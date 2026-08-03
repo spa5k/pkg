@@ -1,0 +1,1755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>pkg — a day-to-day walkthrough (exploration prototype)</title>
+<meta name="description" content="An illustrative, self-contained walkthrough of daily use of pkg, a planned package manager that hides a managed, pinned Nix behind familiar commands. Planning only; no product exists.">
+<style>
+/* ============================================================
+   pkg day-to-day prototype — self-contained, no external assets
+   Palette: deep ink canvas, warm paper text, restrained amber/teal routes
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --ink:      #0f131a;   /* deepest canvas (deep ink/slate)        */
+  --ink-2:    #151b25;   /* raised panel                            */
+  --ink-3:    #1b2230;   /* card / terminal body                    */
+  --ink-4:    #232c3b;   /* card border                             */
+  --rule:     #2a3344;   /* hairline rule                           */
+  --rule-2:   #364154;   /* stronger rule                           */
+
+  --paper:    #ece5d6;   /* warm paper — primary text               */
+  --paper-2:  #c5beae;   /* secondary text                          */
+  --paper-3:  #8f8a7c;   /* tertiary / labels                       */
+
+  --amber:    #d99a4e;   /* route amber  — Nix internals / build     */
+  --amber-2:  #b07a35;
+  --teal:     #54a99c;   /* route teal   — pkg policy / flow          */
+  --teal-2:   #3c8478;
+  --rust:     #cf6f50;   /* restrained error / cancel                */
+  --rust-2:   #5a3b34;   /* rust-deep — cancel border weight         */
+  --green:    #82b07a;   /* restrained success                       */
+
+  --scrim:      rgba(0,0,0,.35);   /* float scrim — shadow tint              */
+  --scrim-soft: rgba(0,0,0,.18);   /* inset scrim — terminal prompt well     */
+  --shadow: 0 10px 30px var(--scrim);
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+html, body { margin: 0; padding: 0; }
+html { background: var(--ink); }
+body {
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  min-height: 100vh;
+}
+
+a { color: var(--teal); }
+h1,h2,h3,h4 { font-weight: 600; line-height: 1.25; margin: 0 0 .4em; letter-spacing: -.01em; }
+h1 { font-size: 1.32rem; }
+h2 { font-size: 1.12rem; }
+h3 { font-size: .98rem; }
+p  { margin: 0 0 .7em; }
+small { font-size: .8rem; }
+.mono { font-family: var(--mono); }
+.dim  { color: var(--paper-3); }
+.mid  { color: var(--paper-2); }
+
+/* ---------- focus visibility (keyboard) ---------- */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--paper);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+button { font: inherit; color: inherit; }
+
+/* ---------- layout shell ---------- */
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+#main { padding-bottom: 132px; } /* room for fixed switcher + legend */
+
+/* ---------- top banner ---------- */
+header.site {
+  border-bottom: 1px solid var(--rule);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 23px, rgba(255,255,255,.012) 23px 24px),
+    var(--ink);
+}
+.site-top {
+  display: flex; align-items: center; gap: 16px;
+  padding: 16px 0 12px; flex-wrap: wrap;
+}
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand .mark {
+  width: 30px; height: 30px; flex: 0 0 auto;
+  border: 1px solid var(--rule-2);
+  border-radius: 6px;
+  display: grid; place-items: center;
+  font-family: var(--mono); font-weight: 700; color: var(--paper);
+  background: var(--ink-2);
+}
+.brand h1 { margin: 0; font-size: 1.12rem; }
+.brand .sub { color: var(--paper-3); font-size: .8rem; margin-top: 1px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: .72rem; letter-spacing: .03em; text-transform: uppercase;
+  color: var(--paper-2);
+  border: 1px solid var(--rule-2);
+  padding: 3px 8px; border-radius: 999px;
+  background: var(--ink-2);
+}
+.pill .d { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.pill.teal .d { background: var(--teal); }
+
+.site-controls { margin-left: auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.kbd-hint { color: var(--paper-3); font-size: .74rem; font-family: var(--mono); white-space: nowrap; }
+.kbd {
+  font-family: var(--mono); font-size: .72rem;
+  border: 1px solid var(--rule-2); border-bottom-width: 2px;
+  padding: 1px 5px; border-radius: 4px; color: var(--paper-2); background: var(--ink-2);
+}
+
+/* ---------- platform toggle (segmented) ---------- */
+.seg { display: inline-flex; border: 1px solid var(--rule-2); border-radius: var(--radius); overflow: hidden; background: var(--ink-2); }
+.seg button {
+  appearance: none; background: transparent; color: var(--paper-2);
+  border: 0; padding: 7px 12px; font-size: .82rem; cursor: pointer;
+  border-right: 1px solid var(--rule); display: flex; align-items: center; gap: 7px;
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink-4); color: var(--paper); }
+.seg button .plat-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+.seg button[aria-pressed="false"] .plat-dot { background: var(--paper-3); opacity: .6; }
+
+/* ---------- shared legend bar ---------- */
+.legend {
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: linear-gradient(180deg, var(--ink-2), var(--ink));
+}
+.legend .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding: 11px 0; }
+.legend .cell { display: flex; gap: 9px; align-items: flex-start; min-width: 0; }
+.legend .sw { width: 12px; height: 12px; border-radius: 3px; margin-top: 4px; flex: 0 0 auto; }
+.legend .sw.intent { background: var(--paper); }
+.legend .sw.pkg    { background: var(--teal); }
+.legend .sw.nix    { background: var(--amber); }
+.legend .cell b { display: block; font-size: .82rem; }
+.legend .cell span { display: block; color: var(--paper-3); font-size: .74rem; line-height: 1.4; }
+
+/* ---------- variant scaffolding ---------- */
+.variant { display: none; }
+.variant.is-active { display: block; animation: fadeIn .28s ease both; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.section-head { padding: 26px 0 14px; }
+.section-head .eyebrow { color: var(--teal); font-family: var(--mono); font-size: .74rem; letter-spacing: .08em; text-transform: uppercase; }
+.section-head h2 { font-size: 1.32rem; margin: 4px 0 6px; }
+.section-head p { color: var(--paper-2); max-width: 70ch; margin: 0; font-size: .875rem; }
+
+/* ============================================================
+   TERMINAL component (shared)
+   ============================================================ */
+.term {
+  background: var(--ink-3);
+  border: 1px solid var(--ink-4);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.term-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  background: var(--ink-2);
+  border-bottom: 1px solid var(--ink-4);
+  font-family: var(--mono); font-size: .76rem; color: var(--paper-3);
+}
+.term-head .lights { display: flex; gap: 6px; }
+.term-head .lights i { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-4); display: inline-block; }
+.term-head .title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-head .tag { color: var(--amber); }
+.term-body {
+  font-family: var(--mono); font-size: .82rem; line-height: 1.5;
+  padding: 12px 14px; max-height: 360px; overflow: auto;
+  color: var(--paper);
+  white-space: pre-wrap; word-break: break-word;
+}
+.term-body.lg { max-height: 520px; }
+.term-line { display: block; min-height: 1.2em; }
+.term-line.cmd { color: var(--paper); }
+.term-line.cmd .ps { color: var(--teal); }
+.term-line.ok    { color: var(--green); }
+.term-line.warn  { color: var(--amber); }
+.term-line.err   { color: var(--rust); }
+.term-line.dim   { color: var(--paper-3); }
+.term-line.pkg   { color: var(--teal); }
+.term-line.nix   { color: var(--amber); }
+.term-line.note  { color: var(--paper-2); font-style: normal; }
+
+.term-prompt {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 10px 14px; border-top: 1px solid var(--ink-4); background: var(--scrim-soft);
+}
+.term-prompt .q { font-family: var(--mono); font-size: .82rem; color: var(--paper); flex: 1 1 220px; min-width: 0; }
+.tbtn {
+  appearance: none; cursor: pointer; font-family: var(--mono); font-size: .82rem;
+  border: 1px solid var(--rule-2); background: var(--ink-2); color: var(--paper);
+  padding: 6px 12px; border-radius: 6px; transition: background .12s, border-color .12s;
+}
+.tbtn:hover { background: var(--ink-4); }
+.tbtn.go   { border-color: var(--teal-2); color: var(--teal); }
+.tbtn.go:hover { background: rgba(84,169,156,.12); }
+.tbtn.no   { border-color: var(--rust-2); color: var(--rust); }
+.tbtn.no:hover { background: rgba(207,111,80,.1); }
+.tbtn[disabled] { opacity: .5; cursor: default; }
+
+.term-foot { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--ink-4); background: var(--ink-2); flex-wrap: wrap; }
+.term-foot .replay { margin-left: auto; }
+.term-foot .state { font-family: var(--mono); font-size: .72rem; color: var(--paper-3); }
+
+/* ============================================================
+   VARIANT A — GUIDED DAY
+   ============================================================ */
+.day-wrap { display: grid; grid-template-columns: 168px 1fr; gap: 26px; padding: 8px 0 0; align-items: start; }
+.daytabs { position: sticky; top: 12px; }
+.daytabs ol { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--rule); }
+.daytabs li { margin: 0; }
+.daytabs button {
+  appearance: none; background: transparent; border: 0; text-align: left; cursor: pointer;
+  display: block; width: 100%; padding: 9px 12px; color: var(--paper-3);
+  font-family: var(--sans); font-size: .8rem; border-left: 2px solid transparent; margin-left: -2px;
+  line-height: 1.3;
+}
+.daytabs button .t { font-family: var(--mono); font-size: .72rem; color: var(--paper-3); display: block; }
+.daytabs button:hover { color: var(--paper-2); }
+.daytabs button[aria-current="true"] { color: var(--paper); border-left-color: var(--teal); }
+.daytabs button[aria-current="true"] .t { color: var(--teal); }
+
+.station {
+  border: 1px solid var(--rule);
+  background: var(--ink-2);
+  border-radius: var(--radius);
+  padding: 18px 20px; margin-bottom: 18px;
+  scroll-margin-top: 16px;
+}
+.station .clock {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono); font-size: .74rem; color: var(--teal); letter-spacing: .04em;
+}
+.station .clock::before {
+  content: "";
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 0 2px var(--ink-2);
+}
+.station.miss .clock { color: var(--amber); }
+.station.miss .clock::before { background: var(--amber); }
+.station.recover .clock { color: var(--paper-2); }
+.station.recover .clock::before { background: var(--paper-2); }
+.station h3 { margin: 2px 0 4px; font-size: 1.12rem; }
+.station .intent { color: var(--paper-2); font-size: .875rem; margin: 0 0 14px; max-width: 68ch; }
+.station .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.station .meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.chip {
+  font-family: var(--mono); font-size: .74rem; color: var(--paper-2);
+  border: 1px solid var(--rule-2); padding: 2px 8px; border-radius: 999px; background: var(--ink-3);
+}
+.chip.pkg { color: var(--teal); border-color: var(--teal-2); }
+.chip.nix { color: var(--amber); border-color: var(--amber-2); }
+.note-line { font-size: .82rem; color: var(--paper-3); margin-top: 10px; }
+.note-line b { color: var(--paper-2); }
+
+/* ============================================================
+   VARIANT B — COMMAND DESK
+   ============================================================ */
+.desk { display: grid; grid-template-columns: 248px minmax(0,1fr) 268px; gap: 18px; align-items: start; padding-top: 6px; }
+.families, .context { display: flex; flex-direction: column; gap: 14px; }
+.panel {
+  border: 1px solid var(--rule); background: var(--ink-2); border-radius: var(--radius); padding: 14px;
+}
+.panel h3 { font-size: .82rem; letter-spacing: .05em; text-transform: uppercase; color: var(--paper-3); margin-bottom: 10px; }
+.fam + .fam { margin-top: 12px; }
+.fam .ft { font-family: var(--mono); font-size: .76rem; color: var(--teal); margin-bottom: 7px; }
+.fam .cmds { display: flex; flex-wrap: wrap; gap: 6px; }
+.cmdchip {
+  appearance: none; cursor: pointer; font-family: var(--mono); font-size: .76rem;
+  border: 1px solid var(--rule-2); background: var(--ink-3); color: var(--paper-2);
+  padding: 5px 9px; border-radius: 6px; transition: border-color .12s, color .12s;
+}
+.cmdchip:hover { color: var(--paper); border-color: var(--rule-2); }
+.cmdchip[aria-current="true"] { color: var(--teal); border-color: var(--teal-2); background: rgba(84,169,156,.08); }
+.fam .cmds .cmdchip.nix-only { color: var(--amber); }
+
+.scenarios { display: flex; flex-wrap: wrap; gap: 8px; }
+.scn {
+  appearance: none; cursor: pointer; font-family: var(--sans); font-size: .82rem;
+  border: 1px solid var(--rule-2); background: var(--ink-2); color: var(--paper-2);
+  padding: 7px 11px; border-radius: var(--radius); text-align: left; line-height: 1.25;
+}
+.scn:hover { color: var(--paper); border-color: var(--rule-2); }
+.scn b { display: block; color: var(--paper); font-weight: 600; font-size: .82rem; }
+.scn span { color: var(--paper-3); font-size: .72rem; }
+
+.context .kv { font-family: var(--mono); font-size: .76rem; color: var(--paper-2); display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--rule); }
+.context .kv:last-child { border-bottom: 0; }
+.context .kv b { color: var(--paper-3); font-weight: 500; }
+.context .pinned-list { font-family: var(--mono); font-size: .76rem; color: var(--teal); }
+.context .empty { color: var(--paper-3); font-size: .76rem; }
+
+/* ============================================================
+   VARIANT C — LIFECYCLE MAP
+   ============================================================ */
+.map-wrap { border: 1px solid var(--rule); background: var(--ink-2); border-radius: var(--radius); padding: 8px; overflow: hidden; }
+.map-scroll { overflow-x: auto; }
+svg.map { display: block; width: 100%; min-width: 760px; height: auto; font-family: var(--sans); }
+svg.map .route { fill: none; stroke-width: 9; stroke-linecap: round; stroke-linejoin: round; }
+svg.map .route.teal { stroke: var(--teal); }
+svg.map .route.teal-dim { stroke: var(--teal); opacity: .35; stroke-dasharray: 2 10; stroke-width: 4; }
+svg.map .route.amber { stroke: var(--amber); }
+svg.map .route.amber-ghost { stroke: var(--paper-3); opacity: .35; stroke-dasharray: 5 7; stroke-width: 5; }
+svg.map .lbl { font-size: 13px; fill: var(--paper); }
+svg.map .lbl.sub { font-size: .74rem; fill: var(--paper-3); }
+svg.map .lbl.teal { fill: var(--teal); }
+svg.map .lbl.amber { fill: var(--amber); }
+svg.map .nd { cursor: pointer; }
+svg.map .nd circle.core { fill: var(--ink); stroke: var(--teal); stroke-width: 3; }
+svg.map .nd.amber circle.core { stroke: var(--amber); }
+svg.map .nd circle.bell { fill: var(--ink-2); stroke: var(--rule-2); stroke-width: 1; opacity: .0; }
+svg.map .nd:hover circle.core { fill: var(--teal); }
+svg.map .nd.amber:hover circle.core { fill: var(--amber); }
+svg.map .nd[aria-current="true"] circle.core { fill: var(--teal); }
+svg.map .nd.amber[aria-current="true"] circle.core { fill: var(--amber); }
+svg.map .nd:focus-visible circle.core { stroke: var(--paper); stroke-width: 4; }
+svg.map .engine-pill { fill: var(--ink); stroke: var(--amber-2); stroke-width: 1; }
+svg.map .engine-pill text { fill: var(--amber); font-size: .74rem; }
+svg.map .train { fill: var(--paper); }
+
+.c-detail { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; margin-top: 18px; align-items: start; }
+.c-detail .desc h3 { color: var(--paper); }
+.c-detail .desc .roles { margin: 10px 0 0; display: grid; gap: 9px; }
+.role { display: flex; gap: 10px; align-items: flex-start; font-size: .875rem; }
+.role .bar { width: 3px; align-self: stretch; border-radius: 3px; flex: 0 0 auto; min-height: 18px; }
+.role.intent .bar { background: var(--paper); }
+.role.pkg .bar { background: var(--teal); }
+.role.nix .bar { background: var(--amber); }
+.role b { color: var(--paper); display: block; font-size: .76rem; letter-spacing: .04em; text-transform: uppercase; }
+.role.pkg b { color: var(--teal); }
+.role.nix b { color: var(--amber); }
+.role span { color: var(--paper-2); }
+.c-ref { margin-top: 18px; }
+.c-ref h3 { font-size: .82rem; letter-spacing: .05em; text-transform: uppercase; color: var(--paper-3); }
+.c-ref ul { list-style: none; margin: 8px 0 0; padding: 0; columns: 2; column-gap: 18px; }
+.c-ref li { font-family: var(--mono); font-size: .76rem; color: var(--paper-2); padding: 2px 0; break-inside: avoid; }
+.c-ref li .d { color: var(--paper-3); }
+
+/* ---------- bottom variant switcher ---------- */
+.switcher {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: flex; justify-content: center; pointer-events: none;
+  padding: 0 12px 14px;
+}
+.switcher .bar {
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(21,27,37,.92);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--rule-2);
+  border-radius: 999px;
+  padding: 5px;
+  box-shadow: var(--shadow);
+}
+.switcher .vbtn {
+  appearance: none; cursor: pointer; background: transparent; color: var(--paper-3);
+  border: 0; padding: 7px 14px; border-radius: 999px; font-size: .82rem;
+  display: flex; align-items: center; gap: 8px; white-space: nowrap;
+}
+.switcher .vbtn .k { font-family: var(--mono); font-size: .72rem; color: var(--paper-3); border: 1px solid var(--rule-2); border-radius: 4px; padding: 0 5px; }
+.switcher .vbtn[aria-current="true"] { background: var(--ink-4); color: var(--paper); }
+.switcher .vbtn[aria-current="true"] .k { color: var(--teal); border-color: var(--teal-2); }
+.switcher .vbtn:hover:not([aria-current="true"]) { color: var(--paper-2); }
+
+/* ---------- footer ---------- */
+footer.site { border-top: 1px solid var(--rule); margin-top: 30px; padding: 18px 0 24px; color: var(--paper-3); font-size: .8rem; }
+footer.site b { color: var(--paper-2); }
+
+/* ---------- accessible live region ---------- */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 980px) {
+  .day-wrap { grid-template-columns: 1fr; }
+  .daytabs { position: static; margin-bottom: 6px; }
+  .daytabs ol { display: flex; overflow-x: auto; border-left: 0; border-bottom: 2px solid var(--rule); }
+  .daytabs li { flex: 0 0 auto; }
+  .daytabs button { border-left: 0; border-bottom: 2px solid transparent; margin-left: 0; margin-bottom: -2px; white-space: nowrap; }
+  .daytabs button[aria-current="true"] { border-left: 0; border-bottom-color: var(--teal); }
+  .desk { grid-template-columns: 1fr; }
+  .c-detail { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  body { font-size: .875rem; }
+  .wrap { padding: 0 14px; }
+  .site-top { gap: 10px; padding: 12px 0 10px; }
+  .site-controls { width: 100%; margin-left: 0; }
+  .kbd-hint { display: none; }
+  .legend .row { grid-template-columns: 1fr; gap: 8px; }
+  .switcher .vbtn .label-txt { display: none; }
+  .switcher .vbtn { padding: 8px 12px; }
+  .c-ref ul { columns: 1; }
+  .term-body { font-size: .82rem; }
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .variant.is-active { animation: none; }
+  svg.map animateMotion { display: none; }
+  svg.map .train { transform: translate(0,0); }
+}
+</style>
+</head>
+<body>
+<!--
+THESIS: A walkthrough of daily use of pkg, a planned package manager that hides a managed, pinned Nix behind familiar brew/paru commands.
+OWN-WORLD: A transit-style lifecycle map fused with a serious terminal workbench, set in deep ink with warm paper text and restrained amber/teal routes, not a SaaS dashboard.
+STORY: One working day — morning health and outdated checks, discovery and install, midday pins, a clearly reversible upgrade, then an end-of-day rollback and cleanup.
+FIRST VIEWPORT: A quiet header framing pkg as planning-only, a platform toggle, and the active variant's opening beat with an illustrative terminal.
+FORM: Three structural variants (Guided Day, Command Desk, Lifecycle Map) share one fact set; concept seed b41d68e3.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md.
+-->
+<!--
+PRODUCT ANCHORS (from plans/00,01,03,04,05,06,07,08,12): pkg is a planned Rust CLI; V1 is planning only and no implementation exists.
+Users touch only pkg. pkg owns the signed/pinned source (channel descriptor via TUF), policy, manifest/lock, generations, activation, GC roots, and receipts; a managed, pinned internal Nix engine performs fetch, NAR/signature verification, the /nix/store, and sandboxed builds. The catalog is exactly-pinned Nixpkgs; the only binary cache in v1 is cache.nixos.org.
+Cache substitution is always attempted first. On a cache miss, a native current-system local build is offered on BOTH Linux and macOS, only after a deterministic preview and explicit, per-operation, journaled approval (cancel/no approval is the default and leaves the generation unchanged; a cancel returns ACQUIRE_NEEDS_APPROVAL). Linux: managed nixbld users, Nix Linux sandbox, sandbox=true, sandbox-fallback=false, cgroups/RLIMIT-backed caps where available. macOS: managed _nixbld users, Nix Darwin sandbox, sandbox=true, sandbox-fallback=false, RLIMIT/disk/free-space/load safeguards — Darwin isolation is narrower than Linux's and pkg does not claim cgroups on macOS. Build only the selected platform's native system (x86_64-linux / aarch64-darwin): no Rosetta, cross-compilation, emulation, or remote builds. Fail closed if the managed builder pool or sandbox verification is unhealthy. ACQUIRE_NO_BINARY is reserved for a closure that cannot be built for the current system or is blocked by policy; a normal cache miss on either OS does not return it. Trust is verified, not absolute; pinned Nixpkgs is not curated (RISK-01, T-IDX-4, T-RUN-1).
+INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the URL via replaceState — no new history entry is pushed); &os=linux|macos sets the platform. ArrowLeft/ArrowRight switch variants only when focus is not in any interactive control (button, link, input, field, or a map station); after switching, focus moves to the newly visible variant heading. The terminal is a simulator: in-memory session state only, no network, no real install or system mutation. All versions, sizes, timings, health results, and command output are illustrative.
+-->
+<div id="sr" class="sr-only" role="status" aria-live="polite"></div>
+<noscript>
+  <div style="max-width:760px;margin:40px auto;padding:0 20px;font-family:var(--sans)">
+    <h1>pkg — day-to-day walkthrough</h1>
+    <p>This exploration prototype needs JavaScript enabled to switch variants and run the terminal simulator. All content is illustrative; no product exists yet.</p>
+  </div>
+</noscript>
+
+<header class="site">
+  <div class="wrap site-top">
+    <div class="brand">
+      <div class="mark" aria-hidden="true">p</div>
+      <div>
+        <h1>pkg <span class="dim" style="font-weight:400">— a day-to-day walkthrough</span></h1>
+        <div class="sub">Planning only. No implementation exists. All output on this page is illustrative.</div>
+      </div>
+    </div>
+    <div class="site-controls">
+      <span class="pill"><span class="d"></span> exploration prototype</span>
+      <div class="seg" role="group" aria-label="Platform">
+        <button type="button" id="plat-linux" aria-pressed="true"><span class="plat-dot"></span>Linux</button>
+        <button type="button" id="plat-macos" aria-pressed="false"><span class="plat-dot"></span>macOS</button>
+      </div>
+      <span class="kbd-hint"><span class="kbd">&larr;</span> <span class="kbd">&rarr;</span> switch view</span>
+    </div>
+  </div>
+  <div class="legend">
+    <div class="wrap">
+      <div class="row">
+        <div class="cell"><span class="sw intent"></span><div><b>User intent</b><span>What you type and what you want — search, install, rollback.</span></div></div>
+        <div class="cell"><span class="sw pkg"></span><div><b>pkg policy &amp; state</b><span>Channel lock, pins, generations, activation, GC roots, approval gates, receipts. What pkg owns.</span></div></div>
+        <div class="cell"><span class="sw nix"></span><div><b>Nix internals (hidden)</b><span>Fetch from cache.nixos.org, NAR + signature checks, the /nix/store, sandboxed builds. The managed engine does this; you never invoke it.</span></div></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main id="main" class="wrap">
+
+  <!-- ===================== VARIANT A — GUIDED DAY ===================== -->
+  <section class="variant" id="v-A" aria-label="Guided Day">
+    <div class="section-head">
+      <div class="eyebrow">Variant A &middot; Guided Day</div>
+      <h2>One day with pkg, from morning check to end-of-day rollback</h2>
+      <p>A narrative through the terminal. Each beat states your intent, the pkg command, and the hidden work the managed Nix engine performs. Pick a beat on the left, or scroll the day.</p>
+    </div>
+    <div class="day-wrap">
+      <nav class="daytabs" aria-label="Day beats">
+        <ol id="daytabs-list"></ol>
+      </nav>
+      <div id="day-stations"></div>
+    </div>
+  </section>
+
+  <!-- ===================== VARIANT B — COMMAND DESK ===================== -->
+  <section class="variant" id="v-B" aria-label="Command Desk">
+    <div class="section-head">
+      <div class="eyebrow">Variant B &middot; Command Desk</div>
+      <h2>Task-oriented command families around one interactive terminal</h2>
+      <p>Pick a command from a family, or load a scenario. The terminal re-runs against the in-memory session and reshapes its output for the selected platform.</p>
+    </div>
+    <div class="desk">
+      <aside class="families" id="families"></aside>
+      <div>
+        <div class="panel" style="padding:0;overflow:hidden">
+          <div id="desk-terminal"></div>
+        </div>
+        <div class="panel" style="margin-top:14px">
+          <h3>Scenarios</h3>
+          <div class="scenarios" id="scenarios"></div>
+        </div>
+      </div>
+      <aside class="context" id="desk-context"></aside>
+    </div>
+  </section>
+
+  <!-- ===================== VARIANT C — LIFECYCLE MAP ===================== -->
+  <section class="variant" id="v-C" aria-label="Lifecycle Map">
+    <div class="section-head">
+      <div class="eyebrow">Variant C &middot; Lifecycle Map</div>
+      <h2>A transit map of the package lifecycle, from pinned input to garbage collection</h2>
+      <p>The teal line is the pkg-controlled backbone. The amber spur is the only place the hidden Nix engine builds — on a cache miss, after a preview and your explicit, per-operation approval. It is active on both Linux and macOS; builder identity and resource guards change by platform without implying identical sandbox primitives. Select a station for its intent, pkg's role, the engine's role, and an illustrative command.</p>
+    </div>
+    <div class="map-wrap">
+      <div class="map-scroll">
+        <svg class="map" viewBox="0 0 1220 560" role="img" aria-label="Package lifecycle transit map">
+          <!-- routes -->
+          <path class="route teal" d="M120,150 L360,150 L700,150 L980,150 L980,300 L1120,300"/>
+          <path class="route teal" d="M1120,300 L1120,440"/>
+          <path class="route amber" id="build-spur" d="M360,150 L360,270 L600,270 L700,150"/>
+          <!-- rollback reactivates a prior generation (dashed return) -->
+          <path class="route teal-dim" d="M1120,285 C1180,225 1090,205 992,150" aria-hidden="true"/>
+
+          <!-- engine pills (Nix internals on the teal path) -->
+          <g class="engine-pill" aria-hidden="true">
+            <rect x="300" y="108" width="120" height="20" rx="10"/>
+            <text x="360" y="122" text-anchor="middle">Nix: substitute + verify</text>
+          </g>
+          <g class="engine-pill" aria-hidden="true">
+            <rect x="624" y="108" width="152" height="20" rx="10"/>
+            <text x="700" y="122" text-anchor="middle">Nix: NAR integrity + signatures</text>
+          </g>
+
+          <!-- stations (teal backbone) -->
+          <g class="nd" tabindex="0" role="button" aria-label="Station: Signed and pinned Nixpkgs input" data-station="pin">
+            <circle class="core" cx="120" cy="150" r="11"/>
+            <text class="lbl" x="120" y="182" text-anchor="middle">Signed / pinned</text>
+            <text class="lbl sub" x="120" y="197" text-anchor="middle">Nixpkgs input</text>
+          </g>
+          <g class="nd" tabindex="0" role="button" aria-label="Station: Cache lookup" data-station="cache">
+            <circle class="core" cx="360" cy="150" r="11"/>
+            <text class="lbl" x="360" y="182" text-anchor="middle">Cache lookup</text>
+            <text class="lbl sub" x="360" y="197" text-anchor="middle">cache.nixos.org</text>
+          </g>
+          <g class="nd" tabindex="0" role="button" aria-label="Station: Verified closure" data-station="verify">
+            <circle class="core" cx="700" cy="150" r="11"/>
+            <text class="lbl" x="700" y="182" text-anchor="middle">Verified closure</text>
+            <text class="lbl sub" x="700" y="197" text-anchor="middle">identity = store path</text>
+          </g>
+          <g class="nd" tabindex="0" role="button" aria-label="Station: Generation activation" data-station="activate">
+            <circle class="core" cx="980" cy="150" r="11"/>
+            <text class="lbl" x="980" y="133" text-anchor="middle">Generation</text>
+            <text class="lbl sub" x="980" y="118" text-anchor="middle">activation</text>
+          </g>
+          <g class="nd" tabindex="0" role="button" aria-label="Station: History" data-station="history">
+            <circle class="core" cx="980" cy="300" r="11"/>
+            <text class="lbl" x="992" y="304">History</text>
+          </g>
+          <g class="nd" tabindex="0" role="button" aria-label="Station: Rollback" data-station="rollback">
+            <circle class="core" cx="1120" cy="300" r="11"/>
+            <text class="lbl" x="1120" y="283" text-anchor="middle">Rollback</text>
+            <text class="lbl sub" x="1120" y="328" text-anchor="middle">reactivates a prior gen</text>
+          </g>
+          <g class="nd" tabindex="0" role="button" aria-label="Station: Garbage collection" data-station="gc">
+            <circle class="core" cx="1120" cy="440" r="11"/>
+            <text class="lbl" x="1132" y="436">Garbage</text>
+            <text class="lbl sub" x="1132" y="452">collection</text>
+          </g>
+
+          <!-- build spur stations (amber, approval-gated on both platforms) -->
+          <g class="nd amber" tabindex="0" role="button" aria-label="Station: Build preview and approval" data-station="build-preview">
+            <circle class="core" cx="430" cy="270" r="11"/>
+            <text class="lbl amber" x="430" y="302" text-anchor="middle">Build preview</text>
+            <text class="lbl sub" x="430" y="317" text-anchor="middle">approval gate</text>
+          </g>
+          <g class="nd amber" tabindex="0" role="button" aria-label="Station: Sandboxed local build" data-station="build-run">
+            <circle class="core" cx="600" cy="270" r="11"/>
+            <text class="lbl amber" x="600" y="302" text-anchor="middle">Sandboxed</text>
+            <text class="lbl sub" x="600" y="317" text-anchor="middle">local build</text>
+          </g>
+
+          <!-- platform note for the spur -->
+          <text id="spur-note" class="lbl sub" x="430" y="356" text-anchor="middle">cache miss · preview → explicit approval (cancel is default)</text>
+
+          <!-- moving signal along the teal backbone -->
+          <circle class="train" r="5" cx="120" cy="150">
+            <animateMotion dur="13s" repeatCount="indefinite" path="M120,150 L360,150 L700,150 L980,150 L980,300 L1120,300 L1120,440"/>
+          </circle>
+        </svg>
+      </div>
+    </div>
+
+    <div class="c-detail">
+      <div class="desc panel" id="c-desc">
+        <div class="eyebrow" style="color:var(--teal);font-family:var(--mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase">Station detail</div>
+        <h3 id="c-title">Select a station</h3>
+        <p class="mid" id="c-blurb" style="font-size:.875rem;max-width:60ch">Each station separates what you want, what pkg decides, and what the hidden Nix engine does.</p>
+        <div class="roles" id="c-roles"></div>
+      </div>
+      <div>
+        <div id="c-terminal"></div>
+        <div class="c-ref panel" style="margin-top:14px">
+          <h3>Every pkg command</h3>
+          <ul id="c-reflist"></ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <p><b>Illustrative.</b> Versions, sizes, timings, health results, and terminal output are fabricated to show intended behaviour. <b>pkg is a working codename.</b> You interact only with pkg; a managed internal Nix engine handles fetch, verification, store, and build mechanics &mdash; you never touch raw Nix. Verification reduces risk; it is not a guarantee of absolute security, and the pinned Nixpkgs catalog is not curated.</p>
+    <p class="dim" style="margin:0">Anchored to <span class="mono">plans/</span> (00, 01, 03, 04, 05, 06, 07, 08, 12). No network calls; no real installs; session state lives only in memory.</p>
+  </div>
+</footer>
+
+<nav class="switcher" aria-label="Prototype variant">
+  <div class="bar">
+    <button type="button" class="vbtn" data-variant="A" aria-current="true"><span class="k">A</span><span class="label-txt">Guided Day</span></button>
+    <button type="button" class="vbtn" data-variant="B" aria-current="false"><span class="k">B</span><span class="label-txt">Command Desk</span></button>
+    <button type="button" class="vbtn" data-variant="C" aria-current="false"><span class="k">C</span><span class="label-txt">Lifecycle Map</span></button>
+  </div>
+</nav>
+
+<script>
+"use strict";
+/* ============================================================================
+   pkg day-to-day prototype — engine + UI
+   - In-memory session only; no network; no system mutation.
+   - All output is illustrative.
+   ========================================================================== */
+
+/* -------- palette mirrors for JS-built terminals (kept in sync with CSS) -- */
+const CL = { d:"", dim:"dim", ok:"ok", warn:"warn", err:"err", pkg:"pkg", nix:"nix", note:"note" };
+
+/* -------- small DOM helpers --------------------------------------------- */
+const $  = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+function el(tag, props={}, children=[]) {
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(props)) {
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k === "html") e.innerHTML = v;
+    else if (k.startsWith("on") && typeof v === "function") e.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined && v !== false) e.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) { if (c) e.append(c); }
+  return e;
+}
+function announce(msg){ const sr = $("#sr"); if (sr) sr.textContent = msg; }
+
+/* ===========================================================================
+   SESSION — illustrative, in-memory, shared across terminals
+   =========================================================================== */
+function freshSession(){
+  return {
+    channelSeq: 42,
+    nextSeq: 43,
+    installed: {
+      ripgrep: { ver:"14.1.0", attr:"ripgrep", pinned:true,  closureMB:4.8 },
+      fd:      { ver:"10.1.0", attr:"fd",      pinned:false, closureMB:2.1 },
+      bat:     { ver:"0.24.0", attr:"bat",     pinned:false, closureMB:5.6 },
+      jq:      { ver:"1.7.1",  attr:"jq",      pinned:false, closureMB:3.2 },
+    },
+    genCounter: 42,
+    gens: [
+      { id:"gen-0042", kind:"upgrade",  summary:"upgrade bat, jq",        when:"today",        ageDays:0,  sizeMB:16, outputs:["ripgrep","fd","bat","jq"] },
+      { id:"gen-0041", kind:"install",  summary:"install bat",            when:"yesterday",    ageDays:1,  sizeMB:6,  outputs:["ripgrep","fd","jq","bat"] },
+      { id:"gen-0040", kind:"install",  summary:"install jq",             when:"2 days ago",   ageDays:2,  sizeMB:4,  outputs:["ripgrep","fd","jq"] },
+      { id:"gen-0039", kind:"pin",      summary:"pin ripgrep",            when:"3 days ago",   ageDays:3,  sizeMB:4,  outputs:["ripgrep","fd"] },
+      { id:"gen-0038", kind:"install",  summary:"install ripgrep, fd",    when:"5 days ago",   ageDays:5,  sizeMB:7,  outputs:["ripgrep","fd"] },
+      { id:"gen-0037", kind:"initial",  summary:"initial generation",     when:"1 week ago",   ageDays:7,  sizeMB:4,  outputs:[] },
+      { id:"gen-0036", kind:"install",  summary:"install curl (example)", when:"10 days ago",  ageDays:10, sizeMB:5,  outputs:["curl"] },
+      { id:"gen-0035", kind:"install",  summary:"install wget (example)", when:"2 weeks ago",  ageDays:14, sizeMB:5,  outputs:["wget"] },
+      { id:"gen-0034", kind:"install",  summary:"install tree (example)", when:"18 days ago",  ageDays:18, sizeMB:4,  outputs:["tree"] },
+      { id:"gen-0033", kind:"upgrade",  summary:"upgrade jq (example)",   when:"3 weeks ago",  ageDays:21, sizeMB:8,  outputs:["ripgrep","fd","jq"] },
+      { id:"gen-0032", kind:"install",  summary:"install htop (example)", when:"4 weeks ago",  ageDays:27, sizeMB:5,  outputs:["htop"] },
+      { id:"gen-0031", kind:"install",  summary:"install ncdu (example)", when:"5 weeks ago",  ageDays:35, sizeMB:5,  outputs:["ncdu"] },
+      { id:"gen-0030", kind:"install",  summary:"install tmux (example)", when:"6 weeks ago",  ageDays:42, sizeMB:9,  outputs:["tmux"] },
+      { id:"gen-0029", kind:"initial",  summary:"earlier baseline",       when:"2 months ago", ageDays:61, sizeMB:12, outputs:[] },
+    ],
+    outdated: {
+      bat: { cur:"0.24.0", avail:"0.24.1", kind:"patch" },
+      jq:  { cur:"1.7.1",  avail:"1.7.1",  kind:"rev-only" },
+    },
+    updated: false,
+  };
+}
+let SESSION = freshSession();
+function activeGen(s){ return s.gens.find(g => g.active) || s.gens[0]; }
+function markActive(s){ s.gens.forEach((g,i)=> g.active = (i===0)); s.gens[0].active = true; }
+markActive(SESSION);
+
+function genSize(outputs){
+  // illustrative reclaimable size for a fresh generation: sum of known output
+  // closures in the current session, with a small floor.
+  let total = 0;
+  outputs.forEach(o => { if (SESSION.installed[o]) total += SESSION.installed[o].closureMB; });
+  return Math.max(4, Math.round(total));
+}
+
+// retention policy (plan 05 §9): protect the active generation plus the most
+// recent `keep` generations plus any within `maxAgeDays`; prune the rest.
+function prunableGens(s, keep, maxAgeDays){
+  return s.gens.filter((g,i) => {
+    if (g.active) return false;       // active generation is never pruned
+    if (i < keep) return false;       // within the keep-count window
+    const age = (g && g.ageDays != null) ? g.ageDays : 0;
+    if (age <= maxAgeDays) return false; // within the age window
+    return true;
+  });
+}
+
+function newGen(s, kind, summary, outputs){
+  s.genCounter += 1;
+  const id = "gen-" + String(s.genCounter).padStart(4,"0");
+  s.gens.forEach(g => g.active = false);
+  const sizeMB = genSize(outputs);
+  const g = { id, kind, summary, when:"just now", ageDays:0, sizeMB, outputs: outputs.slice(), active:true };
+  s.gens.unshift(g);
+  return g;
+}
+
+/* ===========================================================================
+   PLATFORM + VARIANT app state
+   =========================================================================== */
+const App = {
+  variant: "A",
+  platform: "linux",
+  terminals: [],
+  listeners: [],
+  onRefresh(fn){ this.listeners.push(fn); },
+  refresh(){ this.listeners.forEach(fn => { try{ fn(); }catch(e){ console.error(e); } }); },
+  system(){ return this.platform === "linux" ? "x86_64-linux" : "aarch64-darwin"; },
+};
+
+/* ===========================================================================
+   COMMAND ENGINE — returns {pre:[lines], gate|null}
+   lines are [text, class?]; gate = {kind, question, approve:()=>{lines,announce}, cancel:()=>lines}
+   =========================================================================== */
+function sysLine(){ return ["pkg v0.1.0-prototype · channel seq " + SESSION.channelSeq + " · system " + App.system(), CL.dim]; }
+
+const ENGINE = {
+
+  doctor(){
+    const sys = App.system();
+    const mac = App.platform === "macos";
+    const posture = mac
+      ? "managed _nixbld users · Nix Darwin sandbox · sandbox=true · sandbox-fallback=false · RLIMIT/disk/free-space/load guards"
+      : "managed nixbld users · Nix Linux sandbox · sandbox=true · sandbox-fallback=false · cgroups/RLIMIT caps";
+    const lines = [
+      ["$ pkg doctor", CL.cmd],
+      ["pkg doctor  — illustrative", CL.dim],
+      sysLine(),
+      ["  [✓] managed nix runtime present (pinned, matches descriptor)", CL.ok],
+      ["  [✓] daemon reachable (nix ping-store ok)", CL.ok],
+      ["  [✓] store /nix/store writable, 9.0 GB free", CL.ok],
+      ["  [✓] signed channel descriptor verified (TUF), not expired", CL.ok],
+      ["  [✓] disposable index fresh for " + sys, CL.ok],
+      ["  [✓] active generation " + activeGen(SESSION).id + " verifies", CL.ok],
+      ["  [✓] no unmanaged nix detected", CL.ok],
+      ["  [✓] cache.nixos.org reachable", CL.ok],
+      ["  [✓] managed builder pool healthy · sandbox verified (fail-closed)", CL.ok],
+      ["  [i] cache miss → approval-gated local build on " + sys + " (" + posture + ")", CL.note],
+      ["  [i] trust is verified, not absolute — pinned nixpkgs is not curated", CL.note],
+      ["overall: ok", CL.ok],
+    ];
+    return { pre: lines };
+  },
+
+  search(){
+    return { pre: [
+      ["$ pkg search fzf", CL.cmd],
+      ["pkg search — illustrative (disposable index; not authoritative)", CL.dim],
+      ["name        version   description                       license", ""],
+      ["fzf         0.46.1    A command-line fuzzy finder       MIT", ""],
+      ["fzf-zsh     0.1.2     zsh integration for fzf           MIT", ""],
+      ["top 2 of 3 (host-filtered to " + App.system() + ")", CL.dim],
+      ["the index is display-only — install re-checks the attribute on host", CL.note],
+    ]};
+  },
+
+  info(){
+    const ins = !!SESSION.installed.fzf;
+    return { pre: [
+      ["$ pkg info fzf", CL.cmd],
+      ["pkg info — illustrative", CL.dim],
+      ["attribute    fzf", ""],
+      ["version      0.46.1", ""],
+      ["homepage     https://github.com/junegunn/fzf", ""],
+      ["license      MIT", ""],
+      ["description  A command-line fuzzy finder.", ""],
+      ["outputs      [out, man]", ""],
+      ["systems      x86_64-linux ✓   aarch64-linux ✓   x86_64-darwin ✓   aarch64-darwin ✓", ""],
+      ["installed    " + (ins ? "yes" : "no"), ins ? CL.pkg : ""],
+      ["source       channel:current (nixpkgs rev abc123…, pinned by descriptor)", CL.dim],
+      ["realizability is confirmed only at install (on-host eval)", CL.note],
+    ]};
+  },
+
+  /* cache-hit install: fzf */
+  install_hit(){
+    const pre = [
+      ["$ pkg install fzf", CL.cmd],
+      ["resolving fzf … ok (attribute fzf, channel seq " + SESSION.channelSeq + ")", CL.pkg],
+      ["preflight: 1 target, all binaries available on cache.nixos.org", CL.pkg],
+      ["  + fzf  0.46.1   closure 3.4 MB   download 1.0 MB   binary ✓", ""],
+      ["new downloads 1.0 MB · new disk 3.4 MB · free 9.0 GB", CL.dim],
+    ];
+    return {
+      pre,
+      gate: {
+        kind: "confirm",
+        question: "Install fzf → new generation? (previous gen stays recoverable)",
+        approveLabel: "Install",
+        cancelLabel: "Cancel",
+        approve: () => {
+          if (!SESSION.installed.fzf) SESSION.installed.fzf = { ver:"0.46.1", attr:"fzf", pinned:false, closureMB:3.4 };
+          const outs = Object.keys(SESSION.installed);
+          const g = newGen(SESSION, "install", "install fzf", outs);
+          return {
+            lines: [
+              ["[nix] substituting 6 paths from cache.nixos.org (signatures verified)", CL.nix],
+              ["[pkg] staging " + g.id + " → rooted → atomic current swap", CL.pkg],
+              ["installed fzf 0.46.1 → " + g.id + " (active)", CL.ok],
+              ["reversible: pkg rollback returns to the previous generation", CL.note],
+            ],
+            announce: "Installed fzf into a new generation."
+          };
+        },
+        cancel: () => ({ lines: [
+          ["cancelled — " + activeGen(SESSION).id + " still active, nothing staged", CL.err],
+        ]}),
+      },
+    };
+  },
+
+  /* cache-miss install: ffmpeg — BOTH Linux and macOS offer the SAME
+     deterministic preview and an explicit, per-operation, journaled
+     approve/cancel gate. Cancel is the default and leaves the generation
+     unchanged (ACQUIRE_NEEDS_APPROVAL). Builder identity and resource
+     guards differ by platform; only the selected OS's native current system
+     is built (x86_64-linux / aarch64-darwin) — no Rosetta, cross-compile,
+     emulation, or remote builds. A normal cache miss never returns
+     ACQUIRE_NO_BINARY; that code is reserved for a closure that cannot be
+     built for the current system or is blocked by policy. */
+  install_miss(){
+    const mac = App.platform === "macos";
+    const sys = App.system();
+    const builder = mac
+      ? "managed _nixbld users · Nix Darwin sandbox · sandbox=true · sandbox-fallback=false · RLIMIT/disk/free-space/load guards"
+      : "managed nixbld users · Nix Linux sandbox · sandbox=true · sandbox-fallback=false · cgroups/RLIMIT caps";
+    const guard = mac
+      ? "Darwin isolation primitives differ from and are narrower than Linux's (no cgroups claimed)"
+      : "fail closed if the managed builder pool or sandbox verification is unhealthy";
+    const pre = [
+      ["$ pkg install ffmpeg", CL.cmd],
+      ["resolving ffmpeg … ok (attribute ffmpeg, channel seq " + SESSION.channelSeq + ")", CL.pkg],
+      ["preflight: substitution attempted first · 1 closure path has no signed binary on cache.nixos.org", CL.warn],
+      ["  ffmpeg 6.1   closure 320 MB   no " + sys + " binary   est. 8–14 min (sandboxed local build)", CL.warn],
+      ["  builder: " + builder, CL.dim],
+      ["  guard:  " + guard, CL.dim],
+      ["  no Rosetta · no cross-compile · no emulation · no remote builds", CL.dim],
+      ["new downloads 0 B · new disk 320 MB · free 9.0 GB", CL.dim],
+    ];
+    return {
+      pre,
+      gate: {
+        kind: "build",
+        question: "No signed binary for " + sys + ". Build locally in a sandbox? (default: cancel)",
+        approveLabel: "Approve build",
+        cancelLabel: "Cancel",
+        approve: () => {
+          if (!SESSION.installed.ffmpeg) SESSION.installed.ffmpeg = { ver:"6.1", attr:"ffmpeg", pinned:false, closureMB:320, built:true };
+          const outs = Object.keys(SESSION.installed);
+          const g = newGen(SESSION, "install", "install ffmpeg (local build, " + sys + ")", outs);
+          return {
+            lines: [
+              ["[nix] local build on " + sys + ": ffmpeg-6.1 · " + builder, CL.nix],
+              ["[nix] build ok · NAR verified · tagged provenance: local-build (not cache-signed)", CL.nix],
+              ["[pkg] approval journaled · staging " + g.id + " → rooted → atomic current swap", CL.pkg],
+              ["installed ffmpeg 6.1 → " + g.id + " (active)", CL.ok],
+              ["reversible: pkg rollback returns to the previous generation", CL.note],
+            ],
+            announce: "Built and installed ffmpeg into a new generation."
+          };
+        },
+        cancel: () => ({ lines: [
+          ["build not approved — exit 68 ACQUIRE_NEEDS_APPROVAL", CL.err],
+          ["generation unchanged. Re-run with approval, or pick a binary-only package.", CL.note],
+        ]}),
+      },
+    };
+  },
+
+  list(){
+    const rows = [["name","version","pinned","source","closure"]];
+    Object.keys(SESSION.installed).forEach(k => {
+      const p = SESSION.installed[k];
+      rows.push([k, p.ver, p.pinned ? "yes":"no", p.built ? "local-build":"cache.nixos.org", p.closureMB + " MB"]);
+    });
+    const total = Object.values(SESSION.installed).reduce((a,p)=>a+p.closureMB,0).toFixed(1);
+    const lines = [
+      ["$ pkg list", CL.cmd],
+      ["pkg list — illustrative", CL.dim],
+      ...fmtTable(rows),
+      [Object.keys(SESSION.installed).length + " packages · active " + activeGen(SESSION).id + " · closure " + total + " MB", CL.dim],
+    ];
+    return { pre: lines };
+  },
+
+  outdated(){
+    const keys = Object.keys(SESSION.outdated);
+    if (!keys.length) return { pre: [
+      ["$ pkg outdated", CL.cmd],
+      ["pkg outdated — illustrative", CL.dim],
+      ["nothing outdated at channel seq " + SESSION.channelSeq, CL.ok],
+    ]};
+    const rows = [["name","current","available","kind","pinned"]];
+    keys.forEach(k => { const o = SESSION.outdated[k]; rows.push([k, o.cur, o.avail, o.kind, (SESSION.installed[k]&&SESSION.installed[k].pinned)?"yes":"no"]); });
+    return { pre: [
+      ["$ pkg outdated", CL.cmd],
+      ["pkg outdated — illustrative", CL.dim],
+      ...fmtTable(rows),
+      [keys.length + " selectors behind channel seq " + SESSION.channelSeq + ". Try: pkg upgrade --dry-run", CL.dim],
+    ]};
+  },
+
+  update(){
+    if (!SESSION.updated) {
+      SESSION.updated = true;
+      SESSION.channelSeq = SESSION.nextSeq;
+      SESSION.nextSeq += 1;
+      if (!SESSION.outdated.fd) SESSION.outdated.fd = { cur:"10.1.0", avail:"10.2.0", kind:"minor" };
+    }
+    return { pre: [
+      ["$ pkg update", CL.cmd],
+      ["pkg update — illustrative (metadata only; no packages changed)", CL.dim],
+      ["[nix] fetching TUF timestamp/snapshot/targets … verified", CL.nix],
+      ["[pkg] channel seq → " + SESSION.channelSeq + " (descriptor signed, narHash pinned)", CL.pkg],
+      ["[pkg] disposable index refreshed for " + App.system(), CL.pkg],
+      ["0 packages changed. Run pkg outdated, then pkg upgrade --all to apply.", CL.note],
+    ]};
+  },
+
+  upgrade_dry(){
+    const keys = Object.keys(SESSION.outdated).filter(k => SESSION.installed[k] && !SESSION.installed[k].pinned);
+    if (!keys.length) return { pre: [
+      ["$ pkg upgrade --dry-run --all", CL.cmd],
+      ["pkg upgrade --dry-run — illustrative", CL.dim],
+      ["nothing to upgrade at channel seq " + SESSION.channelSeq, CL.ok],
+    ]};
+    const rows = [["","package","from","to","kind"]];
+    keys.forEach(k => { const o = SESSION.outdated[k]; rows.push(["~", k, o.cur, o.avail, o.kind]); });
+    const dl = (0.1*keys.length + 0.3).toFixed(1);
+    return { pre: [
+      ["$ pkg upgrade --dry-run --all", CL.cmd],
+      ["pkg upgrade --dry-run — illustrative (no changes made)", CL.dim],
+      ["pinned selectors are skipped (ripgrep)", CL.dim],
+      ...fmtTable(rows),
+      ["new downloads ~" + dl + " MB · free 9.0 GB", CL.dim],
+      ["reversible: pkg rollback returns to " + activeGen(SESSION).id + " in one step", CL.note],
+    ]};
+  },
+
+  upgrade(){
+    const keys = Object.keys(SESSION.outdated).filter(k => SESSION.installed[k] && !SESSION.installed[k].pinned);
+    if (!keys.length) return { pre: [
+      ["$ pkg upgrade --all", CL.cmd],
+      ["nothing to upgrade. Try pkg update first.", CL.note],
+    ]};
+    const prev = activeGen(SESSION).id;
+    const pre = [
+      ["$ pkg upgrade --all", CL.cmd],
+      ["preflight: " + keys.length + " upgradable, all binaries available", CL.pkg],
+      ...keys.map(k => ["  ~ " + k + "  " + SESSION.outdated[k].cur + " → " + SESSION.outdated[k].avail, CL.warn]),
+    ];
+    return {
+      pre,
+      gate: {
+        kind: "confirm",
+        question: "Apply upgrade → new generation? (rollback restores " + prev + ")",
+        approveLabel: "Upgrade",
+        cancelLabel: "Cancel",
+        approve: () => {
+          keys.forEach(k => { SESSION.installed[k].ver = SESSION.outdated[k].avail; });
+          keys.forEach(k => delete SESSION.outdated[k]);
+          const outs = Object.keys(SESSION.installed);
+          const g = newGen(SESSION, "upgrade", "upgrade " + keys.join(", "), outs);
+          return { lines: [
+            ["[nix] substituting updated closures from cache.nixos.org (verified)", CL.nix],
+            ["[pkg] staging " + g.id + " → rooted → atomic current swap", CL.pkg],
+            ["upgraded " + keys.length + " → " + g.id + " (active)", CL.ok],
+            ["reversible: pkg rollback returns to " + prev, CL.note],
+          ], announce: "Upgrade applied to a new generation." };
+        },
+        cancel: () => ({ lines: [["cancelled — " + prev + " still active", CL.err]] }),
+      },
+    };
+  },
+
+  pin(){
+    // pin fd (ripgrep already pinned)
+    const target = "fd";
+    if (SESSION.installed[target] && SESSION.installed[target].pinned) {
+      return { pre: [
+        ["$ pkg pin " + target, CL.cmd],
+        [target + " is already pinned — no-op", CL.note],
+      ]};
+    }
+    SESSION.installed[target].pinned = true;
+    const g = newGen(SESSION, "pin", "pin " + target, Object.keys(SESSION.installed));
+    return { pre: [
+      ["$ pkg pin " + target, CL.cmd],
+      ["[pkg] froze " + target + " to its realized store path (skipped by upgrade --all)", CL.pkg],
+      ["recorded " + g.id + " (activation byte-identical; history reflects the intent)", CL.ok],
+    ]};
+  },
+
+  unpin(){
+    const target = "ripgrep";
+    if (SESSION.installed[target] && !SESSION.installed[target].pinned) {
+      return { pre: [ ["$ pkg unpin " + target, CL.cmd], [target + " is not pinned — no-op", CL.note] ]};
+    }
+    SESSION.installed[target].pinned = false;
+    const g = newGen(SESSION, "unpin", "unpin " + target, Object.keys(SESSION.installed));
+    return { pre: [
+      ["$ pkg unpin " + target, CL.cmd],
+      ["[pkg] cleared pin; next upgrade --all may move " + target, CL.pkg],
+      ["recorded " + g.id, CL.ok],
+    ]};
+  },
+
+  remove(){
+    const target = Object.keys(SESSION.installed).find(k => !SESSION.installed[k].pinned && k !== "ripgrep" && k !== "fd");
+    const t = target || "bat";
+    if (!SESSION.installed[t]) return { pre: [ ["$ pkg remove " + t, CL.cmd], [t + " is not installed", CL.err] ]};
+    const pre = [
+      ["$ pkg remove " + t, CL.cmd],
+      ["preflight: remove " + t + " from desired state and rebuild generation", CL.pkg],
+    ];
+    return {
+      pre,
+      gate: {
+        kind: "confirm",
+        question: "Remove " + t + "? (its closure becomes eligible for gc)",
+        approveLabel: "Remove",
+        cancelLabel: "Keep",
+        approve: () => {
+          delete SESSION.installed[t];
+          const g = newGen(SESSION, "remove", "remove " + t, Object.keys(SESSION.installed));
+          return { lines: [
+            ["[pkg] staged " + g.id + " without " + t + " → rooted → atomic current swap", CL.pkg],
+            ["removed " + t + " → " + g.id + " (active)", CL.ok],
+            ["reversible: pkg rollback restores " + t, CL.note],
+          ], announce: "Removed " + t + "." };
+        },
+        cancel: () => ({ lines: [["cancelled — " + activeGen(SESSION).id + " unchanged", CL.err]] }),
+      },
+    };
+  },
+
+  history(){
+    const rows = [["gen","created","kind","changes","active"]];
+    const shown = SESSION.gens.slice(0, 7);
+    shown.forEach(g => {
+      const ch = g.kind === "install" ? "+" + (g.outputs.length) :
+                 g.kind === "upgrade" ? "~" + (g.outputs.length) :
+                 g.kind === "remove" ? "-1" :
+                 g.kind === "pin" || g.kind === "unpin" ? "~0" :
+                 g.kind === "rollback" ? "↺" : "—";
+      rows.push([g.id, g.when, g.kind, String(ch), g.active ? "*" : ""]);
+    });
+    return { pre: [
+      ["$ pkg history", CL.cmd],
+      ["pkg history — illustrative", CL.dim],
+      ...fmtTable(rows),
+      ["generations are immutable snapshots; rollback adds a new row", CL.note],
+    ]};
+  },
+
+  rollback(){
+    const cur = activeGen(SESSION);
+    const idx = SESSION.gens.indexOf(cur);
+    const target = SESSION.gens[idx+1] || SESSION.gens[idx];
+    // rollback creates a NEW monotonic gen referencing the prior activation
+    const g = newGen(SESSION, "rollback", "rollback to " + target.id, target.outputs.slice());
+    return { pre: [
+      ["$ pkg rollback", CL.cmd],
+      ["[pkg] creating " + g.id + " referencing the activation of " + target.id, CL.pkg],
+      ["[pkg] gc root created → atomic current swap", CL.pkg],
+      ["rolled back to the state of " + target.id + " (active " + g.id + ")", CL.ok],
+      ["run pkg rollback again to step back further", CL.note],
+    ]};
+  },
+
+  gc_dry(){
+    const KEEP = 10, MAX_AGE = 30;
+    const prunable = prunableGens(SESSION, KEEP, MAX_AGE);
+    if (!prunable.length) return { pre: [
+      ["$ pkg gc --dry-run", CL.cmd],
+      ["retention: keep " + KEEP + " generations / " + MAX_AGE + " days", CL.dim],
+      ["nothing outside the retention window", CL.ok],
+    ]};
+    const reclaim = prunable.reduce((a,g) => a + (g.sizeMB || 0), 0);
+    const lines = [
+      ["$ pkg gc --dry-run", CL.cmd],
+      ["pkg gc --dry-run — illustrative (nothing is removed)", CL.dim],
+      ["retention: keep " + KEEP + " generations / " + MAX_AGE + " days", CL.dim],
+      ["would prune " + prunable.length + " generations outside the window:", CL.warn],
+    ];
+    prunable.forEach(g => lines.push(["  " + g.id + "  " + g.kind + " " + g.summary + "   ~" + (g.sizeMB || 0) + " MB", CL.dim]));
+    lines.push(["estimated reclaim ~" + reclaim + " MB. Active " + activeGen(SESSION).id + " is never pruned.", CL.note]);
+    return { pre: lines };
+  },
+
+  gc(){
+    const KEEP = 10, MAX_AGE = 30;
+    const prunable = prunableGens(SESSION, KEEP, MAX_AGE);
+    if (!prunable.length) return { pre: [ ["$ pkg gc", CL.cmd], ["nothing to collect", CL.ok] ]};
+    const reclaim = prunable.reduce((a,g) => a + (g.sizeMB || 0), 0);
+    const pre = [
+      ["$ pkg gc", CL.cmd],
+      ["retention: keep " + KEEP + " generations / " + MAX_AGE + " days", CL.dim],
+      ["would prune " + prunable.length + " generations:", CL.warn],
+      ...prunable.map(g => ["  " + g.id + "  " + g.summary + "   ~" + (g.sizeMB || 0) + " MB", CL.dim]),
+    ];
+    return {
+      pre,
+      gate: {
+        kind: "confirm",
+        question: "Remove " + prunable.length + " old generations and collect ~" + reclaim + " MB?",
+        approveLabel: "Collect",
+        cancelLabel: "Cancel",
+        approve: () => {
+          const n = prunable.length;
+          const ids = new Set(prunable.map(g => g.id));
+          SESSION.gens = SESSION.gens.filter(g => !ids.has(g.id));
+          return { lines: [
+            ["[pkg] removed " + n + " gc roots outside the window", CL.pkg],
+            ["[nix] nix store gc … reclaimed ~" + reclaim + " MB", CL.nix],
+            ["active " + activeGen(SESSION).id + " protected; done", CL.ok],
+          ], announce: "Garbage collected " + n + " old generations." };
+        },
+        cancel: () => ({ lines: [["cancelled — nothing removed", CL.err]] }),
+      },
+    };
+  },
+
+  repair(){
+    const names = Object.keys(SESSION.installed);
+    const lines = [
+      ["$ pkg repair", CL.cmd],
+      ["pkg repair — illustrative", CL.dim],
+      ["[pkg] verifying active " + activeGen(SESSION).id + " outputs …", CL.pkg],
+      ["[nix] nix store verify --recursive (NAR integrity) …", CL.nix],
+    ];
+    names.forEach(n => lines.push(["  " + pad(n,10) + " ok   (sigs verified, cache.nixos.org)", CL.ok]));
+    lines.push(["all outputs verified. No re-acquire needed.", CL.ok]);
+    return { pre: lines };
+  },
+
+  completion(){
+    return { pre: [
+      ["$ pkg completion zsh", CL.cmd],
+      ["pkg completion — illustrative (snippet)", CL.dim],
+      ["#compdef pkg", CL.dim],
+      ["_pkg() {", CL.dim],
+      ["  local cmds=(install remove upgrade search info list outdated", CL.dim],
+      ["    update pin unpin history rollback doctor gc repair completion)", CL.dim],
+      ["  _arguments '*:command:($cmds)' ;; ", CL.dim],
+      ["}", CL.dim],
+      ["compdef _pkg pkg", CL.dim],
+      ["dynamic attribute completion is deferred in v1 (would eval nixpkgs per keystroke)", CL.note],
+    ]};
+  },
+};
+
+/* ===========================================================================
+   table formatter — pads columns so monospace output aligns
+   =========================================================================== */
+function pad(s, n){ s = String(s); return s.length >= n ? s : s + " ".repeat(n - s.length); }
+function fmtTable(rows){
+  const widths = rows[0].map((_,c) => Math.max(...rows.map(r => String(r[c]).length)));
+  return rows.map((r,ri) => {
+    const text = r.map((cell,ci) => pad(cell, widths[ci])).join("   ");
+    return [text, ri === 0 ? CL.dim : ""];
+  });
+}
+
+/* ===========================================================================
+   TERMINAL component
+   =========================================================================== */
+function makeTerminal(mount, opts={}){
+  const headTitle = opts.title || "pkg@prototype";
+  const headTag = opts.tag !== false;
+
+  const body = el("div", { class:"term-body" + (opts.lg ? " lg" : "") });
+  const head = el("div", { class:"term-head" }, [
+    el("span", { class:"lights", "aria-hidden":"true" }, [el("i"),el("i"),el("i")]),
+    el("span", { class:"title" }, headTitle + (headTag ? "  ·  illustrative output" : "")),
+  ]);
+  const prompt = el("div", { class:"term-prompt", role:"group", "aria-label":"Confirmation" });
+  const foot = el("div", { class:"term-foot" });
+  const root = el("div", { class:"term" }, [head, body, prompt, foot]);
+  mount.innerHTML = "";
+  mount.append(root);
+
+  const term = {
+    root, body, prompt, foot,
+    clear(){ body.innerHTML = ""; prompt.innerHTML = ""; },
+    addLines(lines){ (lines||[]).forEach(([t,c]) => this.addLine(t,c)); this.body.scrollTop = this.body.scrollHeight; },
+    addLine(text, cls){
+      const div = el("div", { class:"term-line " + (cls||"") });
+      if (cls === CL.cmd) {
+        const ps = el("span", { class:"ps" }, "$");
+        const sp = el("span", { text:" " + text.replace(/^\$\s*/, "") });
+        div.append(ps, sp);
+      } else {
+        div.textContent = text;
+      }
+      this.body.append(div);
+      this.body.scrollTop = this.body.scrollHeight;
+    },
+    clearPrompt(){ prompt.innerHTML = ""; prompt.style.display = "none"; },
+    showPrompt(gate, onApprove, onCancel){
+      prompt.style.display = "flex";
+      const q = el("span", { class:"q", text:gate.question });
+      const ok = el("button", { type:"button", class:"tbtn go", text:gate.approveLabel });
+      const no = el("button", { type:"button", class:"tbtn no", text:gate.cancelLabel });
+      prompt.innerHTML = "";
+      prompt.append(q, no, ok);
+      const done = () => { ok.disabled = no.disabled = true; };
+      ok.addEventListener("click", () => { done(); const r = onApprove(); this.clearPrompt(); });
+      no.addEventListener("click", () => { done(); const r = onCancel(); this.clearPrompt(); });
+      // default focus goes to the safe (Cancel/Keep) action so a blind Enter
+      // never triggers a destructive build, install, upgrade, remove, or gc.
+      setTimeout(()=> no.focus(), 0);
+    },
+    setState(t){ foot.querySelector(".state") ? (foot.querySelector(".state").textContent = t) : null; },
+  };
+  return term;
+}
+
+/* run a command plan into a terminal */
+function runPlan(term, cmdKey){
+  term.clear();
+  const plan = ENGINE[cmdKey] ? ENGINE[cmdKey]() : { pre:[ ["(no output)", CL.dim] ] };
+  term.addLines(plan.pre);
+  if (plan.gate) {
+    term.showPrompt(
+      plan.gate,
+      () => {
+        const r = plan.gate.approve();
+        if (r && r.lines) term.addLines(r.lines);
+        if (r && r.announce) announce(r.announce);
+        App.refresh();
+      },
+      () => {
+        const r = plan.gate.cancel();
+        if (r && r.lines) term.addLines(r.lines);
+        announce("Command cancelled; state unchanged.");
+        App.refresh();
+      }
+    );
+  } else {
+    App.refresh();
+  }
+}
+
+/* ===========================================================================
+   VARIANT A — GUIDED DAY
+   =========================================================================== */
+const DAY_BEATS = [
+  { id:"morning",  clock:"09:02", title:"Morning health check", accent:"pkg",
+    intent:"Make sure the machine is healthy and see what's fallen behind.",
+    chips:[{t:"pkg doctor",k:"pkg"},{t:"pkg outdated",k:"pkg"}],
+    note:"<b>pkg</b> runs the checks and reads its own state; the <b>managed Nix engine</b> answers the store ping and signature status. Nothing is curated, and verification is not absolute.",
+    cmds:["doctor","outdated"] },
+  { id:"discover", clock:"10:15", title:"Discover before installing", accent:"pkg",
+    intent:"Find a tool and read its metadata before committing.",
+    chips:[{t:"pkg search fzf",k:"pkg"},{t:"pkg info fzf",k:"pkg"}],
+    note:"Search and info read the <b>disposable index</b> — display only. Realizability is only confirmed at install, on host.",
+    cmds:["search","info"] },
+  { id:"install",  clock:"10:42", title:"Install a binary package", accent:"pkg",
+    intent:"Install fzf from the pinned catalog.",
+    chips:[{t:"pkg install fzf",k:"pkg"},{t:"cache.nixos.org",k:"nix"}],
+    note:"<b>pkg</b> resolves, previews, and stages a generation; the <b>Nix engine</b> substitutes the closure and verifies signatures. The previous generation stays recoverable.",
+    cmds:["install_hit"] },
+  { id:"miss",     clock:"11:10", title:"A package with no binary", accent:"nix",
+    intent:"Install ffmpeg, which has no signed binary for this system.",
+    chips:[{t:"pkg install ffmpeg",k:"pkg"},{t:"preview → approve",k:"nix"},{t:"cancel = default",k:"nix"}],
+    note:"A cache miss opens the <b>same</b> deterministic preview and explicit, per-operation approval on <b>Linux and macOS</b> (cancel is the default; the generation is left unchanged). Builder identity and resource guards differ by platform — try the platform toggle.",
+    cmds:["install_miss"] },
+  { id:"pin",      clock:"13:20", title:"Freeze and unfreeze versions", accent:"pkg",
+    intent:"Keep a tool pinned while the world moves around it.",
+    chips:[{t:"pkg pin fd",k:"pkg"},{t:"pkg unpin ripgrep",k:"pkg"}],
+    note:"Pinning is a <b>pkg policy</b> stored in the manifest; upgrade --all skips pinned selectors.",
+    cmds:["pin","unpin"] },
+  { id:"upgrade",  clock:"15:05", title:"A clearly reversible upgrade", accent:"pkg",
+    intent:"See what would change, then apply — knowing rollback is one step away.",
+    chips:[{t:"pkg update",k:"pkg"},{t:"pkg upgrade --dry-run",k:"pkg"},{t:"pkg upgrade --all",k:"pkg"}],
+    note:"<b>pkg</b> refreshes signed metadata, previews before/after, then stages a new generation. Rollback restores the prior generation in one command.",
+    cmds:["update","upgrade_dry","upgrade"] },
+  { id:"inspect",  clock:"16:10", title:"Inspect and tidy state", accent:"pkg",
+    intent:"See what's installed and remove something unused.",
+    chips:[{t:"pkg list",k:"pkg"},{t:"pkg remove bat",k:"pkg"}],
+    note:"<b>list</b> reads pkg's own lock, not Nix's profile. Removing re-builds a generation; the closure is reclaimed later by gc.",
+    cmds:["list","remove"] },
+  { id:"recover",  clock:"17:35", title:"End-of-day rollback", accent:"recover",
+    intent:"Today's upgrade didn't feel right — step back.",
+    chips:[{t:"pkg history",k:"pkg"},{t:"pkg rollback",k:"pkg"}],
+    note:"Rollback creates a <b>new monotonic generation</b> referencing a prior activation. History stays linear; nothing is destroyed.",
+    cmds:["history","rollback"] },
+  { id:"cleanup",  clock:"18:00", title:"Cleanup, repair, and shell help", accent:"recover",
+    intent:"Reclaim space, verify the store, and enable shell completion.",
+    chips:[{t:"pkg gc --dry-run",k:"pkg"},{t:"pkg gc",k:"pkg"},{t:"pkg repair",k:"nix"},{t:"pkg completion zsh",k:"pkg"}],
+    note:"<b>gc</b> prunes out-of-window generations then asks the Nix engine to collect. <b>repair</b> re-verifies NAR integrity. The active generation is never pruned.",
+    cmds:["gc_dry","gc","repair","completion"] },
+];
+
+let _dayIO = null;
+
+function buildVariantA(){
+  const stations = $("#day-stations");
+  const tabs = $("#daytabs-list");
+  stations.innerHTML = ""; tabs.innerHTML = "";
+  const terms = [];
+  DAY_BEATS.forEach((b, i) => {
+    const st = el("article", { class:"station" + (b.accent==="nix"?" miss":"") + (b.accent==="recover"?" recover":""), id:"beat-"+b.id, tabindex:"-1" });
+    st.append(
+      el("div", { class:"clock", text:b.clock }),
+      el("h3", { text:b.title }),
+      el("p", { class:"intent", text:b.intent }),
+    );
+    const meta = el("div", { class:"meta" });
+    b.chips.forEach(c => meta.append(el("span", { class:"chip " + c.k, text:c.t })));
+    st.append(meta);
+    const termMount = el("div");
+    st.append(termMount);
+    st.append(el("p", { class:"note-line", html:b.note }));
+    stations.append(st);
+
+    const term = makeTerminal(termMount, { title:"beat · " + b.clock });
+    const replay = el("button", { type:"button", class:"tbtn replay", text:"Replay beat" });
+    term.foot.append(el("span",{class:"state",text:"illustrative"}), replay);
+    terms.push({term, cmds:b.cmds, replay});
+
+    const tabBtn = el("button", { type:"button" }, [ el("span",{class:"t",text:b.clock}), document.createTextNode(b.title) ]);
+    tabBtn.addEventListener("click", () => {
+      document.getElementById("beat-"+b.id).scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto":"smooth", block:"start" });
+      setActiveTab(b.id);
+    });
+    tabs.append(el("li", {}, [tabBtn]));
+  });
+
+  // wire replay + initial narrative render
+  terms.forEach(({term,cmds,replay}) => {
+    replay.addEventListener("click", () => runBeatSequence(term, cmds));
+    runBeatSequence(term, cmds);
+  });
+
+  // track active tab on scroll. Reuse a single observer across rebuilds so
+  // repeated activations of Variant A do not accumulate observers.
+  if (_dayIO) { _dayIO.disconnect(); _dayIO = null; }
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) setActiveTab(e.target.id.replace("beat-","")); });
+  }, { rootMargin:"-30% 0px -60% 0px", threshold:0 });
+  $$("#day-stations .station").forEach(s => io.observe(s));
+  _dayIO = io;
+}
+
+function runBeatSequence(term, cmds){
+  // Narrative: each command's pre lines, then for gated commands we surface the
+  // confirmation question and take the happy path so the beat reads continuously.
+  // (To exercise Approve/Cancel interactively, use Variant B — Command Desk.)
+  term.clear();
+  cmds.forEach(cmdKey => {
+    const plan = ENGINE[cmdKey] ? ENGINE[cmdKey]() : { pre:[ ["(no output)", CL.dim] ] };
+    term.addLines(plan.pre);
+    if (plan.gate) {
+      term.addLine("  ⇒ " + plan.gate.question, CL.note);
+      term.addLine("  (illustrative: approved — Command Desk lets you cancel)", CL.dim);
+      const r = plan.gate.approve();
+      if (r && r.lines) term.addLines(r.lines);
+    }
+  });
+  App.refresh();
+}
+
+let _activeTab = null;
+function setActiveTab(id){
+  _activeTab = id;
+  $$("#daytabs-list button").forEach((b,i) => b.setAttribute("aria-current", String(DAY_BEATS[i].id === id)));
+}
+
+/* ===========================================================================
+   VARIANT B — COMMAND DESK
+   =========================================================================== */
+const FAMILIES = [
+  { name:"Discover", cmds:[
+    {k:"search", t:"search fzf"}, {k:"info", t:"info fzf"},
+    {k:"list", t:"list"}, {k:"outdated", t:"outdated"},
+  ]},
+  { name:"Change", cmds:[
+    {k:"install_hit", t:"install fzf"}, {k:"install_miss", t:"install ffmpeg"},
+    {k:"upgrade", t:"upgrade --all"}, {k:"remove", t:"remove bat"},
+    {k:"pin", t:"pin fd"}, {k:"unpin", t:"unpin ripgrep"},
+  ]},
+  { name:"Recover & maintain", cmds:[
+    {k:"update", t:"update"}, {k:"upgrade_dry", t:"upgrade --dry-run"},
+    {k:"history", t:"history"}, {k:"rollback", t:"rollback"},
+    {k:"gc_dry", t:"gc --dry-run"}, {k:"gc", t:"gc"},
+    {k:"repair", t:"repair"},
+  ]},
+  { name:"System", cmds:[
+    {k:"doctor", t:"doctor"}, {k:"completion", t:"completion zsh"},
+  ]},
+];
+
+const SCENARIOS = [
+  { id:"fresh", title:"Fresh install", sub:"cache hit · approve", cmds:["install_hit"] },
+  { id:"miss",  title:"Cache miss", sub:"preview → approve / cancel", cmds:["install_miss"] },
+  { id:"reversible", title:"Reversible upgrade", sub:"update → dry-run → upgrade", cmds:["update","upgrade_dry","upgrade"] },
+  { id:"regret", title:"Rollback after regret", sub:"history → rollback", cmds:["history","rollback"] },
+  { id:"cleanup", title:"End-of-day cleanup", sub:"gc dry-run → gc → repair", cmds:["gc_dry","gc","repair"] },
+];
+
+let deskTerm = null;
+function buildVariantB(){
+  const famRoot = $("#families"); famRoot.innerHTML = "";
+  FAMILIES.forEach(f => {
+    const cmds = el("div", { class:"cmds" });
+    f.cmds.forEach(c => {
+      const b = el("button", { type:"button", class:"cmdchip" + (c.t.includes("ffmpeg")?" nix-only":""), text:"pkg " + c.t, "data-key":c.k });
+      b.addEventListener("click", () => {
+        $$(".cmdchip", famRoot).forEach(x => x.removeAttribute("aria-current"));
+        b.setAttribute("aria-current","true");
+        runPlan(deskTerm, c.k);
+        announce("Ran: pkg " + c.t);
+      });
+      cmds.append(b);
+    });
+    famRoot.append(el("div", { class:"fam" }, [ el("div",{class:"ft",text:f.name}), cmds ]));
+  });
+
+  const scnRoot = $("#scenarios"); scnRoot.innerHTML = "";
+  SCENARIOS.forEach(s => {
+    const b = el("button", { type:"button", class:"scn" }, [ el("b",{text:s.title}), el("span",{text:s.sub}) ]);
+    b.addEventListener("click", () => { runScenario(deskTerm, s); announce("Scenario: " + s.title); });
+    scnRoot.append(b);
+  });
+
+  if (!deskTerm) deskTerm = makeTerminal($("#desk-terminal"), { title:"pkg@workbench", lg:true });
+  // context panel
+  buildDeskContext();
+}
+
+function runScenario(term, s){
+  term.clear();
+  s.cmds.forEach(cmdKey => {
+    const plan = ENGINE[cmdKey] ? ENGINE[cmdKey]() : { pre:[["(no output)", CL.dim]] };
+    term.addLines(plan.pre);
+    if (plan.gate) { const r = plan.gate.approve(); if (r&&r.lines) term.addLines(r.lines); }
+  });
+  App.refresh();
+}
+
+function buildDeskContext(){
+  const root = $("#desk-context"); if (!root) return;
+  root.innerHTML = "";
+  const installed = Object.keys(SESSION.installed);
+  const pinned = installed.filter(k => SESSION.installed[k].pinned);
+  const panel = el("div", { class:"panel" }, [
+    el("h3",{text:"Session state"}),
+    el("div",{class:"kv"},[el("b",{text:"active gen"}), el("span",{text:activeGen(SESSION).id})]),
+    el("div",{class:"kv"},[el("b",{text:"channel seq"}), el("span",{text:String(SESSION.channelSeq)})]),
+    el("div",{class:"kv"},[el("b",{text:"system"}), el("span",{text:App.system()})]),
+    el("div",{class:"kv"},[el("b",{text:"installed"}), el("span",{text:String(installed.length)})]),
+    el("div",{class:"kv"},[el("b",{text:"pinned"}), el("span",{ class: pinned.length?"pinned-list":"empty", text: pinned.length ? pinned.join(", ") : "none" })]),
+  ]);
+  root.append(panel);
+  const legend2 = el("div", { class:"panel" }, [
+    el("h3",{text:"What just happened"}),
+    el("div",{class:"role pkg",style:"font-size:.82rem"},[ el("div",{class:"bar"}), el("div",[ el("b",{text:"pkg"}), el("span",{text:" resolved, previewed, staged a generation, swapped current, recorded a receipt."}) ])]),
+    el("div",{class:"role nix",style:"font-size:.82rem"},[ el("div",{class:"bar"}), el("div",[ el("b",{text:"nix engine"}), el("span",{text:" fetched from cache.nixos.org, verified NAR + signatures, wrote /nix/store."}) ])]),
+    el("div",{class:"role intent",style:"font-size:.82rem"},[ el("div",{class:"bar"}), el("div",[ el("b",{text:"you"}), el("span",{text:" typed one familiar command. No raw Nix was exposed."}) ])]),
+  ]);
+  root.append(legend2);
+}
+
+/* ===========================================================================
+   VARIANT C — LIFECYCLE MAP
+   =========================================================================== */
+const STATIONS = {
+  pin: {
+    title:"Signed / pinned Nixpkgs input",
+    blurb:"The catalog is exactly one Nixpkgs revision, pinned by a signed channel descriptor. There are no floating channels or overlays.",
+    intent:"(indirect) you get reproducibility for free; you never type a rev.",
+    pkg:"pkg accepts only the descriptor's pinned rev + narHash; pkg update refreshes the signed descriptor via TUF.",
+    nix:"the engine fetches the pinned source and verifies its narHash against the descriptor.",
+    cmds:["update"],
+  },
+  cache: {
+    title:"Cache lookup",
+    blurb:"For every path in the recursive closure, pkg asks whether a signed binary exists on cache.nixos.org. One missing path means a build is required.",
+    intent:"pkg install <name>  /  pkg upgrade --all",
+    pkg:"pkg classifies the whole closure up front, so it never reports “binary available” unless every path is a hit.",
+    nix:"the engine probes narInfo on cache.nixos.org (the only cache in v1).",
+    cmds:["install_hit"],
+  },
+  verify: {
+    title:"Verified closure",
+    blurb:"Identity is the content-addressed store path — not pname@version. Every path is checked for NAR integrity and required signatures before it can activate.",
+    intent:"(automatic) nothing activates unverified.",
+    pkg:"pkg keys its lock and generations on the store path; display metadata is never an identity.",
+    nix:"the engine runs NAR + signature verification; a mismatch aborts the operation.",
+    cmds:["repair"],
+  },
+  "build-preview": {
+    title:"Build preview & approval",
+    blurb:"On a cache miss, pkg shows a deterministic preview (closure size, inputs, time estimate) and asks for explicit, per-operation approval. The same gate runs on Linux and macOS; cancel is the default and the generation is left unchanged.",
+    intent:"approve or cancel the local build (cancel is the default).",
+    pkg:"pkg presents the preview and gates the operation; approval is per-operation and journaled.",
+    nix:"no build runs until you approve. Builder identity and resource guards depend on the selected OS.",
+    cmds:["install_miss"],
+  },
+  "build-run": {
+    title:"Sandboxed local build",
+    blurb:"After approval, the engine builds only the selected platform's native current system in a sandbox with managed build users and resource caps. The resulting path is tagged local-build, not cache-signed.",
+    intent:"(you already approved) wait for the build.",
+    pkg:"pkg records provenance: local-build in the lock, never claimed to be cache-signed.",
+    nix:"Linux: managed nixbld users, Nix Linux sandbox, sandbox=true/fallback=false, cgroups/RLIMIT caps. macOS: managed _nixbld users, Nix Darwin sandbox, same sandbox flags, RLIMIT/disk/free-space/load guards (narrower than Linux's). No Rosetta, cross-compile, emulation, or remote builds.",
+    cmds:["install_miss"],
+  },
+  activate: {
+    title:"Generation activation",
+    blurb:"pkg writes an immutable generation record, creates its GC root, then atomically swaps current. A failed operation leaves the previous generation active.",
+    intent:"pkg install / upgrade / remove / rollback (the commit step).",
+    pkg:"pkg owns manifest, lock, generations, activation, and GC roots; the root is created before the swap.",
+    nix:"the engine materialises the buildEnv activation tree in /nix/store.",
+    cmds:["install_hit","upgrade"],
+  },
+  history: {
+    title:"History",
+    blurb:"Generations are immutable, monotonic snapshots. History lists them with the active one marked; it works offline.",
+    intent:"pkg history  /  pkg list",
+    pkg:"pkg reads its own generations directory — never the Nix profile.",
+    nix:"(none) this is pure pkg state.",
+    cmds:["history","list"],
+  },
+  rollback: {
+    title:"Rollback",
+    blurb:"Rollback creates a new monotonic generation that references a prior activation's store path. Nothing is destroyed; history stays linear.",
+    intent:"pkg rollback  (safe; no confirmation needed)",
+    pkg:"pkg creates the new row, ensures its GC root, and swaps current atomically.",
+    nix:"(none) the prior activation is already rooted in /nix/store.",
+    cmds:["rollback"],
+  },
+  gc: {
+    title:"Garbage collection",
+    blurb:"gc prunes generations outside the retention window, removes their GC roots, then asks the engine to collect. The active generation is never pruned.",
+    intent:"pkg gc --dry-run  /  pkg gc",
+    pkg:"pkg decides what to prune; the active generation is always protected.",
+    nix:"the engine runs the collector over /nix/store; only unrooted paths are reclaimable.",
+    cmds:["gc_dry","gc"],
+  },
+};
+
+let cTerm = null;
+let cCurrent = null;
+// The SVG .nd station nodes are static (defined once in the markup), so their
+// click/keydown handlers must be bound at most once. buildVariantC() runs on
+// every activation of Variant C; without this guard, addEventListener would
+// stack a fresh click + keydown pair on each node every time.
+let cStationsBound = false;
+function buildVariantC(){
+  if (!cTerm) cTerm = makeTerminal($("#c-terminal"), { title:"station · command", lg:false });
+  // station click + keyboard handlers (idempotent: bound once, never re-stacked)
+  if (!cStationsBound) {
+    cStationsBound = true;
+    $$(".nd", $("#v-C")).forEach(nd => {
+      const key = nd.getAttribute("data-station");
+      const activate = () => selectStation(key);
+      nd.addEventListener("click", activate);
+      nd.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+      });
+    });
+  }
+  // reference list of every command
+  const ref = $("#c-reflist"); ref.innerHTML = "";
+  [
+    "search","info","install","list","outdated","update",
+    "upgrade --dry-run","upgrade","pin","unpin","remove",
+    "history","rollback","doctor","gc --dry-run","gc","repair","completion"
+  ].forEach(c => ref.append(el("li",{},[ el("span",{class:"d",text:"pkg "}), document.createTextNode(c) ])));
+
+  selectStation("pin");
+}
+
+function selectStation(key){
+  const s = STATIONS[key]; if (!s) return;
+  cCurrent = key;
+  $$(".nd", $("#v-C")).forEach(nd => nd.setAttribute("aria-current", String(nd.getAttribute("data-station")===key)));
+  $("#c-title").textContent = s.title;
+  $("#c-blurb").textContent = s.blurb;
+  const roles = $("#c-roles"); roles.innerHTML = "";
+  roles.append(
+    roleRow("intent","You", s.intent),
+    roleRow("pkg","pkg", s.pkg),
+    roleRow("nix","Nix engine (hidden)", s.nix),
+  );
+  // run the station's illustrative command(s) — interactive (gates honoured)
+  if (cTerm && s.cmds && s.cmds.length) {
+    cTerm.clear();
+    s.cmds.forEach(cmdKey => {
+      const plan = ENGINE[cmdKey] ? ENGINE[cmdKey]() : { pre:[["(no output)", CL.dim]] };
+      cTerm.addLines(plan.pre);
+      if (plan.gate) { const r = plan.gate.approve(); if (r&&r.lines) cTerm.addLines(r.lines); }
+    });
+  }
+  announce("Lifecycle station: " + s.title);
+}
+
+function roleRow(cls, label, text){
+  return el("div", { class:"role " + cls }, [
+    el("div", { class:"bar" }),
+    el("div", {}, [ el("b",{text:label}), el("span",{text:" " + text}) ]),
+  ]);
+}
+
+function refreshMapSpur(){
+  const note = $("#spur-note");
+  const mac = App.platform === "macos";
+  // The build spur is active on both platforms; its label changes by platform
+  // without implying identical sandbox primitives. No macOS dimming.
+  if (note) note.textContent = mac
+    ? "macOS · _nixbld users, Nix Darwin sandbox, RLIMIT/disk/free-space/load guards (narrower than Linux)"
+    : "Linux · nixbld users, Nix Linux sandbox, cgroups/RLIMIT caps, sandbox=true";
+}
+
+/* ===========================================================================
+   APP wiring: variant switching, platform toggle, URL state, keyboard
+   =========================================================================== */
+function setVariant(v, opts={}){
+  if (!["A","B","C"].includes(v)) v = "A";
+  App.variant = v;
+  $$(".variant").forEach(s => s.classList.toggle("is-active", s.id === "v-"+v));
+  $$(".vbtn").forEach(b => b.setAttribute("aria-current", String(b.getAttribute("data-variant")===v)));
+  // lazy build on first show
+  if (v === "A") buildVariantA();
+  if (v === "B") buildVariantB();
+  if (v === "C") { buildVariantC(); refreshMapSpur(); }
+  // update URL/history
+  const url = new URL(location.href);
+  url.searchParams.set("variant", v);
+  url.searchParams.set("os", App.platform);
+  if (!opts.silent) history.replaceState({variant:v, platform:App.platform}, "", url);
+  announce("View: " + ({A:"Guided Day",B:"Command Desk",C:"Lifecycle Map"}[v]));
+  // move focus to the newly visible variant heading (a sensible visible target).
+  // Skipped on the initial load so the page lands on the header, not mid-content.
+  if (!opts.initial) {
+    const heading = $("#v-"+v+" .section-head h2");
+    if (heading) { heading.setAttribute("tabindex", "-1"); heading.focus({ preventScroll:true }); }
+  }
+  window.scrollTo({ top:0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto":"smooth" });
+}
+
+function setPlatform(p){
+  if (p !== "linux" && p !== "macos") return;
+  App.platform = p;
+  $("#plat-linux").setAttribute("aria-pressed", String(p==="linux"));
+  $("#plat-macos").setAttribute("aria-pressed", String(p==="macos"));
+  refreshMapSpur();
+  // re-run visible terminal(s) for the new platform where relevant
+  if (App.variant === "B" && deskTerm) {
+    // keep it simple: do not auto-rerun, but reflect system line on next command
+    buildDeskContext();
+  }
+  if (App.variant === "C" && cTerm && cCurrent) selectStation(cCurrent);
+  const url = new URL(location.href);
+  url.searchParams.set("os", p);
+  history.replaceState({variant:App.variant, platform:p}, "", url);
+  announce("Platform: " + (p==="linux" ? "Linux (x86_64-linux, approval-gated local builds)" : "macOS (aarch64-darwin, approval-gated local builds)"));
+}
+
+// True when focus is on something arrow keys should not be stolen from:
+// form/text controls, buttons, links, or focusable map stations. A heading
+// marked tabindex="-1" (our switch focus target) is NOT considered interactive,
+// so arrow-key switching still works right after a switch.
+function inInteractiveControl(){
+  const a = document.activeElement;
+  if (!a || a === document.body || a === document.documentElement) return false;
+  if (a.isContentEditable) return true;
+  const tag = (a.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select" || tag === "button" || tag === "summary") return true;
+  if (tag === "a" && a.hasAttribute("href")) return true;
+  if (a.getAttribute && a.getAttribute("role") === "button") return true;
+  const ti = a.getAttribute && a.getAttribute("tabindex");
+  if (ti !== null && ti !== "-1") return true;
+  return false;
+}
+
+function init(){
+  // read URL state
+  const params = new URLSearchParams(location.search);
+  let v = (params.get("variant") || "A").toUpperCase();
+  let os = params.get("os");
+  if (!["A","B","C"].includes(v)) v = "A";
+  if (os !== "linux" && os !== "macos") os = "linux";
+
+  // platform buttons
+  $("#plat-linux").addEventListener("click", () => setPlatform("linux"));
+  $("#plat-macos").addEventListener("click", () => setPlatform("macos"));
+
+  // variant buttons
+  $$(".vbtn").forEach(b => b.addEventListener("click", () => setVariant(b.getAttribute("data-variant"))));
+
+  // keyboard: left/right switch variants only when focus is not in any
+  // interactive/form/text control; focus then moves to the new heading.
+  window.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    if (inInteractiveControl()) return;
+    const order = ["A","B","C"];
+    let idx = order.indexOf(App.variant);
+    if (e.key === "ArrowLeft") idx = (idx - 1 + order.length) % order.length;
+    else idx = (idx + 1) % order.length;
+    setVariant(order[idx]);
+    e.preventDefault();
+  });
+
+  App.onRefresh(() => { if (App.variant === "B") buildDeskContext(); });
+
+  // apply
+  setPlatform(os);
+  setVariant(v, { silent:true, initial:true });
+}
+
+document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>

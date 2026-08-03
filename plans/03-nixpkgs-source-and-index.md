@@ -29,7 +29,7 @@ The resolver's full selection algorithm and approval flow (doc 04); the CLI pres
 - **CAT-INV-02** The index is keyed by `(channelSeq, system)` and its bytes are verified against the descriptor's `index.perSystem.<system>.sha256` (INV-07). Mismatch → index is discarded/rebuilt (disposable).
 - **CAT-INV-03** No code path uses the index to *decide what store path to trust*. The index only suggests attribute paths; realization always comes from on-host `nix build`/`path-info` (D-07).
 - **CAT-INV-04** `pname@version` from the index is **display metadata only** (D-13); it is never a key and never gates install/upgrade identity.
-- **CAT-INV-05** macOS installs never invoke a local build path (D-11); if a substitution miss occurs on macOS, it is an error, not a build.
+- **CAT-INV-05** Darwin cache misses never build silently; an approved native sandboxed build is allowed. A cache miss on `*-darwin` is **not** an automatic error — it triggers the same deterministic build preview + explicit single-operation approval + sandbox/build-user gates as Linux (D-11). It becomes an error (`ACQUIRE_NO_BINARY`) only when building is impossible or disallowed for a concrete reason (unsupported package/system, sandbox/build-user unavailable, policy-blocked derivation).
 
 ## 5. Legend
 
@@ -193,10 +193,11 @@ sequenceDiagram
 - ✅ `nix store path-info --json --recursive` yields per-path `narHash` (SRI), references, and closure size — the data `pkg` records in the lock (doc 01 §10.2). — *Nix Reference Manual, `nix3-store-path-info`.*
 - 🛠 The `narHash` and `sigs` from `path-info` are how `pkg` later confirms a path is present and (via Nix's own substitution-trust) trustworthy. `pkg` does not re-implement Nix signature verification (D-10).
 
-### 9.3 macOS binary-only enforcement (D-11, CAT-INV-05)
+### 9.3 Cache-miss build policy is cross-platform (D-11, CAT-INV-05)
 
-- On `*-darwin`, if `nix build` cannot substitute the closure from `cache.nixos.org`, `pkg` reports a **binary-unavailable** error and does **not** attempt a local build. (doc 04 owns the message/exit code.)
-- On `*-linux`, a substitution miss triggers the **explicit local-build preview/approval** flow (closure size, build inputs, time estimate) owned by doc 04; only after approval does `pkg` run `nix build … --substituters "" --builders ""` (force local).
+On **any** v1 system (`*-linux`, `*-darwin`), substitution from `cache.nixos.org` is tried first and preferred. A cache miss is **not** automatically an error: it triggers the **explicit local-build preview/approval** flow owned by doc 04 (closure, derivations/source inputs, download bytes, resource estimate or explicit unknowns, target system, sandbox status). After explicit single-operation approval, `pkg` runs `nix build … --substituters "" --builders ""` (force local) for the host's **native** system only — no Rosetta, cross-compilation, emulation, or remote builders in v1.
+
+The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there is no acceptable substitute **and** building is impossible or disallowed for a concrete reason — e.g. the package is `meta.broken`/unsupported on this `system`, the derivation requires forbidden impurity or unsandboxed execution, the sandbox or build users cannot be made ready, or the descriptor's `buildPolicy` denies the system. A cache miss on `*-darwin` is therefore **not** grounds for `ACQUIRE_NO_BINARY` by itself; macOS local builds are explicitly allowed (D-11) and require the same gates as Linux.
 
 ## 10. Cross-platform coverage & per-system availability
 
@@ -221,8 +222,7 @@ sequenceDiagram
 | On-host eval: attr not found | `nix build` error (attr undefined) | Map to "not found" (check selector/alias; doc 04). |
 | On-host eval: ambiguous attr | resolver yields >1 candidate | Disambiguate via doc 04; doc 06 presents choice. |
 | On-host eval: `broken`/unsupported | eval error / `meta.broken` | Structured error; on Linux may offer nothing (it's broken), on macOS binary-miss is separate. |
-| On-host eval: substitution miss (macOS) | build cannot proceed without local build | **Error** (CAT-INV-05); never build. |
-| On-host eval: substitution miss (Linux) | build cannot substitute | Preview/approval → optional local build (doc 04). |
+| On-host eval: substitution miss (any v1 system) | build cannot substitute | Preview/approval → optional native local build (D-11, doc 04). |
 | Nixpkgs source hash mismatch | `nix flake metadata` nar != descriptor | Abort; treat as trust event (CAT-INV-01); re-run `pkg update`. |
 | Self-build meta-eval too slow (SPK-04) | timeout | Prefer publisher-precomputed index (Option A or prebuilt Option B bytes); document expected time. |
 
@@ -239,7 +239,7 @@ sequenceDiagram
 |---|---|---|
 | Index per system | yes | yes |
 | Meta-eval host | can eval Linux index on Linux | must eval darwin index on darwin (lazy `legacyPackages` is system-bound) → publisher precompute recommended |
-| Install on cache miss | preview → optional **local build** (D-11) | **error** (binary-only, CAT-INV-05) |
+| Install on cache miss | preview → optional **native local build** (D-11) | preview → optional **native local build** (D-11); `ACQUIRE_NO_BINARY` only if the build is impossible/disallowed (CAT-INV-05) |
 | Realization command | identical (`nix build … --json`, `nix store path-info`) | identical |
 
 ## 15. Dependencies on other plan documents
@@ -266,7 +266,7 @@ sequenceDiagram
 - AC-03.2 A flipped bit in the index is detected by hash and triggers rebuild/refetch, never partial use (CAT-INV-02).
 - AC-03.3 No code path derives a store path or `narHash` from the index; all realizations come from `nix build`/`path-info` on host (CAT-INV-03) — enforced by module boundaries + tests.
 - AC-03.4 `pname@version` is never a key in manifest/lock (CAT-INV-04); identity is `manifestId → realization`.
-- AC-03.5 On `*-darwin`, a cache miss produces a binary-unavailable error and never a local build (CAT-INV-05).
+- AC-03.5 On `*-darwin`, a cache miss that can be built natively produces a build preview (not an automatic error); a build that is impossible/disallowed (unsupported/broken/impure derivation, or sandbox/build-user unavailable, or `buildPolicy` denies the system) fails with `ACQUIRE_NO_BINARY` (CAT-INV-05). Cache misses are never built silently.
 - AC-03.6 Search returns host-system-filtered results and never claims installability (display-only); install is the authority.
 - AC-03.7 An absent/corrupt index does not block a known-attr install that re-evaluates on host (§12).
 

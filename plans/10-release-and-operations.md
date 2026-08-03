@@ -139,7 +139,7 @@ Triggered by suspected/confirmed compromise (`08` T-CHAN-5, T-REL-2):
 | Step | Action | Artifact |
 |------|--------|----------|
 | 1 | Choose target Nixpkgs `rev`; compute `narHash`. | — |
-| 2 | (Linux) Confirm chosen attrs substitute from `cache.nixos.org` for x86_64/aarch64-linux; (macOS) confirm **arm64-darwin** binary availability (spike S3, `12`). | availability report |
+| 2 | Confirm chosen attrs substitute from `cache.nixos.org` for x86_64/aarch64-linux and x86_64-darwin/aarch64-darwin; for attrs without binaries, confirm they build natively (macOS via `_nixbld`/sandbox per DR-003). Gaps are an availability/perf signal, not a hard block (spike S3, `12`). | availability + buildability report |
 | 3 | Build the disposable index from the pinned rev; assert **determinism** across hosts (`09` T-IDX-3). | index + hash |
 | 4 | Decide managed-Nix version bump if needed. | — |
 | 5 | Author new `targets.json` (rev, narHash, index hashes, substituters/keys, systems, policyVersion, sequence, expiry); sign; cut snapshot+timestamp. | TUF metadata |

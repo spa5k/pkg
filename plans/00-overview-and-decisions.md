@@ -36,7 +36,10 @@ The following are explicitly **out of scope** and, in many cases, are **forbidde
 - User control of substituters (`substituters`), trust keys (`trusted-public-keys`/`trusted-substituters`), builders, remote builders, or `narinfo-cache-positive-ttl`.
 - Linking against Nix's C++ libraries (`libstore`, `libexpr`, `libnixmain`, `libfetchers`). `pkg` only ever drives Nix as a **subprocess**.
 - Custom/alternative store prefixes (e.g. a relocatable or per-user store). The store is `/nix/store`. (See §11 spike.)
-- macOS local builds (V1 macOS is **binary-only**).
+- Building for **non-host** systems in v1: Rosetta fallback, cross-compilation, hardware
+  emulation (e.g. QEMU), and remote/distributed builders. v1 builds only the host's **native**
+  Nix system locally (D-11); anything for another system must come from the cache. (macOS
+  *local* builds for the native Darwin system are explicitly **in scope** under D-11.)
 - A web UI, a GUI, a daemon-control REST API, multi-user networked serving, or a package-authoring/upload workflow.
 - Becoming a replacement for declarative system configuration (NixOS/nix-darwin/home-manager). `pkg` is imperative package management only.
 
@@ -92,7 +95,7 @@ These are the product's invariants. Other documents implement them; none may con
 | **D-08** | **A small signed channel descriptor** selects the Nix runtime, Nixpkgs revision/narHash, index hashes, allowed substituters/keys, supported systems, policy version, sequence, and expiry. | Single pinned, verifiable source of truth per release. | 02 |
 | **D-09** | **Updates use mature signed-update metadata (TUF)**; `pkg` does **not** invent custom "TUF-lite" cryptography. | Avoid ad-hoc crypto; get key rotation, threshold, rollback/freeze protection for free. | 02 |
 | **D-10** | **`cache.nixos.org` is the only artifact cache in V1.** Users cannot change substituters or trust keys. | Reduce attack surface; single trust path. | 02, 04 |
-| **D-11** | **Linux permits explicit local builds** only after a preview/approval; **macOS is binary-only in V1.** | Building on Linux is common and supported by Nix; building on macOS needs Apple toolchain + signing and is out of V1 scope. | 04, 07 |
+| **D-11** | **Local builds are explicit and cross-platform.** Cache substitution is always tried first and preferred on every platform. On a cache miss, v1 may build locally for the host's **native** Nix system on Linux and macOS (`x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`) — **never** via Rosetta, cross-compilation, emulation, or remote builders. A local build is never silent: `pkg` first shows a deterministic build preview (derivations/source inputs, downloads/closure, resource estimate or explicit unknowns, target system, sandbox status) and then requires explicit **single-operation** approval (cancel is the safe default). Builds run through the managed multi-user daemon's dedicated unprivileged build users (`nixbld` on Linux; `_nixbld` users/group on macOS) with `sandbox=true` and `sandbox-fallback=false` on both platforms; `pkg` fails closed if sandbox or build-user readiness cannot be verified. | Substitution stays the fast/safe path; builds are opt-in per operation; the same preview/approval/sandbox/build-user controls apply to macOS as to Linux. macOS local builds need the host's native toolchain (Xcode/CLT); they are kept honest about Nix's macOS sandbox using different, generally narrower platform primitives than Linux. Installer/runtime signing & notarization are **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized by `pkg`. | 04, 07, 08 |
 | **D-12** | **Rust owns desired state, exact locks, generations, activation, and GC roots.** Nix profile state is **not authoritative**. | Single, versioned, migratable state machine; predictable rollback. | 01, 05 |
 | **D-13** | **Package identity distinguishes intent from realization.** `pname@version` is **display metadata, not a unique identity.** Two intents may share a pname; one intent may resolve differently per system/channel. | Correctness of upgrade/pin/rollback semantics. | 04, 05 |
 | **D-14** | **V1 platform set** is `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin`. | User requirement. | 07 |
@@ -109,7 +112,7 @@ These are the product's invariants. Other documents implement them; none may con
 - **INV-05** Every realized output pinned in a generation has a GC root in `/nix/var/nix/gcroots/pkg/`. (D-12)
 - **INV-06** `pname@version` is never used as a key; identity is `(intent selector, channel sequence, system) → realization`. (D-13)
 - **INV-07** The descriptor, its TUF metadata, and the index hashes are the only inputs `pkg` trusts for "what to install"; the index is UX-only. (D-06, D-07, D-08)
-- **INV-08** Local builds (Linux only) require explicit user approval after a preview; never silent. (D-11)
+- **INV-08** Local builds (Linux and macOS, native system only) are never silent and never the default: substitution is tried first, then a deterministic build preview, then explicit single-operation user approval. Builds run only through the managed daemon's unprivileged build users under `sandbox=true`/`sandbox-fallback=false`; `pkg` fails closed if sandbox or build-user readiness cannot be verified. No Rosetta, cross-compilation, emulation, or remote builders in v1. (D-11)
 - **INV-09** Update metadata is verified with TUF before any descriptor/Nix-runtime/index/source is used. (D-09)
 - **INV-10** Authoritative package environment state (manifest/lock/generations/activation/journal) is **per-user keyed by uid**; only the immutable runtime/channel/index/source/store service is root-owned and shared. Package state is never globally shared across users. (D-17)
 
@@ -235,9 +238,9 @@ flowchart TD
 |---|---|---|---|
 | **S1** (PR-4 → DR-001) | SPK-01 | Store-prefix constraint & managed/unmanaged Nix coexistence: confirm `pkg` can exclusively own `/nix/store` while running its own daemon socket/state under managed locations, and that no V1 scenario requires a relocatable store. Default: hard requirement on `/nix/store`; if a platform cannot grant exclusive `/nix` ownership, `pkg` fails closed (D-04). | doc 07; tracked in doc 12 |
 | **S2** (PR-5 → DR-002) | SPK-03 | TUF library choice (`tough` vs `tuf` crate) against the target metadata layout, threshold + revocation. | doc 02 |
-| **S3** (PR-7 → DR-003) | (new) | macOS binary coverage on `cache.nixos.org` for `aarch64-darwin` (binary-only V1) + Apple signing/notarization feasibility. | doc 07 |
+| **S3** (PR-7 → DR-003) | (new) | Darwin binary coverage on `cache.nixos.org` for `x86_64-darwin`/`aarch64-darwin` **and** real local-build readiness on macOS (native sandboxed build, `_nixbld` build users/group, Xcode/CLT toolchain availability, platform-appropriate resource caps, `sandbox-fallback=false` fail-closed) + Apple signing/notarization feasibility for the installer/runtime. | doc 07 |
 | **S4** (PR-6 → DR-004) | SPK-04 / SPK-04a | Single-attribute reevaluation cost (and index self-build meta-eval performance for four systems); confirm the flake-fetcher `narHash` vs raw GitHub archive hash difference. | doc 03 |
-| **S5** (PR-8 → DR-005) | (new) | Linux sandbox/build-hook + resource caps effectiveness; build-preview/approval interception. | doc 04/07 |
+| **S5** (PR-8 → DR-005) | (new) | Sandbox/build-hook + resource caps effectiveness on **both Linux and macOS** (`sandbox=true`/`sandbox-fallback=false`, `_nixbld` build users on macOS); build-preview/approval interception; fail-closed readiness. | doc 04/07 |
 
 > **SPK-02 (Nix-as-subprocess JSON stability)** is **not** a standalone spike: it is enforced continuously by pinning the managed Nix runtime version (doc 02/07) and isolating **all** Nix output — including the experimental `--log-format internal-json` stream — behind the **single versioned `nix-driver` adapter** (doc 01 §11, ARCH-INV-01; doc 04 I2). The exact set of stable `nix … --json` invocations for the pinned runtime is recorded in the doc 01 §11 subprocess-contract table and validated by the Fake↔Real parity job (doc 09 §4.3).
 
@@ -254,9 +257,9 @@ flowchart TD
 | | Linux | macOS |
 |---|---|---|
 | Daemon | systemd unit managed by `pkg` | launchd plist managed by `pkg` |
-| Local builds | Allowed with explicit approval (D-11) | **Forbidden in V1** (binary-only) |
+| Local builds | Allowed for native system with explicit approval + `sandbox=true` + `nixbld` build users (D-11) | Allowed for native system with explicit approval + `sandbox=true` + `_nixbld` build users; Nix's macOS sandbox uses different, generally narrower primitives than Linux (D-11) |
 | Store ownership | root `/nix` | root `/nix` (needs admin install) |
-| Signing | — | codesign + notarization of runtime (target) |
+| Signing | — | codesign + notarization of installer/bundled runtime (target); **not** per-package notarization of locally-built Nix outputs |
 | Architectures | x86_64, aarch64 | x86_64 (Intel), aarch64 (Apple Silicon) |
 
 ## 14. Failure & recovery (overview)

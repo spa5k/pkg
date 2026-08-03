@@ -18,8 +18,9 @@ operation:
    identity* (derivation + outputs + narHash + Nixpkgs revision).
 2. **Preflight** — preview closures, builds, downloads, collisions, disk and
    policy violations *before* mutating anything.
-3. **Acquire** — fetch from the trusted substituter (cache.nixos.org) or, on
-   Linux only, build locally after explicit user approval.
+3. **Acquire** — fetch from the trusted substituter (cache.nixos.org) or, on a
+   cache miss, build locally for the host's native system after explicit user
+   approval (Linux and macOS; D-11).
 4. **Verify** — confirm NAR integrity and required signatures.
 5. **Stage** — build a candidate generation (activation tree) in a staging
    area that the live `current` pointer does not see.
@@ -43,8 +44,9 @@ All Nix interaction is via the bundled, pinned Nix runtime (plan 07) using
 - Machine-readable subprocess contracts for every Nix invocation (argv +
   JSON response shapes + error shapes).
 - Selector → identity resolution rules (including pins and version ranges).
-- Cache-hit vs cache-miss, local-build preview/approval (Linux), binary-only
-  behavior (macOS).
+- Cache-hit vs cache-miss, cross-platform local-build preview/approval (Linux
+  **and** macOS, native system only), and the concrete conditions under which a
+  cache miss becomes `ACQUIRE_NO_BINARY`.
 - Collision policy and multi-output selection.
 - Progress event protocol, structured logs, exit codes.
 - Cancellation, restart recovery, resource and sandbox limits.
@@ -68,7 +70,7 @@ All Nix interaction is via the bundled, pinned Nix runtime (plan 07) using
 | I2 | Every Nix subprocess is invoked with `--json` (or `--log-format internal-json`); the product never regex-scrapes human output. | A single `nix` adapter module is the only legal caller; CI lint forbids other `Command::new("nix*")`. |
 | I3 | Only the channel descriptor's pinned Nixpkgs revision(s) and approved substituters/keys are used. No arbitrary flakes/URLs/overlays/trust edits. | Adapter references Nixpkgs **only** by the descriptor-pinned flake-ref `github:NixOS/nixpkgs/<rev>?narHash=<h>` (or its locked store path) — never a mutable channel or user URL. `--expr`, `--impure`, `--override-input`, `--inputs-from`, and `file://`/`path:` flakes are **never** passed (doc 01 §11.1); substituters/trusted keys fixed via generated `nix.conf` + per-call reinforcement flags. |
 | I4 | A realized identity is identified by its **store path** (which embeds the content hash), not by `pname@version`. Display metadata is never used as a key. | Lock and generation manifest key on store path; `pname`/`version` are display-only fields. |
-| I5 | Local builds occur **only on Linux** and **only after** the user has seen the build preview and explicitly approved. macOS is binary-only. | Preflight computes build plan; a `BuildRequired` event gates on `Host::os == Linux && user_approval == true`. |
+| I5 | Local builds occur **only for the host's native Nix system** (Linux and macOS), **only after** the user has seen a deterministic build preview and explicitly approved a single operation, and **only** under `sandbox=true`/`sandbox-fallback=false` through the daemon's unprivileged build users. No Rosetta/cross-compilation/emulation/remote builders. Approval never overrides a hard policy refusal (unsupported/broken/impure derivation, or sandbox/build-user unavailable). | Preflight computes the build plan; a `BuildRequired` event gates on `Host::nativeSystem ∈ descriptor.buildPolicy.nativeLocalBuilds(mode=allow-with-gates) && sandbox_ready && build_users_ready && user_approval == true`. A cache miss with no buildable path, or a disallowed build, yields `ACQUIRE_NO_BINARY`. |
 | I6 | Acquire/verify/stage are **idempotent and resumable**; restarting the product resumes from the persisted operation journal without redoing completed Nix work unnecessarily. | Journal is append-only + fsynced; Nix daemon keeps realised paths so re-running `nix build` is cheap. |
 | I7 | The product never writes the activation tree by hand into `/nix/store`; the activation tree is a Nix-built `buildEnv` store object, so collisions are detected by Nix and the tree is content-addressed. | Stage phase issues `nix build` of a generated `buildEnv` expression. |
 
@@ -125,8 +127,8 @@ flowchart TD
     RV --> P[preflight]
     P -->|preview| APP{approval?}
     APP -->|no build, cache hit| AC[acquire: substitute]
-    APP -->|build required, Linux, approved| AB[acquire: build]
-    APP -->|build required, macOS or denied| FAIL[abort: leave gen N active]
+    APP -->|build required, approved| AB[acquire: build]
+    APP -->|build denied or not approved| FAIL[abort: leave gen N active]
     AC --> V[verify]
     AB --> V
     V --> S[stage: buildEnv activation tree]
@@ -279,17 +281,22 @@ nix build --json --no-link --out-link /dev/null \
 ```
 
 `--max-jobs 0` makes a missing substitute a hard error rather than silently
-falling back to a local build — this enforces **binary-only** on macOS and on
-Linux when the user has not approved a build **at the Nix invocation level**, not
-merely as UI policy (I5).
+falling back to a local build — this keeps the **pure-substitution** acquire
+phase build-free on every platform at the Nix invocation level, not merely as
+UI policy (I5). A miss here is not yet `ACQUIRE_NO_BINARY`: it hands control to
+the explicit build path below.
 
-**Cache miss on macOS:** acquire fails with `ACQUIRE_NO_BINARY` and a message
-naming the missing path(s) and suggesting `pkg info <attr>` to confirm the
-attribute exists for `aarch64-darwin`/`x86_64-darwin`. No build.
-
-**Cache miss on Linux:** preflight already produced a `build_plan` and
-`approval_required: true`. If the user approved (`--yes` or interactive prompt
-sourced from the PreflightReport), acquire runs **with building enabled**:
+**Cache miss → explicit build (Linux and macOS, native system only):**
+preflight already produced a `build_plan` and `approval_required: true`. If the
+build is disallowed for a concrete reason — the descriptor's `buildPolicy`
+denies the host system; the package is `meta.broken`/unsupported on this
+`system`; the derivation requires forbidden impurity or unsandboxed execution;
+or sandbox/build-user readiness cannot be verified — acquire fails with
+`ACQUIRE_NO_BINARY` and a calm reason naming the path(s) and suggesting
+`pkg info <attr>`. **Approval never overrides a hard policy refusal** (§8, I5).
+Otherwise, if the user approved (`--yes`/`PKG_YES_TO_BUILDS=1` or an interactive
+prompt sourced from the PreflightReport), acquire runs **with building enabled**
+for the host's native system:
 
 ```
 nix build --json --no-link \
@@ -300,6 +307,8 @@ nix build --json --no-link \
   <targets>
 ```
 
+If the build was required but not approved, acquire exits
+`ACQUIRE_NEEDS_APPROVAL` and stages nothing (cancel is the safe default).
 `--log-format internal-json` is the **confirmed machine-readable log channel**
 [^log-format]; the adapter parses it into the product's ProgressEvent stream
 (§10). `--keep-going` lets one failing build not abort unrelated targets; the
@@ -319,7 +328,7 @@ After acquire, confirm what was realised is what was resolved and is intact:
   **not** by an unverified verify flag. The exact trust-mode flag (if any) for
   the pinned runtime is pinned for the chosen managed Nix runtime and validated
   by the Fake↔Real parity job (doc 09 §4.3; doc 01 §11 / doc 00 §11 SPK-02 — not
-  a standalone spike). On Linux local builds, the locally built path is **not**
+  a standalone spike). For local builds (Linux and macOS), the locally built path is **not**
   signed by cache.nixos.org — NAR integrity is verified and the sandbox (§8)
   provides build integrity; the path is tagged `provenance: local-build` in the
   **lock** (doc 01 §10.2 / doc 05 §5.2), not the manifest (the manifest holds
@@ -430,25 +439,29 @@ realised paths (§9).
 
 ## 6. Cache-hit / cache-miss behavior matrix
 
-| OS | substituter has path | user approved build? | Action | Exit on failure |
-|----|----------------------|----------------------|--------|-----------------|
+| OS | substituter has path | build allowed & approved? | Action | Exit on failure |
+|----|----------------------|--------------------------|--------|-----------------|
 | Linux | yes | n/a | substitute | `ACQUIRE_NETWORK` |
-| Linux | no  | yes | local build (sandboxed) | `BUILD_FAILED` |
-| Linux | no  | no  | refuse, emit `BuildRequired` requiring approval | `ACQUIRE_NEEDS_APPROVAL` |
+| Linux | no  | allowed & approved | native local build (sandboxed) | `BUILD_FAILED` |
+| Linux | no  | allowed, not approved | refuse, emit `BuildRequired` requiring approval | `ACQUIRE_NEEDS_APPROVAL` |
+| Linux | no  | disallowed (unsupported/broken/impure; sandbox/build-user unavailable; policy-deny) | refuse | `ACQUIRE_NO_BINARY` |
 | macOS | yes | n/a | substitute | `ACQUIRE_NETWORK` |
-| macOS | no  | —   | refuse (binary-only) | `ACQUIRE_NO_BINARY` |
+| macOS | no  | allowed & approved | native local build (sandboxed; `_nixbld`) | `BUILD_FAILED` |
+| macOS | no  | allowed, not approved | refuse, emit `BuildRequired` requiring approval | `ACQUIRE_NEEDS_APPROVAL` |
+| macOS | no  | disallowed (unsupported/broken/impure; sandbox/build-user unavailable; policy-deny) | refuse | `ACQUIRE_NO_BINARY` |
 
 **Substituter reachability:** preflight probes the narInfo HEAD/GET; if the
 substituter is unreachable, the product surfaces `CACHE_UNREACHABLE` and does
 **not** silently fall back to a build. The user may run `pkg doctor` to
 diagnose.
 
-## 7. Build preview & user approval (Linux only)
+## 7. Build preview & user approval (Linux and macOS, native system)
 
 The build preview is the `build_plan` field of the PreflightReport. The
 interactive prompt (plan 06) shows:
 
 ```
+Target system: aarch64-darwin   (native; sandbox=on, build users=_nixbld)
 The following need to be BUILT locally (no signed binary on cache.nixos.org):
   • ffmpeg-6.1            closure ≈ 320 MB   est. 8–14 min  (sandboxed)
   • libx264-<ver>         closure ≈  12 MB   est. 1–2 min   (sandboxed)
@@ -464,13 +477,15 @@ safety, unless the user sets a config toggle `build.always_local_after_preview`
 
 ## 8. Sandbox & resource limits
 
-Applies to **local builds on Linux** only. Configured in the generated
+Applies to **local builds on Linux and macOS** (native system only; I5). Configured
+in the generated
 `nix.conf` (plan 07) and overridable per-call:
 
 | Knob | Default | Source |
 |------|---------|--------|
-| `sandbox` | `true` | Nix conf `sandbox` [^sandbox] |
-| `build-users-group` | `nixbld` (created by installer) | multi-user [^multiuser] |
+| `sandbox` | `true` (both platforms) | Nix conf `sandbox` [^sandbox] |
+| `sandbox-fallback` | `false` (both platforms; fail closed, never build unsandboxed) | Nix conf `sandbox-fallback` |
+| `build-users-group` | `nixbld` (Linux); `_nixbld` group/users (macOS) — both created by the installer | multi-user [^multiuser] |
 | `max-jobs` | `1` (tunable) | conf `max-jobs` |
 | `cores` | `0` (use all) | conf `cores` |
 | `max-silent-time` | `3600` s | conf `max-silent-time` |
@@ -482,6 +497,16 @@ Applies to **local builds on Linux** only. Configured in the generated
 CPU/disk guard: preflight refuses to start a build if free disk at `/nix` <
 `new_bytes * 1.2` or if `loadavg` exceeds a configurable ceiling
 (`build.max_loadavg`, default unset).
+
+**Platform-appropriate controls (I5):** Linux uses cgroup CPU/memory/IO caps
+(where available) plus RLIMIT and the `bwrap`/namespace sandbox; macOS has no
+cgroup equivalent, so `pkg` applies RLIMIT-style caps and disk/load guards plus
+Nix's macOS sandbox primitives and **never invents cgroup controls on macOS**.
+Nix's macOS sandbox is supported but uses different, generally narrower platform
+primitives than the Linux sandbox (D-11); the preview states `sandbox=on`
+honestly without claiming identical isolation. Before any local build, `pkg`
+verifies `sandbox=true`/`sandbox-fallback=false` and that build users are ready,
+and **fails closed** if not.
 
 ## 9. Cancellation & restart recovery
 
@@ -542,7 +567,7 @@ build heuristic). All events are append-only to
 | 64 | `RESOLVE_*` | selector resolution failed (not found/ambiguous/broken/unsupported/insecure) |
 | 65 | `PREFLIGHT_FAIL` | policy/disk/collision-preview blocked the op before mutation |
 | 66 | `ACQUIRE_NETWORK` | substituter unreachable / download failed |
-| 67 | `ACQUIRE_NO_BINARY` | macOS or unapproved-Linux: no binary available |
+| 67 | `ACQUIRE_NO_BINARY` | no acceptable substitute **and** building is impossible or disallowed (unsupported package/system, sandbox/build-user unavailable, policy-blocked derivation) — not merely a Darwin cache miss |
 | 68 | `ACQUIRE_NEEDS_APPROVAL` | build required, not approved (`--dry`/no `--yes`) |
 | 69 | `BUILD_FAILED` | local build failed |
 | 70 | `VERIFY_FAIL` | NAR/signature/identity mismatch |
@@ -568,7 +593,7 @@ defined once here; plan 06 maps each command's outcomes to them.
 | preflight | disk < 1.2× new | statvfs | unchanged | 65 |
 | preflight | insecure | meta.knownVulnerabilities | unchanged | 65 |
 | acquire | substituter offline | narInfo GET error | unchanged; daemon may have partial paths (harmless) | 66 |
-| acquire | build fail (Linux) | build exit≠0 | unchanged | 69 |
+| acquire | build fail (Linux/macOS) | build exit≠0 | unchanged | 69 |
 | acquire | kill -9 mid-build | journal tail | gen N active, op `aborted` on next start | 75/`RECOVERED` |
 | verify | NAR mismatch | `nix store verify` | unchanged; quarantined path; SECURITY event | 70 |
 | stage | collision | buildEnv error | unchanged | 71 |
@@ -613,9 +638,14 @@ defined once here; plan 06 maps each command's outcomes to them.
   signed channel descriptor (plan 02) and are written to a root-owned
   `nix.conf`; the product ignores user env overrides (`NIX_SUBSTITUTERS`,
   `NIX_TRUSTED_PUBLIC_KEYS`) and `--override` of trust knobs.
-- **Local build integrity (Linux):** sandbox on, build-users-group isolation,
-  `require-sigs` for substitutes. Locally-built paths are tagged
-  `provenance: local-build` and never claimed to be cache-signed.
+- **Local build integrity (Linux and macOS):** `sandbox=true` + `sandbox-fallback=false`, build-user isolation (`nixbld` / `_nixbld`),
+  `require-sigs` for substitutes. `pkg` fails closed if sandbox or build-user
+  readiness cannot be verified; approval never overrides a hard policy refusal
+  (unsupported/broken/impure derivation). Platform-appropriate resource caps
+  apply (cgroups on Linux where available; RLIMIT/disk/load guards on macOS —
+  never invented cgroups). Locally-built paths are tagged
+  `provenance: local-build` and never claimed to be cache-signed; on macOS they
+  are **not** individually Apple-notarized by `pkg`.
 - **Verify-before-activate:** Stage never activates an unverified tree.
 - **No network at activate/commit:** those phases are local-only.
 - **Reproducibility audit:** the generation manifest records exact store paths
@@ -659,9 +689,14 @@ defined once here; plan 06 maps each command's outcomes to them.
 - **PR-D — Acquire (substitute-only).** `--max-jobs 0` path on Linux+macOS;
   verify phase; progress events. *Acceptance:* cache-hit install of a small
   package end-to-end against a fake substituter; verify-fail → 70.
-- **PR-E — Local build (Linux).** Build preview, approval gate, sandboxed
-  build, `BUILD_FAILED` mapping. *Acceptance:* hermetic build of a trivial
-  derivation in the test lane; macOS path returns `ACQUIRE_NO_BINARY`.
+- **PR-E — Local build (cross-platform).** Build preview (with target system
+  + sandbox status), approval gate, sandboxed native build, `BUILD_FAILED`
+  mapping, and `ACQUIRE_NO_BINARY` for impossible/disallowed builds. *Acceptance:*
+  hermetic build of a trivial derivation in the test lane on Linux **and** macOS
+  (native sandboxed build under `nixbld`/`_nixbld`); a build that is disallowed
+  (unsupported/impure derivation, or sandbox/build-user unavailable, or
+  policy-deny) returns `ACQUIRE_NO_BINARY`; a required-but-unapproved build
+  returns `ACQUIRE_NEEDS_APPROVAL`.
 - **PR-F — Stage + collision policy.** Generated buildEnv expression, staging
   symlink, collision detection + policies. *Acceptance:* collision fixture
   for each policy.
@@ -686,10 +721,15 @@ defined once here; plan 06 maps each command's outcomes to them.
    transaction (§5.7), then re-running, either resumes and commits or aborts
    cleanly — **generation N is always still active and `current` is never a
    broken or unrooted symlink** (the GC root always precedes the swap).
-3. On macOS, a package with no `aarch64-darwin` binary fails with exit 67 and
-   never attempts a build.
-4. On Linux, a cache-miss install without approval exits 68 and stages
-   nothing; with `--yes` it builds under sandbox and commits.
+3. On macOS, a package that is `meta.broken`/unsupported on `aarch64-darwin`
+   (or whose derivation requires forbidden impurity/unsandboxed execution, or
+   when the sandbox/build users cannot be made ready) fails with exit 67
+   `ACQUIRE_NO_BINARY` and a calm reason, even with approval; a buildable cache
+   miss does **not** fail at 67.
+4. On Linux and macOS, a buildable cache-miss install without approval exits
+   68 `ACQUIRE_NEEDS_APPROVAL` and stages nothing; with `--yes` it builds under
+   `sandbox=true`/`sandbox-fallback=false` (native system, `nixbld`/`_nixbld`)
+   and commits; cancelling the preview leaves generation N active.
 5. A collision between two selectors with default policy exits 71 and leaves
    the previous generation active; with `--on-collision=keep-first` it commits
    and the manifest records the resolution.

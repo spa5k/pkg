@@ -104,8 +104,12 @@ This is the schema referenced by doc 01 §10.4 and consumed by docs 03/04/05/10.
     "x86_64-darwin", "aarch64-darwin"
   ],
   "buildPolicy": {
-    "localBuildsOn": ["x86_64-linux", "aarch64-linux"],
-    "macosBinaryOnly": true
+    "nativeLocalBuilds": {
+      "x86_64-linux":   { "mode": "allow-with-gates" },
+      "aarch64-linux":  { "mode": "allow-with-gates" },
+      "x86_64-darwin":  { "mode": "allow-with-gates" },
+      "aarch64-darwin": { "mode": "allow-with-gates" }
+    }
   },
   "nixRuntime": {
     "version": "2.24.10",
@@ -146,7 +150,11 @@ Field semantics:
 - `sequence` — monotonic per channel; **the** key referenced by generations as `channelSeq` (doc 01 §10). TRU-INV-03 enforces strict increase.
 - `expiresAt` — RFC3339; TRU-INV-04.
 - `supportedSystems` — superset of platforms V1 supports (D-14); `pkg` errors if its host system is not listed.
-- `buildPolicy` — implements D-11 (Linux local builds allowed; macOS binary-only).
+- `buildPolicy` — implements D-11 with **per-system** semantics. Each entry under `nativeLocalBuilds` is the host's native Nix system (no Rosetta/cross/emulation/remote-builder entries in v1). `mode` is one of:
+  - `allow-with-gates` — substitution is tried first; on a cache miss a build is permitted **only after** a deterministic preview + explicit single-operation approval (`prompt`) **and** verified `sandbox=true`/`sandbox-fallback=false` + build-user readiness + resource limits; `pkg` fails closed if any gate cannot be verified. This is the v1 mode for all four native systems.
+  - `prompt` — preview + explicit single-operation approval required (the approval dimension of `allow-with-gates` without asserting the security gates).
+  - `deny` — substitution only; a cache miss that cannot be resolved is `ACQUIRE_NO_BINARY`.
+  A system with no entry (e.g. a non-native `system`) is implicitly `deny`: v1 never builds for it locally.
 - `nixRuntime`/`nixpkgs`/`index` — each entry is a **TUF target**; the `url`/`sha256`/`narHash`/`target` values must match the hash recorded in the corresponding TUF `targets`/delegation metadata. `pkg` cross-checks both (defense in depth).
 - `substituters` — pinned per D-10; baked into the bundled `nix.conf` (doc 01 §11).
 

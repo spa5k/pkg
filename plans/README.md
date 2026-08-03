@@ -33,7 +33,11 @@ The four load-bearing V1 design choices (full set: **D-01…D-17** in doc 00 §7
   (**D-08**, **D-09**). `cache.nixos.org` is the **only** artifact cache in V1 (**D-10**).
 
 **Platforms:** `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `aarch64-darwin` (**D-14**).
-Linux permits **explicitly approved** local builds; **macOS is binary-only** in V1 (**D-11**).
+Cache substitution is first and preferred on **every** platform; on a cache miss, v1 may
+build locally for the host's **native** Nix system on **both Linux and macOS**, only after a
+deterministic build preview and explicit single-operation approval, under `sandbox=true`/
+`sandbox-fallback=false` and the daemon's unprivileged build users (`nixbld` / `_nixbld`). No
+Rosetta, cross-compilation, emulation, or remote builders in v1 (**D-11**, **INV-08**).
 
 **Multi-user ownership split (D-17 / INV-10):** the immutable runtime, channel, index, source,
 and store *service* are **root-owned and machine-global (shared, read-only to users)**; the
@@ -172,7 +176,7 @@ sequenceDiagram
   N-->>R: drvPath + outputs
   CLI->>N: preflight: path-info --recursive --closure-size
   N-->>CLI: closure + download/build classification
-  CLI->>CLI: ensure closure realized (substitute per D-10; or Linux approved build D-11)
+  CLI->>CLI: ensure closure realized (substitute per D-10; or explicit native build D-11)
   CLI->>N: verify: store verify + path-info (narHash/sigs)
   CLI->>N: stage: buildEnv activation tree → store path P (no current change)
   CLI->>DOM: prepared: write generations/gen-N.json + fsync (immutable metadata)
@@ -359,7 +363,7 @@ risks §3, defaults/deferrals §4).
 | **M2 Catalog & resolve** | 13–16 | fetch+verify Nixpkgs, deterministic index, query API, resolver | Selector→Realization under pure eval; narHash verified |
 | **M3 Install/activate** | 17–20 | substitute+verify, GC roots+activation+`current`, install pipeline, remove/upgrade+mixed-rev | install w/ rollback-on-failure; mixed revisions |
 | **M4 Generations & UX** | 21–25 | generations/history/rollback/pin, GC+leases, CLI skeleton, wired commands, completion+doctor | full CLI wired to Fake Nix |
-| **M5 Local build & installers** | 26–29 | Linux local build (sandbox+approval), Linux + macOS installers, uninstall | installers + bounded uninstall |
+| **M5 Local build & installers** | 26–29 | Cross-platform local build (sandbox+approval, Linux + macOS native), Linux + macOS installers, uninstall | installers + bounded uninstall |
 | **M6 Hardening & ops** | 30–35 | repair, security lane, perf gate, release signing, observability, docs/support | all G-* lanes green on fixtures |
 | **M7 Technical Preview** | 36 | Real-Nix nightly CI, Fake↔Real parity, self-hosted e2e | Real-Nix e2e green on Linux x86_64 + macOS arm64 |
 | **M8 v1** | 37–38 | RC + revoke rehearsal + sign-off; v1.0 release | all release gates + advisory |
@@ -369,7 +373,7 @@ risks §3, defaults/deferrals §4).
 - **Spikes (M0.5):** PR-4 ‖ PR-5 ‖ PR-6 ‖ PR-7 ‖ PR-8 (all independent after PR-1).
 - **M1:** PR-9 ‖ PR-10 ‖ PR-11 (state, detect, channel).
 - **M3→M4:** PR-20 ‖ PR-21 (lifecycle ops both consume PR-19).
-- **M5:** PR-27 (Linux) ‖ PR-28 (macOS); PR-25/26 parallel.
+- **M5:** PR-27 (Linux installer) ‖ PR-28 (macOS installer+build, depends on PR-26); PR-25 ‖ PR-26 ‖ PR-27.
 - **M6:** PR-30 ‖ PR-31 ‖ PR-32 ‖ PR-33 ‖ PR-34 ‖ PR-35 (whole hardening batch).
 - **CLI skeleton (PR-23)** only needs PR-2 → can start during M1/M2.
 
@@ -398,9 +402,9 @@ solved. No irreversible architecture merges before the corresponding DR is `Acce
 |---|---|---|---|
 | **S1 — store prefix / runtime layout** | PR-4 → DR-001 | Can `pkg` exclusively own `/nix/store` under a managed daemon socket/state, with no V1 need for a relocatable store? How to safely detect/refuse unmanaged Nix? | Hard requirement on `/nix/store`; fail-closed otherwise (D-04). |
 | **S2 — TUF fit / key custody** | PR-5 → DR-002 | Does real TUF via `tough` express the small target set (rev/narHash, Nix version, index hashes, substituters/keys, systems, policyVersion, sequence, expiry) with threshold + revocation? | Use `tough`; 1-of-1 v1 → 2-of-3 at GA; offline root (DR-002). |
-| **S3 — macOS cache coverage** | PR-7 → DR-003 | Do v1 attrs substitute for `aarch64-darwin`? Is a notarized+signed installer feasible? | macOS binary-only; signed/notarized installer (DR-003). |
+| **S3 — macOS cache coverage** | PR-7 → DR-003 | Do v1 attrs substitute for `aarch64-darwin`/`x86_64-darwin`? Is a notarized+signed installer feasible, and are native macOS local builds (sandbox, `_nixbld` build users, Xcode toolchain, resource caps) viable? | Darwin cache coverage + approved native sandboxed local builds; signed/notarized installer/runtime (DR-003). |
 | **S4 — Nixpkgs reevaluation / index cost** | PR-6 → DR-004 | What are realistic single-attr realize + four-system index meta-eval costs? flake `narHash` vs raw GitHub archive hash difference? | Disposable index for browse; on-host re-eval for install; publisher precompute. |
-| **S5 — sandbox / resource enforcement** | PR-8 → DR-005 | Does `sandbox=true` work under the managed daemon? Can we intercept builds for preview/approval? Are RLIMIT/cgroup caps effective? | Linux local builds only after explicit approval; sandbox + caps (DR-005). |
+| **S5 — sandbox / resource enforcement** | PR-8 → DR-005 | Does `sandbox=true`/`sandbox-fallback=false` work under the managed daemon on both Linux and macOS? Can we intercept builds for preview/approval? Are resource caps effective (cgroups/RLIMIT on Linux; RLIMIT/guards on macOS)? | Local builds (Linux **and** macOS, native) only after explicit approval + fail-closed readiness; sandbox + caps (DR-005). |
 
 > SPK-02 (Nix-as-subprocess JSON stability) is **not** a standalone spike: it is enforced
 > continuously by pinning the managed Nix version and isolating all Nix output — including the
@@ -431,7 +435,7 @@ dependency**, so they can begin immediately:
 M1 architecture is locked. **PR-23 (CLI skeleton)** needs only PR-2 and can start in M1/M2.
 
 **Hard ordering constraints (doc 11 §9):** no installer layout before S1; no channel
-implementation before S2; no macOS binary-only commitment before S3; no local-build UX before
+implementation before S2; no macOS build-security commitment (cache coverage **and** native local-build readiness) before S3; no local-build UX before
 S5; no perf budgets before S4.
 
 ---

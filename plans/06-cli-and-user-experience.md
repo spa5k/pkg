@@ -191,7 +191,7 @@ plan-04 pipeline.
 - `--on-collision abort|keep-first|keep-last|keep-all` (default `abort`).
 - `--yes`, `--dry-run`, `--json`/`--jsonl`, `--keep-going`.
 - `--channel <id>` to install from a non-current pinned channel (still signed).
-- `--max-jobs`, `--cores` (override build resources; Linux).
+- `--max-jobs`, `--cores` (override build resources; Linux and macOS).
 
 **Flow:** resolve → preflight → [approval gate if builds] → acquire → verify
 → stage → activate → commit. On any failure the previous generation stays
@@ -360,7 +360,7 @@ v1 (it would require evaluating Nixpkgs per keystroke — too slow); a future
 
 | Trigger | Default prompt | `--yes` | Force env |
 |---------|----------------|---------|-----------|
-| First-time local build (Linux) | required | still prompts | `PKG_YES_TO_BUILDS=1` skips |
+| First-time local build (Linux/macOS, native) | required | still prompts | `PKG_YES_TO_BUILDS=1` skips |
 | Subsequent builds same session | required | skips | as above |
 | `remove` | required | skips | — |
 | `gc` (destructive) | required | skips | — |
@@ -395,8 +395,8 @@ Every error carries a `hint`. Examples:
   `hint: V1 manages its own Nix exclusively. To proceed, remove the existing
   Nix manually (see <docs URL>) or set up on a clean machine. The product will
   not remove it for you.`
-- `error[ACQUIRE_NO_BINARY]: no signed binary for aarch64-darwin for ffmpeg.`
-  `hint: macOS is binary-only in v1. See `pkg info ffmpeg --realize`.` `
+- `error[ACQUIRE_NO_BINARY]: no signed binary and no buildable path for aarch64-darwin for ffmpeg.`
+  `hint: this package has no acceptable substitute and building is impossible/disallowed here (unsupported/broken/impure, sandbox/build-user unavailable, or policy-blocked). See `pkg info ffmpeg --realize`.`
 - `error[STAGE_COLLISION]: bin/rg provided by ripgrep and ripgrep-nightly.`
   `hint: pass --on-collision=keep-first or remove one of them.`
 
@@ -411,9 +411,9 @@ Mapped to verbs:
 | 64 | RESOLVE_* | install, upgrade, info, pin |
 | 65 | PREFLIGHT_FAIL | install, upgrade |
 | 66 | ACQUIRE_NETWORK | install, upgrade, update, search, outdated |
-| 67 | ACQUIRE_NO_BINARY | install, upgrade (macOS) |
-| 68 | ACQUIRE_NEEDS_APPROVAL | install, upgrade (Linux build, no --yes) |
-| 69 | BUILD_FAILED | install, upgrade (Linux) |
+| 67 | ACQUIRE_NO_BINARY | install, upgrade (build impossible/disallowed on any OS) |
+| 68 | ACQUIRE_NEEDS_APPROVAL | install, upgrade (build required, no --yes) |
+| 69 | BUILD_FAILED | install, upgrade (Linux/macOS local build) |
 | 70 | VERIFY_FAIL | install, upgrade, repair, update |
 | 71 | STAGE_COLLISION | install, upgrade |
 | 72 | STATE_LOCKED | mutating verbs |
@@ -525,8 +525,11 @@ sequenceDiagram
 2. `pkg install ripgrep --json` returns schemaVersion 1 and, on success, a
    `generation.id` whose manifest contains the installed output's exact
    `storePath`.
-3. `pkg install <cache-miss>` on macOS exits 67; on Linux without approval
-   exits 68; on Linux with `PKG_YES_TO_BUILDS=1` succeeds via sandboxed build.
+3. `pkg install <buildable cache-miss>` on macOS or Linux without approval exits
+   68; with `PKG_YES_TO_BUILDS=1` it succeeds via a sandboxed native build
+   (`nixbld`/`_nixbld`). A cache miss that is impossible/disallowed
+   (unsupported/broken/impure, or sandbox/build-user unavailable) exits 67 even
+   with approval.
 4. `pkg list --json | jq` returns the active generation's outputs; offline.
 5. `pkg outdated` after `update` reports the right per-selector kinds
    (`patch`/`rev-only`) against fixture locks.

@@ -77,9 +77,9 @@ flowchart TD
     P24[PR-24 CLI wire commands]
     P25[PR-25 completion + PATH/doctor]
 
-    P26[PR-26 local build Linux sandbox+approval]
+    P26[PR-26 shared local-build engine sandbox+approval]
     P27[PR-27 Linux installer + root helper]
-    P28[PR-28 macOS installer + launchd + notary]
+    P28[PR-28 macOS installer+build+launchd+notary]
     P29[PR-29 uninstall boundaries]
 
     P30[PR-30 repair + corruption recovery]
@@ -135,6 +135,7 @@ flowchart TD
     P12-->P28
     P27-->P29
     P28-->P29
+    P26-->P28
     P18-->P30
     P8-->P30
     P19-->P31
@@ -273,12 +274,10 @@ flowchart TD
 - **Milestone:** M0.5.
 
 #### PR-7 — SPIKE S3: macOS binary coverage + Apple signing/notarization
-- **Purpose:** confirm chosen attrs substitute from `cache.nixos.org` for `aarch64-darwin`
-  (binary-only v1) and that a notarized signed installer is achievable. **Gates PR-28 and the
-  Real-Nix macOS lane (`09`).**
+- **Purpose:** confirm Darwin binary coverage on `cache.nixos.org` for `x86_64-darwin`/`aarch64-darwin`, **and** that real macOS local builds are viable (native sandboxed build, `_nixbld` build users/group, Xcode/CLT toolchain availability, platform-appropriate resource caps, `sandbox-fallback=false` fail-closed), and that a notarized signed installer/runtime is achievable. **Gates PR-28 and the Real-Nix macOS lane (`09`).**
 - **Owns:** `spikes/s3-macos/`, DR-003 in `12`.
 - **Depends:** PR-1.
-- **Migration/compat:** confirms or revises the macOS binary-only policy (`07`).
+- **Migration/compat:** confirms or revises the macOS build-security policy (cache coverage **and** native local-build readiness) (`07`, DR-003).
 - **Tests & gates:** DR accepted by E and A.
 - **Demo:** availability matrix for a fixture attr set on `aarch64-darwin`.
 - **Reviewers:** primary E; cross F; **A** (security: signing).
@@ -287,8 +286,7 @@ flowchart TD
 - **Milestone:** M0.5.
 
 #### PR-8 — SPIKE S5: Linux sandbox/build-hook + resource caps
-- **Purpose:** confirm `sandbox=true` works with the managed daemon, that we can intercept a
-  build for preview/approval, and that cgroups/RLIMIT caps are effective. **Gates PR-26.**
+- **Purpose:** confirm `sandbox=true`/`sandbox-fallback=false` works with the managed daemon on **both Linux and macOS** (including Nix's macOS sandbox primitives and `_nixbld` build users), that we can intercept a build for preview/approval, that resource caps are effective (cgroups/RLIMIT on Linux; RLIMIT/disk/load guards on macOS — no cgroups invented), and that `pkg` fails closed if sandbox/build-user readiness cannot be verified. **Gates PR-26.**
 - **Owns:** `spikes/s5-sandbox/`, DR-005 in `12`.
 - **Depends:** PR-1.
 - **Migration/compat:** informs `04`/`07` build/caps design and `08` T-BUILD-* controls.
@@ -535,14 +533,13 @@ flowchart TD
 
 ### Milestone M5 — Local builds & platform installers
 
-#### PR-26 — Linux local build (sandbox + caps + preview/approval)
-- **Purpose:** the **explicit**, non-default local build path with closure preview, sandbox,
-  RLIMIT/cgroup caps, and approval journaling (`08` T-BUILD-*, `04`).
+#### PR-26 — Shared local-build engine & policy (sandbox + caps + preview/approval)
+- **Purpose:** the **explicit**, non-default, cross-platform local-build path: deterministic closure/derivation preview (with target system + sandbox status), sandbox (`sandbox=true`/`sandbox-fallback=false`), platform-appropriate resource caps (cgroups/RLIMIT on Linux; RLIMIT/disk/load guards on macOS), build-user readiness verification with fail-closed, approval journaling, and `ACQUIRE_NO_BINARY` for impossible/disallowed builds (`08` T-BUILD-*, `04`). The engine is shared by Linux and macOS; macOS-specific wiring/validation lands in PR-28.
 - **Owns:** `crates/pkg-nix/src/build.rs` + tests.
-- **Depends:** PR-17, PR-8 (S5). **Linux only** (feature-gated).
-- **Migration/compat:** macOS remains binary-only (`00`,`07`).
-- **Tests & gates:** G-UNIT + G-INTEGRATION + security (approval is non-default; sandbox on).
-- **Demo:** cache-miss → preview → explicit approval → sandboxed build.
+- **Depends:** PR-17, PR-8 (S5).
+- **Migration/compat:** implements the cross-platform D-11 (`00`,`07`); macOS validation/integration completes in PR-28.
+- **Tests & gates:** G-UNIT + G-INTEGRATION + security (approval is non-default; sandbox on; `sandbox-fallback=false` fail-closed; disallowed build → `ACQUIRE_NO_BINARY`).
+- **Demo:** cache-miss → preview (target system + sandbox) → explicit approval → sandboxed native build.
 - **Reviewers:** primary E; cross F; **A mandatory security** (T-BUILD-1/3).
 - **Rollback:** revert; users fall back to substitution.
 - **Parallel:** with PR-27/28/29.
@@ -561,14 +558,13 @@ flowchart TD
 - **Parallel:** with PR-28 (different OS), PR-26, PR-25.
 - **Milestone:** M5.
 
-#### PR-28 — macOS installer + launchd daemon + notarization
-- **Purpose:** same on macOS: launchd-based privileged setup, authorized-client auth,
-  notarized + signed installer (`07`, DR-003 from S3).
-- **Owns:** `crates/pkg-installer/src/platform/macos.rs`, notarization tooling, packaging.
-- **Depends:** PR-12, PR-7 (S3).
-- **Migration/compat:** binary-only (no local build) on macOS.
-- **Tests & gates:** G-UNIT + macOS runner integration.
-- **Demo:** install on macOS arm64 → `pkg doctor` clean.
+#### PR-28 — macOS installer + Darwin build integration + launchd + signing/notarization
+- **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `_nixbld` build users/group, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and platform-appropriate resource caps (`07`, DR-003 from S3). Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
+- **Owns:** `crates/pkg-installer/src/platform/macos.rs`, `_nixbld` build-user provisioning, notarization tooling, packaging.
+- **Depends:** PR-12, PR-7 (S3), PR-26 (shared engine).
+- **Migration/compat:** macOS supports approved native sandboxed local builds (D-11); not binary-only.
+- **Tests & gates:** G-UNIT + macOS runner integration: cache hit, cache-miss preview/cancel/approval, successful native sandboxed build, sandbox-unavailable fail-closed, unsupported-package `ACQUIRE_NO_BINARY`, receipt/rollback.
+- **Demo:** install on macOS arm64 → `pkg doctor` clean; cache-miss → approved native sandboxed build → `pkg history`.
 - **Reviewers:** primary E; cross F; **A mandatory security** (signing/notarization).
 - **Rollback:** uninstall path.
 - **Parallel:** with PR-27 (different OS).
@@ -713,7 +709,7 @@ flowchart TD
 | **CLI skeleton (M4 start)** | PR-23 only needs PR-2 → can start during M1/M2 |
 | **Lifecycle ops (M3→M4)** | PR-20 ‖ PR-21 (both consume PR-19) |
 | **Hardening batch (M6)** | PR-30 ‖ PR-31 ‖ PR-32 ‖ PR-33 ‖ PR-34 ‖ PR-35 |
-| **Installers (M5)** | PR-27 (Linux) ‖ PR-28 (macOS); PR-26 (build) ‖ PR-25 (doctor) ‖ PR-27/28 |
+| **Installers (M5)** | PR-27 (Linux) ‖ PR-28 (macOS, depends on PR-26); PR-26 (shared build engine) ‖ PR-25 (doctor) ‖ PR-27 |
 
 ---
 
@@ -743,7 +739,7 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
 | **M2 Catalog & resolve** | 13–16 | Pinned Nixpkgs realized + narHash-verified; disposable deterministic index built/queried; Selector→Realization resolves under pure eval. |
 | **M3 Install/activate** | 17–20 | Substitute+verify; atomic activation; install pipeline with rollback-on-failure; remove/upgrade with mixed revisions. |
 | **M4 Generations & UX** | 21–25 | Generations/history/rollback/pin; GC+leases; full CLI wired to Fake Nix; completions + doctor. |
-| **M5 Local build & installers** | 26–29 | Linux local build w/ sandbox+approval; Linux + macOS installers with authenticated helpers; bounded uninstall. |
+| **M5 Local build & installers** | 26–29 | Shared cross-platform local-build engine w/ sandbox+approval (Linux + macOS native); Linux + macOS installers with authenticated helpers + build users (`nixbld`/`_nixbld`); bounded uninstall. |
 | **M6 Hardening & ops** | 30–35 | Repair; security lane; perf gate; release signing; observability; docs/support export. |
 | **M7 Technical Preview** | 36 | Real-Nix nightly green on Linux x86_64 + macOS arm64; Fake↔Real parity; self-hosted e2e. |
 | **M8 v1** | 37–38 | RC with compat matrix + revoke rehearsal + sign-off; v1.0 published with advisory. |
@@ -774,9 +770,10 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
   is unusable, the entire managed-Nix model (PR-9/12/27/28) replans — cheap now, expensive later.
 - **No channel implementation before S2 (PR-5).** A wrong crypto choice (e.g., accidental
   "TUF-lite") is the single most expensive mistake to unwind post-release.
-- **No macOS binary-only commitment before S3 (PR-7).** If `aarch64-darwin` coverage gaps are
-  material, v1 must either curate the catalog or ship a product cache — a scope decision, not
-  a late surprise.
+- **No macOS build-security commitment before S3 (PR-7).** If `aarch64-darwin`/`x86_64-darwin`
+  cache coverage gaps are material, **or** if native macOS local builds (sandbox, `_nixbld`
+  users, Xcode toolchain, resource caps) prove unviable, v1 must curate the catalog, ship a
+  product cache, or narrow the build policy — a scope decision, not a late surprise.
 - **No local-build UX before S5 (PR-8).** Sandbox escape / resource caps must be proven.
 - **No perf budgets set before S4 (PR-6).** Otherwise budgets are fiction and the perf gate
   (PR-32) misfires.

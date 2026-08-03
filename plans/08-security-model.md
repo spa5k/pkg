@@ -314,12 +314,12 @@ Impact (L/M/H) using the rubric in §6.0.
 > says so explicitly; a multi-cache/threshold-binary-trust model is **deferred** to v2
 > (T-CACHE-2 residual).
 
-### 6.7 Local builds (Linux only, after preview+approval)
+### 6.7 Local builds (Linux and macOS, native system, after preview+approval)
 
 | ID | Threat | STRIDE | Detail | Controls | Residual | Refs |
 |----|--------|--------|--------|----------|----------|------|
-| **T-BUILD-1** | Build script (from Nixpkgs) runs arbitrary code during local build | RCE-as-builder | Any local build | `sandbox=true` (network blocked, fs restricted); builder users isolated; **explicit user approval** with closure-size + derivation preview; macOS is **binary-only** in v1 (no local build) | M (sandbox escapes are rare but exist) | `04`,`07` |
-| **T-BUILD-2** | Resource exhaustion during build (fork bomb, disk fill) | DoS | Pathological derivation | RLIMIT_AS/CPU/FILES, cgroup CPU/mem/io caps, disk-quota guard, timeout | M | `04` |
+| **T-BUILD-1** | Build script (from Nixpkgs) runs arbitrary code during local build | RCE-as-builder | Any local build (Linux **and** macOS) | `sandbox=true`/`sandbox-fallback=false` (both platforms; network blocked, fs restricted); builder users isolated (`nixbld`/`_nixbld`); **explicit single-operation user approval** after a deterministic preview (derivations/source inputs, closure, resource estimate, target system, sandbox status); approval never overrides a hard policy refusal; `pkg` fails closed if sandbox/build-user readiness cannot be verified. Nix's macOS sandbox uses different, generally narrower primitives than Linux's | M (sandbox escapes are rare but exist; macOS isolation is narrower than Linux's) | `04`,`07` |
+| **T-BUILD-2** | Resource exhaustion during build (fork bomb, disk fill) | DoS | Pathological derivation | RLIMIT_AS/CPU/FILES + cgroup CPU/mem/io caps on Linux; RLIMIT + disk/load guards on macOS (no cgroup equivalent — none invented); disk-quota guard; timeout | M | `04` |
 | **T-BUILD-3** | Build writes outside sandbox (sandbox escape) | Tampering/EoP | Kernel/CVE | Run as unprivileged builder users; drop all caps; seccomp filter; monitor for sandbox=`broken` | M (depends on kernel) | `07` |
 | **T-BUILD-4** | Non-reproducible local build diverges from cache → "two valid builds" confusion | Tampering (trust) | Nondeterminism | When a cache path exists for the same drv, **prefer cache**; only build locally when absent or user-forced; `--check` available in `repair` | M | `04`,`03` |
 | **T-BUILD-5** | Approval bypass (UI race) makes "build" the default | Tampering | UX bug | Approval is an **explicit** non-default action; never auto-build; TUI records consent event in journal | L | `06`,`04` |
@@ -443,7 +443,7 @@ Impact (L/M/H) using the rubric in §6.0.
 | Index (T-IDX) | — | disposable + hash-in-channel + regen-on-mismatch | `03`,`02` | `09` e2e + determinism |
 | Channel (T-CHAN) | — | **real TUF (tough)**, expiry, version monotonicity | `02` | `09` security lane |
 | Cache (T-CACHE) | Ed25519 sig verify, trusted keys | pin substituters/keys via channel | `01`,`02` | `09` security lane |
-| Local builds (T-BUILD) | sandbox, builder isolation | approval gate, RLIMIT/cgroups, binary-only macOS | `04`,`07` | `09` platform + fault |
+| Local builds (T-BUILD) | sandbox, builder isolation | preview + approval gate, RLIMIT/cgroups (Linux) / RLIMIT+guards (macOS), `sandbox-fallback=false` fail-closed on both | `04`,`07` | `09` platform + fault |
 | Path/symlink (T-PATH) | store is root-owned | 0700 dirs, O_NOFOLLOW, openat, store-relative symlinks | `05` | `09` security lane |
 | State/concurrency (T-STATE/CONC) | — | atomic writes, flock+lease, journal, fail-closed | `05` | `09` fault-injection |
 | Logs/secrets (T-LOG) | — | redactor, allowlist fields, 0600 | `06`,`10` | `09` security lane |
@@ -473,7 +473,8 @@ Impact (L/M/H) using the rubric in §6.0.
 | Aspect | Linux | macOS |
 |--------|-------|-------|
 | Privilege helper | polkit-gated service (preferred) or setuid w/ priv drop | launchd daemon + authorized client (no setuid) |
-| Build sandbox | full `bwrap`/namespaces sandbox | limited; **no local build in v1** (binary-only) |
+| Build sandbox | full `bwrap`/namespaces sandbox; `sandbox-fallback=false` | Nix macOS sandbox (supported but **different, generally narrower primitives** than Linux); `sandbox-fallback=false`; `pkg` fails closed if unready |
+| Build users | `nixbld` group/users | `_nixbld` group/users |
 | Caller auth | `SO_PEERCRED` | `getpeereid` / launchd `Audit Token` |
 | PATH integration | rc-snippet sourced by shell | rc-snippet + `/etc/paths.d` considered; doctor verifies |
 | Root-owned store | yes (daemon model) | yes (daemon model) |
@@ -538,9 +539,7 @@ users in `06` (CLI copy / `doctor`), `10` (release notes), and tracked in `12`.
 - **AC-S12** (UID confusion) A process authenticated as uid A cannot cause the helper or
   daemon to create/repair GC roots (or touch state) under uid B's directories; the peer-cred
   uid is the only uid used (T-INST-3/T-DAEMON-1/T-INST-6).
-- **AC-S13** (Full-closure cache preflight, macOS) An install whose closure has even one path
-  without a `cache.nixos.org` binary fails preflight/acquire with `ACQUIRE_NO_BINARY` and
-  **never** builds on macOS (D-11; plan 07 §16.4, plan 04 §5/§6).
+- **AC-S13** (Build-readiness & full-closure preflight, cross-platform) A build that is impossible or disallowed (unsupported/broken/impure derivation, or sandbox/build-user unavailable, or `buildPolicy` denies the host system) fails with `ACQUIRE_NO_BINARY` and **never** runs, even with approval, on Linux and macOS. A buildable cache miss is **not** auto-rejected: it surfaces the build preview. The full-closure cache preflight (plan 04 §5/§6) classifies every closure path up front as an availability signal, and `pkg` fails closed if `sandbox=true`/`sandbox-fallback=false` or build-user readiness cannot be verified (D-11; plan 07 §16.4).
 
 ---
 

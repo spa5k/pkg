@@ -221,7 +221,7 @@ Each AC-S*n* becomes one or more tests:
 | AC-S10 | `pkg info` shows provenance fields | e2e golden |
 | AC-S11 | two uids on a shared host: A cannot read/write B's `<user-state>`; GC roots scoped per uid (D-17) | e2e (privileged VM, multi-user) |
 | AC-S12 | caller as uid A cannot create roots / touch state under uid B (peer-cred enforced) | integration (privileged VM) |
-| AC-S13 | macOS closure with ≥1 missing binary → `ACQUIRE_NO_BINARY`, never builds | e2e (macOS) + fault |
+| AC-S13 | build impossible/disallowed → `ACQUIRE_NO_BINARY` never runs (cross-platform); buildable miss surfaces preview; `sandbox-fallback=false`/build-user readiness fail-closed | e2e (Linux + macOS) + fault |
 | (`10` AC-O4) | rotated-out TUF key can't sign new targets; rotation accepted within one `timestamp` window (T-CHAN-5) | e2e + fake channel |
 
 Additional security tests beyond ACs: T-PATH-* matrix, T-LOG-* injection, T-REL-4 dependency
@@ -243,12 +243,16 @@ review, T-INST-2 TOCTOU, T-INST-6 cross-user/UID-confusion, T-UNINST-1/2 boundar
 |----|------|------|-----------|
 | Linux | x86_64 | Real Nix (container) | every PR (Fast) + nightly (Full) |
 | Linux | aarch64 | Real Nix (emulated/native runner) | nightly + release |
-| macOS | arm64 (Apple Silicon) | Real Nix (binary-only) | nightly + release |
-| macOS | x86_64 | (best-effort) | release only |
+| macOS | arm64 (Apple Silicon) | Real Nix: cache hit; cache-miss preview; cancel; approval; successful native sandboxed build; sandbox-unavailable fail-closed; unsupported-package `ACQUIRE_NO_BINARY`; receipt/rollback | nightly + release |
+| macOS | x86_64 | (best-effort) same matrix | release only |
 
-macOS lanes additionally exercise the **full-closure cache preflight** (AC-S13): any closure
-path lacking a `cache.nixos.org` binary fails before activation, proving binary-only
-enforcement end-to-end.
+macOS lanes additionally exercise the **full-closure cache preflight** as an
+**availability signal** (AC-S13): every closure path is classified against
+`cache.nixos.org` up front, buildable misses surface the build preview, and
+disallowed builds fail with `ACQUIRE_NO_BINARY`; `sandbox=true`/
+`sandbox-fallback=false` and `_nixbld` build-user readiness are verified and
+fail-closed when unready. This is **not** binary-only enforcement — a buildable
+Darwin cache miss proceeds to an approved native sandboxed build.
 
 **Fast vs Full split:** "Fast" = unit+contract+integration+e2e(Fake) on every PR for the
 primary arch (Linux x86_64). "Full" = adds e2e(Real)+fault+security+perf+platform nightly.
@@ -265,9 +269,10 @@ is a **release gate**, not optional.
   product's own installer (exercising `07`).
 - **Fixture strategy:** pin a small set of Nixpkgs attrs known to substitute from
   `cache.nixos.org` for the target systems; assert substitution + activation. For
-  **aarch64-darwin** coverage, confirm in CI that the chosen attrs have binary availability
-  (this is part of spike S3, `12`) — if gaps exist, the Real lane documents them as known
-  limitations rather than silently skipping.
+  **x86_64-darwin/aarch64-darwin** coverage, confirm in CI which chosen attrs substitute vs.
+  which require a native build (this is part of spike S3, `12`); the macOS lane now covers both
+  the cache-hit path **and** the approved native sandboxed build path, so a coverage gap is an
+  availability/perf signal (a build happens) rather than a skipped test.
 - **Cost control:** Real Nix ops are cached where safe (NAR store reused across a night's
   run via a CI cache keyed by Nixpkgs narHash), but **integrity-relevant tests always
   re-verify signatures and NAR hashes** (no trusting stale cache for security assertions).
@@ -384,8 +389,12 @@ These are **constraints the implementation must satisfy** so testing is even pos
 - **AC-T9** (Crash ordering) A crash at *each* state of the generation transaction (prepared / rooted / activated / committed) recovers correctly (plan 05 §8.4): pre-swap states (prepared/rooted) leave the previous generation active and delete the unreachable staged generation/root; the **activated** state (after the `current` swap, before the `committed` row) always leaves `current` pointing at a fully-rooted, fully-documented tree and recovery finalizes `manifest`/`lock` + the committed row. Because the GC root is created **before** the swap, no crash ever leaves `current` pointing at an unrooted tree, and no orphaned unrooted staged path survives `gc`.
 - **AC-T10** (GC leases) `gc` invoked while another op holds the lease is serialized/refused
   and never collects the in-flight closure (plan 05 §9/§12).
-- **AC-T11** (Closure cache miss, macOS) A closure with any non-substitutable path fails with
-  `ACQUIRE_NO_BINARY` on macOS and never triggers a build (plan 07 §16.4, plan 04 §5/§6).
+- **AC-T11** (Cache-miss build behavior, macOS) On macOS: a buildable cache miss shows
+  the preview; cancelling leaves gen N active; with approval it builds natively under
+  `sandbox=true`/`sandbox-fallback=false` via `_nixbld` and commits; a sandbox-unavailable
+  state fails closed; an unsupported/impure derivation fails `ACQUIRE_NO_BINARY` even with
+  approval; a successful build writes a receipt/journal row and is rollback-safe
+  (plan 07 §16.4, plan 04 §5/§6/§7).
 
 ---
 
@@ -402,7 +411,8 @@ These are **constraints the implementation must satisfy** so testing is even pos
 ## 15. Unresolved Questions (→ `12`)
 
 - Q1 Exact perf budgets (defaults proposed in §6.7; finalize in `12`).
-- Q2 Whether aarch64-darwin binary coverage on cache.nixos.org is sufficient for the Real
-  lane without product-hosted artifacts (spike S3).
+- Q2 How much of the macOS Real lane is cache-hit vs. native-build (aarch64-darwin/x86_64-darwin
+  coverage on cache.nixos.org affects build frequency, not viability — builds are allowed per DR-003);
+  spike S3 sizes this.
 - Q3 Emulation strategy for aarch64-linux CI (QEMU vs native runners) cost tradeoff.
 - Q4 Whether security lane runs on every PR (slow) or only nightly+security-PRs (proposed).

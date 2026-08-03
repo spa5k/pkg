@@ -257,7 +257,7 @@ Field names below are referenced verbatim by docs 02, 03, 04, 05, 06. Full versi
         "version": "14.1.0"                    // display metadata ONLY (D-13)
       },
       "lockedAt": "2025-01-02T03:04:05Z",
-      "provenance": "cache:cache.nixos.org",   // or "local-build" (Linux, doc 04)
+      "provenance": "cache:cache.nixos.org",   // or "local-build" (Linux/macOS, doc 04)
       "sigsObserved": ["cache.nixos.org-1:..."]
     }
   }
@@ -307,14 +307,14 @@ All invocations:
 
 | Purpose | Invocation (sketch) | JSON key(s) consumed | Stable? | Owner |
 |---|---|---|---|---|
-| Eval/realize a selector (Linux) | `nix build <nixpkgs>#<attr> --no-link --print-out-paths --json` | `outputs.*` | ✅ | 04 |
+| Eval/realize a selector | `nix build <nixpkgs>#<attr> --no-link --print-out-paths --json` | `outputs.*` | ✅ | 04 |
 | Build path info / narHash | `nix store path-info --json --recursive <out>` | `path, narHash, references, closureSize` | ✅ | 03/04 |
 | Prefetch Nixpkgs source | `nix flake metadata github:NixOS/nixpkgs/<rev> --json` then verify narHash | `locks.nodes.nixpkgs.locked.rev`, `nar` | ✅ | 03 |
 | Prefetch Nix runtime tarball hash | (no Nix call; verify against TUF target hash) | — | — | 02 |
 | Copy/substitute closure | (handled by daemon automatically via substituters in nix.conf) | — | ✅ | 04 |
 | Verify store | `nix store verify --recursive [--repair] <store-path>` | per-path NAR/trust status | ✅ ⚠️ | 05 (`repair`) |
 | GC | `nix store gc` (respects our gcroots; we never `--delete-generations` on nix profiles) | — | ✅ | 05 (`gc`) |
-| Local build (Linux, approved) | `nix build ... --substituters "" --builders ""` (force local) | `outputs.*` | ✅ | 04 |
+| Local build (Linux/macOS, approved, native system) | `nix build ... --substituters "" --builders ""` (force local) | `outputs.*` | ✅ | 04 |
 | Index meta-eval (self-built) | `nix eval <nixpkgs>#legacyPackages.<system>.<expr-meta> --json` (doc 03) | meta records | ⚠️ S4 | 03 |
 
 > ✅ *Stability basis:* the realization / path-info / flake-metadata / build / gc calls are part of the stable Nix **new CLI** (`nix3-*`) and `--json` is a documented flag. — *Nix Reference Manual, "Command reference" → new-cli.*
@@ -412,7 +412,7 @@ sequenceDiagram
 | Foreign Nix appeared later | D-04 re-check on each privileged op | Fail closed with remediation; do not auto-fix. |
 | Corrupt manifest/lock | hash mismatch on load (doc 05) | Roll back to previous good generation; quarantine bad file. |
 | Partial download (Nix/Nixpkgs) | hash mismatch vs TUF/descriptor | Discard, re-fetch; never use unverifiable bytes. |
-| Store corruption | `nix store verify` non-zero | `pkg repair` re-substitutes; local rebuild only on Linux w/ approval. |
+| Store corruption | `nix store verify` non-zero | `pkg repair` re-substitutes; local rebuild on Linux or macOS (native) w/ approval (D-11). |
 | Disk full during stage | write/atomic-rename failure | Abandon stage; previous generation stays active (D-16). |
 | Expired update metadata | TUF timestamp expiry (doc 02) | Use cache within grace; else warn/refuse `update` (UD-00.5). |
 
@@ -430,7 +430,7 @@ sequenceDiagram
 |---|---|---|
 | Daemon supervision | systemd unit (pkg-managed) | launchd plist `org.pkg.daemon` (pkg-managed) |
 | Runtime install root | `/opt/pkg` | `/opt/pkg` |
-| Local builds | allowed w/ explicit approval (D-11) | **forbidden (binary-only)** — enforced in resolver: any cache-miss on macOS is an error, not a build |
+| Local builds | allowed w/ explicit approval (D-11); `nixbld` build users | allowed w/ explicit approval (D-11); `_nixbld` build users; Nix macOS sandbox uses different, generally narrower primitives than Linux |
 | Signing | n/a (LIC: distribute under our chosen license; out of scope here) | codesign + notarize the `pkg` binary + bundled Nix runtime (target V1) |
 | Store | `/nix/store` (INV-02) | `/nix/store` (INV-02); install requires admin to create `/nix` |
 

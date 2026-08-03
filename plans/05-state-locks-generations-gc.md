@@ -180,7 +180,7 @@ Identity = `storePath`, never `pname@version`.
         "pname": "ripgrep", "version": "14.1.0"
       },
       "lockedAt": "2024-08-02T23:14:05Z",
-      "provenance": "cache:cache.nixos.org",         // or "local-build" (Linux)
+      "provenance": "cache:cache.nixos.org",         // or "local-build" (Linux/macOS native sandboxed)
       "sigsObserved": ["cache.nixos.org-1:..."]
     }
   }

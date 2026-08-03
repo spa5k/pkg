@@ -48,10 +48,10 @@ The product maps host to a Nix `system` triple (*confirmed* [^system]):
 
 | Host | `system` | Build mode |
 |------|----------|------------|
-| x86_64 Linux | `x86_64-linux` | substitute; local build allowed (Linux) |
-| aarch64 Linux | `aarch64-linux` | substitute; local build allowed |
-| x86_64 macOS (Intel) | `x86_64-darwin` | substitute only (binary-only) |
-| aarch64 macOS (Apple Silicon) | `aarch64-darwin` | substitute only; **Rosetta not used** for x86_64-darwin paths |
+| x86_64 Linux | `x86_64-linux` | substitute first; native local build allowed (D-11) |
+| aarch64 Linux | `aarch64-linux` | substitute first; native local build allowed (D-11) |
+| x86_64 macOS (Intel) | `x86_64-darwin` | substitute first; native local build allowed (D-11) |
+| aarch64 macOS (Apple Silicon) | `aarch64-darwin` | substitute first; native local build allowed (D-11); **Rosetta not used** for x86_64-darwin paths |
 
 Detection: `uname -m` + `uname -s`, plus `sysctl -n hw.optional.arm64` on
 macOS to distinguish Apple Silicon (report `aarch64-darwin`, never fall back
@@ -84,9 +84,9 @@ Owned by root (or the daemon user), mode `0644`, path
 `<daemon-state>/nix.conf` referenced by the daemon. Minimal v1 contents:
 
 ```ini
-build-users-group = nixbld            # Linux; macOS uses its own build users
-sandbox = true                       # Linux builds; macOS binary-only so n/a
-sandbox-fallback = false             # fail closed, never build unsandboxed
+build-users-group = nixbld            # Linux: nixbld; macOS: _nixbld (created by installer)
+sandbox = true                       # both platforms: builds run sandboxed
+sandbox-fallback = false             # fail closed, never build unsandboxed (both platforms)
 require-sigs = true
 substituters = https://cache.nixos.org
 trusted-public-keys = cache.nixos.org-1:6NCHdD59...  # from descriptor (plan 02 §6.5/§7)
@@ -116,10 +116,14 @@ The bundled Nix runs as a **daemon** (`nix-daemon`):
   only. Build users: a `nixbld` group + `nixbld1..N` users created by the
   installer (*confirmed multi-user model* [^multi-user]).
 - **macOS:** a `launchd` daemon
-  (`system` domain `org.pkg.nix-daemon.plist`) for the same role. macOS has
-  no build sandbox in the Linux sense; since v1 is **binary-only on macOS**
-  the daemon substitutes only and never invokes a builder. (Sandbox-exec
-  exists but is out of scope for v1 — Q7.4.)
+  (`system` domain `org.pkg.nix-daemon.plist`) for the same role. macOS builds
+  run through Nix's macOS sandbox under the `_nixbld` group/users created by
+  the installer (D-11); the daemon is configured with `sandbox=true` and
+  `sandbox-fallback=false`, and `pkg` fails closed if sandbox or build-user
+  readiness cannot be verified. Nix's macOS sandbox uses different, generally
+  narrower platform primitives than the Linux `bwrap`/namespace sandbox —
+  `pkg` never claims identical isolation (§12, Q7.4). Substitution is still
+  tried first and preferred on every install.
 
 The product's CLI always talks to **its own daemon socket**, configured via
 generated `nix.conf` + env at the adapter call site (plan 04). It never relies
@@ -240,25 +244,33 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    (§8) including `/nix`, `~/.nix-profile`, `~/.nix-defexpr`, Homebrew's
    `nix`, `launchctl list | grep nix`, `/Library/LaunchDaemons/org.nixos.*` —
    refuse with remediation if found.
-2. Create `/nix` (root:admin), `/nix/store`, `/nix/var/nix/...`. (Standard Nix
-   on macOS still uses `/nix`.)
+2. Create `/nix` (root:admin), `/nix/store`, `/nix/var/nix/...` (standard Nix
+   on macOS still uses `/nix`); create the `_nixbld` group + `_nixbld1..N`
+   build users (multi-user build isolation, [^multi-user]); verify the host's
+   native toolchain (Xcode/Command Line Tools) is present for local builds.
 3. Extract bundled Nix to `/opt/pkg/nix`.
 4. Install `org.pkg.nix-daemon.plist` into `/Library/LaunchDaemons` and
-   `launchctl load`. Daemon runs as root, substitutes only (binary-only).
-5. Write root-owned `nix.conf` (sandbox lines omitted; substituters/keys from
-   descriptor).
+   `launchctl load`. Daemon runs as root and substitutes/builds via the
+   `_nixbld` build users.
+5. Write root-owned `nix.conf` (`sandbox=true`, `sandbox-fallback=false`,
+   `build-users-group=_nixbld`; substituters/keys from descriptor).
 6. Install `pkg` to `/usr/local/bin/pkg` (or `/opt/pkg/bin`).
 7. PATH integration (§10); uninstall manifest.
 
-**macOS binary-only enforcement:** the macOS daemon is configured with
-`max-jobs = 0` and no builder users; any attempt to build returns an error the
-product maps to `ACQUIRE_NO_BINARY` (plan 04/06). Because no build is possible,
-install relies on plan 04's **full-closure cache preflight**: preflight
-classifies **every** path in the recursive closure against `cache.nixos.org`
-and only reports "binary available" if **all** closure paths are cache hits; a
-single missing binary fails the op with `ACQUIRE_NO_BINARY` **before**
-activation (plan 04 §5/§6). `pkg info`/`pkg install --dry-run` surface this up
-front so macOS users never reach a partial activation.
+**macOS build readiness:** the macOS daemon runs with `sandbox=true`/
+`sandbox-fallback=false` and the `_nixbld` group/users created at install
+(D-11). Substitution is tried first; on a cache miss an **approved** native
+sandboxed build is permitted. A build that is impossible or disallowed
+(unsupported/broken/impure derivation, or sandbox/build-user unavailable, or
+`buildPolicy` denies the system) yields `ACQUIRE_NO_BINARY` and never runs,
+even with approval (plan 04/06). Plan 04's **full-closure cache preflight**
+still classifies **every** path in the recursive closure against
+`cache.nixos.org` before any acquire — now as an **availability signal** (it
+tells the user up front which paths will substitute vs. build and surfaces
+disallowed builds early), not as binary-only enforcement. `pkg info`/`pkg
+install --dry-run` surface this up front so users never reach a partial
+activation. macOS builds need the host's native toolchain (Xcode/Command Line
+Tools); the installer verifies its presence and `doctor` reports it.
 
 ### 7.4 Privilege & daemon protocol
 
@@ -406,12 +418,17 @@ snippets, or any foreign `/nix`.
 - Installer & root helper are the highest-privilege code paths — minimal,
   audit-targeted, no network in the helper, fixed allowlist of subcommands.
 - `nix.conf` is root-owned and checksummed; tampering ⇒ refuse ops.
-- Build users (`nixbld*`) are created with no login shell, no password,
-  confined home; sandbox on (Linux).
+- Build users (`nixbld*` on Linux, `_nixbld*` on macOS) are created with no
+  login shell, no password, confined home; `sandbox=true`/
+  `sandbox-fallback=false` on **both** platforms (D-11). `pkg` fails closed if
+  sandbox or build-user readiness cannot be verified.
 - The daemon socket is group-restricted; membership granted only to intended
   users at install.
 - No `setuid` binaries anywhere (I5).
-- macOS binary-only removes a whole class of build-time risk on that OS.
+- macOS now shares the Linux build-time risk surface (T-BUILD-*), mitigated
+  by the same sandbox/build-user/approval gates, with the honest caveat that
+  Nix's macOS sandbox uses different, generally narrower platform primitives
+  than Linux's (D-11); see plan 08.
 - Uninstall is conservative about `/nix` to avoid destroying foreign data.
 
 ## 13. Failure matrix (selected)
@@ -427,7 +444,7 @@ snippets, or any foreign `/nix`.
 | Rosetta-only Mac | Reported as `aarch64-darwin`; no x86_64-darwin fallback. |
 | Uninstall with foreign paths in `/nix` | Leaves `/nix`, prints notice; removes only our files. |
 | Daemon crash mid-op | Nix store is durable; product recovers via journal (plan 04/05). |
-| macOS path without `aarch64-darwin` binary | `ACQUIRE_NO_BINARY` (plan 04); never builds. |
+| macOS path impossible/disallowed to build (unsupported/broken/impure, or sandbox/build-user unavailable) | `ACQUIRE_NO_BINARY` (plan 04); never builds, even with approval. A buildable macOS cache miss offers the build preview instead. |
 
 ## 14. Dependencies on other plans
 
@@ -457,8 +474,9 @@ snippets, or any foreign `/nix`.
 - **PR-P3 — Linux installer (systemd, build users, paths, manifest).**
   *Acceptance:* clean install on a fresh VM; re-run is idempotent; unmanaged
   fixture → refuse.
-- **PR-P4 — macOS installer (launchd, `.pkg`, paths).** *Acceptance:* clean
-  install on fresh macOS VM; binary-only enforced (`max-jobs=0`).
+- **PR-P4 — macOS installer (launchd, `.pkg`, `_nixbld` build users, paths).** *Acceptance:* clean
+  install on fresh macOS VM; `_nixbld` build users + `sandbox=true`/
+  `sandbox-fallback=false` verified; native toolchain (Xcode/CLT) check present.
 - **PR-P5 — Privileged root helper (fixed allowlist).** *Acceptance:* every
   subcommand unit-tested; no network in helper; plan-08 audit checklist met.
 - **PR-P6 — PATH integration (`profile.d`, `paths.d`, `shell-init`).**
@@ -477,9 +495,13 @@ snippets, or any foreign `/nix`.
    foreign unit is modified or removed.
 3. The store prefix is `/nix/store`; the product's own binary/state are **not**
    required to be inside `/nix/store` (spike acceptance).
-4. Linux local builds run sandboxed under `nixbld*` users; macOS never builds
-   (`max-jobs=0`) and **any** closure path missing a `cache.nixos.org` binary
-   yields `ACQUIRE_NO_BINARY` (full-closure preflight, plan 04 §5/§6).
+4. Linux and macOS local builds run sandboxed under the daemon's build users
+   (`nixbld*`/`_nixbld*`) with `sandbox=true`/`sandbox-fallback=false` only
+   after explicit approval (D-11); a build that is impossible/disallowed
+   (unsupported/broken/impure, or sandbox/build-user unavailable) yields
+   `ACQUIRE_NO_BINARY` even with approval. The full-closure cache preflight
+   (plan 04 §5/§6) is an availability signal that classifies every closure
+   path up front, not binary-only enforcement.
 5. After install, a new login shell has `<user-state>/current/bin` on PATH on both
    OSes; `pkg doctor` confirms and warns if shadowed.
 6. `pkg self-uninstall --yes` on a sole-manager host leaves no `pkg` files,
@@ -500,8 +522,12 @@ snippets, or any foreign `/nix`.
   *(Plan 12.)*
 - **Q7.3 musl/Linux-static.** v1 targets glibc `*-linux`; musl is a spike
   (affects bundled-Nix build and `system`). *(Default: defer.)*
-- **Q7.4 macOS sandbox-exec.** Out of scope (binary-only makes it moot).
-  *(Default: not used.)*
+- **Q7.4 macOS sandbox primitives.** Nix's macOS sandbox is supported but
+  uses different, generally narrower platform primitives than Linux; `pkg`
+  requires `sandbox=true`/`sandbox-fallback=false` and fails closed if
+  readiness cannot be verified, while honestly disclosing that macOS isolation
+  is not identical to Linux's. Custom `sandbox-exec` profiles are out of scope.
+  *(Default: rely on Nix's macOS sandbox; never claim parity.)*
 - **Q7.5 Per-user vs shared profile.** **RESOLVED → multi-user per-user
   authoritative state (D-17/INV-10).** The managed
   runtime/channel/index/source/store service is root-owned and shared;

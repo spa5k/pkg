@@ -53,15 +53,12 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Consequences:** Adds a mature dependency; metadata is tiny; gets anti-rollback/freeze free.
 - **Owner:** F + A. **Source:** `[TUF]`, `[TOUGH]`, `[SIGSTORE]`.
 
-### DR-003 — macOS is binary-only in v1; signing & notarization required
-- **Status:** Proposed (pending **S3 / PR-7**).
-- **Context:** macOS Nix sandboxing is limited; local builds add risk and cost. Apple
-  requires Developer-ID signing + notarization for a usable installer. (`07`,`08` T-BUILD-1)
-- **Decision:** v1 macOS = **binary-only** (substitution from `cache.nixos.org`); no local
-  build. Installer must be signed + notarized. Local builds on macOS are **deferred**.
-- **Consequences:** macOS users depend on `aarch64-darwin` binary availability (S3 must
-  confirm coverage); cannot build arbitrary attrs on macOS in v1.
-- **Owner:** E. **Source:** `[NIX-MANUAL]` (sandbox limits); spike S3.
+### DR-003 — macOS build security + signing/notarization (supersedes the former binary-only decision)
+- **Status:** Proposed (pending **S3 / PR-7**); supersedes the earlier "macOS is binary-only in v1" framing.
+- **Context:** Apple requires Developer-ID signing + notarization for a usable installer/runtime. The prior policy made macOS binary-only, but `cache.nixos.org` substitution coverage is imperfect and a blanket refusal on every Darwin cache miss is a poor, surprising experience. macOS *can* build natively for `x86_64-darwin`/`aarch64-darwin`, so the question is **how** to do it securely, not whether to. (`07`,`08` T-BUILD-*)
+- **Decision:** On macOS, cache substitution is tried first and preferred; on a cache miss, v1 may build locally for the host's **native** Darwin system — never via Rosetta, cross-compilation, emulation, or remote builders — under the same gates as Linux (D-11): a deterministic build preview, explicit single-operation approval (cancel default), `sandbox=true`/`sandbox-fallback=false`, and the managed daemon's `_nixbld` build users/group. `pkg` fails closed if sandbox or build-user readiness cannot be verified and never claims macOS isolation identical to Linux's. The installer/runtime + `pkg` binary must be signed + notarized; locally-built Nix outputs are **not** individually Apple-notarized by `pkg` (installer codesigning ≠ package building).
+- **Consequences:** macOS users no longer fail on every cache miss; they opt into native builds knowingly. Residual: macOS now shares the T-BUILD surface (mitigated by the same gates, with the honest caveat that Nix's macOS sandbox uses different, generally narrower primitives than Linux's), plus native toolchain availability (Xcode/CLT) tracked in RISK-06. Cache coverage gaps become an availability/perf concern, not hard binary-only enforcement (also RISK-06).
+- **Owner:** E. **Source:** `[NIX-MANUAL]` (sandboxed builds, macOS build users); spike S3.
 
 ### DR-004 — Resolve UX & index strategy gated on reevaluation cost
 - **Status:** Proposed (pending **S4 / PR-6**).
@@ -78,9 +75,7 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Status:** Proposed (pending **S5 / PR-8**).
 - **Context:** Local builds run Nixpkgs build scripts on the host; sandboxing is the control.
   (`04`,`08` T-BUILD-1/3)
-- **Decision:** Linux permits local builds **only** after an explicit, non-default user
-  approval following a closure-size + derivation preview; `sandbox=true`, RLIMIT + cgroup
-  caps, builder-user isolation, seccomp where feasible. macOS has no local build (DR-003).
+- **Decision:** Local builds (Linux **and** macOS, native system only) are permitted **only** after an explicit, non-default user approval following a deterministic closure/derivation preview; `sandbox=true`/`sandbox-fallback=false`, platform-appropriate caps (cgroups/RLIMIT on Linux; RLIMIT/disk/load guards on macOS — no cgroups invented), build-user isolation (`nixbld`/`_nixbld`), and fail-closed readiness verification. macOS shares this policy per DR-003 (no longer binary-only). Approval never overrides a hard policy refusal (unsupported/broken/impure derivation, or sandbox/build-user unavailable).
 - **Consequences:** Users opt into build risk knowingly; sandbox escapes remain a residual.
 - **Owner:** E + A. **Source:** `[NIX-MANUAL]` (sandboxed builds); spike S5.
 
@@ -171,9 +166,9 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 |-------|----------|-------------------|------------------------------|-------------------|--------|----|
 | **S1** (PR-4) | Is `/nix/store` viable for exclusive managed use, and how do we detect/safely refuse unmanaged Nix? | Concrete layout + detection method + refusal text validated on Linux & macOS; go/no-go on alternative prefix. | PR-9, PR-12, PR-27, PR-28 | end of M0.5 | Proposed | DR-001 |
 | **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | Proposed | DR-002 |
-| **S3** (PR-7) | Do v1 attrs substitute for `aarch64-darwin`, and is a notarized installer feasible? | Availability matrix for fixture attrs; notarized pkg builds & validates. | PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed | DR-003 |
+| **S3** (PR-7) | Do v1 attrs substitute for `x86_64-darwin`/`aarch64-darwin`, **and** are native macOS local builds viable (sandbox, `_nixbld` users, Xcode toolchain, resource caps, fail-closed)? Is a notarized installer feasible? | Availability matrix for fixture attrs; a real native sandboxed Darwin build under `_nixbld`; notarized installer/runtime builds & validates. | PR-26, PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed | DR-003 |
 | **S4** (PR-6) | What are realistic resolve/reeval costs and index-build costs? | Measured time/memory table; proposed budgets. | PR-14, PR-16, PR-32 | end of M0.5 | Proposed | DR-004 |
-| **S5** (PR-8) | Does sandbox+caps+approval work for Linux local builds? | Sandboxed build blocked from network; caps effective; approval hook demonstrable. | PR-26, PR-30 | end of M0.5 | Proposed | DR-005 |
+| **S5** (PR-8) | Does sandbox+caps+approval work for local builds on **both Linux and macOS**? | Sandboxed build blocked from network on both; cgroups/RLIMIT effective (Linux) and RLIMIT/guards effective (macOS); `_nixbld` build users ready; approval + fail-closed demonstrable. | PR-26, PR-30 | end of M0.5 | Proposed | DR-005 |
 
 > **Guardrail:** Per `11` §9, no irreversible architecture merges before these DRs are
 > accepted. If any spike returns **no-go**, the dependent milestone replans before code lands.
@@ -194,8 +189,8 @@ AC-D2.)
 | **RISK-03** | Channel signing key compromise | T-CHAN-5, T-REL-2 | L | H | H | A | TUF threshold + offline root + short timestamp expiry + revocation procedure (`10` §4.4) | M (until rotation) | signing audit logs; anomaly alerts |
 | **RISK-04** | Store-prefix/coexistence surprise invalidates installer layout | T-INST-4 | M | H | H | F | spike S1 **before** PR-9/12/27/28 (`11` §9) | L (if S1 on time) | S1 DR |
 | **RISK-05** | TUF/crypto choice wrong (e.g., accidental bespoke scheme) | T-CHAN-1/2/3 | L | H | H | F | spike S2 mandates real TUF/tough (DR-002) | L | S2 DR; crypto review |
-| **RISK-06** | macOS binary coverage gaps break binary-only policy | T-BUILD-1, T-CACHE-1 | M | M | M | E | spike S3 matrix; curate catalog or ship product cache if gaps (deferred) | M | S3 DR; per-release availability CI |
-| **RISK-07** | Local-build sandbox escape / resource exhaustion | T-BUILD-1/2/3 | L | H | M | E | sandbox=true, RLIMIT/cgroups, seccomp, builder-user isolation; macOS no build (DR-003) | M | kernel CVEs; build telemetry |
+| **RISK-06** | Darwin build availability / security / toolchain (cache coverage gaps + native macOS build readiness) | T-BUILD-1/2/3, T-CACHE-1 | M | M | M | E | native macOS builds gated like Linux (D-11/DR-003); cache coverage is an **availability/perf** signal (full-closure preflight), not binary-only enforcement; `_nixbld` users + Xcode/CLT + `sandbox-fallback=false` verified at install/doctor; curate catalog or ship product cache only if coverage gaps are material | M | S3 DR; per-release availability CI; toolchain/sandbox readiness checks |
+| **RISK-07** | Local-build sandbox escape / resource exhaustion (Linux **and** macOS) | T-BUILD-1/2/3 | L | H | M | E | `sandbox=true`/`sandbox-fallback=false` on both, RLIMIT/cgroups (Linux)/RLIMIT+guards (macOS), seccomp where feasible, `nixbld`/`_nixbld` builder-user isolation, fail-closed readiness; macOS shares this surface per DR-003 | M | kernel CVEs; macOS sandbox narrower than Linux; build telemetry |
 | **RISK-08** | Path/symlink attack on state or activation | T-PATH-1/2/3/4 | M | H | H | E | 0700 dirs, O_NOFOLLOW, openat, store-relative symlinks, ancestor-perm checks | L | security lane (AC-S4) |
 | **RISK-09** | State tampering / concurrent-writer corruption | T-STATE-1/2/3/4, T-CONC-1/2 | M | H | H | E | integrity anchor (DR-013), flock+lease+journal, atomic current, fail-closed | L | fault lane (AC-S2/S5) |
 | **RISK-10** | Privileged helper privilege escalation / unauth IPC | T-INST-3/5, T-DAEMON-1 | L | H | H | E | caller auth, allowlist, prefer polkit/launchd over setuid, drop privs | L | security lane (AC-S6) |
@@ -227,7 +222,7 @@ AC-D2.)
 | Managed Nix (bundled, pinned) | ✅ exclusive | coexistence w/ user Nix → v2 | DR-001, DR-007 |
 | Channel signing | real TUF / tough, 1-of-1 → 2-of-3 at GA | Sigstore attestation layer → later | DR-002 |
 | Binary cache | cache.nixos.org only | product-hosted / multi-source → v2 | DR-006, RISK-02 |
-| macOS local build | ❌ binary-only | local build → v2 | DR-003 |
+| macOS local build | ✅ native + sandbox + approval (like Linux) | none (cross-compilation/Rosetta/emulation/remote builders remain out of scope) | DR-003, RISK-06 |
 | Linux local build | ✅ sandbox + approval | seccomp hardening refinements → later | DR-005, RISK-07 |
 | Search index | disposable, narHash-pinned | upstream packages.json.br as permanent API → not assumed | DR-004, DR-010 |
 | Runtime app isolation | ❌ none | firejail/bwrap integration → v2 | DR-009, RISK-01 |
