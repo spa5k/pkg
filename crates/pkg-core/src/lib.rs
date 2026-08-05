@@ -1,11 +1,51 @@
 //! `pkg-core` — the shared domain vocabulary for `pkg`.
 //!
-//! This crate is intentionally empty as of **PR-1**. It exists only as the
-//! permanent home for the Cargo workspace so that `cargo build`, `check`,
-//! `clippy`, `doc`, and `fmt` operate against a real member crate — a
-//! memberless virtual workspace makes all of those commands fail.
+//! This crate holds the **PR-2** domain types (see `plans/11-pr-roadmap.md`):
+//! the user-intent-vs-exact-realization distinction, identity, supported
+//! system triples, channel/policy vocabulary, and Nix-native version
+//! comparison. Everything else in `pkg` builds on these types.
 //!
-//! **PR-2** (see `plans/11-pr-roadmap.md`) adds the domain modules — identity,
-//! selector, realization, channel, version, and system — that the rest of `pkg`
-//! builds on. Until then this crate exposes no types and no public API, by
-//! design.
+//! # Design notes
+//!
+//! - **Intent vs realization** (`plans/00` D-13 / `plans/05` §6): a
+//!   [`PackageSelector`] is what the user asked for; a [`Realization`] is the
+//!   exact realized store object (input-addressed or content-addressed).
+//!   `pname@version` is display metadata and is **never** an identity — the
+//!   canonical identity is the store path ([`RealizationIdentity`]).
+//! - **Versions** ([`version`]): a [`PackageVersion`] preserves the raw Nix
+//!   string, with literal [`Eq`]/[`Hash`] and **no** [`Ord`]; ordering goes
+//!   through [`compare_nix_versions`], which mirrors upstream Nix exactly.
+//! - **No persistence / serde / CLI** here: this PR is the value vocabulary
+//!   only.
+//! - **No unsafe**, no runtime dependencies; `proptest` is a dev-dependency for
+//!   the roadmap-required property tests (`plans/09` §6.1).
+//!
+//! The intentional public surface is re-exported at the crate root below.
+
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+
+pub mod channel;
+pub mod identity;
+pub mod realization;
+pub mod selector;
+pub mod system;
+pub mod version;
+
+// Re-export the intentional public surface at the crate root.
+pub use channel::{
+    ChannelError, ChannelName, ChannelSequence, NixpkgsRevision, PolicyVersion, SourceRevision,
+};
+pub use identity::{
+    DerivationPath, IdentityError, NarHash, OutputName, RealizationIdentity, StorePath,
+};
+pub use realization::{Realization, RealizationError};
+pub use selector::{
+    AttributePath, OutputSelection, PackageSelector, PinState, SelectorError, SelectorId,
+    SelectorInput,
+};
+pub use system::{Architecture, Os, System, SystemError};
+pub use version::{
+    PackageVersion, VersionBound, VersionError, VersionPreference, VersionRange,
+    compare_nix_versions,
+};

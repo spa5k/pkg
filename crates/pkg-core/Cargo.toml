@@ -1,8 +1,9 @@
 # `pkg-core` — shared domain vocabulary crate for `pkg`.
 #
-# PR-1 scaffold only: this manifest plus an empty `lib.rs` are the permanent
-# home for the workspace so the toolchain is operable. PR-2 adds the domain
-# modules/logic/tests. The crate has no dependencies in PR-1.
+# PR-2 fills in the domain modules (identity, selector, realization, channel,
+# version, system) that the rest of `pkg` builds on. PR-1 stood up the scaffold
+# (this manifest plus an empty `lib.rs`); this PR extends it with the domain
+# types/logic/tests. The crate has no runtime dependencies.
 #
 # License: intentionally ABSENT (DR-015, plans/12-open-decisions-and-risks.md).
 
@@ -12,3 +13,15 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dev-dependencies]
+# Property-based testing for the roadmap-required proptests (doc 09 §6.1,
+# layer 1). Pinned exactly and kept `std`-only (no fork/timeout/bit-set) to
+# minimize the transitive dependency surface. Current as of this PR, licensed
+# "MIT OR Apache-2.0" — within the `deny.toml` dependency allowlist.
+#
+# MSRV note: `proptest` 1.11.0 declares an MSRV of 1.85, while the workspace
+# MSRV is 1.96 (rust-toolchain.toml). This crate's own code targets the
+# workspace toolchain; the dependency's lower declared MSRV does not lower the
+# workspace floor.
+proptest = { version = "=1.11.0", default-features = false, features = ["std"] }

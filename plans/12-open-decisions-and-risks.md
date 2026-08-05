@@ -17,7 +17,7 @@ decisions, risks, spikes, and v1 defaults/deferrals referenced throughout).
 |------|---------|
 | **Selector** | User intent, e.g. "openssl" (display pname@version); **not** a unique identity. (`05`,`06`) |
 | **Realization** | The exact pinned-Nixpkgs attribute + version + system actually installed. (`00`,`04`) |
-| **Identity** | A Realization's unique key (attribute + rev + system + output); two equal Realizations ⇒ same Identity. |
+| **Identity** | A Realization's canonical identity is its **store path** (`StorePath`); attribute/rev/system/output are resolution provenance/lookup data, not a competing identity. Two equal Realizations ⇒ same Identity. |
 | **Channel descriptor** | The signed metadata selecting managed-Nix version, Nixpkgs rev/narHash, index hashes, allowed substituters/keys, systems, policyVersion, sequence, expiry. (`02`) |
 | **Managed Nix** | The pinned Nix runtime the product bundles/owns; users never invoke it directly. (`01`,`07`) |
 | **Disposable index** | Derived search/list/info data; regenerable; **not** a trust root. (`03`,`08` T-IDX) |
