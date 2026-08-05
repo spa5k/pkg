@@ -1,0 +1,43 @@
+# Docs linkcheck — validates Markdown cross-references across the repo and the
+# PR-0 structural invariants (plans/ as source of truth, threat-model + reviewer
+# links). Runs a deterministic, repository-local Python checker (stdlib only —
+# no package-manager network installs).
+
+name: docs-linkcheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: this job only needs to read repository contents.
+permissions:
+  contents: read
+
+# Bound the work: supersede stale runs for the same ref, and never run long.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linkcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        # v6.0.2 — pinned to an immutable full-length commit SHA.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Run checker unit tests
+        # Standard-library unittest, stdlib only, tempdirs — runs before the
+        # real checker so a regression in link extraction / structural
+        # predicates fails the job fast with an actionable signal.
+        run: |
+          python3 -m unittest discover \
+            -s .github/scripts/tests -p 'test_*.py' -v
+
+      - name: Check docs links
+        run: python3 .github/scripts/check_docs_links.py

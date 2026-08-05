@@ -1,7 +1,7 @@
 # 04 — Resolution, Install & Build Pipeline
 
 > Owner: execution track. This document is **planning only**; it specifies no Rust code.
-> Sibling plans it depends on are cross-referenced by number. See [Dependencies](#dependencies-on-other-plans).
+> Sibling plans it depends on are cross-referenced by number. See [Dependencies](#14-dependencies-on-other-plans).
 
 ## 1. Purpose
 

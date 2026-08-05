@@ -1,7 +1,7 @@
 # 05 — State, Locks, Generations, GC
 
 > Owner: execution track. **Planning only**; no Rust code. Cross-references by
-> number; see [Dependencies](#dependencies-on-other-plans).
+> number; see [Dependencies](#15-dependencies-on-other-plans).
 
 ## 1. Purpose
 

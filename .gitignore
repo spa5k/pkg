@@ -1,0 +1,40 @@
+# --- Rust build artifacts (workspace arrives in PR-1) ---
+/target
+**/target
+target/
+
+# Per-crate Cargo registries are transient; keep them local.
+# NOTE: Cargo.lock is intentionally NOT ignored — for a binary/application
+# workspace we commit it for reproducible builds.
+
+# --- Local environment / secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Editor / IDE ---
+.vscode/
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.fleet/
+.zed/
+
+# --- OS files ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Tooling caches (local only; never policy/config) ---
+# Keep these ignored, but explicitly do NOT ignore project config such as
+# deny.toml, rust-toolchain.toml, rustfmt.toml, clippy.toml, .github/, etc.
+# Python: the docs-linkcheck checker is stdlib-only, but running it locally
+# creates __pycache__ bytecode that must never be committed.
+__pycache__/
+*.py[cod]
+.cache/
+*.log
