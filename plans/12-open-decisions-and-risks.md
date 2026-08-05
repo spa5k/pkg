@@ -32,16 +32,79 @@ Format: **ID · Status · Date · Supersedes/Superseded-by · Context · Decisio
 Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferred`.
 
 ### DR-001 — Store prefix & managed-Nix coexistence
-- **Status:** Proposed (pending **S1 / PR-4**).
+- **Status:** **Proposed** post **S1 / PR-4** — see `spikes/s1-store-prefix/findings.md`. The
+  spike's **technical recommendation and evidence are complete** (all documented S1 success
+  criteria in `12` §2 — concrete layout + detection method + refusal text validated on Linux &
+  macOS + go/no-go on alternative prefix — are supported by executed + primary-source
+  evidence), but the DR remains **Proposed, not Accepted**: per `11` §2 / `CONTRIBUTING` §5 a
+  spike DR is `Accepted` only after the spike owner **and** the affected area owners (F, E, A)
+  sign off. That recorded sign-off has not happened, so the **AC-D1 gate is NOT cleared** by
+  this entry and dependent PRs (PR-9/PR-12/PR-27/PR-28) must not merge on this basis until the
+  DR is Accepted. The two honesty gates below are also still open.
 - **Context:** Nix historically assumes `/nix/store`; relocatable prefixes exist via `--store`
   for some operations but many assumptions bake the path in. v1 must own its store and must
-  not collide with or corrupt a user's unmanaged Nix. (`01`,`07`)
-- **Decision (default pending spike):** The product uses the standard `/nix/store` under an
-  **exclusive managed** model. If an unmanaged Nix is detected, the product **fails closed**
-  with remediation and **never auto-deletes** it. Coexistence with a separate prefix is
-  **deferred** to v2. (`00`,`08` T-INST-4, G6)
+  not collide with or corrupt a user's unmanaged Nix. (`01`,`07`) Spike S1 corrected the prior
+  over-broad claim "stock Nix is not relocatable at all": stock Nix *is* chroot-relocatable on
+  **Linux only** (`--store <root>`; logical store stays `/nix/store`; programs run only by
+  chroot-ing) and *can* change the logical store dir (`local?store=…`), but the latter is
+  documented "not recommended" and **makes it impossible to use `cache.nixos.org`**.
+- **Decision:** The product uses the standard logical `/nix/store` with **stock (unmodified,
+  pinned-upstream) Nix** under an **exclusive managed** model. Product binary/state/config/logs
+  live **outside** `/nix` (e.g. `/usr/local/bin/pkg`, `/var/lib/pkg/` (Linux) / macOS
+  machine-global **`/Library/Application Support/pkg`** — the leading slash = the machine-global
+  `/Library`, distinct from per-user `~/Library/Application Support/pkg` — / per-user
+  `$XDG_DATA_HOME/pkg`). **Multi-user with daemon** on both Linux and macOS (single-user is
+  unsupported on macOS). The daemon uses the standard socket `/nix/var/nix/daemon-socket/socket`
+  (safe *only because* preflight first proves exclusive ownership); a product-specific socket is
+  a v2 defense-in-depth option, not a substitute for exclusive ownership. **Go/no-go on
+  alternative prefix: NO-GO** — every non-standard option fails at least one hard V1 requirement
+  (an alternate logical store-dir and a compile-time store-dir (Nix Meson option
+  `-Dlibstore:store-dir=`) break `cache.nixos.org` reuse; a chroot store is Linux-only and
+  cannot run programs natively). If an unmanaged or ambiguous Nix artifact is detected, the
+  product **fails closed** with remediation and **never auto-deletes** it (no `--force`).
+  Coexistence with a separate prefix is **deferred** to v2. (`00` D-03/04/10/14, INV-02;
+  `08` T-INST-4, G6; `07` I1/I4)
 - **Consequences:** v1 cannot be installed alongside another Nix. Honest, bounded, reversible.
-- **Owner:** F (Foundations). **Source:** `[NIX-MANUAL]` (store model); spike S1.
+  The spike detector is **install/preflight only** and is the **unprivileged early read-only
+  scan**: any Nix artifact — up to and including a lone pkg ownership marker — is a REFUSE
+  (exit 2); there is no runtime/mode recognition in the spike. **Two-phase preflight contract:**
+  the unprivileged scan can REFUSE (advisory) but can **never authorize** installation — only a
+  FULL read-only **privileged** preflight re-run by the signed installer/helper **immediately
+  before any mutation** can authorize proceeding. This closes the unprivileged permission gap
+  (e.g. `/var/root` is unreadable as non-root) and shrinks the TOCTOU window to the moment
+  before mutation. Remediation is split by result: **ambiguity-only** (no unmanaged/marker
+  evidence) prints an advisory that **contains no removal/uninstall instructions** and demands
+  the privileged read-only recheck; **definite** unmanaged/marker evidence provides **bounded
+  vendor-uninstall guidance** (pkg never removes it). Once the DR is Accepted, PR-9 may rely on
+  the spike's detector contract (signal IDs; exit 0=clean / 2=refuse / 64=usage; `--root`/`--json`;
+  fail-closed-on-ambiguity; no `PKG_PROBE_*` env bypass; pkg ownership marker is corroborating
+  only and is itself a refusal at install time). Runtime/`doctor` recognition of an existing
+  `/nix` tree as pkg-owned is **deferred to PR-9/PR-12** and must require an
+  **authenticated/validated ownership receipt** PLUS verification of the **complete expected
+  managed-artifact set** — never a path or marker alone. PR-12/PR-27/PR-28 may rely on the layout
+  invariants (standard `/nix/store`; product files outside `/nix`; multi-user daemon; standard
+  socket behind exclusive ownership) and the refusal copy.
+- **Open gates (honesty):** (1) **F/E/A sign-off pending** — per `11` §2 / `CONTRIBUTING` §5 a
+  spike DR requires spike-owner + affected area-owner (F, E, A) sign-off; this entry records only
+  the technical basis, hence **Proposed**. (2) **No real-Nix'd host / privileged installer
+  executed** — what was validated by execution: a **real Nix-free macOS host produced a safe
+  ambiguity/refusal as non-root** (unreadable `/var/root`), a **root Alpine container produced
+  CLEAN**, and **all positive-platform artifacts are fixture-driven**. What remains inference /
+  unvalidated: native-execution-of-cache-paths, two-daemon collision, and — critically — **the
+  privileged macOS CLEAN** (the two-phase privileged preflight was NOT run in the spike). Real-Nix
+  and privileged validation is deferred to the PR-9/PR-12 Real-Nix lanes and PR-27/PR-28
+  installers.
+- **Cross-plan note (scoped):** On Acceptance, this DR **supersedes** the stale, over-broad
+  relocatability/socket statements in E-owned `plans/07` §6.2 — specifically "stock Nix is **not
+  relocatable** to an arbitrary prefix" (it is chroot-relocatable on Linux and can change the
+  logical store-dir, just not in any way that meets V1's requirements) and spike deliverable #4
+  ("prefer product prefix" for the daemon socket), which the DR resolves to the **standard
+  socket behind exclusive ownership**. `plans/07` is **E-owned and must be reconciled by its
+  owner in PR-9/PR-12**; this spike does **not** edit `plans/07` and no tracking issue is claimed.
+- **Owner:** F (Foundations). **Source:** `[NIX-MANUAL]` local-store/multi-user/installation
+  pages (versions recorded in spike); Nix source installer scripts + `src/libstore/meson.options`/
+  `src/libstore/meson.build` at tag `2.34.8`, commit
+  `f3f1c3c5b8ad91850e0f7c590cf177f7ab022024`; spike S1 (`spikes/s1-store-prefix/findings.md`).
 
 ### DR-002 — Channel signing: real TUF via `tough`
 - **Status:** Proposed (pending **S2 / PR-5**); target `Accepted` before PR-11.
@@ -183,7 +246,7 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 
 | Spike | Question | Success criterion | Blocks (no-merge before DR) | Decision deadline | Status | DR |
 |-------|----------|-------------------|------------------------------|-------------------|--------|----|
-| **S1** (PR-4) | Is `/nix/store` viable for exclusive managed use, and how do we detect/safely refuse unmanaged Nix? | Concrete layout + detection method + refusal text validated on Linux & macOS; go/no-go on alternative prefix. | PR-9, PR-12, PR-27, PR-28 | end of M0.5 | Proposed | DR-001 |
+| **S1** (PR-4) | Is `/nix/store` viable for exclusive managed use, and how do we detect/safely refuse unmanaged Nix? | Concrete layout + detection method + refusal text validated on Linux & macOS; go/no-go on alternative prefix. | PR-9, PR-12, PR-27, PR-28 | end of M0.5 | Proposed (technical evidence complete; F/E/A sign-off pending) | DR-001 |
 | **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | Proposed | DR-002 |
 | **S3** (PR-7) | Do v1 attrs substitute for `x86_64-darwin`/`aarch64-darwin`, **and** are native macOS local builds viable (sandbox, `_nixbld` users, Xcode toolchain, resource caps, fail-closed)? Is a notarized installer feasible? | Availability matrix for fixture attrs; a real native sandboxed Darwin build under `_nixbld`; notarized installer/runtime builds & validates. | PR-26, PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed | DR-003 |
 | **S4** (PR-6) | What are realistic resolve/reeval costs and index-build costs? | Measured time/memory table; proposed budgets. | PR-14, PR-16, PR-32 | end of M0.5 | Proposed | DR-004 |
