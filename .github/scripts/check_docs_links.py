@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0 OR MIT
 """Repository-local docs link checker for the `pkg` plan set.
 
 Pure Python 3 standard library — no third-party dependencies, no network.
@@ -41,6 +40,14 @@ from typing import Dict, List, Set, Tuple
 # Repo root = the directory three levels up from this script
 # (.github/scripts/check_docs_links.py -> repo root).
 REPO_ROOT: Path = Path(__file__).resolve().parents[2]
+
+# Path components that mark trees the checker must never scan. Files living
+# under any directory named here are excluded from Markdown discovery: `.git`
+# is VCS metadata, and `target` is Rust build output (notably the generated
+# `target/doc/static.files/*.md` license files emitted by `cargo doc`, which
+# otherwise inflate the author-owned Markdown count). Matched as exact path
+# components, never substrings, so e.g. `my-target/` stays in scope.
+IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target"}
 
 # Plans that must exist (PR-0 makes plans/ the source of truth).
 REQUIRED_PLANS: List[str] = [
@@ -151,10 +158,17 @@ def collect_heading_slugs(text: str) -> Set[str]:
 
 
 def iter_markdown_files() -> List[Path]:
-    """All tracked-style .md files under the repo root, excluding .git."""
+    """All author-owned `.md` files under the repo root.
+
+    The repo root is rglob-scanned for Markdown, but anything inside a
+    directory listed in :data:`IGNORED_DIR_COMPONENTS` is skipped. That keeps
+    the scanned set equal to the author-owned Markdown rather than including
+    VCS metadata (`.git`) or Rust build output (`target`, e.g. the
+    `target/doc/static.files/*.md` license files produced by `cargo doc`).
+    """
     out: List[Path] = []
     for p in sorted(REPO_ROOT.rglob("*.md")):
-        if ".git" in p.parts:
+        if IGNORED_DIR_COMPONENTS.intersection(p.parts):
             continue
         out.append(p)
     return out

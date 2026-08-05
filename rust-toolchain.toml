@@ -1,0 +1,12 @@
+# Exact, immutable toolchain for the `pkg` workspace.
+#
+# Pinned to channel "1.96.1" (NOT a mutable "stable") so every contributor and
+# CI run uses the same compiler. This is also the MSRV declared in
+# [workspace.package] rust-version = "1.96" (see Cargo.toml). rustfmt + clippy
+# are required by the G-LINT job (.github/workflows/ci-fast.yml). No cross
+# compilation targets are installed here.
+
+[toolchain]
+channel = "1.96.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

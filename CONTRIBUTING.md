@@ -56,12 +56,47 @@ DR is accepted (roadmap §9 guardrails).
   python3 .github/scripts/check_docs_links.py
   ```
 - **Code PRs (PR-1 onward):** the lanes defined in [`plans/09`](plans/09-testing-and-validation.md)
-  apply as the roadmap entry specifies — at minimum the Fast-CI lint job
-  (`rustfmt`, `clippy -D warnings`, `cargo deny check`, `cargo audit`, `cargo doc`). Do not
-  disable a gate to make CI green; fix the cause or split the PR.
+  apply as the roadmap entry specifies — at minimum the Fast-CI **G-LINT** job
+  ([`ci-fast.yml`](.github/workflows/ci-fast.yml): `fmt`, `clippy -D warnings`, `doc`,
+  `build`, `cargo deny check`, `cargo audit`). Do not disable a gate to make CI green; fix
+  the cause or split the PR.
 - **Trust-surface PRs:** the relevant security test lane from
   [`plans/08`](plans/08-security-model.md) must be green *and* A's security review recorded
   on the PR before merge.
+
+### 3.1 Toolchain, MSRV, and the local G-LINT gate
+
+- **Repo toolchain.** `rust-toolchain.toml` pins the exact channel **`1.96.1`** (profile
+  `minimal`, components `rustfmt` + `clippy`). CI and contributors use this exact toolchain;
+  it is deliberately **not** a mutable `stable`. The workspace **MSRV is `1.96`**
+  (`[workspace.package] rust-version`), matching the repo toolchain.
+- **Local G-LINT gate.** This mirrors `.github/workflows/ci-fast.yml` step-for-step; every
+  command must be green locally before a code PR opens:
+  ```sh
+  cargo fmt --all --check
+  cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+  cargo build --workspace --all-targets --all-features --locked
+  cargo deny --locked check        # cargo-deny 0.20.2: cargo install --locked cargo-deny@0.20.2
+  cargo audit                      # cargo-audit 0.22.2: cargo install --locked cargo-audit@0.22.2
+  ```
+  `cargo` normally selects the pinned toolchain automatically via `rust-toolchain.toml`,
+  **but an exported `RUSTUP_TOOLCHAIN` environment variable overrides it** (that is how
+  rustup resolves precedence). If your shell has one set — the usual cause of “bare
+  `cargo`/`rustc` used the wrong compiler despite the repo pin” — the final gates will run
+  against the wrong toolchain silently. Clear it, or pin it to the repo channel, before the
+  final gate:
+  ```sh
+  unset RUSTUP_TOOLCHAIN            # let rust-toolchain.toml decide
+  RUSTUP_TOOLCHAIN=1.96.1 cargo --version   # …or pin it to the repo channel explicitly
+  ```
+  The final G-LINT gate must run on exactly `1.96.1`; an older toolchain (below the MSRV
+  of `1.96`) is **not** acceptable for final validation, even temporarily.
+- **License deferral (DR-015).** The project license is undecided. Until
+  [DR-015](plans/12-open-decisions-and-risks.md) is superseded by an Accepted DR, do **not**
+  add a `license` field to any `Cargo.toml` and do **not** add `SPDX-License-Identifier`
+  headers to source files. The `deny.toml` license allowlist is a *dependency* policy, not a
+  project license.
 
 ## 4. Rollback evidence
 

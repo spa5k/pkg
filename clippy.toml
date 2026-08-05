@@ -1,0 +1,9 @@
+# clippy configuration for the `pkg` workspace.
+#
+# Only the MSRV is pinned here, kept consistent with [workspace.package]
+# rust-version = "1.96" and the exact repo toolchain (rust-toolchain.toml
+# channel "1.96.1"). Lint policy itself is enforced on the command line by the
+# G-LINT job (`cargo clippy ... -- -D warnings`); no broad pedantic/unsafe/
+# panic policy is invented here.
+
+msrv = "1.96"

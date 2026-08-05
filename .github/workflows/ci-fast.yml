@@ -1,0 +1,95 @@
+# Fast CI — the G-LINT gate inherited by every later PR.
+#
+# Sibling to (not a replacement for) docs-linkcheck.yml, which remains the
+# required docs/structural-invariant job. This workflow owns the Rust toolchain
+# gate: format, clippy, docs, build, cargo-deny, cargo-audit. No mutable
+# third-party actions are used; the only action is actions/checkout pinned to an
+# immutable full-length SHA, and the audit/deny tools are installed with
+# published locks at exact versions.
+
+name: ci-fast
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # RUSTUP_TOOLCHAIN is part of the ambient environment on the runner and, per
+  # rustup precedence, OVERRIDES rust-toolchain.toml. A leaked value would
+  # silently compile with the wrong toolchain. Pin it here to the exact channel
+  # declared in rust-toolchain.toml; the "Install and verify" step asserts the
+  # two agree before any cargo/rustc runs.
+  RUSTUP_TOOLCHAIN: "1.96.1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  g-lint:
+    name: G-LINT (fmt / clippy / doc / build / deny / audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        # v6.0.2 — pinned to an immutable full-length commit SHA; no credentials
+        # are persisted. This mirrors docs-linkcheck.yml's checkout pin.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install and verify pinned Rust toolchain
+        # rust-toolchain.toml is the source of truth for the exact channel.
+        # Assert CI agrees with it before any cargo/rustc runs, then install it
+        # explicitly. With RUSTUP_TOOLCHAIN set at the workflow level, the bare
+        # rustc/cargo below resolve to this exact toolchain — defeating any
+        # ambient override that would otherwise silently pick a different one.
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${RUSTUP_TOOLCHAIN}"
+          channel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \
+                     | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [ -z "$channel" ]; then
+            echo "::error::could not parse channel from rust-toolchain.toml" >&2
+            exit 1
+          fi
+          if [ "$channel" != "$expected" ]; then
+            echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2
+            exit 1
+          fi
+          rustup toolchain install "$channel" --profile minimal --component rustfmt --component clippy
+          rustc --version
+          cargo --version
+
+      - name: Install cargo-deny (0.20.2, locked)
+        run: cargo install --locked cargo-deny@0.20.2
+
+      - name: Install cargo-audit (0.22.2, locked)
+        run: cargo install --locked cargo-audit@0.22.2
+
+      - name: cargo fmt --all --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy (-D warnings)
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: cargo doc (-D warnings)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --all-features --no-deps --locked
+
+      - name: cargo build
+        run: cargo build --workspace --all-targets --all-features --locked
+
+      - name: cargo deny check
+        run: cargo deny --locked check
+
+      - name: cargo audit
+        run: cargo audit

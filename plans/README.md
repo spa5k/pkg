@@ -421,12 +421,19 @@ dependency**, so they can begin immediately:
 1. **PR-0 — Repo + CI + plans cross-links.** Establish the repo, this `plans/` directory as the
    source of truth, `CONTRIBUTING.md` (reviewer model from doc 11 §2), and a docs-linkcheck CI
    that fails on broken plan cross-references. *(No code.)*
-2. **PR-1 — Cargo workspace + lint/license/deny/audit.** `Cargo.toml` (workspace),
-   `rust-toolchain.toml`, `deny.toml`, `rustfmt.toml`, `clippy.toml`, and the Fast-CI lint job
-   (`fmt`, `clippy -D warnings`, `cargo deny check`, `cargo audit`, `cargo doc`).
-3. **PR-2 — `pkg-core` domain types.** `identity`, `selector`, `realization`, `channel`,
-   `version`, `system` — the intent-vs-realization vocabulary (D-13) and the display-only
-   `pname@version` distinction. Property tests for version compare + identity equality.
+2. **PR-1 — Cargo workspace, toolchain, lint/deny/audit + `pkg-core` scaffold.** The
+   permanent workspace plus a real member crate (`pkg-core`) are required so `cargo build`/
+   `check`/`clippy`/`doc`/`fmt` are operable (a memberless virtual workspace fails all of
+   them). `Cargo.toml` (workspace), `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`,
+   `rustfmt.toml`, `clippy.toml`, `.github/workflows/ci-fast.yml` (G-LINT: `fmt`,
+   `clippy -D warnings`, `doc`, `build`, `cargo deny check`, `cargo audit`), and the
+   `crates/pkg-core/` scaffold (manifest + empty `lib.rs` only — no domain logic). The
+   project license is **deferred** (DR-015): no `license` field, no SPDX headers.
+3. **PR-2 — `pkg-core` domain types & logic.** `identity`, `selector`, `realization`,
+   `channel`, `version`, `system` — the intent-vs-realization vocabulary (D-13) and the
+   display-only `pname@version` distinction, plus property tests for version compare +
+   identity equality. May **extend** the `pkg-core` manifest/lib laid down in PR-1 (it does
+   not re-create the scaffold).
 4. **PR-3 — `NixAdapter` trait + JSON contract + `FakeNix` + Fast CI.** The seam that lets the
    entire core be built/tested **without Real Nix** (the JSON-only contract from doc 04, a trust
    boundary per doc 08 T-DAEMON-2). Fast-CI wires unit + contract (serde round-trips) on `FakeNix`.

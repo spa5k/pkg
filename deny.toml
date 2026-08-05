@@ -1,0 +1,68 @@
+# cargo-deny configuration for the `pkg` workspace.
+#
+# Targeted at cargo-deny 0.20.2 (the version pinned in
+# .github/workflows/ci-fast.yml via `cargo install --locked cargo-deny@0.20.2`).
+#
+# IMPORTANT — licensing: the permissive allowlist below is a DEPENDENCY policy
+# (which upstream licenses we accept as transitive build/runtime inputs). It is
+# NOT a project license for `pkg` itself. The project license is unresolved and
+# intentionally not declared anywhere (no `license` manifest field, no SPDX
+# source headers); see DR-015 in plans/12-open-decisions-and-risks.md. Because
+# `pkg-core` is unpublished and the project license is undecided, private
+# workspace crates are ignored by the license check ([licenses.private]).
+
+# Dependency graph to check: all features, across all four planned v1 hosts.
+[graph]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+[advisories]
+version = 2
+# No advisories are silently ignored; yanked crates are denied; unmaintained
+# crates are only reported when reachable from a workspace member.
+yanked = "deny"
+ignore = []
+unmaintained = "workspace"
+
+[licenses]
+version = 2
+# Permissive DEPENDENCY allowlist. This is a dependency policy, NOT a project
+# license — see the note at the top of this file and DR-015.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+# `pkg-core` is unpublished and the project license is undecided, so private
+# workspace crates are ignored by the license check.
+include-dev = true
+include-build = true
+# An allowed license with no current consumer should not fail the skeleton.
+unused-allowed-license = "allow"
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Wildcards (crate = "*") are denied; multiple versions are only warned; path
+# wildcards are allowed. No skips or exceptions.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io (cargo-deny's implicit allowed default registry) is permitted;
+# no git sources are allowed.
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -1,0 +1,7 @@
+# rustfmt configuration for the `pkg` workspace.
+#
+# Only stable, necessary options. `edition` must match [workspace.package]
+# edition = "2024"; `newline_style` keeps source files Unix-newline.
+
+edition = "2024"
+newline_style = "Unix"

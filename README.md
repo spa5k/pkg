@@ -36,14 +36,22 @@ summarizes and links to the documents that do.
 
 ## Current state
 
-This is **PR-0** of the roadmap: the repository, the plans-as-source-of-truth convention,
-the contributor/reviewer model, and a CI linkcheck that guards plan cross-references and
-the threat-model baseline. There is **no Cargo workspace and no Rust code yet** — that
-arrives in [PR-1](plans/11-pr-roadmap.md) and later. See the roadmap's
-["Initial implementation starting instructions"](plans/README.md) for the sequenced entry
-points.
+This is **PR-1** of the roadmap: the Cargo workspace and the permanent `pkg-core` crate
+scaffold now exist, along with the toolchain (`rust-toolchain.toml`, pinned exactly to
+`1.96.1`), the lint/format/deny config (`clippy.toml`, `rustfmt.toml`, `deny.toml`), and the
+Fast-CI **G-LINT** job ([`ci-fast.yml`](.github/workflows/ci-fast.yml): `fmt`,
+`clippy -D warnings`, `doc`, `build`, `cargo deny check`, `cargo audit`). The `pkg-core`
+crate is an **empty scaffold** — its domain types/logic/tests arrive in
+[PR-2](plans/11-pr-roadmap.md); the product binary and every other crate arrive later. See
+the roadmap's ["Initial implementation starting instructions"](plans/README.md) for the
+sequenced entry points.
 
 ## License
 
-To be finalized (see `plans/10`). Until then, treat all content here as unreleased planning
-material belonging to the project authors.
+The project license is **not yet chosen**. Until
+[DR-015](plans/12-open-decisions-and-risks.md) is superseded by an Accepted decision, all
+source in this repository is **all rights reserved** — no public license is granted, no
+`license` field is set in the manifests, and no `SPDX-License-Identifier` headers are present.
+(The `deny.toml` permissive license allowlist is a *dependency* policy, not a project
+license.) Until then, treat everything here as unreleased material belonging to the project
+authors.

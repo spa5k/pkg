@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0 OR MIT
 """Focused unit tests for the repo docs link checker.
 
 Scope of this file (PR-0 fix): prove that Markdown links hidden inside HTML
@@ -197,6 +196,72 @@ class StructuralInvariantTests(unittest.TestCase):
         targets = [lnk.target for lnk in cdl.extract_links(root / "README.md", readme)]
         self.assertIn("plans/08-security-model.md", targets)
         self.assertNotIn("missing.md", targets)
+
+
+class IterMarkdownFilesDiscoveryTests(unittest.TestCase):
+    """Regression: Markdown discovery must skip `.git` and Rust `target`.
+
+    After `cargo doc` runs, `target/doc/static.files/*.md` contains generated
+    license Markdown. Previously `iter_markdown_files` only excluded `.git`, so
+    the checker scanned generated build output and over-counted the repo's
+    Markdown set (19 instead of 18). Discovery must now skip both trees while
+    still surfacing normal root- and `plans/`-level Markdown.
+    """
+
+    def test_skips_git_and_target_keeps_repo_markdown(self):
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name)
+
+        # Author-owned Markdown that must be discovered.
+        _write(root / "README.md", "# pkg\n")
+        _write(root / "plans" / "00-overview-and-decisions.md", "# Overview\n")
+        # Generated / ignored trees that must NOT be discovered.
+        _write(
+            root
+            / "target"
+            / "doc"
+            / "static.files"
+            / "SourceSerif4-LICENSE-a2cfd9d5.md",
+            "# License\n",
+        )
+        _write(root / ".git" / "notes" / "commentary.md", "# git notes\n")
+
+        with patch.object(cdl, "REPO_ROOT", root):
+            found = {
+                p.relative_to(root).as_posix()
+                for p in cdl.iter_markdown_files()
+            }
+
+        # Generated/VCS Markdown is excluded; repo Markdown survives.
+        self.assertIn("README.md", found)
+        self.assertIn("plans/00-overview-and-decisions.md", found)
+        self.assertNotIn(
+            "target/doc/static.files/SourceSerif4-LICENSE-a2cfd9d5.md", found
+        )
+        self.assertNotIn(".git/notes/commentary.md", found)
+        # Exactly the two author-owned files and nothing else.
+        self.assertEqual(
+            found, {"README.md", "plans/00-overview-and-decisions.md"}
+        )
+
+    def test_ignored_match_is_exact_component_not_substring(self):
+        # A path component that merely *contains* the ignored name (e.g.
+        # `my-target`, `target-report`) is still author-owned and stays in
+        # scope; only a literal `target` or `.git` directory is skipped.
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name)
+        _write(root / "my-target" / "notes.md", "# notes\n")
+        _write(root / "target-report" / "q2.md", "# q2\n")
+
+        with patch.object(cdl, "REPO_ROOT", root):
+            found = {
+                p.relative_to(root).as_posix()
+                for p in cdl.iter_markdown_files()
+            }
+
+        self.assertEqual(found, {"my-target/notes.md", "target-report/q2.md"})
 
 
 if __name__ == "__main__":

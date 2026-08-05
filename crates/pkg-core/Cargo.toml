@@ -1,0 +1,14 @@
+# `pkg-core` — shared domain vocabulary crate for `pkg`.
+#
+# PR-1 scaffold only: this manifest plus an empty `lib.rs` are the permanent
+# home for the workspace so the toolchain is operable. PR-2 adds the domain
+# modules/logic/tests. The crate has no dependencies in PR-1.
+#
+# License: intentionally ABSENT (DR-015, plans/12-open-decisions-and-risks.md).
+
+[package]
+name = "pkg-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true

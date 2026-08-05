@@ -183,16 +183,26 @@ flowchart TD
 - **Parallel:** no (blocks all).
 - **Milestone:** M0.
 
-#### PR-1 — Cargo workspace, toolchain, lint/license/deny/audit
-- **Purpose:** create the workspace skeleton and the lint/security gates that every later PR
-  inherits.
-- **Owns:** `Cargo.toml` (workspace), `rust-toolchain.toml`, `deny.toml`, `rustfmt.toml`,
-  `clippy.toml`, `.github/workflows/ci-fast.yml` (lint job: fmt, `clippy -D warnings`,
-  `cargo deny check`, `cargo audit`, `cargo doc`), license headers.
+#### PR-1 — Cargo workspace, toolchain, lint/deny/audit + `pkg-core` scaffold
+- **Purpose:** stand up the permanent `pkg-core` crate scaffold (manifest + empty `lib.rs`)
+  and the workspace/toolchain/lint/security gates that every later PR inherits. A memberless
+  virtual workspace makes `cargo build`/`check`/`clippy`/`doc` fail 101 and `fmt` fail 1, so
+  PR-1 must lay down a real member crate now (not an empty workspace); PR-2 still owns all
+  domain types/logic/tests.
+- **Owns:** `Cargo.toml` (workspace), `Cargo.lock`, `rust-toolchain.toml`, `deny.toml`,
+  `rustfmt.toml`, `clippy.toml`, `.github/workflows/ci-fast.yml` (G-LINT job: `fmt`,
+  `clippy -D warnings`, `doc`, `build`, `cargo deny check`, `cargo audit`), and the
+  `crates/pkg-core/` scaffold (manifest + empty `lib.rs` only — **no** domain logic). The
+  project license is **deferred** per DR-015: no `license` field, no `SPDX-License-Identifier`
+  headers anywhere.
 - **Depends:** PR-0.
-- **Migration/compat:** pins MSRV; documented in `CONTRIBUTING`.
-- **Tests & gates:** G-LINT green on empty workspace.
-- **Demo:** `cargo build --workspace && cargo deny check && cargo audit`.
+- **Migration/compat:** pins MSRV (`1.96`) and the exact repo toolchain (`1.96.1`);
+  documented in `CONTRIBUTING`.
+- **Tests & gates:** G-LINT green on the `pkg-core` scaffold.
+- **Demo:** `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features
+  --locked -- -D warnings && RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features
+  --no-deps --locked && cargo build --workspace --all-targets --all-features --locked &&
+  cargo deny --locked check && cargo audit`.
 - **Reviewers:** primary F; cross A; (E informed).
 - **Rollback:** revert.
 - **Parallel:** no.
@@ -201,7 +211,10 @@ flowchart TD
 #### PR-2 — `pkg-core` domain types
 - **Purpose:** the vocabulary everything else uses: user intent vs exact realization, identity,
   system triples, channel/policyVersion, version comparison.
-- **Owns:** `crates/pkg-core/src/{identity.rs,selector.rs,realization.rs,channel.rs,version.rs,system.rs}`, `crates/pkg-core/Cargo.toml`, unit tests.
+- **Owns:** `crates/pkg-core/src/{identity.rs,selector.rs,realization.rs,channel.rs,version.rs,system.rs}`, the domain content of `crates/pkg-core/src/lib.rs` (module re-export
+  tree) plus any manifest additions the modules need, and unit tests. The scaffold itself
+  (manifest + empty `lib.rs`) is already landed in PR-1; PR-2 **extends** it, it does not
+  re-create it.
 - **Depends:** PR-1.
 - **Migration/compat:** defines the (display-only) `pname@version` vs unique-identity
   distinction (`00`,`05`). No persistence yet.
