@@ -1,0 +1,56 @@
+# Spike S2 — real TUF via `tough` (PR-5).
+#
+# This is a STANDALONE Cargo project: the `[workspace]` table below makes this
+# manifest its own workspace root, so this spike does NOT join the production
+# workspace at the repository root (`Cargo.toml` members = pkg-core/pkg-nix/
+# pkg-testkit). It therefore has its OWN `Cargo.lock` and `target/` directory
+# and is excluded from the root `cargo build/clippy/test/doc` lanes.
+#
+# The spike validates DR-002 (channel signing via real TUF) only. It is not
+# production code, is `publish = false`, and (per DR-015) carries NO `license`
+# field and NO SPDX headers. All signing keys are generated Ed25519 test keys
+# created in temporary directories at test time; no reusable/real secrets exist
+# in this directory. See README.md / findings.md.
+
+[package]
+name = "pkg-spike-s2-tough"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+description = "Spike S2: prove pkg's channel/TUF requirements against the real `tough` crate (awslabs)."
+
+[lib]
+name = "pkg_spike_s2_tough"
+path = "src/lib.rs"
+
+[workspace]
+# Intentionally empty: this manifest is both the package and its own workspace
+# root, isolating the spike from the production workspace.
+
+[dependencies]
+# Pin the EXACT validated `tough` release. `default-features = false` drops the
+# optional HTTP transport (reqwest / rustls-platform-verifier); this spike uses
+# `FilesystemTransport` only, matching how pkg loads a local signed repository.
+tough = { version = "=0.24.0", default-features = false }
+# aws-lc-rs: generates ephemeral Ed25519 PKCS#8 test keys ONLY. Parsing the
+# PKCS#8 and signing bytes go through tough's public tough::sign::{parse_keypair,
+# Sign} APIs; aws-lc-rs performs no parsing and no signing here.
+aws-lc-rs = "1"
+olpc-cjson = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jiff = { version = "0.2", features = ["serde"] }
+url = "2"
+tempfile = "3"
+# The verifier + publisher helpers are async; tests use the tokio multi-thread
+# runtime. (tough itself depends on tokio.)
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "fs"] }
+hex = "0.4"
+
+[dev-dependencies]
+# Integration tests live in `tests/` and reuse the library + tokio.
+
+# NOTE: `Cargo.lock` for this spike is committed alongside this manifest for
+# reproducible builds (it is a binary-style standalone workspace, not a library
+# consumed by the production workspace).

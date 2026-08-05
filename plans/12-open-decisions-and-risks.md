@@ -107,14 +107,53 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
   `f3f1c3c5b8ad91850e0f7c590cf177f7ab022024`; spike S1 (`spikes/s1-store-prefix/findings.md`).
 
 ### DR-002 — Channel signing: real TUF via `tough`
-- **Status:** Proposed (pending **S2 / PR-5**); target `Accepted` before PR-11.
+- **Status:** **Proposed** post **S2 / PR-5** — see `spikes/s2-tough/findings.md`. The
+  spike's **technical recommendation and evidence are complete** (all documented S2 success
+  criteria in `12` §2 — signed fixture metadata verified end-to-end; revocation proven with
+  real `tough` refusals; per-role threshold semantics demonstrated; plus rollback, freeze,
+  endless-data, and drained-stream tamper refusals, each pinning the exact `tough` error
+  variant — are supported by executed evidence, 20 tests passing), but the DR remains
+  **Proposed, not Accepted**: per `11` §2 / `CONTRIBUTING` §5 a spike DR is `Accepted` only
+  after the spike owner **and** the affected area owners (**F + A** for DR-002) sign off.
+  That recorded sign-off has not happened, so the **AC-D1 gate is NOT cleared** by this
+  entry and the dependent PRs (**PR-11** the production channel client, **PR-33**) must not
+  merge on this basis until the DR is Accepted.
 - **Context:** Need rollback/freeze/mix-match protection, threshold signatures, and revocation
   for a small target set. The brief forbids inventing "TUF-lite" crypto. (`02`,`08` §7)
-- **Decision:** Use the **real TUF** specification via the Rust `tough` crate (AWS Bottlerocket).
-  Root key offline; v1 thresholds 1-of-1 with documented rotation, target **2-of-3 at GA**.
-  Sigstore considered for a future release-attestation layer; **deferred**. (`08` §7, `10` §4)
-- **Consequences:** Adds a mature dependency; metadata is tiny; gets anti-rollback/freeze free.
-- **Owner:** F + A. **Source:** `[TUF]`, `[TOUGH]`, `[SIGSTORE]`.
+- **Decision:** Use the **real TUF** specification via the Rust `tough` crate (AWS Bottlerocket,
+  pinned **exactly `0.24.0`**, `default-features = false`). Root key offline; v1 thresholds
+  1-of-1 with documented rotation, target **2-of-3 at GA**. Sigstore considered for a future
+  release-attestation layer; **deferred**. (`08` §7, `10` §4)
+- **Consequences:** Adds a mature dependency (`tough` → `aws-lc-rs`/`aws-lc-sys`, which
+  compiles AWS-LC from source via CMake — a **new native C/C++/CMake/pkg-config build step**
+  the production workspace does not yet have; recorded as a DR-002 consequence in the
+  spike). Channel metadata is tiny. **Rollback / freeze / mix-and-match / threshold /
+  revocation are all enforceable by `tough`'s real client — but they are NOT free:**
+  - **Anti-rollback requires a persistent, single-writer datastore** that survives across
+    `pkg update` runs. Without it, `tough`'s rollback guard is never entered (no
+    previously-seen `timestamp.json` to compare) and an older-but-validly-signed metadata
+    set is accepted. The spike proves this directly: a *fresh* datastore accepts the old
+    valid repo while the *same* datastore that previously saw a newer version refuses it.
+    **Anti-rollback is a datastore responsibility, not a property of the metadata bytes.**
+  - **`ExpirationEnforcement::Safe` is mandatory** on normal update/install paths and
+    refuses signed metadata past its `expires` field against the real wall clock;
+    `Unsafe` is prohibited there.
+  - **Descriptor product-semantic validation is PR-11's duty, not `tough`'s.** `tough`
+    supplies the cryptographic/TUF guarantees for `descriptor.json` (authentication,
+    integrity, rollback, freeze, mix-and-match, threshold); it does **not** check
+    `descriptor.expiresAt` or any build-time value, and the policy fields
+    (`schemaVersion`, `policyVersion`, `sequence`, `expiresAt`, systems allowlists,
+    `substituters`/`trustedPublicKeys` allowlists, descriptor-hash ↔ TUF-target-hash
+    cross-checks) are deferred to PR-11.
+- **Open gates (honesty):** (1) **F + A sign-off pending** — per `11` §2 / `CONTRIBUTING` §5
+  a spike DR requires spike-owner + affected area-owner (F, A) sign-off; this entry records
+  only the technical basis, hence **Proposed**. (2) **Transport is spike-only** — the spike
+  loads over `FilesystemTransport` (a local signed repo); PR-11 selects the production
+  transport (likely HTTPS) and is not bound by this choice. (3) **Endless-data is only
+  partially exercised** — the spike's size-limit test exercises `max_timestamp_size` only;
+  the other conservative caps are configured and applied but not adversarially exercised.
+- **Owner:** F + A. **Source:** `[TUF]`, `[TOUGH]`, `[SIGSTORE]`; spike S2
+  (`spikes/s2-tough/findings.md`).
 
 ### DR-003 — macOS build security + signing/notarization (supersedes the former binary-only decision)
 - **Status:** Proposed (pending **S3 / PR-7**); supersedes the earlier "macOS is binary-only in v1" framing.
@@ -247,7 +286,7 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 | Spike | Question | Success criterion | Blocks (no-merge before DR) | Decision deadline | Status | DR |
 |-------|----------|-------------------|------------------------------|-------------------|--------|----|
 | **S1** (PR-4) | Is `/nix/store` viable for exclusive managed use, and how do we detect/safely refuse unmanaged Nix? | Concrete layout + detection method + refusal text validated on Linux & macOS; go/no-go on alternative prefix. | PR-9, PR-12, PR-27, PR-28 | end of M0.5 | Proposed (technical evidence complete; F/E/A sign-off pending) | DR-001 |
-| **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | Proposed | DR-002 |
+| **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | Proposed (technical evidence complete; F + A sign-off pending) | DR-002 |
 | **S3** (PR-7) | Do v1 attrs substitute for `x86_64-darwin`/`aarch64-darwin`, **and** are native macOS local builds viable (sandbox, `_nixbld` users, Xcode toolchain, resource caps, fail-closed)? Is a notarized installer feasible? | Availability matrix for fixture attrs; a real native sandboxed Darwin build under `_nixbld`; notarized installer/runtime builds & validates. | PR-26, PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed | DR-003 |
 | **S4** (PR-6) | What are realistic resolve/reeval costs and index-build costs? | Measured time/memory table; proposed budgets. | PR-14, PR-16, PR-32 | end of M0.5 | Proposed | DR-004 |
 | **S5** (PR-8) | Does sandbox+caps+approval work for local builds on **both Linux and macOS**? | Sandboxed build blocked from network on both; cgroups/RLIMIT effective (Linux) and RLIMIT/guards effective (macOS); `_nixbld` build users ready; approval + fail-closed demonstrable. | PR-26, PR-30 | end of M0.5 | Proposed | DR-005 |
