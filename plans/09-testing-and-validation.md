@@ -88,45 +88,223 @@ flowchart BT
 
 ## 4. The Fake Nix Adapter (`pkg-testkit`)
 
-> **📐 DECISION.** Define a `NixAdapter` trait (`pkg-nix`, see `01`/`04`) with **JSON-only**
-> methods (no scraping human output — see `04`). Provide a `FakeNix` implementation in
-> `pkg-testkit` that is **programmable, deterministic, and in-process**, plus a recording
-> mode that captures a Real Nix session to golden files so we can prove Fake↔Real parity.
+> **📐 DECISION.** Define a `NixAdapter` trait (`pkg-nix`, owned by `01`/`04`) as the **single
+> object-safe boundary** between the install pipeline and any concrete Nix backend (Fake or
+> Real). It exposes **JSON-only** semantics — no scraping human output (`01` §11, ARCH-INV-01).
+> A `FakeNix` implementation lives in `pkg-testkit`: PR-3 ships a **deterministic exact-FIFO
+> transcript** replay engine (§4.4); richer simulation is phased to later checkpoints (§4.5).
+> A Real implementation is proven by the nightly parity lane (§4.3, §7).
 
-### 4.1 Adapter trait (sketch — concrete types live in `pkg-nix`, owned by `01`/`04`)
+### 4.1 Adapter trait — object-safe, `Send + Sync`, nine methods
 
-```text
-trait NixAdapter {
-    fn version(&self) -> Result<VersionInfo>;                 // managed-Nix version
-    fn eval_realize(&self, sel: &Selector, chan: &Channel) -> Result<Realization>;
-    fn path_info(&self, path: &StorePath) -> Result<PathInfo>; // sigs, narHash, refs
-    fn substitute(&self, path: &StorePath, subs: &Substituters) -> Result<SubstituteReport>;
-    fn build(&self, drv: &DrvPath, caps: &BuildCaps) -> Result<BuildReport>;
-    fn verify(&self, opts: VerifyOpts) -> Result<VerifyReport>;
-    fn repair(&self, path: &StorePath) -> Result<RepairReport>;
-    fn gc(&self, roots: &[StorePath]) -> Result<GcReport>;
-    fn add_root(&self, path: &StorePath, name: &str) -> Result<RootRef>;
+The trait is **object-safe** (every method takes `&self`; none are generic; none return
+`Self`) and `Send + Sync`, so it can live behind an `Arc<dyn NixAdapter>` shared across the
+journal/worker threads. **Only validated, `pkg-nix`-owned request/report types cross this
+boundary** — never raw Nix JSON, never `serde_json::Value`; and the only error type is a
+**closed, redacted `NixAdapterError`** that never leaks a wire shape (T-DAEMON-2).
+
+```rust
+pub trait NixAdapter: Send + Sync {
+    /// Pinned managed-Nix version + the upstream JSON format versions this adapter
+    /// accepts/rejects (`01` §11). Read-only capability probe.
+    fn version(&self) -> Result<VersionInfo, NixAdapterError>;
+
+    /// Evaluate + realize a selector into a store path, deriver, and outputs.
+    fn eval_realize(&self, req: &EvalRealizeRequest) -> Result<RealizationReport, NixAdapterError>;
+    /// NAR hash, signatures, references, closure size for one store path.
+    fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError>;
+    /// Substitute (download) one path under the adapter's pinned trust set.
+    fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError>;
+    /// Approved, sandboxed local build. No per-call trust/flag toggles (see below).
+    fn build(&self, req: &BuildRequest) -> Result<BuildReport, NixAdapterError>;
+    /// Read-only integrity/trust verification. Never mutates the store.
+    fn verify(&self, req: &VerifyRequest) -> Result<VerifyReport, NixAdapterError>;
+    /// Destructive re-fetch/rebuild of the listed paths. Separate from verify.
+    fn repair(&self, paths: &[StorePath]) -> Result<RepairReport, NixAdapterError>;
+    /// Collect unreachable paths. Consults on-disk gcroots — no roots argument.
+    fn gc(&self) -> Result<GcReport, NixAdapterError>;
+    /// Create a managed gcroot via the authenticated root-helper FS op (see below).
+    fn add_root(&self, req: &AddRootRequest) -> Result<RootRef, NixAdapterError>;
 }
 ```
 
-Every method returns **strict, size-capped, versioned JSON** typed in `pkg-nix` and
-round-tripped by serde. This is the contract that layers 1–3 exercise without Nix and that
-the Real lane proves against real Nix (T-DAEMON-2).
+Each method returns **`Result<Report, NixAdapterError>`**. `NixAdapterError` is a **public,
+validated, closed error enum** with **stable codes** and **bounded, redacted context** — it
+**never exposes raw wire JSON or unbounded stdout/stderr**. The following are all
+**`NixAdapterError` variants, never leaked wire data**: oversized input, malformed payload,
+unsupported upstream JSON format, validation failure, timeout, unavailable daemon, and
+transcript mismatch. **Reports model successful semantic results**; an operation-specific
+*expected* result that is not a technical failure — e.g. "no substitute available" — may be a
+**closed report enum** the caller matches on
+(`SubstituteReport { outcome: SubstituteOutcome::MissingFromSubstituters }`). Technical
+failures are **not** forced into report outcome fields: they are `Err(NixAdapterError)`. The
+request/report types are defined in `pkg-nix`, validated at construction, and **compose
+`pkg-core` strong types** (`StorePath`, `NarHash`, `AttributePath`, `System`, `NixpkgsRevision`, `OutputSelection`, …). Their
+concrete field shapes are owned by `pkg-nix` (jointly with `01` §10/§11 and `04`); the
+semantic fields enumerated below are fixed here, and they carry **no dangerous knobs** — no
+`--substituters`, `--trusted-public-keys`, `--sandbox`, `--builders`, `--max-jobs`, or
+expression-string fields ever appear on any request or report (`01` §11.1):
 
-### 4.2 `FakeNix` capabilities
-- Scripted responses keyed by Selector / StorePath / scenario.
-- Deterministic narHash/signature generation using fixture keys.
-- Simulated latency, partial writes, kills, and timeouts (drives layer 5).
-- A **fake binary cache** (in-process HTTP server) serving signed NARs with controllable
-  trust keys — used by security lane for sig-mismatch/rollback tests (T-CACHE-1/3).
-- A **fake channel CDN** serving TUF metadata with controllable staleness/versions — used
-  for rollback/freeze/mix-and-match tests (T-CHAN-1/2/3).
+| Method | Request carries | Report carries |
+|---|---|---|
+| `version` | — | managed-Nix version; accepted/rejected JSON format versions |
+| `eval_realize` | `EvalRealizeRequest` (AttributePath, System, NixpkgsRevision, Nixpkgs source NarHash pin, OutputSelection) — built by the later resolver from a Selector + the accepted channel descriptor | store path, deriver, outputs |
+| `path_info` | `StorePath` | narHash, sigs, references, closure size |
+| `substitute` | `StorePath` | outcome (fetched / absent / no-binary …) — signature/trust failure is `Err(NixAdapterError)`, never a report outcome |
+| `build` | `BuildRequest` (targets, System, a typed single-operation `BuildApprovalReceipt` carrying a bounded operation id) | outcome + built outputs / `ACQUIRE_NO_BINARY` (AC-S13) |
+| `verify` | `VerifyRequest` (paths, recursive/integrity mode only) | per-path NAR/trust status (**read-only**) |
+| `repair` | `&[StorePath]` | per-path restored/unchanged status |
+| `gc` | — (on-disk gcroots are authoritative) | paths collected / refused-under-lease (T-STATE-4) |
+| `add_root` | validated `RootName` + `StorePath` | `RootRef` (absolute gcroot path) |
+
+**Security semantics — trust/build policy is immutable, never per-call.** All trust and build
+enforcement is fixed **once**, at adapter construction / managed-runtime config time, sourced
+from the signed channel descriptor (doc `02`) and the product's channel-locked
+`/opt/pkg/etc/pkg/nix.conf` (INV-03), and is **immutable for the life of the adapter**. The
+adapter pins — and **never lets any caller override per call**: **substituters** (channel set
+only, T-CACHE-1/4); **trusted-public-keys** (channel key set only, T-CACHE-1); **`restrict-eval`
++ `--allowed-uris`** for any eval `pkg` performs (T-DAEMON-1); **`sandbox=true` +
+`sandbox-fallback=false`** on Linux and macOS, with `pkg` failing closed if the sandbox or the
+build-user group cannot be verified ready (T-BUILD-1, AC-S13); the **build-users group**
+(`nixbld`/`_nixbld`) (D-11); and the **builders**/substituter-URL set. The trait
+therefore accepts **no caller trust/flag toggles**: `eval_realize`, `substitute`, and `build`
+take only selector/store-path/realization inputs plus already-pinned identifiers (`channelSeq`,
+`system`, an approval token) — never `--substituters`, `--trusted-public-keys`, `--sandbox`,
+`--builders`, or an expression string (`01` §11.1). This is the direct type-level enforcement
+of T-DAEMON-1, T-CACHE-1, T-BUILD-1, INV-03, and AC-S13.
+
+**Method-specific rules:**
+
+- **`substitute` runs pure-substitute:** it internally enforces **`max-jobs=0`** so no local
+  build slot can fire — only the daemon's pinned substituters may satisfy the path.
+- **`build` runs an approved local build:** it internally uses a **positive, policy-capped
+  `max-jobs`**. **Neither `max-jobs` value is caller-controlled** (D-11): they are
+  operation-specific internal policies of the adapter, *not* a single lifetime-wide adapter
+  setting, and *not* applied to the other operation. `BuildRequest` carries **targets,
+  `System`, and a typed single-operation `BuildApprovalReceipt` carrying a bounded operation id**
+  — and **no sandbox/substituter/key/builders/build-user flags**. **PR-3 defines only this stable
+  opaque receipt carrier and its validation; PR-26 owns its production issuance, journal binding,
+  single-use verification, and rejection. PR-3 must not claim the carrier itself proves
+  authorization** — it is a stable opaque token carried through the trait, not a capability the
+  adapter defines or checks.
+- **`verify` is strictly read-only** — it never mutates the store; **`repair` is the separate
+  destructive** operation (re-substitute / local rebuild). They are distinct methods so a
+  read-only caller can never trigger a write (AC-S3, T-CACHE-3).
+- **`gc()` takes no roots argument.** Collection consults the on-disk gcroots tree
+  `/nix/var/nix/gcroots/pkg/users/<uid>/` (ARCH-INV-04, D-17) — the same roots `add_root`
+  creates. Passing roots as an argument would risk diverging from what actually protects paths
+  on disk and would let a caller misrepresent reachability. `gc` is also serialized/refused
+  while an op holds the lease (plan `05` §9/§12; AC-T10).
+- **`add_root(&AddRootRequest)`** creates a managed gcroot. `AddRootRequest` carries a
+  **validated `RootName`** (allowlist grammar, `01` §11.1) and a `StorePath`. The **real**
+  implementation (later PR) is an **authenticated root-helper filesystem operation** that
+  creates a symlink under the caller's gcroots subdir with peer-credential-uid enforcement
+  (ARCH-INV-06, AC-S12) — **not** `nix-store --add-root`, which is a CLI convenience with
+  different trust semantics and is not part of the stable new-CLI surface `pkg` pins
+  (`01` §11).
+
+### 4.2 Serde & validation boundary — `pkg-core` stays serde-free
+
+- **`pkg-core` remains serde-free.** It owns the pure strong types (`StorePath`, `NarHash`,
+  `AttributePath`, `System`, `NixpkgsRevision`, `OutputSelection`, …) and the identity/state
+  math, and depends on no serde.
+- **The public trait request/report types are validated `pkg-nix` types that compose
+  `pkg-core` strong types**; they are the *only* shapes that cross the trait boundary.
+- **Crate-private raw/wire DTOs** in `pkg-nix` (not public, absent from every trait signature)
+  deserialize untrusted Nix JSON with **strict serde** — deny unknown fields, size-capped, and
+  reject unknown/unsupported upstream JSON format versions (`01` §11). A fallible
+  `TryFrom<WireDto> for ValidatedReport` (or equivalent fallible constructor) then **promotes**
+  raw bytes into the validated report. **Unknown fields, unsupported schema versions, malformed
+  data, and oversized input surface as bounded `NixAdapterError` variants — the raw wire JSON
+  never crosses the trait boundary** (T-DAEMON-2; exercised by the contract/fuzz tests in §6.2
+  and the oversized/malformed fault row in §6.5).
+- **Every `pkg`-owned serialized report carries an explicit top-level `schemaVersion`** — the
+  product's own contract version (matching the `schemaVersion = 1` convention of `05` §5 and
+  the CLI envelopes of `06`). It is **deliberately decoupled from Nix's upstream JSON format
+  versions** (which the adapter negotiates/validates privately, `01` §11); `pkg`'s
+  `schemaVersion` is the public contract, owned and migrated here/`05`.
 
 ### 4.3 Fake↔Real parity (contract tests)
+
 - A **capture/replay** harness records a Real Nix session to golden JSON; contract tests
   assert `FakeNix` reproduces the same typed outputs for the same scripted inputs.
 - A diff in a parity job fails the build → forces Fake updates when Real behavior changes
-  (e.g., new Nix version via channel update). Owned jointly with `04`/`10`.
+  (e.g., a new managed-Nix version via channel update). Owned jointly with `04`/`10`; the Real
+  capture/replay lane is §7 (nightly + release), **not** PR-3.
+
+### 4.4 PR-3 `FakeNix` scope — deterministic exact-FIFO transcript
+
+PR-3 ships a **deterministic, exact, first-in-first-out transcript replay** engine — *not* a
+rich simulator. Its job is to let layers 1–3 (unit/contract/integration) and the Fake E2E lane
+drive the install pipeline against a `NixAdapter` with byte-stable, hermetic outputs, **with no
+Nix and no network** (§3).
+
+**Replay transcript shape (defined now):** an ordered `Vec<Expectation>` where
+
+```text
+Expectation    := { call: MethodKind, expect: RequestMatcher, respond: canned }
+MethodKind     := Version | EvalRealize | PathInfo | Substitute | Build
+               |  Verify | Repair | Gc | AddRoot
+RequestMatcher := the exact request value the head call must equal (per MethodKind)
+canned         := Ok(Report) | Err(NixAdapterError)   // the canned result returned for a matching call
+```
+
+A `FakeNix` holds the transcript. Each adapter call pops the **head** expectation; the call must
+match `MethodKind` **and** `RequestMatcher`. When the test is finished it calls
+**`FakeNix::assert_exhausted()`** (or the harness returns the result) to confirm no expectations
+remain.
+
+**Two failure domains, two error types — never one impossible shared type:**
+
+```text
+// pkg-nix: the only trait error. Closed, bounded, redacted.
+NixAdapterError::UnexpectedCall {
+    expected: MethodKind,   // pkg-nix contract enum (Version | EvalRealize | … | AddRoot)
+    actual:   MethodKind,
+    mismatch: <redacted, bounded summary of how the request missed the head matcher>,
+}
+
+// pkg-testkit: separate error for leftover expectations only.
+TranscriptError::UnmetExpectations { remaining: usize }
+```
+
+`MethodKind` is a **`pkg-nix` contract enum** shared by the trait and the transcript, so
+`pkg-testkit` depends on `pkg-nix` one way — **never the reverse** (`pkg-nix` cannot name a
+`pkg-testkit` type). A trait call that pops a head expectation of the wrong `MethodKind`, or
+whose request does not equal the head matcher, returns
+**`Err(NixAdapterError::UnexpectedCall { expected, actual, mismatch })`** — expected/actual
+`MethodKind` plus a **redacted, bounded mismatch summary**; it carries **no raw request data and
+no `Vec<Expectation>`**. A canned `respond` outcome is `Ok(Report)` or `Err(NixAdapterError)`,
+so wrong/extra/mismatched calls and canned technical failures both flow through
+`NixAdapterError`. **Leftover expectations are a separate `pkg-testkit` concern:**
+`FakeNix::assert_exhausted()` is **not a trait method** and returns `Result<(), TranscriptError>`;
+a non-empty transcript yields `Err(TranscriptError::UnmetExpectations { remaining: usize })` (a
+**count**, never the leftover `Expectation` values) that the test asserts on
+(`assert_eq!(fake.assert_exhausted(), Ok(()))`). **`FakeNix` never panics** — not on an
+unexpected call, not on drop — and the design contains **no `Drop`-panic, no `todo!`, no
+`unimplemented!`, and no ignored placeholder**: every failure surfaces as a returned `Result`
+(a trait call's `Result<_, NixAdapterError>`, or `assert_exhausted`'s
+`Result<(), TranscriptError>`).
+
+**Explicitly deferred out of PR-3** (so the plan never implies they land here): rich key maps,
+simulated **latency**, **partial writes**, **kills/timeouts**, the **fake binary cache**, and
+the **fake channel CDN** are owned by **CP-T-2** (fixture generators + frozen
+`nixpkgs-slice-tiny` + fake cache + fake channel) and **CP-T-5** (fault-injection harness
+`pkg-testkit::chaos`), and by later roadmap owners. PR-3 = the FIFO transcript + the nine trait
+methods + the request/report skeletons + `assert_exhausted`, nothing more.
+
+### 4.5 Long-term `FakeNix` capabilities (phased future scope — not PR-3)
+
+The full simulation set `FakeNix` is intended to grow into, **phased across CP-T-2 / CP-T-5 and
+later roadmap owners** (none of it is implied to land in PR-3, §4.4):
+
+- Scripted responses keyed by Selector / StorePath / scenario.
+- Deterministic narHash/signature generation using fixture keys.
+- Simulated latency, partial writes, kills, and timeouts (drives layer 5).
+- A **fake binary cache** (in-process HTTP server) serving signed NARs with controllable trust
+  keys — used by the security lane for sig-mismatch/rollback tests (T-CACHE-1/3).
+- A **fake channel CDN** serving TUF metadata with controllable staleness/versions — used for
+  rollback/freeze/mix-and-match tests (T-CHAN-1/2/3).
 
 ---
 
