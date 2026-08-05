@@ -93,3 +93,56 @@ jobs:
 
       - name: cargo audit
         run: cargo audit
+
+  # G-TEST — the Fast-CI test job (plans/11 PR-3 "Fast-CI test job wiring";
+  # plans/09 §2 Fast lane = unit + contract + integration, §10 test gates
+  # G-UNIT/G-CONTRACT/G-INTEGRATION). This is a SEPARATE job from G-LINT:
+  # plans/09 §10 defines G-LINT as fmt/clippy/deny/audit/docs/linkcheck with
+  # NO test, distinct from the test gates, and PR-3 owns the test-job wiring.
+  # It runs two non-redundant `cargo test --workspace` invocations:
+  # `--all-targets` (unit, contract, and integration tests for every workspace
+  # crate — pkg-core, pkg-nix, pkg-testkit — including the pkg-nix + pkg-testkit
+  # contract tests), and `--doc` (doctests). `--all-targets` does NOT compile
+  # doctests, so the doctest gate is a separate step; neither overlaps with
+  # G-LINT's fmt/clippy/doc/build/deny/audit steps. No narrower `-p pkg-nix
+  # -p pkg-testkit` invocation is added because the workspace-wide test
+  # already proves those contract tests.
+  g-test:
+    name: G-TEST (workspace unit + contract + integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        # v6.0.2 — pinned to an immutable full-length commit SHA; no
+        # credentials are persisted. Mirrors G-LINT's checkout pin.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install and verify pinned Rust toolchain
+        # Same source-of-truth + override-defeat guard as G-LINT. `cargo test`
+        # needs no rustfmt/clippy, so the minimal profile suffices.
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${RUSTUP_TOOLCHAIN}"
+          channel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \
+                     | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [ -z "$channel" ]; then
+            echo "::error::could not parse channel from rust-toolchain.toml" >&2
+            exit 1
+          fi
+          if [ "$channel" != "$expected" ]; then
+            echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2
+            exit 1
+          fi
+          rustup toolchain install "$channel" --profile minimal
+          rustc --version
+          cargo --version
+
+      - name: cargo test
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      # `--all-targets` does not compile doctests; gate them explicitly.
+      - name: cargo test --doc
+        run: cargo test --workspace --doc --all-features --locked

@@ -257,11 +257,15 @@ remain.
 **Two failure domains, two error types — never one impossible shared type:**
 
 ```text
-// pkg-nix: the only trait error. Closed, bounded, redacted.
-NixAdapterError::UnexpectedCall {
-    expected: MethodKind,   // pkg-nix contract enum (Version | EvalRealize | … | AddRoot)
+// pkg-nix: the only trait error. Closed, bounded, redacted. Two variants, one code.
+NixAdapterError::UnexpectedCall {           // a head existed and was consumed
+    expected: MethodKind,                   // pkg-nix contract enum (Version | EvalRealize | … | AddRoot)
     actual:   MethodKind,
-    mismatch: <redacted, bounded summary of how the request missed the head matcher>,
+    mismatch: <redacted, bounded static summary: "method mismatch" | "request mismatch">,
+}
+NixAdapterError::UnexpectedExtraCall {      // no head existed (empty/exhausted transcript)
+    actual:  MethodKind,                    // the call that arrived with nothing to match
+    summary: <redacted, bounded static summary: "extra call">,   // expected is honestly absent
 }
 
 // pkg-testkit: separate error for leftover expectations only.
@@ -270,13 +274,19 @@ TranscriptError::UnmetExpectations { remaining: usize }
 
 `MethodKind` is a **`pkg-nix` contract enum** shared by the trait and the transcript, so
 `pkg-testkit` depends on `pkg-nix` one way — **never the reverse** (`pkg-nix` cannot name a
-`pkg-testkit` type). A trait call that pops a head expectation of the wrong `MethodKind`, or
-whose request does not equal the head matcher, returns
+`pkg-testkit` type). A trait call that **pops a head** of the wrong `MethodKind`, or whose
+request does not equal the head matcher, returns
 **`Err(NixAdapterError::UnexpectedCall { expected, actual, mismatch })`** — expected/actual
-`MethodKind` plus a **redacted, bounded mismatch summary**; it carries **no raw request data and
-no `Vec<Expectation>`**. A canned `respond` outcome is `Ok(Report)` or `Err(NixAdapterError)`,
-so wrong/extra/mismatched calls and canned technical failures both flow through
-`NixAdapterError`. **Leftover expectations are a separate `pkg-testkit` concern:**
+`MethodKind` plus a **redacted, bounded static mismatch summary** (one of two fixed strings:
+`"method mismatch"` when the kinds differ, `"request mismatch"` when they are equal). A call
+against an **empty or fully-consumed** transcript, where **no head exists** and no honest
+`expected` can be named, returns the sibling
+**`Err(NixAdapterError::UnexpectedExtraCall { actual, summary })`** — the fixed static summary
+`"extra call"` with `expected` honestly absent — **never a synthetic `expected` value and never
+a generic backend error**. Both variants reuse the single `NixAdapterErrorCode::UnexpectedCall`
+code and carry **no raw request data and no `Vec<Expectation>`**. A canned `respond` outcome is
+`Ok(Report)` or `Err(NixAdapterError)`, so wrong/mismatched/extra calls and canned technical
+failures all flow through `NixAdapterError`. **Leftover expectations are a separate `pkg-testkit` concern:**
 `FakeNix::assert_exhausted()` is **not a trait method** and returns `Result<(), TranscriptError>`;
 a non-empty transcript yields `Err(TranscriptError::UnmetExpectations { remaining: usize })` (a
 **count**, never the leftover `Expectation` values) that the test asserts on

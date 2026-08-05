@@ -11,7 +11,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/pkg-core", "crates/pkg-nix"]
+members = ["crates/pkg-core", "crates/pkg-nix", "crates/pkg-testkit"]
 
 [workspace.package]
 version = "0.0.0"

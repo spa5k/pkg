@@ -1513,6 +1513,33 @@ fn adapter_errors_are_bounded_and_redacted() {
     assert_eq!(malformed_kind(&e), Some(MalformedKind::ExcessiveNesting));
 }
 
+#[test]
+fn unexpected_extra_call_is_redacted_truthful_no_head() {
+    // The no-head sibling of unexpected_call. Constructed from the actual
+    // method kind only; no expected is named because no expectation remained
+    // (the transcript was empty or fully consumed).
+    let e = NixAdapterError::unexpected_extra_call(MethodKind::Gc);
+    assert_eq!(e.code(), NixAdapterErrorCode::UnexpectedCall);
+    assert_eq!(e.expected_method(), None);
+    assert_eq!(e.actual_method(), Some(MethodKind::Gc));
+    assert_eq!(e.mismatch_summary(), Some("extra call"));
+    assert!(e.mismatch_summary().unwrap().len() <= BoundedSummary::MAX);
+
+    // Display is bounded/redacted and truthfully says no expectation remained,
+    // names the actual method, and carries only the static summary.
+    let msg = e.to_string();
+    assert!(msg.contains("no expectation remained"));
+    assert!(msg.contains("gc"));
+    assert!(msg.contains("extra call"));
+
+    // It is distinct from the head-bearing UnexpectedCall even when actual
+    // matches, because there is no expected and the summary differs.
+    assert_ne!(
+        e,
+        NixAdapterError::unexpected_call(MethodKind::Gc, MethodKind::Gc)
+    );
+}
+
 // ===========================================================================
 // Tests: substitute outcome is normal-only; BuildApprovalReceipt is opaque
 // ===========================================================================

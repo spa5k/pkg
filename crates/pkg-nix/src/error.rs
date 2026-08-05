@@ -8,7 +8,8 @@
 //! (T-DAEMON-2). Every variant that the architecture lists as an adapter error
 //! is represented here: oversized input, malformed payload, unsupported upstream
 //! JSON format, validation failure, timeout, unavailable backend, the
-//! transcript mismatch [`NixAdapterError::UnexpectedCall`], and four coarse
+//! transcript-mismatch variants [`NixAdapterError::UnexpectedCall`] and
+//! [`NixAdapterError::UnexpectedExtraCall`], and four coarse
 //! operation-failure categories — [`NixAdapterError::TrustFailure`],
 //! [`NixAdapterError::IntegrityFailure`],
 //! [`NixAdapterError::PermissionDenied`], and
@@ -37,9 +38,11 @@ const SUMMARY_MAX_BYTES: usize = 128;
 /// particular the [`NixAdapterError::unexpected_call`] transcript-mismatch
 /// constructor takes **no** external text argument: it selects between two
 /// crate-owned static summaries (`"method mismatch"` / `"request mismatch"`)
-/// based solely on the `expected`/`actual` [`MethodKind`]s. No external
-/// free-text input may ever enter [`NixAdapterError`]. External code may only
-/// *read* a summary (via [`BoundedSummary::as_str`]) after the fact.
+/// based solely on the `expected`/`actual` [`MethodKind`]s, and the sibling
+/// [`NixAdapterError::unexpected_extra_call`] no-head constructor uses the
+/// single crate-owned static summary `"extra call"`. No external free-text
+/// input may ever enter [`NixAdapterError`]. External code may only *read* a
+/// summary (via [`BoundedSummary::as_str`]) after the fact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundedSummary(String);
 
@@ -123,8 +126,11 @@ impl fmt::Display for MalformedKind {
 /// set can be documented as a stable contract even if internal detail evolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NixAdapterErrorCode {
-    /// A trait call did not match the head expectation of a transcript
-    /// (`plans/09` §4.4 `UnexpectedCall`).
+    /// A transcript mismatch: either a call that did not match an existing
+    /// head expectation ([`NixAdapterError::UnexpectedCall`]), or a call that
+    /// arrived with no remaining head expectation
+    /// ([`NixAdapterError::UnexpectedExtraCall`]). Both variants map to this
+    /// single code (`plans/09` §4.4).
     UnexpectedCall,
     /// Decoded input exceeded the codec's byte cap before parsing.
     OversizedInput,
@@ -201,8 +207,9 @@ impl fmt::Display for NixAdapterErrorCode {
 ///
 /// Every adapter failure named in `plans/09` §4.1/§4.4 maps to a variant here:
 /// oversized input, malformed payload, unsupported upstream JSON format,
-/// validation failure, timeout, unavailable backend, the transcript mismatch
-/// `UnexpectedCall`, and four coarse operation-failure categories —
+/// validation failure, timeout, unavailable backend, the two transcript-
+/// mismatch variants `UnexpectedCall` and `UnexpectedExtraCall`, and four coarse
+/// operation-failure categories —
 /// [`Self::TrustFailure`], [`Self::IntegrityFailure`], [`Self::PermissionDenied`],
 /// and [`Self::OperationFailed`]. [`Self::UnsupportedSchemaVersion`] is the
 /// pkg-contract schema mismatch, separate from the upstream format mismatch
@@ -228,8 +235,10 @@ pub enum NixAdapterError {
     /// method kinds differ. It deliberately carries **no raw request data**
     /// and never a `Vec` of expectations. This variant is the `pkg-nix`-side
     /// half of the transcript contract; a `pkg-testkit` `FakeNix` constructs
-    /// it (via [`NixAdapterError::unexpected_call`]), and `pkg-nix` never
-    /// depends on `pkg-testkit`.
+    /// it (via [`NixAdapterError::unexpected_call`]); `pkg-nix` never depends
+    /// on `pkg-testkit`. The no-head case (an empty or fully-consumed
+    /// transcript, where no honest `expected` exists) uses the sibling
+    /// [`Self::UnexpectedExtraCall`].
     UnexpectedCall {
         /// The method kind the head expectation required.
         expected: MethodKind,
@@ -238,6 +247,31 @@ pub enum NixAdapterError {
         /// A bounded, redacted, crate-owned static summary of how the call
         /// missed the matcher (one of two fixed strings; never free text).
         mismatch: BoundedSummary,
+    },
+    /// A trait call arrived when the transcript held **no head expectation** —
+    /// the call was extra: the transcript was initially empty, or every
+    /// expectation had already been consumed (`plans/09` §4.4).
+    ///
+    /// This is the honest sibling of [`UnexpectedCall`](Self::UnexpectedCall)
+    /// for the no-head case: there is no `expected: MethodKind` to name,
+    /// because no expectation remained. It carries only the `actual` method
+    /// kind that arrived and a **bounded, redacted, crate-owned static**
+    /// `summary` — the single fixed string `"extra call"`. Like
+    /// [`UnexpectedCall`](Self::UnexpectedCall), it carries **no raw request
+    /// data** and never a `Vec` of expectations, and it reuses the single
+    /// [`NixAdapterErrorCode::UnexpectedCall`] code: the two transcript-
+    /// mismatch variants are one *code*, distinguished by whether an
+    /// expectation existed (a head-bearing mismatch versus a no-head extra
+    /// call). A `pkg-testkit` `FakeNix` constructs it via
+    /// [`NixAdapterError::unexpected_extra_call`]; `pkg-nix` never depends on
+    /// `pkg-testkit`.
+    UnexpectedExtraCall {
+        /// The method kind of the call that arrived with no expectation to
+        /// match.
+        actual: MethodKind,
+        /// A bounded, redacted, crate-owned static summary (the fixed string
+        /// `"extra call"`; never free text).
+        summary: BoundedSummary,
     },
     /// Decoded input exceeded the codec's byte cap. The check happens **before**
     /// parsing, so oversized input is rejected without materializing it.
@@ -328,11 +362,32 @@ impl NixAdapterError {
         }
     }
 
+    /// Constructs the [`NixAdapterError::UnexpectedExtraCall`] no-head variant
+    /// from the actual method kind **only**.
+    ///
+    /// This is the constructor a `pkg-testkit` `FakeNix` uses for a call
+    /// against an empty or fully-consumed transcript, where there is no honest
+    /// `expected: MethodKind`; `pkg-nix` itself never depends on `pkg-testkit`.
+    /// No external free-text argument is accepted: the `summary` is the single
+    /// **crate-owned static** string `"extra call"`, so no raw request bytes or
+    /// arbitrary text can ever enter the error. It reuses the single
+    /// [`NixAdapterErrorCode::UnexpectedCall`] code; `expected_method` returns
+    /// `None`, `actual_method` returns `Some(actual)`, and `mismatch_summary`
+    /// returns `Some("extra call")`.
+    #[must_use]
+    pub fn unexpected_extra_call(actual: MethodKind) -> Self {
+        Self::UnexpectedExtraCall {
+            actual,
+            summary: BoundedSummary::new("extra call"),
+        }
+    }
+
     /// Returns the stable [`NixAdapterErrorCode`] for this error.
     #[must_use]
     pub const fn code(&self) -> NixAdapterErrorCode {
         match self {
             Self::UnexpectedCall { .. } => NixAdapterErrorCode::UnexpectedCall,
+            Self::UnexpectedExtraCall { .. } => NixAdapterErrorCode::UnexpectedCall,
             Self::OversizedInput { .. } => NixAdapterErrorCode::OversizedInput,
             Self::MalformedPayload { .. } => NixAdapterErrorCode::MalformedPayload,
             Self::UnsupportedSchemaVersion { .. } => NixAdapterErrorCode::UnsupportedSchemaVersion,
@@ -354,25 +409,31 @@ impl NixAdapterError {
     pub const fn expected_method(&self) -> Option<MethodKind> {
         match self {
             Self::UnexpectedCall { expected, .. } => Some(*expected),
+            // No expectation existed for an extra call, so there is no honest
+            // expected method to report.
+            Self::UnexpectedExtraCall { .. } => None,
             _ => None,
         }
     }
 
-    /// Returns the actual [`MethodKind`], if this is an `UnexpectedCall`.
+    /// Returns the actual [`MethodKind`], if this is an `UnexpectedCall` or
+    /// `UnexpectedExtraCall`.
     #[must_use]
     pub const fn actual_method(&self) -> Option<MethodKind> {
         match self {
             Self::UnexpectedCall { actual, .. } => Some(*actual),
+            Self::UnexpectedExtraCall { actual, .. } => Some(*actual),
             _ => None,
         }
     }
 
     /// Returns the bounded, redacted mismatch summary, if this is an
-    /// `UnexpectedCall`.
+    /// `UnexpectedCall` or `UnexpectedExtraCall`.
     #[must_use]
     pub fn mismatch_summary(&self) -> Option<&str> {
         match self {
             Self::UnexpectedCall { mismatch, .. } => Some(mismatch.as_str()),
+            Self::UnexpectedExtraCall { summary, .. } => Some(summary.as_str()),
             _ => None,
         }
     }
@@ -391,6 +452,12 @@ impl fmt::Display for NixAdapterError {
                 expected.as_str(),
                 actual.as_str(),
                 mismatch.as_str()
+            ),
+            Self::UnexpectedExtraCall { actual, summary } => write!(
+                f,
+                "unexpected adapter call: no expectation remained, actual {} ({})",
+                actual.as_str(),
+                summary.as_str()
             ),
             Self::OversizedInput { limit_bytes } => {
                 write!(f, "oversized input: exceeds {limit_bytes} bytes")
@@ -575,5 +642,58 @@ mod tests {
         let msg = e.to_string();
         assert!(msg.contains("invalid store path"));
         assert_eq!(e.code(), NixAdapterErrorCode::ValidationFailure);
+    }
+
+    #[test]
+    fn unexpected_extra_call_represents_no_head_honestly() {
+        // The no-head sibling: constructed from the actual method kind only.
+        let e = NixAdapterError::unexpected_extra_call(MethodKind::Gc);
+        // Reuses the single UnexpectedCall code.
+        assert_eq!(e.code(), NixAdapterErrorCode::UnexpectedCall);
+        // No expectation existed -> no honest expected method.
+        assert_eq!(e.expected_method(), None);
+        // The actual method that arrived is named.
+        assert_eq!(e.actual_method(), Some(MethodKind::Gc));
+        // The single crate-owned static summary.
+        assert_eq!(e.mismatch_summary(), Some("extra call"));
+        assert!(e.mismatch_summary().unwrap().len() <= BoundedSummary::MAX);
+
+        // Display is bounded/redacted and truthfully says no expectation
+        // remained, names the actual method, and carries the static summary.
+        let msg = e.to_string();
+        assert!(msg.contains("no expectation remained"), "msg={msg}");
+        assert!(msg.contains("gc"), "actual method named: msg={msg}");
+        assert!(msg.contains("extra call"), "summary present: msg={msg}");
+
+        // Equal construction is value-equal; a different actual is not.
+        assert_eq!(
+            NixAdapterError::unexpected_extra_call(MethodKind::Gc),
+            NixAdapterError::unexpected_extra_call(MethodKind::Gc)
+        );
+        assert_ne!(
+            NixAdapterError::unexpected_extra_call(MethodKind::Gc),
+            NixAdapterError::unexpected_extra_call(MethodKind::Build)
+        );
+
+        // It is distinct from the head-bearing UnexpectedCall even when actual
+        // matches, because there is no expected and the summary differs.
+        assert_ne!(
+            NixAdapterError::unexpected_extra_call(MethodKind::Gc),
+            NixAdapterError::unexpected_call(MethodKind::Version, MethodKind::Gc)
+        );
+    }
+
+    #[test]
+    fn unexpected_extra_call_works_for_every_method_kind() {
+        for m in MethodKind::ALL {
+            let e = NixAdapterError::unexpected_extra_call(m);
+            assert_eq!(e.code(), NixAdapterErrorCode::UnexpectedCall);
+            assert_eq!(e.expected_method(), None);
+            assert_eq!(e.actual_method(), Some(m));
+            assert_eq!(e.mismatch_summary(), Some("extra call"));
+            let msg = e.to_string();
+            assert!(msg.contains(m.as_str()));
+            assert!(msg.contains("no expectation remained"));
+        }
     }
 }
