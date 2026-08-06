@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "nix": {
+    "version": "2.34.8"
+  },
+  "nixpkgs": {
+    "owner": "NixOS",
+    "repo": "nixpkgs",
+    "rev": "a62e6edd6d5e1fa0329b8653c801147986f8d446",
+    "narHash": "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw="
+  },
+  "systems": [
+    "x86_64-linux",
+    "aarch64-linux",
+    "x86_64-darwin",
+    "aarch64-darwin"
+  ],
+  "attr": "ripgrep",
+  "sampling": {
+    "warmup": 1,
+    "singleAttrSamples": 5,
+    "indexSamples": 3
+  },
+  "caps": {
+    "singleAttrStdoutBytes": 1048576,
+    "indexStdoutBytes": 268435456,
+    "stderrBytes": 8388608
+  },
+  "timeouts": {
+    "singleAttrSeconds": 300,
+    "indexSeconds": 600,
+    "overallSeconds": 3600
+  },
+  "rawArchive": {
+    "url": "https://github.com/NixOS/nixpkgs/archive/a62e6edd6d5e1fa0329b8653c801147986f8d446.tar.gz",
+    "sha256Sri": "sha256-rXVGuq8bJfByJbOrrB3I++2MTsvZDcTo7C6UHXD5muE=",
+    "sha256Hex": "ad7546baaf1b25f07225b3abac1dc8fbed8c4ecbd90dc4e8ec2e941d70f99ae1",
+    "bytes": 38667882
+  }
+}

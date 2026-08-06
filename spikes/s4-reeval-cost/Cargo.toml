@@ -1,0 +1,57 @@
+# Spike S4 — single-attribute reevaluation cost (PR-6 / DR-004).
+#
+# This is a STANDALONE Cargo project: the `[workspace]` table below makes this
+# manifest its own workspace root, so this spike does NOT join the production
+# workspace at the repository root (`Cargo.toml` members = pkg-core/pkg-nix/
+# pkg-testkit). It therefore has its OWN `Cargo.lock` and `target/` directory
+# and is excluded from the root `cargo build`/`clippy`/`test`/`doc` lanes (the
+# same isolation model as `spikes/s2-tough/`).
+#
+# It is a benchmark/evidence harness, NOT production pkg code. It is
+# `publish = false`, carries NO `license` field and NO SPDX headers (DR-015), and
+# FORBIDS unsafe code (`#![forbid(unsafe_code)]` in `src/lib.rs`/`src/main.rs`).
+# Dependencies are intentionally minimal and locked (`serde`, `serde_json`, and
+# `rustix`): `serde`/`serde_json` drive the report schema and JSON I/O, while
+# `rustix` provides safe process-group signaling. See `README.md` / `FINDINGS.md`.
+
+[package]
+name = "pkg-spike-s4-reeval-cost"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+description = "Spike S4: measure single-attribute + index-meta reevaluation cost at a pinned Nixpkgs rev (Fake vs Real)."
+
+[lib]
+name = "pkg_spike_s4_reeval_cost"
+path = "src/lib.rs"
+
+[[bin]]
+name = "s4-runner"
+path = "src/main.rs"
+
+[workspace]
+# Intentionally a self-contained workspace root (resolver 3 to match the
+# production workspace and edition 2024). Empty members = this package only.
+resolver = "3"
+
+[dependencies]
+# Minimal, locked tree of exactly three crates. `serde` derive powers the
+# deterministic report schema; `serde_json` parses `nix flake prefetch --json`
+# output (hash + storePath) and the `benchmark.json` manifest, and serializes
+# `report.json`. The `nix --version` probe is plain-text (NOT JSON), and the
+# `nix … eval --json` outputs are measured only for wall-ms/RSS cost — their
+# stdout is never inspected or JSON-parsed. `rustix` (below) supplies the safe
+# process-group signaling instead of unsafe/libc. No other crates, no `unsafe`,
+# no network in Fake.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# safe portable process-group SIGKILL on macOS/Linux; avoids unsafe/libc and host /bin/kill assumptions.
+rustix = { version = "1.1.4", features = ["process"] }
+
+[dev-dependencies]
+# Integration tests in `tests/` reuse the library only; no extra dev-deps.
+
+# NOTE: `Cargo.lock` for this spike is committed alongside this manifest for
+# reproducible builds (it is a binary-style standalone workspace, not a library
+# consumed by the production workspace).

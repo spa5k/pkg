@@ -1,0 +1,14 @@
+# Spike S4 local ignores — generated output + Rust build artifacts.
+#
+# Generated result files (report.json / summary.md / per-run time captures) are
+# intentionally NOT committed: they are host/time-specific evidence, never source
+# of truth. `Cargo.lock` IS committed (reproducible standalone build). We do NOT
+# ignore Nix caches here and never touch `/nix` from this spike.
+
+/out/
+/.time-*.txt
+/.time.txt
+
+# Rust build artifacts (mirrors the repo-root .gitignore intent for `target`).
+/target/
+**/target/
