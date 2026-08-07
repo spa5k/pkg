@@ -4,7 +4,9 @@ use clap::Parser;
 use pkg_cli::cli::{Cli, Command};
 use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport};
 use pkg_cli::completion::write_completion;
+use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
 use pkg_cli::exit::ExitCode;
+use pkg_cli::log::{LogConfig, LogLevel, LogRecord, StructuredLog};
 use pkg_cli::path::{HostFamily, PathObservation, default_state_root};
 use pkg_cli::ux::{CommandError, OutputMode, write_error};
 
@@ -42,6 +44,8 @@ fn main() -> ProcessExitCode {
         _ => {}
     }
 
+    install_crash_reporter(&cli);
+
     // PR-24 replaces this closed response for the remaining command set.
     let error = CommandError::new(
         ExitCode::EngineUnavailable,
@@ -60,7 +64,44 @@ fn main() -> ProcessExitCode {
     {
         return ProcessExitCode::FAILURE;
     }
+    write_command_log(&cli, error.exit_code());
     error.exit_code().into()
+}
+
+fn observability_root(cli: &Cli) -> Option<std::path::PathBuf> {
+    cli.state()
+        .map(std::path::Path::to_owned)
+        .or_else(|| HostFamily::detect().and_then(default_state_root))
+}
+
+fn install_crash_reporter(cli: &Cli) {
+    let Some(root) = observability_root(cli) else {
+        return;
+    };
+    let Ok(context) = CrashContext::new(CrashPhase::Cli, None, None) else {
+        return;
+    };
+    CrashReporter::new(root.join("crash/latest.json"), context).install();
+}
+
+fn write_command_log(cli: &Cli, exit_code: ExitCode) {
+    let Some(root) = observability_root(cli) else {
+        return;
+    };
+    let Ok(log) = StructuredLog::open(root.join("logs"), LogConfig::default()) else {
+        return;
+    };
+    let level = if exit_code == ExitCode::Ok {
+        LogLevel::Info
+    } else {
+        LogLevel::Error
+    };
+    let _ = log.append(&LogRecord::command(
+        level,
+        "command_finished",
+        cli.command_name(),
+        Some(exit_code.as_u8()),
+    ));
 }
 
 fn run_doctor(cli: &Cli) -> ProcessExitCode {

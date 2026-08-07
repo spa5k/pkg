@@ -79,6 +79,32 @@ fn completion_is_real_static_source_and_doctor_is_honest_about_deferred_checks()
 }
 
 #[test]
+fn command_logging_records_only_the_command_not_package_arguments() {
+    let state = std::env::temp_dir().join(format!(
+        "pkg-cli-log-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let output = pkg()
+        .args([
+            "install",
+            "super-secret-package-name",
+            "--state",
+            state.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(79));
+    let text = std::fs::read_to_string(state.join("logs/pkg.log")).unwrap();
+    assert!(text.contains("command_finished"));
+    assert!(text.contains("install"));
+    assert!(!text.contains("super-secret-package-name"));
+    assert!(!text.contains("argv"));
+    assert!(!text.contains("environment"));
+    std::fs::remove_dir_all(state).unwrap();
+}
+
+#[test]
 fn semantic_usage_failure_uses_the_selected_machine_format() {
     let output = pkg()
         .args(["--json", "upgrade"])

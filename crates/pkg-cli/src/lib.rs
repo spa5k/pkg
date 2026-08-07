@@ -6,7 +6,10 @@
 pub mod cli;
 pub mod commands;
 pub mod completion;
+pub mod crash;
 pub mod exit;
+pub mod log;
 pub mod path;
 pub mod progress;
+pub mod telemetry;
 pub mod ux;
