@@ -1,9 +1,8 @@
 # `pkg` root workspace.
 #
-# A single real member crate (`pkg-core`) is required even in PR-1: a memberless
-# virtual workspace makes `cargo build`/`check`/`clippy`/`doc` fail 101 and
-# `fmt` fail 1. PR-2 fills `pkg-core` with domain types/logic/tests; PR-1 only
-# stands up the scaffold so the toolchain is operable against a real crate.
+# PR-1 began with `pkg-core`; later dependency-safe milestones add their owned
+# crates here. Keeping every production crate in the root member list makes the
+# standard build, lint, documentation, and dependency gates cover it by default.
 #
 # License: intentionally ABSENT. The project license is deferred (DR-015 in
 # plans/12-open-decisions-and-risks.md). No `license` key is set here or in any
@@ -11,7 +10,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/pkg-core", "crates/pkg-nix", "crates/pkg-testkit"]
+members = ["crates/pkg-cli", "crates/pkg-core", "crates/pkg-nix", "crates/pkg-testkit"]
 
 [workspace.package]
 version = "0.0.0"
