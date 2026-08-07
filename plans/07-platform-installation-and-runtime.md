@@ -84,7 +84,7 @@ Owned by root (or the daemon user), mode `0644`, path
 `<daemon-state>/nix.conf` referenced by the daemon. Minimal v1 contents:
 
 ```ini
-build-users-group = nixbld            # Linux: nixbld; macOS: _nixbld (created by installer)
+build-users-group = nixbld            # group is `nixbld` on BOTH Linux and macOS (created by installer); build users are `nixbld*` (Linux) / `_nixbld*` (macOS)
 sandbox = true                       # both platforms: builds run sandboxed
 sandbox-fallback = false             # fail closed, never build unsandboxed (both platforms)
 require-sigs = true
@@ -117,7 +117,8 @@ The bundled Nix runs as a **daemon** (`nix-daemon`):
   installer (*confirmed multi-user model* [^multi-user]).
 - **macOS:** a `launchd` daemon
   (`system` domain `org.pkg.nix-daemon.plist`) for the same role. macOS builds
-  run through Nix's macOS sandbox under the `_nixbld` group/users created by
+  run through Nix's macOS sandbox under the `nixbld` group / `_nixbld*` build
+  users created by
   the installer (D-11); the daemon is configured with `sandbox=true` and
   `sandbox-fallback=false`, and `pkg` fails closed if sandbox or build-user
   readiness cannot be verified. Nix's macOS sandbox uses different, generally
@@ -245,7 +246,7 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    `nix`, `launchctl list | grep nix`, `/Library/LaunchDaemons/org.nixos.*` —
    refuse with remediation if found.
 2. Create `/nix` (root:admin), `/nix/store`, `/nix/var/nix/...` (standard Nix
-   on macOS still uses `/nix`); create the `_nixbld` group + `_nixbld1..N`
+   on macOS still uses `/nix`); create the `nixbld` group + `_nixbld1..N`
    build users (multi-user build isolation, [^multi-user]); verify the host's
    native toolchain (Xcode/Command Line Tools) is present for local builds.
 3. Extract bundled Nix to `/opt/pkg/nix`.
@@ -253,12 +254,12 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    `launchctl load`. Daemon runs as root and substitutes/builds via the
    `_nixbld` build users.
 5. Write root-owned `nix.conf` (`sandbox=true`, `sandbox-fallback=false`,
-   `build-users-group=_nixbld`; substituters/keys from descriptor).
+   `build-users-group=nixbld`; substituters/keys from descriptor).
 6. Install `pkg` to `/usr/local/bin/pkg` (or `/opt/pkg/bin`).
 7. PATH integration (§10); uninstall manifest.
 
 **macOS build readiness:** the macOS daemon runs with `sandbox=true`/
-`sandbox-fallback=false` and the `_nixbld` group/users created at install
+`sandbox-fallback=false` and the `nixbld` group / `_nixbld*` users created at install
 (D-11). Substitution is tried first; on a cache miss an **approved** native
 sandboxed build is permitted. A build that is impossible or disallowed
 (unsupported/broken/impure derivation, or sandbox/build-user unavailable, or

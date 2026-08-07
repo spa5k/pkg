@@ -26,9 +26,10 @@ Three modes are wired to the binary; two of them have host/network/store
 
 - **`detect`** runs the **read-only** macOS host Detect lane. When explicitly
   invoked it reads **default-keychain identity metadata/counts** (via
-  `/usr/bin/security find-identity`) **plus `_nixbld`/tool capability metadata**
+  `/usr/bin/security find-identity`) **plus `nixbld` build-group / `_nixbld*`
+  member metadata**
   (filesystem presence of fixed Apple tools, `xcode-select -p`, `xcrun --find
-  notarytool`, `dscl … /Groups/_nixbld`). It **never** accepts credentials,
+  notarytool`, `dscl … /Groups/nixbld`). It **never** accepts credentials,
   **never** unlocks/signs/notarizes, and **never** writes keychain data. It only
   records booleans, a closed Xcode enum, and bounded counts — never an identity
   name, tool path, hostname, username, or profile.
@@ -54,8 +55,8 @@ Five lanes, one report per run, one ACTIVE lane selected by the mode:
   No network, no Nix, no keychain. Never evidence.
 - **Detect** — read-only macOS host capability detection: the macOS
   signing/notarization/packaging tool capabilities, the active Xcode
-  classification, Developer ID identity *counts*, `_nixbld` build-user group
-  presence/count, and optional Nix presence (existence check only).
+  classification, Developer ID identity *counts*, `nixbld` build-user group
+  presence/count (`_nixbld*` members), and optional Nix presence (existence check only).
 - **Preflight** — `cache.nixos.org` binary-coverage availability matrix for the
   pinned attrs/systems, gated by an exact-Nix-version check and a verified
   pinned flake prefetch.
@@ -269,7 +270,7 @@ and Preflight modes. The wrapper's Detect does **not** accept an optional
 ./run.sh fake custom/out
 
 # Detect (read-only host lane; reads default-keychain identity metadata/counts
-# plus _nixbld/tool capability metadata; no credentials/writes/signing):
+# plus nixbld build-group/_nixbld* member metadata; no credentials/writes/signing):
 ./run.sh detect                     # out -> target/s3-detect
 ./run.sh detect custom/out
 
@@ -377,7 +378,7 @@ version string, or hash.
   `/usr/bin/xcode-select`, `/usr/bin/xcrun`, `/usr/bin/dscl`, and the nine fixed
   packaging/signing tool paths). It **reads default-keychain identity
   metadata/counts** via `/usr/bin/security find-identity` and reads
-  `_nixbld`/tool capability metadata. It **never** accepts credentials,
+  `nixbld` build-group / `_nixbld*` member metadata. It **never** accepts credentials,
   **never** unlocks/signs/notarizes, **never** writes keychain data, and
   **never** executes the optional `--nix-bin` (existence check only). No `/nix`
   mutation. The only recorded values are booleans, a closed Xcode enum, and

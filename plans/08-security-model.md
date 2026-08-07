@@ -474,7 +474,7 @@ Impact (L/M/H) using the rubric in §6.0.
 |--------|-------|-------|
 | Privilege helper | polkit-gated service (preferred) or setuid w/ priv drop | launchd daemon + authorized client (no setuid) |
 | Build sandbox | full `bwrap`/namespaces sandbox; `sandbox-fallback=false` | Nix macOS sandbox (supported but **different, generally narrower primitives** than Linux); `sandbox-fallback=false`; `pkg` fails closed if unready |
-| Build users | `nixbld` group/users | `_nixbld` group/users |
+| Build users | `nixbld` group, `nixbld*` users | `nixbld` group, `_nixbld*` users |
 | Caller auth | `SO_PEERCRED` | `getpeereid` / launchd `Audit Token` |
 | PATH integration | rc-snippet sourced by shell | rc-snippet + `/etc/paths.d` considered; doctor verifies |
 | Root-owned store | yes (daemon model) | yes (daemon model) |

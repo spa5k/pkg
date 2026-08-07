@@ -137,6 +137,17 @@ in this session. The pin itself is the **same canonical pin**
 `sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=`), scoped to the two
 Darwin systems and three attrs.
 
+The **Detect** lane's `nixbld` build-user group probe is likewise pinned to
+the official Nix 2.34.8 installer source (the primary source for this spike's
+pin): `scripts/install-multi-user.sh` hard-codes
+`readonly NIX_BUILD_GROUP_NAME="nixbld"` and writes
+`build-users-group = $NIX_BUILD_GROUP_NAME`; `scripts/install-darwin-multi-user.sh`
+sets `NIX_BUILD_USER_NAME_TEMPLATE="_nixbld%d"` and creates those users as
+members of the `nixbld` group. The macOS build-user group is therefore
+`nixbld` (the probe reads `/Groups/nixbld`), and the macOS build users are
+`_nixbld1..N` (the group is **never** `_nixbld`). A live Detect has not been
+run (see §5.2), so this is a contract/source review, **not** observed evidence.
+
 > **Runtime behavior of these probes remains unobserved here.** The contracts
 > were checked against the source/docs; no real Nix 2.34.8 was executed in this
 > environment (see §3), so this is a contract review, **not** measured
@@ -224,7 +235,7 @@ cargo build --locked --offline --release
 ```
 
 **Run command for a real Detect** (macOS host only; reads default-keychain
-identity metadata/counts plus `_nixbld`/tool capability metadata; no
+identity metadata/counts plus `nixbld` build-group/`_nixbld*` member metadata; no
 credentials/writes/signing):
 
 ```sh
@@ -281,8 +292,8 @@ Also pending: the two Preflight gates that make the matrix meaningful —
 | `xcodeSelection` (Absent / CommandLineTools / FullXcode, via `xcode-select -p`) | Pending |
 | `applicationIdentityCount` ("Developer ID Application" identities) | Pending |
 | `installerIdentityCount` ("Developer ID Installer" identities) | Pending |
-| `nixbldGroupPresent` (`_nixbld` group, via `dscl`) | Pending |
-| `nixbldUserCount` (`_nixbld` group member count) | Pending |
+| `nixbldGroupPresent` (`nixbld` group, via `dscl . -read /Groups/nixbld`) | Pending |
+| `nixbldUserCount` (`nixbld` group member count; `_nixbld*` users) | Pending |
 
 These are **read-only detections** (identity *counts* and tool *presence*; never
 identity names, paths, or credentials). Pending until a live Detect runs on a
@@ -391,7 +402,7 @@ meeting it makes a report *candidate* evidence, not proof.
 For BuildProbe and signing/notarization, **additionally** (these cannot be
 satisfied from this spike alone):
 
-- [ ] A real native sandboxed Darwin build under `_nixbld` (BuildProbe) from a
+- [ ] A real native sandboxed Darwin build under `_nixbld*` build users (BuildProbe) from a
       managed macOS / [S5](../../plans/11-pr-roadmap.md) harness, with
       `sandbox=true`/`sandbox-fallback=false` and **effective** network denial,
       approval, and resource caps (cap/approval/network effectiveness co-owned

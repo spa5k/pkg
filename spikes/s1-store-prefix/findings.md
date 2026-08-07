@@ -438,7 +438,7 @@ world-writable**. `/nix/store` is **mode `1775`** = sticky bit (`1`) + owner `rw
 group but NOT world-writable** (others get read+execute, no write). On **Linux** the
 group is `nixbld`, sourced directly from `install-multi-user.sh`
 (`install -dv -g nixbld -m 1775`). On **macOS** the build users are `_nixbld1..` and
-the group `_nixbld`, and `/nix` lives on the synthetic APFS "Nix Store" volume; the
+the group `nixbld`, and `/nix` lives on the synthetic APFS "Nix Store" volume; the
 *exact* store mode/group on Darwin is **inference (c)** — the pinned `install-multi-user.sh`
 proves the Linux `1775`/`nixbld` contract, while the macOS path runs through
 `install-darwin-multi-user.sh`/`create-darwin-volume.sh`, whose concrete `install -m`/

@@ -166,7 +166,7 @@ only, T-CACHE-1/4); **trusted-public-keys** (channel key set only, T-CACHE-1); *
 + `--allowed-uris`** for any eval `pkg` performs (T-DAEMON-1); **`sandbox=true` +
 `sandbox-fallback=false`** on Linux and macOS, with `pkg` failing closed if the sandbox or the
 build-user group cannot be verified ready (T-BUILD-1, AC-S13); the **build-users group**
-(`nixbld`/`_nixbld`) (D-11); and the **builders**/substituter-URL set. The trait
+(`nixbld` on both Linux and macOS; build users `nixbld*`/`_nixbld*`) (D-11); and the **builders**/substituter-URL set. The trait
 therefore accepts **no caller trust/flag toggles**: `eval_realize`, `substitute`, and `build`
 take only selector/store-path/realization inputs plus already-pinned identifiers (`channelSeq`,
 `system`, an approval token) — never `--substituters`, `--trusted-public-keys`, `--sandbox`,

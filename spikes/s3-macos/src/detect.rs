@@ -183,9 +183,20 @@ pub(crate) fn security_installer_spec() -> CommandSpec {
     probe(SECURITY, &["find-identity", "-v"])
 }
 
-/// `/usr/bin/dscl . -read /Groups/_nixbld GroupMembership`.
+/// `/usr/bin/dscl . -read /Groups/nixbld GroupMembership`.
+///
+/// The macOS build-user GROUP is `nixbld`, and the build USERS are
+/// `_nixbld1..N`. Per the official Nix 2.34.8 installer — the primary source
+/// for this spike's pin — `scripts/install-multi-user.sh` hard-codes
+/// `readonly NIX_BUILD_GROUP_NAME="nixbld"` and writes
+/// `build-users-group = $NIX_BUILD_GROUP_NAME`, while
+/// `scripts/install-darwin-multi-user.sh` sets
+/// `NIX_BUILD_USER_NAME_TEMPLATE="_nixbld%d"` and creates those users as
+/// members of the `nixbld` group. The probe therefore reads the `nixbld`
+/// group's `GroupMembership`, whose members are `_nixbld*` users; it must
+/// NEVER probe `/Groups/_nixbld` (a user-name prefix, not the group).
 pub(crate) fn dscl_spec() -> CommandSpec {
-    probe(DSCL, &[".", "-read", "/Groups/_nixbld", "GroupMembership"])
+    probe(DSCL, &[".", "-read", "/Groups/nixbld", "GroupMembership"])
 }
 
 /// Compile-time host system mapping. `Some` only on macOS for the two pinned
@@ -345,8 +356,9 @@ pub fn detect(
         }
     }
 
-    // dscl . -read /Groups/_nixbld GroupMembership (only if dscl exists).
-    // Nonzero/signal ⇒ group absent (capability, NO failure); zero-exit + valid
+    // dscl . -read /Groups/nixbld GroupMembership (only if dscl exists). The
+    // group is `nixbld`; members are `_nixbld*` users. Nonzero/signal ⇒ group
+    // absent (capability, NO failure); zero-exit + valid
     // UTF-8 ⇒ present + bounded count; zero-exit + non-UTF-8 ⇒ a closed
     // Detect/Unknown malformed failure with presence conservatively false. The
     // closed [`NixbldOutcome`] makes the malformed case impossible to silently
@@ -534,8 +546,9 @@ fn strip_required_ws(mut bytes: &[u8]) -> Option<&[u8]> {
     if consumed == 0 { None } else { Some(bytes) }
 }
 
-/// The closed outcome of parsing a `_nixbld` `GroupMembership` probe. This is
-/// the SINGLE source of truth for how `dscl` output maps to the
+/// The closed outcome of parsing the `nixbld` group's `GroupMembership`
+/// probe (members are `_nixbld*` users). This is the SINGLE source of truth
+/// for how `dscl` output maps to the
 /// `(present, count)` pair on the observation AND whether the Detect lane must
 /// record a closed failure: the parser never returns a bare tuple the
 /// orchestrator could silently accept as complete on malformed output.
@@ -543,7 +556,7 @@ fn strip_required_ws(mut bytes: &[u8]) -> Option<&[u8]> {
 pub(crate) enum NixbldOutcome {
     /// Capability absence: a nonzero exit OR a signal termination. The group is
     /// absent, the member count is zero, and NO failure is recorded (a host
-    /// without `_nixbld` simply lacks the build-user group).
+    /// without the `nixbld` group simply lacks the build-user group).
     Absent,
     /// Group present with a bounded member count. Covers both a real
     /// `GroupMembership:` line and the deliberate exit-0-but-no-line case (the
@@ -554,8 +567,9 @@ pub(crate) enum NixbldOutcome {
     Malformed,
 }
 
-/// Parse `_nixbld` group presence and member COUNT from bounded `dscl …
-/// GroupMembership` stdout into a closed [`NixbldOutcome`]:
+/// Parse `nixbld` group presence and member COUNT from bounded `dscl …
+/// GroupMembership` stdout into a closed [`NixbldOutcome`] (the group is
+/// `nixbld`; members are `_nixbld*` users):
 ///   * nonzero exit / signal ⇒ [`NixbldOutcome::Absent`] (group absent, zero
 ///     members, NO failure — capability absence);
 ///   * zero exit + valid UTF-8 `GroupMembership:` line ⇒ [`NixbldOutcome::Present`]
@@ -1305,5 +1319,47 @@ mod tests {
             assert!(spec.program.is_absolute(), "{:?}", spec.program);
             assert!(spec.timeout <= Duration::from_secs(30));
         }
+    }
+
+    #[test]
+    fn dscl_spec_reads_nixbld_group_never_the_user_prefix() {
+        // The macOS build-user GROUP is `nixbld`; the build USERS are
+        // `_nixbld1..N` (official Nix 2.34.8 installer: `install-multi-user.sh`
+        // hard-codes `NIX_BUILD_GROUP_NAME="nixbld"`; `install-darwin-multi-user.sh`
+        // sets `NIX_BUILD_USER_NAME_TEMPLATE="_nixbld%d"`). The dscl probe MUST
+        // read `/Groups/nixbld` and NEVER `/Groups/_nixbld` (a user-name prefix,
+        // not the group). This regression test pins the exact argv.
+        let spec = dscl_spec();
+        let argv: Vec<String> = std::iter::once(spec.program.to_string_lossy().into_owned())
+            .chain(spec.args.iter().map(|a| a.to_string_lossy().into_owned()))
+            .collect();
+        let joined = argv.join(" ");
+        assert!(
+            joined.contains("/Groups/nixbld"),
+            "dscl argv must read /Groups/nixbld, got {joined:?}"
+        );
+        assert!(
+            !joined.contains("/Groups/_nixbld"),
+            "dscl argv must NEVER probe /Groups/_nixbld (a user-name prefix, \
+             not the group), got {joined:?}"
+        );
+        // Exact argv: /usr/bin/dscl . -read /Groups/nixbld GroupMembership.
+        assert_eq!(spec.program, Path::new("/usr/bin/dscl"));
+        assert_eq!(
+            spec.args,
+            vec![
+                OsString::from("."),
+                OsString::from("-read"),
+                OsString::from("/Groups/nixbld"),
+                OsString::from("GroupMembership"),
+            ]
+        );
+        // The member FIXTURES stay `_nixbld*` users (the parser counts them);
+        // only the probed GROUP path changed. Sanity-check the parser still
+        // counts `_nixbld*` members of the `nixbld` group.
+        assert_eq!(
+            parse_nixbld(b"GroupMembership: _nixbld1 _nixbld2 _nixbld3\n", true),
+            NixbldOutcome::Present(3)
+        );
     }
 }

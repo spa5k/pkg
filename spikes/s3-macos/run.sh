@@ -12,7 +12,7 @@
 # detect   — read-only host Detect lane. WARNING: when explicitly invoked it
 #            runs the fixed read-only `/usr/bin/security find-identity` probe,
 #            so it reads default-keychain identity metadata/counts plus
-#            `_nixbld`/tool capability metadata. It NEVER accepts credentials,
+#            `nixbld` build-group/`_nixbld*` member metadata. It NEVER accepts credentials,
 #            NEVER unlocks/signs/notarizes, and NEVER writes keychain data.
 # preflight — Preflight cache-coverage lane. WARNING: it EXECUTES the supplied
 #            absolute Nix binary (its exact Nix 2.34.8 version verified at
@@ -53,7 +53,7 @@ case ${1:-} in
       exit 64
     fi
     # Effect warning (see header): reads default-keychain identity metadata/
-    # counts plus _nixbld/tool capability metadata; no credentials/writes/
+    # counts plus nixbld build-group/_nixbld* member metadata; no credentials/writes/
     # signing.
     printf 's3-probe: detect reads default-keychain identity metadata/counts (read-only); no credentials, no keychain writes, no signing\n' >&2
     out_dir=${2:-target/s3-detect}

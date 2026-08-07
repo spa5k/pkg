@@ -498,7 +498,8 @@ pub const MAX_IDENTITY_COUNT: u32 = 4_096;
 /// Detect-lane evidence: host Nix presence, detected host system (optional),
 /// the macOS signing/notarization tool capabilities, the active Xcode
 /// classification, the Developer ID identity COUNTS (application/installer),
-/// and the `_nixbld` build-user group presence/member count.
+/// and the `nixbld` build-user group presence/member count (members are
+/// `_nixbld*` users).
 ///
 /// Carries NO identity name, tool path, hostname, username, keychain profile,
 /// timestamp, or raw tool output — only booleans, the closed Xcode enum, and
@@ -518,9 +519,10 @@ pub struct DetectObservation {
     /// Number of "Developer ID Installer" identities (from
     /// `security find-identity -v`). A COUNT only.
     pub installer_identity_count: u16,
-    /// `_nixbld` build-user group present (from `dscl . -read /Groups/_nixbld`).
+    /// `nixbld` build-user group present (from `dscl . -read /Groups/nixbld`;
+    /// members are `_nixbld*` users).
     pub nixbld_group_present: bool,
-    /// Number of `_nixbld` group members. A COUNT only.
+    /// Number of `nixbld` group members (`_nixbld*` users). A COUNT only.
     pub nixbld_user_count: u16,
 }
 

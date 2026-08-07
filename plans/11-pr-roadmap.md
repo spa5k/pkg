@@ -287,7 +287,7 @@ flowchart TD
 - **Milestone:** M0.5.
 
 #### PR-7 — SPIKE S3: macOS binary coverage + Apple signing/notarization
-- **Purpose:** confirm Darwin binary coverage on `cache.nixos.org` for `x86_64-darwin`/`aarch64-darwin`, **and** that real macOS local builds are viable (native sandboxed build, `_nixbld` build users/group, Xcode/CLT toolchain availability, platform-appropriate resource caps, `sandbox-fallback=false` fail-closed), and that a notarized signed installer/runtime is achievable. **Gates PR-28 and the Real-Nix macOS lane (`09`).**
+- **Purpose:** confirm Darwin binary coverage on `cache.nixos.org` for `x86_64-darwin`/`aarch64-darwin`, **and** that real macOS local builds are viable (native sandboxed build, `nixbld` build-user group / `_nixbld*` build users, Xcode/CLT toolchain availability, platform-appropriate resource caps, `sandbox-fallback=false` fail-closed), and that a notarized signed installer/runtime is achievable. **Gates PR-28 and the Real-Nix macOS lane (`09`).**
 - **Owns:** `spikes/s3-macos/`, DR-003 in `12`.
 - **Depends:** PR-1.
 - **Migration/compat:** confirms or revises the macOS build-security policy (cache coverage **and** native local-build readiness) (`07`, DR-003).
@@ -572,7 +572,7 @@ flowchart TD
 - **Milestone:** M5.
 
 #### PR-28 — macOS installer + Darwin build integration + launchd + signing/notarization
-- **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `_nixbld` build users/group, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and platform-appropriate resource caps (`07`, DR-003 from S3). Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
+- **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and platform-appropriate resource caps (`07`, DR-003 from S3). Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
 - **Owns:** `crates/pkg-installer/src/platform/macos.rs`, `_nixbld` build-user provisioning, notarization tooling, packaging.
 - **Depends:** PR-12, PR-7 (S3), PR-26 (shared engine).
 - **Migration/compat:** macOS supports approved native sandboxed local builds (D-11); not binary-only.
@@ -752,7 +752,7 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
 | **M2 Catalog & resolve** | 13–16 | Pinned Nixpkgs realized + narHash-verified; disposable deterministic index built/queried; Selector→Realization resolves under pure eval. |
 | **M3 Install/activate** | 17–20 | Substitute+verify; atomic activation; install pipeline with rollback-on-failure; remove/upgrade with mixed revisions. |
 | **M4 Generations & UX** | 21–25 | Generations/history/rollback/pin; GC+leases; full CLI wired to Fake Nix; completions + doctor. |
-| **M5 Local build & installers** | 26–29 | Shared cross-platform local-build engine w/ sandbox+approval (Linux + macOS native); Linux + macOS installers with authenticated helpers + build users (`nixbld`/`_nixbld`); bounded uninstall. |
+| **M5 Local build & installers** | 26–29 | Shared cross-platform local-build engine w/ sandbox+approval (Linux + macOS native); Linux + macOS installers with authenticated helpers + `nixbld` build group plus `nixbld*` users on Linux and `_nixbld*` users on macOS; bounded uninstall. |
 | **M6 Hardening & ops** | 30–35 | Repair; security lane; perf gate; release signing; observability; docs/support export. |
 | **M7 Technical Preview** | 36 | Real-Nix nightly green on Linux x86_64 + macOS arm64; Fake↔Real parity; self-hosted e2e. |
 | **M8 v1** | 37–38 | RC with compat matrix + revoke rehearsal + sign-off; v1.0 published with advisory. |

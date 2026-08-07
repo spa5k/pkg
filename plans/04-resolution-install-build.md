@@ -485,7 +485,7 @@ in the generated
 |------|---------|--------|
 | `sandbox` | `true` (both platforms) | Nix conf `sandbox` [^sandbox] |
 | `sandbox-fallback` | `false` (both platforms; fail closed, never build unsandboxed) | Nix conf `sandbox-fallback` |
-| `build-users-group` | `nixbld` (Linux); `_nixbld` group/users (macOS) — both created by the installer | multi-user [^multiuser] |
+| `build-users-group` | `nixbld` (both Linux and macOS; created by the installer) — build users are `nixbld*` (Linux) / `_nixbld*` (macOS) | multi-user [^multiuser] |
 | `max-jobs` | `1` (tunable) | conf `max-jobs` |
 | `cores` | `0` (use all) | conf `cores` |
 | `max-silent-time` | `3600` s | conf `max-silent-time` |
