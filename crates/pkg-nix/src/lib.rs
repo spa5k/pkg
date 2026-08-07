@@ -23,7 +23,7 @@
 //!
 //! # Design rules enforced here
 //!
-//! - **Object-safe, `Send + Sync` trait** with nine methods and **borrowed**
+//! - **Object-safe, `Send + Sync` trait** with eight methods and **borrowed**
 //!   inputs (`plans/09` §4.1).
 //! - **No per-call trust/flag knobs.** None of `--substituters`,
 //!   `--trusted-public-keys`, `--sandbox`, `--builders`, `--max-jobs`, an
@@ -52,9 +52,9 @@ pub use adapter::NixAdapter;
 pub use contract::{
     AcceptedFormats, AddRootRequest, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
     EvalRealizeRequest, FormatVersion, GcReport, GcStatus, JsonCodec, MethodKind, NarIntegrity,
-    NixVersion, OperationId, PathInfoReport, PathRepairResult, PathVerifyResult, RealizationReport,
-    RepairOutcome, RepairReport, RootName, RootRef, SchemaVersion, Signature, SubstituteOutcome,
-    SubstituteReport, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    NixVersion, OperationId, PathInfoReport, PathVerifyResult, RealizationReport, RootName,
+    RootRef, SchemaVersion, Signature, SubstituteOutcome, SubstituteReport, TrustStatus,
+    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 

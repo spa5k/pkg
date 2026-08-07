@@ -49,8 +49,8 @@ use std::sync::Mutex;
 
 use pkg_nix::{
     AddRootRequest, BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind,
-    NixAdapter, NixAdapterError, PathInfoReport, RealizationReport, RepairReport, RootRef,
-    StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    NixAdapter, NixAdapterError, PathInfoReport, RealizationReport, RootRef, StorePath,
+    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 
 use crate::transcript::TranscriptError;
@@ -104,13 +104,6 @@ enum Expectation {
         /// The owned canned result returned for a matching call.
         respond: Result<VerifyReport, NixAdapterError>,
     },
-    /// `repair()` — exact path-slice matcher + canned result.
-    Repair {
-        /// The exact path slice the head call must equal.
-        expect: Vec<StorePath>,
-        /// The owned canned result returned for a matching call.
-        respond: Result<RepairReport, NixAdapterError>,
-    },
     /// `gc()` — no request.
     Gc {
         /// The owned canned result returned for a matching call.
@@ -135,7 +128,6 @@ impl Expectation {
             Expectation::Substitute { .. } => MethodKind::Substitute,
             Expectation::Build { .. } => MethodKind::Build,
             Expectation::Verify { .. } => MethodKind::Verify,
-            Expectation::Repair { .. } => MethodKind::Repair,
             Expectation::Gc { .. } => MethodKind::Gc,
             Expectation::AddRoot { .. } => MethodKind::AddRoot,
         }
@@ -272,16 +264,6 @@ impl FakeNix {
         respond: Result<VerifyReport, NixAdapterError>,
     ) -> &Self {
         self.push(Expectation::Verify { expect, respond })
-    }
-
-    /// Expects exactly one `repair()` call whose path slice equals `expect`
-    /// exactly, and returns the owned canned result for it.
-    pub fn expect_repair(
-        &self,
-        expect: Vec<StorePath>,
-        respond: Result<RepairReport, NixAdapterError>,
-    ) -> &Self {
-        self.push(Expectation::Repair { expect, respond })
     }
 
     /// Expects exactly one `gc()` call and returns the owned canned result for
@@ -445,26 +427,6 @@ impl NixAdapter for FakeNix {
             other => Err(NixAdapterError::unexpected_call(
                 other.kind(),
                 MethodKind::Verify,
-            )),
-        }
-    }
-
-    fn repair(&self, paths: &[StorePath]) -> Result<RepairReport, NixAdapterError> {
-        let head = self.take_head(MethodKind::Repair)?;
-        match head {
-            Expectation::Repair { expect, respond } => {
-                if paths == expect.as_slice() {
-                    respond
-                } else {
-                    Err(NixAdapterError::unexpected_call(
-                        MethodKind::Repair,
-                        MethodKind::Repair,
-                    ))
-                }
-            }
-            other => Err(NixAdapterError::unexpected_call(
-                other.kind(),
-                MethodKind::Repair,
             )),
         }
     }

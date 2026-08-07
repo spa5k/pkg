@@ -11,7 +11,7 @@
 //!
 //! - Object safety + `Send + Sync` of `dyn NixAdapter`, and dispatch through
 //!   `Arc<dyn NixAdapter>`.
-//! - A deterministic stub implementing and invoking all nine trait methods.
+//! - A deterministic stub implementing and invoking all eight trait methods.
 //! - Encode/decode round trips for every public request/report type that
 //!   exposes serialization.
 //! - Explicit top-level `schemaVersion = 1`, stable camelCase keys, and stable
@@ -48,10 +48,9 @@ use pkg_nix::{
     BuildRequest, BuildStatus, DerivationPath, EvalRealizeRequest, FormatVersion, GcReport,
     GcStatus, JsonCodec, MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter,
     NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName,
-    OutputSelection, PathInfoReport, PathRepairResult, PathVerifyResult, RealizationReport,
-    RepairOutcome, RepairReport, RootName, RootRef, SchemaVersion, Signature, StorePath,
-    SubstituteOutcome, SubstituteReport, System, TrustStatus, VerifyMode, VerifyReport,
-    VerifyRequest, VersionInfo,
+    OutputSelection, PathInfoReport, PathVerifyResult, RealizationReport, RootName, RootRef,
+    SchemaVersion, Signature, StorePath, SubstituteOutcome, SubstituteReport, System, TrustStatus,
+    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
 // Compile assertion: every contract type appearing in the NixAdapter trait
@@ -165,14 +164,6 @@ fn verify_report_fixture() -> VerifyReport {
     .unwrap()
 }
 
-fn repair_report_fixture() -> RepairReport {
-    RepairReport::new(vec![PathRepairResult::new(
-        store_path("hello-1.0"),
-        RepairOutcome::Restored,
-    )])
-    .unwrap()
-}
-
 fn gc_report_collected() -> GcReport {
     GcReport::new(
         GcStatus::Collected,
@@ -249,7 +240,7 @@ fn as_str(bytes: &[u8]) -> &str {
 // ===========================================================================
 
 /// A stub that returns a deterministic `Ok` report for every method, so the
-/// full nine-method signature set compiles and dispatch can be asserted.
+/// full eight-method signature set compiles and dispatch can be asserted.
 struct OkStub;
 
 impl NixAdapter for OkStub {
@@ -270,9 +261,6 @@ impl NixAdapter for OkStub {
     }
     fn verify(&self, _: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
         Ok(verify_report_fixture())
-    }
-    fn repair(&self, _: &[StorePath]) -> Result<RepairReport, NixAdapterError> {
-        Ok(repair_report_fixture())
     }
     fn gc(&self) -> Result<GcReport, NixAdapterError> {
         Ok(gc_report_collected())
@@ -304,9 +292,6 @@ impl NixAdapter for UnavailableStub {
         Err(NixAdapterError::Unavailable)
     }
     fn verify(&self, _: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
-        Err(NixAdapterError::Unavailable)
-    }
-    fn repair(&self, _: &[StorePath]) -> Result<RepairReport, NixAdapterError> {
         Err(NixAdapterError::Unavailable)
     }
     fn gc(&self) -> Result<GcReport, NixAdapterError> {
@@ -345,7 +330,7 @@ macro_rules! assert_unknown_field_rejected {
 }
 
 // ===========================================================================
-// Tests: object safety, Send + Sync, nine-method dispatch
+// Tests: object safety, Send + Sync, eight-method dispatch
 // ===========================================================================
 
 #[test]
@@ -362,7 +347,7 @@ fn trait_is_object_safe_send_sync_and_dyn_compatible() {
 }
 
 #[test]
-fn stub_dispatches_all_nine_methods_through_dyn() {
+fn stub_dispatches_all_eight_methods_through_dyn() {
     let a: Arc<dyn NixAdapter> = Arc::new(OkStub);
 
     let v = a.version().expect("version");
@@ -396,10 +381,6 @@ fn stub_dispatches_all_nine_methods_through_dyn() {
     assert_eq!(vr.results().len(), 1);
     assert_eq!(vr.results()[0].nar_integrity(), NarIntegrity::Intact);
     assert_eq!(vr.results()[0].trust(), TrustStatus::Trusted);
-
-    let rep = a.repair(&[store_path("hello-1.0")]).expect("repair");
-    assert_eq!(rep.results().len(), 1);
-    assert_eq!(rep.results()[0].outcome(), RepairOutcome::Restored);
 
     let g = a.gc().expect("gc");
     assert_eq!(g.status(), GcStatus::Collected);
@@ -444,10 +425,6 @@ fn adapter_failure_path_is_closed_nix_adapter_error() {
         a.verify(&verify_request_fixture()).unwrap_err().code(),
         NixAdapterErrorCode::Unavailable
     );
-    assert_eq!(
-        a.repair(&[store_path("x")]).unwrap_err().code(),
-        NixAdapterErrorCode::Unavailable
-    );
     assert_eq!(a.gc().unwrap_err().code(), NixAdapterErrorCode::Unavailable);
     assert_eq!(
         a.add_root(&add_root_fixture()).unwrap_err().code(),
@@ -456,8 +433,8 @@ fn adapter_failure_path_is_closed_nix_adapter_error() {
 }
 
 #[test]
-fn method_kind_has_exactly_nine_variants() {
-    assert_eq!(MethodKind::ALL.len(), 9);
+fn method_kind_has_exactly_eight_variants() {
+    assert_eq!(MethodKind::ALL.len(), 8);
     // Stable camelCase names round-trip.
     for m in MethodKind::ALL {
         let s = m.as_str();
@@ -628,16 +605,6 @@ fn verify_report_round_trip() {
 }
 
 #[test]
-fn repair_report_round_trip() {
-    let c = JsonCodec::production();
-    let r = repair_report_fixture();
-    let enc = r.encode().expect("encode");
-    let back = RepairReport::decode(&c, &enc).expect("decode");
-    assert_eq!(back.encode().expect("re-encode"), enc);
-    assert_eq!(back, r);
-}
-
-#[test]
 fn gc_report_round_trips_collected_and_refused() {
     let c = JsonCodec::production();
     for rep in [gc_report_collected(), gc_report_refused()] {
@@ -712,7 +679,6 @@ fn all_shapes() -> Vec<(&'static str, Vec<u8>)> {
         ),
         ("verifyRequest", verify_request_fixture().encode().unwrap()),
         ("verifyReport", verify_report_fixture().encode().unwrap()),
-        ("repairReport", repair_report_fixture().encode().unwrap()),
         (
             "gcReport(collected)",
             gc_report_collected().encode().unwrap(),
@@ -788,9 +754,6 @@ fn wire_names_are_stable_camelcase() {
     assert!(
         as_str(&verify_report_fixture().encode().unwrap()).contains("\"narIntegrity\":\"intact\"")
     );
-    assert!(
-        as_str(&repair_report_fixture().encode().unwrap()).contains("\"outcome\":\"restored\"")
-    );
     assert!(as_str(&gc_report_collected().encode().unwrap()).contains("\"status\":\"collected\""));
     assert!(
         as_str(&gc_report_refused().encode().unwrap()).contains("\"status\":\"refusedUnderLease\"")
@@ -847,7 +810,6 @@ fn decode_rejects_unknown_top_level_fields() {
     assert_unknown_field_rejected!(c, BuildReport, build_report_built());
     assert_unknown_field_rejected!(c, VerifyRequest, verify_request_fixture());
     assert_unknown_field_rejected!(c, VerifyReport, verify_report_fixture());
-    assert_unknown_field_rejected!(c, RepairReport, repair_report_fixture());
     assert_unknown_field_rejected!(c, GcReport, gc_report_collected());
     assert_unknown_field_rejected!(c, AddRootRequest, add_root_fixture());
     assert_unknown_field_rejected!(c, RootRef, root_ref_fixture());
@@ -871,11 +833,6 @@ fn decode_rejects_unknown_nested_fields() {
     // Unknown field inside a per-path verify result.
     let bad = br#"{"schemaVersion":1,"results":[{"path":"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-hello-1.0","narIntegrity":"intact","trust":"trusted","extra":1}]}"#;
     let err = decode_err!(c, VerifyReport, bad);
-    assert_eq!(err.code(), NixAdapterErrorCode::MalformedPayload);
-
-    // Unknown field inside a per-path repair result.
-    let bad = br#"{"schemaVersion":1,"results":[{"path":"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-hello-1.0","outcome":"restored","extra":1}]}"#;
-    let err = decode_err!(c, RepairReport, bad);
     assert_eq!(err.code(), NixAdapterErrorCode::MalformedPayload);
 }
 
@@ -1077,9 +1034,8 @@ fn constructors_reject_empty_and_duplicate_collections() {
     let p = store_path("x");
     assert!(VerifyRequest::new(vec![p.clone(), p], VerifyMode::Shallow).is_err());
 
-    // VerifyReport / RepairReport: empty.
+    // VerifyReport: empty.
     assert!(VerifyReport::new(vec![]).is_err());
-    assert!(RepairReport::new(vec![]).is_err());
 
     // GcReport: duplicate collected.
     let p = store_path("x");

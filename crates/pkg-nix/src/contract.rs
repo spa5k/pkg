@@ -8,7 +8,7 @@
 //! - [`NixVersion`] / [`VersionInfo`]: the managed-Nix version and the upstream
 //!   per-command JSON format versions an adapter accepts/rejects
 //!   (`plans/01` §11, `plans/09` §4.1).
-//! - The nine methods' request/report types, all validated `pkg-nix` types that
+//! - The eight methods' request/report types, all validated `pkg-nix` types that
 //!   **compose `pkg-core` strong types** (`StorePath`, `NarHash`,
 //!   `AttributePath`, `System`, `NixpkgsRevision`, `OutputSelection`, …).
 //! - [`RootName`] / [`AddRootRequest`] / [`RootRef`]: validated, traversal-safe
@@ -84,9 +84,9 @@ const MAX_REALIZATION_OUTPUTS: usize = 1024;
 /// Maximum total bytes of output-name + store-path pairs in one realization
 /// report.
 const MAX_REALIZATION_OUTPUTS_BYTES: usize = 1024 * 1024;
-/// Maximum number of paths in one verify/repair request.
+/// Maximum number of paths in one verify request.
 const MAX_PATH_LIST: usize = 65_536;
-/// Maximum total bytes of paths in one verify/repair request.
+/// Maximum total bytes of paths in one verify request.
 const MAX_PATH_LIST_BYTES: usize = 16 * 1024 * 1024;
 /// Maximum number of paths reported collected by one gc report.
 const MAX_GC_COLLECTED: usize = 1_048_576;
@@ -573,15 +573,6 @@ where
     BoundedSeq::<PathVerifyResultWire>::deserialize_bounded(deserializer, MAX_PATH_LIST)
 }
 
-fn deserialize_repair_results<'de, D>(
-    deserializer: D,
-) -> Result<BoundedSeq<PathRepairResultWire>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    BoundedSeq::<PathRepairResultWire>::deserialize_bounded(deserializer, MAX_PATH_LIST)
-}
-
 fn deserialize_gc_collected<'de, D>(deserializer: D) -> Result<BoundedStringSeq, D::Error>
 where
     D: Deserializer<'de>,
@@ -663,8 +654,6 @@ pub enum MethodKind {
     Build,
     /// `verify()`.
     Verify,
-    /// `repair()`.
-    Repair,
     /// `gc()`.
     Gc,
     /// `add_root()`.
@@ -672,15 +661,14 @@ pub enum MethodKind {
 }
 
 impl MethodKind {
-    /// All nine methods, in canonical order.
-    pub const ALL: [MethodKind; 9] = [
+    /// All eight methods, in canonical order.
+    pub const ALL: [MethodKind; 8] = [
         MethodKind::Version,
         MethodKind::EvalRealize,
         MethodKind::PathInfo,
         MethodKind::Substitute,
         MethodKind::Build,
         MethodKind::Verify,
-        MethodKind::Repair,
         MethodKind::Gc,
         MethodKind::AddRoot,
     ];
@@ -695,7 +683,6 @@ impl MethodKind {
             MethodKind::Substitute => "substitute",
             MethodKind::Build => "build",
             MethodKind::Verify => "verify",
-            MethodKind::Repair => "repair",
             MethodKind::Gc => "gc",
             MethodKind::AddRoot => "addRoot",
         }
@@ -719,7 +706,6 @@ impl FromStr for MethodKind {
             "substitute" => Ok(MethodKind::Substitute),
             "build" => Ok(MethodKind::Build),
             "verify" => Ok(MethodKind::Verify),
-            "repair" => Ok(MethodKind::Repair),
             "gc" => Ok(MethodKind::Gc),
             "addRoot" => Ok(MethodKind::AddRoot),
             _ => Err(()),
@@ -2129,152 +2115,6 @@ impl VerifyReport {
 }
 
 // ===========================================================================
-// repair
-// ===========================================================================
-
-/// The closed outcome of repairing one path (`plans/09` §4.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum RepairOutcome {
-    /// The path was re-fetched/rebuilt (restored).
-    Restored,
-    /// The path was already intact (unchanged).
-    Unchanged,
-    /// The path could not be restored (missing source).
-    Missing,
-}
-
-/// The per-path result of a repair (`plans/09` §4.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PathRepairResult {
-    path: StorePath,
-    outcome: RepairOutcome,
-}
-
-impl PathRepairResult {
-    /// Constructs a per-path repair result from validated types (infallible).
-    #[must_use]
-    pub fn new(path: StorePath, outcome: RepairOutcome) -> Self {
-        Self { path, outcome }
-    }
-
-    /// Returns the path.
-    #[must_use]
-    pub fn path(&self) -> &StorePath {
-        &self.path
-    }
-
-    /// Returns the repair outcome.
-    #[must_use]
-    pub const fn outcome(&self) -> RepairOutcome {
-        self.outcome
-    }
-}
-
-/// The report returned by `repair()` (`plans/09` §4.1). Repair is the separate
-/// destructive operation distinct from read-only verify.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RepairReport {
-    results: Vec<PathRepairResult>,
-}
-
-impl RepairReport {
-    /// Constructs and validates a repair report.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NixAdapterError::ValidationFailure`] if `results` is empty,
-    /// names a path more than once, or exceeds the bounded collection caps.
-    pub fn new(results: Vec<PathRepairResult>) -> Result<Self, NixAdapterError> {
-        if results.is_empty() {
-            return Err(invalid("empty repair results"));
-        }
-        ensure_unique_strings(
-            results.iter().map(|r| r.path().as_str()),
-            "duplicate repair result",
-        )?;
-        check_size_bounds(
-            results.iter().map(|r| r.path().as_str()),
-            MAX_PATH_LIST,
-            MAX_PATH_LIST_BYTES,
-            "too many repair results",
-        )?;
-        Ok(Self { results })
-    }
-
-    /// Returns the per-path results (caller order preserved).
-    #[must_use]
-    pub fn results(&self) -> &[PathRepairResult] {
-        &self.results
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-enum RepairOutcomeWire {
-    Restored,
-    Unchanged,
-    Missing,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PathRepairResultWire {
-    path: String,
-    outcome: RepairOutcomeWire,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RepairReportWire {
-    schema_version: u32,
-    #[serde(deserialize_with = "deserialize_repair_results")]
-    results: BoundedSeq<PathRepairResultWire>,
-}
-
-impl RepairReport {
-    /// Deterministically encodes this report to JSON bytes.
-    pub fn encode(&self) -> Result<Vec<u8>, NixAdapterError> {
-        let dto = RepairReportWire {
-            schema_version: SCHEMA_VERSION_CURRENT,
-            results: BoundedSeq::from_vec(
-                self.results
-                    .iter()
-                    .map(|r| PathRepairResultWire {
-                        path: r.path().as_str().to_owned(),
-                        outcome: match r.outcome() {
-                            RepairOutcome::Restored => RepairOutcomeWire::Restored,
-                            RepairOutcome::Unchanged => RepairOutcomeWire::Unchanged,
-                            RepairOutcome::Missing => RepairOutcomeWire::Missing,
-                        },
-                    })
-                    .collect(),
-            ),
-        };
-        to_json(&dto)
-    }
-
-    /// Size-checks, strictly parses, schema-checks, and promotes JSON bytes into
-    /// a validated [`RepairReport`].
-    pub fn decode(codec: &JsonCodec, bytes: &[u8]) -> Result<Self, NixAdapterError> {
-        let dto: RepairReportWire = parse_dto(codec, bytes)?;
-        check_schema(dto.schema_version)?;
-        let r_vec = dto.results.into_inner();
-        let mut results = Vec::with_capacity(r_vec.len());
-        for r in r_vec {
-            let path =
-                StorePath::new(&r.path).map_err(|_| invalid("invalid repair result path"))?;
-            let outcome = match r.outcome {
-                RepairOutcomeWire::Restored => RepairOutcome::Restored,
-                RepairOutcomeWire::Unchanged => RepairOutcome::Unchanged,
-                RepairOutcomeWire::Missing => RepairOutcome::Missing,
-            };
-            results.push(PathRepairResult::new(path, outcome));
-        }
-        Self::new(results)
-    }
-}
-
-// ===========================================================================
 // gc
 // ===========================================================================
 
@@ -2740,7 +2580,7 @@ mod tests {
             assert_eq!(MethodKind::from_str(s).unwrap(), m);
             assert_eq!(m.to_string(), s);
         }
-        assert_eq!(MethodKind::ALL.len(), 9);
+        assert_eq!(MethodKind::ALL.len(), 8);
         assert!(MethodKind::from_str("nope").is_err());
     }
 

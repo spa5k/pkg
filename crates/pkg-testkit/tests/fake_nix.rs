@@ -9,7 +9,7 @@
 //!
 //! Coverage map (acceptance criterion #8):
 //!
-//! - All nine `NixAdapter` methods return their canned results.
+//! - All eight `NixAdapter` methods return their canned results.
 //! - Exact first-in-first-out ordering.
 //! - Exact request matching for every request-bearing method.
 //! - Canned `Ok` and canned `Err` results.
@@ -32,9 +32,9 @@ use pkg_nix::{
     BuildRequest, BuildStatus, DerivationPath, EvalRealizeRequest, FormatVersion, GcReport,
     GcStatus, MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
     NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName, OutputSelection,
-    PathInfoReport, PathRepairResult, PathVerifyResult, RealizationReport, RepairOutcome,
-    RepairReport, RootName, RootRef, Signature, StorePath, SubstituteOutcome, SubstituteReport,
-    System, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    PathInfoReport, PathVerifyResult, RealizationReport, RootName, RootRef, Signature, StorePath,
+    SubstituteOutcome, SubstituteReport, System, TrustStatus, VerifyMode, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 use pkg_testkit::{FakeNix, TranscriptError};
 
@@ -137,14 +137,6 @@ fn verify_report_fixture() -> VerifyReport {
     .unwrap()
 }
 
-fn repair_report_fixture() -> RepairReport {
-    RepairReport::new(vec![PathRepairResult::new(
-        store_path("hello-1.0"),
-        RepairOutcome::Restored,
-    )])
-    .unwrap()
-}
-
 fn gc_report_collected() -> GcReport {
     GcReport::new(
         GcStatus::Collected,
@@ -174,11 +166,11 @@ fn eval_request_default_outputs() -> EvalRealizeRequest {
 }
 
 // ===========================================================================
-// Tests: all nine methods return canned results, in exact FIFO order.
+// Tests: all eight methods return canned results, in exact FIFO order.
 // ===========================================================================
 
 #[test]
-fn all_nine_methods_return_canned_results_in_fifo_order() {
+fn all_eight_methods_return_canned_results_in_fifo_order() {
     let fake = FakeNix::new();
     fake.expect_version(Ok(version_info(33)))
         .expect_eval_realize(eval_request_default_outputs(), Ok(realization_fixture()))
@@ -189,7 +181,6 @@ fn all_nine_methods_return_canned_results_in_fifo_order() {
         )
         .expect_build(build_request_fixture(), Ok(build_report_built()))
         .expect_verify(verify_request_fixture(), Ok(verify_report_fixture()))
-        .expect_repair(vec![store_path("hello-1.0")], Ok(repair_report_fixture()))
         .expect_gc(Ok(gc_report_collected()))
         .expect_add_root(add_root_fixture(), Ok(root_ref_fixture()));
 
@@ -213,10 +204,6 @@ fn all_nine_methods_return_canned_results_in_fifo_order() {
             .results()
             .len(),
         1
-    );
-    assert_eq!(
-        fake.repair(&[store_path("hello-1.0")]).unwrap().results()[0].outcome(),
-        RepairOutcome::Restored
     );
     assert_eq!(fake.gc().unwrap().status(), GcStatus::Collected);
     assert_eq!(
@@ -348,50 +335,6 @@ fn verify_matches_exact_request_only() {
     let other = VerifyRequest::new(vec![store_path("hello-1.0")], VerifyMode::Shallow).unwrap();
     assert_eq!(
         fake.verify(&other).unwrap_err().mismatch_summary(),
-        Some("request mismatch")
-    );
-    assert_eq!(fake.assert_exhausted(), Ok(()));
-}
-
-#[test]
-fn repair_matches_exact_path_slice_only() {
-    let fake = FakeNix::new();
-    fake.expect_repair(vec![store_path("hello-1.0")], Ok(repair_report_fixture()))
-        .expect_repair(vec![store_path("hello-1.0")], Ok(repair_report_fixture()));
-    // Matching slice returns the canned result.
-    assert!(fake.repair(&[store_path("hello-1.0")]).is_ok());
-    // A different path is a request mismatch against the fresh head.
-    assert_eq!(
-        fake.repair(&[store_path("other")])
-            .unwrap_err()
-            .mismatch_summary(),
-        Some("request mismatch")
-    );
-    assert_eq!(fake.assert_exhausted(), Ok(()));
-}
-
-#[test]
-fn repair_order_and_count_must_match_exactly() {
-    let a = store_path("a-1.0");
-    let b = store_path("b-1.0");
-    let fake = FakeNix::new();
-    fake.expect_repair(vec![a.clone(), b.clone()], Ok(repair_report_fixture()));
-
-    // Reversed order mismatches.
-    assert_eq!(
-        fake.repair(&[b, a]).unwrap_err().mismatch_summary(),
-        Some("request mismatch")
-    );
-    // The head is consumed by the mismatch; transcript is empty.
-    assert_eq!(fake.assert_exhausted(), Ok(()));
-
-    // Wrong count mismatches.
-    let fake = FakeNix::new();
-    fake.expect_repair(vec![store_path("a-1.0")], Ok(repair_report_fixture()));
-    assert_eq!(
-        fake.repair(&[store_path("a-1.0"), store_path("a-1.0")])
-            .unwrap_err()
-            .mismatch_summary(),
         Some("request mismatch")
     );
     assert_eq!(fake.assert_exhausted(), Ok(()));
@@ -580,9 +523,6 @@ fn extra_call_against_empty_transcript_returns_unexpected_extra_call() {
 
     let err = fake.path_info(&store_path("x")).unwrap_err();
     assert_eq!(err.actual_method(), Some(MethodKind::PathInfo));
-
-    let err = fake.repair(&[store_path("x")]).unwrap_err();
-    assert_eq!(err.actual_method(), Some(MethodKind::Repair));
 
     // Nothing was consumed; the transcript is still empty.
     assert_eq!(fake.assert_exhausted(), Ok(()));

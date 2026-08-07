@@ -37,8 +37,7 @@
 
 use crate::contract::{
     AddRootRequest, BuildReport, BuildRequest, EvalRealizeRequest, GcReport, PathInfoReport,
-    RealizationReport, RepairReport, RootRef, SubstituteReport, VerifyReport, VerifyRequest,
-    VersionInfo,
+    RealizationReport, RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use crate::error::NixAdapterError;
 use pkg_core::identity::StorePath;
@@ -47,7 +46,7 @@ use pkg_core::identity::StorePath;
 /// (`plans/09` §4.1).
 ///
 /// See the [module docs](self) for the object-safety, `Send + Sync`, and
-/// no-per-call-knobs guarantees. There are exactly nine methods; the
+/// no-per-call-knobs guarantees. There are exactly eight methods; the
 /// [`MethodKind`](crate::MethodKind) enum enumerates them in the same order for
 /// the `pkg-testkit` transcript replay engine (`plans/09` §4.4).
 pub trait NixAdapter: Send + Sync {
@@ -73,10 +72,6 @@ pub trait NixAdapter: Send + Sync {
 
     /// Read-only integrity/trust verification. Never mutates the store.
     fn verify(&self, req: &VerifyRequest) -> Result<VerifyReport, NixAdapterError>;
-
-    /// Destructive re-fetch/rebuild of the listed paths. Separate from
-    /// [`NixAdapter::verify`] so a read-only caller can never trigger a write.
-    fn repair(&self, paths: &[StorePath]) -> Result<RepairReport, NixAdapterError>;
 
     /// Collect unreachable paths. Consults the on-disk gcroots tree — there is
     /// no roots argument (`plans/01` ARCH-INV-04, `plans/05` T-STATE-4).

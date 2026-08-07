@@ -149,8 +149,9 @@ pub enum NixAdapterErrorCode {
     Timeout,
     /// The Nix backend (e.g. the managed daemon) was unavailable.
     Unavailable,
-    /// A cache/signature trust rejection surfaced by a mutating or fetching
-    /// lane (`substitute`, `build`, `repair`). Distinct from a read-only
+    /// A cache/signature trust rejection surfaced by a fetching or building
+    /// lane (`substitute`, `build`), e.g. a downloaded object whose signatures
+    /// or trusted cache could not be verified. Distinct from a read-only
     /// [`crate::TrustStatus::Untrusted`] observation, which verify reports
     /// normally.
     TrustFailure,
@@ -221,8 +222,9 @@ impl fmt::Display for NixAdapterErrorCode {
 /// status and a [`crate::Corrupt`](crate::NarIntegrity) NAR-integrity status
 /// in its [`crate::VerifyReport`]; `TrustFailure`/`IntegrityFailure` instead
 /// represent the same underlying conditions surfacing as an operation failure
-/// on a lane where trust/integrity is a precondition (substitute, build,
-/// repair). The contract is closed and exhaustive (no `non_exhaustive`).
+/// on a lane where trust/integrity is a precondition (substitute or build,
+/// including a downloaded object that failed its trust/integrity checks). The
+/// contract is closed and exhaustive (no `non_exhaustive`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NixAdapterError {
     /// A trait call popped a head transcript expectation of the wrong method,
@@ -313,18 +315,19 @@ pub enum NixAdapterError {
     Timeout,
     /// The Nix backend (e.g. the managed daemon) was unavailable.
     Unavailable,
-    /// A cache/signature trust rejection surfaced by a mutating or fetching
-    /// lane (`substitute`, `build`, `repair`). Read-only `verify` still
+    /// A cache/signature trust rejection surfaced by a fetching or building
+    /// lane (`substitute`, `build`), e.g. a downloaded object whose signatures
+    /// or trusted cache could not be verified. Read-only `verify` still
     /// reports [`crate::TrustStatus::Untrusted`] as a normal observation; this
     /// variant is the **operation failure** when trust is a precondition for
-    /// fetching/building/repairing a path.
+    /// substituting or building a path.
     TrustFailure,
     /// Verified NAR/hash corruption observed as an operation failure on a
-    /// mutating/fetching lane. Read-only `verify` still reports
+    /// fetching/building lane. Read-only `verify` still reports
     /// [`crate::NarIntegrity::Corrupt`] as a normal observation; this variant
     /// is the **operation failure** when integrity is a precondition for
-    /// proceeding (e.g. a repair could not restore the path, or a downloaded
-    /// object did not match its expected hash).
+    /// proceeding (e.g. a downloaded object did not match its expected hash, or
+    /// a substituted/built path failed its NAR verification).
     IntegrityFailure,
     /// A build-approval or root-helper authorization rejection: an invalid or
     /// already-consumed approval receipt, or the authenticated root helper
