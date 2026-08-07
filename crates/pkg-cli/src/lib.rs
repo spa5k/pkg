@@ -4,6 +4,9 @@
 #![deny(missing_docs)]
 
 pub mod cli;
+pub mod commands;
+pub mod completion;
 pub mod exit;
+pub mod path;
 pub mod progress;
 pub mod ux;

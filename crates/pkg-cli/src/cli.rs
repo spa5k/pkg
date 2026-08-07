@@ -445,6 +445,14 @@ pub struct CompletionArgs {
     shell: CompletionShell,
 }
 
+impl CompletionArgs {
+    /// Requested completion shell.
+    #[must_use]
+    pub const fn shell(&self) -> CompletionShell {
+        self.shell
+    }
+}
+
 /// Supported activation collision policy.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum CollisionPolicy {

@@ -103,8 +103,8 @@ impl CommandError {
     pub fn new(exit_code: ExitCode, message: impl AsRef<str>, hint: impl AsRef<str>) -> Self {
         Self {
             exit_code,
-            message: public_text(message.as_ref()),
-            hint: public_text(hint.as_ref()),
+            message: sanitize_public_text(message.as_ref()),
+            hint: sanitize_public_text(hint.as_ref()),
         }
     }
 
@@ -203,7 +203,7 @@ pub fn write_json_line(mut writer: impl Write, value: &impl Serialize) -> io::Re
     writer.write_all(b"\n")
 }
 
-fn public_text(value: &str) -> String {
+pub(crate) fn sanitize_public_text(value: &str) -> String {
     let bounded: String = value
         .chars()
         .map(|character| {

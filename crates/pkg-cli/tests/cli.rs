@@ -30,7 +30,7 @@ fn clap_usage_failures_exit_two() {
 #[test]
 fn development_stub_obeys_json_and_jsonl_terminal_contracts() {
     for (flag, expected_type) in [("--json", None), ("--jsonl", Some("result"))] {
-        let output = pkg().args([flag, "doctor"]).output().unwrap();
+        let output = pkg().args([flag, "install", "ripgrep"]).output().unwrap();
         assert_eq!(output.status.code(), Some(79));
         assert!(output.stderr.is_empty());
         assert_eq!(
@@ -40,13 +40,42 @@ fn development_stub_obeys_json_and_jsonl_terminal_contracts() {
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(value["schemaVersion"], 1);
         assert_eq!(value["ok"], false);
-        assert_eq!(value["command"], "doctor");
+        assert_eq!(value["command"], "install");
         assert_eq!(value["error"]["symbol"], "ENGINE_UNAVAILABLE");
         assert_eq!(
             value.get("type").and_then(|value| value.as_str()),
             expected_type
         );
     }
+}
+
+#[test]
+fn completion_is_real_static_source_and_doctor_is_honest_about_deferred_checks() {
+    let completion = pkg().args(["completion", "bash"]).output().unwrap();
+    assert!(completion.status.success());
+    assert!(
+        String::from_utf8(completion.stdout)
+            .unwrap()
+            .contains("_pkg")
+    );
+
+    let state = std::env::temp_dir().join(format!("pkg-cli-doctor-{}", std::process::id()));
+    let expected_bin = state.join("current/bin");
+    let doctor = pkg()
+        .args(["--json", "--state", state.to_str().unwrap(), "doctor"])
+        .env("PATH", &expected_bin)
+        .output()
+        .unwrap();
+    assert_eq!(doctor.status.code(), Some(78));
+    let value: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    assert_eq!(value["overall"], "needs_attention");
+    assert!(
+        value["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["status"] == "deferred")
+    );
 }
 
 #[test]
