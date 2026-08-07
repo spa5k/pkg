@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "nix": {
+    "version": "2.34.8"
+  },
+  "nixpkgs": {
+    "owner": "NixOS",
+    "repo": "nixpkgs",
+    "rev": "a62e6edd6d5e1fa0329b8653c801147986f8d446",
+    "narHash": "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw="
+  },
+  "systems": [
+    "x86_64-darwin",
+    "aarch64-darwin"
+  ],
+  "attrs": [
+    "hello",
+    "ripgrep",
+    "git"
+  ],
+  "cacheStoreUrl": "https://cache.nixos.org/"
+}

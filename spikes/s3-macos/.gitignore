@@ -1,0 +1,18 @@
+# Spike S3 local ignores — generated output + Rust build artifacts.
+#
+# Generated result files (report.json / summary.md) are intentionally NOT
+# committed: they are host/time-specific evidence, never source of truth.
+# `Cargo.lock` IS committed (reproducible standalone build). This spike never
+# executes Nix, never reaches the network, never mutates `/nix`, and never
+# signs/notarizes. Detect mode DOES run the read-only
+# `/usr/bin/security find-identity` probe, so a live Detect reads identity
+# metadata/counts from the default keychain (never credentials, never writes
+# keychain data); unit/Fake tests never access the keychain.
+
+/out/
+/report.json
+/summary.md
+
+# Rust build artifacts (mirrors the repo-root .gitignore intent for `target`).
+/target/
+**/target/

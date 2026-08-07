@@ -1,0 +1,73 @@
+# Spike S3 — macOS binary coverage + signing/notarization evidence harness (PR-7).
+#
+# This is a STANDALONE Cargo project: the `[workspace]` table below makes this
+# manifest its own workspace root, so this spike does NOT join the production
+# workspace at the repo root (`Cargo.toml` members = pkg-core/pkg-nix/
+# pkg-testkit). It therefore has its OWN `Cargo.lock` and `target/` directory
+# and is excluded from the root `cargo build`/`clippy`/`test`/`doc` lanes (the
+# same isolation model as `spikes/s2-tough/` and `spikes/s4-reeval-cost/`).
+#
+# It is an EVIDENCE/DATA-CONTRACT harness, NOT production pkg code. It is
+# `publish = false`, carries NO `license` field and NO SPDX headers (DR-015),
+# and FORBIDS unsafe code (`#![forbid(unsafe_code)]` in `src/lib.rs`). This
+# spike performs NO package build, profile activation, signing/notarization, or
+# Apple submission, and no shell/PATH lookup. Fake mode never touches the
+# network or Nix; Preflight mode DOES execute the caller-supplied absolute
+# Nix binary (its exact Nix 2.34.8 version verified at runtime) for build-free
+# probes only: flake prefetch fetches the pinned GitHub flake/source, while
+# store-info/path-info availability queries target cache.nixos.org
+# (build-free/activation-free, but NOT read-only or mutation-free: prefetch may
+# add the pinned source to the Nix store/fetch cache and evaluation may populate
+# ordinary Nix-managed state). Detect mode
+# DOES run the read-only `/usr/bin/security find-identity` probe, so when
+# explicitly invoked it reads identity metadata/counts from the default
+# keychain; it never accepts credentials, never unlocks/signs/notarizes, and
+# never writes keychain data. Unit and Fake tests never access the keychain,
+# and the repo-root validation lanes never run a live Detect (this spike is a
+# self-contained workspace excluded from the root build/clippy/test/doc lanes).
+# Dependencies are intentionally minimal and locked (`serde` + `serde_json`):
+# both drive the report schema and JSON I/O. See README.md and FINDINGS.md for
+# the five-lane evidence model, the Fake/Observed/Designed honesty anchors,
+# the Complete/Incomplete/Pending states, the exact CLI grammar and effect
+# boundaries, and the current (all-Pending) evidence ledger.
+#
+# The pin mirrored here is the SAME canonical pin S4 measures (Nix 2.34.8,
+# NixOS/nixpkgs rev a62e…d446), but scoped to the two Darwin systems and three
+# fixture attributes S3 concerns itself with. It does NOT duplicate S4's
+# raw-archive hash evidence: that is irrelevant to S3's substitution/build/sign
+# questions.
+
+[package]
+name = "pkg-spike-s3-macos"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+description = "Spike S3: closed evidence model for macOS binary coverage + signing/notarization lanes (Fake/Detect/Preflight/BuildProbe/SignPlan)."
+
+[lib]
+name = "pkg_spike_s3_macos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "s3-probe"
+path = "src/main.rs"
+
+[workspace]
+# Intentionally a self-contained workspace root (resolver 3 to match the
+# production workspace and edition 2024). Empty members = this package only.
+resolver = "3"
+
+[dependencies]
+# Minimal, locked tree. `serde` (derive) powers the deterministic,
+# deny_unknown_fields report/pin DTOs; `serde_json` parses the embedded
+# `fixtures.json` pin and serializes the report. `rustix` (`process` feature
+# only) supplies the SAFE process-group SIGKILL used by the bounded command
+# executor (`src/command.rs`) instead of `unsafe`/`libc`/host `/bin/kill`.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rustix = { version = "1.1.4", features = ["process"] }
+
+# NOTE: `Cargo.lock` for this spike is committed alongside this manifest for
+# reproducible builds (it is a standalone workspace, not a library consumed by
+# the production workspace).
