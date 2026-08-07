@@ -24,6 +24,10 @@
    left behind).
 6. **Small enough for serious review.** Target: a PR lands in ≤ a few hundred lines of
    *logic* (fixtures/tests excluded); anything larger is split.
+7. **Privilege split is reflected in the adapter seam.** The unprivileged `NixAdapter` (broker)
+   exposes **no** mutating repair / GC-root-write method; the privileged `MaintenanceAdapter`/helper
+   owns `repair_store_paths` and per-output root-set writes (D-19, doc 09 §4.1.2). No PR
+   adds a generic `repair(paths)` to `NixAdapter`.
 
 ---
 
@@ -54,7 +58,7 @@ flowchart TD
     P5[PR-5 SPIKE S2 TUF/tough]
     P6[PR-6 SPIKE S4 reeval cost]
     P7[PR-7 SPIKE S3 macOS bin+sign]
-    P8[PR-8 SPIKE S5 sandbox/build-hook]
+    P8[PR-8 SPIKE S5 managed-daemon sandbox/approval/resource-boundary]
 
     P9[PR-9 detect unmanaged Nix fail-closed]
     P10[PR-10 state schema v1 + journal]
@@ -82,7 +86,7 @@ flowchart TD
     P28[PR-28 macOS installer+build+launchd+notary]
     P29[PR-29 uninstall boundaries]
 
-    P30[PR-30 repair + corruption recovery]
+    P30[PR-30 two-phase repair + corruption recovery]
     P31[PR-31 security test lane + chaos]
     P32[PR-32 perf bench + budget gate]
     P33[PR-33 release signing + publish]
@@ -92,6 +96,7 @@ flowchart TD
     P36[PR-36 Tech Preview hardening + Real-Nix CI]
     P37[PR-37 v1 RC + sign-off + revoke rehearsal]
     P38[PR-38 v1.0 release]
+    P39[PR-39 broker/helper contract + capability — early BLOCKING design/contract milestone (M1.5)]
 
     P0-->P1-->P2-->P3
     P2-->P10
@@ -137,7 +142,17 @@ flowchart TD
     P28-->P29
     P26-->P28
     P18-->P30
-    P8-->P30
+    P26-->P30
+    P22-->P30
+    P3-->P39
+    P10-->P39
+    P39-->P27
+    P39-->P28
+    P39-->P30
+    P39-->P36
+    P27-->P30
+    P28-->P30
+    P30-->P36
     P19-->P31
     P18-->P31
     P11-->P31
@@ -230,7 +245,9 @@ flowchart TD
 - **Owns:** `crates/pkg-nix/src/{adapter.rs,contract.rs,error.rs}`, `crates/pkg-testkit/src/{fake_nix.rs,lib.rs}`, Fast-CI test job wiring (unit+contract+integration-stub).
 - **Depends:** PR-1, PR-2.
 - **Migration/compat:** defines the **JSON-only** contract (`04`) — no human-output scraping.
-- **Tests & gates:** G-UNIT + G-CONTRACT (serde round-trips) on FakeNix.
+- **Tests & gates:** G-UNIT + G-CONTRACT (serde round-trips) on FakeNix; **negative**: the
+  unprivileged `NixAdapter` exposes **no** mutating repair / GC-root-write method (those are the
+  privileged `MaintenanceAdapter`/helper — doc 09 §4.1.2; AC-S21); no generic `repair(paths)`.
 - **Demo:** `cargo test -p pkg-nix -p pkg-testkit`.
 - **Reviewers:** primary F; cross E; **security A** (contract is a trust boundary, `08` T-DAEMON-2).
 - **Rollback:** revert.
@@ -287,7 +304,7 @@ flowchart TD
 - **Milestone:** M0.5.
 
 #### PR-7 — SPIKE S3: macOS binary coverage + Apple signing/notarization
-- **Purpose:** confirm Darwin binary coverage on `cache.nixos.org` for `x86_64-darwin`/`aarch64-darwin`, **and** that real macOS local builds are viable (native sandboxed build, `nixbld` build-user group / `_nixbld*` build users, Xcode/CLT toolchain availability, platform-appropriate resource caps, `sandbox-fallback=false` fail-closed), and that a notarized signed installer/runtime is achievable. **Gates PR-28 and the Real-Nix macOS lane (`09`).**
+- **Purpose:** confirm Darwin binary coverage on `cache.nixos.org` for `x86_64-darwin`/`aarch64-darwin`, **and** that real macOS local builds are viable (native sandboxed build, `nixbld` build-user group / `_nixbld*` build users, Xcode/CLT toolchain availability, the honest resource boundary with **no** per-build memory/CPU/IO cap in stock Nix 2.34.8, `sandbox-fallback=false` fail-closed), and that a notarized signed installer/runtime is achievable. **Gates PR-28 and the Real-Nix macOS lane (`09`).**
 - **Owns:** `spikes/s3-macos/`, DR-003 in `12`.
 - **Depends:** PR-1.
 - **Migration/compat:** confirms or revises the macOS build-security policy (cache coverage **and** native local-build readiness) (`07`, DR-003).
@@ -298,13 +315,13 @@ flowchart TD
 - **Parallel:** with PR-4,5,6,8.
 - **Milestone:** M0.5.
 
-#### PR-8 — SPIKE S5: Linux sandbox/build-hook + resource caps
-- **Purpose:** confirm `sandbox=true`/`sandbox-fallback=false` works with the managed daemon on **both Linux and macOS** (including Nix's macOS sandbox primitives and `_nixbld` build users), that we can intercept a build for preview/approval, that resource caps are effective (cgroups/RLIMIT on Linux; RLIMIT/disk/load guards on macOS — no cgroups invented), and that `pkg` fails closed if sandbox/build-user readiness cannot be verified. **Gates PR-26.**
+#### PR-8 — SPIKE S5: managed-daemon sandbox + approval + resource-boundary
+- **Purpose:** confirm `sandbox=true`/`sandbox-fallback=false` works with the managed daemon on **both Linux and macOS** (including Nix's macOS sandbox primitives and the `nixbld` build group / `nixbld*`/`_nixbld*` users), that we can intercept a build for preview/approval, **what resource boundary actually holds** (`max-jobs=1` bounds concurrent derivations per client/connection (so `pkg` adds a machine-global local-build admission lease across users); `timeout`/`max-silent-time`/`max-build-log-size` are daemon bounds; disk/free-space/load preflight; Nix `use-cgroups` is Linux-only process grouping/cleanup/statistics, **not** caps; service-manager ceilings have **distinct** systemd-vs-launchd semantics and are **Pending** defense-in-depth, not accepted enforcement), and that `pkg` fails closed if sandbox/build-user readiness cannot be verified. The spike must record **real managed-host behavioral evidence** (or stay `Proposed`); until then PR-26 stays gated. **Gates PR-26.**
 - **Owns:** `spikes/s5-sandbox/`, DR-005 in `12`.
 - **Depends:** PR-1.
-- **Migration/compat:** informs `04`/`07` build/caps design and `08` T-BUILD-* controls.
+- **Migration/compat:** informs `04`/`07` build/sandbox design and `08` T-BUILD-* controls.
 - **Tests & gates:** DR accepted by E and **A**.
-- **Demo:** a sandboxed build that fails to reach the network as predicted.
+- **Demo:** a **regular** derivation build that is filesystem-sandboxed and network-denied as predicted under `sandbox=true`; a fixed-output derivation that is intentionally network-enabled (hash boundary); readiness fail-closed when sandbox/build users are unready. On Linux the spike also validates **cgroup v2 + service readiness** for the per-build grouping/cleanup/accounting provided by `use-cgroups` (confirming it writes no `memory.max`/`cpu.max`/`pids.max`/IO knobs) and that the generated `nix.conf` renders per-platform exactly (Linux: `cgroups` feature + `use-cgroups=true`; macOS: both omitted).
 - **Reviewers:** primary E; cross F; **A** (security: T-BUILD-1/3).
 - **Rollback:** archive spike.
 - **Parallel:** with PR-4,5,6,7.
@@ -363,6 +380,88 @@ flowchart TD
 - **Rollback:** remove laid-down files via manifest; documented.
 - **Parallel:** no (consumes 9+11).
 - **Milestone:** M1.
+
+### Milestone M1.5 — Broker/helper contract & capability (BLOCKING design/contract milestone)
+
+> **Blocking gate.** No broker/helper/platform integration (PR-27/28), no two-phase repair
+> (PR-30), and no Real-Nix execution (PR-36) merge before this milestone's accepted design lands
+> (`12` DR-017). It deliberately does **not** renumber PR-0..38: PR-39 is timeline-positioned
+> **early** (right after the minimum core-types/state prerequisites PR-3/PR-10, before M2) and is
+> ordered by DAG edges, not by its number. It lands as a **design/contract** milestone — the ADR
+> + the typed `MaintenanceAdapter` trait + the framed channels validated on FakeNix/in-process —
+> so it does **not** depend on completed installers; the real OS transports (peer-auth via
+> `SO_PEERCRED`/launchd-XPC, systemd/launchd units) are implemented later in PR-27/28, which is
+> exactly why PR-39 must precede them rather than follow them.
+>
+> **Repair scope (decided — accepted).** Full privileged two-phase mutating `pkg repair` is an
+> **unconditional V1 milestone** (accepted product decision; `00` D-19/INV-12, `12` DR-017): PR-30
+> (Phase 0 read-only verify via broker → Phase A cache-only repair via helper → Phase B approved
+> local rebuild via helper) ships in V1 and is gated by this milestone. PR-39 therefore
+> **unconditionally** gates broker/helper integration (PR-27/28), two-phase repair (PR-30), and
+> Real-Nix execution (PR-36); the PR-39→PR-30 and PR-36→PR-30 edges are permanent, not conditional.
+> The verified **non-atomic** residual is retained as **RISK-22** (`12`).
+
+#### PR-39 — Broker/helper framed-RPC, peer-auth, operation-lifecycle, child-containment, capability & restart-handshake design (early contract milestone)
+- **Purpose:** land the **detailed framed RPC + wire/capability design** that sibling docs flag as
+  "the next milestone" (`01` ARCH-INV-01/05/06/07; `07` I7; `04` §5.3.1; `12` DR-017) so the
+  accepted broker/helper boundary is **not left vague** before any broker/helper/platform
+  integration or Real-Nix execution. Defines and specifies (with a FakeNix/in-process reference
+  implementation): (a) the **CLI↔broker** closed product-framed RPC and the **broker↔helper**
+  closed validated execute channel; (b) **peer authentication** (caller uid on CLI→broker;
+  broker-only authenticated capability on broker→helper); (c) **operation lifecycle** (opaque
+  operation handles, handle expiry, CLI-disconnect/cancel semantics); (d) **child containment**
+  for the bundled `nix` CLI subprocesses the broker spawns (scrubbed env, no
+  expression/substituter passthrough, ARCH-INV-02); (e) **opaque expiring single-use maintenance
+  capability storage/expiry** server-side in helper/broker state (bound to uid / existing
+  pkg-owned rooted generation/closure / typed `StorePath` set / `RepairBuildPlan` digest /
+  policyVersion / mode; stale/replayed/mismatched/cross-UID **fail closed**; invalidated on
+  helper/broker restart); (f) the **restart handshake** (broker/helper restart re-establishes
+  peer auth and empties in-flight handles/admission; capabilities do not survive restart). The
+  real OS credential/transport APIs (Linux `SO_PEERCRED` + systemd units; macOS launchd/XPC
+  authorized-client + launchd plists) are implemented **later** in PR-27/28, not here.
+- **Owns:** the framed-RPC + capability + restart-handshake design doc/ADR (closes DR-017's open
+  wire item), the typed closed-grammar `MaintenanceAdapter` trait surface (`publish_root_set` /
+  `remove_root_set` / `repair_store_paths`; doc 09 §4.1.2), and the broker↔CLI /
+  broker↔helper framed-channel **reference implementation + tests on FakeNix / in-process** (no
+  Real-Nix transport — that binding is PR-27/28). The unprivileged `NixAdapter` (PR-3) is
+  confirmed to expose **no** repair / GC-root-write method; repair/root writes live only on
+  `MaintenanceAdapter`/helper. It also owns the **contract + FakeNix/in-process reference
+  implementation of the broker-internal, host-global admission gates** — the machine-wide **build
+  admission lease** (AC-S19) and the **GC admission gate** that mints the shared **GC-inhibit
+  permit** (AC-S23) — as in-memory broker state (no backing-file `flock`): the gc command (PR-22,
+  reclamation logic only) and the build engine (PR-26) **integrate** these gates at runtime, repair
+  (PR-30) holds its GC-inhibit permit from here, and the real broker hosts them once its transports
+  land (PR-27/28). *(Exact transport/token-format bytes are decided inside this PR
+  and recorded in the ADR; the planning docs deliberately leave them open — DR-017.)*
+- **Depends:** PR-3 (the `NixAdapter` contract + `StorePath`/JSON surface whose privileged
+  counterpart this defines — PR-3 itself depends on PR-2, so the pkg-core domain types are
+  satisfied transitively), PR-10 (state schema: the generation/closure types the capability
+  binds to). The broker boundary itself is accepted (CP-01.6, D-19/DR-016) — this PR formalizes
+  the wire, not the boundary. It deliberately does **not** depend on PR-27/PR-28; on the contrary
+  they depend on it (a contract must precede the transports that implement it — depending on the
+  installers would be circular with the PR-39→PR-27/PR-28 edges).
+- **Tests & gates:** G-UNIT + G-CONTRACT + G-SECURITY **on FakeNix / in-process** (Real Nix is
+  not yet wired — the installers that provide the OS transports land in PR-27/28): peer-auth
+  rejection of unauthenticated/impersonated callers against the in-process/framed fake;
+  operation-handle lifecycle + disconnect/cancel releases admission; capability
+  replay/stale/mismatch/expiry/cross-UID all **fail closed** (AC-S22); helper grammar **cannot
+  widen** to raw
+  path/installable/derivation/expression/flake/argv/option/substituter-key/env-override/output-selection/verb
+  (AC-S22 fuzz); restart handshake empties in-flight handles + admission and refuses stale
+  capabilities; **broker-internal build/GC admission gates** are in-memory only — no backing-file
+  `flock` (AC-S19/S23); ADR accepted by E, F, and **A**. The matching Real-Nix peer-auth /
+  transport / capability validation lands in PR-27 (Linux), PR-28 (macOS), and PR-30 (repair).
+- **Demo:** against the in-process/framed fake: a closed broker→helper repair/root request
+  round-trips with a fresh capability; a replayed/expired/cross-UID capability is refused;
+  kill+restart the broker → in-flight ops fail, admission empties, stale capabilities rejected, a
+  new op re-authenticates cleanly.
+- **Reviewers:** primary E; cross F; **A mandatory security** (peer auth, capability, child
+  containment — T-DAEMON-*, T-INST-7).
+- **Rollback:** revert the framed-channel reference implementation; the broker/helper boundary
+  stays accepted and the contract/ADR remains the spec PR-27/28 implement against.
+- **Parallel:** no (it is the early gate). It may be *developed* alongside M2/M3/M4 work that
+  does not depend on it, but it must land before PR-27/28/30/36.
+- **Milestone:** M1.5.
 
 ### Milestone M2 — Catalog & resolve
 
@@ -494,11 +593,20 @@ flowchart TD
 
 #### PR-22 — GC + leases
 - **Purpose:** collect unreferenced store paths using product-owned roots + generation
-  manifest; operation leases for long ops (`05`,`08` T-STATE-4, T-CONC-1).
-- **Owns:** `crates/pkg-store/src/{gc.rs,leases.rs}` + tests.
+  manifest; the per-user **state-mutation lease** (a filesystem `flock`, `05` §12) that serializes
+  a user's state writes and `gc` for that user (`05`,`08` T-STATE-4, T-CONC-1).
+- **Owns:** `crates/pkg-store/src/{gc.rs,leases.rs}` + tests. `gc.rs` = reclamation logic that
+  consults generations/roots (via PR-18/PR-21); `leases.rs` = the per-user state-mutation lease
+  (a filesystem `flock`). This PR does **not** own the **broker-internal, host-global GC admission
+  gate** — that is an in-memory broker-hosted gate whose **contract + FakeNix/in-process reference
+  implementation is owned by PR-39** (M1.5; AC-S19/S23), hosted at runtime by the broker (PR-27/28
+  transports). PR-22 is **M4 and runs in-process against FakeNix (no real broker yet)**, so it
+  acquires no broker gate here — the broker wraps `pkg gc` with that gate once the broker exists;
+  an M4 PR cannot supply a broker-hosted gate.
 - **Depends:** PR-18, PR-21.
 - **Migration/compat:** GC must consult generations, not only roots.
-- **Tests & gates:** G-UNIT + G-INTEGRATION (GC never breaks an active generation).
+- **Tests & gates:** G-UNIT + G-INTEGRATION (GC never breaks an active generation) on FakeNix
+  in-process.
 - **Demo:** `gc` reclaims space; active rollback still works.
 - **Reviewers:** primary E; cross F; **A** (security/reliability).
 - **Rollback:** revert.
@@ -546,23 +654,29 @@ flowchart TD
 
 ### Milestone M5 — Local builds & platform installers
 
-#### PR-26 — Shared local-build engine & policy (sandbox + caps + preview/approval)
-- **Purpose:** the **explicit**, non-default, cross-platform local-build path: deterministic closure/derivation preview (with target system + sandbox status), sandbox (`sandbox=true`/`sandbox-fallback=false`), platform-appropriate resource caps (cgroups/RLIMIT on Linux; RLIMIT/disk/load guards on macOS), build-user readiness verification with fail-closed, approval journaling, and `ACQUIRE_NO_BINARY` for impossible/disallowed builds (`08` T-BUILD-*, `04`). The engine is shared by Linux and macOS; macOS-specific wiring/validation lands in PR-28.
+#### PR-26 — Shared local-build engine & policy (managed-daemon sandbox + approval + resource-boundary)
+- **Purpose:** the **explicit**, non-default, cross-platform local-build path: deterministic closure/derivation preview (with target system + sandbox status + fixed-output label), managed-daemon sandbox (`sandbox=true`/`sandbox-fallback=false`; Nix's own Linux namespace/chroot sandbox, not bubblewrap; regular-derivation network denial; fixed-output network-enabled with hash boundary), the **honest resource boundary** (`max-jobs=1` bounds concurrency per client/connection, supplemented by a **machine-global local-build admission lease** across users — a second op waits/cancels, then revalidates approval/readiness once it acquires the lease; immediately before local-build execution `pkg` acquires the lease, recomputes the exact derivation/readiness `BuildPlan` and compares its digest to the approved one, then re-measures disk/free-space/load outside the digest; `timeout`/`max-silent-time`/`max-build-log-size` daemon bounds; disk/free-space/load preflight; Nix `use-cgroups` Linux process grouping/cleanup/accounting; service-manager ceilings Pending defense-in-depth — **no** stock per-build memory/CPU/IO cap, so resource exhaustion stays a disclosed residual RISK-07), **evaluation/planning that never realizes outputs** (`nix derivation show --recursive` of the exact pinned installable with import-from-derivation disabled; `nix build` begins only at acquire — pure substitution first with `max-jobs=0`, then an approved local build), build-user readiness verification with fail-closed, **single-operation** approval journaling (bound to the canonical `BuildPlan` digest + policy version; `--yes` pre-approves that one op; no `PKG_YES_TO_BUILDS`/session skip), and `ACQUIRE_NO_BINARY` for impossible/disallowed builds (`08` T-BUILD-*, `04`). **Gated on S5/DR-005 managed-host evidence** (DR-005 stays `Proposed`; PR-26 may land a harness whose real evidence is `Pending`). The engine is shared by Linux and macOS; macOS-specific wiring/validation lands in PR-28.
 - **Owns:** `crates/pkg-nix/src/build.rs` + tests.
 - **Depends:** PR-17, PR-8 (S5).
 - **Migration/compat:** implements the cross-platform D-11 (`00`,`07`); macOS validation/integration completes in PR-28.
-- **Tests & gates:** G-UNIT + G-INTEGRATION + security (approval is non-default; sandbox on; `sandbox-fallback=false` fail-closed; disallowed build → `ACQUIRE_NO_BINARY`).
-- **Demo:** cache-miss → preview (target system + sandbox) → explicit approval → sandboxed native build.
+- **Tests & gates:** G-UNIT + G-INTEGRATION + security (approval is non-default and single-operation; sandbox on; `sandbox-fallback=false` fail-closed; disallowed build → `ACQUIRE_NO_BINARY`). Cross-referenced AC-S14–S17 (`09` §6.6): exact per-platform `nix.conf` rendering (Linux cgroups feature+setting present; macOS omits both) and finite defaults; canonical `BuildPlan` determinism + mutation-invalidation; approval journal `source` + no persistence beyond one op; launchd-vs-systemd semantics documented as Pending.
+- **Demo:** cache-miss → preview (target system + sandbox + fixed-output label) → explicit single-operation approval → sandboxed native build.
 - **Reviewers:** primary E; cross F; **A mandatory security** (T-BUILD-1/3).
 - **Rollback:** revert; users fall back to substitution.
 - **Parallel:** with PR-27/28/29.
 - **Milestone:** M5.
 
-#### PR-27 — Linux installer + root helper (polkit/setuid)
-- **Purpose:** install the product + managed Nix with a least-privilege privileged helper;
-  caller-authenticated IPC (`07`,`08` T-INST-1/2/3/5).
-- **Owns:** `crates/pkg-installer/src/{installer.rs,helper.rs,assets.rs,platform/linux.rs}` + privileged-VM tests.
-- **Depends:** PR-9, PR-12, PR-4 (S1).
+#### PR-27 — Linux installer + root helper (polkit/socket-cred; implements the PR-39 contract)
+- **Purpose:** install the product + managed Nix with a least-privilege privileged helper that
+  implements the broker↔helper contract (PR-39) on Linux — the real framed-RPC **transport** (Unix
+  socket + length-prefixed frames), the real **peer-auth** (caller uid via socket credentials /
+  `SO_PEERCRED`), the real **capability transport**, and the **systemd** service definitions for
+  the broker and helper (`07`,`08` T-INST-1/2/3/5). The OS credential/transport APIs are implemented
+  **here**, not in PR-39.
+- **Owns:** `crates/pkg-installer/src/{installer.rs,helper.rs,assets.rs,platform/linux.rs}`
+  (including the Linux transport binding of PR-39's `MaintenanceAdapter` + peer-auth + capability
+  transport and the generated systemd units) + privileged-VM tests.
+- **Depends:** PR-9, PR-12, PR-4 (S1), **PR-39 (the contract/core/fake this transport implements)**.
 - **Migration/compat:** records the install asset manifest (PR-29 consumes).
 - **Tests & gates:** G-UNIT + privileged-VM integration (helper auth, allowlist, fail-closed).
 - **Demo:** install in an ephemeral VM → `pkg doctor` clean.
@@ -571,10 +685,10 @@ flowchart TD
 - **Parallel:** with PR-28 (different OS), PR-26, PR-25.
 - **Milestone:** M5.
 
-#### PR-28 — macOS installer + Darwin build integration + launchd + signing/notarization
-- **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and platform-appropriate resource caps (`07`, DR-003 from S3). Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
-- **Owns:** `crates/pkg-installer/src/platform/macos.rs`, `_nixbld` build-user provisioning, notarization tooling, packaging.
-- **Depends:** PR-12, PR-7 (S3), PR-26 (shared engine).
+#### PR-28 — macOS installer + Darwin build integration + launchd + signing/notarization (implements the PR-39 contract)
+- **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and the honest resource boundary (**no** per-build memory/CPU/IO cap in stock Nix 2.34.8) (`07`, DR-003 from S3). It implements the broker↔helper contract (PR-39) on macOS — the real framed-RPC **transport**, **peer-auth** (caller uid via launchd/XPC authorized client), **capability transport**, and the **launchd** service definitions for broker and helper. The OS credential/transport APIs are implemented **here**, not in PR-39. Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
+- **Owns:** `crates/pkg-installer/src/platform/macos.rs` (including the macOS transport binding of PR-39's `MaintenanceAdapter` + peer-auth + capability transport and the generated launchd plists), `_nixbld` build-user provisioning, notarization tooling, packaging.
+- **Depends:** PR-12, PR-7 (S3), PR-26 (shared engine), **PR-39 (the contract/core/fake this transport implements)**.
 - **Migration/compat:** macOS supports approved native sandboxed local builds (D-11); not binary-only.
 - **Tests & gates:** G-UNIT + macOS runner integration: cache hit, cache-miss preview/cancel/approval, successful native sandboxed build, sandbox-unavailable fail-closed, unsupported-package `ACQUIRE_NO_BINARY`, receipt/rollback.
 - **Demo:** install on macOS arm64 → `pkg doctor` clean; cache-miss → approved native sandboxed build → `pkg history`.
@@ -598,16 +712,80 @@ flowchart TD
 
 ### Milestone M6 — Hardening & operations
 
-#### PR-30 — Repair flow + corruption recovery
-- **Purpose:** `pkg repair` re-verifies NAR/signatures and restores integrity
-  (`04`,`08` T-CACHE-3).
-- **Owns:** `crates/pkg-nix/src/{verify.rs,repair.rs}`, `crates/pkg-cli/src/commands/repair.rs` + tests.
-- **Depends:** PR-18, PR-8 (S5).
-- **Tests & gates:** G-UNIT + G-INTEGRATION + security (corrupt→detect→repair).
-- **Demo:** corrupt a fixture path → `pkg repair` restores.
-- **Reviewers:** primary E; cross F; **A** (integrity).
-- **Rollback:** revert.
-- **Parallel:** with PR-31..35.
+#### PR-30 — Two-phase `pkg repair` + corruption recovery (privilege-split; non-atomic)
+- **Purpose:** `pkg repair` is **explicitly user-initiated** and **verified non-atomic** (`00`
+  D-19/INV-12; `05` §10; `08` T-CACHE-3/T-INST-7). It re-verifies integrity and restores it across
+  the broker/helper privilege split: (Phase 0) **read-only** `nix store verify --recursive` (**no**
+  `--repair`) via the **unprivileged broker** `NixAdapter` computes the damage set from broker-held
+  generation state; (Phase A) **cache-only** `nix store repair` via the **privileged helper**
+  `MaintenanceAdapter` with managed pinned substituters/keys, `max-jobs=0`, `builders` empty — auto
+  on a signed cache hit and **must stop before any build** on a cache miss; (Phase B) an **approved
+  local rebuild** via the helper, bounded nonzero `max-jobs`, `builders` empty, serialized by the
+  broker's machine-wide build mutex and holding a shared GC-inhibit permit, using the ordinary
+  public build preview / explicit single-operation approval whose internal
+  `RepairBuildPlan`/digest covers every output Nix may rebuild. A path is marked repaired **only
+  after a fresh read-only verify**. `pkg repair` warns affected commands may be temporarily
+  unavailable, journals per path, auto-resumes **only** cache repair after a crash, and requires
+  **fresh approval** before repeating a local repair build (the `mode=build` capability is
+  single-use and invalidated on restart).
+- **Owns (adapter split — no generic `repair(paths)` on `NixAdapter`):** broker-side read-only
+  `crates/pkg-nix/src/verify.rs` (NixAdapter: verify **only**; **no** repair method) + broker-side
+  capability issuance (opaque expiring single-use, server-side bound to uid / rooted generation /
+  typed `StorePath` set / `RepairBuildPlan` digest / policyVersion / mode); the **privileged**
+  repair execution on `MaintenanceAdapter`/helper — `repair_store_paths` (nonempty sorted
+  validated typed `StorePath` set) — lives with the helper in `crates/pkg-installer/` (PR-39
+  contract trait; PR-27/PR-28 platform transports); and `crates/pkg-cli/src/commands/repair.rs`
+  + tests. Raw Nix logs stay
+  **service-private**; only sanitized per-path outcome/versioned events reach the CLI/public logs.
+- **Depends:** PR-18 (per-output roots + re-root), PR-22 (GC reclamation logic + the per-user
+  state-mutation lease that repair coordinates with — **not** the broker gate), PR-26 (the shared
+  build engine: build preview/approval + the Phase-B repair-build path that reuses it; transitively
+  S5/PR-8), **PR-39** (the early M1.5 contract/core/fake: capability issuance + framed channel +
+  restart handshake + the **broker-internal in-memory admission gates** — the machine-wide **build
+  admission lease** (AC-S19) the Phase-B repair build waits on, and the **GC admission gate** that
+  mints the shared **GC-inhibit permit** (AC-S23) repair holds so a concurrent `gc` cannot reap
+  mid-repair; these are broker-hosted and owned here, **not** by PR-22/PR-26/PR-18), **PR-27** (the
+  Linux transport/helper that implements the PR-39 contract), **PR-28** (the macOS transport/helper
+  that implements the PR-39 contract). *(PR-39 now precedes the helpers (M1.5 ≪ M5), so both platform
+  helpers are listed explicitly; repair must run on Real Nix on both Linux and macOS. Full
+  two-phase mutating repair is an unconditional V1 milestone (M1.5 repair-scope note), so the
+  PR-39→PR-30 edge and these helper deps are permanent; PR-39's ownership of the broker-internal
+  admission gates is unchanged.)*
+- **Tests & gates:** G-UNIT + G-INTEGRATION + G-SECURITY + G-FAULT on **Real Nix 2.34.8 on Linux
+  x86_64 and macOS arm64** (the repair privilege split is a Nix-2.34.8 trusted-user fact — it
+  cannot be asserted on Fake Nix alone). Required real-Nix cases (cross-ref `09` AC-S*):
+  (a) **socket access** — an ordinary non-broker uid cannot `connect()` the daemon socket or exec
+  the bundled `nix`/helper (AC-S24);
+  (b) **cache repair** — corrupt a fixture output → Phase-0 verify detects → Phase-A cache-only
+  repair restores from `cache.nixos.org` with `max-jobs=0`/`builders` empty (AC-S3);
+  (c) **cache-miss stop-before-build** — a damaged path with no substitute and a valid deriver
+  **stops** at Phase A and does not build (AC-S14);
+  (d) **approval fallback** — Phase-B build preview shows the full `RepairBuildPlan` (every
+  rebuildable output) → explicit single-operation approval → bounded-nonzero-`max-jobs` local
+  rebuild (AC-S15/S16);
+  (e) **replay / cross-UID rejection** — a stale/replayed/mismatched/cross-UID capability is
+  refused (SECURITY logged) and the helper grammar cannot widen to raw
+  path/installable/derivation/expression/flake/argv/option/substituter-key/verb (AC-S22);
+  (f) **crash between deletion/replacement** — kill mid cache-repair (path deleted, not yet
+  restored) and mid local-repair (old moved aside, not yet replaced) → recovery re-runs read-only
+  verify, **idempotently resumes cache-only repair per path**, and **does not silently resume an
+  approved build** (marks it needing re-approval) (AC-S5, `05` §10.8);
+  (g) **final verify** — no path is marked `repaired` until a fresh read-only `nix store verify`
+  confirms it clean (AC-S14);
+  (h) **no raw-log leak** — the raw broker/Nix subprocess log never appears in
+  `--json`/`--jsonl`/public `<user-state>/logs/*.ndjson` (AC-S25).
+  Negative parity (AC-S21): the broker `NixAdapter` issuing any `--repair`-shaped command is
+  **denied** by Nix 2.34.8.
+- **Demo:** on Real Nix (Linux + macOS): corrupt one output → `pkg repair` → Phase-0 verify →
+  Phase-A cache restore → final verify clean; then force a cache-miss → stop-before-build →
+  approve → Phase-B rebuild → final verify; replay a used capability → refused; kill between
+  delete/restore → recovery resumes cache repair only; grep public logs → no raw Nix log.
+- **Reviewers:** primary E; cross F; **A mandatory security** (T-CACHE-3/T-INST-7 privilege split +
+  capability + non-atomic residual RISK-22).
+- **Rollback:** revert; repair never deletes user state (worst case it reports paths it cannot
+  re-acquire and exits non-zero).
+- **Parallel:** within the M6 batch with PR-31..35 **but cannot start until PR-39 (M1.5) and both
+  platform helpers (PR-27/PR-28) land**.
 - **Milestone:** M6.
 
 #### PR-31 — Security test lane + fault-injection harness
@@ -675,10 +853,17 @@ flowchart TD
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real
   parity, and self-host the product on Real Nix end-to-end (`09` §7).
 - **Owns:** `.github/workflows/nightly.yml` (Full), golden capture harness, parity diffing.
-- **Depends:** PR-24 (wired CLI), PR-27/PR-28 (Linux+macOS installers), PR-29 (uninstall),
-  PR-31, PR-32, PR-33. (The demo runs clean-host install → install → rollback → uninstall on
-  Real Nix, so it requires the installers, uninstall, and the full CLI surface — not only the
-  M6 hardening batch.)
+- **Depends:** PR-24 (wired CLI), **PR-39 (early M1.5 broker/helper contract — Real-Nix execution
+  is gated on its accepted ADR, DR-017; listed directly so the Depends-parse CI in AC-R1 enforces
+  it, not merely transitively)**, PR-27/PR-28 (Linux+macOS installers + the platform transports
+  that implement the PR-39 contract), PR-29 (uninstall), **PR-30 (two-phase repair — repair is the
+  in-scope V1 baseline (D-19/INV-12), so the technical preview must demonstrate `pkg repair` on
+  Real Nix)**, PR-31, PR-32, PR-33. The demo runs clean-host install → install → rollback →
+  uninstall → `repair` on Real Nix, so it requires the installers, uninstall, repair, and the full
+  CLI surface — not only the M6 hardening batch. *(Two-phase mutating repair is an unconditional
+  V1 milestone (M1.5 repair-scope note), so the PR-30 edge and the Real-Nix `pkg repair` demo are
+  permanent; the PR-39 edge likewise stands — Real-Nix execution is unconditionally gated on the
+  broker/helper contract.)*
 - **Tests & gates:** G-E2E-REAL + G-FAULT + G-SECURITY + G-PERF + G-PLATFORM green on Linux x86_64 & macOS arm64.
 - **Demo:** clean-host install → install package → rollback → uninstall, on Real Nix in CI.
 - **Reviewers:** primary A; cross F,E; **A mandatory**.
@@ -721,7 +906,8 @@ flowchart TD
 | **State vs Channel vs Detect (M1)** | PR-9 ‖ PR-10 ‖ PR-11 (all depend only on PR-2/PR-3 + spikes) |
 | **CLI skeleton (M4 start)** | PR-23 only needs PR-2 → can start during M1/M2 |
 | **Lifecycle ops (M3→M4)** | PR-20 ‖ PR-21 (both consume PR-19) |
-| **Hardening batch (M6)** | PR-30 ‖ PR-31 ‖ PR-32 ‖ PR-33 ‖ PR-34 ‖ PR-35 |
+| **Hardening batch (M6)** | PR-30 ‖ PR-31 ‖ PR-32 ‖ PR-33 ‖ PR-34 ‖ PR-35 (PR-30 starts only after PR-39/M1.5 + PR-27/28 land) |
+| **Broker contract milestone (M1.5)** | PR-39 (after PR-3 ‖ PR-10; gates PR-27/28/30/36 — not parallelizable with them) |
 | **Installers (M5)** | PR-27 (Linux) ‖ PR-28 (macOS, depends on PR-26); PR-26 (shared build engine) ‖ PR-25 (doctor) ‖ PR-27 |
 
 ---
@@ -732,13 +918,29 @@ flowchart TD
 PR-0 → PR-1 → PR-2 → PR-3
   → PR-11(needs PR-5 spike) → PR-12(needs PR-9) → PR-13
   → PR-14(needs PR-6) → PR-16 → PR-19(needs PR-18) → PR-24
-  → PR-36(needs PR-31/32/33) → PR-37 → PR-38
+  → PR-36(needs PR-27/28/29/30/31/32/33) → PR-37 → PR-38
+
+Early blocking contract gate (off the longest chain, but hard-blocking M5+):
+PR-3 / PR-10 → PR-39 (M1.5) ── gates ──▶ PR-27/28 (M5) ──▶ PR-30 (M6) ──▶ PR-36 (M7)
 ```
 
 **Interpretation:** the channel/TUF choice (S2 → PR-11) and the resolve→install chain
-(PR-13→16→19→24) are on the critical path; the installers (PR-27/28), local build (PR-26),
-and most of M6 hardening run **off** the critical path and can be parallelized. Store-prefix
-spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
+(PR-13→16→19→24) are on the **longest** critical path; the installers (PR-27/28), local build
+(PR-26), and most of M6 hardening run **off** that longest chain and can be parallelized.
+Store-prefix spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5. **PR-39 is repositioned
+as an early blocking design/contract milestone (M1.5), right after the minimum core-types/state
+prerequisites (PR-3, PR-10) and well before the broker/helper/platform integration it gates
+(PR-27/28), the two-phase repair (PR-30), and Real-Nix execution (PR-36). Because it no longer
+depends on the installers (the prior PR-27/28→PR-39 edges were circular with the
+PR-39→PR-27/PR-28 edges and are removed), it creates no late-stage bottleneck (it no longer sits
+late, after the installers): it can be
+developed in parallel with M2/M3/M4 and must land before M5. It sits off the longest chain
+(PR-2→PR-10→PR-39→PR-27/28→PR-30→PR-36 is shorter than the resolve→install chain into PR-36), but
+no broker/helper integration, repair, or Real-Nix work merges before its accepted ADR lands
+(DR-017). The broker-internal, host-global admission gates (build admission lease + GC admission
+gate / GC-inhibit permit) are owned — contract + reference — by **PR-39**, so PR-30's GC-inhibit
+permit and PR-26's build admission trace to PR-39, not to the M4 GC PR (PR-22 owns reclamation +
+the per-user state-mutation `flock` only).**
 
 ---
 
@@ -749,11 +951,12 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
 | **M0 Foundations** | 0–3 | Workspace builds; Fake Nix + Fast CI green; domain types & JSON contract stable. |
 | **M0.5 Spikes** | 4–8 | All five DRs (DR-001..005) accepted; no irreversible architecture locked before this. |
 | **M1 Managed Nix & state** | 9–12 | Managed Nix can be detected/provisioned in a temp root; state schema v1 + journal + integrity landed; channel verify works on fixtures. |
+| **M1.5 Broker/helper contract & capability** | 39 | Early BLOCKING design/contract milestone: broker↔CLI and broker↔helper framed RPC, peer auth, operation lifecycle, child containment, opaque expiring single-use capability storage/expiry, restart handshake, **and the broker-internal in-memory admission gates (machine-wide build admission lease + GC admission gate / GC-inhibit permit, AC-S19/S23)** — **designed + reference-implemented on FakeNix/in-process** (real OS transports land in PR-27/28); adapter split enforced (NixAdapter has no repair; MaintenanceAdapter/helper owns repair). **Unconditional BLOCKING gate for PR-27/28 (broker/helper integration), PR-30 (two-phase repair), and PR-36 (Real-Nix execution)** — full two-phase mutating repair is an accepted V1 milestone (DR-017; non-atomic residual RISK-22). |
 | **M2 Catalog & resolve** | 13–16 | Pinned Nixpkgs realized + narHash-verified; disposable deterministic index built/queried; Selector→Realization resolves under pure eval. |
 | **M3 Install/activate** | 17–20 | Substitute+verify; atomic activation; install pipeline with rollback-on-failure; remove/upgrade with mixed revisions. |
 | **M4 Generations & UX** | 21–25 | Generations/history/rollback/pin; GC+leases; full CLI wired to Fake Nix; completions + doctor. |
 | **M5 Local build & installers** | 26–29 | Shared cross-platform local-build engine w/ sandbox+approval (Linux + macOS native); Linux + macOS installers with authenticated helpers + `nixbld` build group plus `nixbld*` users on Linux and `_nixbld*` users on macOS; bounded uninstall. |
-| **M6 Hardening & ops** | 30–35 | Repair; security lane; perf gate; release signing; observability; docs/support export. |
+| **M6 Hardening & ops** | 30–35 | Two-phase repair (needs M1.5/PR-39); security lane; perf gate; release signing; observability; docs/support export. |
 | **M7 Technical Preview** | 36 | Real-Nix nightly green on Linux x86_64 + macOS arm64; Fake↔Real parity; self-hosted e2e. |
 | **M8 v1** | 37–38 | RC with compat matrix + revoke rehearsal + sign-off; v1.0 published with advisory. |
 
@@ -764,14 +967,14 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
 | Plan | Owns which PR decisions |
 |------|-------------------------|
 | `00` | scope/invariants → PR-0, PR-2, PR-24 honesty copy |
-| `01` | architecture/NixAdapter contract → PR-3, PR-9, PR-12 |
+| `01` | architecture/NixAdapter contract → PR-3, PR-9, PR-12, PR-39 |
 | `02` | channel/TUF schema → PR-5, PR-11, PR-33 |
 | `03` | index model → PR-14, PR-15, PR-33 |
 | `04` | resolve/install/build pipeline → PR-13, PR-16, PR-17, PR-19, PR-20, PR-26, PR-30 |
 | `05` | state/locks/gen/GC → PR-10, PR-18, PR-21, PR-22 |
 | `06` | CLI/UX → PR-23, PR-24, PR-25, PR-34, PR-35 |
-| `07` | installers/runtime → PR-4, PR-9, PR-12, PR-27, PR-28, PR-29 |
-| `08` | security → security reviews on PR-3,9,10,11,12,16,17,18,19,26,27,28,29,31,33,34,36,37,38 |
+| `07` | installers/runtime → PR-4, PR-9, PR-12, PR-27, PR-28, PR-29, PR-39 |
+| `08` | security → security reviews on PR-3,9,10,11,12,16,17,18,19,26,27,28,29,30,31,33,34,36,37,38,39 |
 | `09` | test lanes → PR-3, PR-31, PR-32, PR-36 |
 | `10` | release/ops → PR-33, PR-34, PR-35, PR-36, PR-37, PR-38 |
 
@@ -785,11 +988,22 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
   "TUF-lite") is the single most expensive mistake to unwind post-release.
 - **No macOS build-security commitment before S3 (PR-7).** If `aarch64-darwin`/`x86_64-darwin`
   cache coverage gaps are material, **or** if native macOS local builds (sandbox, `_nixbld`
-  users, Xcode toolchain, resource caps) prove unviable, v1 must curate the catalog, ship a
+  users, Xcode toolchain, honest resource boundary) prove unviable, v1 must curate the catalog, ship a
   product cache, or narrow the build policy — a scope decision, not a late surprise.
-- **No local-build UX before S5 (PR-8).** Sandbox escape / resource caps must be proven.
+- **No local-build UX before S5 (PR-8).** Sandbox escape and the honest resource boundary (no per-build cap) must be proven.
 - **No perf budgets set before S4 (PR-6).** Otherwise budgets are fiction and the perf gate
   (PR-32) misfires.
+- **No broker/helper integration, two-phase repair, or Real-Nix execution before PR-39 (M1.5).**
+  The broker/helper framed RPC, peer auth, operation lifecycle, child containment, capability
+  storage/expiry, and restart handshake are a blocking **design/contract** milestone that lands
+  **early** (right after the core-types/state prerequisites PR-3/PR-10), before the broker/helper
+  platform integration (PR-27/28), two-phase repair (PR-30), and any Real-Nix execution (PR-36)
+  (`12` DR-017); PR-27/28/30/36 **must not merge** before PR-39's accepted ADR lands. This is a
+  *dependency* made explicit and decoupled from the installers (a contract must precede the
+  transports that implement it), not a V1 scope broadening: the boundary was already accepted
+  (D-19/DR-016); PR-39 only specifies the wire. Full two-phase mutating repair (PR-30) is an
+  **accepted, unconditional V1 milestone** (DR-017; non-atomic residual RISK-22) — no post-V1
+  deferral.
 
 ---
 
@@ -802,6 +1016,23 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
 - **AC-R3** Every spike PR closes with an accepted DR in `12` before its dependent PR opens.
 - **AC-R4** M7 exit is gated on Real-Nix nightly green on both Linux x86_64 and macOS arm64.
 - **AC-R5** M8 exit is gated on a completed revocation rehearsal + 2-person sign-off.
+- **AC-R6** PR-39 is an **early** blocking design/contract milestone (M1.5, after PR-3/PR-10) and
+  **does not depend on PR-27/PR-28** (that would be circular — PR-27/28 implement the PR-39
+  contract). PR-27 (Linux helper), PR-28 (macOS helper), PR-30 (two-phase repair), and PR-36
+  (Real-Nix execution) do not merge before PR-39 lands its accepted ADR (DR-017); the unprivileged
+  `NixAdapter` exposes no repair method (AC-S21) and the DAG in §3 carries the PR-39→PR-27 /
+  PR-39→PR-28 / PR-39→PR-30 / PR-39→PR-36 edges with **no** PR-27→PR-39 or PR-28→PR-39 back-edge
+  (enforced by the `Depends:` parse in AC-R1). (PR-30/repair edges are permanent: full two-phase mutating repair is an accepted, unconditional
+  V1 milestone (DR-017; non-atomic residual RISK-22), so the PR-39→PR-30 and PR-36→PR-30 edges
+  never drop; PR-39 unconditionally gates PR-27/28/30/36.)
+- **AC-R7** No M4 PR is credited with supplying a **broker-hosted** gate. The broker-internal,
+  host-global **admission gates** (machine-wide build admission lease, AC-S19; GC admission gate /
+  shared GC-inhibit permit, AC-S23) are owned — contract + FakeNix/in-process reference — by
+  **PR-39** (M1.5) and hosted at runtime by the broker (PR-27/28 transports). **PR-22** (M4) owns
+  only GC reclamation logic + the per-user state-mutation lease (a filesystem `flock`); PR-30's
+  GC-inhibit permit traces to **PR-39**, not to PR-22 or PR-18. The §4 `Depends:` attributions and
+  §6 interpretation must agree with this (any label crediting an M4 PR with a broker-hosted gate is
+  a defect).
 
 ---
 
@@ -820,3 +1051,6 @@ spike S1 (PR-4) gates PR-9/12/27 and must not slip past M0.5.
 - Q2 Whether v1 ships a product-hosted cache (affects T-CACHE-2 and PR-33 scope).
 - Q3 Final perf budgets (PR-32) once S4 numbers land.
 - Q4 Exact TUF threshold at GA (PR-33/37, DR-002).
+- Q5 Exact broker/helper framed-RPC transport, capability-token format, and restart-handshake
+  bytes — **open by design**, resolved inside PR-39 (M1.5) and recorded in its ADR (DR-017); the
+  planning docs deliberately leave the wire unspecified.

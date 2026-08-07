@@ -53,9 +53,9 @@ and decommissioned** — across four operational surfaces:
 > (mirror)**. The CDN is a performance/availability layer; authenticity is **never** derived
 > from the CDN — only from TUF signatures and hashes (`08` T-REL-3).
 >
-> **📐 DECISION (TUF target set).** The TUF channel target set is **exactly** the four
-> “release targets” of doc 02 §6.4: the channel `descriptor.json`, the managed-Nix runtime
-> tarballs, the pinned Nixpkgs source tarball, and the per-system index files. TUF provides
+> **📐 DECISION (TUF target set).** The TUF channel target set is **exactly** the three
+> "release targets" of doc 02 §6.4: the channel `descriptor.json`, the managed-Nix runtime
+> tarballs, and the per-system index files. TUF provides
 > rollback/freeze/mix-and-match protection, threshold signatures, and key rotation/revocation
 > for **these** targets only. The CLI binary is **not** a TUF channel target, and TUF
 > enumerates **no package catalog** (packages are resolved/realized from pinned Nixpkgs +
@@ -196,8 +196,8 @@ Triggered by suspected/confirmed compromise (`08` T-CHAN-5, T-REL-2):
 - **Upgrade CLI:** self-update fetches the new binary from GitHub Releases + CDN and verifies
   the Sigstore attestation + the checksum pinned in signed release notes/installer (`07`);
   atomic install with rollback to the previous CLI binary on failure. The CLI is **not** a
-  TUF channel target — the signed channel (TUF) governs descriptor/runtime/Nixpkgs-source/
-  index only (doc 02 §6.4); CLI rollback is binary keep-prev, not channel-sequence rollback.
+  TUF channel target — the signed channel (TUF) governs descriptor/runtime/index only
+  (doc 02 §6.4); CLI rollback is binary keep-prev, not channel-sequence rollback.
 - **Downgrade CLI:** supported only within the managed-Nix compatibility window; refuses if
   state schema/policyVersion is incompatible (fail-closed, `05`).
 

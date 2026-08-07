@@ -7,6 +7,12 @@
 > production code. It produces a technical recommendation for **DR-002** only.
 > Concrete results live in [`findings.md`](findings.md); the decision record is
 > [`plans/12`](../../plans/12-open-decisions-and-risks.md) DR-002.
+>
+> ⚠️ **One target-set row below is SUPERSEDED** — the accepted architecture
+> ([`plans/02` §6.5](../../plans/02-trust-and-update-model.md),
+> [`plans/03` §6.2](../../plans/03-nixpkgs-source-and-index.md)) acquires Nixpkgs via
+> the locked-flake fetcher, **not** as a `src.tar.gz` TUF target. See §7 for the
+> record, preserved verbatim as historical evidence.
 
 ---
 
@@ -188,13 +194,26 @@ in this repository**.
 
 ## 7. Target set (what this models)
 
+> ⚠️ **SUPERSEDED — historical record only; not current architecture.** The
+> accepted design
+> ([`plans/02` §6.4/§6.5](../../plans/02-trust-and-update-model.md),
+> [`plans/03` §6.2](../../plans/03-nixpkgs-source-and-index.md)) does **not** publish
+> Nixpkgs source as a TUF target. Nixpkgs is acquired directly via the bundled Nix
+> locked-flake fetcher (`github:<owner>/<repo>/<rev>?narHash=…`, enforced through
+> `locked.rev`/`locked.narHash`), authenticated transitively because the descriptor
+> is itself a TUF target. The table below is the target set this spike **actually
+> modeled and tested for DR-002** — preserved verbatim as historical evidence,
+> **not** reconciled to current architecture. This spike did **not** exercise the
+> locked-flake acquisition path; it exercised only the `src.tar.gz` TUF-target model
+> shown below.
+
 The spike models `pkg`'s real channel target set (`plans/02` §6.4 / §7):
 
 | Target | Signed by | Notes |
 |--------|-----------|-------|
 | `descriptor.json` | top-level `targets` (1-of-1) | the channel descriptor itself (§10) |
 | `nix/<ver>/<sys>.tar.xz` | top-level `targets` (1-of-1) | managed-Nix runtime, one per supported system |
-| `nixpkgs/<rev>/src.tar.gz` | top-level `targets` (1-of-1) | pinned Nixpkgs source |
+| `nixpkgs/<rev>/src.tar.gz` | top-level `targets` (1-of-1) | pinned Nixpkgs source — ⚠️ **SUPERSEDED** (see note above; **not** a target in the accepted architecture — plans/02 §6.5 / plans/03 §6.2) |
 | `index/<seq>/<sys>.json.br` | **delegated** `index` role (1-of-1, paths `index/**`) | disposable per-system catalog index |
 
 ### Delegated targets ARE supported and demonstrated

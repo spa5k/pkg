@@ -313,19 +313,36 @@ would record; none are observed today.
 | `sandboxEnforced` (`sandbox=true`) | Pending |
 | `sandboxFallbackDisabled` (`sandbox-fallback=false`) | Pending |
 | `buildUsersReady` (`_nixbld` build-time readiness) | Pending |
-| `networkDenied` (sandbox blocks network during build) | Pending |
+| `networkDenied` (regular derivation network-denied under `sandbox=true`; fixed-output derivations are intentionally network-enabled with their hash as the integrity boundary — **not** universal denial) | Pending |
 | `approvalRecorded` (explicit single-operation approval) | Pending |
-| `resourceCapsEffective` (ledger-only; no current schema field; S5/DR-005/PR-26 evidence) | Pending |
+| `resourceBoundaryHolds` (ledger-only; **no** per-build cap exists in stock Nix 2.34.8: `max-jobs` bounds concurrency, `timeout`/`max-silent-time`/`max-build-log-size` are daemon bounds, `use-cgroups` is Linux cleanup/statistics not caps, service-manager ceilings are Pending; S5/DR-005/PR-26 evidence) | Pending |
 
-> **Cap/approval/network-denial effectiveness is owned jointly by [S5]
+> **Cap/approval/network-denial boundary is owned jointly by [S5]
 > / [DR-005] / [PR-26](../../plans/11-pr-roadmap.md).** The current BuildProbe
 > **schema** (booleans for sandbox/fallback/users/network/approval) is a
 > data-contract placeholder and **must not be read as evidence that resource
-> caps, approval gates, or network denial are *effective*** — that requires the
-> S5 managed-build harness on both Linux and macOS, which has not run here. The
-> `resourceCapsEffective` table row is **ledger-only**: no such schema field
-> exists today (it is tracked here precisely because cap *effectiveness* is
-> S5/DR-005/PR-26 evidence, not something this spike's report can produce).
+> caps, approval gates, or network denial are *effective***. Per DR-005: stock
+> Nix 2.34.8 provides **no** per-build memory/CPU/IO cap — `use-cgroups` is
+> Linux-only process grouping/lingering-process-cleanup/CPU-statistics (it does
+> not write `memory.max`/`cpu.max`/`pids.max`/IO limits), and there is no cgroup
+> equivalent on macOS; the boundary is `max-jobs` (concurrency, per
+> client/connection; pkg adds a machine-global local-build admission lease across
+> users) + daemon
+> `timeout`/`max-silent-time`/`max-build-log-size` + disk/free-space/load preflight, with
+> service-manager ceilings Pending and **not** equivalent to each other: systemd
+> `MemoryMax`/`TasksMax`/`CPUQuota` would be an **aggregate service-cgroup ceiling over
+> the daemon plus all descendants**, whereas launchd `SoftResourceLimits`/
+> `HardResourceLimits` are **inherited per-process RLIMIT ceilings**, not an aggregate
+> daemon-subtree ceiling.
+> Network denial is **not** universal: regular input-addressed derivations are
+> network-denied under `sandbox=true`, but fixed-output derivations are
+> intentionally network-enabled (their output hash is the integrity boundary;
+> on macOS the sandbox profile permits network for non-sandboxed derivation
+> types). Verifying the build-time sandbox/approval/boundary requires the S5
+> managed-build harness on both Linux and macOS, which has not run here. The
+> `resourceBoundaryHolds` table row is **ledger-only**: no such schema field
+> exists today (it is tracked here precisely because the *boundary* — not a cap —
+> is S5/DR-005/PR-26 evidence, not something this spike's report can produce).
 
 ### 5.4 Signing / notarization validation — `Pending`
 
@@ -404,9 +421,11 @@ satisfied from this spike alone):
 
 - [ ] A real native sandboxed Darwin build under `_nixbld*` build users (BuildProbe) from a
       managed macOS / [S5](../../plans/11-pr-roadmap.md) harness, with
-      `sandbox=true`/`sandbox-fallback=false` and **effective** network denial,
-      approval, and resource caps (cap/approval/network effectiveness co-owned
-      with [S5] / [DR-005] / [PR-26](../../plans/11-pr-roadmap.md)).
+      `sandbox=true`/`sandbox-fallback=false`, regular-derivation network denial
+      (fixed-output derivations are network-enabled with their hash as the boundary),
+      single-operation approval, and the honest resource boundary (**no** per-build cap
+      in stock Nix 2.34.8; cap/approval/network boundary co-owned with
+      [S5] / [DR-005] / [PR-26](../../plans/11-pr-roadmap.md)).
 - [ ] A notarized installer/runtime that builds, signs (codesign), submits
       (notarytool), and staples successfully end-to-end.
 

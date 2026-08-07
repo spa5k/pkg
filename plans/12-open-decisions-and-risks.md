@@ -173,13 +173,12 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Consequences:** Resolve may show a progress step on cache-miss; documented in UX.
 - **Owner:** E + F. **Source:** `[NIXPKGS-MANUAL]`; spike S4.
 
-### DR-005 — Linux local builds: sandbox + caps + explicit approval
-- **Status:** Proposed (pending **S5 / PR-8**).
-- **Context:** Local builds run Nixpkgs build scripts on the host; sandboxing is the control.
-  (`04`,`08` T-BUILD-1/3)
-- **Decision:** Local builds (Linux **and** macOS, native system only) are permitted **only** after an explicit, non-default user approval following a deterministic closure/derivation preview; `sandbox=true`/`sandbox-fallback=false`, platform-appropriate caps (cgroups/RLIMIT on Linux; RLIMIT/disk/load guards on macOS — no cgroups invented), build-user isolation (group `nixbld` on both platforms; users `nixbld*` on Linux and `_nixbld*` on macOS), and fail-closed readiness verification. macOS shares this policy per DR-003 (no longer binary-only). Approval never overrides a hard policy refusal (unsupported/broken/impure derivation, or sandbox/build-user unavailable).
-- **Consequences:** Users opt into build risk knowingly; sandbox escapes remain a residual.
-- **Owner:** E + A. **Source:** `[NIX-MANUAL]` (sandboxed builds); spike S5.
+### DR-005 — Managed-daemon local builds: sandbox + approval + resource-boundary
+- **Status:** **Proposed** (pending **S5 / PR-8** managed-host behavioral evidence). PR-26 (shared local-build engine) **remains gated** on this DR; S5 may land a harness whose real evidence is `Pending`. No accepted enforcement until managed-host evidence on Linux **and** macOS.
+- **Context:** Local builds run Nixpkgs build scripts on the host; `sandbox=true`/`sandbox-fallback=false` is the primary control, and the single-operation build preview/approval gate makes each build explicit. (`04`,`08` T-BUILD-1/3). The earlier "sandbox + caps" framing overstated what stock Nix provides.
+- **Decision:** Local builds (Linux **and** macOS, native system only) are permitted **only** after an explicit, non-default **single-operation** user approval following a deterministic closure/derivation preview; `sandbox=true`/`sandbox-fallback=false`; build-user isolation (group `nixbld` on both platforms; users `nixbld*` on Linux and `_nixbld*` on macOS); and fail-closed readiness verification. macOS shares this policy per DR-003 (no longer binary-only). Approval never overrides a hard policy refusal (unsupported/broken/impure derivation, or sandbox/build-user unavailable). **Evaluation/planning never realize outputs:** the exact pinned installable is evaluated with `nix derivation show --recursive` (top-level derivation JSON version 4; Nix 2.34.8 has no `derivation show --json-format` selector) and import-from-derivation disabled; `nix build` begins only at acquire — pure substitution first (with `max-jobs=0`), then an approved local build if needed. Immediately before local-build execution `pkg` acquires the machine-global local-build admission lease, recomputes the exact derivation/readiness `BuildPlan` and compares its digest to the approved one, then re-measures disk/free-space/load outside the digest; on mismatch or failed preflight it fails/re-prompts as specified and releases the lease on all exits. **Honest resource boundary:** stock Nix 2.34.8 provides **no** per-build memory/CPU/IO cap. What holds: `max-jobs=1` bounds concurrent derivations per client/connection (so `pkg` adds a machine-global local-build admission lease across users); `cores` only supplies the `NIX_BUILD_CORES` cooperation hint; `timeout`/`max-silent-time`/`max-build-log-size` are daemon-enforced bounds; disk/free-space/load preflight; Nix `use-cgroups` (experimental feature `cgroups`, **Linux-only**) creates a per-build cgroup for process grouping, lingering-process cleanup, and CPU statistics — it does **not** write `memory.max`/`cpu.max`/`pids.max`/IO limits, so it is **not** a resource cap; macOS has no cgroup equivalent. The Rust `pkg` client and the `nix` CLI it spawns are **socket clients** of the long-lived `nix-daemon`; RLIMIT or cgroup membership applied to those client processes does **not** constrain the builders the daemon spawns. Regular input-addressed derivations are filesystem-sandboxed and network-denied; fixed-output derivations remain filesystem-sandboxed but are intentionally network-enabled (their output hash is the integrity boundary); `__noChroot` is rejected under `sandbox=true`. **Service-manager ceilings are Pending defense-in-depth, not accepted enforcement (distinct semantics).** systemd `MemoryMax`/`TasksMax`/`CPUQuota` (Linux) would be an **aggregate service-cgroup ceiling over the daemon plus all descendants** (a coarse whole-unit limit, not a stable per-build control). launchd `SoftResourceLimits`/`HardResourceLimits` (macOS) are **inherited per-process RLIMIT ceilings** (`CPU`/`Data`/`FileSize`/`NumberOfFiles`/`NumberOfProcesses`/`ResidentSetSize`/`Stack`; no `AddressSpace` key in `launchd.plist`) — **not** an aggregate daemon-subtree ceiling, and several keys are advisory or alter system `sysctls` for system daemons (dangerous system-wide). The two must not be lumped together as one coarse limit.
+- **Consequences:** Users opt into build risk knowingly. Sandbox escapes (T-BUILD-1) and **resource exhaustion (T-BUILD-2) remain disclosed residuals (RISK-07)** — there is no hard per-build memory/CPU/IO guarantee. Approval is one operation only (bound to the canonical `BuildPlan` digest + policy version; `--yes` pre-approves that one op; no `PKG_YES_TO_BUILDS`/same-session skip/`build.always_local_after_preview`).
+- **Owner:** E + A. **Source:** `[NIX-MANUAL]` (sandboxed builds, cores-vs-jobs, experimental features); Nix 2.34.8 source — `src/libstore/include/nix/store/local-settings.hh`, `src/libstore/unix/build/{linux,darwin}-derivation-builder.cc` + `derivation-builder.cc`, `src/libstore/derivations.cc` (https://github.com/NixOS/nix/tree/2.34.8); https://releases.nixos.org/nix/nix-2.34.8/manual/advanced-topics/cores-vs-jobs.html ; https://releases.nixos.org/nix/nix-2.34.8/manual/development/experimental-features.html ; spike S5.
 
 ### DR-006 — cache.nixos.org is the single v1 binary source
 - **Status:** Accepted (from `00` baseline); residual tracked as RISK-04.
@@ -203,7 +202,9 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Context:** If Nix profiles were authoritative, rollback/GC/pin semantics would be fragile.
   (`05`)
 - **Decision:** The product owns the desired-state set, exact locks, generations, activation,
-  and GC roots. Nix profile state is ignored/mirrored, not trusted.
+  and GC roots. Nix profile state is ignored/mirrored, not trusted. **Activation is realized as
+  a store-independent symlink forest outside `/nix/store` (no Nix); per-output GC roots are
+  created before the `current` swap — see DR-016 / `00` D-18 / INV-11.**
 - **Consequences:** Consistent rollback & GC; more code in Rust (noted in `11` PR-18/21/22).
 - **Owner:** E. **Source:** product baseline.
 
@@ -249,6 +250,8 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
   is on disk). The goal is **detection + fail-closed**, not secrecy. (`08` §7.3, T-STATE-1)
 - **Decision:** State is tamper-evident via a generation Merkle root anchored to a field in the
   last-applied signed channel `targets`. Tampering fails closed to the last good generation.
+  The per-generation `treeDigest` (sorted path→store-target/source records of the activation
+  forest, DR-016) is included in that anchor, so a tampered activation forest is detected.
 - **Consequences:** No key management on the client; root can still tamper (we detect only).
 - **Owner:** E + A. **Source:** product baseline.
 
@@ -279,6 +282,61 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
   `license` field until DR-015 is superseded.
 - **Owner:** project owner (human). **Source:** PR-1 correction.
 
+### DR-016 — Activation is a Rust-owned symlink forest outside the store; activation invokes no Nix
+- **Status:** **Accepted** (V1 architecture decision; supersedes the former "activation = Nix `buildEnv` store object" framing captured in `04` Q4.1 and referenced across `01`/`04`/`05`/`06`/`07`).
+- **Context:** The prior design realized each generation's activation as a Nix `buildEnv` store
+  object, so activation depended on a per-generation Nix build and a single generation-level GC
+  root. That couples the user-facing activation to Nix, adds a Nix build to every
+  install/remove/upgrade, and makes collisions a whole-tree Nix decision. (`00`, `04` Q4.1,
+  `05`, `07`)
+- **Decision:** `pkg` (Rust) owns activation as a **deterministic per-generation symlink forest**
+  materialized **outside `/nix/store`** under `<user-state>/activations/gen-<id>/`; forest entries
+  point at `/nix/store` targets or approved sources. `current` is a **relative symlink** into
+  `activations/`. A `treeDigest` binds the sorted path→store-target/source records, so the forest
+  is content-addressable and collision policy is enforced in Rust. **Activation invokes no Nix**
+  (no `buildEnv`, no activation-expression `nix build`); Nix owns downloads/builds/store only. The
+  private broker is the sole **mediator/requester** for **one root set per selected output** (not
+  one per generation); the narrow privileged root-helper/service is the sole filesystem writer
+  that atomically publishes/removes those root sets before the `current` swap (the broker is an
+  **allowed-user, not a trusted-user**; root is the sole trusted-user — detail in docs 01/07/08).
+  V1 collision policies are **only** `abort` (default),
+  `keep-first`, `keep-last` (no `keep-all`, no `--force`); `keep-first`/`keep-last` pick a
+  deterministic per-file winner while the losing package's other (non-colliding) files remain
+  visible. (`00` D-12/D-17/D-18, INV-05/INV-11; `06` §6.4/§7; `07` §6.1/§7.4/§10)
+- **Consequences:** Activation is store-independent, deterministic, and needs no per-generation
+  Nix build; collisions are resolved per-file in Rust. **Cross-plan reconciliation (relative to this DR):** `01`, `04`, and `05` are **all converted** to
+  the symlink-forest / per-output-root / `abort`|`keep-first`|`keep-last` model — `01`: the
+  `activator` materializes the symlink forest, activation invokes ZERO Nix commands, and there is
+  one root per selected output; `04`: Q4.1 is RESOLVED → Rust symlink forest with `buildEnv`
+  explicitly rejected, and §12.2 collision policy is abort/keep-first/keep-last only (no
+  `keep-all`, no `--force`); `05`: now carries the symlink-forest / per-output-root /
+  abort|keep-first|keep-last model with no `buildEnv` store-object framing remaining. There is
+  **no remaining E-track `buildEnv` reconciliation**. The managed **private broker** boundary is
+  the **accepted hidden-Nix V1 ownership shape** — an **unprivileged singleton** broker that
+  authenticates the caller, is the **sole general Nix daemon client and sole spawner of the bundled
+  `nix` CLI for all normal operations**, and is the sole **mediator/requester** for per-output
+  GC-root operations and for helper-run repair (hosting the broker-internal in-memory build/GC
+  admission gates), with the narrow privileged **root-helper/service** as the **sole root-set
+  filesystem writer** that atomically publishes/removes per-output root sets **and the one
+  exceptional maintenance client** running the two-phase `nix store repair` as root; the broker is
+  an allowed-user but **not** a trusted-user (root is the sole trusted-user). The full privilege
+  split + two-phase repair + capability + admission/log rules are fixed in D-19/DR-017. This boundary is **accepted**, so creating the boundary itself is **not** the next
+  milestone: the next required V1 milestone is its **detailed framed RPC / peer-auth / privilege /
+  concurrency design**, tracked as the blocking **PR-39** milestone in `11`'s PR DAG (it gates
+  Real-Nix execution / PR-36 and the two-phase repair / PR-30); the wire design itself remains
+  open (DR-017). Security residuals (T-PATH-*,
+  T-STATE-*) are unchanged in severity; the forest is per-user 0700 and the `treeDigest` (now in the
+  DR-013 anchor) makes tamper evident.
+- **Owner:** E + F. **Source:** V1 architecture decision (this registry); cross-refs `00`
+  D-18/INV-11, `06`, `07`.
+
+### DR-017 — Broker/helper privilege split & two-phase store repair (boundary accepted; wire design open)
+- **Status:** **Accepted** — and the **full privileged two-phase mutating store repair is an unconditional V1 milestone** (accepted product decision; not conditional, not deferrable to post-V1). This covers the privilege-split boundary and the two-phase repair semantics (Phase 0 read-only verify via broker → Phase A cache-only repair via helper → Phase B approved local rebuild via helper; `00` D-19/INV-12): **PR-30 is in scope for V1 and is unconditionally gated by PR-39**. The **exact framed RPC / peer-auth / operation-lifecycle / child-containment / capability-token / restart-handshake wire design remains OPEN** and is tracked as the blocking **PR-39** milestone in `11` (it unconditionally gates broker/helper integration / PR-27/28, two-phase repair / PR-30, and Real-Nix execution / PR-36). The verified **non-atomic** residual is retained as **RISK-22**. No implementation detail of the wire is resolved here and none must be inferred.
+- **Context:** The hidden-Nix boundary is accepted (DR-016), but the operational facts it implies needed to be pinned: who may drive the daemon, who may mutate the store, how repair works given Nix 2.34.8 trust rules, how admission/GC coordination is represented, and what is logged where. (`00` D-19, `01` ARCH-INV-01/05/06/07, `05` §10, `07` I7, `08` T-INST-7/T-DAEMON-1)
+- **Decision (boundary facts, accepted):** (1) The **unprivileged singleton broker** is the **sole general Nix daemon client and sole spawner of the bundled `nix` CLI for all normal operations** (a daemon `allowed-user`, never a `trusted-user`; root is the sole `trusted-user`, and `trusted-users` are root-equivalent). (2) The **privileged root helper** is the **sole root-set filesystem writer** and the **one exceptional maintenance client**; repair requests require a `trusted-user` (verified Nix 2.34.8), so every repair mutation runs as the helper's single fixed two-phase op against a broker-chosen validated typed `StorePath` set drawn from broker-held generation state. (3) **Two-phase repair:** Phase 0 read-only `nix store verify` (broker) → Phase A cache-only `nix store repair` (helper; managed pinned substituters/keys; `max-jobs=0`; `builders` empty; auto on a signed cache hit; **must stop before any build** on a cache miss) → Phase B approved local rebuild (helper; bounded nonzero `max-jobs`; `builders` empty; serialized by the broker's machine-wide build mutex and holding a shared GC-inhibit permit; the ordinary public build preview / explicit single-operation approval; internal `RepairBuildPlan`/digest covers every output Nix may rebuild). (4) **Capability:** opaque, expiring, single-use, bound server-side to uid / existing pkg-owned rooted generation/closure / typed `StorePath` set / `RepairBuildPlan` digest / `policyVersion` / mode; stale/replayed/mismatched/cross-UID capabilities **fail closed**; invalidated on helper/broker restart. (5) **Admission:** build admission and GC admission are **broker-internal in-memory gates, not backing-file `flock`s** (a single broker cannot represent independent shared holders portably); the per-user state-mutation lease remains a filesystem `flock`. (6) **Logs:** raw Nix logs are **service-private only**; public/user-state logs are sanitized NDJSON.
+- **Consequences:** The boundary is fixed and citable (D-19, INV-12). Repair is **verified non-atomic** — cache repair deletes the live path before restore and an approved local repair moves the old output aside before replacement — disclosed as residual **RISK-22**, mitigated by user-initiated + availability warning + per-path journal + final read-only verify + cache-only auto-resume + fresh-approval-for-local. Confused-deputy repair is **T-INST-7** (mapped to RISK-10). The **wire design is not resolved here** and must not be inferred; it lands in PR-39 before any Real-Nix execution.
+- **Owner:** E + A. **Source:** `[NIX-MANUAL]` (store verify vs repair are separate modern commands; `--repair` requires a `trusted-user`; verified Nix 2.34.8); `01` ARCH-INV-01/05; `05` §10; `08` T-INST-7.
+
 ---
 
 ## 2. Go / No-Go Spikes (S1–S5)
@@ -287,9 +345,9 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 |-------|----------|-------------------|------------------------------|-------------------|--------|----|
 | **S1** (PR-4) | Is `/nix/store` viable for exclusive managed use, and how do we detect/safely refuse unmanaged Nix? | Concrete layout + detection method + refusal text validated on Linux & macOS; go/no-go on alternative prefix. | PR-9, PR-12, PR-27, PR-28 | end of M0.5 | Proposed (technical evidence complete; F/E/A sign-off pending) | DR-001 |
 | **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | Proposed (technical evidence complete; F + A sign-off pending) | DR-002 |
-| **S3** (PR-7) | Do v1 attrs substitute for `x86_64-darwin`/`aarch64-darwin`, **and** are native macOS local builds viable (sandbox, `_nixbld` users, Xcode toolchain, resource caps, fail-closed)? Is a notarized installer feasible? | Availability matrix for fixture attrs; a real native sandboxed Darwin build under `_nixbld`; notarized installer/runtime builds & validates. | PR-26, PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed (harness implemented; Complete real Preflight/native-build/notarization evidence pending) | DR-003 |
+| **S3** (PR-7) | Do v1 attrs substitute for `x86_64-darwin`/`aarch64-darwin`, **and** are native macOS local builds viable (sandbox, `_nixbld` users, Xcode toolchain, the honest resource boundary with **no** per-build cap in stock Nix, fail-closed)? Is a notarized installer feasible? | Availability matrix for fixture attrs; a real native sandboxed Darwin build under `_nixbld`; notarized installer/runtime builds & validates. | PR-26, PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed (harness implemented; Complete real Preflight/native-build/notarization evidence pending) | DR-003 |
 | **S4** (PR-6) | What are realistic resolve/reeval costs and index-build costs? | Measured time/memory table; proposed budgets. | PR-14, PR-16, PR-32 | end of M0.5 | Proposed | DR-004 |
-| **S5** (PR-8) | Does sandbox+caps+approval work for local builds on **both Linux and macOS**? | Sandboxed build blocked from network on both; cgroups/RLIMIT effective (Linux) and RLIMIT/guards effective (macOS); `_nixbld` build users ready; approval + fail-closed demonstrable. | PR-26, PR-30 | end of M0.5 | Proposed | DR-005 |
+| **S5** (PR-8) | Does managed-daemon sandbox + single-operation approval + the honest resource boundary work for local builds on **both Linux and macOS**? | A **regular** derivation build that is filesystem-sandboxed + network-denied under `sandbox=true`; a fixed-output derivation intentionally network-enabled (hash boundary); `nixbld` group + `nixbld*`/`_nixbld*` users ready; single-operation approval + fail-closed demonstrable; recorded **managed-host behavioral evidence** (boundary = `max-jobs`/timeout/max-silent-time/max-build-log-size + disk/free-space/load preflight; `use-cgroups` is cleanup/statistics on Linux; service-manager ceilings have **distinct** systemd-vs-launchd semantics and are Pending) — **not** a verification of per-build caps (none exist in stock Nix). | PR-26, PR-30 | end of M0.5 | Proposed | DR-005 |
 
 > **Guardrail:** Per `11` §9, no irreversible architecture merges before these DRs are
 > accepted. If any spike returns **no-go**, the dependent milestone replans before code lands.
@@ -311,10 +369,10 @@ AC-D2.)
 | **RISK-04** | Store-prefix/coexistence surprise invalidates installer layout | T-INST-4 | M | H | H | F | spike S1 **before** PR-9/12/27/28 (`11` §9) | L (if S1 on time) | S1 DR |
 | **RISK-05** | TUF/crypto choice wrong (e.g., accidental bespoke scheme) | T-CHAN-1/2/3 | L | H | H | F | spike S2 mandates real TUF/tough (DR-002) | L | S2 DR; crypto review |
 | **RISK-06** | Darwin build availability / security / toolchain (cache coverage gaps + native macOS build readiness) | T-BUILD-1/2/3, T-CACHE-1 | M | M | M | E | native macOS builds gated like Linux (D-11/DR-003); cache coverage is an **availability/perf** signal (full-closure preflight), not binary-only enforcement; `_nixbld` users + Xcode/CLT + `sandbox-fallback=false` verified at install/doctor; curate catalog or ship product cache only if coverage gaps are material | M | S3 DR; per-release availability CI; toolchain/sandbox readiness checks |
-| **RISK-07** | Local-build sandbox escape / resource exhaustion (Linux **and** macOS) | T-BUILD-1/2/3 | L | H | M | E | `sandbox=true`/`sandbox-fallback=false` on both, RLIMIT/cgroups (Linux)/RLIMIT+guards (macOS), seccomp where feasible, `nixbld`/`_nixbld` builder-user isolation, fail-closed readiness; macOS shares this surface per DR-003 | M | kernel CVEs; macOS sandbox narrower than Linux; build telemetry |
-| **RISK-08** | Path/symlink attack on state or activation | T-PATH-1/2/3/4 | M | H | H | E | 0700 dirs, O_NOFOLLOW, openat, store-relative symlinks, ancestor-perm checks | L | security lane (AC-S4) |
+| **RISK-07** | Local-build sandbox escape / resource exhaustion (Linux **and** macOS) | T-BUILD-1/2/3 | L (escape) / M (exhaustion) | H | **H** | E | `sandbox=true`/`sandbox-fallback=false` on both (Nix's own Linux namespace/chroot sandbox, not bubblewrap; regular-derivation network denial; fixed-output network-enabled with hash boundary); `max-jobs=1` bounds concurrency; `timeout`/`max-silent-time`/`max-build-log-size` daemon bounds; disk/free-space/load preflight; `use-cgroups` cleanup/statistics on Linux (**not** caps); `nixbld` group + `nixbld*`/`_nixbld*` builder-user isolation; service-manager ceilings Pending defense-in-depth; fail-closed readiness; macOS shares this surface per DR-003. **No stock per-build memory/CPU/IO cap, so resource exhaustion is not mitigated by a cap** | M (escape, rare) / **H (exhaustion — disclosed residual; no per-build cap in stock Nix 2.34.8)** | kernel CVEs; macOS sandbox narrower than Linux; build telemetry |
+| **RISK-08** | Path/symlink attack on state or activation (incl. the symlink forest) | T-PATH-1/2/3/4 | M | H | H | E | per-user 0700 dirs, O_NOFOLLOW, openat, store-relative forest entries, ancestor-perm checks, `treeDigest` re-validation of the forest (D-18) | L | security lane (AC-S4) |
 | **RISK-09** | State tampering / concurrent-writer corruption | T-STATE-1/2/3/4, T-CONC-1/2 | M | H | H | E | integrity anchor (DR-013), flock+lease+journal, atomic current, fail-closed | L | fault lane (AC-S2/S5) |
-| **RISK-10** | Privileged helper privilege escalation / unauth IPC | T-INST-3/5, T-DAEMON-1 | L | H | H | E | caller auth, allowlist, prefer polkit/launchd over setuid, drop privs | L | security lane (AC-S6) |
+| **RISK-10** | Privileged helper privilege escalation / unauth IPC / confused-deputy repair | T-INST-3/5/7, T-DAEMON-1 | L | H | H | E | caller auth, allowlist, prefer polkit/launchd over setuid, drop privs; **repair is the helper's one fixed maintenance op against a broker-chosen validated typed `StorePath` set resolved from an opaque expiring single-use capability** (replay/stale/mismatch/cross-UID fail closed; accepts no public path/installable/derivation/expression/flake/argv/option/substituter-key/env-override/output-selection/verb; returns only sanitized per-path outcome) | L | security lane (AC-S6/S14/S22) |
 | **RISK-11** | Index poisoning misleads users | T-IDX-1/2 | M | M | M | F | disposable + hash-in-channel + regen-on-mismatch (DR-010) | L | determinism CI; hash checks |
 | **RISK-12** | Channel rollback/freeze attack | T-CHAN-1/2 | M | M | M | F | real TUF expiry + version monotonicity (DR-002) | L | security lane (AC-S1/S2) |
 | **RISK-13** | Release/dependency supply-chain compromise (Rust crate malice) | T-REL-1/4 | M | H | H | A | offline root signing, `cargo deny`/`audit`, lockfile review, reproducible CLI builds, attestation | M | release gate G-DEPS; advisories |
@@ -326,6 +384,7 @@ AC-D2.)
 | **RISK-19** | aarch64-linux CI cost (QEMU vs native) destabilizes the matrix | (operations) | M | L | M | A | decide runner strategy in `12` Q1; budget CI | M | CI cost/burn dashboards |
 | **RISK-20** | v1 cannot block a single bad attribute within a pinned rev | T-RUN-1 | M | H | H | A | re-pin/rollback; freeze; **attribute denylist deferred** | H | incident drills (`10` §8) |
 | **RISK-21** | Cross-user state tampering / UID confusion on a shared host (D-17 multi-user) | T-INST-6, T-INST-3, T-DAEMON-1 | M | H | H | E | per-user `<user-state>` 0700 keyed by uid (INV-10); UID-authenticated helper/daemon; GC roots scoped to `/nix/var/nix/gcroots/pkg/users/<uid>/` (ARCH-INV-06) | L | security lane (AC-S11/S12) |
+| **RISK-22** | `pkg repair` is verified non-atomic (cache repair deletes the live path before restore; approved local repair moves the old output aside before replacement) — affected commands may be temporarily unavailable mid-repair, and a crash between delete/aside and replacement can leave a path absent | (availability) T-CACHE-3 | M | M | **M** | E | repair is **explicitly user-initiated** and warns affected commands may be temporarily unavailable; **journals per path**; runs a **final read-only `nix store verify`** before marking anything repaired; **auto-resumes only cache repair** after a crash; an **approved local repair build requires fresh single-operation approval** (the `mode=build` capability is single-use and invalidated on restart); never claims atomicity or generation-switching (D-19, INV-12) | M (disclosed) | fault lane (crash between delete/restore + between move-aside/replace); AC-S5 |
 
 ### 3.1 Top-5 watch list (revisited every milestone)
 1. **RISK-01 / RISK-20** — malicious/insecure package in pinned Nixpkgs (core honesty risk).
@@ -346,6 +405,7 @@ AC-D2.)
 | macOS local build | ✅ native + sandbox + approval (like Linux) | none (cross-compilation/Rosetta/emulation/remote builders remain out of scope) | DR-003, RISK-06 |
 | Linux local build | ✅ sandbox + approval | seccomp hardening refinements → later | DR-005, RISK-07 |
 | Search index | disposable, narHash-pinned | upstream packages.json.br as permanent API → not assumed | DR-004, DR-010 |
+| Activation | Rust symlink forest outside `/nix/store` (no Nix); per-output GC roots; collisions abort/keep-first/keep-last | (buildEnv store-object activation is **superseded** by D-18, not deferred) | DR-016, D-18 |
 | Runtime app isolation | ❌ none | firejail/bwrap integration → v2 | DR-009, RISK-01 |
 | Vuln/CVE feed | ❌ none | integration → v2 | RISK-01 |
 | Attribute denylist | ❌ none (re-pin only) | per-attribute blocking → v2 | RISK-20 |
@@ -354,6 +414,10 @@ AC-D2.)
 | Threshold root signing | 1-of-1 v1, 2-of-3 GA | higher thresholds → post-GA | DR-002 |
 | Project license (source) | ❌ none (all rights reserved) | chosen license + SPDX headers → when DR-015 is superseded | DR-015 |
 | aarch64-linux CI | nightly (runner TBD) | native runners → when justified | RISK-19 |
+| Store repair | ✅ two-phase (read-only verify via broker; cache-only repair via helper; approved local repair via helper) | (none — single fixed helper maintenance op) | D-19, DR-017 |
+| Repair atomicity | ❌ verified non-atomic (user-initiated; warns; per-path journal; final read-only verify) | atomic / generation-switched repair → v2+ | INV-12, RISK-22 |
+| Build/GC admission | ✅ broker-internal in-memory gates | backing-file `flock` admission → not used (not portable for shared holders) | D-19 |
+| Broker/helper framed RPC | ⏳ blocking milestone **PR-39** (wire design OPEN) | wire schema lands in PR-39, not invented in planning | DR-017 |
 
 ---
 
@@ -377,8 +441,8 @@ If any assumption breaks, the affected DRs/PRs/RISKs are re-opened and re-planne
 | `00` | scope/invariants seed DR-007/008/011 and RISK baselines. |
 | `01`,`02` | architecture + channel/TUF feed DR-001/002/006/013/014. |
 | `03`,`04` | index + resolve/build feed DR-004/005/010 and RISK-07/16/18. |
-| `05` | state/locks/gen/GC feed DR-008/013 and RISK-08/09. |
-| `06`,`07` | UX/installer feed DR-003/007/012 and RISK-06/10/15. |
+| `05` | state/locks/gen/GC/activation feed DR-008/013/016 and RISK-08/09. |
+| `06`,`07` | UX/installer/activation feed DR-003/007/012/016 and RISK-06/08/10/15. |
 | `08` | every T-* maps to a RISK-*; §7 crypto feeds DR-002/013. |
 | `09`,`10` | test lanes & release gates consume DR/RISK as acceptance criteria. |
 | `11` | spikes S1–S5 produce DR-001..005; PRs reference RISK-* for prioritization. |

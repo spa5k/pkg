@@ -14,7 +14,7 @@ commands, where Nixpkgs-at-an-exact-revision is the catalog and `cache.nixos.org
 v1 binary cache.
 
 ### In scope
-- All v1 surfaces: installer, root helper / privileged daemon, product↔Nix IPC, CLI,
+- All v1 surfaces: installer, root helper / privileged daemon, the **product-owned private broker** (sole general Nix-daemon client for normal ops; the two-phase `nix store repair` maintenance op is delegated to the root helper; D-18/INV-11), broker↔Nix IPC, CLI,
   state/locks/generations, GC roots, channel metadata, the disposable search index,
   substitution, local Linux builds, uninstall, and **runtime execution of installed
   packages**.
@@ -57,12 +57,13 @@ Primary sources cited by short key (full list in §13):
 |----|-----------|-----------|---------|-----------------|
 | CLI | User-facing command binary (`pkg`) | `06` | invoking user | — |
 | CORE | Rust domain core: state, locks, generations, resolver, install pipeline | `04`,`05` | invoking user | product state dir |
-| CHANNEL | Signed channel descriptor client (mature update metadata) | `02` | invoking user | product state dir |
-| INDEX | Disposable search/list/info index (derived from pinned Nixpkgs) | `03` | invoking user | product cache dir |
-| NIXCLIENT | Product's adapter that talks to the managed Nix daemon/CLI over JSON | `01`,`04` | invoking user | — |
-| NIXD | Managed Nix daemon (bundled, pinned) | `01`,`07` | privileged (root-owned svc, builder users) | `/nix`-style store |
+| CHANNEL | Signed channel descriptor client (mature update metadata). **Refresh of machine-global channel is broker-mediated**; user-side does verified reads only | `02` | invoking user (verified reads); broker-mediated refresh | per-user cache (reads); `/var/lib/pkg/channel` (machine-global, broker-owned) |
+| INDEX | Disposable search/list/info index (derived from pinned Nixpkgs). **Refresh is broker-mediated**; verified reads may be user-side | `03` | invoking user (verified reads); broker-mediated refresh | per-user cache (reads); `/var/lib/pkg/index` (machine-global, broker-owned) |
+| BROKER | **Product-owned, unprivileged private broker service (D-18/INV-11):** sole **general** client of the private daemon socket for all normal operations — evaluate/build/substitute/path-info/read-only `nix store verify`/liveness-respecting GC — (a daemon `allowed-user`, **never** a Nix `trusted-user`; `trusted-users` are root-equivalent; the two-phase `nix store repair` maintenance op is delegated to the root helper, §6.1 T-INST-7); owns NIXCLIENT; spawns the bundled `nix` CLI; **sole mediator/requester** of per-output GC-root operations (root helper is the sole writer); **sole client** that may ask the root helper to run the two-phase repair op; mediates machine-global channel/index/source refresh; authenticates caller uid | `01` | product-owned unprivileged dedicated service (daemon-client capability; GC-root mediation; repair-delegation via opaque request only) | `/var/lib/pkg` machine-global service state |
+| NIXCLIENT | Product's `nix-driver` adapter — **broker-owned, inside the service boundary**; spawns the bundled `nix` CLI subprocess (argv) and parses its JSON stdout/structured stderr where supported (§11). The bundled CLI→`nix-daemon` link is Nix's **private native daemon protocol, not JSON**; never runs as the invoking user | `01`,`04` | broker | — |
+| NIXD | Managed Nix daemon (bundled, pinned); **private socket, service-only**; reached by the bundled `nix` CLI over Nix's private native daemon protocol (never by `pkg` directly) | `01`,`07` | privileged (root-owned svc, builder users) | `/nix`-style store |
 | STORE | The Nix store (closure of built/substituted paths) | `01`,`07` | root-owned files, builder-writable during build | managed store prefix |
-| HELPER | Privileged installer/root helper (Linux setuid or polkit; macOS launchd/LP) | `07` | root | — |
+| HELPER | Privileged installer/root helper (**sudo/polkit/AuthorizationServices or narrow root service; NOT a Linux setuid binary in v1**); **sole root-set filesystem writer** that atomically publishes/removes GC-root sets under `/nix/var/nix/gcroots/pkg` on a closed validated request from the broker only; **and the one exceptional maintenance client** that runs the **two-phase `nix store repair`** maintenance operation as root (the modern mutating command; there is **no** `nix store verify --repair` — `verify` is read-only, `repair` mutates; repair requests require a **trusted** daemon client — verified Nix 2.34.8) against a broker-chosen validated set of registered StorePath targets within the FULL computed closure reachable from the generation's selected output roots (incl. missing-on-disk targets), invoked only on a closed opaque/typed broker request after the broker's read-only `nix store verify` confirms corruption: **Phase A** per-path cache-only repair (managed pinned substituters/keys, `max-jobs = 0`, `builders` empty; auto-repairs a signed cache hit, stops before any local/remote build on an unavailable substitute); **Phase B** the ordinary build preview/approval flow with a `RepairBuildPlan`/digest over **every output Nix may rebuild** (`Store::repairPath` rebuilds all outputs via `bmRepair`), holding the broker machine-wide build mutex + shared GC-inhibit permit, run locally with bounded nonzero `max-jobs`, `builders` empty; it resolves an opaque expiring single-use maintenance capability bound server-side to caller UID, an existing pkg-owned rooted generation, the exact typed corrupt targets within the FULL computed closure reachable from the generation's selected output roots (incl. missing-on-disk but registered/expected closure targets), the `RepairBuildPlan`/target digest, `policyVersion`, and mode (stale/replayed/mismatched/cross-UID fail closed), accepts no public/raw path, installable, derivation, expression, flake ref, argv, option, substituter/key, environment override, output selection, or arbitrary verb, executes per-path cache-only with final read-only verification (partial cache repairs resumable/idempotently reverified), and returns only sanitized per-path outcome (raw Nix logs service-private) — the user CLI never calls it directly | `07` | root | — |
 | RELEASE | CI/release infra that signs channel metadata & publishes index/targets | `10` | release service | product CDN |
 
 ### 2.2 Trust boundary diagram
@@ -75,48 +76,73 @@ flowchart TB
         NIXPKGS["Nixpkgs git<br/>(catalog source)"]
     end
 
-    subgraph UserSpace["User-owned process space"]
+    subgraph UserSpace["User-owned process space (invoking uid)"]
         CLI["pkg CLI (user)"]
         CORE["pkg-core (user)"]
-        CHANNEL["channel client (user)"]
-        INDEX["index (user)"]
+        CHANNEL["channel client (user-side verified reads)"]
+        INDEX["index (user-side verified reads)"]
+    end
+
+    subgraph SvcSpace["Product service boundary (managed, product-owned, UNPRIVILEGED)"]
+        BROKER["private broker<br/>(SOLE general daemon client; allowed-user;<br/>two-phase nix store repair op via root helper; D-18/INV-11)"]
+        NIXCLIENT["nix-driver adapter<br/>(broker-owned; spawns bundled nix CLI)"]
+        NIXCLI["bundled `nix` CLI subprocess<br/>(runs as broker uid)"]
+        SVCSTATE[("machine-global service state<br/>/var/lib/pkg: channel, index, source")]
     end
 
     subgraph PrivSpace["Privileged boundary"]
-        HELPER["root helper"]
-        NIXD["managed nix-daemon"]
+        HELPER["root helper<br/>(sudo/polkit/AuthServices;<br/>NOT setuid; SOLE root-set FS writer;<br/>two-phase nix store repair op)"]
+        NIXD["managed nix-daemon<br/>(private socket; service-only)<br/>root-only trusted-user"]
         STORE[("/nix store")]
+        GCROOTS[("/nix/var/nix/gcroots/pkg<br/>(root-set FS; helper writes)")]
     end
 
-    subgraph HostFS["Host filesystem"]
-        STATE[("product state dir\nlocks, generations, journal")]
-        HOME[("~/.pkg (profile, PATH link)")]
+    subgraph HostFS["Host filesystem (per-user)"]
+        STATE[("per-user state<br/>manifest/lock/generations/journal")]
+        CUR[("<user-state>/current → activations/gen-<id><br/>(relative symlink; shell PATH exposure)")]
     end
 
     CLI --> CORE
     CORE --> CHANNEL
     CORE --> INDEX
-    CORE -- "JSON/CLI contract" --> NIXD
+    CORE -- "closed request / op handle (auth uid)<br/>product-framed RPC" --> BROKER
+    BROKER --> NIXCLIENT
+    NIXCLIENT -- "argv + JSON stdout/structured stderr<br/>(scrubbed env)" --> NIXCLI
+    NIXCLI -- "PRIVATE native daemon protocol" --> NIXD
+    BROKER -- "refresh machine-global channel/index/source" --> SVCSTATE
+    CHANNEL -. "verified reads" .-> SVCSTATE
+    INDEX -. "verified reads" .-> SVCSTATE
     CHANNEL -->|HTTPS+sig| CDN
     INDEX -->|verify narHash| NIXPKGS
     NIXD -->|substitute+verify sig| CACHE
     NIXD --> STORE
-    HELPER --> NIXD
-    HELPER --> STORE
+    BROKER -- "closed validated request:<br/>publish/remove root set (SOLE mediator)" --> HELPER
+    HELPER -- "atomically publish/remove<br/>GC-root sets" --> GCROOTS
+    HELPER -- "install / service-control / runtime-upgrade" --> NIXD
+    BROKER -. "repair ONLY if read-only verify confirms corruption:<br/>closed opaque request → two-phase nix store repair as root<br/>(Phase A cache-only max-jobs=0 / builders empty;<br/>Phase B approved build over all outputs;<br/>HELPER = ONE exceptional maintenance client;<br/>unprivileged broker cannot repair)" .-> HELPER
+    HELPER -. "two-phase nix store repair as root<br/>(trusted; repair requires trust;<br/>broker is untrusted)" .-> NIXD
     CORE --> STATE
-    CORE --> HOME
+    CORE --> CUR
 ```
 
 **Trust boundaries crossed (each is a control point):**
 1. **Internet → product CDN → CHANNEL.** Signed update metadata must verify (T-CHAN-*).
 2. **Internet → cache.nixos.org → STORE.** Substituted paths must verify against the
    channel-approved key set (T-CACHE-*).
-3. **User space → privileged (NIXD/HELPER).** IPC must authenticate the caller and reject
-   path/symlink injection (T-DAEMON-*, T-HELPER-*, T-PATH-*).
-4. **User space → Host FS (STATE, HOME).** State must be integrity-checked and atomic
-   (T-STATE-*, T-PATH-*).
-5. **STORE → user runtime (PATH).** Activation maps provenance → executed code
-   (T-RUN-*); we provide *provenance + reproducibility*, not runtime isolation.
+3. **User space → product service (BROKER) → privileged (NIXD/HELPER).** The CLI crosses
+   only the broker's closed product-framed-RPC boundary; the raw daemon socket is
+   **service-only** and never user-connectable (D-18/INV-11), and only the unprivileged
+   broker (a daemon `allowed-user`, never a `trusted-user`; root is the only `trusted-user`)
+   may reach it for all normal operations — via the bundled `nix` CLI over Nix's private native daemon protocol (never
+   JSON); the one operation the unprivileged broker cannot do — **repair** (`nix store repair` / `Store::repairPath` requires a **trusted** daemon client; verified Nix 2.34.8) — is delegated to HELPER as a **two-phase** operation (T-INST-7). The broker authenticates the caller uid; HELPER is a narrow root boundary for
+   install/service-control, is the **sole filesystem writer** of GC-root sets, and is the **one exceptional maintenance client** that runs the two-phase `nix store repair` operation as root, accepting a
+   closed validated/opaque request from the broker only (the user CLI never calls it).
+   (T-DAEMON-*, T-HELPER-*, T-INST-*, T-PATH-*.)
+4. **User space → Host FS (STATE, CUR).** Per-user state + the `current` relative symlink
+   must be integrity-checked and atomic (T-STATE-*, T-PATH-*).
+5. **STORE → user runtime (PATH).** The `current` symlink forest exposes activated binaries
+   on the user's PATH; activation maps provenance → executed code (T-RUN-*); we provide
+   *provenance + reproducibility*, not runtime isolation.
 
 ---
 
@@ -144,7 +170,12 @@ flowchart TB
   the prior generation intact; tampered state is detected, not silently repaired from
   attacker data.
 - **G5 Least privilege.** The privileged helper and daemon expose a minimal, authenticated
-  surface; no arbitrary eval/substituter/expression controls reach the user.
+  surface; the daemon socket is service-only with the broker as its sole `allowed-user`
+  (root alone `trusted`; `trusted-users` are root-equivalent) and sole **general** client —
+  the two-phase `nix store repair` op is run by the root helper as root (repair requires a
+  **trusted** daemon client; verified Nix 2.34.8), never by an end user — so no arbitrary
+  eval/substituter/expression controls reach an end user and ordinary users get no socket
+  access.
 - **G6 No silent privilege escalation or persistence.** Installer/daemon setup is explicit
   and reversible; uninstall is bounded and never removes assets we did not create.
 
@@ -179,16 +210,32 @@ naïve reading of "Nix is reproducible and signed" overstates our security postu
 > **trusted-public-keys** set and the substituter is permitted. `[NIX-MANUAL]` "Secure
 > Binary Caches".
 >
-> **ℹ️ FACT.** `nix-store --verify` recomputes NAR serializations to detect local
-> corruption; `--repair` re-fetches/rebuilds from trusted sources. `[NIX-MANUAL]`
+> **ℹ️ FACT (modern new-CLI model pkg uses).** The modern commands are **`nix store verify`** (read-only NAR-integrity check; permitted to untrusted / `allowed-user` clients) and the **separate** mutating command **`nix store repair`** (there is **no** modern `nix store verify --repair` single flag). `Store::repairPath` (driven by `nix store repair`) re-fetches/rebuilds from trusted sources and **requires a trusted daemon client**. (The legacy `nix-store --verify --repair` single-flag form exists in old Nix but is **not** what pkg uses; pkg never performs a single-phase repair — see §5.3 and T-INST-7.) `[NIX-MANUAL]`
 >
-> **ℹ️ FACT.** With **`sandbox = true`** (default on supported Linux), builds execute in an
-> isolated mount/PID/network namespace and may access only declared inputs. macOS sandboxing
-> is more limited. `[NIX-MANUAL]` "Sandboxed builds".
+> **ℹ️ FACT.** With **`sandbox = true`**, Nix implements its **own** Linux namespaces/chroot sandbox
+> (it does **not** invoke bubblewrap); macOS uses Nix's Darwin sandbox. Regular input-addressed
+> derivations are filesystem-sandboxed and network-denied. **Fixed-output** derivations remain
+> filesystem-sandboxed but are **intentionally network-enabled** — their output hash is the
+> integrity boundary (on Linux they omit the private network namespace; on macOS the sandbox
+> profile permits network for non-sandboxed derivation types). `__noChroot` is **rejected**
+> under `sandbox=true` (it only bypasses under `sandbox=relaxed`). Verified against Nix 2.34.8
+> (`src/libstore/unix/build/{linux,darwin}-derivation-builder.cc`, `derivation-builder.cc`,
+> `src/libstore/derivations.cc`). `[NIX-MANUAL]` "Sandboxed builds".
 >
 > **ℹ️ FACT.** `nix-daemon` authenticates clients via Unix-socket permissions plus the
 > `trusted-users` / `allowed-users` config; only trusted users can perform privileged
 > operations. `[NIX-MANUAL]`
+>
+> **ℹ️ FACT.** In Nix's multi-user model, `trusted-users` are effectively **root-equivalent**,
+> and **repair requests require a trusted daemon client**: the modern mutating command is
+> **`nix store repair`** (there is **no** modern `nix store verify --repair` combination — `verify` is
+> read-only, `repair` mutates), and `Store::repairPath` (driven by `nix store repair`) is trust-gated
+> — untrusted / `allowed-user` clients cannot repair. Verified against Nix 2.34.8
+> (`Store::repairPath`; `bmRepair`). `[NIX-MANUAL]`
+> "Configuration" (`trusted-users`/`allowed-users`). **Consequence:** the product's
+> unprivileged broker (an `allowed-user`, never a `trusted-user`) can `verify` (read-only)
+> but **cannot** run `nix store repair`; repair is delegated to the root helper as a two-phase operation
+> (§6.1 T-INST-7, `01` §12.4).
 >
 > **ℹ️ FACT.** Nixpkgs reproducibility is **per-derivation and incomplete**; many
 > attributes are not bit-for-bit reproducible. Reproducible Builds tracks coverage.
@@ -205,8 +252,9 @@ naïve reading of "Nix is reproducible and signed" overstates our security postu
 
 > **ℹ️ FACT.** Local builds run the **derivation's build script on the host.** Even with
 > sandboxing, the build script is whatever the pinned Nixpkgs says; a malicious recipe can
-> attempt to exfiltrate during build (sandbox blocks network on Linux) or produce a
-> malicious output that is then *executed at runtime*.
+> attempt to exfiltrate during build (**regular** derivations are network-denied under
+> `sandbox=true`; **fixed-output** derivations are network-enabled and rely on their output
+> hash as the integrity boundary) or produce a malicious output that is then *executed at runtime*.
 
 > **ℹ️ FACT.** Signature verification only proves a path was vouched for by a trusted
 > **cache key**. It does **not** prove the path is benign. Trusting `cache.nixos.org` means
@@ -224,9 +272,44 @@ naïve reading of "Nix is reproducible and signed" overstates our security postu
 > `[TOUGH]`
 >
 > **📐 DECISION (G5).** The product owns GC roots, generations, and activation; Nix profile
-> state is **not authoritative**. The managed Nix daemon is configured with `trusted-users`
-> restricted to the product's own runtime identity and substituters pinned to the channel
-> set. (`05`, `07`)
+> state is **not authoritative**. The managed Nix daemon socket is **service-only** and
+> reachable by exactly **one** unprivileged identity — the dedicated **broker** service
+> (D-18/INV-11), configured as a daemon **`allowed-user`** (never a `trusted-user`); **root
+> alone is `trusted`**. Ordinary users get **no** socket access at all. Intended
+> next-milestone concrete policy: `trusted-users = root`, `allowed-users = pkg-nix-broker`,
+> substituters pinned to the channel set. The broker is never granted Nix `trusted-user`
+> power (no arbitrary eval/substituter/expression control reaches an end user).
+>
+> **📐 DECISION (G5, repair privilege split).** Because `trusted-users` are effectively
+> root-equivalent and **repair requests require a trusted daemon client** (the modern mutating
+> command is **`nix store repair`** — there is **no** modern `nix store verify --repair` combination;
+> `verify` is read-only, `repair` mutates; `Store::repairPath`, driven by `nix store repair`, first
+> tries Repair-mode substitution and, failing that with a valid deriver, rebuilds **all** outputs via
+> `bmRepair`; verified Nix 2.34.8), the broker — kept deliberately unprivileged — **cannot** repair;
+> `pkg repair` is two-phase: the broker verifies read-only with **`nix store verify --recursive`**,
+> and only confirmed corruption is forwarded as a **closed opaque/typed request** to the root
+> helper, which is the **one exceptional maintenance client** and runs **`nix store repair` as root
+> in two phases**. **Phase A (cache-only):** per-path `nix store repair` against a **nonempty
+> sorted validated set of registered StorePath targets** (the corrupt targets plus any missing-on-disk but registered/expected closure targets, all within the FULL computed closure reachable from the generation's selected output roots; drawn from broker-held generation state), with
+> **managed pinned substituters/keys**, **`max-jobs = 0`** (disables local build), and **`builders`
+> empty** (prohibits remote build); it may auto-repair a **signed cache hit** and **must stop
+> before any local/remote build** when a substitute is unavailable. **Phase B (fallback rebuild):**
+> a corrupt path with no signed substitute but a valid deriver rebuilds via the **ordinary public
+> build preview / explicit approval flow**, whose **`RepairBuildPlan`/digest covers every output
+> Nix may rebuild, not just the corrupt output**, holding the **broker machine-wide build mutex**
+> + **shared GC-inhibit permit**, run **locally** with **bounded nonzero `max-jobs`** and
+> **`builders` empty**. The helper resolves an **opaque expiring single-use maintenance capability**
+> bound server-side to the **caller UID**, an **existing pkg-owned rooted generation**, the
+> **exact typed corrupt targets within the FULL computed closure reachable from the generation's selected output roots (incl. missing-on-disk targets)**, the **`RepairBuildPlan`/target digest**, the **policyVersion**, and the
+> **mode** (stale/replayed/mismatched/cross-UID fail closed). The helper accepts **no** public/raw
+> path, installable, derivation, expression, flake ref, argv, option, substituter/key, environment
+> override, output selection, or arbitrary verb; it executes per-path cache-only with **final
+> read-only verification** (partial cache repairs resumable/idempotently reverified), and returns
+> **only sanitized per-path outcome** to the broker (raw Nix logs service-private; CLI/broker
+> public output sanitized; public receives sanitized outcome/versioned events). Exact helper
+> framing/RPC fields remain the next broker milestone; these state invariants are accepted now.
+> **GC stays in the unprivileged broker** (liveness must never be ignored). (`01` §11/§12.4, `05`,
+> `07`; threat T-INST-7.)
 >
 > **📐 DECISION (G4).** State writes are atomic (temp+fsync+rename), generation-numbered,
 > and journal-backed; integrity is self-checked on load. Tampered state fails **closed** and
@@ -254,19 +337,21 @@ Impact (L/M/H) using the rubric in §6.0.
 |----|--------|--------|---------------|-----------|--------|-------------|-----------------|----------|------|
 | **T-INST-1** | Malicious/modified installer script downloaded over MITM or from spoofed host | Spoofing/Tampering | Network | Serve altered installer | H | none | Pin installer checksum in docs; fetch over TLS with pinned cert/commit; verify detached signature; `pkg doctor` self-verify | M (key/cert compromise) | `07`,`10` |
 | **T-INST-2** | TOCTOU / symlink swap in directories the installer writes before privilege drop | Tampering/EoP | Local unpriv. | Pre-create symlink in writable path | H | none | Installer uses `O_NOFOLLOW`, `mkdtemp` under product-owned root, `fchdir`+`openat` relative opens; rejects world-writable ancestors | L | `07` |
-| **T-INST-3** | Root helper accepts unauthenticated commands from any local user | EoP | Local unpriv. | Talk to helper socket | H | n/a | Helper authenticates caller via `SO_PEERCRED` (Linux)/`getpeereid` (macOS); single fixed socket with 0600; command allowlist; no path/string passthrough to shell | L | `07`,`04` |
+| **T-INST-3** | Root helper accepts unauthenticated commands from any local user | EoP | Local unpriv. | Talk to helper socket | H | n/a | The helper accepts **only** a closed validated request from the **broker** (its sole caller); it authenticates the broker via `SO_PEERCRED` (Linux)/`getpeereid`/Audit Token (macOS) over a single fixed socket (0600), enforces a command allowlist (exactly: root-set publish/remove **and** the two-phase `nix store repair` maintenance op — a closed opaque request resolved via an opaque expiring single-use maintenance capability to a validated StorePath set; see T-INST-7) with no path/string passthrough to shell, and the user CLI never calls it directly | L | `07`,`04` |
 | **T-INST-4** | Existing **unmanaged** Nix present; product silently co-mounts `/nix/store` and crosses trust domains | EoP/Tampering | Pre-existing install | Pre-seed store/profiles | H | none | **Fail closed**: refuse to install/manage; emit manual remediation; **never auto-delete** user's Nix. (G6) | L (UX: user must remediate) | `07`,`01` |
-| **T-INST-5** | Installer leaves privileged helper with overly broad permissions (setuid root, world-executable) | EoP | Local unpriv. | Invoke helper | H | n/a | Prefer **polkit** (Linux) / **launchd + authorized-client** (macOS) over setuid; if setuid unavoidable, drop privs ASAP, cap to install/daemon ops | M | `07` |
-| **T-INST-6** | Cross-user tampering / UID confusion: a local user tries to read/modify another user's authoritative state or trick the helper/daemon into creating GC roots under another uid | EoP/Tampering | Local unpriv. | Spoof identity / cross-uid path | H | socket peer creds | Per-user `<user-state>` owned by uid 0700 (D-17/INV-10); helper authenticates caller uid via `SO_PEERCRED`/`getpeereid`/Audit Token and scopes GC-root writes to `/nix/var/nix/gcroots/pkg/users/<caller-uid>/` only (ARCH-INV-06); daemon `trusted-users` restricted; package state never globally shared | L | `01`,`05`,`07` |
+| **T-INST-5** | Installer leaves privileged helper with overly broad permissions | EoP | Local unpriv. | Invoke helper | H | n/a | **v1 uses no Linux `setuid` binary**: HELPER is sudo/polkit (Linux), AuthorizationServices-gated launchd (macOS), or a narrow root service, scoped to install/service-control/runtime-upgrade/root-set publish **and** the two-phase `nix store repair` maintenance op only (T-INST-7) | L | `07` |
+| **T-INST-6** | Cross-user tampering / UID confusion: a local user tries to read/modify another user's authoritative state or trick the helper/daemon into creating GC roots under another uid | EoP/Tampering | Local unpriv. | Spoof identity / cross-uid path | H | socket peer creds | Per-user `<user-state>` owned by uid 0700 (D-17/INV-10); the **broker** authenticates the end-user uid on its closed-request channel and is the **sole mediator** that asks the helper to publish roots; the **helper is the sole writer** and its only peer is the broker (it never trusts an end-user uid presented by a local user directly), scoping each write to `/nix/var/nix/gcroots/pkg/users/<validated-uid>/` only (ARCH-INV-05/06); daemon `trusted-users = root` only, `allowed-users = pkg-nix-broker` only; package state never globally shared | L | `01`,`05`,`07` |
+| **T-INST-7** | Confused-deputy repair: an attacker (or tampered broker state) tries to make the root helper run repair against attacker-chosen paths / arbitrary installables / flags, turning the privileged repair op into a primitive to repair or rebuild arbitrary store paths or to pass attacker argv/options/substituters to the daemon as root | EoP/Tampering | Local unpriv. via tampered state, or broker-adjacent input | Reach helper / craft repair request | H | repair requires trust (`Store::repairPath`/`nix store repair` reject untrusted clients; verified Nix 2.34.8) | The helper is the **one exceptional maintenance client** and runs **only** the modern mutating command **`nix store repair`** as root, in **two phases**, against a **fixed, nonempty, sorted, validated set of registered StorePath targets** — the corrupt targets plus any missing-on-disk but registered/expected closure targets, all within the FULL computed closure reachable from the generation's selected output roots (chosen from **broker-held generation state**, never from public/user input). It creates/retains an **opaque expiring single-use maintenance capability** bound **server-side** to: the **caller UID**, an **existing pkg-owned rooted generation**, the **exact typed corrupt targets within the FULL computed closure reachable from the generation's selected output roots (incl. missing-on-disk targets)**, the **`RepairBuildPlan`/target digest**, the **policyVersion**, and the **mode**; stale, replayed, mismatched, or cross-UID capabilities **fail closed** (single-use and invalidated on helper/broker restart; resume/retry per ARCH-INV-10 of `01` — cache-only Phase A auto-retries from the per-path journal, a Phase B build is never auto-retried and needs fresh preview/approval/capability). **Phase A:** per-path **cache-only** repair with **managed pinned substituters/keys**, **`max-jobs = 0`**, **`builders` empty** — auto-repairs a signed cache hit, and **must stop before any local/remote build** on an unavailable substitute (`max-jobs = 0` + empty `builders` makes the `Store::repairPath` rebuild branch unable to proceed). **Phase B:** any fallback rebuild uses the **ordinary public build preview / explicit approval flow**, whose **`RepairBuildPlan`/digest covers every output Nix may rebuild** (because `Store::repairPath` rebuilds **all** outputs via `bmRepair`, not just the corrupt output), holding the **broker machine-wide build mutex** + **shared GC-inhibit permit**, run **locally** with **bounded nonzero `max-jobs`**, **`builders` empty**. The helper accepts **no** public/raw path, installable, derivation, expression, flake ref, argv, option, substituter/key, environment override, output selection, or arbitrary verb; the broker reaches the helper only **after** its own read-only `nix store verify` confirms corruption; it executes per-path cache-only with **final read-only verification** (partial cache repairs resumable/idempotently reverified); it returns **only sanitized per-path outcome** to the broker (**raw Nix logs service-private only**; public receives sanitized outcome/versioned events); the user CLI never calls the helper. **Repair is an explicit user action that warns affected commands may be temporarily unavailable; it is non-atomic per path** (cache repair deletes the live path before NAR restore; local repair moves the old aside before replacement), **journaled per path with final read-only verify governing success, never creates/swaps a generation, and never auto-retries a Phase B build** (ARCH-INV-10 of `01`). Exact helper framing/RPC fields remain the next broker milestone; these state invariants are accepted now | L | `01`,`05`,`07` |
+| **T-INST-8** | Repair-build amplification: because `Store::repairPath` rebuilds **all** outputs of a deriver (`bmRepair`), a Phase-B fallback repair could build outputs beyond the corrupt one (e.g. `debug`/`dev`/large outputs), widening the build surface and the approval blast radius if the preview only showed the corrupt output | Tampering/DoS | Tampered/corrupt store path whose deriver is multi-output | Trigger a Phase-B repair | M | n/a (Nix rebuilds all outputs on repair by design) | The Phase-B **`RepairBuildPlan`/digest enumerates every output Nix may rebuild, not just the corrupt output**; the explicit single-operation approval binds to that digest (no `PKG_YES_TO_BUILDS`/session skip; `--yes` pre-approves that one op only; approval never persists beyond the op); the op is **serialized by the broker machine-wide build mutex** (machine-global local-build admission permit) + **shared GC-inhibit permit** and run locally with **bounded nonzero `max-jobs`**, **`builders` empty**; the maintenance capability binds the exact `RepairBuildPlan` digest + `policyVersion`, so any output-set drift fails closed (re-derive-before-execute; non-interactive exits `ACQUIRE_NEEDS_APPROVAL`) | L | `01`,`04`,`05` |
 
 ### 6.2 Daemon & IPC protocol (product↔Nix and product↔helper)
 
 | ID | Threat | STRIDE | Detail | Controls | Residual | Refs |
 |----|--------|--------|--------|----------|----------|------|
-| **T-DAEMON-1** | Untrusted client drives the managed `nix-daemon` to build/eval arbitrary expressions or pull from arbitrary substituters | EoP/Tampering | `trusted-users` too broad; user supplies `--expr`/`--substituters` | Product never exposes expression/substituter flags; daemon `trusted-users` restricted to product runtime identity; `restrict-eval` + `--allowed-uris` for any eval we perform | L | `01`,`04` |
+| **T-DAEMON-1** | Untrusted client drives the managed `nix-daemon` to build/eval arbitrary expressions or pull from arbitrary substituters | EoP/Tampering | `trusted-users` too broad; user supplies `--expr`/`--substituters` | The raw daemon socket is **service-only** and reachable only by the unprivileged **broker** (a daemon **`allowed-user`**, never a `trusted-user`; `trusted-users = root` only), so an end user cannot reach the daemon at all — the broker reaches it only via the bundled `nix` CLI over Nix's private native protocol (never JSON); the broker forwards only closed requests (never expression/substituter flags); `restrict-eval` + `--allowed-uris` for any eval the broker performs; the one Nix op an unprivileged client cannot do — **repair** (`nix store repair` / `Store::repairPath` requires a **trusted** daemon client; verified Nix 2.34.8) — is delegated to the root helper as a **two-phase** operation (T-INST-7), never exposed to end users | L | `01`,`04` |
 | **T-DAEMON-2** | JSON/CLI contract parsing: malformed or huge Nix output causes panic/RCE in product | DoS/RCE | Nix emits unexpected JSON | Parse with strict serde, size-capped, never `eval`; contract tests in `09` (golden + fuzz) | L | `04`,`09` |
 | **T-DAEMON-3** | Replay of an old daemon command stream | Tampering | Capture socket traffic | Daemon ops are idempotent & validated against current state; no replay-sensitive tokens over the socket | L | `04` |
-| **T-DAEMON-4** | Rogue process impersonates the daemon on the socket (path hijack) | Spoofing | Replace socket file | Socket created by privileged setup with 0600 owner=root/product; product connects only to the well-known path created by HELPER; verify peer creds | L | `07` |
+| **T-DAEMON-4** | Rogue process impersonates the daemon on the socket (path hijack) | Spoofing | Replace socket file | Setup owns the well-known parent `daemon-socket` dir `root:pkg-nix-broker` `0750`; **Linux** — systemd **socket activation** creates the socket `root:pkg-nix-broker` `0660`; **macOS** — Nix self-creates a hard-coded `0666` socket (not a `nix.conf` knob), so the `0750` parent dir + `allowed-users = pkg-nix-broker` + traversal restriction is the boundary; the **broker is the sole connector** to this service-only path; verify peer creds (Linux `SO_PEERCRED` / macOS Audit Token) **and the expected endpoint** | L | `07` |
 
 ### 6.3 Source evaluation (pinned Nixpkgs reevaluation)
 
@@ -283,7 +368,7 @@ Impact (L/M/H) using the rubric in §6.0.
 | **T-IDX-1** | Attacker tampers with the published index to make `search`/`info` misdirect users (e.g., point "openssl" at a malicious pname) | Spoofing/Tampering | MITM or CDN compromise | Index is **disposable** and re-derived from the pinned Nixpkgs `narHash`; published index carries a hash recorded **in the signed channel descriptor**; client verifies hash before use, regenerates on mismatch | L | `03`,`02` |
 | **T-IDX-2** | Local cache of the index is swapped for a poisoned one | Tampering | Local unpriv. writes to cache dir | Index path under product-owned dir with 0700; hash verified every load; on mismatch, re-derive (do **not** trust local copy) | L | `03` |
 | **T-IDX-3** | Index regeneration is non-deterministic → silent drift | Tampering (false confidence) | Build nondeterminism | Reproducible index build (sorted, pinned inputs); CI asserts determinism across hosts (`09`) | L | `03`,`09` |
-| **T-IDX-4** | "Typosquatting"/naming confusion **within Nixpkgs itself** is surfaced to the user as if curated | Spoofing | Nixpkgs contains confusing/duplicate names | We **do not** claim curation; search results show exact attribute + version + closure; `info` surfaces upstream homepage/license so users can disambiguate (honesty, not a fix) | **M (inherited)** | `03`,`06` |
+| **T-IDX-4** | "Typosquatting"/naming confusion **within Nixpkgs itself** is surfaced to the user as if curated | Spoofing | Nixpkgs contains confusing/duplicate names | We **do not** claim curation; search results show the **product package identity, version, and source/provenance** (catalog revision + build/cache origin) in product language — not raw `attribute`/`closure`/`narHash`/`substituter` internals; `info` surfaces upstream homepage/license so users can disambiguate (honesty, not a fix) | **M (inherited)** | `03`,`06` |
 
 > **📐 DECISION.** The index is **defense-in-depth**, never a trust root. A package is
 > *resolved and realized* from the pinned Nixpkgs, not "installed from the index." A poisoned
@@ -306,7 +391,7 @@ Impact (L/M/H) using the rubric in §6.0.
 |----|--------|--------|--------|----------|----------|------|
 | **T-CACHE-1** | MITM serves an unsigned or differently-signed path | Tampering | Network | Nix verifies Ed25519 sig against channel-trusted keys; substituters pinned to `cache.nixos.org` only; product ignores `~/.config/nix/nix.conf` substituters | L | `02`,`01` |
 | **T-CACHE-2** | cache.nixos.org itself is compromised and serves paths signed by its own (trusted) key that are malicious | Tampering (trusted!) | Cache-key abuse | We **cannot** prevent (we trust the key); mitigate via: pin Nixpkgs rev so the *closure* is fixed & reproducible; offer `repair` (re-verify NAR); document inherited risk; future: second-source/mirror for v2 | **H (inherited, low likelihood)** | `10`,`11` |
-| **T-CACHE-3** | Path collides with local store but NAR differs (corruption masked) | Tampering | Local corruption | `nix-store --verify` detects; product runs verify on `repair` and on doctor | L | `04` |
+| **T-CACHE-3** | Path collides with local store but NAR differs (corruption masked) | Tampering | Local corruption | `nix store verify` (read-only) detects; product runs verify on `repair` and on doctor | L | `04` |
 | **T-CACHE-4** | Substituter key rotation by upstream not reflected in channel | DoS | Old key removed | Channel descriptor is the single source of allowed keys; we update via signed channel update, not upstream nix.conf | L | `02` |
 
 > **ℹ️ FACT.** Trusting `cache.nixos.org` is equivalent to trusting Hydra's build of that
@@ -318,18 +403,18 @@ Impact (L/M/H) using the rubric in §6.0.
 
 | ID | Threat | STRIDE | Detail | Controls | Residual | Refs |
 |----|--------|--------|--------|----------|----------|------|
-| **T-BUILD-1** | Build script (from Nixpkgs) runs arbitrary code during local build | RCE-as-builder | Any local build (Linux **and** macOS) | `sandbox=true`/`sandbox-fallback=false` (both platforms; network blocked, fs restricted); builder users isolated (`nixbld`/`_nixbld`); **explicit single-operation user approval** after a deterministic preview (derivations/source inputs, closure, resource estimate, target system, sandbox status); approval never overrides a hard policy refusal; `pkg` fails closed if sandbox/build-user readiness cannot be verified. Nix's macOS sandbox uses different, generally narrower primitives than Linux's | M (sandbox escapes are rare but exist; macOS isolation is narrower than Linux's) | `04`,`07` |
-| **T-BUILD-2** | Resource exhaustion during build (fork bomb, disk fill) | DoS | Pathological derivation | RLIMIT_AS/CPU/FILES + cgroup CPU/mem/io caps on Linux; RLIMIT + disk/load guards on macOS (no cgroup equivalent — none invented); disk-quota guard; timeout | M | `04` |
-| **T-BUILD-3** | Build writes outside sandbox (sandbox escape) | Tampering/EoP | Kernel/CVE | Run as unprivileged builder users; drop all caps; seccomp filter; monitor for sandbox=`broken` | M (depends on kernel) | `07` |
-| **T-BUILD-4** | Non-reproducible local build diverges from cache → "two valid builds" confusion | Tampering (trust) | Nondeterminism | When a cache path exists for the same drv, **prefer cache**; only build locally when absent or user-forced; `--check` available in `repair` | M | `04`,`03` |
-| **T-BUILD-5** | Approval bypass (UI race) makes "build" the default | Tampering | UX bug | Approval is an **explicit** non-default action; never auto-build; TUI records consent event in journal | L | `06`,`04` |
+| **T-BUILD-1** | Build script (from Nixpkgs) runs arbitrary code during local build | RCE-as-builder | Any local build (Linux **and** macOS) | `sandbox=true`/`sandbox-fallback=false` (both platforms; **regular** derivations network-denied + fs-restricted; **fixed-output** derivations network-enabled with their output hash as the integrity boundary; `__noChroot` rejected under `sandbox=true`); builder users isolated (group `nixbld`; `nixbld*`/`_nixbld*`); **explicit single-operation user approval** after a deterministic preview (derivations/source inputs, closure, resource estimate, target system, sandbox status, and a fixed-output label), bound to the canonical `BuildPlan` digest + policy version (`--yes` pre-approves that one op non-interactively; no `PKG_YES_TO_BUILDS`/session skip); approval never overrides a hard policy refusal; `pkg` fails closed if sandbox/build-user readiness cannot be verified. Nix's macOS sandbox uses different, generally narrower primitives than Linux's | M (sandbox escapes are rare but exist; macOS isolation is narrower than Linux's) | `04`,`07` |
+| **T-BUILD-2** | Resource exhaustion during build (fork bomb, disk fill) | DoS | Pathological derivation | **No stock per-build memory/CPU/IO cap exists in Nix 2.34.8.** What holds: `max-jobs=1` bounds concurrent derivations per client/connection (so `pkg` adds a machine-global local-build admission lease across users — a second build op waits or cancels, then revalidates approval/readiness once it acquires the lease); `timeout`/`max-silent-time`/`max-build-log-size` are daemon-enforced bounds; Nix `use-cgroups` (Linux only, experimental feature `cgroups`) is process grouping/lingering-process-cleanup/CPU-statistics, **not** caps (it does not write `memory.max`/`cpu.max`/`pids.max`/IO limits); preflight checks disk/free-space/load. Service-manager ceilings are **Pending** defense-in-depth, not accepted enforcement, and are **not** lumped together: systemd `MemoryMax`/`TasksMax`/`CPUQuota` (Linux) would be an **aggregate service-cgroup ceiling over the daemon plus all descendants** (a coarse whole-unit limit), whereas launchd `SoftResourceLimits`/`HardResourceLimits` (macOS — inherited per-process `setrlimit` values `CPU`/`Data`/`FileSize`/`NumberOfFiles`/`NumberOfProcesses`/`ResidentSetSize`/`Stack`; no `AddressSpace` key) are **per-process RLIMIT ceilings, not an aggregate daemon-subtree ceiling** (several keys are advisory or alter system `sysctls` for system daemons). The managed engine socket stays **product-private** (socket mode `0660` under Linux systemd socket activation / hard-coded `0666` on macOS where Nix self-creates it, under a `root:pkg-nix-broker` `0750` parent dir that blocks traversal by ordinary users; `trusted-users = root` only; the unprivileged broker is the sole `allowed-user` and never a `trusted-user`); v1 does **not** expose a group- or world-connectable raw Nix daemon socket to chase per-build caps (the raw managed daemon socket stays **product-private and non-user-connectable**; the product never recommends direct/raw socket access); the **private broker** — the daemon's sole general client (the two-phase `nix store repair` op is run by the root helper as root) and the sole mediator/requester of per-output GC-root operations (the root helper is the sole writer) — is the **accepted hidden-Nix V1 boundary** (D-18/INV-11; `00`), promoted from the former "next milestone" framing (DR-016 / `12`); its **detailed framed RPC schemas are the next milestone** (boundary ownership is fixed now) | **H (disclosed residual — RISK-07)** | `04` |
+| **T-BUILD-3** | Build writes outside sandbox (sandbox escape) | Tampering/EoP | Kernel/CVE | Run as unprivileged builder users; drop all caps; monitor for sandbox=`broken`. **A seccomp profile is an open question (Q3), not an accepted v1 control** — do not claim one is in place | M (depends on kernel) | `07` |
+| **T-BUILD-4** | Non-reproducible local build diverges from cache → "two valid builds" confusion | Tampering (trust) | Nondeterminism | When a cache path exists for the same drv, **prefer cache**; only build locally on a cache miss (V1 has no separate user-forced local-build path); `--check` available in `repair` | M | `04`,`03` |
+| **T-BUILD-5** | Approval bypass (UI race) makes "build" the default | Tampering | UX bug | Approval is an **explicit** non-default action; never auto-build; the CLI records the consent event in the journal (V1 uses CLI inline rendering, not a TUI) | L | `06`,`04` |
 
 ### 6.8 Path / symlink attacks on state & activation
 
 | ID | Threat | STRIDE | Detail | Controls | Residual | Refs |
 |----|--------|--------|--------|----------|----------|------|
 | **T-PATH-1** | Attacker pre-creates symlinks in product dirs to redirect writes (e.g., `current` → `/etc/passwd`) | Tampering/EoP | Local unpriv. | Product dirs `0700` owner=product; atomic `rename`/`symlink` with `O_NOFOLLOW`; reject if target exists & not owned; `openat`-relative | L | `05` |
-| **T-PATH-2** | Activation swaps a binary in `~/.pkg/bin` after verify but before exec | TOCTOU | Local unpriv. | Activation symlinks point into the read-only store (`/nix/store/...`), not user-writable copies; verify store path at activation time | L | `05`,`01` |
+| **T-PATH-2** | Activation swaps a binary in `<user-state>/current/bin` (the symlink forest) after verify but before exec | TOCTOU | Local unpriv. | Activation leaf symlinks point into the read-only store (`/nix/store/...`), not user-writable copies; `current` is a relative symlink to a `treeDigest`-verified forest; verify store path at activation time | L | `05`,`01` |
 | **T-PATH-3** | PATH injection makes `pkg` invoke a trojaned `nix`/helper | EoP | PATH tamper | Product resolves managed-Nix & helper by **absolute path** from its install root, never `$PATH`; doctor warns on shadowing | L | `07`,`06` |
 | **T-PATH-4** | World-writable ancestor directory of state files | Tampering | Bad perms | On load & write, walk ancestors, refuse if any is group/world-writable & not product-owned | L | `05` |
 
@@ -371,7 +456,7 @@ Impact (L/M/H) using the rubric in §6.0.
 | ID | Threat | STRIDE | Detail | Controls | Residual | Refs |
 |----|--------|--------|--------|----------|----------|------|
 | **T-UNINST-1** | Uninstall removes the user's **own** Nix install/profile | Destruction | Over-broad cleanup | Uninstall removes **only** paths it created & recorded in an asset manifest; refuses to touch `/nix` if an unmanaged Nix is detected; dry-run preview | L | `07` |
-| **T-UNINST-2** | Uninstall leaves privileged residue (daemon, setuid) | Persistence | Incomplete cleanup | Asset manifest is authoritative; uninstall verifies zero privileged residue and reports; `doctor --post-uninstall` | L | `07` |
+| **T-UNINST-2** | Uninstall leaves privileged residue (daemon, root service/helper) | Persistence | Incomplete cleanup | Asset manifest is authoritative; uninstall verifies zero privileged residue and reports; `doctor --post-uninstall` | L | `07` |
 | **T-UNINST-3** | Partial uninstall corrupts shell PATH permanently | DoS | Bad edit | PATH edits via a managed snippet file `source`d from rc, not inline edits; removal = delete snippet + warn | L | `06`,`07` |
 
 ### 6.14 Compromised packages at runtime
@@ -423,6 +508,14 @@ Impact (L/M/H) using the rubric in §6.0.
 > tampering. This avoids a client-side secret-management problem (a key on disk protects
 > nothing against a local root anyway; the goal is **detection + fail-closed**, not
 > secrecy). `05`
+>
+> **Honesty scope (not an authentication claim).** These hashes **detect corruption and
+> crash-inconsistency** and surface tampering/rollback; they do **not** authenticate that the
+> writer is the legitimate same-uid owner (the uid owns its own state and can rewrite any
+> bytes — and any self-computed hash — it likes). Isolation **between** users comes from OS
+> per-user permissions (`<user-state>` owned `0700` by uid; D-17/INV-10), and a local **root
+> is out of scope** (T-STATE-1). The Merkle anchor ties state to a signed channel version
+> for anti-rollback, **not** to a per-user identity.
 
 ### 7.4 Key management lifecycle (release-side) — summary; full procedure in `10`
 - Root key: generated offline, stored on HSM/air-gapped media; used only for root rotation.
@@ -437,13 +530,13 @@ Impact (L/M/H) using the rubric in §6.0.
 
 | Threat family | Primary Nix control | Primary product control | Owning plan(s) | Tested in |
 |---------------|--------------------|-------------------------|---------------|-----------|
-| Installer/helper (T-INST) | — | auth caller (uid), O_NOFOLLOW, fail-closed on unmanaged Nix, no setuid if avoidable, per-user uid-scoped state/roots (D-17) | `07` | `09` security lane |
-| Daemon/IPC (T-DAEMON) | socket perms, trusted-users | strict serde, size caps, no expr/substituter passthrough | `01`,`04` | `09` contract+fuzz |
+| Installer/helper (T-INST) | — | helper accepts closed validated request from broker only (user CLI never calls it); O_NOFOLLOW; fail-closed on unmanaged Nix; **no setuid in v1** (sudo/polkit/AuthServices/narrow root svc); helper is sole root-set GC-roots writer **and** the ONE exceptional maintenance client running the **two-phase `nix store repair`** op as root against a broker-chosen validated set of registered StorePath targets (the generation's full closure, incl. missing-on-disk targets) (resolves an authenticated broker-only **opaque expiring single-use maintenance capability** bound to caller UID / existing pkg-owned rooted generation / exact typed corrupt targets within the FULL computed closure reachable from the selected output roots (incl. missing-on-disk targets) / `RepairBuildPlan`/target digest / `policyVersion` / mode; Phase A cache-only with managed pinned substituters/keys, `max-jobs = 0`, `builders` empty; Phase B approved build over every rebuildable output, serialized by broker build mutex + GC-inhibit permit, run locally with bounded nonzero `max-jobs`, `builders` empty; stale/replayed/mismatched/cross-UID fail closed; accepts no public path/installable/derivation/expression/flake ref/argv/option/substituter-key/environment-override/output-selection/arbitrary-verb; raw Nix logs service-private; returns sanitized per-path outcome; confused-deputy repair + repair-build amplification mitigated — T-INST-7/T-INST-8); per-user uid-scoped state/roots (D-17) | `07` | `09` security lane |
+| Daemon/IPC (T-DAEMON) | socket perms, `trusted-users=root` only | **unprivileged broker is the sole general daemon `allowed-user` (service-only socket; D-18/INV-11; never a `trusted-user`; `trusted-users` are root-equivalent)**; bundled CLI→daemon is native protocol; strict serde, size caps, no expr/substituter passthrough; the two-phase `nix store repair` op is run by the root helper as root (repair requests require a trusted daemon client; verified Nix 2.34.8; T-INST-7) | `01`,`04` | `09` contract+fuzz |
 | Source eval (T-EVAL) | pure-eval, restrict-eval, allowed-uris | pin rev/narHash, env scrub, RLIMIT | `03`,`04` | `09` fault-injection |
 | Index (T-IDX) | — | disposable + hash-in-channel + regen-on-mismatch | `03`,`02` | `09` e2e + determinism |
 | Channel (T-CHAN) | — | **real TUF (tough)**, expiry, version monotonicity | `02` | `09` security lane |
 | Cache (T-CACHE) | Ed25519 sig verify, trusted keys | pin substituters/keys via channel | `01`,`02` | `09` security lane |
-| Local builds (T-BUILD) | sandbox, builder isolation | preview + approval gate, RLIMIT/cgroups (Linux) / RLIMIT+guards (macOS), `sandbox-fallback=false` fail-closed on both | `04`,`07` | `09` platform + fault |
+| Local builds (T-BUILD) | sandbox, builder isolation | preview + single-operation approval gate (no `PKG_YES_TO_BUILDS`/session skip); machine-global local-build admission lease across users; `max-jobs`/`timeout`/`max-silent-time`/`max-build-log-size` daemon bounds; disk/free-space/load preflight; `use-cgroups` process grouping/statistics (Linux); service-manager ceilings Pending; `sandbox-fallback=false` fail-closed on both; no stock per-build cap (residual RISK-07) | `04`,`07` | `09` platform + fault |
 | Path/symlink (T-PATH) | store is root-owned | 0700 dirs, O_NOFOLLOW, openat, store-relative symlinks | `05` | `09` security lane |
 | State/concurrency (T-STATE/CONC) | — | atomic writes, flock+lease, journal, fail-closed | `05` | `09` fault-injection |
 | Logs/secrets (T-LOG) | — | redactor, allowlist fields, 0600 | `06`,`10` | `09` security lane |
@@ -472,8 +565,8 @@ Impact (L/M/H) using the rubric in §6.0.
 
 | Aspect | Linux | macOS |
 |--------|-------|-------|
-| Privilege helper | polkit-gated service (preferred) or setuid w/ priv drop | launchd daemon + authorized client (no setuid) |
-| Build sandbox | full `bwrap`/namespaces sandbox; `sandbox-fallback=false` | Nix macOS sandbox (supported but **different, generally narrower primitives** than Linux); `sandbox-fallback=false`; `pkg` fails closed if unready |
+| Privilege helper | sudo/polkit-gated service or narrow root service (**no setuid in v1**) | launchd daemon + authorized client via AuthorizationServices (no setuid) |
+| Build sandbox | Nix's own namespaces/chroot sandbox (does **not** invoke bubblewrap); regular derivations network-denied, fixed-output network-enabled (hash boundary); `sandbox-fallback=false` | Nix macOS sandbox (supported but **different, generally narrower primitives** than Linux; profile permits network for non-sandboxed derivation types); `sandbox-fallback=false`; `pkg` fails closed if unready |
 | Build users | `nixbld` group, `nixbld*` users | `nixbld` group, `_nixbld*` users |
 | Caller auth | `SO_PEERCRED` | `getpeereid` / launchd `Audit Token` |
 | PATH integration | rc-snippet sourced by shell | rc-snippet + `/etc/paths.d` considered; doctor verifies |
@@ -519,27 +612,44 @@ users in `06` (CLI copy / `doctor`), `10` (release notes), and tracked in `12`.
 - **AC-S2** Replaying a valid-but-older `targets.json` is refused (version monotonicity)
   (T-CHAN-1).
 - **AC-S3** A store path whose signature does not verify against the channel-trusted key set
-  is **not** substituted (T-CACHE-1); `repair` re-verifies and restores integrity (T-CACHE-3).
+  is **not** substituted (T-CACHE-1); `repair` re-verifies and restores integrity (T-CACHE-3; two-phase privilege split — broker verifies read-only, root helper runs `nix store repair` as root in two phases — per T-INST-7).
 - **AC-S4** A pre-created symlink in a product dir cannot redirect a state/activation write
   (T-PATH-1); a world-writable ancestor is rejected (T-PATH-4).
 - **AC-S5** A second `pkg` instance is serialized via the writer lock; a crash mid-operation
   recovers to the last committed generation (T-STATE-2/3).
-- **AC-S6** The privileged helper refuses unauthenticated callers and rejects any command
-  outside its allowlist (T-INST-3/T-DAEMON-1).
+- **AC-S6** The privileged helper accepts only a closed validated request from the broker
+  (its sole caller; the user CLI never reaches it), refuses all other callers, and rejects
+  any command outside its allowlist — exactly root-set publish/remove **and** the two-phase `nix store repair`
+  maintenance op (closed opaque request → opaque expiring single-use maintenance capability → validated StorePath set; T-INST-7) — never a
+  public/raw path, installable, derivation, expression, flake ref, argv, option,
+  substituter/key, environment override, output selection, or arbitrary verb
+  (T-INST-3/T-DAEMON-1/T-INST-7).
 - **AC-S7** On a host with an existing **unmanaged** Nix, install refuses with remediation
   text and **does not** modify or delete it (T-INST-4).
 - **AC-S8** `cargo audit` + `cargo deny` are clean in the release gate (T-REL-4).
 - **AC-S9** Logs contain no env/args/secret fields by default; redactor unit-tested with
   known-secret fixtures (T-LOG-1).
-- **AC-S10** `pkg info <attr>` displays provenance (rev, narHash, substituter, build source)
-  so T-RUN-1's residual risk is visible to users.
+- **AC-S10** `pkg info <package>` displays **product-level provenance** — catalog/source
+  revision, package/source integrity basis, build source, and cache origin — so T-RUN-1's
+  residual risk is visible to users. Surfaced in product language, **not** raw
+  `attribute`/`closure`/`narHash`/`substituter` internals.
 - **AC-S11** (Multi-user isolation, D-17) On a shared host, user A cannot read or modify
   user B's `<user-state>` (manifest/lock/generations/current/journal), and each user's GC
   roots live under their own `/nix/var/nix/gcroots/pkg/users/<uid>/` (T-INST-6).
-- **AC-S12** (UID confusion) A process authenticated as uid A cannot cause the helper or
-  daemon to create/repair GC roots (or touch state) under uid B's directories; the peer-cred
-  uid is the only uid used (T-INST-3/T-DAEMON-1/T-INST-6).
+- **AC-S12** (UID confusion) An end-user authenticated by the broker as uid A cannot cause
+  GC roots (or state) to be written under uid B's directories: the broker mediates every
+  root request, the helper (sole writer) accepts only the broker, and the broker only ever
+  requests roots under the uid it authenticated (T-INST-3/T-DAEMON-1/T-INST-6).
 - **AC-S13** (Build-readiness & full-closure preflight, cross-platform) A build that is impossible or disallowed (unsupported/broken/impure derivation, or sandbox/build-user unavailable, or `buildPolicy` denies the host system) fails with `ACQUIRE_NO_BINARY` and **never** runs, even with approval, on Linux and macOS. A buildable cache miss is **not** auto-rejected: it surfaces the build preview. The full-closure cache preflight (plan 04 §5/§6) classifies every closure path up front as an availability signal, and `pkg` fails closed if `sandbox=true`/`sandbox-fallback=false` or build-user readiness cannot be verified (D-11; plan 07 §16.4).
+> **ℹ️ Numbering note.** The three repair criteria below are **AC-S31/S32/S33**, **not**
+> S14/S15/S16, to avoid a collision with the **09-internal** AC-S14..S30 (heavily
+> cross-referenced in `09` §6.6). `09` §6.6 covers S31..S33 with its existing repair tests
+> (AC-S21/AC-S22/AC-S28/AC-S29/AC-S30) via an explicit coverage map rather than duplicate rows.
+
+- **AC-S31** (Repair two-phase privilege split & confused-deputy resistance; Nix 2.34.8). The modern mutating command is **`nix store repair`** (there is **no** modern `nix store verify --repair` combination — `verify` is read-only, `repair` mutates); `Store::repairPath` (driven by `nix store repair`) first tries Repair-mode substitution and, failing that with a valid deriver, rebuilds **all** outputs via `bmRepair`, and a repair request requires a **trusted** daemon client. `pkg repair` first runs **`nix store verify --recursive`** (read-only) through the **unprivileged** broker; the daemon rejects any repair attempt by the broker (untrusted/`allowed-user`). Only when verification confirms corruption does the broker send a **closed opaque/typed request** to the root helper, which runs **`nix store repair` as root in two phases** against a **nonempty sorted validated set of registered StorePath targets** (the corrupt targets plus any missing-on-disk but registered/expected closure targets, all within the FULL computed closure reachable from the generation's selected output roots; drawn from broker-held generation state): **(A)** per-path **cache-only** repair with **managed pinned substituters/keys**, **`max-jobs = 0`**, **`builders` empty** — it auto-repairs a **signed cache hit** and, on an unavailable substitute, **stops before any local/remote build** (`max-jobs = 0` + empty `builders` makes the rebuild branch unable to proceed); **(B)** any fallback rebuild goes through the **ordinary build preview / explicit single-operation approval flow**, whose **`RepairBuildPlan`/digest covers every output Nix may rebuild, not just the corrupt output**, while holding the **broker machine-wide build mutex** + **shared GC-inhibit permit**, and is run **locally** with **bounded nonzero `max-jobs`** and **`builders` empty**. The helper resolves an **opaque expiring single-use maintenance capability** bound server-side to the **caller UID**, an **existing pkg-owned rooted generation**, the **exact typed corrupt targets within the FULL computed closure reachable from the generation's selected output roots (incl. missing-on-disk targets)**, the **`RepairBuildPlan`/target digest**, the **policyVersion**, and the **mode**; **stale, replayed, mismatched, or cross-UID capabilities fail closed**. The helper refuses any request carrying a public/raw path, installable, derivation, expression, flake ref, argv, option, substituter/key, environment override, output selection, or arbitrary verb; it executes per-path cache-only with **final read-only verification** (partial cache repairs resumable/idempotently reverified); it returns **only sanitized per-path outcome** to the broker (**raw Nix logs service-private only**; public receives sanitized outcome/versioned events); the user CLI never reaches the helper. **GC stays in the unprivileged broker** and never ignores liveness (T-INST-7/T-INST-8/T-DAEMON-1/AC-S6).
+- **AC-S32** (Two-phase repair phase boundary; Nix 2.34.8). Phase A is demonstrably build-free: when a corrupt path has **no signed substitute**, a Phase-A `nix store repair` run with `max-jobs = 0` and `builders` empty **performs no local or remote build** — it stops/returns unrepairable rather than rebuilding (asserted by a test that no build is dispatched). Phase B's **`RepairBuildPlan`/digest enumerates every output Nix may rebuild** for the corrupt path's deriver (because `Store::repairPath` rebuilds all outputs via `bmRepair`), the approval binds to that digest (re-derive-before-execute fails closed on drift; non-interactive exits `ACQUIRE_NEEDS_APPROVAL`), and the approved build is serialized by the broker machine-wide build mutex + shared GC-inhibit permit and run locally with bounded nonzero `max-jobs` and `builders` empty (T-INST-7/T-INST-8).
+
+- **AC-S33** (Repair execution & restart semantics; ARCH-INV-10 of `01`). `pkg repair` is an explicit user action that warns affected commands may be temporarily unavailable. Repair is non-atomic per path: a cache-only repair deletes the live (corrupt) path before restoring its NAR, and a local rebuild moves the old output aside before replacing it (a target can be transiently absent). Progress is journaled per path; a fresh read-only `nix store verify --recursive` governs success. On helper/broker restart, no stale capability is replayed (single-use, invalidated): cache-only Phase A auto-retries from the per-path journal with a fresh capability; a Phase B build is **not** auto-retried and requires a fresh preview/approval/capability. Normal repair never creates or swaps a generation and never touches activation; activation recovery (damaged symlink forest) is separate, Rust-only re-materialization from the generation record (ARCH-INV-09 of `01`).
 
 ---
 

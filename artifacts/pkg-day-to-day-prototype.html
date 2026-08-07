@@ -432,8 +432,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 -->
 <!--
 PRODUCT ANCHORS (from plans/00,01,03,04,05,06,07,08,12): pkg is a planned Rust CLI; V1 is planning only and no implementation exists.
-Users touch only pkg. pkg owns the signed/pinned source (channel descriptor via TUF), policy, manifest/lock, generations, activation, GC roots, and receipts; a managed, pinned internal Nix engine performs fetch, NAR/signature verification, the /nix/store, and sandboxed builds. The catalog is exactly-pinned Nixpkgs; the only binary cache in v1 is cache.nixos.org.
-Cache substitution is always attempted first. On a cache miss, a native current-system local build is offered on BOTH Linux and macOS, only after a deterministic preview and explicit, per-operation, journaled approval (cancel/no approval is the default and leaves the generation unchanged; a cancel returns ACQUIRE_NEEDS_APPROVAL). Linux: managed nixbld users, Nix Linux sandbox, sandbox=true, sandbox-fallback=false, cgroups/RLIMIT-backed caps where available. macOS: managed _nixbld users, Nix Darwin sandbox, sandbox=true, sandbox-fallback=false, RLIMIT/disk/free-space/load safeguards — Darwin isolation is narrower than Linux's and pkg does not claim cgroups on macOS. Build only the selected platform's native system (x86_64-linux / aarch64-darwin): no Rosetta, cross-compilation, emulation, or remote builds. Fail closed if the managed builder pool or sandbox verification is unhealthy. ACQUIRE_NO_BINARY is reserved for a closure that cannot be built for the current system or is blocked by policy; a normal cache miss on either OS does not return it. Trust is verified, not absolute; pinned Nixpkgs is not curated (RISK-01, T-IDX-4, T-RUN-1).
+Users touch only pkg. pkg owns the signed/pinned source (channel descriptor via TUF), policy, manifest/lock, generations, activation, GC roots, and receipts; a managed, pinned internal Nix engine performs fetch, NAR/signature verification, the managed store, and sandboxed builds. The catalog is exactly-pinned Nixpkgs; the only binary cache in v1 is cache.nixos.org.
+Cache substitution is always attempted first. On a cache miss, a native current-system local build is offered on BOTH Linux and macOS, only after a deterministic preview and explicit, single-operation, journaled approval bound to the BuildPlan digest + policy version (cancel/no approval is the default and leaves the generation unchanged; a cancel returns ACQUIRE_NEEDS_APPROVAL; --yes pre-approves that one op non-interactively but never overrides a hard refusal). Linux: managed nixbld users, Nix's own Linux namespace/chroot sandbox, sandbox=true, sandbox-fallback=false; use-cgroups (Linux only) is process grouping/cleanup/accounting, not a cap or isolation. macOS: managed _nixbld users, Nix Darwin sandbox, sandbox=true, sandbox-fallback=false; stock Nix 2.34.8 provides no per-build memory/CPU/IO cap on either OS (max-jobs=1 bounds concurrency; daemon timeout/max-silent-time/max-build-log-size; preflight disk/free-space/load; service-manager ceilings are Pending) — Darwin isolation is narrower than Linux's. Build only the selected platform's native system (x86_64-linux / aarch64-darwin): no Rosetta, cross-compilation, emulation, or remote builds. Fail closed if the managed builder pool or sandbox verification is unhealthy. ACQUIRE_NO_BINARY is reserved for a closure that cannot be built for the current system or is blocked by policy; a normal cache miss on either OS does not return it. Trust is verified, not absolute; pinned Nixpkgs is not curated (RISK-01, T-IDX-4, T-RUN-1).
 INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the URL via replaceState — no new history entry is pushed); &os=linux|macos sets the platform. ArrowLeft/ArrowRight switch variants only when focus is not in any interactive control (button, link, input, field, or a map station); after switching, focus moves to the newly visible variant heading. The terminal is a simulator: in-memory session state only, no network, no real install or system mutation. All versions, sizes, timings, health results, and command output are illustrative.
 -->
 <div id="sr" class="sr-only" role="status" aria-live="polite"></div>
@@ -467,7 +467,7 @@ INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the UR
       <div class="row">
         <div class="cell"><span class="sw intent"></span><div><b>User intent</b><span>What you type and what you want — search, install, rollback.</span></div></div>
         <div class="cell"><span class="sw pkg"></span><div><b>pkg policy &amp; state</b><span>Channel lock, pins, generations, activation, GC roots, approval gates, receipts. What pkg owns.</span></div></div>
-        <div class="cell"><span class="sw nix"></span><div><b>Nix internals (hidden)</b><span>Fetch from cache.nixos.org, NAR + signature checks, the /nix/store, sandboxed builds. The managed engine does this; you never invoke it.</span></div></div>
+        <div class="cell"><span class="sw nix"></span><div><b>Engine internals (hidden)</b><span>Download from cache.nixos.org, integrity + signature checks, the managed store, and sandboxed builds. The managed engine does this; you never invoke it.</span></div></div>
       </div>
     </div>
   </div>
@@ -480,7 +480,7 @@ INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the UR
     <div class="section-head">
       <div class="eyebrow">Variant A &middot; Guided Day</div>
       <h2>One day with pkg, from morning check to end-of-day rollback</h2>
-      <p>A narrative through the terminal. Each beat states your intent, the pkg command, and the hidden work the managed Nix engine performs. Pick a beat on the left, or scroll the day.</p>
+      <p>A narrative through the terminal. Each beat states your intent, the pkg command, and the hidden work the managed engine performs. Pick a beat on the left, or scroll the day.</p>
     </div>
     <div class="day-wrap">
       <nav class="daytabs" aria-label="Day beats">
@@ -517,7 +517,7 @@ INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the UR
     <div class="section-head">
       <div class="eyebrow">Variant C &middot; Lifecycle Map</div>
       <h2>A transit map of the package lifecycle, from pinned input to garbage collection</h2>
-      <p>The teal line is the pkg-controlled backbone. The amber spur is the only place the hidden Nix engine builds — on a cache miss, after a preview and your explicit, per-operation approval. It is active on both Linux and macOS; builder identity and resource guards change by platform without implying identical sandbox primitives. Select a station for its intent, pkg's role, the engine's role, and an illustrative command.</p>
+      <p>The teal line is the pkg-controlled backbone. The amber spur is the only place the managed engine builds — on a cache miss, after a preview and your explicit, single-operation approval. It is active on both Linux and macOS; builder identity and the resource boundary change by platform (no per-build cap on either OS) without implying identical sandbox primitives. Select a station for its intent, pkg's role, the engine's role, and an illustrative command.</p>
     </div>
     <div class="map-wrap">
       <div class="map-scroll">
@@ -532,11 +532,11 @@ INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the UR
           <!-- engine pills (Nix internals on the teal path) -->
           <g class="engine-pill" aria-hidden="true">
             <rect x="300" y="108" width="120" height="20" rx="10"/>
-            <text x="360" y="122" text-anchor="middle">Nix: substitute + verify</text>
+            <text x="360" y="122" text-anchor="middle">engine: download + verify</text>
           </g>
           <g class="engine-pill" aria-hidden="true">
             <rect x="624" y="108" width="152" height="20" rx="10"/>
-            <text x="700" y="122" text-anchor="middle">Nix: NAR integrity + signatures</text>
+            <text x="700" y="122" text-anchor="middle">engine: verify integrity + signatures</text>
           </g>
 
           <!-- stations (teal backbone) -->
@@ -550,10 +550,10 @@ INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the UR
             <text class="lbl" x="360" y="182" text-anchor="middle">Cache lookup</text>
             <text class="lbl sub" x="360" y="197" text-anchor="middle">cache.nixos.org</text>
           </g>
-          <g class="nd" tabindex="0" role="button" aria-label="Station: Verified closure" data-station="verify">
+          <g class="nd" tabindex="0" role="button" aria-label="Station: Verified packages" data-station="verify">
             <circle class="core" cx="700" cy="150" r="11"/>
-            <text class="lbl" x="700" y="182" text-anchor="middle">Verified closure</text>
-            <text class="lbl sub" x="700" y="197" text-anchor="middle">identity = store path</text>
+            <text class="lbl" x="700" y="182" text-anchor="middle">Verified packages</text>
+            <text class="lbl sub" x="700" y="197" text-anchor="middle">verified output identity</text>
           </g>
           <g class="nd" tabindex="0" role="button" aria-label="Station: Generation activation" data-station="activate">
             <circle class="core" cx="980" cy="150" r="11"/>
@@ -602,7 +602,7 @@ INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the UR
       <div class="desc panel" id="c-desc">
         <div class="eyebrow" style="color:var(--teal);font-family:var(--mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase">Station detail</div>
         <h3 id="c-title">Select a station</h3>
-        <p class="mid" id="c-blurb" style="font-size:.875rem;max-width:60ch">Each station separates what you want, what pkg decides, and what the hidden Nix engine does.</p>
+        <p class="mid" id="c-blurb" style="font-size:.875rem;max-width:60ch">Each station separates what you want, what pkg decides, and what the managed engine does.</p>
         <div class="roles" id="c-roles"></div>
       </div>
       <div>
@@ -619,7 +619,7 @@ INTERACTION CONTRACT: ?variant=A|B|C selects structure (also reflected in the UR
 
 <footer class="site">
   <div class="wrap">
-    <p><b>Illustrative.</b> Versions, sizes, timings, health results, and terminal output are fabricated to show intended behaviour. <b>pkg is a working codename.</b> You interact only with pkg; a managed internal Nix engine handles fetch, verification, store, and build mechanics &mdash; you never touch raw Nix. Verification reduces risk; it is not a guarantee of absolute security, and the pinned Nixpkgs catalog is not curated.</p>
+    <p><b>Illustrative.</b> Versions, sizes, timings, health results, and terminal output are fabricated to show intended behaviour. <b>pkg is a working codename.</b> You interact only with pkg; a managed internal engine handles fetch, verification, store, and build mechanics &mdash; you never touch raw Nix. Verification reduces risk; it is not a guarantee of absolute security, and the pinned Nixpkgs catalog is not curated.</p>
     <p class="dim" style="margin:0">Anchored to <span class="mono">plans/</span> (00, 01, 03, 04, 05, 06, 07, 08, 12). No network calls; no real installs; session state lives only in memory.</p>
   </div>
 </footer>
@@ -695,6 +695,9 @@ function freshSession(){
       jq:  { cur:"1.7.1",  avail:"1.7.1",  kind:"rev-only" },
     },
     updated: false,
+    // repair damage set (plan 05 §10): drives Phase A (cache-hit auto) vs
+    // Phase B (cache-miss approved rebuild). Empty = clean (Phase 0 only).
+    repairNeed: [],
   };
 }
 let SESSION = freshSession();
@@ -757,23 +760,23 @@ const ENGINE = {
     const sys = App.system();
     const mac = App.platform === "macos";
     const posture = mac
-      ? "managed _nixbld users · Nix Darwin sandbox · sandbox=true · sandbox-fallback=false · RLIMIT/disk/free-space/load guards"
-      : "managed nixbld users · Nix Linux sandbox · sandbox=true · sandbox-fallback=false · cgroups/RLIMIT caps";
+      ? "managed build users · macOS sandbox · fail-closed · no per-build resource cap"
+      : "managed build users · Linux sandbox · fail-closed · no per-build resource cap (cleanup/stats only, not a cap)";
     const lines = [
       ["$ pkg doctor", CL.cmd],
       ["pkg doctor  — illustrative", CL.dim],
       sysLine(),
-      ["  [✓] managed nix runtime present (pinned, matches descriptor)", CL.ok],
-      ["  [✓] daemon reachable (nix ping-store ok)", CL.ok],
-      ["  [✓] store /nix/store writable, 9.0 GB free", CL.ok],
-      ["  [✓] signed channel descriptor verified (TUF), not expired", CL.ok],
+      ["  [✓] managed engine present (pinned, matches descriptor)", CL.ok],
+      ["  [✓] managed engine reachable (ping ok)", CL.ok],
+      ["  [✓] managed store writable, 9.0 GB free", CL.ok],
+      ["  [✓] signed channel descriptor verified, not expired", CL.ok],
       ["  [✓] disposable index fresh for " + sys, CL.ok],
       ["  [✓] active generation " + activeGen(SESSION).id + " verifies", CL.ok],
-      ["  [✓] no unmanaged nix detected", CL.ok],
+      ["  [✓] no conflicting system install detected", CL.ok],
       ["  [✓] cache.nixos.org reachable", CL.ok],
       ["  [✓] managed builder pool healthy · sandbox verified (fail-closed)", CL.ok],
       ["  [i] cache miss → approval-gated local build on " + sys + " (" + posture + ")", CL.note],
-      ["  [i] trust is verified, not absolute — pinned nixpkgs is not curated", CL.note],
+      ["  [i] trust is verified, not absolute — the pinned catalog is not curated", CL.note],
       ["overall: ok", CL.ok],
     ];
     return { pre: lines };
@@ -787,7 +790,7 @@ const ENGINE = {
       ["fzf         0.46.1    A command-line fuzzy finder       MIT", ""],
       ["fzf-zsh     0.1.2     zsh integration for fzf           MIT", ""],
       ["top 2 of 3 (host-filtered to " + App.system() + ")", CL.dim],
-      ["the index is display-only — install re-checks the attribute on host", CL.note],
+      ["the index is display-only — install re-checks the package on host", CL.note],
     ]};
   },
 
@@ -795,8 +798,8 @@ const ENGINE = {
     const ins = !!SESSION.installed.fzf;
     return { pre: [
       ["$ pkg info fzf", CL.cmd],
-      ["pkg info — illustrative", CL.dim],
-      ["attribute    fzf", ""],
+      ["pkg info — illustrative (index-served; offline)", CL.dim],
+      ["package      fzf", ""],
       ["version      0.46.1", ""],
       ["homepage     https://github.com/junegunn/fzf", ""],
       ["license      MIT", ""],
@@ -804,50 +807,43 @@ const ENGINE = {
       ["outputs      [out, man]", ""],
       ["systems      x86_64-linux ✓   aarch64-linux ✓   x86_64-darwin ✓   aarch64-darwin ✓", ""],
       ["installed    " + (ins ? "yes" : "no"), ins ? CL.pkg : ""],
-      ["source       channel:current (nixpkgs rev abc123…, pinned by descriptor)", CL.dim],
-      ["realizability is confirmed only at install (on-host eval)", CL.note],
+      ["source       channel:current (pinned catalog revision abc123…)", CL.dim],
+      ["exact pinned outputs and cache/buildability: pkg info fzf --exact", CL.note],
     ]};
   },
 
-  /* cache-hit install: fzf */
+  /* cache-hit install: fzf — every binary is on cache.nixos.org, so there
+     is no build and no extra confirmation: it proceeds directly
+     (resolve → acquire → verify → stage → activate → commit). */
   install_hit(){
-    const pre = [
+    const willInstall = !SESSION.installed.fzf;
+    let g = null;
+    if (willInstall) {
+      SESSION.installed.fzf = { ver:"0.46.1", attr:"fzf", pinned:false, closureMB:3.4 };
+      g = newGen(SESSION, "install", "install fzf", Object.keys(SESSION.installed));
+    }
+    const lines = [
       ["$ pkg install fzf", CL.cmd],
-      ["resolving fzf … ok (attribute fzf, channel seq " + SESSION.channelSeq + ")", CL.pkg],
+      ["resolving fzf … ok (package fzf, channel seq " + SESSION.channelSeq + ")", CL.pkg],
       ["preflight: 1 target, all binaries available on cache.nixos.org", CL.pkg],
-      ["  + fzf  0.46.1   closure 3.4 MB   download 1.0 MB   binary ✓", ""],
+      ["  + fzf  0.46.1   size 3.4 MB   download 1.0 MB   binary ✓", ""],
       ["new downloads 1.0 MB · new disk 3.4 MB · free 9.0 GB", CL.dim],
     ];
-    return {
-      pre,
-      gate: {
-        kind: "confirm",
-        question: "Install fzf → new generation? (previous gen stays recoverable)",
-        approveLabel: "Install",
-        cancelLabel: "Cancel",
-        approve: () => {
-          if (!SESSION.installed.fzf) SESSION.installed.fzf = { ver:"0.46.1", attr:"fzf", pinned:false, closureMB:3.4 };
-          const outs = Object.keys(SESSION.installed);
-          const g = newGen(SESSION, "install", "install fzf", outs);
-          return {
-            lines: [
-              ["[nix] substituting 6 paths from cache.nixos.org (signatures verified)", CL.nix],
-              ["[pkg] staging " + g.id + " → rooted → atomic current swap", CL.pkg],
-              ["installed fzf 0.46.1 → " + g.id + " (active)", CL.ok],
-              ["reversible: pkg rollback returns to the previous generation", CL.note],
-            ],
-            announce: "Installed fzf into a new generation."
-          };
-        },
-        cancel: () => ({ lines: [
-          ["cancelled — " + activeGen(SESSION).id + " still active, nothing staged", CL.err],
-        ]}),
-      },
-    };
+    if (willInstall) {
+      lines.push(
+        ["[engine] downloading 6 paths from cache.nixos.org (signatures verified)", CL.nix],
+        ["[pkg] staging " + g.id + " → rooted → atomic current swap", CL.pkg],
+        ["installed fzf 0.46.1 → " + g.id + " (active)", CL.ok],
+        ["reversible: pkg rollback returns to the previous generation", CL.note],
+      );
+    } else {
+      lines.push(["fzf already installed — generation unchanged", CL.note]);
+    }
+    return { pre: lines };
   },
 
   /* cache-miss install: ffmpeg — BOTH Linux and macOS offer the SAME
-     deterministic preview and an explicit, per-operation, journaled
+     deterministic preview and an explicit, single-operation, journaled
      approve/cancel gate. Cancel is the default and leaves the generation
      unchanged (ACQUIRE_NEEDS_APPROVAL). Builder identity and resource
      guards differ by platform; only the selected OS's native current system
@@ -859,20 +855,22 @@ const ENGINE = {
     const mac = App.platform === "macos";
     const sys = App.system();
     const builder = mac
-      ? "managed _nixbld users · Nix Darwin sandbox · sandbox=true · sandbox-fallback=false · RLIMIT/disk/free-space/load guards"
-      : "managed nixbld users · Nix Linux sandbox · sandbox=true · sandbox-fallback=false · cgroups/RLIMIT caps";
+      ? "managed build users · macOS sandbox · fail-closed · no per-build resource cap"
+      : "managed build users · Linux sandbox · fail-closed · no per-build resource cap (cleanup/stats only, not a cap)";
     const guard = mac
-      ? "Darwin isolation primitives differ from and are narrower than Linux's (no cgroups claimed)"
+      ? "Darwin isolation is narrower than Linux's; no per-build cap on either OS (residual)"
       : "fail closed if the managed builder pool or sandbox verification is unhealthy";
     const pre = [
       ["$ pkg install ffmpeg", CL.cmd],
-      ["resolving ffmpeg … ok (attribute ffmpeg, channel seq " + SESSION.channelSeq + ")", CL.pkg],
-      ["preflight: substitution attempted first · 1 closure path has no signed binary on cache.nixos.org", CL.warn],
-      ["  ffmpeg 6.1   closure 320 MB   no " + sys + " binary   est. 8–14 min (sandboxed local build)", CL.warn],
+      ["resolving ffmpeg … ok (package ffmpeg, channel seq " + SESSION.channelSeq + ")", CL.pkg],
+      ["preflight: cache download attempted first · 1 path has no signed binary on cache.nixos.org", CL.warn],
+      ["  ffmpeg 6.1   installed size ~320 MB (heuristic, unbuilt)   no " + sys + " binary   est. 8–14 min (sandboxed local build)", CL.warn],
       ["  builder: " + builder, CL.dim],
       ["  guard:  " + guard, CL.dim],
       ["  no Rosetta · no cross-compile · no emulation · no remote builds", CL.dim],
-      ["new downloads 0 B · new disk 320 MB · free 9.0 GB", CL.dim],
+      ["  BuildPlan covers all outputs the engine may build · approval is single-operation and journaled", CL.dim],
+      ["  build plan digest sha256:f3a9c1b2d8…e7 (illustrative) · policy version 1", CL.dim],
+      ["new downloads 0 B · new disk ~320 MB (heuristic until built) · free 9.0 GB", CL.dim],
     ];
     return {
       pre,
@@ -887,9 +885,10 @@ const ENGINE = {
           const g = newGen(SESSION, "install", "install ffmpeg (local build, " + sys + ")", outs);
           return {
             lines: [
-              ["[nix] local build on " + sys + ": ffmpeg-6.1 · " + builder, CL.nix],
-              ["[nix] build ok · NAR verified · tagged provenance: local-build (not cache-signed)", CL.nix],
-              ["[pkg] approval journaled · staging " + g.id + " → rooted → atomic current swap", CL.pkg],
+              ["[engine] local build on " + sys + ": ffmpeg 6.1 · " + builder, CL.nix],
+              ["[engine] build ok · verified · tagged provenance: local-build (not cache-signed)", CL.nix],
+              ["[pkg] approval journaled to build plan digest sha256:f3a9c1b2d8…e7 · policy version 1", CL.pkg],
+              ["[pkg] staging " + g.id + " → rooted → atomic current swap", CL.pkg],
               ["installed ffmpeg 6.1 → " + g.id + " (active)", CL.ok],
               ["reversible: pkg rollback returns to the previous generation", CL.note],
             ],
@@ -905,7 +904,7 @@ const ENGINE = {
   },
 
   list(){
-    const rows = [["name","version","pinned","source","closure"]];
+    const rows = [["name","version","pinned","source","size"]];
     Object.keys(SESSION.installed).forEach(k => {
       const p = SESSION.installed[k];
       rows.push([k, p.ver, p.pinned ? "yes":"no", p.built ? "local-build":"cache.nixos.org", p.closureMB + " MB"]);
@@ -915,7 +914,7 @@ const ENGINE = {
       ["$ pkg list", CL.cmd],
       ["pkg list — illustrative", CL.dim],
       ...fmtTable(rows),
-      [Object.keys(SESSION.installed).length + " packages · active " + activeGen(SESSION).id + " · closure " + total + " MB", CL.dim],
+      [Object.keys(SESSION.installed).length + " packages · active " + activeGen(SESSION).id + " · installed size " + total + " MB", CL.dim],
     ];
     return { pre: lines };
   },
@@ -947,8 +946,8 @@ const ENGINE = {
     return { pre: [
       ["$ pkg update", CL.cmd],
       ["pkg update — illustrative (metadata only; no packages changed)", CL.dim],
-      ["[nix] fetching TUF timestamp/snapshot/targets … verified", CL.nix],
-      ["[pkg] channel seq → " + SESSION.channelSeq + " (descriptor signed, narHash pinned)", CL.pkg],
+      ["[engine] fetching signed channel metadata … verified", CL.nix],
+      ["[pkg] channel seq → " + SESSION.channelSeq + " (descriptor signed, content hash pinned)", CL.pkg],
       ["[pkg] disposable index refreshed for " + App.system(), CL.pkg],
       ["0 packages changed. Run pkg outdated, then pkg upgrade --all to apply.", CL.note],
     ]};
@@ -964,10 +963,14 @@ const ENGINE = {
     const rows = [["","package","from","to","kind"]];
     keys.forEach(k => { const o = SESSION.outdated[k]; rows.push(["~", k, o.cur, o.avail, o.kind]); });
     const dl = (0.1*keys.length + 0.3).toFixed(1);
+    const pinnedNow = Object.keys(SESSION.installed).filter(k => SESSION.installed[k].pinned);
+    const pinNote = pinnedNow.length
+      ? "pinned packages are skipped (" + pinnedNow.join(", ") + ")"
+      : "no pinned packages";
     return { pre: [
       ["$ pkg upgrade --dry-run --all", CL.cmd],
-      ["pkg upgrade --dry-run — illustrative (no changes made)", CL.dim],
-      ["pinned selectors are skipped (ripgrep)", CL.dim],
+      ["pkg upgrade --dry-run — illustrative (no packages or generation changed)", CL.dim],
+      [pinNote, CL.dim],
       ...fmtTable(rows),
       ["new downloads ~" + dl + " MB · free 9.0 GB", CL.dim],
       ["reversible: pkg rollback returns to " + activeGen(SESSION).id + " in one step", CL.note],
@@ -999,7 +1002,7 @@ const ENGINE = {
           const outs = Object.keys(SESSION.installed);
           const g = newGen(SESSION, "upgrade", "upgrade " + keys.join(", "), outs);
           return { lines: [
-            ["[nix] substituting updated closures from cache.nixos.org (verified)", CL.nix],
+            ["[engine] downloading updated packages from cache.nixos.org (verified)", CL.nix],
             ["[pkg] staging " + g.id + " → rooted → atomic current swap", CL.pkg],
             ["upgraded " + keys.length + " → " + g.id + " (active)", CL.ok],
             ["reversible: pkg rollback returns to " + prev, CL.note],
@@ -1023,7 +1026,7 @@ const ENGINE = {
     const g = newGen(SESSION, "pin", "pin " + target, Object.keys(SESSION.installed));
     return { pre: [
       ["$ pkg pin " + target, CL.cmd],
-      ["[pkg] froze " + target + " to its realized store path (skipped by upgrade --all)", CL.pkg],
+      ["[pkg] froze " + target + " to its current version (skipped by upgrade --all)", CL.pkg],
       ["recorded " + g.id + " (activation byte-identical; history reflects the intent)", CL.ok],
     ]};
   },
@@ -1054,7 +1057,7 @@ const ENGINE = {
       pre,
       gate: {
         kind: "confirm",
-        question: "Remove " + t + "? (its closure becomes eligible for gc)",
+        question: "Remove " + t + "? (its space becomes eligible for gc)",
         approveLabel: "Remove",
         cancelLabel: "Keep",
         approve: () => {
@@ -1094,12 +1097,13 @@ const ENGINE = {
     const cur = activeGen(SESSION);
     const idx = SESSION.gens.indexOf(cur);
     const target = SESSION.gens[idx+1] || SESSION.gens[idx];
-    // rollback creates a NEW monotonic gen referencing the prior activation
+    // rollback creates a NEW monotonic gen that re-materializes the prior
+    // verified activation forest and roots its selected outputs before the swap
     const g = newGen(SESSION, "rollback", "rollback to " + target.id, target.outputs.slice());
     return { pre: [
       ["$ pkg rollback", CL.cmd],
-      ["[pkg] creating " + g.id + " referencing the activation of " + target.id, CL.pkg],
-      ["[pkg] gc root created → atomic current swap", CL.pkg],
+      ["[pkg] creating " + g.id + " from the verified activation forest of " + target.id, CL.pkg],
+      ["[pkg] selected outputs rooted → atomic current swap", CL.pkg],
       ["rolled back to the state of " + target.id + " (active " + g.id + ")", CL.ok],
       ["run pkg rollback again to step back further", CL.note],
     ]};
@@ -1149,7 +1153,7 @@ const ENGINE = {
           SESSION.gens = SESSION.gens.filter(g => !ids.has(g.id));
           return { lines: [
             ["[pkg] removed " + n + " gc roots outside the window", CL.pkg],
-            ["[nix] nix store gc … reclaimed ~" + reclaim + " MB", CL.nix],
+            ["[engine] garbage collection … reclaimed ~" + reclaim + " MB", CL.nix],
             ["active " + activeGen(SESSION).id + " protected; done", CL.ok],
           ], announce: "Garbage collected " + n + " old generations." };
         },
@@ -1159,16 +1163,116 @@ const ENGINE = {
   },
 
   repair(){
+    const sys = App.system();
+    const mac = App.platform === "macos";
     const names = Object.keys(SESSION.installed);
+    const gen = activeGen(SESSION).id;
+    // ---- Phase 0: broker read-only verify (mutates nothing) ----
     const lines = [
       ["$ pkg repair", CL.cmd],
       ["pkg repair — illustrative", CL.dim],
-      ["[pkg] verifying active " + activeGen(SESSION).id + " outputs …", CL.pkg],
-      ["[nix] nix store verify --recursive (NAR integrity) …", CL.nix],
+      ["[pkg] phase 0 · read-only verify of active " + gen, CL.pkg],
+      ["[engine] verifying all paths (integrity + signatures) …", CL.nix],
     ];
-    names.forEach(n => lines.push(["  " + pad(n,10) + " ok   (sigs verified, cache.nixos.org)", CL.ok]));
-    lines.push(["all outputs verified. No re-acquire needed.", CL.ok]);
-    return { pre: lines };
+    names.forEach(n => {
+      const p = SESSION.installed[n] || {};
+      const origin = p.built ? "local-build" : "cache.nixos.org";
+      lines.push(["  " + pad(n,10) + " ok   " + pad(p.ver || "?",9) + " (verified · " + origin + ")", CL.ok]);
+    });
+
+    // damage set (plan 05 §10): cache-hit entries repair automatically (Phase A);
+    // any local-build entry is a cache miss and routes to the approval-gated
+    // Phase B rebuild. Empty set = clean (Phase 0 only, nothing mutated).
+    // Store repair is store-only: it re-acquires or rebuilds damaged store
+    // paths in place and creates/swaps NO generation. Activation-forest and
+    // manifest/lock recovery are separate, subordinate flows.
+    const need = (SESSION.repairNeed || []).slice();
+    const miss = need.filter(x => x.source === "local-build");
+    const hits = need.filter(x => x.source !== "local-build");
+
+    if (!need.length) {
+      lines.push(["phase 0 complete · all outputs verified · closure healthy · no re-acquire needed", CL.ok]);
+      lines.push(["store repair is store-only — no generation created or swapped", CL.note]);
+      return { pre: lines };
+    }
+
+    // Damage found: the closure is unhealthy and dependent mutations are
+    // blocked until a final read-only verify passes. The store-path swap below
+    // is non-atomic (plan 05 §10.6): affected commands may be unavailable or
+    // observe partial content until the swap completes. pkg warns first.
+    const NA = "warning: this store-path swap is non-atomic. Affected commands may be unavailable or observe partial content until the swap completes.";
+    lines.push(["closure unhealthy · dependent mutations blocked until a final read-only verify", CL.warn]);
+    lines.push(["store repair is store-only: activation-forest and manifest/lock recovery are separate, subordinate flows", CL.note]);
+
+    if (!miss.length) {
+      // ---- Phase A: cache-only repair — automatic on a cache hit (no approval) ----
+      lines.push(["[pkg] phase A · cache-only repair · " + hits.length + " output(s) need re-acquire · signed binaries available on cache.nixos.org", CL.warn]);
+      lines.push([NA, CL.warn]);
+      hits.forEach(x => {
+        const p = SESSION.installed[x.name] || {};
+        lines.push(["  [engine] re-acquiring " + x.name + " " + (p.ver || "?") + " from cache.nixos.org (integrity + signatures verified)", CL.nix]);
+      });
+      SESSION.repairNeed = [];
+      lines.push(["[pkg] damaged store paths swapped in place · active generation " + gen + " unchanged", CL.pkg]);
+      lines.push(["[pkg] final read-only verify …", CL.pkg]);
+      hits.forEach(x => lines.push(["  " + pad(x.name,10) + " ok   (verified · cache.nixos.org)", CL.ok]));
+      lines.push(["repair complete · closure healthy · mutations unblocked · no generation created or swapped", CL.ok]);
+      return { pre: lines };
+    }
+
+    // ---- Phase B: approved rebuild fallback — deterministic preview + gate ----
+    const builder = mac
+      ? "managed build users · macOS sandbox · fail-closed · no per-build resource cap"
+      : "managed build users · Linux sandbox · fail-closed · no per-build resource cap (cleanup/stats only, not a cap)";
+    const guard = mac
+      ? "Darwin isolation is narrower than Linux's; no per-build cap on either OS (residual)"
+      : "fail closed if the managed builder pool or sandbox verification is unhealthy";
+    const targets = miss.map(x => x.name).join(", ");
+    lines.push(
+      ["[pkg] phase B · approved rebuild · cache miss · no signed binary on cache.nixos.org for " + sys + ": " + targets, CL.warn],
+      ["  rebuild: " + miss.map(x => x.name + " " + ((SESSION.installed[x.name] || {}).ver || "?")).join("; "), CL.warn],
+      ["  builder: " + builder, CL.dim],
+      ["  guard:  " + guard, CL.dim],
+      ["  no Rosetta · no cross-compile · no emulation · no remote builds", CL.dim],
+      ["  RepairBuildPlan covers all outputs the engine may rebuild · approval is single-operation and journaled", CL.dim],
+      ["  build plan digest sha256:9c2f4a7710…b3 (illustrative) · policy version 1", CL.dim],
+      [NA, CL.warn],
+    );
+    if (hits.length) {
+      lines.push(["  also re-acquiring from cache (no build): " + hits.map(x => x.name).join(", "), CL.dim]);
+    }
+    return {
+      pre: lines,
+      gate: {
+        kind: "build",
+        question: "Rebuild " + targets + " locally in a sandbox to repair? (default: cancel)",
+        approveLabel: "Approve rebuild",
+        cancelLabel: "Cancel",
+        approve: () => {
+          miss.forEach(x => { if (SESSION.installed[x.name]) SESSION.installed[x.name].built = true; });
+          SESSION.repairNeed = [];
+          const r = [
+            [NA, CL.warn],
+            ["[engine] local rebuild on " + sys + ": " + targets + " · " + builder, CL.nix],
+            ["[engine] build ok · verified · tagged provenance: local-build (not cache-signed)", CL.nix],
+          ];
+          if (hits.length) r.push(["[engine] re-acquired " + hits.map(x => x.name).join(", ") + " from cache.nixos.org (verified)", CL.nix]);
+          r.push(
+            ["[pkg] approval journaled to build plan digest sha256:9c2f4a7710…b3 · policy version 1", CL.pkg],
+            ["[pkg] damaged store paths swapped in place · active generation " + gen + " unchanged", CL.pkg],
+            ["[pkg] final read-only verify …", CL.pkg],
+          );
+          miss.forEach(x => r.push(["  " + pad(x.name,10) + " ok   (verified · local-build)", CL.ok]));
+          hits.forEach(x => r.push(["  " + pad(x.name,10) + " ok   (verified · cache.nixos.org)", CL.ok]));
+          r.push(["repair complete · closure healthy · mutations unblocked · no generation created or swapped", CL.ok]);
+          return { lines: r, announce: "Rebuilt and repaired " + targets + "." };
+        },
+        cancel: () => ({ lines: [
+          ["rebuild not approved — exit 68 ACQUIRE_NEEDS_APPROVAL", CL.err],
+          ["store and active generation " + gen + " unchanged; affected outputs remain as last verified. Re-run with approval to complete the repair.", CL.note],
+        ]}),
+      },
+    };
   },
 
   completion(){
@@ -1182,7 +1286,7 @@ const ENGINE = {
       ["  _arguments '*:command:($cmds)' ;; ", CL.dim],
       ["}", CL.dim],
       ["compdef _pkg pkg", CL.dim],
-      ["dynamic attribute completion is deferred in v1 (would eval nixpkgs per keystroke)", CL.note],
+      ["dynamic package-name completion is deferred in v1 (would eval the catalog per keystroke)", CL.note],
     ]};
   },
 };
@@ -1286,22 +1390,22 @@ const DAY_BEATS = [
   { id:"morning",  clock:"09:02", title:"Morning health check", accent:"pkg",
     intent:"Make sure the machine is healthy and see what's fallen behind.",
     chips:[{t:"pkg doctor",k:"pkg"},{t:"pkg outdated",k:"pkg"}],
-    note:"<b>pkg</b> runs the checks and reads its own state; the <b>managed Nix engine</b> answers the store ping and signature status. Nothing is curated, and verification is not absolute.",
+    note:"<b>pkg</b> runs the checks and reads its own state; the <b>managed engine</b> answers the store ping and signature status. Nothing is curated, and verification is not absolute.",
     cmds:["doctor","outdated"] },
   { id:"discover", clock:"10:15", title:"Discover before installing", accent:"pkg",
     intent:"Find a tool and read its metadata before committing.",
     chips:[{t:"pkg search fzf",k:"pkg"},{t:"pkg info fzf",k:"pkg"}],
-    note:"Search and info read the <b>disposable index</b> — display only. Realizability is only confirmed at install, on host.",
+    note:"Search and info read the <b>disposable index</b> — display only. Exact outputs are shown by pkg info --exact, or confirmed at install.",
     cmds:["search","info"] },
   { id:"install",  clock:"10:42", title:"Install a binary package", accent:"pkg",
     intent:"Install fzf from the pinned catalog.",
     chips:[{t:"pkg install fzf",k:"pkg"},{t:"cache.nixos.org",k:"nix"}],
-    note:"<b>pkg</b> resolves, previews, and stages a generation; the <b>Nix engine</b> substitutes the closure and verifies signatures. The previous generation stays recoverable.",
+    note:"<b>pkg</b> resolves, previews, and stages a generation; the <b>engine</b> downloads the packages and verifies signatures. The previous generation stays recoverable.",
     cmds:["install_hit"] },
   { id:"miss",     clock:"11:10", title:"A package with no binary", accent:"nix",
     intent:"Install ffmpeg, which has no signed binary for this system.",
     chips:[{t:"pkg install ffmpeg",k:"pkg"},{t:"preview → approve",k:"nix"},{t:"cancel = default",k:"nix"}],
-    note:"A cache miss opens the <b>same</b> deterministic preview and explicit, per-operation approval on <b>Linux and macOS</b> (cancel is the default; the generation is left unchanged). Builder identity and resource guards differ by platform — try the platform toggle.",
+    note:"A cache miss opens the <b>same</b> deterministic preview and explicit, single-operation approval on <b>Linux and macOS</b> (cancel is the default; the generation is left unchanged). Builder identity and the resource boundary differ by platform (no per-build cap on either OS) — try the platform toggle.",
     cmds:["install_miss"] },
   { id:"pin",      clock:"13:20", title:"Freeze and unfreeze versions", accent:"pkg",
     intent:"Keep a tool pinned while the world moves around it.",
@@ -1316,17 +1420,17 @@ const DAY_BEATS = [
   { id:"inspect",  clock:"16:10", title:"Inspect and tidy state", accent:"pkg",
     intent:"See what's installed and remove something unused.",
     chips:[{t:"pkg list",k:"pkg"},{t:"pkg remove bat",k:"pkg"}],
-    note:"<b>list</b> reads pkg's own lock, not Nix's profile. Removing re-builds a generation; the closure is reclaimed later by gc.",
+    note:"<b>list</b> reads pkg's own lock, not Nix's profile. Removing re-builds a generation; its space is reclaimed later by gc.",
     cmds:["list","remove"] },
   { id:"recover",  clock:"17:35", title:"End-of-day rollback", accent:"recover",
     intent:"Today's upgrade didn't feel right — step back.",
     chips:[{t:"pkg history",k:"pkg"},{t:"pkg rollback",k:"pkg"}],
-    note:"Rollback creates a <b>new monotonic generation</b> referencing a prior activation. History stays linear; nothing is destroyed.",
+    note:"Rollback creates a <b>new monotonic generation</b> that re-materializes a prior verified activation forest and roots its selected outputs. History stays linear; nothing is destroyed.",
     cmds:["history","rollback"] },
   { id:"cleanup",  clock:"18:00", title:"Cleanup, repair, and shell help", accent:"recover",
     intent:"Reclaim space, verify the store, and enable shell completion.",
     chips:[{t:"pkg gc --dry-run",k:"pkg"},{t:"pkg gc",k:"pkg"},{t:"pkg repair",k:"nix"},{t:"pkg completion zsh",k:"pkg"}],
-    note:"<b>gc</b> prunes out-of-window generations then asks the Nix engine to collect. <b>repair</b> re-verifies NAR integrity. The active generation is never pruned.",
+    note:"<b>gc</b> prunes out-of-window generations then asks the engine to collect. <b>repair</b> runs a read-only Phase 0 verify; on a cache hit it re-acquires automatically (Phase A), on a cache miss it previews a sandboxed rebuild and asks before executing (Phase B). Store repair swaps damaged store paths in place — it creates or swaps no generation; activation-forest and manifest/lock recovery are separate. The active generation is never pruned.",
     cmds:["gc_dry","gc","repair","completion"] },
 ];
 
@@ -1435,6 +1539,13 @@ const SCENARIOS = [
   { id:"reversible", title:"Reversible upgrade", sub:"update → dry-run → upgrade", cmds:["update","upgrade_dry","upgrade"] },
   { id:"regret", title:"Rollback after regret", sub:"history → rollback", cmds:["history","rollback"] },
   { id:"cleanup", title:"End-of-day cleanup", sub:"gc dry-run → gc → repair", cmds:["gc_dry","gc","repair"] },
+  { id:"repair-clean", title:"Repair: clean", sub:"phase 0 verify · nothing to do",
+    setup:(s)=>{ s.repairNeed = []; }, cmds:["repair"] },
+  { id:"repair-hit", title:"Repair: cache-hit", sub:"phase A · auto re-acquire",
+    setup:(s)=>{ s.repairNeed = [{ name:"ripgrep", source:"cache.nixos.org" }]; }, cmds:["repair"] },
+  { id:"repair-miss", title:"Repair: cache-miss", sub:"phase B · preview → cancel / approve",
+    setup:(s)=>{ if(!s.installed.ffmpeg) s.installed.ffmpeg = { ver:"6.1", attr:"ffmpeg", pinned:false, closureMB:320, built:true }; s.repairNeed = [{ name:"ffmpeg", source:"local-build" }]; },
+    cmds:["repair"], interactive:true },
 ];
 
 let deskTerm = null;
@@ -1469,6 +1580,14 @@ function buildVariantB(){
 
 function runScenario(term, s){
   term.clear();
+  if (s.setup) { try { s.setup(SESSION); } catch(e){} }
+  // Interactive scenarios surface the gate live (Cancel is the focused/default
+  // action, Approve executes) so the Phase B cancel/approve outcomes are
+  // demonstrable by hand; non-interactive scenarios take the approve happy path.
+  if (s.interactive && s.cmds[0]) {
+    runPlan(term, s.cmds[0]);
+    return;
+  }
   s.cmds.forEach(cmdKey => {
     const plan = ENGINE[cmdKey] ? ENGINE[cmdKey]() : { pre:[["(no output)", CL.dim]] };
     term.addLines(plan.pre);
@@ -1494,7 +1613,7 @@ function buildDeskContext(){
   const legend2 = el("div", { class:"panel" }, [
     el("h3",{text:"What just happened"}),
     el("div",{class:"role pkg",style:"font-size:.82rem"},[ el("div",{class:"bar"}), el("div",[ el("b",{text:"pkg"}), el("span",{text:" resolved, previewed, staged a generation, swapped current, recorded a receipt."}) ])]),
-    el("div",{class:"role nix",style:"font-size:.82rem"},[ el("div",{class:"bar"}), el("div",[ el("b",{text:"nix engine"}), el("span",{text:" fetched from cache.nixos.org, verified NAR + signatures, wrote /nix/store."}) ])]),
+    el("div",{class:"role nix",style:"font-size:.82rem"},[ el("div",{class:"bar"}), el("div",[ el("b",{text:"engine"}), el("span",{text:" downloaded from cache.nixos.org, verified integrity + signatures, wrote the managed store."}) ])]),
     el("div",{class:"role intent",style:"font-size:.82rem"},[ el("div",{class:"bar"}), el("div",[ el("b",{text:"you"}), el("span",{text:" typed one familiar command. No raw Nix was exposed."}) ])]),
   ]);
   root.append(legend2);
@@ -1508,48 +1627,48 @@ const STATIONS = {
     title:"Signed / pinned Nixpkgs input",
     blurb:"The catalog is exactly one Nixpkgs revision, pinned by a signed channel descriptor. There are no floating channels or overlays.",
     intent:"(indirect) you get reproducibility for free; you never type a rev.",
-    pkg:"pkg accepts only the descriptor's pinned rev + narHash; pkg update refreshes the signed descriptor via TUF.",
-    nix:"the engine fetches the pinned source and verifies its narHash against the descriptor.",
+    pkg:"pkg accepts only the descriptor's pinned revision + content hash; pkg update refreshes the signed descriptor.",
+    nix:"the engine fetches the pinned source and verifies its content hash against the descriptor.",
     cmds:["update"],
   },
   cache: {
     title:"Cache lookup",
-    blurb:"For every path in the recursive closure, pkg asks whether a signed binary exists on cache.nixos.org. One missing path means a build is required.",
+    blurb:"For every path in the package set, pkg asks whether a signed binary exists on cache.nixos.org. One missing path means a build is required.",
     intent:"pkg install <name>  /  pkg upgrade --all",
-    pkg:"pkg classifies the whole closure up front, so it never reports “binary available” unless every path is a hit.",
-    nix:"the engine probes narInfo on cache.nixos.org (the only cache in v1).",
+    pkg:"pkg classifies the whole package set up front, so it never reports “binary available” unless every path is a hit.",
+    nix:"the engine checks cache.nixos.org for each path (the only cache in v1).",
     cmds:["install_hit"],
   },
   verify: {
-    title:"Verified closure",
-    blurb:"Identity is the content-addressed store path — not pname@version. Every path is checked for NAR integrity and required signatures before it can activate.",
+    title:"Verified packages",
+    blurb:"Identity is the verified output — not just name@version. Every output is checked for integrity and required signatures before it can activate.",
     intent:"(automatic) nothing activates unverified.",
-    pkg:"pkg keys its lock and generations on the store path; display metadata is never an identity.",
-    nix:"the engine runs NAR + signature verification; a mismatch aborts the operation.",
+    pkg:"pkg keys its lock and generations on verified output identity; display metadata is never an identity.",
+    nix:"the engine verifies integrity + signatures; a mismatch aborts the operation.",
     cmds:["repair"],
   },
   "build-preview": {
     title:"Build preview & approval",
-    blurb:"On a cache miss, pkg shows a deterministic preview (closure size, inputs, time estimate) and asks for explicit, per-operation approval. The same gate runs on Linux and macOS; cancel is the default and the generation is left unchanged.",
-    intent:"approve or cancel the local build (cancel is the default).",
-    pkg:"pkg presents the preview and gates the operation; approval is per-operation and journaled.",
-    nix:"no build runs until you approve. Builder identity and resource guards depend on the selected OS.",
+    blurb:"On a cache miss, pkg shows a deterministic plan (digest, inputs) plus a heuristic size and time estimate, and asks for explicit, single-operation approval bound to the BuildPlan digest + policy version. The same gate runs on Linux and macOS; cancel is the default and the generation is left unchanged.",
+    intent:"approve or cancel the local build (cancel is the default; --yes pre-approves that one op but never overrides a hard refusal).",
+    pkg:"pkg presents the preview and gates the operation; approval is single-operation and journaled.",
+    nix:"no build runs until you approve. Builder identity and the resource boundary depend on the selected OS; no per-build cap.",
     cmds:["install_miss"],
   },
   "build-run": {
     title:"Sandboxed local build",
-    blurb:"After approval, the engine builds only the selected platform's native current system in a sandbox with managed build users and resource caps. The resulting path is tagged local-build, not cache-signed.",
+    blurb:"After approval, the engine builds only the selected platform's native current system in a sandbox with managed build users. The engine provides no per-build memory/CPU/IO cap (concurrency is bounded; daemon time bounds; preflight checks); resource exhaustion is a disclosed residual. The resulting output is tagged local-build, not cache-signed.",
     intent:"(you already approved) wait for the build.",
     pkg:"pkg records provenance: local-build in the lock, never claimed to be cache-signed.",
-    nix:"Linux: managed nixbld users, Nix Linux sandbox, sandbox=true/fallback=false, cgroups/RLIMIT caps. macOS: managed _nixbld users, Nix Darwin sandbox, same sandbox flags, RLIMIT/disk/free-space/load guards (narrower than Linux's). No Rosetta, cross-compile, emulation, or remote builds.",
+    nix:"Linux: managed build users, the engine's own Linux sandbox, fail-closed; process grouping is cleanup/statistics only, not a resource cap; regular builds run offline while content-addressed inputs may fetch against their hash. macOS: managed build users, the engine's macOS sandbox, same fail-closed posture, no per-build resource cap. No Rosetta, cross-compile, emulation, or remote builds.",
     cmds:["install_miss"],
   },
   activate: {
     title:"Generation activation",
-    blurb:"pkg writes an immutable generation record, creates its GC root, then atomically swaps current. A failed operation leaves the previous generation active.",
+    blurb:"pkg materializes a deterministic per-generation symlink forest outside the managed store from the already-verified selected outputs, completes its per-output GC roots, then atomically swaps current. Nix is invoked zero times during activation. A failed operation leaves the previous generation active.",
     intent:"pkg install / upgrade / remove / rollback (the commit step).",
-    pkg:"pkg owns manifest, lock, generations, activation, and GC roots; the root is created before the swap.",
-    nix:"the engine materialises the buildEnv activation tree in /nix/store.",
+    pkg:"pkg owns manifest, lock, generations, activation, and GC roots. Rust/pkg materializes the per-generation symlink forest outside the managed store and completes per-output GC roots before the atomic current swap.",
+    nix:"(none) Nix is invoked zero times during activation; the selected outputs were already verified upstream.",
     cmds:["install_hit","upgrade"],
   },
   history: {
@@ -1562,10 +1681,10 @@ const STATIONS = {
   },
   rollback: {
     title:"Rollback",
-    blurb:"Rollback creates a new monotonic generation that references a prior activation's store path. Nothing is destroyed; history stays linear.",
+    blurb:"Rollback creates a new monotonic generation, re-materializes the prior verified forest in user state, publishes a fresh per-output root set, then swaps current. Nothing is destroyed; history stays linear.",
     intent:"pkg rollback  (safe; no confirmation needed)",
-    pkg:"pkg creates the new row, ensures its GC root, and swaps current atomically.",
-    nix:"(none) the prior activation is already rooted in /nix/store.",
+    pkg:"pkg creates the new row, re-materializes the prior verified forest in user state (outside the managed store), publishes a fresh per-output root set, then swaps current atomically.",
+    nix:"the engine may verify the selected outputs are still present in the managed store; it does not materialize the activation forest (Nix is invoked zero times for rollback).",
     cmds:["rollback"],
   },
   gc: {
@@ -1573,7 +1692,7 @@ const STATIONS = {
     blurb:"gc prunes generations outside the retention window, removes their GC roots, then asks the engine to collect. The active generation is never pruned.",
     intent:"pkg gc --dry-run  /  pkg gc",
     pkg:"pkg decides what to prune; the active generation is always protected.",
-    nix:"the engine runs the collector over /nix/store; only unrooted paths are reclaimable.",
+    nix:"the engine runs the collector over the managed store; only unrooted paths are reclaimable.",
     cmds:["gc_dry","gc"],
   },
 };
@@ -1620,7 +1739,7 @@ function selectStation(key){
   roles.append(
     roleRow("intent","You", s.intent),
     roleRow("pkg","pkg", s.pkg),
-    roleRow("nix","Nix engine (hidden)", s.nix),
+    roleRow("nix","engine (hidden)", s.nix),
   );
   // run the station's illustrative command(s) — interactive (gates honoured)
   if (cTerm && s.cmds && s.cmds.length) {
@@ -1647,8 +1766,8 @@ function refreshMapSpur(){
   // The build spur is active on both platforms; its label changes by platform
   // without implying identical sandbox primitives. No macOS dimming.
   if (note) note.textContent = mac
-    ? "macOS · _nixbld users, Nix Darwin sandbox, RLIMIT/disk/free-space/load guards (narrower than Linux)"
-    : "Linux · nixbld users, Nix Linux sandbox, cgroups/RLIMIT caps, sandbox=true";
+    ? "macOS · managed build users · macOS sandbox · no per-build cap (narrower than Linux)"
+    : "Linux · managed build users · Linux sandbox · no per-build cap (cleanup/stats only, not a cap)";
 }
 
 /* ===========================================================================

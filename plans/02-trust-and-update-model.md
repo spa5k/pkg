@@ -25,7 +25,7 @@ The Nixpkgs *source* fetch mechanics (doc 03); the index *derivation* algorithm 
 
 ## 4. Invariants (trust/update-specific)
 
-- **TRU-INV-01** No descriptor, Nix tarball, Nixpkgs source, or index is ever used before its TUF-authenticated target hash matches (INV-09).
+- **TRU-INV-01** No descriptor, Nix tarball, or index is ever used before its TUF-authenticated target hash matches (INV-09); no Nixpkgs source is ever used before the descriptor-authenticated `rev`/`narHash` is verified by the bundled Nix flake fetcher (doc 03 §6.2).
 - **TRU-INV-02** Users cannot supply or override trust keys, substituters, or the TUF root at runtime (D-10, INV-03).
 - **TRU-INV-03** A newer descriptor is accepted only if its `sequence` is strictly greater **and** its TUF metadata version counters are greater than the stored ones (rollback protection).
 - **TRU-INV-04** A descriptor past `expiresAt` is refused for *new* installs; cached use is bounded by the offline grace policy (UD-02.1).
@@ -70,17 +70,15 @@ flowchart TD
   Root --> Snapshot["snapshot.json<br/>(binds all versions)"]
   Root --> Timestamp["timestamp.json<br/>(short expiry, frequent)"]
   TargetsRoot --> D1["delegate: nix-runtime targets<br/>(Nix tarballs per system)"]
-  TargetsRoot --> D2["delegate: nixpkgs-source targets<br/>(source tarball @ rev)"]
-  TargetsRoot --> D3["delegate: index targets<br/>(per-system index files)"]
-  TargetsRoot --> D4["target: descriptor.json itself"]
+  TargetsRoot --> D2["delegate: index targets<br/>(per-system index files)"]
+  TargetsRoot --> D3["target: descriptor.json itself"]
 ```
 
 - **Targets (the "small target set"):**
   1. `descriptor.json` — the channel descriptor (§7). Its *integrity* is guaranteed by being a TUF target; its *semantic fields* are policy.
   2. `nix/<version>/<system>.tar.xz` — the bundled Nix runtime per system (✅ from `releases.nixos.org`).
-  3. `nixpkgs/<rev>/src.tar.gz` — the pinned catalog source (doc 03).
-  4. `index/<seq>/<system>.json{,.br}` — the derived catalog index (doc 03).
-- 🛠 **Mirroring:** `pkg` fetches TUF metadata from the product's metadata origin (HTTPS, pinned in the binary). The *artifacts* (2–4) may be served from the product CDN or transparently mirrored; transport is untrusted (TRU-INV-06). `cache.nixos.org` is **not** used for metadata or for the runtime/index/source — only for **substituting built store paths** (§6.5).
+  3. `index/<seq>/<system>.json{,.br}` — the derived catalog index (doc 03).
+- 🛠 **Mirroring:** `pkg` fetches TUF metadata from the product's metadata origin (HTTPS, pinned in the binary). The *artifacts* (2–3) may be served from the product CDN or transparently mirrored; transport is untrusted (TRU-INV-06). The Nixpkgs **source** is acquired separately via the bundled Nix flake fetcher (doc 03 §6.2), not as a product-published artifact. `cache.nixos.org` is **not** used for metadata or for the runtime/index — only for **substituting built store paths** (§6.5).
 
 ### 6.5 cache.nixos.org role (D-10)
 
@@ -124,8 +122,7 @@ This is the schema referenced by doc 01 §10.4 and consumed by docs 03/04/05/10.
     "owner": "NixOS",
     "repo": "nixpkgs",
     "rev": "abc123…",
-    "narHash": "sha256-…",
-    "sourceTarget": "nixpkgs/<rev>/src.tar.gz"
+    "narHash": "sha256-…"
   },
   "index": {
     "source": "self-built",                  // or "upstream-packages-json-br"
@@ -155,7 +152,8 @@ Field semantics:
   - `prompt` — preview + explicit single-operation approval required (the approval dimension of `allow-with-gates` without asserting the security gates).
   - `deny` — substitution only; a cache miss that cannot be resolved is `ACQUIRE_NO_BINARY`.
   A system with no entry (e.g. a non-native `system`) is implicitly `deny`: v1 never builds for it locally.
-- `nixRuntime`/`nixpkgs`/`index` — each entry is a **TUF target**; the `url`/`sha256`/`narHash`/`target` values must match the hash recorded in the corresponding TUF `targets`/delegation metadata. `pkg` cross-checks both (defense in depth).
+- `nixRuntime`/`index` — each entry is a **TUF target**; the `url`/`sha256`/`target` values must match the hash recorded in the corresponding TUF `targets`/delegation metadata. `pkg` cross-checks both (defense in depth).
+- `nixpkgs` — **not** a separately published source artifact. Its `owner`/`repo`/`rev`/`narHash` are authenticated transitively (the descriptor is itself a TUF target); the bundled Nix flake fetcher enforces `locked.rev`/`locked.narHash` against the descriptor at fetch time (doc 03 §6.2).
 - `substituters` — pinned per D-10; baked into the bundled `nix.conf` (doc 01 §11).
 
 > The descriptor is itself signed as a TUF target. We do **not** add a second ad-hoc signature layer on the descriptor (that would be the "TUF-lite" custom crypto D-09 forbids). TUF is the single trust mechanism.

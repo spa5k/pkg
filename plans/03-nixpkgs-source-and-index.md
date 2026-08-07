@@ -44,21 +44,23 @@ The descriptor (doc 02 §7) provides:
 "nixpkgs": {
   "owner": "NixOS", "repo": "nixpkgs",
   "rev": "<40-char git sha>",
-  "narHash": "sha256-...",
-  "sourceTarget": "nixpkgs/<rev>/src.tar.gz"
+  "narHash": "sha256-..."
 }
 ```
 
 ### 6.2 How we fetch and verify
 
-✅ Nixpkgs is consumed as a flake input `github:NixOS/nixpkgs/<rev>`; its content is authenticated by the flake `narHash` (SRI). — *Nix Reference Manual, `nix3-flake`, `nix3-flake-metadata`; flake.lock format.*
+✅ Nixpkgs is consumed as a flake input; the **descriptor pins the exact source identity** (`owner`/`repo`/`rev` + `narHash`). **Authenticity comes from the signed descriptor/TUF (doc 02), not from `narHash` alone**; the flake `narHash` (SRI) provides **content identity/integrity** and is enforced by Nix's own fetcher when carried in the locked ref (§6.2). — *Nix Reference Manual, `nix3-flake`, `nix3-flake-metadata`; flake.lock format.*
 
-⚠️ **S4 (a)** The `narHash` of `github:owner/repo/<rev>` (flake tarball) differs from the raw `https://github.com/.../archive/<rev>.tar.gz` hash because flakes normalize the source. `pkg` therefore **fetches via the flake fetcher** (`nix flake metadata github:NixOS/nixpkgs/<rev> --json`) and verifies the returned `locks…nar` against `descriptor.nixpkgs.narHash`, rather than hashing a GitHub archive directly. (Default; verified in spike.)
+⚠️ **S4 (a)** The `narHash` of `github:owner/repo/<rev>` (flake tarball) differs from the raw `https://github.com/.../archive/<rev>.tar.gz` hash because flakes normalize the source. `pkg` therefore **fetches via the flake fetcher** (`nix flake metadata`) and verifies the returned **top-level `locked.narHash`** against `descriptor.nixpkgs.narHash`, rather than hashing a GitHub archive directly. (Default; verified in spike.)
 
-🛠 Concrete steps (owned here, consumed by docs 01/04):
-1. `nix flake metadata github:NixOS/nixpkgs/<rev> --json` → read `locks.nodes.nixpkgs.locked.rev` and `…nar` (or `narHash`).
-2. Assert `rev == descriptor.nixpkgs.rev` and `nar == descriptor.nixpkgs.narHash`. (CAT-INV-01; if either mismatches → abort, this is a trust event.)
-3. The fetched source is materialized under the Nix store by Nix; we cache a reference at `/var/lib/pkg/nixpkgs/<rev>/` (a marker + the flake-ref) for index derivation. The authoritative copy lives in `/nix/store` (Nix-managed).
+🛠 **Normative adapter contract (Nix 2.34.8).** `nix flake metadata <direct-locked-ref> --json` emits a **top-level** `locked` object (fetcher attrs, including `rev` and `narHash`), plus top-level `revision`, `path`, `url`, `original`/`resolved`, `locks`, and `fingerprint`. For a **direct** `github:<owner>/<repo>/<rev>` flake the pinned-input identity is the **top-level** `locked.rev` and `locked.narHash` — **not** `locks.nodes.<name>.locked.*`: `locks` is the input lock graph, and for a direct root flake there is **no** guarantee a node is literally named `nixpkgs` (a direct root has no such child node). The exact key is **`narHash`**, never `nar`. — *Verified against Nix 2.34.8 `src/nix/flake.cc` / `src/nix/flake-metadata.md`.*
+
+🛠 Concrete steps (owned here; exact fixed argv/env owned by doc 01 §11.1 / the single `nix-driver` adapter):
+1. **Build the direct locked ref** from the signed descriptor's exact `owner`/`repo`/`rev` (taken verbatim from the verified descriptor — no caller-supplied URL), and include the descriptor `narHash` in the ref query — `github:<owner>/<repo>/<rev>?narHash=<sri>` — so **Nix's own fetcher enforces** content identity during the fetch.
+2. Invoke `nix flake metadata <that-ref> --json` with **fixed argv** and a **scrubbed `pkg`-controlled environment** (ARCH-INV-02): no `NIX_PATH`/`NIXPKGS_*`/user flake config, `--no-registries` so the literal direct ref is resolved rather than a registry mapping, **no mutable channel**, and **no lockfile write** (`metadata` against a direct ref performs no `flake.lock` write). Run inside the adapter only.
+3. **Compare before any use.** Read the top-level `locked.rev` and `locked.narHash`; if a top-level `revision` is also present, assert `revision == locked.rev`. Then independently assert `locked.rev == descriptor.nixpkgs.rev` **and** `locked.narHash == descriptor.nixpkgs.narHash`. (CAT-INV-01; any mismatch → abort and surface as a **trust event** — **no** evaluation or index build runs on an unverified source.)
+4. **Only after identity comparison succeeds**, treat the top-level `path` as a **private typed `StorePath`** (held inside the adapter, never echoed to public output or logs). Nix materializes the source under `/nix/store`; `pkg` caches a private reference at `/var/lib/pkg/nixpkgs/<rev>/` (a **marker**, not a raw flake-ref or store path) for index derivation. The authoritative copy is Nix-managed in `/nix/store`.
 
 ### 6.3 Why not `NIX_PATH` / `nixpkgs` channel
 
@@ -176,26 +178,71 @@ This is the contract doc 04 implements. It is the **only** place `pkg` decides a
 
 The resolver maps a user selector (D-13) to one or more candidate `attrPath`s using the index (§7), then disambiguates (e.g. prefer top-level over `python3Packages.x`; resolve aliases). The resolver may yield **multiple candidates** → doc 06 owns the UX; doc 04 owns the algorithm.
 
-### 9.2 Realize the exact attribute on this host (CAT-INV-03)
+### 9.2 Evaluate the exact attribute into a derivation plan (CAT-INV-03) — evaluate-only, no realization
+
+Resolve and preflight **must not realize outputs**: there is **no** `nix build`, **no**
+output store-path materialization, and Import-From-Derivation (IFD) is **disabled**
+during resolve/preflight. The on-host evaluation step that turns an attribute into an
+authoritative **derivation plan** uses only `nix derivation show --recursive` against the
+exact pinned installable, then validates the returned v4 envelope
+(`{"version":4,"derivations":{"<drvPath>":{…}}}`) by reading the top-level `version`
+field (`4` for the pinned Nix 2.34.8 runtime); `nix derivation show` emits JSON
+unconditionally and takes **no** `--json` or `--json-format` flag in 2.34.8, so the
+`version` is read from the envelope, not negotiated on the command line. **Output realization** — actual store
+paths, `narHash`, references, and signatures — is recorded **only after acquire**
+has brought the paths into the store (§9.2.1 / doc 04 §5.3–§5.4), never in
+resolve/preflight.
 
 ```mermaid
 sequenceDiagram
-  participant R as resolver
+  participant R as resolver/preflight
   participant N as nix-driver→daemon
-  R->>N: nix build github:NixOS/nixpkgs/<rev>?narHash=<h>#<attrPath> --no-link --print-out-paths --json
-  N-->>R: { outputs: { out: "/nix/store/...-<pname>-<version>" } }
-  R->>N: nix store path-info --json --recursive <out>
-  N-->>R: [ { path, narHash, references, closureSize, sigs } ]
-  Note over R: realization = { attrPath, outputs, drvPath, narHash, ... }
+  R->>N: nix derivation show --recursive \
+      github:NixOS/nixpkgs/<rev>?narHash=<h>#legacyPackages.<system>.<attrPath>
+  N-->>R: { "version": 4,
+            "derivations": { "<top-drv>": { name, outputs, inputDrvs, inputSrcs, platform, env, ... },
+                             "<dep-drv>": { ... }, ... } }   # v4 envelope, derivation docs only — NOT realized store paths
+  Note over R: plan = { attrPath, sorted evaluated derivations/outputs,<br/>readiness, resource/admission settings }  # feeds BuildPlan (doc 04 §5.2.1)
 ```
 
-- ✅ `nix build … --print-out-paths --json` returns the realized output path(s) without creating a `result` link; substitution from `cache.nixos.org` happens automatically per the `pkg`-controlled `nix.conf`. — *Nix Reference Manual, `nix3-build`.*
-- ✅ `nix store path-info --json --recursive` yields per-path `narHash` (SRI), references, and closure size — the data `pkg` records in the lock (doc 01 §10.2). — *Nix Reference Manual, `nix3-store-path-info`.*
-- 🛠 The `narHash` and `sigs` from `path-info` are how `pkg` later confirms a path is present and (via Nix's own substitution-trust) trustworthy. `pkg` does not re-implement Nix signature verification (D-10).
+- ✅ `nix derivation show --recursive` returns the **derivation documents** for the attribute and its build closure **without realizing any output** — it performs evaluation only, never a build or substitution, and emits JSON unconditionally (it takes **no** `--json` flag). — *Nix Reference Manual, `nix3-derivation-show` (`--recursive`); top-level envelope `{"version":4,"derivations":{…}}`.*
+- 🛠 **No realization, no IFD.** The `pkg`-controlled `nix.conf` evaluates with `allow-import-from-derivation = false` and `restrict-eval` discipline enforced by the adapter (doc 01 §11.1), so the recursive derivation set is obtained purely by evaluation. Resolve and preflight never issue `nix build` and never read realized store-path identity. The derivation `outputs[*].path` values surfaced by `derivation show` are the **expected** (input-addressed) paths, used to assemble the deterministic `BuildPlan`, **not** a trust statement that the paths exist or are realized.
+- 🛠 **Derivation JSON `version` validation.** The adapter validates the envelope's top-level `version` field (`4` for the pinned Nix 2.34.8 runtime) and rejects an unsupported/unknown value; because `nix derivation show` emits JSON unconditionally and takes **no** `--json`/`--json-format` flag in 2.34.8, the `version` is read from the envelope, not negotiated on the command line. (Wire-format validation is owned by doc 01 §11 / doc 09 §4.2.)
+- 🛠 The **sorted evaluated derivation set** produced here is the deterministic core of the canonical `BuildPlan` digest (doc 04 §5.2.1, RFC 8785). It is re-derived immediately before any approved local build (doc 04 §5.3) and compared by digest.
+
+### 9.2.1 Realization identity is recorded post-acquire (CAT-INV-03)
+
+The actual **realized identity** (`storePath`, `narHash`, references, `closureSize`,
+signatures, and per-output **provenance** — `cache-signed` vs `local-build`) is obtained
+**only after acquire** has realized the paths in the store. Doc 04 acquire owns this:
+first a pure-substitution pass (internal **`max-jobs = 0`**, no local build), then — only
+for a cache miss with one-operation approval **and** the machine-global build admission
+lease — an approved native local build (Linux and macOS, native system only; internal
+**`max-jobs = 1`**; full build policy in §9.3). After the paths are realized, doc 04 §5.4
+records the realization identity via the **root-level** `nix path-info`:
+
+```mermaid
+sequenceDiagram
+  participant A as acquire (doc 04)
+  participant N as nix-driver→daemon
+  A->>N: (post-realization) nix path-info --json --json-format 2 --recursive <out>
+  N-->>A: { "version": 2, "storeDir": "/nix/store",<br/>"info": { "<base>": { narHash, narSize, references, deriver, signatures } } }   # versioned v2 envelope
+  Note over A: realization = { attrPath, outputs, drvPath, narHash, sigs, provenance, ... }  # -> lock (doc 05 §5.2)
+```
+
+- ✅ The **root-level** `nix path-info --json --json-format 2 --recursive` returns a **versioned v2 envelope** (`{"version":2,"storeDir":"/nix/store","info":{"<base>":{…}}}`) whose per-path entries already carry `narHash` (SRI), `narSize`, `references`, the optional `deriver`, and `signatures` — **no `--deriver` flag exists** in 2.34.8. This is the data `pkg` records in the lock (doc 01 §10.2 / doc 05 §5.2) **after** the path is realized in acquire. The adapter validates the v2 envelope (top-level `version` field = 2, `storeDir` = `/nix/store`) and promotes it to the validated `PathInfoReport` (doc 01 §11 / doc 09 §4.1/§4.2). — *Nix Reference Manual, `nix3-path-info` (`--recursive`, `--json`, `--json-format 2`).*
+- 🛠 The `narHash`, `signatures`, and **provenance** from this step are how `pkg` later confirms a path is present, how it was acquired (cache-signed vs local-build), and (via Nix's own substitution-trust) that it is trustworthy. `pkg` does not re-implement Nix signature verification (D-10).
 
 ### 9.3 Cache-miss build policy is cross-platform (D-11, CAT-INV-05)
 
-On **any** v1 system (`*-linux`, `*-darwin`), substitution from `cache.nixos.org` is tried first and preferred. A cache miss is **not** automatically an error: it triggers the **explicit local-build preview/approval** flow owned by doc 04 (closure, derivations/source inputs, download bytes, resource estimate or explicit unknowns, target system, sandbox status). After explicit single-operation approval, `pkg` runs `nix build … --substituters "" --builders ""` (force local) for the host's **native** system only — no Rosetta, cross-compilation, emulation, or remote builders in v1.
+On **any** v1 system (`*-linux`, `*-darwin`), substitution from `cache.nixos.org` is tried first and preferred. A cache miss is **not** automatically an error: it triggers the **explicit local-build preview/approval** flow owned by doc 04 (closure, derivations/source inputs, download bytes, resource estimate or explicit unknowns, target system, sandbox status).
+
+🛠 **No force-local CLI flags.** The root-owned, channel-locked `/opt/pkg/etc/pkg/nix.conf` (INV-03) is the **sole** authority for trust/build policy: it fixes `substituters`/`trusted-public-keys` to the channel set and sets **`builders =`** (empty), so there is **no** `nix build … --substituters "" --builders ""` force-local forcing anywhere in `pkg`. Acquisition is split by an **internal `max-jobs` policy**, never by per-call flags:
+
+- **Cache-only acquisition** runs with internal **`max-jobs = 0`** — only the daemon's pinned substituters may satisfy a path, and `pkg` classifies each closure path against the managed cache up front via **private, policy-fixed NarInfo / `--store <managed-cache>` queries** (never a local `path-info` against an unrealized path, and **never** a caller-provided cache URL).
+- **Approved local build** — only after the canonical `BuildPlan` is approved **and** the machine-global build admission lease is held (doc 04 §5.3.1) — runs with internal **`max-jobs = 1`** over **explicit derived targets** (typed `DerivedOutputTarget` values that the adapter renders **privately** as `x.drv^out,man` or `x.drv^*`, using a validated **nonempty** output selection; a bare `/nix/store/x.drv` is parsed by Nix as an opaque store path and does **not** select or build outputs, so `pkg` never hands one to a build). Build is for the host's **native** system only — no Rosetta, cross-compilation, emulation, or remote builders in v1.
+
+🛠 **Race-safe cache reappearance + per-output provenance.** Between cache classification and the approved build, the managed cache may gain a substitute for a previously-missing path. Because trust/substituters stay channel-pinned (not blanked), a build under `max-jobs = 1` is free to **accept** such a substitute — accepting a cache-signed path is **safer** than a local build — and `pkg` records the **actual per-output provenance** (`cache-signed` vs `local-build`) for every output it realizes. If the miss set has shifted by the time the lease is held: **some** misses still require building → re-derive the `BuildPlan`, compare digests (the changed cache class changes the digest, doc 09 AC-S15), and re-approve; **no** misses remain → the build/approval is **not consumed** (the operation resolves by substitution alone, no build issued). The `BuildApprovalReceipt` binds the operation id + the exact `BuildPlan` digest + `policyVersion`; the digest is re-checked under the lease before any build.
 
 The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there is no acceptable substitute **and** building is impossible or disallowed for a concrete reason — e.g. the package is `meta.broken`/unsupported on this `system`, the derivation requires forbidden impurity or unsandboxed execution, the sandbox or build users cannot be made ready, or the descriptor's `buildPolicy` denies the system. A cache miss on `*-darwin` is therefore **not** grounds for `ACQUIRE_NO_BINARY` by itself; macOS local builds are explicitly allowed (D-11) and require the same gates as Linux.
 
@@ -219,11 +266,11 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 |---|---|---|
 | Index missing for `(seq,system)` | file absent / hash mismatch (CAT-INV-02) | Disposable: re-download from TUF target; if unavailable, **Option B** self-build; if that fails, degrade search/info to "index unavailable" but **do not** block install (install uses on-host eval directly). |
 | Index corrupt | hash mismatch | Discard; rebuild/refetch. Never partial-use. |
-| On-host eval: attr not found | `nix build` error (attr undefined) | Map to "not found" (check selector/alias; doc 04). |
+| On-host eval: attr not found | `nix derivation show` error (attr undefined) | Map to "not found" (check selector/alias; doc 04). |
 | On-host eval: ambiguous attr | resolver yields >1 candidate | Disambiguate via doc 04; doc 06 presents choice. |
 | On-host eval: `broken`/unsupported | eval error / `meta.broken` | Structured error; on Linux may offer nothing (it's broken), on macOS binary-miss is separate. |
 | On-host eval: substitution miss (any v1 system) | build cannot substitute | Preview/approval → optional native local build (D-11, doc 04). |
-| Nixpkgs source hash mismatch | `nix flake metadata` nar != descriptor | Abort; treat as trust event (CAT-INV-01); re-run `pkg update`. |
+| Nixpkgs source hash mismatch | `nix flake metadata` top-level `locked.narHash`/`locked.rev` != descriptor (§6.2) | Abort; treat as trust event (CAT-INV-01); re-run `pkg update`. |
 | Self-build meta-eval too slow (SPK-04) | timeout | Prefer publisher-precomputed index (Option A or prebuilt Option B bytes); document expected time. |
 
 ## 13. Security considerations (catalog; full model doc 08)
@@ -240,7 +287,8 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 | Index per system | yes | yes |
 | Meta-eval host | can eval Linux index on Linux | must eval darwin index on darwin (lazy `legacyPackages` is system-bound) → publisher precompute recommended |
 | Install on cache miss | preview → optional **native local build** (D-11) | preview → optional **native local build** (D-11); `ACQUIRE_NO_BINARY` only if the build is impossible/disallowed (CAT-INV-05) |
-| Realization command | identical (`nix build … --json`, `nix store path-info`) | identical |
+| Resolve/plan command (evaluate-only, no realization) | identical: `nix derivation show --recursive` (JSON unconditional, no `nix build`, IFD disabled) | identical |
+| Realization identity (`path-info`) | acquired post-approval in doc 04 (`nix build` / root-level `nix path-info --json --json-format 2`); per-output provenance (`cache-signed`/`local-build`) recorded | identical |
 
 ## 15. Dependencies on other plan documents
 
@@ -253,18 +301,18 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 
 ## 16. Implementation checkpoints (foundation; feeds doc 11)
 
-- CP-03.1 Implement Nixpkgs source fetch+verify via `nix flake metadata` (CAT-INV-01).
+- CP-03.1 Implement Nixpkgs source fetch+verify via `nix flake metadata <direct-locked-ref>`: build the ref from the descriptor's `owner`/`repo`/`rev`+`narHash`, read top-level `locked.rev`/`locked.narHash`, cross-check `revision` if present, fail-closed against the descriptor before any eval/index use (CAT-INV-01; §6.2).
 - CP-03.2 Define & serialize the index record schema (§7) with stable hashing.
 - CP-03.3 Implement index loader/verifier (download TUF target → verify sha256 → load; else Option B self-build).
 - CP-03.4 Implement Option B meta-eval expression with `tryEval` per-attr tolerance (SPK-04).
-- CP-03.5 Implement the install-evaluation contract (§9) → realization record (feeds doc 04/05 lock).
+- CP-03.5 Implement the install-evaluation contract (§9) → normalized derivation plan (BuildPlan input; feeds doc 04 §5.2.1). Realized store-path identity is recorded **post-acquire** (§9.2.1 / doc 05 lock), never here.
 - CP-03.6 Implement read-only `search`/`info`/`list`/`outdated` minimum paths against the schema (UX polish in doc 06).
 
 ## 17. Acceptance criteria
 
-- AC-03.1 Nixpkgs is never referenced except by `descriptor.nixpkgs.rev`+`narHash`; a mismatch aborts (CAT-INV-01) — testable with a tampered rev.
+- AC-03.1 Nixpkgs is never referenced except by `descriptor.nixpkgs.rev`+`narHash`; acquisition reads the **top-level** `locked.rev`/`locked.narHash` from `nix flake metadata` (**never** `locks.nodes.*`), and any mismatch **fails closed** (CAT-INV-01) — enforced by: (a) a **mismatch fail-closed** test (tampered `rev`, tampered `narHash`, and registry/user-config injection all abort before any eval/index use); and (b) a **fixture/parity test** using a **direct flake whose root lock node is not named `nixpkgs`** that still pins and verifies the source from the top-level `locked` object, so the adapter never depends on a node literally named `nixpkgs` (validated by the adapter parity job, doc 09 §4.3).
 - AC-03.2 A flipped bit in the index is detected by hash and triggers rebuild/refetch, never partial use (CAT-INV-02).
-- AC-03.3 No code path derives a store path or `narHash` from the index; all realizations come from `nix build`/`path-info` on host (CAT-INV-03) — enforced by module boundaries + tests.
+- AC-03.3 No code path derives a store path or `narHash` from the index; resolve/preflight are **evaluate-only** (`nix derivation show --recursive`, no `nix build`, IFD disabled, no realized outputs), and all **realization** identity comes from `nix build`/`path-info` on host **in acquire** (post-approval), never in resolve/preflight (CAT-INV-03) — enforced by module boundaries + tests.
 - AC-03.4 `pname@version` is never a key in manifest/lock (CAT-INV-04); identity is `manifestId → realization`.
 - AC-03.5 On `*-darwin`, a cache miss that can be built natively produces a build preview (not an automatic error); a build that is impossible/disallowed (unsupported/broken/impure derivation, or sandbox/build-user unavailable, or `buildPolicy` denies the system) fails with `ACQUIRE_NO_BINARY` (CAT-INV-05). Cache misses are never built silently.
 - AC-03.6 Search returns host-system-filtered results and never claims installability (display-only); install is the authority.
@@ -281,8 +329,9 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 ## 19. References (primary sources)
 
 - Nix Reference Manual (stable): https://nixos.org/manual/nix/stable/
-  - Flake input/ref & narHash: `nix3-flake`, `nix3-flake-metadata`, flake.lock format.
-  - Realization: `nix3-build` (`--print-out-paths`, `--json`), `nix3-store-path-info` (`--recursive`, `--json`, `narHash`).
+  - Flake input/ref & narHash: `nix3-flake`, `nix3-flake-metadata` (top-level `locked`/`revision`/`path`/`url`/`original`/`resolved`/`locks`/`fingerprint` payload for Nix 2.34.8 — pinned-input identity is top-level `locked.rev`/`locked.narHash`, not `locks.nodes.*`), flake.lock format.
+  - Evaluate-only derivation plan (resolve/preflight): `nix3-derivation-show` (`--recursive`; JSON unconditional — no `--json` flag; v4 envelope, top-level `version` field 4; no `--json-format` selector in 2.34.8).
+  - Realization (post-acquire only): `nix3-build` (`--print-out-paths`, `--json`); **root-level** `nix3-path-info` (`--recursive`, `--json`, `--json-format 2`) — versioned v2 envelope `{"version":2,"storeDir":"/nix/store","info":{…}}` whose per-entry already carries `narHash`/`narSize`/`references`/`deriver`/`signatures`; **no `--deriver` flag** in 2.34.8.
   - `NIX_PATH` semantics; `builtins.tryEval`.
 - Nixpkgs Reference Manual (stable): https://nixos.org/manual/nixpkgs/stable/
   - Meta-attributes (`meta.platforms`, `meta.broken`, `meta.license`, `meta.homepage`), `lib.platforms`, flake output schema (`packages`, `legacyPackages`).
