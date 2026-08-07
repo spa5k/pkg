@@ -15,9 +15,9 @@
 //! - **Versions** ([`version`]): a [`PackageVersion`] preserves the raw Nix
 //!   string, with literal [`Eq`]/[`Hash`] and **no** [`Ord`]; ordering goes
 //!   through [`compare_nix_versions`], which mirrors upstream Nix exactly.
-//! - **No persistence / serde / CLI** here: this PR is the value vocabulary
-//!   only.
-//! - **No unsafe**, no runtime dependencies; `proptest` is a dev-dependency for
+//! - **Persistence is isolated** in [`state`]: private Serde DTOs validate into
+//!   this crate's existing strong domain types.
+//! - **No unsafe**; `proptest` is a dev-dependency for
 //!   the roadmap-required property tests (`plans/09` §6.1).
 //!
 //! The intentional public surface is re-exported at the crate root below.
@@ -29,6 +29,7 @@ pub mod channel;
 pub mod identity;
 pub mod realization;
 pub mod selector;
+pub mod state;
 pub mod system;
 pub mod version;
 
