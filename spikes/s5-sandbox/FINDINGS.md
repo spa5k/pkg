@@ -1,6 +1,7 @@
 # S5 findings — managed-daemon sandbox and resource boundary
 
-Status: **partial observed evidence; DR-005 remains Proposed**.
+Status: **Linux Docker and native macOS evidence observed; DR-005 remains
+Proposed pending required signoff and the limitations below**.
 
 ## Observed Linux Docker lane
 
@@ -26,16 +27,39 @@ Status: **partial observed evidence; DR-005 remains Proposed**.
   incomplete run and all builds remain `pending_approval`. The flag proves a
   per-invocation UX gate only; it is not a production approval receipt.
 
+## Observed native macOS lane
+
+- Date: 2026-08-08.
+- Host: macOS 26.6 (`arm64`), full Xcode 26.6 selected.
+- Nix: pinned and checksum-verified Nix 2.34.8, multi-user daemon managed by
+  launchd, with an encrypted APFS `/nix` volume.
+- The daemon used `sandbox=true`, `sandbox-fallback=false`, group `nixbld`,
+  and `_nixbld1..32`; a build executed as `_nixbld1` (UID 351).
+- The raw socket parent was observed as `root:pkg-nix-broker` mode `0750`.
+  The ordinary console user was denied at socket traversal, while the
+  unprivileged `pkg-nix-broker` account reached the daemon and was untrusted.
+- A regular derivation could not reach `cache.nixos.org`.
+- A fixed-output derivation reached the endpoint and completed only after Nix
+  verified the declared SHA-256 output hash.
+- A run without `--approve-build` performs readiness only. The approved flag
+  is consumed for one invocation and is evidence of the spike UX gate, not a
+  production approval receipt.
+- macOS has no cgroups and no per-build memory/CPU/IO cap is claimed. The
+  configured timeout, silent timeout, log-size bound, and one-job policy remain
+  the honest stock-Nix boundary.
+
 ## Not established
 
-- Native macOS `_nixbld` sandbox/build evidence.
 - Bare-metal Linux or systemd service behavior.
-- launchd behavior, Xcode/CLT readiness, or notarization.
+- The final product launchd labels/bundle, installer signing, or notarization.
+- Reboot persistence of the encrypted managed store and broker-only socket
+  permissions; the observed launchd services were exercised in the live boot.
 - Service-manager defense-in-depth ceilings.
 - Production machine-global build admission and cryptographic approval
   receipts; those belong to the broker/build-engine milestones.
 - Disk, free-space, and load preflight thresholds.
 
-Therefore this evidence cannot accept DR-005 or unlock PR-26 by itself. It does
-validate the Linux Docker harness and the core regular-versus-fixed-output
-network model under Nix 2.34.8.
+Therefore this evidence does not accept DR-005 or unlock PR-26 by itself. It
+does validate the Linux Docker and native macOS sandbox/build-user lanes plus
+the core regular-versus-fixed-output network model under Nix 2.34.8. Required
+architecture/security signoff remains separate.

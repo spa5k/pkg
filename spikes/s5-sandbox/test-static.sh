@@ -23,4 +23,9 @@ grep -q '^sandbox-fallback = false$' "$SCRATCH/linux.conf"
 grep -q '^sandbox = true$' "$SCRATCH/macos.conf"
 grep -q '^sandbox-fallback = false$' "$SCRATCH/macos.conf"
 
+/bin/sh -n "$SCRIPT_DIR/run-native-macos.sh"
+/bin/sh -n "$SCRIPT_DIR/inside-macos.sh"
+grep -q '"resourceBoundary":"no_cgroups_on_macos"' "$SCRIPT_DIR/inside-macos.sh"
+grep -q 'ordinaryUserProbe.*socket_traversal_denied' "$SCRIPT_DIR/inside-macos.sh"
+
 printf '%s\n' 's5 static checks passed'

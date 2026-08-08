@@ -39,6 +39,27 @@ expects exit 69 plus an incomplete report:
 ./spikes/s5-sandbox/test-linux-unprivileged.sh
 ```
 
+The native macOS lane requires the managed test installation, its dedicated
+`pkg-nix-broker` account, and administrator authentication. Readiness is
+non-building by default:
+
+```sh
+./spikes/s5-sandbox/run-native-macos.sh
+```
+
+The regular-network, fixed-output-network, and `_nixbld` build probes require
+one explicit invocation approval:
+
+```sh
+./spikes/s5-sandbox/run-native-macos.sh --approve-build
+```
+
+That writes `out/native-macos/report.json` and `probe.log` with mode `0600`.
+The observed host used an encrypted APFS `/nix` volume, Nix 2.34.8, the
+dedicated broker-only socket boundary, and full Xcode 26.6. This is real native
+macOS evidence, but the bootstrap still uses Nix's upstream launchd service
+label rather than the planned product installer/service bundle.
+
 `--privileged` grants broad control inside Docker Desktop's Linux VM. The
 container mounts only this harness read-only plus the selected output directory;
 it does not mount the Docker socket or the repository root.
