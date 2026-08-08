@@ -44,6 +44,11 @@ Proposed pending required signoff and the limitations below**.
 - A run without `--approve-build` performs readiness only. The approved flag
   is consumed for one invocation and is evidence of the spike UX gate, not a
   production approval receipt.
+- After a native host reboot, launchd unlocked and mounted the encrypted store
+  at `/nix` (the one-shot store job exited 0), the Nix daemon returned running,
+  the `root:pkg-nix-broker` `0750` socket-parent boundary persisted, the
+  ordinary user remained denied, and the committed readiness-only lane reached
+  the daemon through the broker without starting builds.
 - macOS has no cgroups and no per-build memory/CPU/IO cap is claimed. The
   configured timeout, silent timeout, log-size bound, and one-job policy remain
   the honest stock-Nix boundary.
@@ -52,8 +57,6 @@ Proposed pending required signoff and the limitations below**.
 
 - Bare-metal Linux or systemd service behavior.
 - The final product launchd labels/bundle, installer signing, or notarization.
-- Reboot persistence of the encrypted managed store and broker-only socket
-  permissions; the observed launchd services were exercised in the live boot.
 - Service-manager defense-in-depth ceilings.
 - Production machine-global build admission and cryptographic approval
   receipts; those belong to the broker/build-engine milestones.
