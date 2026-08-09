@@ -26,8 +26,11 @@
 #![deny(missing_docs)]
 
 pub mod channel;
+pub mod generation;
+pub mod history;
 pub mod identity;
 pub mod lifecycle;
+pub mod pin;
 pub mod realization;
 pub mod remove;
 pub mod selector;
@@ -43,9 +46,17 @@ mod lifecycle_test_support;
 pub use channel::{
     ChannelError, ChannelName, ChannelSequence, NixpkgsRevision, PolicyVersion, SourceRevision,
 };
+pub use generation::{
+    GenerationSnapshot, GenerationSnapshotError, RollbackError, RollbackPlan, RollbackTarget,
+    plan_rollback,
+};
+pub use history::{
+    ChangeCounts, ChangeKind, History, HistoryDiff, HistoryError, HistorySummary, PackageChange,
+};
 pub use identity::{
     DerivationPath, IdentityError, NarHash, OutputName, RealizationIdentity, StorePath,
 };
+pub use pin::{PinAction, PinError, PinResult, edit_pins};
 pub use realization::{Realization, RealizationError};
 pub use selector::{
     AttributePath, OutputSelection, PackageSelector, PinState, SelectorError, SelectorId,

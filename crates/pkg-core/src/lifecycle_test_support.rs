@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use crate::lifecycle::LifecycleState;
-use crate::state::{LockEntry, LockedState, Manifest};
+use crate::state::{Generation, LockEntry, LockedState, Manifest, body_digest, canonical_digest};
 use crate::{
-    AttributePath, DerivationPath, NarHash, NixpkgsRevision, OutputName, PackageVersion,
-    Realization, StorePath, System,
+    AttributePath, DerivationPath, GenerationSnapshot, NarHash, NixpkgsRevision, OutputName,
+    PackageVersion, Realization, StorePath, System,
 };
 
 pub(crate) const REV1: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -112,4 +112,69 @@ pub(crate) fn replacement(name: &str, hash: char, revision: &str, version: &str)
         vec!["official-1:replacement".into()],
     )
     .unwrap()
+}
+
+pub(crate) fn snapshot(
+    id: &str,
+    parent: Option<&str>,
+    state: LifecycleState,
+    operation: &str,
+) -> GenerationSnapshot {
+    let manifest_bytes = state.manifest().to_json().unwrap();
+    let lock_bytes = state.locked().to_json().unwrap();
+    let outputs = state
+        .manifest()
+        .entries()
+        .iter()
+        .map(|manifest_entry| {
+            let locked = &state.locked().entries()[manifest_entry.id()];
+            let realization = locked.realization();
+            json!({
+                "id": manifest_entry.id().as_str(),
+                "attribute": locked.attribute().as_str(),
+                "nixpkgsRev": realization.nixpkgs_revision().as_str(),
+                "storePath": realization.store_path().as_str(),
+                "deriver": realization.deriver().as_str(),
+                "outputsToInstall": realization.outputs_to_install().iter().map(OutputName::as_str).collect::<Vec<_>>(),
+                "narHash": realization.nar_hash().as_str(),
+                "closureNarSize": realization.closure_nar_size(),
+                "provenance": locked.provenance(),
+                "pinned": manifest_entry.is_pinned()
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut generation = json!({
+        "schemaVersion": 1,
+        "uid": state.manifest().uid(),
+        "id": id,
+        "parent": parent,
+        "createdAt": format!("2026-08-09T00:00:{}Z", &id[id.len() - 2..]),
+        "channelSeq": state.manifest().channel_seq().get().get(),
+        "manifestHash": body_digest(&manifest_bytes).to_string(),
+        "lockHash": body_digest(&lock_bytes).to_string(),
+        "manifestSnapshot": format!("generations/{id}.manifest.json"),
+        "lockSnapshot": format!("generations/{id}.lock.json"),
+        "activation": {
+            "kind": "pkg-symlink-forest",
+            "treePath": format!("activations/{id}"),
+            "treeDigest": "sha256-0000000000000000000000000000000000000000000000000000000000000000",
+            "entryCount": state.selected_output_paths().len(),
+            "collisionPolicy": "abort",
+            "outputRoots": state.selected_output_paths().iter().map(StorePath::as_str).collect::<Vec<_>>(),
+            "collisionResolutions": []
+        },
+        "outputs": outputs,
+        "operation": {
+            "opId": format!("op_{id}"),
+            "kind": operation,
+            "approval": { "build": "not_required" }
+        }
+    });
+    let hash = canonical_digest(&generation).unwrap().to_string();
+    generation
+        .as_object_mut()
+        .unwrap()
+        .insert("generationHash".into(), json!(hash));
+    let generation = Generation::from_json(&serde_json::to_vec(&generation).unwrap()).unwrap();
+    GenerationSnapshot::new(generation, state).unwrap()
 }

@@ -7,6 +7,7 @@ mod activate;
 mod commit;
 mod preflight;
 mod resolve;
+mod rollback;
 mod stage;
 mod verify;
 
@@ -18,6 +19,7 @@ pub use commit::{
 };
 pub use preflight::{PlannedOutput, PreflightError, PreflightInstall, preflight_cache_only};
 pub use resolve::{ResolveBatchError, ResolvedInstall, resolve_install};
+pub use rollback::{RollbackPrepareError, prepare_rollback};
 pub use stage::{StagedInstall, stage_verified};
 pub use verify::{VerifiedInstall, verify_acquired};
 

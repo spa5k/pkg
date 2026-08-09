@@ -291,6 +291,12 @@ impl ManifestEntry {
         }
         self
     }
+
+    pub(crate) fn with_pin(mut self, pinned_to: Option<StorePath>) -> Self {
+        self.pinned = pinned_to.is_some();
+        self.pinned_to = pinned_to;
+        self
+    }
 }
 
 /// Exact realized package state stored in `lock.json`.
@@ -431,6 +437,16 @@ impl Generation {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
+    }
+    /// Returns the previous active generation, if one was recorded.
+    #[must_use]
+    pub fn parent(&self) -> Option<&str> {
+        self.parent.as_deref()
+    }
+    /// Returns the persisted creation timestamp.
+    #[must_use]
+    pub fn created_at(&self) -> &str {
+        &self.created_at
     }
     /// Returns the authenticated user identity owning this generation.
     #[must_use]

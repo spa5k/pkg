@@ -429,7 +429,7 @@ disk delta. Approval gate as in `install`.
 **Purpose:** freeze a selector to its current realized identity (plan 05 §5.1).
 
 - `pin` records the selector's realized identity internally (`pinnedTo` in
-  the lock, plan 05); subsequent `upgrade`/`update` never move it. The public
+  the manifest, plan 05); subsequent `upgrade`/`update` never move it. The public
   output shows selector + version only — never the store path. Records a `pin`
   journal op + new generation (so history reflects the intent change) but the
   *activated tree* is byte-identical.
@@ -453,9 +453,11 @@ non-active generation (frees its GC root; requires `--yes`).
 
 ### 6.12 `pkg rollback [<id>] [flags]`
 
-**Purpose:** switch `current` to a prior generation by creating a new
-monotonic generation row that references the same activation **forest**
-(`<user-state>/activations/gen-<id>/`, D-18; plan 05 §8.1).
+**Purpose:** restore a prior generation's verified manifest/lock state by
+creating a new monotonic generation, freshly re-materializing its activation
+forest, publishing a fresh root set, and atomically switching `current`
+(D-18; plan 05 §8.1). The retained target remains immutable and is never
+reactivated in place.
 
 - No arg → parent of active.
 - `<id>` → that generation (must exist & verify).

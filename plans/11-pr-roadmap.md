@@ -697,8 +697,16 @@ flowchart TD
 ### Milestone M4 — Generations & UX
 
 #### PR-21 — Generations / history / rollback / pin-unpin
+- **Status:** **Completed 2026-08-09.** Immutable `GenerationSnapshot` values now
+  prove every generation/manifest/lock binding; history is numeric, sanitized,
+  and diffable; pin/unpin edits desired state atomically. Rollback selection
+  verifies retained ownership, platform, and channel-derived runtime
+  compatibility. Pipeline preparation rejects stale plans and reused generation
+  ids, re-stages the target outputs into a fresh forest, creates fresh snapshots,
+  record, and root set, then uses the PR-19 crash-safe activation transaction.
 - **Purpose:** surface and roll back generations; pinning expresses user intent (`05`,`06`).
-- **Owns:** `crates/pkg-core/src/{generation.rs,history.rs,pin.rs}` + tests.
+- **Owns:** `crates/pkg-core/src/{generation.rs,history.rs,pin.rs}` and
+  `crates/pkg-pipeline/src/rollback.rs` + tests.
 - **Depends:** PR-10, PR-19.
 - **Migration/compat:** rollback stays within managed-Nix compat window (`10` §6).
 - **Tests & gates:** G-UNIT + G-INTEGRATION (rollback restores prior activation).

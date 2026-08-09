@@ -6,11 +6,11 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use pkg_core::lifecycle::LifecycleState;
 use pkg_core::state::{
     Digest, Generation, JournalPayload, JournalRow, LockedState, Manifest, PreviousRowHash,
     body_digest, canonical_digest, recover_journal,
 };
+use pkg_core::{GenerationSnapshot, lifecycle::LifecycleState};
 use pkg_nix::{GenerationId, MaintenanceAdapter, RemoveRootSetRequest};
 use pkg_store::{
     ActivationEvent, ActivationPlan, PreparedRootSet, RootCandidate, StateLayout,
@@ -42,7 +42,8 @@ impl CandidateGeneration {
             Generation::from_json(&generation_bytes).map_err(|_| CommitError::InvalidCandidate)?;
         let lifecycle = LifecycleState::new(manifest.clone(), lock.clone())
             .map_err(|_| CommitError::InvalidCandidate)?;
-        validate_generation_state(&lifecycle, &generation)?;
+        GenerationSnapshot::new(generation.clone(), lifecycle)
+            .map_err(|_| CommitError::InvalidCandidate)?;
         let id = GenerationId::new(generation.id()).map_err(|_| CommitError::InvalidCandidate)?;
         let expected_manifest_snapshot = format!("generations/{}.manifest.json", id.as_str());
         let expected_lock_snapshot = format!("generations/{}.lock.json", id.as_str());
@@ -398,41 +399,6 @@ fn validate_plan(
         || activation.output_roots() != plan.output_roots()
     {
         return Err(CommitError::StageMismatch);
-    }
-    Ok(())
-}
-
-fn validate_generation_state(
-    lifecycle: &LifecycleState,
-    generation: &Generation,
-) -> Result<(), CommitError> {
-    if lifecycle.selected_output_paths() != generation.activation().output_roots()
-        || lifecycle.manifest().entries().len() != generation.outputs().len()
-    {
-        return Err(CommitError::InvalidCandidate);
-    }
-    for manifest_entry in lifecycle.manifest().entries() {
-        let locked_entry = &lifecycle.locked().entries()[manifest_entry.id()];
-        let realization = locked_entry.realization();
-        let Some(output) = generation
-            .outputs()
-            .iter()
-            .find(|output| output.id() == manifest_entry.id())
-        else {
-            return Err(CommitError::InvalidCandidate);
-        };
-        if output.attribute() != locked_entry.attribute()
-            || output.nixpkgs_revision() != realization.nixpkgs_revision()
-            || output.store_path() != realization.store_path()
-            || output.deriver() != realization.deriver()
-            || output.outputs_to_install() != realization.outputs_to_install()
-            || output.nar_hash() != realization.nar_hash()
-            || output.closure_nar_size() != realization.closure_nar_size()
-            || output.provenance() != locked_entry.provenance()
-            || output.is_pinned() != manifest_entry.is_pinned()
-        {
-            return Err(CommitError::InvalidCandidate);
-        }
     }
     Ok(())
 }
