@@ -4,38 +4,38 @@
     "spec_version": "1.0.0",
     "consistent_snapshot": true,
     "version": 1,
-    "expires": "2036-08-06T10:46:20.060328Z",
+    "expires": "2036-08-06T11:26:42.684729Z",
     "keys": {
-      "10fa487c717f3b5b1d153714625abd1b0fef7147b4e865f1359bdc7927e9e06a": {
+      "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25": {
         "keytype": "ed25519",
         "keyval": {
-          "public": "21498b3298973f8653abf391919f36d51a9ba5d1501668b2a82655d951c8581b"
+          "public": "c851c1e7b81a075f2f1fdebd8cfa76ddb48b59e9cd5b53841844ed751a7e3489"
         },
         "scheme": "ed25519"
       }
     },
     "roles": {
+      "root": {
+        "keyids": [
+          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
+        ],
+        "threshold": 1
+      },
       "snapshot": {
         "keyids": [
-          "10fa487c717f3b5b1d153714625abd1b0fef7147b4e865f1359bdc7927e9e06a"
+          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
         ],
         "threshold": 1
       },
       "targets": {
         "keyids": [
-          "10fa487c717f3b5b1d153714625abd1b0fef7147b4e865f1359bdc7927e9e06a"
+          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
         ],
         "threshold": 1
       },
       "timestamp": {
         "keyids": [
-          "10fa487c717f3b5b1d153714625abd1b0fef7147b4e865f1359bdc7927e9e06a"
-        ],
-        "threshold": 1
-      },
-      "root": {
-        "keyids": [
-          "10fa487c717f3b5b1d153714625abd1b0fef7147b4e865f1359bdc7927e9e06a"
+          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
         ],
         "threshold": 1
       }
@@ -43,8 +43,8 @@
   },
   "signatures": [
     {
-      "keyid": "10fa487c717f3b5b1d153714625abd1b0fef7147b4e865f1359bdc7927e9e06a",
-      "sig": "b7687e812191e11bcd263b118a277c5fbfce6eefc6c213679a09d5aa2f3bd1c8a4bf1db752cd63204133356fb0fbfc8ca4b68ca2d5d018244fd34e41e46c1609"
+      "keyid": "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25",
+      "sig": "09bbe1f7ae0374a126bf4dc94e9237f494a3d4459d6c5069cab13a4610c828881f035c9442160c5ef2369ffba9fc9a9d7412369d318506185e087eb4888f1c0c"
     }
   ]
 }

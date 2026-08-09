@@ -112,10 +112,10 @@ This is the schema referenced by doc 01 §10.4 and consumed by docs 03/04/05/10.
   "nixRuntime": {
     "version": "2.24.10",
     "perSystem": {
-      "x86_64-linux":   { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-linux.tar.xz",   "sha256": "…" },
-      "aarch64-linux":  { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-linux.tar.xz", "sha256": "…" },
-      "x86_64-darwin":  { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-darwin.tar.xz", "sha256": "…" },
-      "aarch64-darwin": { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-darwin.tar.xz","sha256": "…" }
+      "x86_64-linux":   { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-linux.tar.xz",   "sha256": "…", "assetManifestTarget": "nix/2.24.10/x86_64-linux.assets.json",   "assetManifestSha256": "…" },
+      "aarch64-linux":  { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-linux.tar.xz", "sha256": "…", "assetManifestTarget": "nix/2.24.10/aarch64-linux.assets.json",  "assetManifestSha256": "…" },
+      "x86_64-darwin":  { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-darwin.tar.xz", "sha256": "…", "assetManifestTarget": "nix/2.24.10/x86_64-darwin.assets.json",  "assetManifestSha256": "…" },
+      "aarch64-darwin": { "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-darwin.tar.xz","sha256": "…", "assetManifestTarget": "nix/2.24.10/aarch64-darwin.assets.json", "assetManifestSha256": "…" }
     }
   },
   "nixpkgs": {
@@ -152,7 +152,7 @@ Field semantics:
   - `prompt` — preview + explicit single-operation approval required (the approval dimension of `allow-with-gates` without asserting the security gates).
   - `deny` — substitution only; a cache miss that cannot be resolved is `ACQUIRE_NO_BINARY`.
   A system with no entry (e.g. a non-native `system`) is implicitly `deny`: v1 never builds for it locally.
-- `nixRuntime`/`index` — each entry is a **TUF target**; the `url`/`sha256`/`target` values must match the hash recorded in the corresponding TUF `targets`/delegation metadata. `pkg` cross-checks both (defense in depth).
+- `nixRuntime`/`index` — each runtime archive, runtime asset manifest, and index entry is a **TUF target**; the `url`/`sha256`/`assetManifestTarget`/`assetManifestSha256`/`target` values must match the corresponding TUF `targets`/delegation metadata. `pkg` cross-checks both layers (defense in depth). The canonical asset manifest records stable group roles (`root`, `broker`, `buildUsers`), never machine-specific numeric gids; the privileged preflight resolves those roles to the host's validated service groups and binds the numeric gids into the local root-owned receipt.
 - `nixpkgs` — **not** a separately published source artifact. Its `owner`/`repo`/`rev`/`narHash` are authenticated transitively (the descriptor is itself a TUF target); the bundled Nix flake fetcher enforces `locked.rev`/`locked.narHash` against the descriptor at fetch time (doc 03 §6.2).
 - `substituters` — pinned per D-10; baked into the bundled `nix.conf` (doc 01 §11).
 

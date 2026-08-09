@@ -112,7 +112,6 @@ async fn read_top_level_targets_after_drain() {
         got, *nix_bytes,
         "managed-Nix runtime bytes must match exactly after drain"
     );
-
 }
 
 // ---------------------------------------------------------------------------

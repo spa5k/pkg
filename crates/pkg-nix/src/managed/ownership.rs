@@ -43,13 +43,81 @@ pub enum ManagedArtifactKind {
     Symlink,
 }
 
+/// Stable privileged group role recorded in the signed asset manifest.
+///
+/// Numeric gids are deliberately excluded from release metadata because the
+/// installer may have to allocate product service groups differently on each
+/// host. The authenticated role is resolved through [`ManagedGroupBindings`]
+/// immediately before installation and the resulting gids are bound into the
+/// root-owned ownership receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ManagedGroup {
+    /// The platform root/administrator group (gid 0).
+    Root,
+    /// The dedicated unprivileged `pkg-nix-broker` service group.
+    Broker,
+    /// The dedicated Nix build-users group.
+    BuildUsers,
+}
+
+/// Host-local numeric gids bound to stable signed group roles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManagedGroupBindings {
+    broker_gid: u32,
+    build_users_gid: u32,
+}
+
+impl ManagedGroupBindings {
+    /// Validates host-local gids for the two non-root managed groups.
+    pub fn new(broker_gid: u32, build_users_gid: u32) -> Result<Self, OwnershipError> {
+        if broker_gid == 0 || build_users_gid == 0 || broker_gid == build_users_gid {
+            return Err(OwnershipError::new(OwnershipErrorCode::ExpectationInvalid));
+        }
+        Ok(Self {
+            broker_gid,
+            build_users_gid,
+        })
+    }
+
+    /// Returns the gid allocated to the broker group.
+    #[must_use]
+    pub const fn broker_gid(self) -> u32 {
+        self.broker_gid
+    }
+
+    /// Returns the gid allocated to the build-users group.
+    #[must_use]
+    pub const fn build_users_gid(self) -> u32 {
+        self.build_users_gid
+    }
+
+    /// Resolves a stable group role to its host-local gid.
+    #[must_use]
+    pub const fn gid_for(self, group: ManagedGroup) -> u32 {
+        match group {
+            ManagedGroup::Root => 0,
+            ManagedGroup::Broker => self.broker_gid,
+            ManagedGroup::BuildUsers => self.build_users_gid,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) const fn same_gid_for_test(gid: u32) -> Self {
+        Self {
+            broker_gid: gid,
+            build_users_gid: gid,
+        }
+    }
+}
+
 /// One expected product-managed filesystem artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedArtifact {
     path: String,
     kind: ManagedArtifactKind,
     owner_uid: u32,
-    group_gid: u32,
+    group: ManagedGroup,
     mode: Option<u32>,
     size: Option<u64>,
     sha256: Option<Digest>,
@@ -60,7 +128,7 @@ impl ManagedArtifact {
     /// Constructs a root-owned regular-file expectation.
     pub fn file(
         path: impl Into<String>,
-        group_gid: u32,
+        group: ManagedGroup,
         mode: u32,
         size: u64,
         sha256: Digest,
@@ -68,7 +136,7 @@ impl ManagedArtifact {
         Self::new(
             path.into(),
             ManagedArtifactKind::File,
-            group_gid,
+            group,
             Some(mode),
             Some(size),
             Some(sha256),
@@ -79,13 +147,13 @@ impl ManagedArtifact {
     /// Constructs a root-owned directory expectation.
     pub fn directory(
         path: impl Into<String>,
-        group_gid: u32,
+        group: ManagedGroup,
         mode: u32,
     ) -> Result<Self, OwnershipError> {
         Self::new(
             path.into(),
             ManagedArtifactKind::Directory,
-            group_gid,
+            group,
             Some(mode),
             None,
             None,
@@ -96,17 +164,22 @@ impl ManagedArtifact {
     /// Constructs a root-owned symbolic-link expectation.
     pub fn symlink(
         path: impl Into<String>,
-        group_gid: u32,
+        group: ManagedGroup,
         target: impl Into<String>,
     ) -> Result<Self, OwnershipError> {
+        let path = path.into();
         let target = target.into();
-        if target.is_empty() || target.len() > MAX_PATH_BYTES || target.contains('\0') {
+        if target.is_empty()
+            || target.len() > MAX_PATH_BYTES
+            || target.contains('\0')
+            || !safe_symlink_target(Path::new(&path), Path::new(&target))
+        {
             return Err(OwnershipError::new(OwnershipErrorCode::ExpectationInvalid));
         }
         Self::new(
-            path.into(),
+            path,
             ManagedArtifactKind::Symlink,
-            group_gid,
+            group,
             None,
             None,
             None,
@@ -117,7 +190,7 @@ impl ManagedArtifact {
     fn new(
         path: String,
         kind: ManagedArtifactKind,
-        group_gid: u32,
+        group: ManagedGroup,
         mode: Option<u32>,
         size: Option<u64>,
         sha256: Option<Digest>,
@@ -136,7 +209,7 @@ impl ManagedArtifact {
             path,
             kind,
             owner_uid: 0,
-            group_gid,
+            group,
             mode,
             size,
             sha256,
@@ -155,6 +228,36 @@ impl ManagedArtifact {
     pub const fn kind(&self) -> ManagedArtifactKind {
         self.kind
     }
+
+    /// Returns the authenticated privileged group role.
+    #[must_use]
+    pub const fn group(&self) -> ManagedGroup {
+        self.group
+    }
+
+    /// Returns the expected Unix mode for files and directories.
+    #[must_use]
+    pub const fn mode(&self) -> Option<u32> {
+        self.mode
+    }
+
+    /// Returns the expected byte size for a regular file.
+    #[must_use]
+    pub const fn size(&self) -> Option<u64> {
+        self.size
+    }
+
+    /// Returns the expected content digest for a regular file.
+    #[must_use]
+    pub const fn sha256(&self) -> Option<Digest> {
+        self.sha256
+    }
+
+    /// Returns the exact target for a symbolic link.
+    #[must_use]
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
 }
 
 /// Trusted inputs against which an untrusted local receipt is checked.
@@ -166,6 +269,7 @@ pub struct OwnershipExpectation {
     system: System,
     nix_version: NixVersion,
     asset_manifest_digest: Digest,
+    groups: ManagedGroupBindings,
     artifacts: Vec<ManagedArtifact>,
 }
 
@@ -175,6 +279,7 @@ impl OwnershipExpectation {
         system: System,
         nix_version: NixVersion,
         asset_manifest_digest: Digest,
+        groups: ManagedGroupBindings,
         mut artifacts: Vec<ManagedArtifact>,
     ) -> Result<Self, OwnershipError> {
         validate_artifacts(system, &mut artifacts)?;
@@ -186,6 +291,7 @@ impl OwnershipExpectation {
             system,
             nix_version,
             asset_manifest_digest,
+            groups,
             artifacts,
         })
     }
@@ -206,6 +312,12 @@ impl OwnershipExpectation {
     #[must_use]
     pub const fn asset_manifest_digest(&self) -> Digest {
         self.asset_manifest_digest
+    }
+
+    /// Returns the host-local group bindings captured during provisioning.
+    #[must_use]
+    pub const fn groups(&self) -> ManagedGroupBindings {
+        self.groups
     }
 
     /// Returns the canonical, path-sorted artifact expectations.
@@ -241,7 +353,49 @@ fn validate_artifacts(
     {
         return Err(OwnershipError::new(OwnershipErrorCode::ExpectationInvalid));
     }
+    for symlink in artifacts
+        .iter()
+        .filter(|artifact| artifact.kind == ManagedArtifactKind::Symlink)
+    {
+        if artifacts.iter().any(|artifact| {
+            artifact.path != symlink.path && artifact.path().starts_with(symlink.path())
+        }) {
+            return Err(OwnershipError::new(OwnershipErrorCode::ExpectationInvalid));
+        }
+    }
     Ok(())
+}
+
+fn safe_symlink_target(link_path: &Path, target: &Path) -> bool {
+    let resolved = if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        let Some(parent) = link_path.parent() else {
+            return false;
+        };
+        let mut resolved = parent.to_path_buf();
+        for component in target.components() {
+            match component {
+                Component::CurDir => {}
+                Component::Normal(value) => resolved.push(value),
+                Component::ParentDir => {
+                    if !resolved.pop() {
+                        return false;
+                    }
+                }
+                Component::RootDir | Component::Prefix(_) => return false,
+            }
+        }
+        resolved
+    };
+    [
+        Path::new("/nix"),
+        Path::new("/opt/pkg"),
+        Path::new("/Library/Application Support/pkg"),
+        Path::new("/var/lib/pkg"),
+    ]
+    .iter()
+    .any(|prefix| resolved == *prefix || resolved.starts_with(prefix))
 }
 
 /// Stable closed failure categories for ownership verification.
@@ -249,6 +403,12 @@ fn validate_artifacts(
 pub enum OwnershipErrorCode {
     /// The trusted expectation itself violates the contract.
     ExpectationInvalid,
+    /// The authenticated asset manifest exceeds the fixed input limit.
+    ManifestTooLarge,
+    /// The authenticated asset manifest is malformed or non-canonical.
+    ManifestMalformed,
+    /// Manifest bytes or promoted identity differ from authenticated inputs.
+    ManifestMismatch,
     /// No receipt exists at the platform-owned location.
     ReceiptMissing,
     /// Receipt path metadata is not root-only and symlink-free.
@@ -396,6 +556,49 @@ pub fn encode_ownership_asset_manifest(
     encode_validated_asset_manifest(system, nix_version, &artifacts)
 }
 
+/// Decodes a separately authenticated canonical asset manifest and binds its
+/// stable group roles to host-local gids.
+///
+/// The digest must come from verified release/channel metadata. The local
+/// manifest is never allowed to choose its own expected digest or group ids.
+pub fn decode_ownership_asset_manifest(
+    bytes: &[u8],
+    expected_system: System,
+    expected_nix_version: &NixVersion,
+    expected_digest: Digest,
+    groups: ManagedGroupBindings,
+) -> Result<OwnershipExpectation, OwnershipError> {
+    if bytes.len() as u64 > MAX_RECEIPT_BYTES {
+        return Err(OwnershipError::new(OwnershipErrorCode::ManifestTooLarge));
+    }
+    if digest_bytes(bytes) != expected_digest {
+        return Err(OwnershipError::new(OwnershipErrorCode::ManifestMismatch));
+    }
+    let wire: WireAssetManifest = serde_json::from_slice(bytes)
+        .map_err(|_| OwnershipError::new(OwnershipErrorCode::ManifestMalformed))?;
+    if wire.schema_version != SCHEMA_VERSION
+        || wire.product != PRODUCT
+        || wire.system != expected_system.as_str()
+        || wire.nix_version != expected_nix_version.as_str()
+        || wire.artifacts.is_empty()
+        || wire.artifacts.len() > MAX_ARTIFACTS
+    {
+        return Err(OwnershipError::new(OwnershipErrorCode::ManifestMismatch));
+    }
+    let artifacts = wire
+        .artifacts
+        .into_iter()
+        .map(WireArtifact::into_artifact)
+        .collect::<Result<Vec<_>, _>>()?;
+    OwnershipExpectation::new(
+        expected_system,
+        expected_nix_version.clone(),
+        expected_digest,
+        groups,
+        artifacts,
+    )
+}
+
 fn encode_validated_asset_manifest(
     system: System,
     nix_version: &NixVersion,
@@ -425,7 +628,7 @@ pub fn verify_ownership_receipt(
     verify_with_owner_uid(root, expectation, 0)
 }
 
-fn verify_with_owner_uid(
+pub(super) fn verify_with_owner_uid(
     root: &Path,
     expectation: &OwnershipExpectation,
     required_owner_uid: u32,
@@ -451,13 +654,20 @@ fn verify_with_owner_uid(
         .artifacts
         .iter()
         .find(|artifact| artifact.path == "/nix/store")
-        .map(|artifact| artifact.group_gid)
+        .map(|artifact| expectation.groups.gid_for(artifact.group))
         .ok_or_else(|| OwnershipError::new(OwnershipErrorCode::ExpectationInvalid))?;
 
     // Dynamic store objects are authenticated by Nix and tracked by the Nix DB
     // plus pkg state; this receipt corroborates all static privileged assets.
     for (index, artifact) in expectation.artifacts.iter().enumerate() {
-        verify_artifact(&root, artifact, required_owner_uid, store_gid, index)?;
+        verify_artifact(
+            &root,
+            artifact,
+            expectation.groups.gid_for(artifact.group),
+            required_owner_uid,
+            store_gid,
+            index,
+        )?;
     }
 
     let second_receipt = read_safe_receipt(&root, &receipt_path, required_owner_uid)?;
@@ -532,6 +742,7 @@ fn read_safe_receipt(
 fn verify_artifact(
     root: &Path,
     artifact: &ManagedArtifact,
+    expected_group_gid: u32,
     required_owner_uid: u32,
     store_gid: u32,
     index: usize,
@@ -543,7 +754,13 @@ fn verify_artifact(
     verify_artifact_parent(root, parent, required_owner_uid, store_gid, index)?;
 
     match artifact.kind {
-        ManagedArtifactKind::File => verify_file(&path, artifact, required_owner_uid, index),
+        ManagedArtifactKind::File => verify_file(
+            &path,
+            artifact,
+            expected_group_gid,
+            required_owner_uid,
+            index,
+        ),
         ManagedArtifactKind::Directory => {
             let metadata = artifact_metadata(&path, index)?;
             if !metadata.file_type().is_dir() {
@@ -552,7 +769,13 @@ fn verify_artifact(
                     index,
                 ));
             }
-            verify_owner_and_mode(&metadata, artifact, required_owner_uid, index)
+            verify_owner_and_mode(
+                &metadata,
+                artifact,
+                expected_group_gid,
+                required_owner_uid,
+                index,
+            )
         }
         ManagedArtifactKind::Symlink => {
             let metadata = artifact_metadata(&path, index)?;
@@ -562,7 +785,13 @@ fn verify_artifact(
                     index,
                 ));
             }
-            verify_owner(&metadata, artifact, required_owner_uid, index)?;
+            verify_owner(
+                &metadata,
+                artifact,
+                expected_group_gid,
+                required_owner_uid,
+                index,
+            )?;
             let target = fs::read_link(&path)
                 .map_err(|_| OwnershipError::artifact(OwnershipErrorCode::ArtifactUnsafe, index))?;
             if target.as_os_str() != artifact.target.as_deref().unwrap_or_default() {
@@ -579,6 +808,7 @@ fn verify_artifact(
 fn verify_file(
     path: &Path,
     artifact: &ManagedArtifact,
+    expected_group_gid: u32,
     required_owner_uid: u32,
     index: usize,
 ) -> Result<(), OwnershipError> {
@@ -602,7 +832,13 @@ fn verify_file(
             index,
         ));
     }
-    verify_owner_and_mode(&metadata, artifact, required_owner_uid, index)?;
+    verify_owner_and_mode(
+        &metadata,
+        artifact,
+        expected_group_gid,
+        required_owner_uid,
+        index,
+    )?;
     if Some(metadata.len()) != artifact.size {
         return Err(OwnershipError::artifact(
             OwnershipErrorCode::ArtifactSizeMismatch,
@@ -643,10 +879,17 @@ fn artifact_metadata(path: &Path, index: usize) -> Result<fs::Metadata, Ownershi
 fn verify_owner_and_mode(
     metadata: &fs::Metadata,
     artifact: &ManagedArtifact,
+    expected_group_gid: u32,
     required_owner_uid: u32,
     index: usize,
 ) -> Result<(), OwnershipError> {
-    verify_owner(metadata, artifact, required_owner_uid, index)?;
+    verify_owner(
+        metadata,
+        artifact,
+        expected_group_gid,
+        required_owner_uid,
+        index,
+    )?;
     if Some(metadata.mode() & 0o7777) != artifact.mode {
         return Err(OwnershipError::artifact(
             OwnershipErrorCode::ArtifactModeMismatch,
@@ -659,12 +902,13 @@ fn verify_owner_and_mode(
 fn verify_owner(
     metadata: &fs::Metadata,
     artifact: &ManagedArtifact,
+    expected_group_gid: u32,
     required_owner_uid: u32,
     index: usize,
 ) -> Result<(), OwnershipError> {
     if artifact.owner_uid != 0
         || metadata.uid() != required_owner_uid
-        || metadata.gid() != artifact.group_gid
+        || metadata.gid() != expected_group_gid
     {
         return Err(OwnershipError::artifact(
             OwnershipErrorCode::ArtifactOwnerMismatch,
@@ -811,7 +1055,15 @@ struct WireReceipt {
     system: String,
     nix_version: String,
     asset_manifest_digest: String,
+    groups: WireGroupBindings,
     artifacts: Vec<WireArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireGroupBindings {
+    broker_gid: u32,
+    build_users_gid: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -832,6 +1084,10 @@ impl From<&OwnershipExpectation> for WireReceipt {
             system: expectation.system.as_str().to_owned(),
             nix_version: expectation.nix_version.as_str().to_owned(),
             asset_manifest_digest: expectation.asset_manifest_digest.to_string(),
+            groups: WireGroupBindings {
+                broker_gid: expectation.groups.broker_gid,
+                build_users_gid: expectation.groups.build_users_gid,
+            },
             artifacts: expectation
                 .artifacts
                 .iter()
@@ -847,7 +1103,7 @@ struct WireArtifact {
     path: String,
     kind: ManagedArtifactKind,
     owner_uid: u32,
-    group_gid: u32,
+    group: ManagedGroup,
     mode: Option<u32>,
     size: Option<u64>,
     sha256: Option<String>,
@@ -860,11 +1116,48 @@ impl From<&ManagedArtifact> for WireArtifact {
             path: artifact.path.clone(),
             kind: artifact.kind,
             owner_uid: artifact.owner_uid,
-            group_gid: artifact.group_gid,
+            group: artifact.group,
             mode: artifact.mode,
             size: artifact.size,
             sha256: artifact.sha256.map(|digest| digest.to_string()),
             target: artifact.target.clone(),
+        }
+    }
+}
+
+impl WireArtifact {
+    fn into_artifact(self) -> Result<ManagedArtifact, OwnershipError> {
+        if self.owner_uid != 0 {
+            return Err(OwnershipError::new(OwnershipErrorCode::ManifestMalformed));
+        }
+        match self.kind {
+            ManagedArtifactKind::File => {
+                let (Some(mode), Some(size), Some(sha256), None) =
+                    (self.mode, self.size, self.sha256, self.target)
+                else {
+                    return Err(OwnershipError::new(OwnershipErrorCode::ManifestMalformed));
+                };
+                let digest = sha256
+                    .parse::<Digest>()
+                    .map_err(|_| OwnershipError::new(OwnershipErrorCode::ManifestMalformed))?;
+                ManagedArtifact::file(self.path, self.group, mode, size, digest)
+            }
+            ManagedArtifactKind::Directory => {
+                let (Some(mode), None, None, None) =
+                    (self.mode, self.size, self.sha256, self.target)
+                else {
+                    return Err(OwnershipError::new(OwnershipErrorCode::ManifestMalformed));
+                };
+                ManagedArtifact::directory(self.path, self.group, mode)
+            }
+            ManagedArtifactKind::Symlink => {
+                let (None, None, None, Some(target)) =
+                    (self.mode, self.size, self.sha256, self.target)
+                else {
+                    return Err(OwnershipError::new(OwnershipErrorCode::ManifestMalformed));
+                };
+                ManagedArtifact::symlink(self.path, self.group, target)
+            }
         }
     }
 }
@@ -924,28 +1217,29 @@ mod tests {
             let artifacts = vec![
                 ManagedArtifact::file(
                     "/opt/pkg/bin/nix",
-                    group_gid,
+                    ManagedGroup::Broker,
                     0o555,
                     12,
                     body_digest(b"managed nix\n"),
                 )
                 .unwrap(),
-                ManagedArtifact::directory("/nix/store", group_gid, 0o1775).unwrap(),
+                ManagedArtifact::directory("/nix/store", ManagedGroup::BuildUsers, 0o1775).unwrap(),
                 ManagedArtifact::directory(
                     "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nix",
-                    group_gid,
+                    ManagedGroup::BuildUsers,
                     0o555,
                 )
                 .unwrap(),
                 ManagedArtifact::file(
                     "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nix/nix",
-                    group_gid,
+                    ManagedGroup::BuildUsers,
                     0o444,
                     10,
                     body_digest(b"store nix\n"),
                 )
                 .unwrap(),
-                ManagedArtifact::symlink("/opt/pkg/bin/nix-current", group_gid, "nix").unwrap(),
+                ManagedArtifact::symlink("/opt/pkg/bin/nix-current", ManagedGroup::Broker, "nix")
+                    .unwrap(),
             ];
             let nix_version = NixVersion::new("2.34.8").unwrap();
             let asset_manifest_digest =
@@ -954,6 +1248,10 @@ mod tests {
                 System::Aarch64Darwin,
                 nix_version,
                 asset_manifest_digest,
+                ManagedGroupBindings {
+                    broker_gid: group_gid,
+                    build_users_gid: group_gid,
+                },
                 artifacts,
             )
             .unwrap();
@@ -998,6 +1296,77 @@ mod tests {
     }
 
     #[test]
+    fn signed_manifest_binds_roles_without_baking_in_host_gids() {
+        let fixture = Fixture::new();
+        let bytes = encode_ownership_asset_manifest(
+            fixture.expectation.system(),
+            fixture.expectation.nix_version(),
+            fixture.expectation.artifacts(),
+        )
+        .unwrap();
+        let first = decode_ownership_asset_manifest(
+            &bytes,
+            fixture.expectation.system(),
+            fixture.expectation.nix_version(),
+            body_digest(&bytes),
+            ManagedGroupBindings::new(1001, 1002).unwrap(),
+        )
+        .unwrap();
+        let second = decode_ownership_asset_manifest(
+            &bytes,
+            fixture.expectation.system(),
+            fixture.expectation.nix_version(),
+            body_digest(&bytes),
+            ManagedGroupBindings::new(2001, 2002).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(first.artifacts(), second.artifacts());
+        assert_ne!(first.groups(), second.groups());
+        assert_eq!(
+            first.asset_manifest_digest(),
+            second.asset_manifest_digest()
+        );
+    }
+
+    #[test]
+    fn asset_manifest_unknown_fields_and_digest_mismatch_fail_closed() {
+        let fixture = Fixture::new();
+        let bytes = encode_ownership_asset_manifest(
+            fixture.expectation.system(),
+            fixture.expectation.nix_version(),
+            fixture.expectation.artifacts(),
+        )
+        .unwrap();
+        assert_eq!(
+            decode_ownership_asset_manifest(
+                &bytes,
+                fixture.expectation.system(),
+                fixture.expectation.nix_version(),
+                body_digest(b"other"),
+                fixture.expectation.groups(),
+            )
+            .unwrap_err()
+            .code(),
+            OwnershipErrorCode::ManifestMismatch
+        );
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        value["unexpected"] = serde_json::json!(true);
+        let malformed = serde_json::to_vec(&value).unwrap();
+        assert_eq!(
+            decode_ownership_asset_manifest(
+                &malformed,
+                fixture.expectation.system(),
+                fixture.expectation.nix_version(),
+                body_digest(&malformed),
+                fixture.expectation.groups(),
+            )
+            .unwrap_err()
+            .code(),
+            OwnershipErrorCode::ManifestMalformed
+        );
+    }
+
+    #[test]
     fn authenticated_manifest_digest_rejects_a_truncated_artifact_set() {
         let fixture = Fixture::new();
         let mut truncated = fixture.expectation.artifacts().to_vec();
@@ -1006,6 +1375,7 @@ mod tests {
             fixture.expectation.system(),
             fixture.expectation.nix_version().clone(),
             fixture.expectation.asset_manifest_digest(),
+            fixture.expectation.groups(),
             truncated,
         )
         .unwrap_err();
@@ -1023,6 +1393,7 @@ mod tests {
             System::Aarch64Darwin,
             nix_version,
             asset_manifest_digest,
+            fixture.expectation.groups(),
             artifacts,
         )
         .unwrap();
@@ -1120,13 +1491,7 @@ mod tests {
     #[test]
     fn changed_artifact_group_is_rejected_after_receipt_match() {
         let mut fixture = Fixture::new();
-        let file = fixture
-            .expectation
-            .artifacts
-            .iter_mut()
-            .find(|artifact| artifact.path == "/opt/pkg/bin/nix")
-            .unwrap();
-        file.group_gid = file.group_gid.wrapping_add(1);
+        fixture.expectation.groups.broker_gid = fixture.group_gid.wrapping_add(1);
         fs::write(
             fixture.receipt(),
             encode_ownership_receipt(&fixture.expectation).unwrap(),
@@ -1141,13 +1506,7 @@ mod tests {
     #[test]
     fn store_parent_uses_the_store_expectations_group() {
         let mut fixture = Fixture::new();
-        let store_file = fixture
-            .expectation
-            .artifacts
-            .iter_mut()
-            .find(|artifact| artifact.path.ends_with("-nix/nix"))
-            .unwrap();
-        store_file.group_gid = store_file.group_gid.wrapping_add(1);
+        fixture.expectation.groups.build_users_gid = fixture.group_gid.wrapping_add(1);
         fs::write(
             fixture.receipt(),
             encode_ownership_receipt(&fixture.expectation).unwrap(),
@@ -1198,29 +1557,30 @@ mod tests {
     #[test]
     fn duplicate_and_out_of_scope_paths_are_rejected() {
         assert_eq!(
-            ManagedArtifact::directory("/nix/store", 0, 0o775)
+            ManagedArtifact::directory("/nix/store", ManagedGroup::BuildUsers, 0o775)
                 .unwrap_err()
                 .code(),
             OwnershipErrorCode::ExpectationInvalid
         );
         assert_eq!(
-            ManagedArtifact::directory("/opt/pkg/open", 0, 0o777)
+            ManagedArtifact::directory("/opt/pkg/open", ManagedGroup::Root, 0o777)
                 .unwrap_err()
                 .code(),
             OwnershipErrorCode::ExpectationInvalid
         );
         assert_eq!(
-            ManagedArtifact::directory("/opt/pkg/../foreign", 0, 0o755)
+            ManagedArtifact::directory("/opt/pkg/../foreign", ManagedGroup::Root, 0o755)
                 .unwrap_err()
                 .code(),
             OwnershipErrorCode::ExpectationInvalid
         );
-        let artifact = ManagedArtifact::directory("/tmp/pkg", 0, 0o755).unwrap();
+        let artifact = ManagedArtifact::directory("/tmp/pkg", ManagedGroup::Root, 0o755).unwrap();
         assert_eq!(
             OwnershipExpectation::new(
                 System::Aarch64Darwin,
                 NixVersion::new("2.34.8").unwrap(),
                 body_digest(b"manifest"),
+                ManagedGroupBindings::new(20, 21).unwrap(),
                 vec![artifact],
             )
             .unwrap_err()
@@ -1228,13 +1588,63 @@ mod tests {
             OwnershipErrorCode::ExpectationInvalid
         );
 
-        let artifact = ManagedArtifact::directory("/nix/store", 0, 0o1775).unwrap();
+        let artifact =
+            ManagedArtifact::directory("/nix/store", ManagedGroup::BuildUsers, 0o1775).unwrap();
         assert_eq!(
             OwnershipExpectation::new(
                 System::Aarch64Darwin,
                 NixVersion::new("2.34.8").unwrap(),
                 body_digest(b"manifest"),
+                ManagedGroupBindings::new(20, 21).unwrap(),
                 vec![artifact.clone(), artifact],
+            )
+            .unwrap_err()
+            .code(),
+            OwnershipErrorCode::ExpectationInvalid
+        );
+    }
+
+    #[test]
+    fn symlink_targets_cannot_escape_managed_prefixes_or_parent_other_assets() {
+        assert_eq!(
+            ManagedArtifact::symlink(
+                "/opt/pkg/bin/escape",
+                ManagedGroup::Broker,
+                "../../../etc/passwd",
+            )
+            .unwrap_err()
+            .code(),
+            OwnershipErrorCode::ExpectationInvalid
+        );
+        assert_eq!(
+            ManagedArtifact::symlink("/opt/pkg/bin/escape", ManagedGroup::Broker, "/etc/passwd",)
+                .unwrap_err()
+                .code(),
+            OwnershipErrorCode::ExpectationInvalid
+        );
+
+        let store =
+            ManagedArtifact::directory("/nix/store", ManagedGroup::BuildUsers, 0o1775).unwrap();
+        let link =
+            ManagedArtifact::symlink("/opt/pkg/runtime", ManagedGroup::Broker, "nix-2.24.10")
+                .unwrap();
+        let nested = ManagedArtifact::file(
+            "/opt/pkg/runtime/bin/nix",
+            ManagedGroup::Broker,
+            0o550,
+            0,
+            body_digest(&[]),
+        )
+        .unwrap();
+        let version = NixVersion::new("2.24.10").unwrap();
+        let artifacts = vec![store, link, nested];
+        assert_eq!(
+            OwnershipExpectation::new(
+                System::X8664Linux,
+                version,
+                body_digest(b"invalid manifest"),
+                ManagedGroupBindings::new(1001, 1002).unwrap(),
+                artifacts,
             )
             .unwrap_err()
             .code(),

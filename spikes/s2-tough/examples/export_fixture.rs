@@ -17,12 +17,19 @@ fn copy_tree(source: &Path, destination: &Path) {
     }
 }
 
+fn replace_tree(source: &Path, destination: &Path) {
+    if destination.exists() {
+        std::fs::remove_dir_all(destination).unwrap();
+    }
+    copy_tree(source, destination);
+}
+
 #[tokio::main]
 async fn main() {
     let fixture = build_fixture().await;
     let destination = Path::new("../../fixtures/channel-v1");
     std::fs::create_dir_all(destination).unwrap();
     std::fs::write(destination.join("root.json"), fixture.root_bytes()).unwrap();
-    copy_tree(&fixture.repo.metadata_dir, &destination.join("metadata"));
-    copy_tree(&fixture.repo.targets_dir, &destination.join("targets"));
+    replace_tree(&fixture.repo.metadata_dir, &destination.join("metadata"));
+    replace_tree(&fixture.repo.targets_dir, &destination.join("targets"));
 }

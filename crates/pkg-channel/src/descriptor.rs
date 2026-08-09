@@ -20,6 +20,10 @@ pub enum BuildMode {
 pub(crate) struct WireSystemEntry {
     pub url: String,
     pub sha256: String,
+    #[serde(rename = "assetManifestTarget")]
+    pub asset_manifest_target: String,
+    #[serde(rename = "assetManifestSha256")]
+    pub asset_manifest_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -104,6 +108,9 @@ pub(crate) struct WireDescriptor {
 pub struct NixRuntimeArtifact {
     pub(crate) url: String,
     pub(crate) sha256: String,
+    pub(crate) target: String,
+    pub(crate) asset_manifest_target: String,
+    pub(crate) asset_manifest_sha256: String,
 }
 
 impl NixRuntimeArtifact {
@@ -117,6 +124,24 @@ impl NixRuntimeArtifact {
     #[must_use]
     pub fn sha256(&self) -> &str {
         &self.sha256
+    }
+
+    /// Returns the authenticated TUF target carrying the runtime archive.
+    #[must_use]
+    pub fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// Returns the authenticated TUF target carrying the static asset manifest.
+    #[must_use]
+    pub fn asset_manifest_target(&self) -> &str {
+        &self.asset_manifest_target
+    }
+
+    /// Returns the lowercase SHA-256 of the canonical static asset manifest.
+    #[must_use]
+    pub fn asset_manifest_sha256(&self) -> &str {
+        &self.asset_manifest_sha256
     }
 }
 

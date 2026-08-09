@@ -7,6 +7,8 @@
 //     * descriptor.json           — the channel descriptor itself
 //     * nix/<ver>/<sys>.tar.xz    — the managed-Nix runtime (one representative
 //                                   target per system; tiny bytes)
+//     * nix/<ver>/<sys>.assets.json — canonical static privileged-asset manifest
+//                                     with stable group roles (one per system)
 // Nixpkgs source is intentionally not a product TUF target; the descriptor
 // authenticates rev/narHash and bundled Nix verifies the direct flake fetch.
 //
@@ -30,6 +32,7 @@ use crate::descriptor::{
 };
 use crate::keys::SignKey;
 use crate::repo::{DelegationSpec, RepoBuilder, RepoPaths, hours_from_now, sha256_hex};
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -60,6 +63,8 @@ pub struct Fixture {
     pub descriptor_bytes: Vec<u8>,
     /// Representative managed-Nix runtime targets (one per system): (name, bytes).
     pub nix_targets: Vec<(String, Vec<u8>)>,
+    /// Canonical static privileged-asset manifests (one per system).
+    pub asset_manifest_targets: Vec<(String, Vec<u8>)>,
     /// The four per-system index targets (delegated to the "index" role).
     pub index_targets: Vec<(String, Vec<u8>)>,
     /// The delegated role name holding the index targets.
@@ -91,6 +96,65 @@ fn nix_target_bytes(system: &str) -> Vec<u8> {
     format!("managed nix runtime {NIX_VERSION} {system} (fixture)\n").into_bytes()
 }
 
+fn asset_manifest_target_name(system: &str) -> String {
+    format!("nix/{NIX_VERSION}/{system}.assets.json")
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssetManifest<'a> {
+    schema_version: u32,
+    product: &'static str,
+    system: &'a str,
+    nix_version: &'static str,
+    artifacts: Vec<AssetArtifact>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssetArtifact {
+    path: String,
+    kind: &'static str,
+    owner_uid: u32,
+    group: &'static str,
+    mode: Option<u32>,
+    size: Option<u64>,
+    sha256: Option<String>,
+    target: Option<String>,
+}
+
+fn asset_manifest_target_bytes(system: &str, runtime_bytes: &[u8]) -> Vec<u8> {
+    serde_json::to_vec(&AssetManifest {
+        schema_version: 1,
+        product: "pkg",
+        system,
+        nix_version: NIX_VERSION,
+        artifacts: vec![
+            AssetArtifact {
+                path: "/nix/store".to_string(),
+                kind: "directory",
+                owner_uid: 0,
+                group: "buildUsers",
+                mode: Some(0o1775),
+                size: None,
+                sha256: None,
+                target: None,
+            },
+            AssetArtifact {
+                path: format!("/opt/pkg/nix/{NIX_VERSION}/runtime.txt"),
+                kind: "file",
+                owner_uid: 0,
+                group: "broker",
+                mode: Some(0o550),
+                size: Some(runtime_bytes.len() as u64),
+                sha256: Some(format!("sha256:{}", sha256_hex(runtime_bytes))),
+                target: None,
+            },
+        ],
+    })
+    .unwrap()
+}
+
 fn index_target_name(system: &str) -> String {
     format!("index/{SEQUENCE}/{system}.json.br")
 }
@@ -112,6 +176,16 @@ pub async fn build_fixture() -> Fixture {
         .iter()
         .map(|sys| (nix_target_name(sys), nix_target_bytes(sys)))
         .collect();
+    let asset_manifest_targets: Vec<(String, Vec<u8>)> = SUPPORTED_SYSTEMS
+        .iter()
+        .zip(&nix_targets)
+        .map(|(sys, (_, runtime_bytes))| {
+            (
+                asset_manifest_target_name(sys),
+                asset_manifest_target_bytes(sys, runtime_bytes),
+            )
+        })
+        .collect();
     let index_targets: Vec<(String, Vec<u8>)> = SUPPORTED_SYSTEMS
         .iter()
         .map(|sys| (index_target_name(sys), index_target_bytes(sys)))
@@ -129,7 +203,11 @@ pub async fn build_fixture() -> Fixture {
     // target tuple and yields exactly the four keys x86_64-linux, aarch64-linux,
     // x86_64-darwin, aarch64-darwin.
     let mut nix_per_system: BTreeMap<String, SystemEntry> = BTreeMap::new();
-    for (sys, (_, bytes)) in SUPPORTED_SYSTEMS.iter().zip(&nix_targets) {
+    for ((sys, (_, bytes)), (manifest_name, manifest_bytes)) in SUPPORTED_SYSTEMS
+        .iter()
+        .zip(&nix_targets)
+        .zip(&asset_manifest_targets)
+    {
         nix_per_system.insert(
             (*sys).to_string(),
             SystemEntry {
@@ -139,6 +217,8 @@ pub async fn build_fixture() -> Fixture {
                     sys = sys,
                 ),
                 sha256: sha256_hex(bytes),
+                asset_manifest_target: manifest_name.clone(),
+                asset_manifest_sha256: sha256_hex(manifest_bytes),
             },
         );
     }
@@ -207,6 +287,9 @@ pub async fn build_fixture() -> Fixture {
     for (name, bytes) in &nix_targets {
         builder = builder.target(name.clone(), bytes.clone());
     }
+    for (name, bytes) in &asset_manifest_targets {
+        builder = builder.target(name.clone(), bytes.clone());
+    }
     builder = builder.delegated_role(DelegationSpec {
         role_name: "index".to_string(),
         key: SignKey::generate(),
@@ -225,6 +308,7 @@ pub async fn build_fixture() -> Fixture {
         datastore,
         descriptor_bytes,
         nix_targets,
+        asset_manifest_targets,
         index_targets,
         index_role: "index".to_string(),
     }

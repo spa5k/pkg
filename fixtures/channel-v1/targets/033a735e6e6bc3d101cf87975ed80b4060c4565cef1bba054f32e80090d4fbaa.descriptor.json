@@ -31,19 +31,27 @@
     "perSystem": {
       "aarch64-darwin": {
         "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-darwin.tar.xz",
-        "sha256": "1c5cabe15a6ec3610869acd20981b9ec74f2388eb91014b7cf2fb3f7f26d5b7f"
+        "sha256": "1c5cabe15a6ec3610869acd20981b9ec74f2388eb91014b7cf2fb3f7f26d5b7f",
+        "assetManifestTarget": "nix/2.24.10/aarch64-darwin.assets.json",
+        "assetManifestSha256": "ee9d3425387cf96fdea2b7d0aca5b55223b3c5f77c34721f43feaf40c7faf84e"
       },
       "aarch64-linux": {
         "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-linux.tar.xz",
-        "sha256": "946dc216b68668a024e61387bc21102ae68ae9b9df2bc5f49ac211d4551b79b2"
+        "sha256": "946dc216b68668a024e61387bc21102ae68ae9b9df2bc5f49ac211d4551b79b2",
+        "assetManifestTarget": "nix/2.24.10/aarch64-linux.assets.json",
+        "assetManifestSha256": "8bd1bd1db4d67177e480499db87bcb82a8ad5f22ecae1646afdac35665980a3b"
       },
       "x86_64-darwin": {
         "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-darwin.tar.xz",
-        "sha256": "f05a8bc7adb5def2c406070d8fb3c3391ddfff07dd627a8c508c5d0a0a211186"
+        "sha256": "f05a8bc7adb5def2c406070d8fb3c3391ddfff07dd627a8c508c5d0a0a211186",
+        "assetManifestTarget": "nix/2.24.10/x86_64-darwin.assets.json",
+        "assetManifestSha256": "7a99411dd5b037c1aaef4bbef8e6a4db349dfd42a21bd7c9fe6e480503b35215"
       },
       "x86_64-linux": {
         "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-linux.tar.xz",
-        "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3"
+        "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3",
+        "assetManifestTarget": "nix/2.24.10/x86_64-linux.assets.json",
+        "assetManifestSha256": "9906b990559e25b7bc6cb5ebbf05680bb473ca81787d94754d9df715f707a0ee"
       }
     }
   },

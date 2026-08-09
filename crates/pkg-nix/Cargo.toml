@@ -25,6 +25,7 @@ publish.workspace = true
 # this crate composes its strong types into pkg-owned request/report types and
 # performs all (de)serialization through private wire DTOs itself.
 pkg-core = { path = "../pkg-core" }
+pkg-channel = { path = "../pkg-channel" }
 
 # Exact-pinned serde + serde_json for the size-capped JSON codec. The `derive`
 # feature is used only by crate-private wire DTOs (never by public types or by
@@ -37,3 +38,13 @@ serde_json = "=1.0.151"
 # reads and opens regular files with O_NOFOLLOW at the trust boundary.
 sha2 = "=0.10.9"
 libc = "=0.2.189"
+
+# Runtime archives are streamed through a pure-Rust XZ decoder and inspected
+# entry-by-entry. tar's ambient unpack helpers are deliberately not used: the
+# provisioner enforces an exact signed path/kind/content allowlist itself.
+tar = { version = "=0.4.46", default-features = false }
+lzma-rust2 = { version = "=0.18.1", default-features = false, features = ["std", "xz"] }
+
+[dev-dependencies]
+lzma-rust2 = { version = "=0.18.1", default-features = false, features = ["std", "xz", "encoder"] }
+tempfile = "=3.27.0"

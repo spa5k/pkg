@@ -247,6 +247,21 @@ mod tests {
         ));
 
         value = serde_json::from_slice(&bytes).unwrap();
+        value["nixRuntime"]["perSystem"]["x86_64-linux"]["assetManifestSha256"] =
+            serde_json::json!("0".repeat(64));
+        let mismatched_manifest = serde_json::to_vec(&value).unwrap();
+        assert!(matches!(
+            validate_descriptor(
+                &mismatched_manifest,
+                &repository,
+                System::X8664Linux,
+                None,
+                now,
+            ),
+            Err(ChannelError::TargetHashMismatch(_))
+        ));
+
+        value = serde_json::from_slice(&bytes).unwrap();
         value["buildPolicy"]["nativeLocalBuilds"]["x86_64-linux"]["mode"] =
             serde_json::json!("deny");
         let emergency_deny = serde_json::to_vec(&value).unwrap();

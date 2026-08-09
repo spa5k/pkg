@@ -58,13 +58,19 @@ pub use contract::{
     VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
+pub use managed::daemon::{DaemonError, DaemonErrorCode, ManagedDaemon};
 pub use managed::detect::{
     DetectionDisposition, DetectionFinding, DetectionReport, FindingKind, detect_unmanaged_nix,
 };
 pub use managed::ownership::{
-    ManagedArtifact, ManagedArtifactKind, OwnershipError, OwnershipErrorCode, OwnershipExpectation,
-    VerifiedOwnership, encode_ownership_asset_manifest, encode_ownership_receipt,
-    ownership_receipt_path, verify_ownership_receipt,
+    ManagedArtifact, ManagedArtifactKind, ManagedGroup, ManagedGroupBindings, OwnershipError,
+    OwnershipErrorCode, OwnershipExpectation, VerifiedOwnership, decode_ownership_asset_manifest,
+    encode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
+    verify_ownership_receipt,
+};
+pub use managed::provision::{
+    ProvisionError, ProvisionErrorCode, ProvisionRequest, ProvisionSpec, ProvisionedRuntime,
+    RuntimeSource, provision_managed_nix,
 };
 
 // Focused re-exports of the `pkg-core` strong types that appear in this crate's

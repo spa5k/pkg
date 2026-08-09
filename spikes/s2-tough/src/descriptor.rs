@@ -39,6 +39,10 @@ pub const NIX_RUNTIME_VERSION: &str = "2.24.10";
 pub struct SystemEntry {
     pub url: String,
     pub sha256: String,
+    #[serde(rename = "assetManifestTarget")]
+    pub asset_manifest_target: String,
+    #[serde(rename = "assetManifestSha256")]
+    pub asset_manifest_sha256: String,
 }
 
 /// A per-system index entry: the TUF target name plus its declared sha256
@@ -197,6 +201,8 @@ impl ChannelDescriptor {
                         ver = NIX_RUNTIME_VERSION,
                     ),
                     sha256: dummy_sha.clone(),
+                    asset_manifest_target: format!("nix/{NIX_RUNTIME_VERSION}/{sys}.assets.json"),
+                    asset_manifest_sha256: dummy_sha.clone(),
                 },
             );
             index_per_system.insert(

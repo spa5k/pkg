@@ -335,9 +335,10 @@ flowchart TD
 - **Status:** **Completed 2026-08-09** after DR-001 acceptance. The production
   read-only detector, `pkg doctor` refusal integration, and authenticated ownership-receipt
   verifier are implemented; a real privileged macOS scan was captured and correctly remained
-  `nix_ownership_unknown` because the S5 spike install has no production receipt. PR-12 still
-  owns creation of the signed asset expectation and atomic receipt installation; that downstream
-  writer dependency does not weaken or reopen PR-9's completed verification contract.
+  `nix_ownership_unknown` because the S5 spike install has no production receipt. PR-12 now
+  creates the signed asset expectation and installs the atomic receipt, binding portable signed
+  group roles to host-local numeric IDs without weakening or reopening PR-9's verification
+  contract.
 - **Purpose:** detect any existing **unmanaged** Nix and refuse with remediation text; never
   delete it (`08` T-INST-4, G6).
 - **Owns:** `crates/pkg-nix/src/managed/{detect.rs,ownership.rs}` + tests. The ownership verifier
@@ -393,9 +394,18 @@ flowchart TD
 - **Milestone:** M1.
 
 #### PR-12 — Managed-Nix provisioning (fetch/verify/install)
+- **Status:** **Completed 2026-08-09.** The production provisioner consumes the independently
+  authenticated per-system asset-manifest target, performs a second clean-host scan immediately
+  before publication, downloads with hard size limits, verifies SHA-256 before installation, and
+  extracts the XZ/tar stream against the exact signed allowlist. Signed stable group roles are
+  bound to host-local numeric IDs only in the authenticated receipt. Daemon readiness gates the
+  receipt-last commit point; any earlier failure removes only assets created by that attempt.
+  Temp-root Fake CDN/FakeNix tests cover success, archive tampering, unmanaged-Nix refusal, and
+  readiness rollback. Real-Nix smoke remains PR-36; systemd/launchd transports remain PR-27/28.
 - **Purpose:** download the pinned managed-Nix tarball, verify hash from signed `targets`,
   lay it down, launch the daemon; refuse if detection (PR-9) failed.
-- **Owns:** `crates/pkg-nix/src/managed/{provision.rs,daemon.rs}` + tests.
+- **Owns:** `crates/pkg-nix/src/managed/{provision.rs,daemon.rs,ownership.rs}` provisioning
+  extensions, authenticated runtime-manifest fields in `pkg-channel`, signed fixtures, and tests.
 - **Depends:** PR-9, PR-11.
 - **Migration/compat:** records the managed-Nix asset manifest (consumed by uninstall PR-29) and,
   only after successful installation, atomically writes the PR-9 ownership receipt bound to that

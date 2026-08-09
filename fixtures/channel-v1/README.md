@@ -2,8 +2,9 @@
 
 This is the committed contract fixture for `pkg-channel` PR-11. It contains a
 generated TUF repository with threshold-capable root metadata, a signed
-`descriptor.json`, managed-Nix targets for all four V1 systems, and delegated
-per-system index targets. All keys and artifact bytes are synthetic test data.
+`descriptor.json`, managed-Nix runtime and canonical asset-manifest targets for
+all four V1 systems, and delegated per-system index targets. All keys and
+artifact bytes are synthetic test data.
 
 Regenerate it from the isolated S2 publisher harness:
 

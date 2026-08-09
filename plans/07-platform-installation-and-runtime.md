@@ -689,7 +689,10 @@ only when all of the following hold:
 1. The caller supplies an expected system, exact Nix version, asset-manifest digest, and complete
    static privileged-install artifact set from separately authenticated release/channel metadata.
    The manifest uses pkg's canonical versioned encoding; the verifier recomputes its SHA-256 and
-   rejects a digest paired with any truncated, extended, or altered artifact list.
+   rejects a digest paired with any truncated, extended, or altered artifact list. Signed artifacts
+   carry stable group roles (`root`, `broker`, `buildUsers`) rather than non-portable numeric gids;
+   the privileged installer resolves those roles against the just-created/validated local service
+   groups and records the resulting gid bindings in the root-owned receipt.
 2. The fixed receipt is root-owned and root-only, with symlink-free non-writable ancestors:
    `/var/lib/pkg/managed-nix/ownership-v1.json` on Linux or
    `/Library/Application Support/pkg/managed-nix/ownership-v1.json` on macOS.

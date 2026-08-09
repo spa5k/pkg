@@ -290,6 +290,17 @@ pub(crate) fn validate_descriptor(
         )?;
         let target = format!("nix/{}/{system}.tar.xz", wire.nix_runtime.version);
         verify_target_hash(repository, &target, &artifact.sha256)?;
+        let manifest_target = format!("nix/{}/{system}.assets.json", wire.nix_runtime.version);
+        if artifact.asset_manifest_target != manifest_target
+            || !valid_sha256(&artifact.asset_manifest_sha256)
+        {
+            return Err(ChannelError::InvalidRuntimeArtifact);
+        }
+        verify_target_hash(
+            repository,
+            &manifest_target,
+            &artifact.asset_manifest_sha256,
+        )?;
     }
     let runtime = &wire.nix_runtime.per_system[host.as_str()];
 
@@ -335,10 +346,13 @@ pub(crate) fn validate_descriptor(
         descriptor: ChannelDescriptor {
             channel,
             expires_at,
-            nix_version: wire.nix_runtime.version,
+            nix_version: wire.nix_runtime.version.clone(),
             runtime: NixRuntimeArtifact {
                 url: runtime.url.clone(),
                 sha256: runtime.sha256.clone(),
+                target: format!("nix/{}/{}.tar.xz", wire.nix_runtime.version, host),
+                asset_manifest_target: runtime.asset_manifest_target.clone(),
+                asset_manifest_sha256: runtime.asset_manifest_sha256.clone(),
             },
             nixpkgs: NixpkgsPin {
                 owner: wire.nixpkgs.owner,
