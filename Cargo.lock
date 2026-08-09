@@ -1159,6 +1159,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkg-pipeline"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "pkg-channel",
+ "pkg-core",
+ "pkg-index",
+ "pkg-nix",
+ "pkg-resolver",
+ "pkg-store",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "pkg-resolver"
 version = "0.0.0"
 dependencies = [

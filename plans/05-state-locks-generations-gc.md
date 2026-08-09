@@ -611,9 +611,11 @@ record/`treeDigest`/root-set ground truths.
   root-per-generation**: D-18 rejects the buildEnv single-store-path model, so
   no single root ever has to stand in for a hand-built tree.
 - **`<safe-id>` definition.** Each symlink name in a root set is a **validated
-  deterministic non-user path component** derived from `selector id` + `output`
-  (e.g. `sha256("sel_018f\tout")[0:16]`, or a stable prefix thereof) **plus a
-  collision-resistant suffix** so two outputs of the same selector never alias.
+  deterministic non-user path component** derived from the canonical selected
+  output `StorePath` (e.g. `out-` + the first 128 bits of
+  `sha256(storePath)`). This makes the complete name set reconstructible from
+  the persisted, sorted `activation.outputRoots[]` during crash recovery and
+  remains collision-resistant; two distinct selected outputs never alias.
   It is computed by the product and is **never a caller-supplied raw path
   component** — no user selector text, attribute, or version string is used
   verbatim as a symlink name — and the helper rejects any name not in the

@@ -329,6 +329,58 @@ pub fn verify_activation(tree: &Path, plan: &ActivationPlan) -> Result<(), Activ
     Ok(())
 }
 
+/// Verifies a retained forest from only its persisted generation metadata.
+pub fn verify_recorded_activation(
+    tree: &Path,
+    expected_digest: Digest,
+    expected_entries: u64,
+    output_roots: &[StorePath],
+) -> Result<(), ActivationError> {
+    let entries = scan_forest(tree)?;
+    if u64::try_from(entries.len()).ok() != Some(expected_entries)
+        || digest_entries(&entries) != expected_digest
+        || entries.iter().any(|entry| {
+            !entry.target.is_absolute()
+                || !output_roots
+                    .iter()
+                    .any(|root| entry.target.starts_with(root.as_str()))
+        })
+    {
+        return Err(ActivationError::IntegrityMismatch);
+    }
+    Ok(())
+}
+
+/// Inspects an already-staged forest without following links.
+///
+/// This recovery/integration constructor accepts only absolute leaf targets
+/// beneath one of the persisted output roots.
+pub fn inspect_staged_activation(
+    tree: &Path,
+    mut output_roots: Vec<StorePath>,
+) -> Result<ActivationPlan, ActivationError> {
+    output_roots.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    output_roots.dedup_by(|left, right| left == right);
+    if output_roots.is_empty() {
+        return Err(ActivationError::UnsafePath);
+    }
+    let entries = scan_forest(tree)?;
+    if entries.iter().any(|entry| {
+        !entry.target.is_absolute()
+            || !output_roots
+                .iter()
+                .any(|root| entry.target.starts_with(root.as_str()))
+    }) {
+        return Err(ActivationError::UnsafePath);
+    }
+    Ok(ActivationPlan {
+        tree_digest: digest_entries(&entries),
+        output_roots,
+        entries,
+        collisions: Vec::new(),
+    })
+}
+
 fn scan_forest(tree: &Path) -> Result<Vec<ForestEntry>, ActivationError> {
     fn visit(
         root: &Path,

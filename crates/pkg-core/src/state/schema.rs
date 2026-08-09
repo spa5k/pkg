@@ -261,6 +261,11 @@ impl LockedState {
     pub const fn uid(&self) -> u32 {
         self.uid
     }
+    /// Returns the verified channel sequence used to resolve this lock.
+    #[must_use]
+    pub const fn channel_seq(&self) -> ChannelSequence {
+        self.channel_seq
+    }
     /// Returns the target Nix system.
     #[must_use]
     pub const fn system(&self) -> System {
@@ -325,10 +330,50 @@ impl Generation {
     pub fn id(&self) -> &str {
         &self.id
     }
+    /// Returns the authenticated user identity owning this generation.
+    #[must_use]
+    pub const fn uid(&self) -> u32 {
+        self.uid
+    }
+    /// Returns the channel sequence captured by this generation.
+    #[must_use]
+    pub const fn channel_seq(&self) -> ChannelSequence {
+        self.channel_seq
+    }
+    /// Returns the exact manifest snapshot body digest.
+    #[must_use]
+    pub fn manifest_hash(&self) -> &str {
+        &self.manifest_hash
+    }
+    /// Returns the exact lock snapshot body digest.
+    #[must_use]
+    pub fn lock_hash(&self) -> &str {
+        &self.lock_hash
+    }
+    /// Returns the relative generation-scoped manifest snapshot path.
+    #[must_use]
+    pub fn manifest_snapshot(&self) -> &str {
+        &self.manifest_snapshot
+    }
+    /// Returns the relative generation-scoped lock snapshot path.
+    #[must_use]
+    pub fn lock_snapshot(&self) -> &str {
+        &self.lock_snapshot
+    }
     /// Returns the activation record.
     #[must_use]
     pub fn activation(&self) -> &Activation {
         &self.activation
+    }
+    /// Returns the operation provenance captured by this generation.
+    #[must_use]
+    pub const fn operation(&self) -> &GenerationOperation {
+        &self.operation
+    }
+    /// Returns the generation record's self-digest.
+    #[must_use]
+    pub fn generation_hash(&self) -> &str {
+        &self.generation_hash
     }
 }
 
@@ -341,6 +386,39 @@ pub struct Activation {
     collision_policy: CollisionPolicy,
     output_roots: Vec<StorePath>,
     collision_resolutions: Vec<CollisionResolution>,
+}
+
+impl Activation {
+    /// Returns the relative retained forest path.
+    #[must_use]
+    pub fn tree_path(&self) -> &str {
+        &self.tree_path
+    }
+    /// Returns the recorded deterministic forest digest.
+    #[must_use]
+    pub fn tree_digest(&self) -> &str {
+        &self.tree_digest
+    }
+    /// Returns the number of leaf links in the forest.
+    #[must_use]
+    pub const fn entry_count(&self) -> u64 {
+        self.entry_count
+    }
+    /// Returns the collision policy applied during staging.
+    #[must_use]
+    pub const fn collision_policy(&self) -> CollisionPolicy {
+        self.collision_policy
+    }
+    /// Returns every selected output root in canonical order.
+    #[must_use]
+    pub fn output_roots(&self) -> &[StorePath] {
+        &self.output_roots
+    }
+    /// Returns every recorded collision decision.
+    #[must_use]
+    pub fn collision_resolutions(&self) -> &[CollisionResolution] {
+        &self.collision_resolutions
+    }
 }
 
 /// Collision handling recorded for an activation forest.
@@ -390,6 +468,19 @@ pub struct GenerationOperation {
     op_id: String,
     kind: String,
     approval: OperationApproval,
+}
+
+impl GenerationOperation {
+    /// Returns the stable operation identifier.
+    #[must_use]
+    pub fn op_id(&self) -> &str {
+        &self.op_id
+    }
+    /// Returns the product operation kind.
+    #[must_use]
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
 }
 
 /// Build approval state captured by a generation.

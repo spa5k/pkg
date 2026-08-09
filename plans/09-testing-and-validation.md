@@ -906,8 +906,12 @@ These are **constraints the implementation must satisfy** so testing is even pos
   reachable evidence combinations map to explicit recovery actions, impossible
   combinations fail closed, helper refusal leaves staging/current untouched,
   and the observed durability events are exactly `rooted → forest-retained →
-  activated`. PR-19 supplies the fault-injected snapshot/journal executor that
-  applies those actions end to end.
+  activated`. PR-19 now supplies the fault-injected snapshot/journal executor:
+  prepared and rooted tails discard record/snapshots/forest/roots with current
+  unchanged; activated restores both mutable views and commits forward;
+  committed recovery is idempotent. Additional tests cover pre-record orphan
+  snapshots, `current.tmp.*` cleanup, cross-file hash tampering, and journal
+  symlink refusal.
 - **AC-T10** (GC admission) Same-user `gc` + a same-user mutating op is serialized by the
   **per-user state `flock`** (`STATE_LOCKED`, exit 72; plan 05 §12 — UNCHANGED). Cross-user —
   user B's install in its realize→root window vs user A's `gc` — is made safe by the

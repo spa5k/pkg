@@ -28,6 +28,8 @@ pub enum CurrentError {
     MissingForest,
     /// Root publication did not become durable, so activation was not attempted.
     RootPublication,
+    /// `current` may already name the new generation; recovery must finish forward.
+    PostActivation,
     /// The observed recovery evidence cannot occur under the transaction contract.
     InvalidRecoveryState,
     /// A bounded filesystem operation failed.
@@ -41,6 +43,7 @@ impl fmt::Display for CurrentError {
             Self::UnsafePermissions => f.write_str("unsafe state permissions refused"),
             Self::MissingForest => f.write_str("retained activation forest is missing"),
             Self::RootPublication => f.write_str("activation root publication failed"),
+            Self::PostActivation => f.write_str("activation requires forward recovery"),
             Self::InvalidRecoveryState => f.write_str("invalid activation recovery state"),
             Self::Filesystem(_) => f.write_str("state filesystem operation failed"),
         }
@@ -179,7 +182,7 @@ impl StateLayout {
         symlink(&relative_target, &temporary)?;
         sync_dir(&self.state_root)?;
         fs::rename(&temporary, self.state_root.join("current"))?;
-        sync_dir(&self.state_root)?;
+        sync_dir(&self.state_root).map_err(|_| CurrentError::PostActivation)?;
         Ok(())
     }
 
@@ -211,6 +214,17 @@ impl StateLayout {
         }
     }
 
+    /// Returns the validated per-user state root for durable state modules.
+    #[must_use]
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
+
+    /// Re-runs ownership, mode, and symlink-component validation.
+    pub fn validate(&self) -> Result<(), CurrentError> {
+        self.revalidate()
+    }
+
     fn revalidate(&self) -> Result<(), CurrentError> {
         Self::open(&self.trusted_root, &self.state_root, self.owner_uid).map(|_| ())
     }
@@ -228,7 +242,7 @@ pub fn activate_rooted_generation(
     prepared_roots: &PreparedRootSet,
     helper: &dyn MaintenanceAdapter,
     nonce: &str,
-    mut observe: impl FnMut(ActivationEvent),
+    mut observe: impl FnMut(ActivationEvent) -> Result<(), CurrentError>,
 ) -> Result<(), CurrentError> {
     layout.revalidate()?;
     let activations = layout.state_root.join("activations");
@@ -253,12 +267,12 @@ pub fn activate_rooted_generation(
     verify_activation(&staging, plan).map_err(|_| CurrentError::UnsafePath)?;
 
     publish_root_set(prepared_roots, helper)?;
-    observe(ActivationEvent::Rooted);
+    observe(ActivationEvent::Rooted)?;
     fs::rename(&staging, &retained)?;
     sync_dir(&activations)?;
-    observe(ActivationEvent::ForestRetained);
+    observe(ActivationEvent::ForestRetained)?;
     layout.switch_current(generation, nonce)?;
-    observe(ActivationEvent::Activated);
+    observe(ActivationEvent::Activated)?;
     Ok(())
 }
 
@@ -383,7 +397,10 @@ mod tests {
             &roots,
             &maintenance,
             "n1",
-            |event| events.push(event),
+            |event| {
+                events.push(event);
+                Ok(())
+            },
         )
         .unwrap();
         assert_eq!(
@@ -481,7 +498,7 @@ mod tests {
                 &roots,
                 &maintenance,
                 "n1",
-                |_| {}
+                |_| Ok(())
             ),
             Err(CurrentError::RootPublication)
         ));
@@ -535,7 +552,7 @@ mod tests {
                 &roots,
                 &maintenance,
                 "n1",
-                |_| {}
+                |_| Ok(())
             ),
             Err(CurrentError::RootPublication)
         ));

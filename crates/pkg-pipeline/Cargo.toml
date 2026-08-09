@@ -1,0 +1,19 @@
+[package]
+name = "pkg-pipeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+libc = "=0.2.189"
+pkg-channel = { path = "../pkg-channel" }
+pkg-core = { path = "../pkg-core" }
+pkg-index = { path = "../pkg-index" }
+pkg-nix = { path = "../pkg-nix" }
+pkg-resolver = { path = "../pkg-resolver" }
+pkg-store = { path = "../pkg-store" }
+serde_json = "=1.0.151"
+
+[dev-dependencies]
+tempfile = "=3.27.0"

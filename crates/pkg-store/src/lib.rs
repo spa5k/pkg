@@ -10,8 +10,8 @@ mod current;
 mod roots;
 
 pub use activate::{
-    ActivationError, ActivationInput, ActivationPlan, Collision, ForestEntry, stage_activation,
-    verify_activation,
+    ActivationError, ActivationInput, ActivationPlan, Collision, ForestEntry,
+    inspect_staged_activation, stage_activation, verify_activation, verify_recorded_activation,
 };
 pub use current::{
     ActivationEvent, CurrentError, RecoveryAction, RecoveryEvidence, StateLayout,

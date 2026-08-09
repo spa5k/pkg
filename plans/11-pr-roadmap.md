@@ -638,9 +638,22 @@ flowchart TD
 - **Milestone:** M3.
 
 #### PR-19 — Install pipeline state machine + rollback-on-failure
+- **Status:** **Completed 2026-08-09.** The dependency-safe `pkg-pipeline`
+  orchestration crate now composes `pkg-resolver`, authenticated cache-only
+  acquisition, verified-output staging, `pkg-store`, and the persisted-state
+  contracts without making `pkg-core` depend upward on its consumers. Its
+  seven-phase driver has one legal order and cleans pre-swap failures while
+  distinguishing post-swap failures that must recover forward. The concrete
+  generation executor validates cross-file/body/generation hashes, writes
+  snapshots + sidecars before the immutable record, appends hash-chained
+  prepared/rooted/activated/committed rows at their durability landmarks,
+  roots before the atomic relative `current` swap, restores current views from
+  snapshots, rejects symlinked journal/state files, and idempotently reconciles
+  prepared/rooted/activated/committed crash tails. Cache misses return an
+  explicit `BuildRequired` boundary for PR-26's approved local-build path.
 - **Purpose:** resolve→preflight→acquire→verify→stage→activate→commit with the invariant
   that **failure leaves the previous generation active** (`04`,`08` T-STATE-3).
-- **Owns:** `crates/pkg-core/src/pipeline/{mod.rs,resolve.rs,preflight.rs,acquire.rs,verify.rs,stage.rs,activate.rs,commit.rs}` + tests.
+- **Owns:** `crates/pkg-pipeline/src/{lib.rs,resolve.rs,preflight.rs,acquire.rs,verify.rs,stage.rs,activate.rs,commit.rs}` + narrow read-only state accessors in `pkg-core`. The originally planned `pkg-core/src/pipeline` placement is dependency-invalid: orchestration consumes `pkg-resolver`, `pkg-nix`, and `pkg-store`, all of which already depend on `pkg-core`.
 - **Depends:** PR-16, PR-18.
 - **Migration/compat:** writes generations via PR-10 state.
 - **Tests & gates:** G-UNIT + G-INTEGRATION + fault (kill at each transaction state — prepared/rooted/activated/committed, `05` §8.4 — → correct recovery; the previous generation stays active on any pre-swap failure).

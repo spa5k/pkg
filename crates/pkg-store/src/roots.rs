@@ -11,20 +11,21 @@ use sha2::{Digest as _, Sha256};
 /// One selected output that must remain live for a generation.
 #[derive(Debug, Clone)]
 pub struct RootCandidate {
-    selector: SelectorId,
-    output: OutputName,
     target: StorePath,
 }
 
 impl RootCandidate {
     /// Creates a root candidate from validated identity components.
     #[must_use]
-    pub const fn new(selector: SelectorId, output: OutputName, target: StorePath) -> Self {
-        Self {
-            selector,
-            output,
-            target,
-        }
+    pub fn new(_selector: SelectorId, _output: OutputName, target: StorePath) -> Self {
+        Self { target }
+    }
+
+    /// Reconstructs a candidate from the canonical identity persisted in
+    /// `activation.outputRoots` during crash recovery.
+    #[must_use]
+    pub const fn from_output_root(target: StorePath) -> Self {
+        Self { target }
     }
 }
 
@@ -79,23 +80,13 @@ pub fn prepare_root_set(
     candidates: impl IntoIterator<Item = RootCandidate>,
 ) -> Result<PreparedRootSet, RootError> {
     let mut candidates = candidates.into_iter().collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        left.target
-            .as_str()
-            .cmp(right.target.as_str())
-            .then_with(|| left.selector.as_str().cmp(right.selector.as_str()))
-            .then_with(|| left.output.as_str().cmp(right.output.as_str()))
-    });
+    candidates.sort_by(|left, right| left.target.as_str().cmp(right.target.as_str()));
     candidates.dedup_by(|left, right| left.target == right.target);
 
     let entries = candidates
         .into_iter()
         .map(|candidate| {
             let mut hasher = Sha256::new();
-            hasher.update(candidate.selector.as_str().as_bytes());
-            hasher.update(b"\0");
-            hasher.update(candidate.output.as_str().as_bytes());
-            hasher.update(b"\0");
             hasher.update(candidate.target.as_str().as_bytes());
             let digest = hasher.finalize();
             let name = format!("out-{}", encode_hex(&digest[..16]));
