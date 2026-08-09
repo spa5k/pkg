@@ -152,14 +152,25 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Owner:** E. **Source:** `[NIX-MANUAL]` (sandboxed builds, macOS build users); spike S3.
 
 ### DR-004 — Resolve UX & index strategy gated on reevaluation cost
-- **Status:** Proposed (pending **S4 / PR-6**).
+- **Status:** **Accepted 2026-08-09** after E/A review of Complete Real Nix
+  `2.34.8` evidence on native `aarch64-darwin` and native Docker Desktop
+  `aarch64-linux`; artifacts and derivation are preserved in
+  `spikes/s4-reeval-cost/evidence/` and `FINDINGS.md`.
 - **Context:** Realizing an attribute at a pinned rev has measurable cost; the disposable
   index accelerates search/list/info but install re-evaluates the exact attribute. (`03`,`04`)
-- **Decision (default pending spike):** Search/list/info use the disposable index; install
-  re-evaluates the exact selected attribute under pure eval. Perf budgets (`09` §6.7) are
-  finalized from S4 numbers. Pre-built upstream `packages.json.br` may accelerate *official*
-  channels but is **not** assumed permanent or cross-platform-complete.
-- **Consequences:** Resolve may show a progress step on cache-miss; documented in UX.
+- **Decision:** Search/list/info use the disposable index; install re-evaluates
+  the exact selected attribute under pure eval. Pre-built upstream
+  `packages.json.br` may accelerate *official* channels but is **not** assumed
+  permanent or cross-platform-complete. Frozen Real-reference budgets: pinned
+  single-attr resolve p95 `<1.5 s` / peak RSS `<512 MiB`; one-system full index
+  meta-eval p95 `<10 s` / peak RSS `<2.5 GiB`; four-system sequential publisher
+  meta-eval p95 `<30 s` / peak RSS `<2.5 GiB`. PR-32 fails on either an absolute
+  ceiling or a `>25%` regression from its pinned baseline.
+- **Consequences:** Resolve may show a progress step; full index evaluation is
+  publisher-preferred and client self-build is recovery because observed
+  per-system p95 was `3.6–4.7 s` with up to `1.88 GiB` RSS. Observed exact-attr
+  p95 was `325 ms` Linux arm64 / `453 ms` macOS arm64. Native x86_64 baseline
+  expansion remains PR-32 work before GA; QEMU timing is not accepted evidence.
 - **Owner:** E + F. **Source:** `[NIXPKGS-MANUAL]`; spike S4.
 
 ### DR-005 — Managed-daemon local builds: sandbox + approval + resource-boundary
@@ -334,7 +345,7 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 | **S1** (PR-4) | Is `/nix/store` viable for exclusive managed use, and how do we detect/safely refuse unmanaged Nix? | Concrete layout + detection method + refusal text validated on Linux & macOS; go/no-go on alternative prefix. | PR-9, PR-12, PR-27, PR-28 | end of M0.5 | Proposed (technical evidence complete; F/E/A sign-off pending) | DR-001 |
 | **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | **Accepted 2026-08-09** (F+A sign-off; 20 tests re-run) | DR-002 |
 | **S3** (PR-7) | Do v1 attrs substitute for `x86_64-darwin`/`aarch64-darwin`, **and** are native macOS local builds viable (sandbox, `_nixbld` users, Xcode toolchain, the honest resource boundary with **no** per-build cap in stock Nix, fail-closed)? Is a notarized installer feasible? | Availability matrix for fixture attrs; a real native sandboxed Darwin build under `_nixbld`; notarized installer/runtime builds & validates. | PR-26, PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed (harness implemented; Complete real Preflight/native-build/notarization evidence pending) | DR-003 |
-| **S4** (PR-6) | What are realistic resolve/reeval costs and index-build costs? | Measured time/memory table; proposed budgets. | PR-14, PR-16, PR-32 | end of M0.5 | Proposed | DR-004 |
+| **S4** (PR-6) | What are realistic resolve/reeval costs and index-build costs? | Measured time/memory table; accepted budgets. | PR-14, PR-16, PR-32 | end of M0.5 | **Accepted 2026-08-09** | DR-004 |
 | **S5** (PR-8) | Does managed-daemon sandbox + single-operation approval + the honest resource boundary work for local builds on **both Linux and macOS**? | A **regular** derivation build that is filesystem-sandboxed + network-denied under `sandbox=true`; a fixed-output derivation intentionally network-enabled (hash boundary); `nixbld` group + `nixbld*`/`_nixbld*` users ready; single-operation approval + fail-closed demonstrable; recorded **managed-host behavioral evidence** (boundary = `max-jobs`/timeout/max-silent-time/max-build-log-size + disk/free-space/load preflight; `use-cgroups` is cleanup/statistics on Linux; service-manager ceilings have **distinct** systemd-vs-launchd semantics and are Pending) — **not** a verification of per-build caps (none exist in stock Nix). | PR-26, PR-30 | end of M0.5 | Proposed | DR-005 |
 
 > **Guardrail:** Per `11` §9, no irreversible architecture merges before these DRs are

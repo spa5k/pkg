@@ -291,6 +291,9 @@ flowchart TD
 - **Milestone:** M0.5.
 
 #### PR-6 — SPIKE S4: single-attribute reevaluation cost
+- **Status:** Complete; DR-004 accepted 2026-08-09 from Complete Real Nix 2.34.8
+  native macOS arm64 and Linux arm64 evidence. PR-14/16/32 S4 gates are clear;
+  native x86_64 baseline expansion remains PR-32 work before GA.
 - **Purpose:** measure time/memory of realizing one attribute at a pinned rev (Fake vs Real)
   to size resolve UX and the index. **Gates PR-14/16 budgets.**
 - **Owns:** `spikes/s4-reeval-cost/`, DR-004 in `12`.

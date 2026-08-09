@@ -111,7 +111,10 @@ fn main() -> ExitCode {
         }
         Ok(s4::cli::Action::Run(run_args)) => match run_args.mode {
             s4::cli::RunMode::Fake => run_fake_mode(&run_args.out_dir),
-            s4::cli::RunMode::Real { nix_bin } => run_real_mode(&nix_bin, &run_args.out_dir),
+            s4::cli::RunMode::Real {
+                nix_bin,
+                store_root,
+            } => run_real_mode(&nix_bin, store_root.as_deref(), &run_args.out_dir),
         },
         Err(err) => {
             // `CliError` Display is bounded by construction (`MAX_TOKEN_CHARS`).
@@ -259,8 +262,8 @@ fn run_fake_mode(out_dir: &Path) -> ExitCode {
 /// line to stderr noting the run was incomplete and both artifacts were
 /// written, then exits [`EXIT_UNAVAILABLE`](EXIT_UNAVAILABLE) (69). No dynamic
 /// Nix output is ever printed.
-fn run_real_mode(nix_bin: &Path, out_dir: &Path) -> ExitCode {
-    let report = match s4::real::run_real(nix_bin) {
+fn run_real_mode(nix_bin: &Path, store_root: Option<&Path>, out_dir: &Path) -> ExitCode {
+    let report = match s4::real::run_real(nix_bin, store_root) {
         Ok(report) => report,
         Err(err) => {
             // `RealRunError` Display is a fixed ASCII message with no fields,

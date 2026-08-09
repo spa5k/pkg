@@ -18,7 +18,7 @@
 //! # Grammar
 //! ```text
 //! s4-runner fake [--out-dir PATH]
-//! s4-runner real --nix-bin ABSOLUTE_PATH [--out-dir PATH]
+//! s4-runner real --nix-bin ABSOLUTE_PATH [--store-root ABSOLUTE_PATH] [--out-dir PATH]
 //! s4-runner --help | -h
 //! ```
 //! Command and option names are matched by *exact* [`OsStr`] equality. The
@@ -54,7 +54,7 @@ const MAX_TOKEN_CHARS: usize = 64;
 pub const USAGE: &str = "\
 Usage:
     s4-runner fake [--out-dir PATH]
-    s4-runner real --nix-bin ABSOLUTE_PATH [--out-dir PATH]
+    s4-runner real --nix-bin ABSOLUTE_PATH [--store-root ABSOLUTE_PATH] [--out-dir PATH]
     s4-runner --help | -h
 ";
 
@@ -70,6 +70,10 @@ pub enum RunMode {
     Real {
         /// Absolute filesystem path to the `nix` binary, verbatim from argv.
         nix_bin: PathBuf,
+        /// Optional absolute root for a user-owned local chroot store. When
+        /// present, Real children receive it as `NIX_REMOTE`; the managed
+        /// daemon and its socket are not contacted.
+        store_root: Option<PathBuf>,
     },
 }
 
@@ -102,6 +106,8 @@ pub enum OptionKind {
     OutDir,
     /// `--nix-bin ABSOLUTE_PATH`
     NixBin,
+    /// `--store-root ABSOLUTE_PATH`
+    StoreRoot,
 }
 
 impl fmt::Display for OptionKind {
@@ -109,6 +115,7 @@ impl fmt::Display for OptionKind {
         f.write_str(match self {
             OptionKind::OutDir => "--out-dir",
             OptionKind::NixBin => "--nix-bin",
+            OptionKind::StoreRoot => "--store-root",
         })
     }
 }
@@ -138,10 +145,14 @@ pub enum CliError {
     EmptyValue(OptionKind),
     /// `--nix-bin` is not valid together with the `fake` mode.
     NixBinForbiddenInFake,
+    /// `--store-root` is not valid together with the `fake` mode.
+    StoreRootForbiddenInFake,
     /// The `real` mode requires `--nix-bin` but none was supplied.
     MissingNixBin,
     /// `--nix-bin` was supplied a non-absolute path (carried verbatim).
     NotAbsoluteNixBin(OsString),
+    /// `--store-root` was supplied a non-absolute path (carried verbatim).
+    NotAbsoluteStoreRoot(OsString),
     /// `--help` / `-h` appeared alongside any other token.
     HelpNotStandalone,
 }
@@ -168,12 +179,20 @@ impl fmt::Display for CliError {
             CliError::NixBinForbiddenInFake => {
                 write!(f, "option `--nix-bin` is not valid with the `fake` mode")
             }
+            CliError::StoreRootForbiddenInFake => {
+                write!(f, "option `--store-root` is not valid with the `fake` mode")
+            }
             CliError::MissingNixBin => {
                 write!(f, "the `real` mode requires `--nix-bin ABSOLUTE_PATH`")
             }
             CliError::NotAbsoluteNixBin(value) => write!(
                 f,
                 "option `--nix-bin` requires an absolute path: {}",
+                bound_lossy(value)
+            ),
+            CliError::NotAbsoluteStoreRoot(value) => write!(
+                f,
+                "option `--store-root` requires an absolute path: {}",
                 bound_lossy(value)
             ),
             CliError::HelpNotStandalone => {
@@ -188,7 +207,8 @@ impl std::error::Error for CliError {}
 /// Parse command-line arguments (excluding `argv[0]`) into an [`Action`].
 ///
 /// The parser is closed: only the tokens `fake`, `real`, `--out-dir`,
-/// `--nix-bin`, `--help`, and `-h` are recognized, by exact `OsStr` equality.
+/// `--nix-bin`, `--store-root`, `--help`, and `-h` are recognized, by exact
+/// `OsStr` equality.
 /// The mode (`fake`/`real`) must be the first non-help token. A value-taking
 /// option consumes exactly the following token as its value, verbatim, as long
 /// as it is nonempty and not itself a recognized command/option/help token; a
@@ -217,6 +237,7 @@ enum TokenKind {
     ModeReal,
     OptOutDir,
     OptNixBin,
+    OptStoreRoot,
     Other,
 }
 
@@ -231,6 +252,8 @@ fn classify(token: &OsStr) -> TokenKind {
         TokenKind::OptOutDir
     } else if token == OsStr::new("--nix-bin") {
         TokenKind::OptNixBin
+    } else if token == OsStr::new("--store-root") {
+        TokenKind::OptStoreRoot
     } else {
         TokenKind::Other
     }
@@ -291,6 +314,7 @@ fn parse_tokens(tokens: &[OsString]) -> Result<Action, CliError> {
     let mut mode: Option<ModeKind> = None;
     let mut out_dir: Option<OsString> = None;
     let mut nix_bin: Option<OsString> = None;
+    let mut store_root: Option<OsString> = None;
 
     let mut index = 0usize;
     while index < tokens.len() {
@@ -330,6 +354,17 @@ fn parse_tokens(tokens: &[OsString]) -> Result<Action, CliError> {
                 }
                 nix_bin = Some(value);
             }
+            TokenKind::OptStoreRoot => {
+                if mode.is_none() {
+                    return Err(CliError::OptionBeforeMode(OptionKind::StoreRoot));
+                }
+                index += 1;
+                let value = read_value(tokens, &mut index, OptionKind::StoreRoot)?;
+                if store_root.is_some() {
+                    return Err(CliError::DuplicateOption(OptionKind::StoreRoot));
+                }
+                store_root = Some(value);
+            }
             TokenKind::Other => {
                 return Err(CliError::UnknownToken(tokens[index].clone()));
             }
@@ -343,6 +378,9 @@ fn parse_tokens(tokens: &[OsString]) -> Result<Action, CliError> {
             if nix_bin.is_some() {
                 return Err(CliError::NixBinForbiddenInFake);
             }
+            if store_root.is_some() {
+                return Err(CliError::StoreRootForbiddenInFake);
+            }
             RunMode::Fake
         }
         ModeKind::Real => {
@@ -351,7 +389,18 @@ fn parse_tokens(tokens: &[OsString]) -> Result<Action, CliError> {
             if !path.is_absolute() {
                 return Err(CliError::NotAbsoluteNixBin(path.into_os_string()));
             }
-            RunMode::Real { nix_bin: path }
+            let store_root = store_root.map(PathBuf::from);
+            if let Some(root) = &store_root
+                && !root.is_absolute()
+            {
+                return Err(CliError::NotAbsoluteStoreRoot(
+                    root.clone().into_os_string(),
+                ));
+            }
+            RunMode::Real {
+                nix_bin: path,
+                store_root,
+            }
         }
     };
 
@@ -401,6 +450,7 @@ mod tests {
     fn real(p: &str) -> RunMode {
         RunMode::Real {
             nix_bin: PathBuf::from(p),
+            store_root: None,
         }
     }
 
@@ -411,7 +461,9 @@ mod tests {
     #[test]
     fn usage_documents_the_full_grammar() {
         assert!(USAGE.contains("s4-runner fake [--out-dir PATH]"));
-        assert!(USAGE.contains("s4-runner real --nix-bin ABSOLUTE_PATH [--out-dir PATH]"));
+        assert!(USAGE.contains(
+            "s4-runner real --nix-bin ABSOLUTE_PATH [--store-root ABSOLUTE_PATH] [--out-dir PATH]"
+        ));
         assert!(USAGE.contains("s4-runner --help | -h"));
     }
 
@@ -425,6 +477,7 @@ mod tests {
     fn option_kind_renders_its_flag_name() {
         assert_eq!(OptionKind::OutDir.to_string(), "--out-dir");
         assert_eq!(OptionKind::NixBin.to_string(), "--nix-bin");
+        assert_eq!(OptionKind::StoreRoot.to_string(), "--store-root");
     }
 
     // ---- happy paths: fake ---------------------------------------------------
@@ -499,6 +552,50 @@ mod tests {
             ]))
             .unwrap(),
             run(real("/usr/bin/nix"), "res")
+        );
+    }
+
+    #[test]
+    fn real_with_isolated_store_root() {
+        assert_eq!(
+            parse(args(&[
+                "real",
+                "--nix-bin",
+                "/usr/bin/nix",
+                "--store-root",
+                "/private/tmp/pkg-s4-store"
+            ]))
+            .unwrap(),
+            run(
+                RunMode::Real {
+                    nix_bin: PathBuf::from("/usr/bin/nix"),
+                    store_root: Some(PathBuf::from("/private/tmp/pkg-s4-store")),
+                },
+                "out"
+            )
+        );
+    }
+
+    #[test]
+    fn relative_store_root_is_rejected() {
+        assert_eq!(
+            parse(args(&[
+                "real",
+                "--nix-bin",
+                "/usr/bin/nix",
+                "--store-root",
+                "relative/store"
+            ]))
+            .unwrap_err(),
+            CliError::NotAbsoluteStoreRoot(OsString::from("relative/store"))
+        );
+    }
+
+    #[test]
+    fn store_root_is_forbidden_in_fake_mode() {
+        assert_eq!(
+            parse(args(&["fake", "--store-root", "/private/tmp/store"])).unwrap_err(),
+            CliError::StoreRootForbiddenInFake
         );
     }
 
@@ -1051,7 +1148,7 @@ mod tests {
         .expect("absolute non-UTF-8 path must parse");
         match action {
             Action::Run(RunArgs {
-                mode: RunMode::Real { nix_bin },
+                mode: RunMode::Real { nix_bin, .. },
                 out_dir,
             }) => {
                 assert_eq!(nix_bin.as_os_str().as_bytes(), &raw[..]);

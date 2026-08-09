@@ -8,11 +8,9 @@ repo-root workspace lanes. Pin and sampling constants live in
 [`benchmark.json`](benchmark.json); the harness embeds that file at compile time
 and validates it ([`src/validate.rs`](src/validate.rs)).
 
-> **This spike is not a benchmark result.** It is the harness that would
-> *produce* evidence. See [Real vs Fake](#real-vs-fake) and
-> [Complete vs Incomplete](#complete-vs-incomplete). No performance numbers live
-> in this repo; any budget proposals belong in a future [FINDINGS.md](FINDINGS.md), written
-> only *after* Real evidence.
+> The harness and its reviewed Complete Real evidence are both preserved here.
+> See [FINDINGS.md](FINDINGS.md) for the accepted measurements and budgets;
+> Fake and Incomplete runs remain non-evidence.
 
 ## What it measures
 
@@ -99,13 +97,20 @@ only supported platforms; the host target is fixed at compile time.
   prefetch`. The harness creates a private `HOME`/`XDG_CACHE_HOME`/
   `XDG_CONFIG_HOME` but **shares the configured Nix store** — it never clears
   the store or evaluator caches.
+- **For an isolated Real run — an existing private store root.** It must be an
+  absolute, real directory owned by the caller at exact mode `0700` (no
+  symlink). Pass `--store-root`; the runner adds only `NIX_REMOTE=<root>` to the
+  otherwise cleared child environment. Nix treats the absolute path as a local chroot
+  store whose logical store directory remains `/nix/store`. This lets the
+  native macOS lane avoid the service-only managed daemon socket.
 
 ## Running
 
 A shipped executable wrapper, [`run.sh`](run.sh), is the recommended path. It
-requires `rustc 1.96.1` **already resolved on `PATH`** (it does **not** pin,
-install, or select a toolchain), then runs the binary with `cargo run --locked
---offline --release`. It defaults `--out-dir` to `target/s4-fake` (Fake) /
+selects an already-installed rustup 1.96.1 toolchain when available; otherwise
+`rustc` on `PATH` must be exactly 1.96.1. It never installs or downloads a
+toolchain. It then runs the binary with `cargo run --locked --offline
+--release`. It defaults `--out-dir` to `target/s4-fake` (Fake) /
 `target/s4-real` (Real), **preserves the runner's exit status**, and echoes
 `summary.md` under a fixed `--- summary.md ---` header if one was produced.
 
@@ -117,6 +122,7 @@ install, or select a toolchain), then runs the binary with `cargo run --locked
 # Real (requires the prerequisites above):
 ./run.sh real /opt/nix/bin/nix      # out -> target/s4-real
 ./run.sh real /opt/nix/bin/nix custom/out
+./run.sh real /opt/nix/bin/nix custom/out /absolute/local-store-root
 ```
 
 You can also run the binary directly. Build it first (`--locked --offline`, once
@@ -133,6 +139,8 @@ cargo build --locked --offline --release
 # Real (requires the prerequisites above):
 ./target/release/s4-runner real --nix-bin /opt/nix/bin/nix
 ./target/release/s4-runner real --nix-bin /opt/nix/bin/nix --out-dir ./out
+./target/release/s4-runner real --nix-bin /opt/nix/bin/nix \
+  --store-root /absolute/local-store-root --out-dir ./out
 
 # Usage banner:
 ./target/release/s4-runner --help
@@ -150,7 +158,7 @@ The grammar (closed parser, no `--flag=value`, no abbreviations):
 
 ```text
 s4-runner fake [--out-dir PATH]
-s4-runner real --nix-bin ABSOLUTE_PATH [--out-dir PATH]
+s4-runner real --nix-bin ABSOLUTE_PATH [--store-root ABSOLUTE_PATH] [--out-dir PATH]
 s4-runner --help | -h
 ```
 
@@ -212,8 +220,9 @@ KiB (no floats), so the report is byte-deterministic for a given input.
   no `PATH` lookup, no `NIX_PATH`** anywhere. `--nix-bin` must be absolute.
 - **Minimal, fail-closed child environment.** `Command::env_clear()` is applied,
   then exactly: `LANG=C`, `LC_ALL=C`, and (Real) a private `HOME`,
-  `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`. **The configured Nix store is shared**,
-  not isolated by the harness.
+  `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`; an explicit isolated-store run adds only
+  `NIX_REMOTE=<absolute-store-root>`. Without `--store-root`, the configured Nix
+  store is shared.
 - **Bounded, fixed diagnostics.** Every error message is a fixed ASCII label
   with no caller-controlled text (paths and child output are never echoed); I/O
   failures are reduced to a stable `io::ErrorKind` token.
@@ -249,9 +258,8 @@ performance evidence.
 
 - [`benchmark.json`](benchmark.json) — the embedded, validated pin and sampling
   constants.
-- [`FINDINGS.md`](FINDINGS.md) — the designated home for any budget proposals
-  derived from Real evidence; it is written only after a Complete Real run and
-  contains no performance results today.
+- [`FINDINGS.md`](FINDINGS.md) — accepted Complete Real evidence and the budgets
+  derived from it.
 - [`plans/11-pr-roadmap.md`](../../plans/11-pr-roadmap.md), DR-004 in
   [`plans/12-open-decisions-and-risks.md`](../../plans/12-open-decisions-and-risks.md)
   — spike context and decision record.

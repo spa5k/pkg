@@ -16,10 +16,10 @@
 //!   * creates exactly ONE private fail-closed workspace per run
 //!     ([`RealPrivateHome`]: root + `cache` + `config`, each created atomically
 //!     at Unix mode `0o700`, removed best-effort on [`Drop`]) and builds the
-//!     COMPLETE five-entry child env ([`real_child_env`]: `LANG=C`, `LC_ALL=C`,
-//!     `HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`) rooted at it. Only `HOME`
-//!     and the two XDG dirs are redirected — the configured `/nix/store` stays
-//!     shared, nothing else is relocated;
+//!     complete five-entry child env ([`real_child_env`]: `LANG=C`, `LC_ALL=C`,
+//!     `HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`) rooted at it. An explicit
+//!     isolated-store run adds only `NIX_REMOTE=<absolute-root>`; otherwise the
+//!     configured store stays shared;
 //!   * probes the EXACT pinned Nix version (`manifest.nix.version`, e.g.
 //!     `2.34.8`) via [`execute_version_probe`]; runs the ONE online prefetch
 //!     via [`execute_verified_prefetch`], verifying its `hash` EQUALS the
@@ -79,7 +79,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::num::NonZeroU64;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -396,6 +396,7 @@ fn home_create_at(candidate: &Path) -> Result<Option<RealPrivateHome>, RealPriva
     }
     Ok(Some(RealPrivateHome {
         root: candidate.to_path_buf(),
+        store_root: None,
     }))
 }
 
@@ -405,6 +406,9 @@ fn home_create_at(candidate: &Path) -> Result<Option<RealPrivateHome>, RealPriva
 pub(crate) struct RealPrivateHome {
     /// The absolute, owned root path. Private: callers reach it via [`Self::root`].
     root: PathBuf,
+    /// Optional user-owned local chroot-store root selected by the caller.
+    /// Private and never rendered in diagnostics.
+    store_root: Option<PathBuf>,
 }
 
 impl RealPrivateHome {
@@ -431,17 +435,50 @@ impl RealPrivateHome {
         Err(RealPrivateHomeError::Exhausted)
     }
 
+    /// Create a private workspace and bind its child environment to an
+    /// optional absolute local-store root. The CLI validates absoluteness; this
+    /// second check keeps the library entry point fail-closed as well.
+    pub(crate) fn create_for_store(
+        store_root: Option<&Path>,
+    ) -> Result<Self, RealPrivateHomeError> {
+        if let Some(root) = store_root {
+            let metadata = std::fs::symlink_metadata(root)
+                .map_err(|_| RealPrivateHomeError::StoreRootInvalid)?;
+            let owned_by_caller = metadata.uid() == rustix::process::getuid().as_raw();
+            let private_mode = metadata.permissions().mode() & 0o777 == 0o700;
+            if !root.is_absolute()
+                || !metadata.is_dir()
+                || metadata.file_type().is_symlink()
+                || !owned_by_caller
+                || !private_mode
+            {
+                return Err(RealPrivateHomeError::StoreRootInvalid);
+            }
+        }
+        let mut home = Self::create()?;
+        home.store_root = store_root.map(Path::to_path_buf);
+        Ok(home)
+    }
+
     /// The absolute owned root path of this workspace.
     #[must_use]
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
-    /// The complete, deterministic five-entry child environment for this
-    /// workspace, delegating to [`real_child_env`] rooted at [`Self::root`].
+    /// The complete deterministic child environment for this workspace: five
+    /// fixed entries from [`real_child_env`], plus only `NIX_REMOTE` when an
+    /// isolated store root was explicitly selected.
     #[must_use]
     pub(crate) fn child_env(&self) -> BTreeMap<OsString, OsString> {
-        real_child_env(self.root())
+        let mut env = real_child_env(self.root());
+        if let Some(store_root) = &self.store_root {
+            env.insert(
+                OsString::from("NIX_REMOTE"),
+                store_root.as_os_str().to_owned(),
+            );
+        }
+        env
     }
 }
 
@@ -461,6 +498,9 @@ impl Drop for RealPrivateHome {
 pub(crate) enum RealPrivateHomeError {
     /// [`std::env::temp_dir`] was not absolute.
     TempNotAbsolute,
+    /// The selected local-store root is absent, non-absolute, non-private,
+    /// symlinked, not a directory, or not owned by the calling uid.
+    StoreRootInvalid,
     /// All [`HOME_MAX_ATTEMPTS`] candidates already existed.
     Exhausted,
     /// The root directory could not be created (non-`AlreadyExists` failure).
@@ -475,6 +515,7 @@ impl std::fmt::Display for RealPrivateHomeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self {
             Self::TempNotAbsolute => "private home base temp directory is not absolute",
+            Self::StoreRootInvalid => "isolated store root failed safety validation",
             Self::Exhausted => "private home creation exhausted unique candidates",
             Self::RootCreate => "private home root directory could not be created",
             Self::ChildCreate => "private home child directory could not be created",
@@ -489,7 +530,7 @@ impl std::error::Error for RealPrivateHomeError {}
 // === REAL CommandSpec builders (PURE, non-executing) =====================
 //
 // The four crate-private builders below turn the established exact argv (the
-// `*_argv` helpers above) and the complete five-entry fail-closed environment
+// `*_argv` helpers above) and the complete fail-closed environment
 // ([`RealPrivateHome::child_env`]) into a ready-to-run [`CommandSpec`] for each
 // Real-lane command (version probe, flake prefetch, single-attribute eval,
 // index-meta eval). They are PURE, allocation-only construction: they perform
@@ -501,8 +542,8 @@ impl std::error::Error for RealPrivateHomeError {}
 //   * sources `args` from the established exact argv
 //     ([`VERSION_ARGV`] / [`prefetch_argv`] / [`single_eval_argv`] /
 //     [`index_eval_argv`]) token-for-token, with NO re-splitting;
-//   * sources `env` from [`RealPrivateHome::child_env`] (the five-entry
-//     fail-closed environment) exactly;
+//   * sources `env` from [`RealPrivateHome::child_env`] (five fixed entries,
+//     plus only optional `NIX_REMOTE`) exactly;
 //   * preserves the supplied nonzero stdout/stderr caps and [`Duration`] timeout
 //     exactly; and
 //   * maps every [`crate::command::SpecError`] from [`CommandSpec::new`] to
@@ -2059,16 +2100,20 @@ fn assemble_or_fallback(
 /// [`CommandSpec`] (NO shell, NO `PATH` search). The run performs NO direct
 /// output logging, leaks NO child stdout/stderr, and touches NO
 /// Nix/store/network beyond the injected production executor.
+/// `store_root`, when present, must be an existing caller-owned, non-symlink
+/// directory at exact mode `0700`; it is passed only as `NIX_REMOTE` so Nix
+/// selects a user-owned local chroot store without contacting the configured
+/// daemon.
 ///
 /// Only a private-home failure ([`RealRunError::PrivateHome`]), a preparation
 /// failure ([`RealRunError::Preparation`]), or an internal fallback-assembly
 /// failure ([`RealRunError::ReportFallback`]) surfaces as a [`RealRunError`];
 /// every command / scenario failure collapses to a validated Incomplete
 /// [`Report`].
-pub fn run_real(nix_bin: &Path) -> Result<Report, RealRunError> {
+pub fn run_real(nix_bin: &Path, store_root: Option<&Path>) -> Result<Report, RealRunError> {
     let started = Instant::now();
     let mut executor = crate::execute::run;
-    run_real_with_executor(nix_bin, started, &mut executor)
+    run_real_with_executor(nix_bin, store_root, started, &mut executor)
 }
 
 /// The private generic core of [`run_real`], parameterized over an `executor`
@@ -2125,6 +2170,7 @@ pub fn run_real(nix_bin: &Path) -> Result<Report, RealRunError> {
 ///    the final folding crosses the budget.
 fn run_real_with_executor<F>(
     nix_bin: &Path,
+    store_root: Option<&Path>,
     started: Instant,
     executor: &mut F,
 ) -> Result<Report, RealRunError>
@@ -2147,7 +2193,8 @@ where
     let stderr_cap = nz_cap(manifest.caps.stderr_bytes, ManifestField::StderrCap)
         .map_err(|_| RealRunError::Preparation)?;
     let overall = Duration::from_secs(manifest.timeouts.overall_seconds);
-    let home = RealPrivateHome::create().map_err(|_| RealRunError::PrivateHome)?;
+    let home =
+        RealPrivateHome::create_for_store(store_root).map_err(|_| RealRunError::PrivateHome)?;
 
     // 2. Version phase: single-attr phase budget, shared single-attr stdout cap
     //    + shared stderr cap. Timeout-selection failure => Incomplete report
@@ -5363,6 +5410,29 @@ mod tests {
     }
 
     #[test]
+    fn real_private_home_optional_store_root_sets_only_nix_remote() {
+        let store_holder = RealPrivateHome::create().expect("store root fixture");
+        let store_root = store_holder.root().to_path_buf();
+        let home = RealPrivateHome::create_for_store(Some(&store_root)).expect("create succeeds");
+        let got = home.child_env();
+        let mut want = real_child_env(home.root());
+        want.insert(
+            OsString::from("NIX_REMOTE"),
+            store_root.as_os_str().to_owned(),
+        );
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 6, "five fixed entries plus NIX_REMOTE");
+    }
+
+    #[test]
+    fn real_private_home_rejects_relative_store_root() {
+        assert!(matches!(
+            RealPrivateHome::create_for_store(Some(Path::new("relative/store"))),
+            Err(RealPrivateHomeError::StoreRootInvalid)
+        ));
+    }
+
+    #[test]
     fn real_private_home_drop_removes_root_not_parent_or_sibling() {
         let home = RealPrivateHome::create().expect("create succeeds");
         let root = home.root().to_path_buf();
@@ -5566,6 +5636,10 @@ mod tests {
                 "private home base temp directory is not absolute",
             ),
             (
+                RealPrivateHomeError::StoreRootInvalid,
+                "isolated store root failed safety validation",
+            ),
+            (
                 RealPrivateHomeError::Exhausted,
                 "private home creation exhausted unique candidates",
             ),
@@ -5585,6 +5659,7 @@ mod tests {
         // Exhaustive: every variant appears exactly once.
         let all = [
             RealPrivateHomeError::TempNotAbsolute,
+            RealPrivateHomeError::StoreRootInvalid,
             RealPrivateHomeError::Exhausted,
             RealPrivateHomeError::RootCreate,
             RealPrivateHomeError::ChildCreate,
@@ -6152,7 +6227,7 @@ mod tests {
             })
         };
 
-        let report = run_real_with_executor(&nix_bin, started, &mut executor)
+        let report = run_real_with_executor(&nix_bin, None, started, &mut executor)
             .expect("version command error yields an Incomplete report, not RealRunError");
 
         assert_setup_failure_report(&report, RealFailureKind::DetectNixCommand);
@@ -6183,7 +6258,7 @@ mod tests {
             Ok(version_probe_outcome(UnixStatus::Exited(0), b"garbage"))
         };
 
-        let report = run_real_with_executor(&nix_bin, started, &mut executor)
+        let report = run_real_with_executor(&nix_bin, None, started, &mut executor)
             .expect("malformed version stdout yields an Incomplete report");
 
         assert_setup_failure_report(&report, RealFailureKind::DetectNixVersion);
@@ -6217,7 +6292,7 @@ mod tests {
             ))
         };
 
-        let report = run_real_with_executor(&nix_bin, started, &mut executor)
+        let report = run_real_with_executor(&nix_bin, None, started, &mut executor)
             .expect("version mismatch yields an Incomplete report");
 
         assert_setup_failure_report(&report, RealFailureKind::DetectNixVersion);
@@ -6263,7 +6338,7 @@ mod tests {
             })
         };
 
-        let report = run_real_with_executor(&nix_bin, started, &mut executor)
+        let report = run_real_with_executor(&nix_bin, None, started, &mut executor)
             .expect("prefetch verification failure yields an Incomplete report");
 
         assert_setup_failure_report(&report, RealFailureKind::PrefetchVerification);
@@ -6370,7 +6445,8 @@ mod tests {
             })
         };
 
-        let report = run_real_with_executor(&nix_bin, started, &mut executor).expect("Ok report");
+        let report =
+            run_real_with_executor(&nix_bin, None, started, &mut executor).expect("Ok report");
 
         // (1) Exactly 24 calls: 1 version + 1 prefetch + 22 eval (6 single +
         // four*4 index). Queue/count exhausted; never called beyond 24.
@@ -6618,7 +6694,7 @@ mod tests {
             })
         };
 
-        let report = run_real_with_executor(&nix_bin, started, &mut executor)
+        let report = run_real_with_executor(&nix_bin, None, started, &mut executor)
             .expect("scenario failure yields an Incomplete report, not RealRunError");
 
         // (1) Exactly 21 calls: 2 setup + 3 first-scenario attempts (1 warmup

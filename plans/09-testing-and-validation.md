@@ -704,15 +704,18 @@ Additional security tests beyond ACs: T-PATH-* matrix, T-LOG-* injection, T-REL-
 review, T-INST-2 TOCTOU, T-INST-6 cross-user/UID-confusion, T-UNINST-1/2 boundary checks.
 
 ### 6.7 Performance (layer 7)
-- **Budgets (defaults; tuned in `12`):**
+- **Budgets (DR-004 accepted 2026-08-09):**
   - `search` p95 over fixture index: < 150 ms.
   - `info` p95: < 300 ms (Fake) / < 2 s (Real, cached).
   - `install` (cache hit, small closure) cold: < 8 s on Real lane reference host.
-  - Index build (tiny slice): < 5 s; (full Nixpkgs slice): measured & regression-gated, not fixed.
-  - Resolve (single attr, cached eval): p95 < 1.5 s Real.
+  - Index build (tiny slice): < 5 s.
+  - Full one-system Nixpkgs meta-eval: p95 < 10 s Real, peak RSS < 2.5 GiB.
+  - Four-system sequential publisher meta-eval: p95 < 30 s Real, peak RSS < 2.5 GiB.
+  - Resolve (single attr, cached eval): p95 < 1.5 s Real, peak RSS < 512 MiB.
 - **Method:** `criterion` benches in CI on a fixed reference runner; record baselines; fail
-  on >N% regression vs. pinned baseline (`10` perf gate). Bench vs. Fake for stability;
-  Real for absolute budgets.
+  on >25% regression vs. pinned baseline **or** an absolute ceiling (`10` perf
+  gate). Bench vs. Fake for stability; Real for absolute budgets. Native x86_64
+  reference baselines must be added before GA; QEMU timing is diagnostic only.
 
 ### 6.8 Platform matrix (layer 8)
 | OS | Arch | Lane | Frequency |

@@ -1,0 +1,368 @@
+{
+  "schemaVersion": 1,
+  "mode": "real",
+  "completeness": "complete",
+  "harnessOnly": false,
+  "host": {
+    "system": "aarch64-linux",
+    "machine": "ba916161553a",
+    "cores": 10
+  },
+  "pin": {
+    "nixVersion": "2.34.8",
+    "owner": "NixOS",
+    "repo": "nixpkgs",
+    "rev": "a62e6edd6d5e1fa0329b8653c801147986f8d446",
+    "narHash": "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=",
+    "attr": "ripgrep"
+  },
+  "nixVersion": "2.34.8",
+  "scenarios": [
+    {
+      "name": "single-attr:ripgrep",
+      "system": "aarch64-linux",
+      "installable": "github:NixOS/nixpkgs/a62e6edd6d5e1fa0329b8653c801147986f8d446?narHash=sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth%2F3Xuw%3D#legacyPackages.aarch64-linux.ripgrep.drvPath",
+      "warmup": 1,
+      "measured": 5,
+      "samples": [
+        {
+          "index": 0,
+          "record": "warmup",
+          "skipped": false,
+          "wallMs": 348,
+          "rssKb": 144744,
+          "outputBytes": 1055,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 1,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 262,
+          "rssKb": 136844,
+          "outputBytes": 1054,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 2,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 265,
+          "rssKb": 138512,
+          "outputBytes": 1054,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 3,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 325,
+          "rssKb": 137356,
+          "outputBytes": 1054,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 4,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 266,
+          "rssKb": 136860,
+          "outputBytes": 1054,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 5,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 252,
+          "rssKb": 138028,
+          "outputBytes": 1054,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        }
+      ],
+      "statistics": {
+        "wall": {
+          "count": 5,
+          "min": 252,
+          "median": 265,
+          "p95": 325,
+          "max": 325
+        },
+        "rss": {
+          "count": 5,
+          "min": 136844,
+          "median": 137356,
+          "p95": 138512,
+          "max": 138512
+        }
+      }
+    },
+    {
+      "name": "index-meta:x86_64-linux",
+      "system": "x86_64-linux",
+      "installable": "github:NixOS/nixpkgs/a62e6edd6d5e1fa0329b8653c801147986f8d446?narHash=sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth%2F3Xuw%3D#legacyPackages.x86_64-linux",
+      "warmup": 1,
+      "measured": 3,
+      "samples": [
+        {
+          "index": 0,
+          "record": "warmup",
+          "skipped": false,
+          "wallMs": 4451,
+          "rssKb": 1406532,
+          "outputBytes": 1951339,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 1,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 3717,
+          "rssKb": 1404556,
+          "outputBytes": 1951335,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 2,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 3682,
+          "rssKb": 1404200,
+          "outputBytes": 1951334,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 3,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 3691,
+          "rssKb": 1401832,
+          "outputBytes": 1951334,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        }
+      ],
+      "statistics": {
+        "wall": {
+          "count": 3,
+          "min": 3682,
+          "median": 3691,
+          "p95": 3717,
+          "max": 3717
+        },
+        "rss": {
+          "count": 3,
+          "min": 1401832,
+          "median": 1404200,
+          "p95": 1404556,
+          "max": 1404556
+        }
+      }
+    },
+    {
+      "name": "index-meta:aarch64-linux",
+      "system": "aarch64-linux",
+      "installable": "github:NixOS/nixpkgs/a62e6edd6d5e1fa0329b8653c801147986f8d446?narHash=sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth%2F3Xuw%3D#legacyPackages.aarch64-linux",
+      "warmup": 1,
+      "measured": 3,
+      "samples": [
+        {
+          "index": 0,
+          "record": "warmup",
+          "skipped": false,
+          "wallMs": 3913,
+          "rssKb": 1350904,
+          "outputBytes": 1947181,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 1,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 3623,
+          "rssKb": 1349316,
+          "outputBytes": 1947179,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 2,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 3569,
+          "rssKb": 1347576,
+          "outputBytes": 1947179,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 3,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 3594,
+          "rssKb": 1348240,
+          "outputBytes": 1947179,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        }
+      ],
+      "statistics": {
+        "wall": {
+          "count": 3,
+          "min": 3569,
+          "median": 3594,
+          "p95": 3623,
+          "max": 3623
+        },
+        "rss": {
+          "count": 3,
+          "min": 1347576,
+          "median": 1348240,
+          "p95": 1349316,
+          "max": 1349316
+        }
+      }
+    },
+    {
+      "name": "index-meta:x86_64-darwin",
+      "system": "x86_64-darwin",
+      "installable": "github:NixOS/nixpkgs/a62e6edd6d5e1fa0329b8653c801147986f8d446?narHash=sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth%2F3Xuw%3D#legacyPackages.x86_64-darwin",
+      "warmup": 1,
+      "measured": 3,
+      "samples": [
+        {
+          "index": 0,
+          "record": "warmup",
+          "skipped": false,
+          "wallMs": 5343,
+          "rssKb": 1858916,
+          "outputBytes": 1942059,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 1,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 4700,
+          "rssKb": 1853420,
+          "outputBytes": 1942057,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 2,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 4613,
+          "rssKb": 1853056,
+          "outputBytes": 1942057,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 3,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 4678,
+          "rssKb": 1850140,
+          "outputBytes": 1942057,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        }
+      ],
+      "statistics": {
+        "wall": {
+          "count": 3,
+          "min": 4613,
+          "median": 4678,
+          "p95": 4700,
+          "max": 4700
+        },
+        "rss": {
+          "count": 3,
+          "min": 1850140,
+          "median": 1853056,
+          "p95": 1853420,
+          "max": 1853420
+        }
+      }
+    },
+    {
+      "name": "index-meta:aarch64-darwin",
+      "system": "aarch64-darwin",
+      "installable": "github:NixOS/nixpkgs/a62e6edd6d5e1fa0329b8653c801147986f8d446?narHash=sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth%2F3Xuw%3D#legacyPackages.aarch64-darwin",
+      "warmup": 1,
+      "measured": 3,
+      "samples": [
+        {
+          "index": 0,
+          "record": "warmup",
+          "skipped": false,
+          "wallMs": 4909,
+          "rssKb": 1656552,
+          "outputBytes": 1939322,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 1,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 4379,
+          "rssKb": 1648872,
+          "outputBytes": 1939320,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 2,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 4356,
+          "rssKb": 1650812,
+          "outputBytes": 1939320,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        },
+        {
+          "index": 3,
+          "record": "measured",
+          "skipped": false,
+          "wallMs": 4367,
+          "rssKb": 1651672,
+          "outputBytes": 1939320,
+          "exit": 0,
+          "cache": "sourceWarmProcessCold"
+        }
+      ],
+      "statistics": {
+        "wall": {
+          "count": 3,
+          "min": 4356,
+          "median": 4367,
+          "p95": 4379,
+          "max": 4379
+        },
+        "rss": {
+          "count": 3,
+          "min": 1648872,
+          "median": 1650812,
+          "p95": 1651672,
+          "max": 1651672
+        }
+      }
+    }
+  ],
+  "failures": []
+}
