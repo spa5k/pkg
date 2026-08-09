@@ -46,6 +46,7 @@
 
 pub mod adapter;
 pub mod broker;
+pub mod build;
 pub mod contract;
 pub mod error;
 pub mod framing;
@@ -59,13 +60,19 @@ pub use broker::{
     AdmissionSnapshot, AuthenticatedCaller, BrokerError, BrokerErrorCode, BrokerOperationKind,
     ChildContainmentPolicy, InProcessBroker, InProcessCallerPeer, OperationHandle, OperationStatus,
 };
+pub use build::{
+    ApprovalJournal, ApprovalJournalRecord, ApprovalSource, BuildEngineError, BuildEngineErrorCode,
+    BuildPlan, BuildPlanTarget, BuildPreview, BuildPreviewEstimates, BuildReadiness,
+    BuildResources, CacheClassification, CancellationToken, LocalBuildEngine, ResourceProbe,
+    ResourceSnapshot, VolatileBuildEstimate, render_managed_build_nix_conf,
+};
 pub use contract::{
-    AcceptedFormats, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
-    DerivationPlanReport, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport,
-    GcStatus, JsonCodec, MethodKind, NarIntegrity, NixVersion, OperationId, PathInfoReport,
-    PathVerifyResult, RootName, RootRef, SchemaVersion, Signature, SubstituteOutcome,
-    SubstituteReceipt, SubstituteReport, TrustStatus, VerifyMode, VerifyReport, VerifyRequest,
-    VersionInfo,
+    AcceptedFormats, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance, BuildReport,
+    BuildRequest, BuildStatus, DerivationPlanReport, DerivedOutputTarget,
+    EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport, GcStatus, JsonCodec,
+    MethodKind, NarIntegrity, NixVersion, OperationId, PathInfoReport, PathVerifyResult, RootName,
+    RootRef, SchemaVersion, Signature, SubstituteOutcome, SubstituteReceipt, SubstituteReport,
+    TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{

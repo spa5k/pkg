@@ -28,11 +28,12 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use pkg_nix::{
-    AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
-    DerivationPath, DerivationPlanReport, Digest, EvaluateDerivationRequest, EvaluatedDerivation,
-    FormatVersion, GcReport, GcStatus, MalformedKind, MethodKind, NarHash, NarIntegrity,
-    NixAdapter, NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId,
-    OutputName, OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, Signature,
+    AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance,
+    BuildReport, BuildRequest, BuildStatus, DerivationPath, DerivationPlanReport,
+    DerivedOutputTarget, Digest, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion,
+    GcReport, GcStatus, MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter,
+    NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName,
+    OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, PolicyVersion, Signature,
     StorePath, SubstituteOutcome, SubstituteReceipt, SubstituteReport, System, TrustStatus,
     VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
@@ -138,12 +139,20 @@ fn substitute_fixture(outcome: SubstituteOutcome) -> SubstituteReport {
 }
 
 fn receipt_fixture() -> BuildApprovalReceipt {
-    BuildApprovalReceipt::new(OperationId::new("op-0001").unwrap())
+    BuildApprovalReceipt::new(
+        OperationId::new("op-0001").unwrap(),
+        Digest::from_bytes([0x42; 32]),
+        PolicyVersion::from_u64(7).unwrap(),
+    )
+}
+
+fn build_target(name: &str) -> DerivedOutputTarget {
+    DerivedOutputTarget::new(drv(name), vec![OutputName::new("out").unwrap()]).unwrap()
 }
 
 fn build_request_fixture() -> BuildRequest {
     BuildRequest::new(
-        vec![drv("hello-1.0")],
+        vec![build_target("hello-1.0")],
         System::X8664Linux,
         receipt_fixture(),
     )
@@ -151,7 +160,14 @@ fn build_request_fixture() -> BuildRequest {
 }
 
 fn build_report_built() -> BuildReport {
-    BuildReport::new(BuildStatus::Built, vec![store_path("hello-1.0")]).unwrap()
+    BuildReport::new(
+        BuildStatus::Built,
+        vec![BuildOutput::new(
+            store_path("hello-1.0"),
+            BuildOutputProvenance::LocalBuild,
+        )],
+    )
+    .unwrap()
 }
 
 fn verify_request_fixture() -> VerifyRequest {
@@ -332,7 +348,7 @@ fn build_matches_exact_request_only() {
 
     // A different build request (different target) mismatches the fresh head.
     let other = BuildRequest::new(
-        vec![drv("other-1.0")],
+        vec![build_target("other-1.0")],
         System::X8664Linux,
         receipt_fixture(),
     )

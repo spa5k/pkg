@@ -29,7 +29,7 @@
 //! does not expect (`plans/01` §11).
 
 use crate::error::{BoundedSummary, MalformedKind, NixAdapterError};
-use pkg_core::channel::NixpkgsRevision;
+use pkg_core::channel::{NixpkgsRevision, PolicyVersion};
 use pkg_core::identity::{DerivationPath, NarHash, OutputName, StorePath};
 use pkg_core::selector::{AttributePath, OutputSelection};
 use pkg_core::state::Digest;
@@ -556,13 +556,6 @@ where
     BoundedStringSeq::deserialize_bounded(deserializer, MAX_TARGETS, MAX_TARGETS_BYTES)
 }
 
-fn deserialize_build_outputs<'de, D>(deserializer: D) -> Result<BoundedStringSeq, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    BoundedStringSeq::deserialize_bounded(deserializer, MAX_TARGETS, MAX_TARGETS_BYTES)
-}
-
 fn deserialize_verify_paths<'de, D>(deserializer: D) -> Result<BoundedStringSeq, D::Error>
 where
     D: Deserializer<'de>,
@@ -719,7 +712,7 @@ impl FromStr for MethodKind {
 // ===========================================================================
 
 /// A bounded, validated managed-Nix version string (e.g. `2.33.5`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NixVersion(String);
 
 impl NixVersion {
@@ -1997,19 +1990,134 @@ fn is_operation_id(s: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildApprovalReceipt {
     operation_id: OperationId,
+    build_plan_digest: Digest,
+    policy_version: PolicyVersion,
 }
 
 impl BuildApprovalReceipt {
-    /// Constructs a receipt from a validated operation id.
+    /// Constructs a receipt bound to one operation, plan, and policy version.
     #[must_use]
-    pub fn new(operation_id: OperationId) -> Self {
-        Self { operation_id }
+    pub const fn new(
+        operation_id: OperationId,
+        build_plan_digest: Digest,
+        policy_version: PolicyVersion,
+    ) -> Self {
+        Self {
+            operation_id,
+            build_plan_digest,
+            policy_version,
+        }
     }
 
     /// Returns the operation id.
     #[must_use]
     pub fn operation_id(&self) -> &OperationId {
         &self.operation_id
+    }
+
+    /// Returns the exact private build-plan digest approved by the user.
+    #[must_use]
+    pub const fn build_plan_digest(&self) -> Digest {
+        self.build_plan_digest
+    }
+
+    /// Returns the authenticated policy version governing the approval.
+    #[must_use]
+    pub const fn policy_version(&self) -> PolicyVersion {
+        self.policy_version
+    }
+}
+
+/// One explicit derivation-output target accepted by the private build adapter.
+///
+/// A bare derivation path is never a build target: at least one validated output
+/// name must be selected and the private renderer always emits `x.drv^out,man`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DerivedOutputTarget {
+    derivation: DerivationPath,
+    selection: DerivedOutputSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum DerivedOutputSelection {
+    All,
+    Explicit(Vec<OutputName>),
+}
+
+impl DerivedOutputTarget {
+    /// Constructs a target with a nonempty canonical output selection.
+    pub fn new(
+        derivation: DerivationPath,
+        mut outputs: Vec<OutputName>,
+    ) -> Result<Self, NixAdapterError> {
+        if outputs.is_empty() || outputs.len() > MAX_EVAL_OUTPUTS {
+            return Err(invalid("invalid build output selection"));
+        }
+        outputs.sort();
+        if outputs.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(invalid("duplicate build output"));
+        }
+        Ok(Self {
+            derivation,
+            selection: DerivedOutputSelection::Explicit(outputs),
+        })
+    }
+
+    /// Selects every output using Nix's explicit derived-path `^*` grammar.
+    #[must_use]
+    pub const fn all(derivation: DerivationPath) -> Self {
+        Self {
+            derivation,
+            selection: DerivedOutputSelection::All,
+        }
+    }
+
+    /// Returns the exact derivation identity.
+    #[must_use]
+    pub const fn derivation(&self) -> &DerivationPath {
+        &self.derivation
+    }
+
+    /// Returns the canonical explicit selection, or `None` for `^*`.
+    #[must_use]
+    pub fn outputs(&self) -> Option<&[OutputName]> {
+        match &self.selection {
+            DerivedOutputSelection::All => None,
+            DerivedOutputSelection::Explicit(outputs) => Some(outputs),
+        }
+    }
+
+    /// Renders the private Nix derived-path grammar used only by the adapter.
+    #[must_use]
+    pub fn render_private(&self) -> String {
+        let outputs = match &self.selection {
+            DerivedOutputSelection::All => "*".to_owned(),
+            DerivedOutputSelection::Explicit(outputs) => outputs
+                .iter()
+                .map(OutputName::as_str)
+                .collect::<Vec<_>>()
+                .join(","),
+        };
+        format!("{}^{outputs}", self.derivation.as_str())
+    }
+
+    fn parse_private(value: &str) -> Result<Self, NixAdapterError> {
+        let (derivation, outputs) = value
+            .split_once('^')
+            .ok_or_else(|| invalid("bare derivation build target"))?;
+        if outputs.is_empty() || outputs.contains('^') {
+            return Err(invalid("invalid derived output target"));
+        }
+        let derivation = DerivationPath::from_str(derivation)
+            .map_err(|_| invalid("invalid build derivation"))?;
+        if outputs == "*" {
+            return Ok(Self::all(derivation));
+        }
+        let outputs = outputs
+            .split(',')
+            .map(|output| OutputName::new(output).map_err(|_| invalid("invalid build output name")))
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(derivation, outputs)
     }
 }
 
@@ -2023,11 +2131,50 @@ pub enum BuildStatus {
     AcquireNoBinary,
 }
 
+/// Actual acquisition provenance observed for one requested build output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BuildOutputProvenance {
+    /// The channel-pinned signed cache gained the output before execution.
+    CacheSigned,
+    /// Nix realized the output with a native local build.
+    LocalBuild,
+}
+
+/// One exact build output with actual, race-safe provenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildOutput {
+    store_path: StorePath,
+    provenance: BuildOutputProvenance,
+}
+
+impl BuildOutput {
+    /// Constructs a validated output receipt.
+    #[must_use]
+    pub const fn new(store_path: StorePath, provenance: BuildOutputProvenance) -> Self {
+        Self {
+            store_path,
+            provenance,
+        }
+    }
+
+    /// Returns the exact acquired store identity.
+    #[must_use]
+    pub const fn store_path(&self) -> &StorePath {
+        &self.store_path
+    }
+
+    /// Returns whether this output was substituted or built locally.
+    #[must_use]
+    pub const fn provenance(&self) -> BuildOutputProvenance {
+        self.provenance
+    }
+}
+
 /// A request for an approved, sandboxed local build (`plans/09` §4.1). Carries
 /// **no** sandbox/substituter/key/builders/build-user knobs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildRequest {
-    targets: Vec<DerivationPath>,
+    targets: Vec<DerivedOutputTarget>,
     system: System,
     receipt: BuildApprovalReceipt,
 }
@@ -2040,7 +2187,7 @@ impl BuildRequest {
     /// Returns [`NixAdapterError::ValidationFailure`] if `targets` is empty,
     /// contains duplicates, or exceeds the bounded collection caps.
     pub fn new(
-        targets: Vec<DerivationPath>,
+        targets: Vec<DerivedOutputTarget>,
         system: System,
         receipt: BuildApprovalReceipt,
     ) -> Result<Self, NixAdapterError> {
@@ -2048,11 +2195,15 @@ impl BuildRequest {
             return Err(invalid("empty build targets"));
         }
         ensure_unique_strings(
-            targets.iter().map(DerivationPath::as_str),
+            targets.iter().map(|target| target.derivation().as_str()),
             "duplicate build target",
         )?;
+        let rendered = targets
+            .iter()
+            .map(DerivedOutputTarget::render_private)
+            .collect::<Vec<_>>();
         check_size_bounds(
-            targets.iter().map(DerivationPath::as_str),
+            rendered.iter().map(String::as_str),
             MAX_TARGETS,
             MAX_TARGETS_BYTES,
             "too many build targets",
@@ -2066,7 +2217,7 @@ impl BuildRequest {
 
     /// Returns the derivation targets (caller order preserved).
     #[must_use]
-    pub fn targets(&self) -> &[DerivationPath] {
+    pub fn targets(&self) -> &[DerivedOutputTarget] {
         &self.targets
     }
 
@@ -2097,6 +2248,8 @@ struct BuildRequestWire {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReceiptWire {
     operation_id: String,
+    build_plan_digest: String,
+    policy_version: u64,
 }
 
 impl BuildRequest {
@@ -2107,13 +2260,14 @@ impl BuildRequest {
             targets: BoundedStringSeq::from_vec(
                 self.targets
                     .iter()
-                    .map(DerivationPath::as_str)
-                    .map(str::to_owned)
+                    .map(DerivedOutputTarget::render_private)
                     .collect(),
             ),
             system: self.system.as_str().to_owned(),
             receipt: ReceiptWire {
                 operation_id: self.receipt.operation_id().as_str().to_owned(),
+                build_plan_digest: format_build_plan_digest(self.receipt.build_plan_digest()),
+                policy_version: self.receipt.policy_version().get().get(),
             },
         };
         to_json(&dto)
@@ -2127,12 +2281,31 @@ impl BuildRequest {
         let t_vec = dto.targets.into_inner();
         let mut targets = Vec::with_capacity(t_vec.len());
         for t in t_vec {
-            targets.push(DerivationPath::from_str(&t).map_err(|_| invalid("invalid target"))?);
+            targets.push(DerivedOutputTarget::parse_private(&t)?);
         }
         let system = System::from_str(&dto.system).map_err(|_| invalid("unknown system"))?;
         let operation_id = OperationId::new(&dto.receipt.operation_id)?;
-        Self::new(targets, system, BuildApprovalReceipt::new(operation_id))
+        let build_plan_digest = parse_build_plan_digest(&dto.receipt.build_plan_digest)?;
+        let policy_version = PolicyVersion::from_u64(dto.receipt.policy_version)
+            .ok_or_else(|| invalid("invalid build policy version"))?;
+        Self::new(
+            targets,
+            system,
+            BuildApprovalReceipt::new(operation_id, build_plan_digest, policy_version),
+        )
     }
+}
+
+fn format_build_plan_digest(digest: Digest) -> String {
+    let encoded = digest.to_string();
+    format!("sha256:{}", encoded.trim_start_matches("sha256-"))
+}
+
+fn parse_build_plan_digest(value: &str) -> Result<Digest, NixAdapterError> {
+    let hex = value
+        .strip_prefix("sha256:")
+        .ok_or_else(|| invalid("invalid build plan digest"))?;
+    Digest::from_str(&format!("sha256-{hex}")).map_err(|_| invalid("invalid build plan digest"))
 }
 
 /// The report returned by `build()`: a closed status plus built outputs
@@ -2140,7 +2313,7 @@ impl BuildRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildReport {
     status: BuildStatus,
-    outputs: Vec<StorePath>,
+    outputs: Vec<BuildOutput>,
 }
 
 impl BuildReport {
@@ -2153,15 +2326,18 @@ impl BuildReport {
     /// Returns [`NixAdapterError::ValidationFailure`] on an inconsistent
     /// status/payload combination, duplicate outputs, or an over-large
     /// collection.
-    pub fn new(status: BuildStatus, outputs: Vec<StorePath>) -> Result<Self, NixAdapterError> {
+    pub fn new(status: BuildStatus, outputs: Vec<BuildOutput>) -> Result<Self, NixAdapterError> {
         match status {
             BuildStatus::Built => {
                 if outputs.is_empty() {
                     return Err(invalid("built with no outputs"));
                 }
-                ensure_unique_strings(outputs.iter().map(StorePath::as_str), "duplicate output")?;
+                ensure_unique_strings(
+                    outputs.iter().map(|output| output.store_path().as_str()),
+                    "duplicate output",
+                )?;
                 check_size_bounds(
-                    outputs.iter().map(StorePath::as_str),
+                    outputs.iter().map(|output| output.store_path().as_str()),
                     MAX_TARGETS,
                     MAX_TARGETS_BYTES,
                     "too many outputs",
@@ -2184,7 +2360,7 @@ impl BuildReport {
 
     /// Returns the built outputs (empty for [`BuildStatus::AcquireNoBinary`]).
     #[must_use]
-    pub fn outputs(&self) -> &[StorePath] {
+    pub fn outputs(&self) -> &[BuildOutput] {
         &self.outputs
     }
 }
@@ -2197,12 +2373,35 @@ enum BuildStatusWire {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum BuildOutputProvenanceWire {
+    CacheSigned,
+    LocalBuild,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildOutputWire {
+    store_path: String,
+    provenance: BuildOutputProvenanceWire,
+}
+
+fn deserialize_build_output_records<'de, D>(
+    deserializer: D,
+) -> Result<BoundedSeq<BuildOutputWire>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    BoundedSeq::deserialize_bounded(deserializer, MAX_TARGETS)
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BuildReportWire {
     schema_version: u32,
     status: BuildStatusWire,
-    #[serde(deserialize_with = "deserialize_build_outputs")]
-    outputs: BoundedStringSeq,
+    #[serde(deserialize_with = "deserialize_build_output_records")]
+    outputs: BoundedSeq<BuildOutputWire>,
 }
 
 impl BuildReport {
@@ -2214,11 +2413,20 @@ impl BuildReport {
                 BuildStatus::Built => BuildStatusWire::Built,
                 BuildStatus::AcquireNoBinary => BuildStatusWire::AcquireNoBinary,
             },
-            outputs: BoundedStringSeq::from_vec(
+            outputs: BoundedSeq::from_vec(
                 self.outputs
                     .iter()
-                    .map(StorePath::as_str)
-                    .map(str::to_owned)
+                    .map(|output| BuildOutputWire {
+                        store_path: output.store_path().as_str().to_owned(),
+                        provenance: match output.provenance() {
+                            BuildOutputProvenance::CacheSigned => {
+                                BuildOutputProvenanceWire::CacheSigned
+                            }
+                            BuildOutputProvenance::LocalBuild => {
+                                BuildOutputProvenanceWire::LocalBuild
+                            }
+                        },
+                    })
                     .collect(),
             ),
         };
@@ -2236,8 +2444,14 @@ impl BuildReport {
         };
         let o_vec = dto.outputs.into_inner();
         let mut outputs = Vec::with_capacity(o_vec.len());
-        for o in o_vec {
-            outputs.push(StorePath::new(&o).map_err(|_| invalid("invalid output"))?);
+        for output in o_vec {
+            outputs.push(BuildOutput::new(
+                StorePath::new(&output.store_path).map_err(|_| invalid("invalid output"))?,
+                match output.provenance {
+                    BuildOutputProvenanceWire::CacheSigned => BuildOutputProvenance::CacheSigned,
+                    BuildOutputProvenanceWire::LocalBuild => BuildOutputProvenance::LocalBuild,
+                },
+            ));
         }
         Self::new(status, outputs)
     }

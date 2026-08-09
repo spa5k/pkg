@@ -31,7 +31,8 @@
 //! - Bounded, redacted `NixAdapterError`.
 //! - Substitute trust/signature failure represented only as `NixAdapterError`,
 //!   never as a normal outcome.
-//! - `BuildApprovalReceipt` shaped as only an opaque, bounded operation id.
+//! - `BuildApprovalReceipt` binds an opaque operation id to one plan digest and
+//!   policy version.
 //! - No forbidden per-call knobs (`substituters`, `trustedPublicKeys`,
 //!   `sandbox`, `builders`, `buildUsers`, `maxJobs`, `expr`, `environment`,
 //!   `trustPolicy`) on any serialized shape.
@@ -44,11 +45,12 @@ use std::sync::Arc;
 
 use pkg_nix::error::BoundedSummary;
 use pkg_nix::{
-    AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
-    DerivationPath, DerivationPlanReport, Digest, EvaluateDerivationRequest, EvaluatedDerivation,
-    FormatVersion, GcReport, GcStatus, JsonCodec, MalformedKind, MethodKind, NarHash, NarIntegrity,
-    NixAdapter, NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId,
-    OutputName, OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, RootName,
+    AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance,
+    BuildReport, BuildRequest, BuildStatus, DerivationPath, DerivationPlanReport,
+    DerivedOutputTarget, Digest, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion,
+    GcReport, GcStatus, JsonCodec, MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter,
+    NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName,
+    OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, PolicyVersion, RootName,
     RootRef, SchemaVersion, Signature, StorePath, SubstituteOutcome, SubstituteReceipt,
     SubstituteReport, System, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
@@ -161,12 +163,20 @@ fn substitute_fixture(outcome: SubstituteOutcome) -> SubstituteReport {
 }
 
 fn receipt_fixture() -> BuildApprovalReceipt {
-    BuildApprovalReceipt::new(OperationId::new("op-0001").unwrap())
+    BuildApprovalReceipt::new(
+        OperationId::new("op-0001").unwrap(),
+        Digest::from_bytes([0x42; 32]),
+        PolicyVersion::from_u64(7).unwrap(),
+    )
+}
+
+fn build_target(name: &str) -> DerivedOutputTarget {
+    DerivedOutputTarget::new(drv(name), vec![OutputName::new("out").unwrap()]).unwrap()
 }
 
 fn build_request_fixture() -> BuildRequest {
     BuildRequest::new(
-        vec![drv("hello-1.0")],
+        vec![build_target("hello-1.0")],
         System::X8664Linux,
         receipt_fixture(),
     )
@@ -174,7 +184,14 @@ fn build_request_fixture() -> BuildRequest {
 }
 
 fn build_report_built() -> BuildReport {
-    BuildReport::new(BuildStatus::Built, vec![store_path("hello-1.0")]).unwrap()
+    BuildReport::new(
+        BuildStatus::Built,
+        vec![BuildOutput::new(
+            store_path("hello-1.0"),
+            BuildOutputProvenance::LocalBuild,
+        )],
+    )
+    .unwrap()
 }
 
 fn build_report_acquire_no_binary() -> BuildReport {
@@ -401,7 +418,11 @@ fn stub_dispatches_all_seven_methods_through_dyn() {
 
     let b = a.build(&build_request_fixture()).expect("build");
     assert_eq!(b.status(), BuildStatus::Built);
-    assert_eq!(b.outputs(), &[store_path("hello-1.0")]);
+    assert_eq!(b.outputs()[0].store_path(), &store_path("hello-1.0"));
+    assert_eq!(
+        b.outputs()[0].provenance(),
+        BuildOutputProvenance::LocalBuild
+    );
 
     let vr = a.verify(&verify_request_fixture()).expect("verify");
     assert_eq!(vr.results().len(), 1);
@@ -614,6 +635,32 @@ fn build_request_round_trip() {
 }
 
 #[test]
+fn derived_output_targets_require_explicit_selection_or_all_marker() {
+    let derivation = drv("hello-1.0");
+    assert!(DerivedOutputTarget::new(derivation.clone(), vec![]).is_err());
+    let output = OutputName::new("out").unwrap();
+    assert!(DerivedOutputTarget::new(derivation.clone(), vec![output.clone(), output],).is_err());
+    let all = DerivedOutputTarget::all(derivation);
+    assert_eq!(all.outputs(), None);
+    assert!(all.render_private().ends_with(".drv^*"));
+    let request = BuildRequest::new(vec![all], System::X8664Linux, receipt_fixture()).unwrap();
+    let encoded = request.encode().unwrap();
+    assert!(as_str(&encoded).contains(".drv^*"));
+    assert_eq!(
+        BuildRequest::decode(&JsonCodec::production(), &encoded).unwrap(),
+        request
+    );
+
+    let bare = br#"{"schemaVersion":1,"targets":["/nix/store/0123456789abcdfghijklmnpqrsvwxyz-x.drv"],"system":"x86_64-linux","receipt":{"operationId":"op-0001","buildPlanDigest":"sha256:4242424242424242424242424242424242424242424242424242424242424242","policyVersion":7}}"#;
+    assert_eq!(
+        BuildRequest::decode(&JsonCodec::production(), bare)
+            .unwrap_err()
+            .code(),
+        NixAdapterErrorCode::ValidationFailure
+    );
+}
+
+#[test]
 fn build_report_round_trips_built_and_acquire_no_binary() {
     let c = JsonCodec::production();
     for rep in [build_report_built(), build_report_acquire_no_binary()] {
@@ -622,6 +669,20 @@ fn build_report_round_trips_built_and_acquire_no_binary() {
         assert_eq!(back.encode().expect("re-encode"), enc);
         assert_eq!(back, rep);
     }
+
+    let built = build_report_built().encode().expect("encode built report");
+    assert!(as_str(&built).contains("\"provenance\":\"localBuild\""));
+}
+
+#[test]
+fn build_report_requires_explicit_output_provenance() {
+    let missing = br#"{"schemaVersion":1,"status":"built","outputs":[{"storePath":"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-x"}]}"#;
+    assert_eq!(
+        BuildReport::decode(&JsonCodec::production(), missing)
+            .unwrap_err()
+            .code(),
+        NixAdapterErrorCode::MalformedPayload
+    );
 }
 
 #[test]
@@ -994,14 +1055,14 @@ fn decode_rejects_invalid_promoted_values() {
     );
 
     // Unknown system.
-    let bad = br#"{"schemaVersion":1,"targets":["/nix/store/0123456789abcdfghijklmnpqrsvwxyz-x.drv"],"system":"windows-foo","receipt":{"operationId":"op-0001"}}"#;
+    let bad = br#"{"schemaVersion":1,"targets":["/nix/store/0123456789abcdfghijklmnpqrsvwxyz-x.drv^out"],"system":"windows-foo","receipt":{"operationId":"op-0001","buildPlanDigest":"sha256:4242424242424242424242424242424242424242424242424242424242424242","policyVersion":7}}"#;
     assert_eq!(
         decode_err!(c, BuildRequest, bad).code(),
         NixAdapterErrorCode::ValidationFailure
     );
 
     // Invalid operation id (whitespace).
-    let bad = br#"{"schemaVersion":1,"targets":["/nix/store/0123456789abcdfghijklmnpqrsvwxyz-x.drv"],"system":"x86_64-linux","receipt":{"operationId":"bad id"}}"#;
+    let bad = br#"{"schemaVersion":1,"targets":["/nix/store/0123456789abcdfghijklmnpqrsvwxyz-x.drv^out"],"system":"x86_64-linux","receipt":{"operationId":"bad id","buildPlanDigest":"sha256:4242424242424242424242424242424242424242424242424242424242424242","policyVersion":7}}"#;
     assert_eq!(
         decode_err!(c, BuildRequest, bad).code(),
         NixAdapterErrorCode::ValidationFailure
@@ -1062,12 +1123,12 @@ fn constructors_reject_empty_and_duplicate_collections() {
 
     // BuildRequest: empty and duplicate targets.
     assert!(BuildRequest::new(vec![], System::X8664Linux, receipt_fixture()).is_err());
-    let d = drv("x");
+    let d = build_target("x");
     assert!(BuildRequest::new(vec![d.clone(), d], System::X8664Linux, receipt_fixture()).is_err());
 
     // BuildReport: built-with-no-outputs and duplicate outputs.
     assert!(BuildReport::new(BuildStatus::Built, vec![]).is_err());
-    let p = store_path("x");
+    let p = BuildOutput::new(store_path("x"), BuildOutputProvenance::LocalBuild);
     assert!(BuildReport::new(BuildStatus::Built, vec![p.clone(), p]).is_err());
 
     // VerifyRequest: empty and duplicate paths.
@@ -1088,11 +1149,13 @@ fn build_request_enforces_target_count_bound_without_huge_allocations() {
     let receipt = receipt_fixture();
 
     // Exactly at the cap (1024) is accepted.
-    let targets: Vec<DerivationPath> = (0..1024).map(|i| drv(&format!("t{i}"))).collect();
+    let targets: Vec<DerivedOutputTarget> =
+        (0..1024).map(|i| build_target(&format!("t{i}"))).collect();
     assert!(BuildRequest::new(targets, System::X8664Linux, receipt.clone()).is_ok());
 
     // One over the cap is rejected with a bounded validation failure.
-    let targets: Vec<DerivationPath> = (0..1025).map(|i| drv(&format!("t{i}"))).collect();
+    let targets: Vec<DerivedOutputTarget> =
+        (0..1025).map(|i| build_target(&format!("t{i}"))).collect();
     let err = BuildRequest::new(targets, System::X8664Linux, receipt).unwrap_err();
     assert_eq!(err.code(), NixAdapterErrorCode::ValidationFailure);
 }
@@ -1107,9 +1170,15 @@ fn inconsistent_status_payload_combinations_rejected() {
         NixAdapterErrorCode::ValidationFailure
     );
     assert_eq!(
-        BuildReport::new(BuildStatus::AcquireNoBinary, vec![store_path("x")])
-            .unwrap_err()
-            .code(),
+        BuildReport::new(
+            BuildStatus::AcquireNoBinary,
+            vec![BuildOutput::new(
+                store_path("x"),
+                BuildOutputProvenance::LocalBuild,
+            )],
+        )
+        .unwrap_err()
+        .code(),
         NixAdapterErrorCode::ValidationFailure
     );
 
@@ -1588,7 +1657,7 @@ fn substitute_outcomes_are_normal_only_failures_are_errors() {
 }
 
 #[test]
-fn build_approval_receipt_is_opaque_bounded_operation_id() {
+fn build_approval_receipt_binds_operation_plan_and_policy() {
     // OperationId is bounded and validated: nonempty, ≤64 bytes, [A-Za-z0-9_-].
     assert!(OperationId::new("op-0001").is_ok());
     assert!(OperationId::new("").is_err());
@@ -1596,14 +1665,17 @@ fn build_approval_receipt_is_opaque_bounded_operation_id() {
     assert!(OperationId::new("bad id").is_err());
     assert!(OperationId::new("dotted.id").is_err());
 
-    // The receipt exposes only the operation id.
-    let r = BuildApprovalReceipt::new(OperationId::new("op-0001").unwrap());
+    let r = receipt_fixture();
     assert_eq!(r.operation_id().as_str(), "op-0001");
+    assert_eq!(r.build_plan_digest(), Digest::from_bytes([0x42; 32]));
+    assert_eq!(r.policy_version(), PolicyVersion::from_u64(7).unwrap());
 
-    // Its wire shape is exactly {"operationId":"..."} and carries no knobs.
+    // Its wire shape carries only authorization identity and no runtime knobs.
     let encoded = build_request_fixture().encode().unwrap();
     let s = as_str(&encoded);
-    assert!(s.contains("\"receipt\":{\"operationId\":\"op-0001\"}"));
+    assert!(s.contains("\"buildPlanDigest\":\"sha256:"));
+    assert!(s.contains("\"operationId\":\"op-0001\""));
+    assert!(s.contains("\"policyVersion\":7"));
     for knob in [
         "sandbox",
         "substituters",
