@@ -220,6 +220,12 @@ impl StateLayout {
         &self.state_root
     }
 
+    /// Returns the authenticated owner expected for every state component.
+    #[must_use]
+    pub const fn owner_uid(&self) -> u32 {
+        self.owner_uid
+    }
+
     /// Re-runs ownership, mode, and symlink-component validation.
     pub fn validate(&self) -> Result<(), CurrentError> {
         self.revalidate()

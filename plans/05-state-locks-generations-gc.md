@@ -426,9 +426,12 @@ writes.
 ### 5.5 Lease record — `run/lease`
 
 ```jsonc
-{ "opId":"op_...","pid":12345,"nonce":"...","started":"...",
-  "host":"...","tty":"..." }
+{ "opId":"op_...","pid":12345,"nonce":"...","started":"..." }
 ```
+
+The record deliberately omits hostname and TTY: neither grants lock authority,
+and persisting them adds local metadata without improving recovery. The open
+file descriptor's kernel lock is authoritative; this JSON is diagnostic only.
 
 Held by an exclusive `flock(LOCK_EX)` on `run/lease` for the duration of a
 mutating op (or exclusively by `gc` while it prunes that user's generations,
@@ -966,9 +969,11 @@ possible** — `nix store gc` is global to the store [^nix-gc]. Implications:
   `/nix/var/nix/gcroots/pkg/users/<uid>/` are all the product roots (D-17).
 - **Generations must be pruned before GC** for their paths to become
   collectable. `gc` therefore:
-  1. Determines the protected set = active generation + generations within the
-     retention window (`gc.keep_generations`, default 10) and
-     `gc.max_age_days` (default 30). **The active generation is never
+  1. Determines the protected set = active generation + the newest
+     `gc.keep_generations` retired generations (default 10) + any retired
+     generation no older than `gc.max_age_days` (default 30). A retired
+     generation is eligible only when it is **both** outside the count window
+     and older than the age window. **The active generation is never
      eligible** (I5/I6); only **retired, non-current** generations may be
      pruned.
   2. For each eligible generation, prune it using the **crash-safe ordering**
@@ -977,8 +982,10 @@ possible** — `nix store gc` is global to the store [^nix-gc]. Implications:
      outputs alive, remove the privileged root-set directory last, then append
      `pruned`).
   3. Runs `nix store gc` once (under the broker's exclusive GC permit, §8.5).
-- `gc --dry-run` prints what would be pruned and the estimated reclaimed bytes
-  without removing anything.
+- `gc --dry-run` prints what would be pruned and a clearly approximate sum of
+  unique selected-root closure sizes without removing anything. Shared
+  transitive closure content makes only Nix's eventual `freedBytes`
+  authoritative.
 - `gc` acquires the **per-user lease** (§12) exclusively while pruning that
   user's generations (a same-user concurrent install is refused with
   `STATE_LOCKED`, exit 72) **and** obtains the broker's **exclusive GC permit**
@@ -1000,10 +1007,13 @@ ascending id order.
 **Eligibility (re-checked under the per-user lease).** Only a **retired,
 non-current** generation may be pruned — the active generation (the one
 `current` resolves to) is **never** eligible. Eligibility is checked at the
-start and again immediately before the privileged root-set removal (step 4):
-if `current` moved onto the target meanwhile (e.g. a concurrent `rollback`),
-the prune is abandoned (`phase=prune,status=aborted`) and **nothing** is
-removed.
+start and again immediately before the privileged root-set removal (step 4).
+The required exclusive per-user lease makes a legitimate concurrent
+`rollback` impossible. If the second check nevertheless detects an invariant
+breach, pruning fails closed and retains the root set; already-deleted retired
+metadata is not falsely described as untouched. Recovery refuses to remove the
+root while `current` names the target and requires state repair for this
+out-of-model lock-invariant violation.
 
 **Root-last ordering (why).** The user-owned metadata (forest + record +
 candidate snapshots) is deleted **while the per-output root set still keeps the
@@ -1549,8 +1559,8 @@ post-crash views.
 **Per-user state lease.**
 
 - Mutating ops acquire an exclusive lease (`flock LOCK_EX` on `run/lease`).
-  Lease record includes pid+nonce+opId; on start the holder writes its pidfile
-  `run/pid`.
+  The lease record itself includes pid+nonce+opId; there is no second `run/pid`
+  file whose lifecycle could diverge from the locked inode.
 - **Two read classes, both consistent (no torn reads):**
   - *Leased consistent read* of the mutable `manifest`/`lock` views — take
     `LOCK_SH` on `run/lease` across the whole read. Used by ops that must read
@@ -1565,12 +1575,14 @@ post-crash views.
     `history`/`outdated`-style commands so they never block on a long install.
   There is deliberately **no** racy "`LOCK_SH` or none" middle ground: a
   reader either leases the mutable views or reads the immutable snapshot.
-- Stale lease: if the holder pid is not alive (`kill(pid,0)`), the lease is
-  considered abandoned; the next op rewrites it (after verifying no live
-  Nix subprocess for the dead op via the journal). To be safe, the product
-  also refuses to steal a lease younger than `lease_min_age` (default 60s).
-- `doctor` (plan 06) reports lease state and can `--force-release` (requires
-  confirmation; logs a SECURITY event).
+- The kernel lock, not the diagnostic pid JSON, is authoritative. Process exit
+  closes the descriptor and releases `flock`; a live lock is never "stolen"
+  using PID liveness or age heuristics (which are vulnerable to PID reuse).
+  After acquiring the released lock, startup recovery reconciles the journal
+  before the next operation overwrites the stale diagnostic record.
+- `doctor` reports the live kernel-lock state and stale diagnostic record. It
+  never unlinks `run/lease` to "force release": unlinking a locked inode could
+  let a second process lock a new inode and create split-brain writers.
 
 ## 13. Failure matrix (selected)
 

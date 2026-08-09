@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -6,15 +5,13 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use pkg_core::state::{
-    Digest, Generation, JournalPayload, JournalRow, LockedState, Manifest, PreviousRowHash,
-    body_digest, canonical_digest, recover_journal,
-};
+use pkg_core::state::{Digest, Generation, LockedState, Manifest, body_digest, canonical_digest};
 use pkg_core::{GenerationSnapshot, lifecycle::LifecycleState};
 use pkg_nix::{GenerationId, MaintenanceAdapter, RemoveRootSetRequest};
 use pkg_store::{
-    ActivationEvent, ActivationPlan, PreparedRootSet, RootCandidate, StateLayout,
-    activate_generation, prepare_root_set, publish_root_set, verify_recorded_activation,
+    ActivationEvent, ActivationPlan, LeaseMode, PreparedRootSet, RootCandidate, StateJournal,
+    StateJournalError, StateLayout, StateLease, activate_generation, prepare_root_set,
+    publish_root_set, verify_recorded_activation,
 };
 use serde_json::{Value, json};
 
@@ -83,6 +80,7 @@ pub struct PreparedGeneration {
     candidate: CandidateGeneration,
     plan: ActivationPlan,
     roots: Option<PreparedRootSet>,
+    lease: StateLease,
 }
 
 /// A generation already published through the `current` linearization point.
@@ -90,6 +88,7 @@ pub struct PreparedGeneration {
 pub struct ActivatedGeneration {
     layout: StateLayout,
     candidate: CandidateGeneration,
+    _lease: StateLease,
 }
 
 /// Stable, redacted generation commit failure categories.
@@ -107,6 +106,8 @@ pub enum CommitError {
     ActivationFailed,
     /// The atomic current switch may have completed; startup must finish forward.
     ActivatedNeedsRecovery,
+    /// The caller did not transfer an exclusive state-mutation lease.
+    LeaseRequired,
 }
 
 impl fmt::Display for CommitError {
@@ -143,7 +144,11 @@ impl PreparedGeneration {
         layout: StateLayout,
         candidate: CandidateGeneration,
         plan: ActivationPlan,
+        lease: StateLease,
     ) -> Result<Self, CommitError> {
+        if !lease.authorizes(&layout, LeaseMode::Exclusive) {
+            return Err(CommitError::LeaseRequired);
+        }
         layout.validate().map_err(|_| CommitError::StateIo)?;
         validate_plan(&candidate, &plan)?;
         let root = layout.state_root();
@@ -180,7 +185,8 @@ impl PreparedGeneration {
         write_with_sidecar(root, &record_path, &candidate.generation_bytes)?;
         sync_dir(&root.join("generations"))?;
         append_phase(
-            root,
+            &layout,
+            &lease,
             generation.operation().op_id(),
             "commit",
             "prepared",
@@ -195,6 +201,7 @@ impl PreparedGeneration {
             candidate,
             plan,
             roots,
+            lease,
         })
     }
 
@@ -204,7 +211,7 @@ impl PreparedGeneration {
         helper: &dyn MaintenanceAdapter,
         nonce: &str,
     ) -> Result<ActivatedGeneration, CommitError> {
-        let root = self.layout.state_root().to_path_buf();
+        let journal_layout = self.layout.clone();
         let op_id = self.candidate.generation().operation().op_id().to_owned();
         activate_generation(
             &self.layout,
@@ -221,12 +228,14 @@ impl PreparedGeneration {
                     ActivationEvent::Activated => Some(("activate", "activated")),
                 };
                 if let Some((phase, status)) = row {
-                    append_phase(&root, &op_id, phase, status, []).map_err(|_| match event {
-                        ActivationEvent::Activated => pkg_store::CurrentError::PostActivation,
-                        _ => pkg_store::CurrentError::Filesystem(std::io::Error::other(
-                            "journal append failed",
-                        )),
-                    })?;
+                    append_phase(&journal_layout, &self.lease, &op_id, phase, status, []).map_err(
+                        |_| match event {
+                            ActivationEvent::Activated => pkg_store::CurrentError::PostActivation,
+                            _ => pkg_store::CurrentError::Filesystem(std::io::Error::other(
+                                "journal append failed",
+                            )),
+                        },
+                    )?;
                 }
                 Ok(())
             },
@@ -241,6 +250,7 @@ impl PreparedGeneration {
         Ok(ActivatedGeneration {
             layout: self.layout,
             candidate: self.candidate,
+            _lease: self.lease,
         })
     }
 }
@@ -251,7 +261,8 @@ impl ActivatedGeneration {
         restore_current_views(&self.layout, &self.candidate)
             .map_err(|_| CommitError::ActivatedNeedsRecovery)?;
         append_phase(
-            self.layout.state_root(),
+            &self.layout,
+            &self._lease,
             self.candidate.generation().operation().op_id(),
             "commit",
             "committed",
@@ -267,9 +278,13 @@ impl ActivatedGeneration {
 /// Reconciles a prepared/rooted/activated/committed generation idempotently.
 pub fn recover_generation(
     layout: &StateLayout,
+    lease: &StateLease,
     generation_id: &GenerationId,
     helper: &dyn MaintenanceAdapter,
 ) -> Result<RecoveryResult, CommitError> {
+    if !lease.authorizes(layout, LeaseMode::Exclusive) {
+        return Err(CommitError::LeaseRequired);
+    }
     layout.validate().map_err(|_| CommitError::StateIo)?;
     let root = layout.state_root();
     clean_current_temps(root)?;
@@ -351,7 +366,8 @@ pub fn recover_generation(
             .map_err(|_| CommitError::ActivationFailed)?;
         discard_candidate(root, &candidate)?;
         append_phase(
-            root,
+            layout,
+            lease,
             generation.operation().op_id(),
             "commit",
             "aborted",
@@ -372,14 +388,20 @@ pub fn recover_generation(
         generation.activation().output_roots(),
     )
     .map_err(|_| CommitError::StageMismatch)?;
-    let committed =
-        journal_has_status(root, generation.operation().op_id(), "commit", "committed")?;
+    let committed = journal_has_status(
+        layout,
+        lease,
+        generation.operation().op_id(),
+        "commit",
+        "committed",
+    )?;
     restore_current_views(layout, &candidate)?;
     if committed {
         Ok(RecoveryResult::AlreadyCommitted)
     } else {
         append_phase(
-            root,
+            layout,
+            lease,
             generation.operation().op_id(),
             "commit",
             "committed",
@@ -466,86 +488,48 @@ fn write_atomic(root: &Path, name: &str, bytes: &[u8]) -> Result<(), CommitError
 }
 
 fn append_phase<const N: usize>(
-    root: &Path,
+    layout: &StateLayout,
+    lease: &StateLease,
     op_id: &str,
     phase: &str,
     status: &str,
     extra: [(&str, Value); N],
 ) -> Result<(), CommitError> {
-    let journal_dir = root.join("journal");
-    validate_directory(&journal_dir)?;
-    let path = journal_dir.join("journal.ndjson");
-    let existing = match read_regular(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(_) => return Err(CommitError::StateIo),
-    };
-    let recovered = recover_journal(&existing).map_err(|_| CommitError::JournalInvalid)?;
-    if !recovered.quarantined_suffix().is_empty() {
-        return Err(CommitError::JournalInvalid);
-    }
-    let (seq, previous) = recovered
-        .accepted()
-        .last()
-        .map_or((1, PreviousRowHash::Genesis), |row| {
-            (row.seq() + 1, PreviousRowHash::Row(row.row_hash()))
-        });
-    let mut fields = BTreeMap::from([
-        ("opId".to_owned(), json!(op_id)),
-        ("phase".to_owned(), json!(phase)),
-        ("status".to_owned(), json!(status)),
-    ]);
-    fields.extend(
-        extra
-            .into_iter()
-            .map(|(key, value)| (key.to_owned(), value)),
-    );
-    let payload = JournalPayload::new(fields).map_err(|_| CommitError::JournalInvalid)?;
-    let row = JournalRow::new(seq, previous, payload).map_err(|_| CommitError::JournalInvalid)?;
-    let line = row
-        .to_ndjson_line()
-        .map_err(|_| CommitError::JournalInvalid)?;
-    let mut options = OpenOptions::new();
-    options
-        .append(true)
-        .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW);
-    let mut file = options.open(path).map_err(|_| CommitError::StateIo)?;
-    if !file
-        .metadata()
-        .map_err(|_| CommitError::StateIo)?
-        .file_type()
-        .is_file()
-    {
-        return Err(CommitError::StateIo);
-    }
-    file.write_all(&line).map_err(|_| CommitError::StateIo)?;
-    file.sync_all().map_err(|_| CommitError::StateIo)?;
-    sync_dir(&journal_dir)
+    StateJournal::open(layout)
+        .and_then(|journal| {
+            journal.append(
+                lease,
+                op_id,
+                phase,
+                status,
+                extra
+                    .into_iter()
+                    .map(|(key, value)| (key.to_owned(), value)),
+            )
+        })
+        .map_err(map_journal_error)
 }
 
 fn journal_has_status(
-    root: &Path,
+    layout: &StateLayout,
+    lease: &StateLease,
     op_id: &str,
     phase: &str,
     status: &str,
 ) -> Result<bool, CommitError> {
-    let bytes = match read_regular(&root.join("journal/journal.ndjson")) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(_) => return Err(CommitError::StateIo),
-    };
-    let recovered = recover_journal(&bytes).map_err(|_| CommitError::JournalInvalid)?;
-    if !recovered.quarantined_suffix().is_empty() {
-        return Err(CommitError::JournalInvalid);
+    StateJournal::open(layout)
+        .and_then(|journal| journal.has_status(lease, op_id, phase, status))
+        .map_err(map_journal_error)
+}
+
+const fn map_journal_error(error: StateJournalError) -> CommitError {
+    match error {
+        StateJournalError::LeaseRequired => CommitError::LeaseRequired,
+        StateJournalError::InvalidChain | StateJournalError::InvalidRow => {
+            CommitError::JournalInvalid
+        }
+        StateJournalError::UnsafeState | StateJournalError::Io => CommitError::StateIo,
     }
-    Ok(recovered.accepted().iter().any(|row| {
-        let fields = row.payload().fields();
-        fields.get("opId").and_then(Value::as_str) == Some(op_id)
-            && fields.get("phase").and_then(Value::as_str) == Some(phase)
-            && fields.get("status").and_then(Value::as_str) == Some(status)
-    }))
 }
 
 fn restore_current_views(
@@ -753,7 +737,7 @@ fn read_regular(path: &Path) -> std::io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use pkg_nix::{InProcessHelper, InProcessPeer};
-    use pkg_store::inspect_staged_activation;
+    use pkg_store::{LeaseIdentity, inspect_staged_activation};
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use tempfile::{Builder, TempDir};
 
@@ -787,7 +771,7 @@ mod tests {
         let uid = fs::symlink_metadata(temp.path()).unwrap().uid();
         fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let state = temp.path().join("state");
-        for relative in ["", "generations", "journal", "activations"] {
+        for relative in ["", "generations", "journal", "activations", "run"] {
             let path = state.join(relative);
             fs::create_dir_all(&path).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -927,14 +911,30 @@ mod tests {
         }
     }
 
+    fn mutation_lease(layout: &StateLayout) -> StateLease {
+        StateLease::try_exclusive(
+            layout,
+            &LeaseIdentity::new("op_fixture", "nonce1", "2026-08-09T00:00:00Z").unwrap(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn prepared_fault_discards_record_snapshots_and_staging() {
         let fixture = fixture();
-        PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
-            .unwrap();
+        let lease = mutation_lease(&fixture.layout);
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
+        let recovery_lease = mutation_lease(&fixture.layout);
         assert_eq!(
             recover_generation(
                 &fixture.layout,
+                &recovery_lease,
                 &fixture.generation_id,
                 &fixture.maintenance
             )
@@ -958,23 +958,55 @@ mod tests {
     }
 
     #[test]
+    fn prepare_requires_and_holds_exclusive_state_lease() {
+        let fixture = fixture();
+        drop(mutation_lease(&fixture.layout));
+        let shared = StateLease::try_shared(&fixture.layout).unwrap();
+        assert!(matches!(
+            PreparedGeneration::prepare(
+                fixture.layout.clone(),
+                fixture.candidate,
+                fixture.plan,
+                shared
+            ),
+            Err(CommitError::LeaseRequired)
+        ));
+        assert!(
+            !fixture
+                .layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
+        );
+    }
+
+    #[test]
     fn rooted_fault_removes_roots_and_leaves_current_unchanged() {
         let fixture = fixture();
-        let prepared =
-            PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
-                .unwrap();
+        let lease = mutation_lease(&fixture.layout);
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
         publish_root_set(prepared.roots.as_ref().unwrap(), &fixture.maintenance).unwrap();
         append_phase(
-            fixture.layout.state_root(),
+            &fixture.layout,
+            &prepared.lease,
             "op_fixture",
             "commit",
             "rooted",
             [],
         )
         .unwrap();
+        drop(prepared);
+        let recovery_lease = mutation_lease(&fixture.layout);
         assert_eq!(
             recover_generation(
                 &fixture.layout,
+                &recovery_lease,
                 &fixture.generation_id,
                 &fixture.maintenance
             )
@@ -987,13 +1019,20 @@ mod tests {
     #[test]
     fn activated_fault_restores_views_and_commits_forward() {
         let fixture = fixture();
-        let prepared =
-            PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
-                .unwrap();
+        let lease = mutation_lease(&fixture.layout);
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
         prepared.activate(&fixture.maintenance, "n1").unwrap();
+        let recovery_lease = mutation_lease(&fixture.layout);
         assert_eq!(
             recover_generation(
                 &fixture.layout,
+                &recovery_lease,
                 &fixture.generation_id,
                 &fixture.maintenance
             )
@@ -1003,7 +1042,8 @@ mod tests {
         assert!(fixture.layout.state_root().join("manifest.json").is_file());
         assert!(
             journal_has_status(
-                fixture.layout.state_root(),
+                &fixture.layout,
+                &recovery_lease,
                 "op_fixture",
                 "commit",
                 "committed"
@@ -1015,17 +1055,24 @@ mod tests {
     #[test]
     fn committed_recovery_is_idempotent() {
         let fixture = fixture();
-        let prepared =
-            PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
-                .unwrap();
+        let lease = mutation_lease(&fixture.layout);
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
         prepared
             .activate(&fixture.maintenance, "n1")
             .unwrap()
             .finish()
             .unwrap();
+        let recovery_lease = mutation_lease(&fixture.layout);
         assert_eq!(
             recover_generation(
                 &fixture.layout,
+                &recovery_lease,
                 &fixture.generation_id,
                 &fixture.maintenance
             )
@@ -1041,15 +1088,23 @@ mod tests {
     #[test]
     fn empty_generation_commits_and_recovers_without_publishing_roots() {
         let fixture = empty_fixture();
-        PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
-            .unwrap()
-            .activate(&fixture.maintenance, "empty1")
-            .unwrap()
-            .finish()
-            .unwrap();
+        let lease = mutation_lease(&fixture.layout);
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap()
+        .activate(&fixture.maintenance, "empty1")
+        .unwrap()
+        .finish()
+        .unwrap();
+        let recovery_lease = mutation_lease(&fixture.layout);
         assert_eq!(
             recover_generation(
                 &fixture.layout,
+                &recovery_lease,
                 &fixture.generation_id,
                 &fixture.maintenance
             )
@@ -1117,8 +1172,14 @@ mod tests {
     #[test]
     fn preprepared_orphans_and_current_temp_are_cleaned_without_publishing() {
         let fixture = fixture();
-        PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
-            .unwrap();
+        let lease = mutation_lease(&fixture.layout);
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
         fs::remove_file(
             fixture
                 .layout
@@ -1138,9 +1199,11 @@ mod tests {
             fixture.layout.state_root().join("current.tmp.crash"),
         )
         .unwrap();
+        let recovery_lease = mutation_lease(&fixture.layout);
         assert_eq!(
             recover_generation(
                 &fixture.layout,
+                &recovery_lease,
                 &fixture.generation_id,
                 &fixture.maintenance
             )
@@ -1173,9 +1236,11 @@ mod tests {
             fixture.layout.state_root().join("journal/journal.ndjson"),
         )
         .unwrap();
+        let lease = mutation_lease(&fixture.layout);
         assert!(
             append_phase(
-                fixture.layout.state_root(),
+                &fixture.layout,
+                &lease,
                 "op_fixture",
                 "resolve",
                 "started",

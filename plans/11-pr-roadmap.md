@@ -717,10 +717,19 @@ flowchart TD
 - **Milestone:** M4.
 
 #### PR-22 — GC + leases
+- **Status:** **Completed 2026-08-09.** `StateLease` uses kernel-backed
+  nonblocking shared/exclusive file locks with fail-closed owner/mode/symlink
+  checks; generation transactions now own an exclusive lease through commit.
+  Retention planning protects active, newest-count, and age-window generations;
+  pruning journals intent, durably deletes only validated user metadata,
+  removes privileged roots last, and is restart-idempotent. FakeNix integration
+  verifies the global collector runs once after pruning, while the broker's
+  already-landed PR-39 admission gate remains the runtime wrapper boundary.
 - **Purpose:** collect unreferenced store paths using product-owned roots + generation
   manifest; the per-user **state-mutation lease** (a filesystem `flock`, `05` §12) that serializes
   a user's state writes and `gc` for that user (`05`,`08` T-STATE-4, T-CONC-1).
-- **Owns:** `crates/pkg-store/src/{gc.rs,leases.rs}` + tests. `gc.rs` = reclamation logic that
+- **Owns:** `crates/pkg-store/src/{gc.rs,leases.rs,journal.rs}` plus the
+  `pkg-pipeline` lease integration + tests. `gc.rs` = reclamation logic that
   consults generations/roots (via PR-18/PR-21); `leases.rs` = the per-user state-mutation lease
   (a filesystem `flock`). This PR does **not** own the **broker-internal, host-global GC admission
   gate** — that is an in-memory broker-hosted gate whose **contract + FakeNix/in-process reference

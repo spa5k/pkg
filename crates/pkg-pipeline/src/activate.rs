@@ -1,5 +1,5 @@
 use pkg_nix::MaintenanceAdapter;
-use pkg_store::{ActivationPlan, StateLayout};
+use pkg_store::{ActivationPlan, StateLayout, StateLease};
 
 use crate::{ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration};
 
@@ -8,8 +8,9 @@ pub fn prepare_activation(
     layout: StateLayout,
     candidate: CandidateGeneration,
     plan: ActivationPlan,
+    lease: StateLease,
 ) -> Result<PreparedGeneration, CommitError> {
-    PreparedGeneration::prepare(layout, candidate, plan)
+    PreparedGeneration::prepare(layout, candidate, plan, lease)
 }
 
 /// Roots every output before retaining and atomically exposing the forest.

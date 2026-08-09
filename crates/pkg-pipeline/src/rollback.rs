@@ -5,6 +5,7 @@ use std::path::Path;
 use pkg_core::state::{CollisionPolicy, canonical_digest};
 use pkg_core::{RollbackPlan, StorePath};
 use pkg_nix::GenerationId;
+use pkg_store::StateLease;
 use pkg_store::{ActivationError, ActivationInput, ActivationPlan, StateLayout, stage_activation};
 use serde_json::{Value, json};
 
@@ -41,6 +42,7 @@ impl std::error::Error for RollbackPrepareError {}
 /// layer.
 pub fn prepare_rollback(
     layout: StateLayout,
+    lease: StateLease,
     plan: &RollbackPlan,
     generation_id: &str,
     created_at: &str,
@@ -48,6 +50,7 @@ pub fn prepare_rollback(
 ) -> Result<PreparedGeneration, RollbackPrepareError> {
     prepare_rollback_with(
         layout,
+        lease,
         plan,
         generation_id,
         created_at,
@@ -65,6 +68,7 @@ pub fn prepare_rollback(
 
 fn prepare_rollback_with(
     layout: StateLayout,
+    lease: StateLease,
     rollback: &RollbackPlan,
     generation_id: &str,
     created_at: &str,
@@ -126,7 +130,7 @@ fn prepare_rollback_with(
         &activation_plan,
     )
     .inspect_err(|_| discard_staging(&staging))?;
-    PreparedGeneration::prepare(layout, candidate, activation_plan)
+    PreparedGeneration::prepare(layout, candidate, activation_plan, lease)
         .inspect_err(|_| discard_staging(&staging))
         .map_err(RollbackPrepareError::Commit)
 }
@@ -249,7 +253,7 @@ mod tests {
     use pkg_core::state::{Generation, LockedState, Manifest, body_digest};
     use pkg_core::{GenerationSnapshot, RollbackTarget, plan_rollback};
     use pkg_nix::{InProcessHelper, InProcessPeer};
-    use pkg_store::inspect_staged_activation;
+    use pkg_store::{LeaseIdentity, inspect_staged_activation};
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use tempfile::Builder;
 
@@ -267,7 +271,7 @@ mod tests {
         let uid = fs::symlink_metadata(temp.path()).unwrap().uid();
         fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let state_root = temp.path().join("state");
-        for relative in ["", "generations", "journal", "activations/gen-0002"] {
+        for relative in ["", "generations", "journal", "run", "activations/gen-0002"] {
             let path = state_root.join(relative);
             fs::create_dir_all(&path).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -283,8 +287,14 @@ mod tests {
         )
         .unwrap();
         let layout = StateLayout::open(temp.path(), &state_root, uid).unwrap();
+        let lease = StateLease::try_exclusive(
+            &layout,
+            &LeaseIdentity::new("op_rollback", "nonce1", "2026-08-09T00:00:03Z").unwrap(),
+        )
+        .unwrap();
         let prepared = prepare_rollback_with(
             layout,
+            lease,
             &rollback,
             "gen-0003",
             "2026-08-09T00:00:03Z",
@@ -346,7 +356,7 @@ mod tests {
         let uid = fs::symlink_metadata(temp.path()).unwrap().uid();
         fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let state_root = temp.path().join("state");
-        for relative in ["", "generations", "journal", "activations/gen-0002"] {
+        for relative in ["", "generations", "journal", "run", "activations/gen-0002"] {
             let path = state_root.join(relative);
             fs::create_dir_all(&path).unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -362,8 +372,14 @@ mod tests {
         )
         .unwrap();
         let layout = StateLayout::open(temp.path(), &state_root, uid).unwrap();
+        let lease = StateLease::try_exclusive(
+            &layout,
+            &LeaseIdentity::new("op_rollback", "nonce1", "2026-08-09T00:00:03Z").unwrap(),
+        )
+        .unwrap();
         let result = prepare_rollback_with(
             layout,
+            lease,
             &rollback,
             "gen-0002",
             "2026-08-09T00:00:03Z",

@@ -1189,8 +1189,11 @@ dependencies = [
 name = "pkg-store"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "pkg-core",
  "pkg-nix",
+ "pkg-testkit",
+ "serde_json",
  "sha2 0.10.9",
  "tempfile",
 ]
