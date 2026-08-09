@@ -503,6 +503,10 @@ flowchart TD
 ### Milestone M2 — Catalog & resolve
 
 #### PR-13 — Fetch + verify pinned Nixpkgs (rev/narHash)
+- **Status:** **Completed 2026-08-09.** The closed fetch-spec/metadata-runner contract,
+  top-level identity promotion, adversarial tests, and FakeNix hook are implemented in
+  `pkg-nix::nixpkgs` / `pkg-testkit::FakeNixpkgsRunner`. Real contained subprocess execution
+  remains PR-36.
 - **Purpose:** materialize the pinned Nixpkgs rev and verify `narHash` from signed channel.
 - **Owns:** `crates/pkg-nix/src/nixpkgs.rs` + tests + FakeNix hooks.
 - **Depends:** PR-11, PR-12.

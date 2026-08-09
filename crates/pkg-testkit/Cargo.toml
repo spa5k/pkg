@@ -1,7 +1,7 @@
 # `pkg-testkit` — the hermetic, deterministic `FakeNix` for `pkg`'s test layers.
 #
 # PR-3 slice 2 ships the deterministic exact-FIFO transcript replay engine
-# (`plans/09` §4.4): a `FakeNix` that implements all nine `NixAdapter` methods
+# (`plans/09` §4.4): a `FakeNix` that implements all seven `NixAdapter` methods
 # and replays a scripted, first-in-first-out transcript of expectations with
 # byte-stable, hermetic outputs — no Nix process, no network, no timing
 # (`plans/09` §3, §4.4). Richer simulation is deferred to later checkpoints
@@ -20,7 +20,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# One-way path dependency on the Nix-adapter contract: the trait, the nine
+# One-way path dependency on the Nix-adapter contract: the trait, the seven
 # methods' request/report types, and the closed/redacted `NixAdapterError`.
 # `pkg-nix` never depends on `pkg-testkit` (plans/09 §4.4). This normal
 # dependency is also what the black-box integration tests (`tests/`) use to

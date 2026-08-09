@@ -51,6 +51,7 @@ pub mod error;
 pub mod framing;
 pub mod maintenance;
 pub mod managed;
+pub mod nixpkgs;
 
 pub use adapter::NixAdapter;
 pub use broker::{
@@ -88,6 +89,10 @@ pub use managed::ownership::{
 pub use managed::provision::{
     ProvisionError, ProvisionErrorCode, ProvisionRequest, ProvisionSpec, ProvisionedRuntime,
     RuntimeSource, provision_managed_nix,
+};
+pub use nixpkgs::{
+    NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
+    NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,
 };
 
 // Focused re-exports of the `pkg-core` strong types that appear in this crate's

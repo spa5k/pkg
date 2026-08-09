@@ -8,6 +8,8 @@
 //! outputs — **no Nix process, no network, no timing** (`plans/09` §3, §4.4).
 //! Richer simulation (keyed responses, latency, partial writes, fake cache/CDN,
 //! chaos) is explicitly deferred to later checkpoints (`plans/09` §4.5).
+//! [`FakeNixpkgsRunner`] separately replays the closed pinned-source metadata
+//! seam introduced by PR-13; it cannot widen the seven-method adapter.
 //!
 //! # Dependencies (one way)
 //!
@@ -49,9 +51,11 @@
 #![deny(missing_docs)]
 
 pub mod fake_nix;
+pub mod fake_nixpkgs;
 pub mod transcript;
 
 pub use fake_nix::FakeNix;
+pub use fake_nixpkgs::{FakeNixpkgsError, FakeNixpkgsRunner};
 pub use transcript::TranscriptError;
 
 // Focused re-export of the `pkg-nix` contract types that appear in `FakeNix`'s
@@ -60,6 +64,7 @@ pub use transcript::TranscriptError;
 // depending on `pkg-nix` directly.
 pub use pkg_nix::{
     BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind, NixAdapter,
-    NixAdapterError, PathInfoReport, RealizationReport, StorePath, SubstituteReport, VerifyReport,
-    VerifyRequest, VersionInfo,
+    NixAdapterError, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
+    PathInfoReport, RealizationReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest,
+    VersionInfo,
 };

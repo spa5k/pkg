@@ -58,9 +58,18 @@ The descriptor (doc 02 §7) provides:
 
 🛠 Concrete steps (owned here; exact fixed argv/env owned by doc 01 §11.1 / the single `nix-driver` adapter):
 1. **Build the direct locked ref** from the signed descriptor's exact `owner`/`repo`/`rev` (taken verbatim from the verified descriptor — no caller-supplied URL), and include the descriptor `narHash` in the ref query — `github:<owner>/<repo>/<rev>?narHash=<sri>` — so **Nix's own fetcher enforces** content identity during the fetch.
-2. Invoke `nix flake metadata <that-ref> --json` with **fixed argv** and a **scrubbed `pkg`-controlled environment** (ARCH-INV-02): no `NIX_PATH`/`NIXPKGS_*`/user flake config, `--no-registries` so the literal direct ref is resolved rather than a registry mapping, **no mutable channel**, and **no lockfile write** (`metadata` against a direct ref performs no `flake.lock` write). Run inside the adapter only.
+2. Invoke `nix flake metadata <that-ref> --json` with **fixed argv** and a **scrubbed `pkg`-controlled environment** (ARCH-INV-02): no `NIX_PATH`/`NIXPKGS_*`/user flake config, canonical Nix 2.34.8 `--no-use-registries` so the literal direct ref is resolved rather than a registry mapping (the legacy `--no-registries` alias is deprecated), **no mutable channel**, and **no lockfile write** (`metadata` against a direct ref performs no `flake.lock` write). Run inside the adapter only.
 3. **Compare before any use.** Read the top-level `locked.rev` and `locked.narHash`; if a top-level `revision` is also present, assert `revision == locked.rev`. Then independently assert `locked.rev == descriptor.nixpkgs.rev` **and** `locked.narHash == descriptor.nixpkgs.narHash`. (CAT-INV-01; any mismatch → abort and surface as a **trust event** — **no** evaluation or index build runs on an unverified source.)
 4. **Only after identity comparison succeeds**, treat the top-level `path` as a **private typed `StorePath`** (held inside the adapter, never echoed to public output or logs). Nix materializes the source under `/nix/store`; `pkg` caches a private reference at `/var/lib/pkg/nixpkgs/<rev>/` (a **marker**, not a raw flake-ref or store path) for index derivation. The authoritative copy is Nix-managed in `/nix/store`.
+
+**PR-13 implementation (2026-08-09).** `pkg-nix::nixpkgs` implements this as a separate
+closed `NixpkgsMetadataRunner`, preserving the seven-method general `NixAdapter` contract.
+Only `VerifiedChannel` can produce `NixpkgsFetchSpec`; the fixed command is bounded to the
+authenticated direct ref, and bounded raw metadata must pass top-level fetcher/owner/repo/rev/
+`narHash` plus optional `revision` checks before `VerifiedNixpkgsSource` exists. Its store path
+is typed and redacted from `Debug`; `pkg-testkit::FakeNixpkgsRunner` is the hermetic execution
+hook. The real contained subprocess binding remains PR-36, as required by doc 13's child-policy
+boundary.
 
 ### 6.3 Why not `NIX_PATH` / `nixpkgs` channel
 
@@ -301,7 +310,7 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 
 ## 16. Implementation checkpoints (foundation; feeds doc 11)
 
-- CP-03.1 Implement Nixpkgs source fetch+verify via `nix flake metadata <direct-locked-ref>`: build the ref from the descriptor's `owner`/`repo`/`rev`+`narHash`, read top-level `locked.rev`/`locked.narHash`, cross-check `revision` if present, fail-closed against the descriptor before any eval/index use (CAT-INV-01; §6.2).
+- ✅ CP-03.1 Implement Nixpkgs source fetch+verify via `nix flake metadata <direct-locked-ref>`: build the ref from the descriptor's `owner`/`repo`/`rev`+`narHash`, read top-level `locked.rev`/`locked.narHash`, cross-check `revision` if present, fail-closed against the descriptor before any eval/index use (CAT-INV-01; §6.2). Contract/reference completed by PR-13; Real-Nix runner binding remains PR-36.
 - CP-03.2 Define & serialize the index record schema (§7) with stable hashing.
 - CP-03.3 Implement index loader/verifier (download TUF target → verify sha256 → load; else Option B self-build).
 - CP-03.4 Implement Option B meta-eval expression with `tryEval` per-attr tolerance (SPK-04).
