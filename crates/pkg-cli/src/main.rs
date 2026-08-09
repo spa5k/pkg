@@ -9,6 +9,7 @@ use pkg_cli::exit::ExitCode;
 use pkg_cli::log::{LogConfig, LogLevel, LogRecord, StructuredLog};
 use pkg_cli::path::{HostFamily, PathObservation, default_state_root};
 use pkg_cli::ux::{CommandError, OutputMode, write_error};
+use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
 
 fn main() -> ProcessExitCode {
     let cli = Cli::parse();
@@ -119,10 +120,31 @@ fn run_doctor(cli: &Cli) -> ProcessExitCode {
     let path_entries = std::env::var_os("PATH")
         .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
         .unwrap_or_default();
-    let inputs = DoctorInputs::local_development(
+    let mut inputs = DoctorInputs::local_development(
         state_root,
         PathObservation::inspect(&expected_bin, &path_entries),
     );
+    if let Some(system) = inputs.system {
+        let environment_keys = std::env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
+        let detection = detect_unmanaged_nix(
+            std::path::Path::new("/"),
+            system,
+            &path_entries,
+            &environment_keys,
+        );
+        inputs.unmanaged_nix = if detection.disposition() == DetectionDisposition::Clean {
+            pkg_cli::commands::doctor::UnmanagedNixObservation::Clean
+        } else {
+            pkg_cli::commands::doctor::UnmanagedNixObservation::Refused {
+                signals: detection
+                    .findings()
+                    .iter()
+                    .map(|finding| finding.id().to_owned())
+                    .collect(),
+                definite: detection.has_unmanaged_evidence() && !detection.has_ownership_claim(),
+            }
+        };
+    }
     let report = DoctorReport::evaluate(&inputs);
     let rendered = match OutputMode::from_flags(cli.json(), cli.jsonl()) {
         OutputMode::Human => report.write_human(std::io::stdout()),

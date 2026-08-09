@@ -35,6 +35,8 @@ pub enum DoctorOverall {
     NeedsAttention,
     /// An unmanaged Nix installation requires manual remediation.
     UnmanagedNix,
+    /// Nix artifacts exist but a possible pkg ownership claim is unauthenticated.
+    NixOwnershipUnknown,
 }
 
 /// One bounded, product-owned doctor result row.
@@ -103,8 +105,14 @@ pub enum SubsystemObservation {
 pub enum UnmanagedNixObservation {
     /// PR-9 found no unmanaged installation signals.
     Clean,
-    /// PR-9 found one or more bounded product-facing signals.
-    Detected(Vec<String>),
+    /// PR-9 refused because one or more bounded signals were found.
+    Refused {
+        /// Stable signal IDs; never raw paths or environment values.
+        signals: Vec<String>,
+        /// True when foreign artifacts or an unauthenticated marker were found;
+        /// false when the scan found ambiguity only.
+        definite: bool,
+    },
     /// PR-9 has not supplied an observation; doctor must not claim health.
     Deferred,
 }
@@ -206,15 +214,18 @@ impl DoctorReport {
             subsystem_check("channel.signed", &inputs.channel),
         ];
 
-        let overall = if matches!(inputs.unmanaged_nix, UnmanagedNixObservation::Detected(_)) {
-            DoctorOverall::UnmanagedNix
-        } else if checks
-            .iter()
-            .any(|check| matches!(check.status, CheckStatus::Fail | CheckStatus::Deferred))
-        {
-            DoctorOverall::NeedsAttention
-        } else {
-            DoctorOverall::Healthy
+        let overall = match &inputs.unmanaged_nix {
+            UnmanagedNixObservation::Refused { definite: true, .. } => DoctorOverall::UnmanagedNix,
+            UnmanagedNixObservation::Refused {
+                definite: false, ..
+            } => DoctorOverall::NixOwnershipUnknown,
+            _ if checks
+                .iter()
+                .any(|check| matches!(check.status, CheckStatus::Fail | CheckStatus::Deferred)) =>
+            {
+                DoctorOverall::NeedsAttention
+            }
+            _ => DoctorOverall::Healthy,
         };
         Self {
             schema_version: PUBLIC_SCHEMA_VERSION,
@@ -241,7 +252,9 @@ impl DoctorReport {
         match self.overall {
             DoctorOverall::Healthy => ExitCode::Ok,
             DoctorOverall::NeedsAttention => ExitCode::Config,
-            DoctorOverall::UnmanagedNix => ExitCode::UnmanagedNix,
+            DoctorOverall::UnmanagedNix | DoctorOverall::NixOwnershipUnknown => {
+                ExitCode::UnmanagedNix
+            }
         }
     }
 
@@ -296,6 +309,7 @@ impl DoctorReport {
                 DoctorOverall::Healthy => "healthy",
                 DoctorOverall::NeedsAttention => "needs attention",
                 DoctorOverall::UnmanagedNix => "unmanaged Nix detected",
+                DoctorOverall::NixOwnershipUnknown => "Nix ownership unknown",
             }
         )
     }
@@ -426,15 +440,33 @@ fn unmanaged_check(observation: &UnmanagedNixObservation) -> DoctorCheck {
             "no unmanaged Nix signals were detected",
             None::<String>,
         ),
-        UnmanagedNixObservation::Detected(signals) => DoctorCheck::new(
-            "nix.unmanaged",
-            CheckStatus::Fail,
-            format!(
-                "an existing unmanaged Nix installation was detected ({} signals)",
-                signals.len()
-            ),
-            Some("remove it with its own uninstaller, then rerun pkg doctor; pkg never removes it"),
-        ),
+        UnmanagedNixObservation::Refused { signals, definite } => {
+            if *definite {
+                DoctorCheck::new(
+                    "nix.unmanaged",
+                    CheckStatus::Fail,
+                    format!(
+                        "an existing unmanaged Nix installation was detected ({} signals)",
+                        signals.len()
+                    ),
+                    Some(
+                        "remove it with its own uninstaller, then rerun pkg doctor; pkg never removes it",
+                    ),
+                )
+            } else {
+                DoctorCheck::new(
+                    "nix.unmanaged",
+                    CheckStatus::Fail,
+                    format!(
+                        "the host could not be proven free of unmanaged Nix ({} signals)",
+                        signals.len()
+                    ),
+                    Some(
+                        "do not remove anything; rerun the full read-only scan with the privileged installer/helper",
+                    ),
+                )
+            }
+        }
         UnmanagedNixObservation::Deferred => DoctorCheck::new(
             "nix.unmanaged",
             CheckStatus::Deferred,
@@ -495,10 +527,10 @@ mod tests {
     #[test]
     fn unmanaged_signal_has_priority_and_never_lists_raw_paths() {
         let mut inputs = healthy_inputs(PathBuf::from("/missing"));
-        inputs.unmanaged_nix = UnmanagedNixObservation::Detected(vec![
-            "foreign store content".into(),
-            "foreign service unit".into(),
-        ]);
+        inputs.unmanaged_nix = UnmanagedNixObservation::Refused {
+            signals: vec!["NIX_STORE_POPULATED".into(), "SYSTEMD_UNIT".into()],
+            definite: true,
+        };
         let report = DoctorReport::evaluate(&inputs);
         assert_eq!(report.exit_code(), ExitCode::UnmanagedNix);
         let mut json = Vec::new();
@@ -506,6 +538,22 @@ mod tests {
         let text = String::from_utf8(json).unwrap();
         assert!(!text.contains("/nix/store"));
         assert!(text.contains("2 signals"));
+    }
+
+    #[test]
+    fn unauthenticated_ownership_claim_never_advises_removal() {
+        let mut inputs = healthy_inputs(PathBuf::from("/missing"));
+        inputs.unmanaged_nix = UnmanagedNixObservation::Refused {
+            signals: vec!["NIX_ROOT".into(), "PKG_OWNERSHIP_MARKER".into()],
+            definite: false,
+        };
+        let report = DoctorReport::evaluate(&inputs);
+        assert_eq!(report.overall(), DoctorOverall::NixOwnershipUnknown);
+        let mut human = Vec::new();
+        report.write_human(&mut human).unwrap();
+        let text = String::from_utf8(human).unwrap();
+        assert!(text.contains("do not remove anything"));
+        assert!(!text.contains("own uninstaller"));
     }
 
     #[test]

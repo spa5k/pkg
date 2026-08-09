@@ -1,7 +1,8 @@
 # S5 findings — managed-daemon sandbox and resource boundary
 
-Status: **Linux Docker and native macOS evidence observed; DR-005 remains
-Proposed pending required signoff and the limitations below**.
+Status: **Complete. Linux Docker and native macOS evidence observed; DR-005
+accepted 2026-08-09 after architecture/security signoff, with the limitations
+below retained as explicit residual risks and future implementation gates**.
 
 ## Observed Linux Docker lane
 
@@ -62,7 +63,8 @@ Proposed pending required signoff and the limitations below**.
   receipts; those belong to the broker/build-engine milestones.
 - Disk, free-space, and load preflight thresholds.
 
-Therefore this evidence does not accept DR-005 or unlock PR-26 by itself. It
-does validate the Linux Docker and native macOS sandbox/build-user lanes plus
-the core regular-versus-fixed-output network model under Nix 2.34.8. Required
-architecture/security signoff remains separate.
+This evidence, together with the recorded architecture/security signoff,
+accepts DR-005 and clears its decision gate for PR-26. It does not implement or
+validate PR-26's production admission lease, approval receipts, disk/load
+preflight, or other dependencies. The limitations above remain explicit rather
+than being converted into claims of hard resource isolation.

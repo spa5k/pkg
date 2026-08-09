@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Spike** | S1 (PR-4) — *Is `/nix/store` viable for exclusive managed use, and how do we detect / safely refuse an unmanaged Nix?* |
-| **Decision it feeds** | DR-001 (`plans/12-open-decisions-and-risks.md`). **Status set by this spike: see §9 (Proposed).** |
+| **Decision it feeds** | DR-001 (`plans/12-open-decisions-and-risks.md`). **Accepted 2026-08-09 after F/E/A review; see §9 and the acceptance limits in DR-001.** |
 | **Owner (spike)** | This directory only: `spikes/s1-store-prefix/**`. |
 | **Safety** | The **detector is read-only**; the **fixture harness intentionally creates/mutates/cleans only its own verified mktemp scratch tree**. No production code, no `sudo`, no install, no mutation of `/nix`/`/etc`/services. See `detect-unmanaged-nix.sh` header for the safety contract. |
-| **Evidence labels** | **(a)** actually executed · **(b)** official docs/source inspected · **(c)** inference (clearly marked). No human F/E/A sign-off and no real Nix'd host / privileged validation is claimed. |
+| **Evidence labels** | **(a)** actually executed · **(b)** official docs/source inspected · **(c)** inference (clearly marked). F/E/A sign-off was recorded on 2026-08-09; no privileged clean-host installer authorization is claimed. |
 
 ---
 

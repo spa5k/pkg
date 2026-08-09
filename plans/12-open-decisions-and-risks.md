@@ -32,15 +32,11 @@ Format: **ID · Status · Date · Supersedes/Superseded-by · Context · Decisio
 Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferred`.
 
 ### DR-001 — Store prefix & managed-Nix coexistence
-- **Status:** **Proposed** post **S1 / PR-4** — see `spikes/s1-store-prefix/findings.md`. The
-  spike's **technical recommendation and evidence are complete** (all documented S1 success
-  criteria in `12` §2 — concrete layout + detection method + refusal text validated on Linux &
-  macOS + go/no-go on alternative prefix — are supported by executed + primary-source
-  evidence), but the DR remains **Proposed, not Accepted**: per `11` §2 / `CONTRIBUTING` §5 a
-  spike DR is `Accepted` only after the spike owner **and** the affected area owners (F, E, A)
-  sign off. That recorded sign-off has not happened, so the **AC-D1 gate is NOT cleared** by
-  this entry and dependent PRs (PR-9/PR-12/PR-27/PR-28) must not merge on this basis until the
-  DR is Accepted. The two honesty gates below are also still open.
+- **Status:** **Accepted 2026-08-09** after recorded F/E/A architecture and security review of
+  S1 / PR-4 and the subsequent native managed-Nix host evidence. The technical recommendation
+  is unchanged: standard `/nix/store`, exclusive ownership, stock pinned Nix, and fail-closed
+  two-phase preflight. **AC-D1 is cleared** for PR-9/PR-12/PR-27/PR-28, subject to each PR's own
+  tests and gates. See `spikes/s1-store-prefix/findings.md`.
 - **Context:** Nix historically assumes `/nix/store`; relocatable prefixes exist via `--store`
   for some operations but many assumptions bake the path in. v1 must own its store and must
   not collide with or corrupt a user's unmanaged Nix. (`01`,`07`) Spike S1 corrected the prior
@@ -84,17 +80,16 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
   managed-artifact set** — never a path or marker alone. PR-12/PR-27/PR-28 may rely on the layout
   invariants (standard `/nix/store`; product files outside `/nix`; multi-user daemon; standard
   socket behind exclusive ownership) and the refusal copy.
-- **Open gates (honesty):** (1) **F/E/A sign-off pending** — per `11` §2 / `CONTRIBUTING` §5 a
-  spike DR requires spike-owner + affected area-owner (F, E, A) sign-off; this entry records only
-  the technical basis, hence **Proposed**. (2) **No real-Nix'd host / privileged installer
-  executed** — what was validated by execution: a **real Nix-free macOS host produced a safe
+- **Acceptance limits (honesty):** A real Nix-free macOS host produced a safe
   ambiguity/refusal as non-root** (unreadable `/var/root`), a **root Alpine container produced
   CLEAN**, and **all positive-platform artifacts are fixture-driven**. What remains inference /
-  unvalidated: native-execution-of-cache-paths, two-daemon collision, and — critically — **the
+  unvalidated for the production detector/installer: two-daemon collision and — critically — **the
   privileged macOS CLEAN** (the two-phase privileged preflight was NOT run in the spike). Real-Nix
-  and privileged validation is deferred to the PR-9/PR-12 Real-Nix lanes and PR-27/PR-28
-  installers.
-- **Cross-plan note (scoped):** On Acceptance, this DR **supersedes** the stale, over-broad
+  and privileged validation remains mandatory in the PR-9/PR-12 Real-Nix lanes and PR-27/PR-28
+  installers; Acceptance does not waive those gates. The later S5 native macOS lane did validate
+  native cache-path execution and managed-daemon behavior, but it was not a clean-host installer
+  authorization run.
+- **Cross-plan note (scoped):** This DR **supersedes** the stale, over-broad
   relocatability/socket statements in E-owned `plans/07` §6.2 — specifically "stock Nix is **not
   relocatable** to an arbitrary prefix" (it is chroot-relocatable on Linux and can change the
   logical store-dir, just not in any way that meets V1's requirements) and spike deliverable #4
@@ -174,7 +169,7 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Owner:** E + F. **Source:** `[NIXPKGS-MANUAL]`; spike S4.
 
 ### DR-005 — Managed-daemon local builds: sandbox + approval + resource-boundary
-- **Status:** **Proposed** (pending **S5 / PR-8** managed-host behavioral evidence). PR-26 (shared local-build engine) **remains gated** on this DR; S5 may land a harness whose real evidence is `Pending`. No accepted enforcement until managed-host evidence on Linux **and** macOS.
+- **Status:** **Accepted 2026-08-09** after E/A architecture and security review of the S5 / PR-8 Linux Docker and native macOS managed-host evidence, including reboot persistence on macOS. The DR decision gate for PR-26 is cleared; PR-26 remains subject to its own dependencies, production approval-receipt/admission-lease implementation, and tests.
 - **Context:** Local builds run Nixpkgs build scripts on the host; `sandbox=true`/`sandbox-fallback=false` is the primary control, and the single-operation build preview/approval gate makes each build explicit. (`04`,`08` T-BUILD-1/3). The earlier "sandbox + caps" framing overstated what stock Nix provides.
 - **Decision:** Local builds (Linux **and** macOS, native system only) are permitted **only** after an explicit, non-default **single-operation** user approval following a deterministic closure/derivation preview; `sandbox=true`/`sandbox-fallback=false`; build-user isolation (group `nixbld` on both platforms; users `nixbld*` on Linux and `_nixbld*` on macOS); and fail-closed readiness verification. macOS shares this policy per DR-003 (no longer binary-only). Approval never overrides a hard policy refusal (unsupported/broken/impure derivation, or sandbox/build-user unavailable). **Evaluation/planning never realize outputs:** the exact pinned installable is evaluated with `nix derivation show --recursive` (top-level derivation JSON version 4; Nix 2.34.8 has no `derivation show --json-format` selector) and import-from-derivation disabled; `nix build` begins only at acquire — pure substitution first (with `max-jobs=0`), then an approved local build if needed. Immediately before local-build execution `pkg` acquires the machine-global local-build admission lease, recomputes the exact derivation/readiness `BuildPlan` and compares its digest to the approved one, then re-measures disk/free-space/load outside the digest; on mismatch or failed preflight it fails/re-prompts as specified and releases the lease on all exits. **Honest resource boundary:** stock Nix 2.34.8 provides **no** per-build memory/CPU/IO cap. What holds: `max-jobs=1` bounds concurrent derivations per client/connection (so `pkg` adds a machine-global local-build admission lease across users); `cores` only supplies the `NIX_BUILD_CORES` cooperation hint; `timeout`/`max-silent-time`/`max-build-log-size` are daemon-enforced bounds; disk/free-space/load preflight; Nix `use-cgroups` (experimental feature `cgroups`, **Linux-only**) creates a per-build cgroup for process grouping, lingering-process cleanup, and CPU statistics — it does **not** write `memory.max`/`cpu.max`/`pids.max`/IO limits, so it is **not** a resource cap; macOS has no cgroup equivalent. The Rust `pkg` client and the `nix` CLI it spawns are **socket clients** of the long-lived `nix-daemon`; RLIMIT or cgroup membership applied to those client processes does **not** constrain the builders the daemon spawns. Regular input-addressed derivations are filesystem-sandboxed and network-denied; fixed-output derivations remain filesystem-sandboxed but are intentionally network-enabled (their output hash is the integrity boundary); `__noChroot` is rejected under `sandbox=true`. **Service-manager ceilings are Pending defense-in-depth, not accepted enforcement (distinct semantics).** systemd `MemoryMax`/`TasksMax`/`CPUQuota` (Linux) would be an **aggregate service-cgroup ceiling over the daemon plus all descendants** (a coarse whole-unit limit, not a stable per-build control). launchd `SoftResourceLimits`/`HardResourceLimits` (macOS) are **inherited per-process RLIMIT ceilings** (`CPU`/`Data`/`FileSize`/`NumberOfFiles`/`NumberOfProcesses`/`ResidentSetSize`/`Stack`; no `AddressSpace` key in `launchd.plist`) — **not** an aggregate daemon-subtree ceiling, and several keys are advisory or alter system `sysctls` for system daemons (dangerous system-wide). The two must not be lumped together as one coarse limit.
 - **Consequences:** Users opt into build risk knowingly. Sandbox escapes (T-BUILD-1) and **resource exhaustion (T-BUILD-2) remain disclosed residuals (RISK-07)** — there is no hard per-build memory/CPU/IO guarantee. Approval is one operation only (bound to the canonical `BuildPlan` digest + policy version; `--yes` pre-approves that one op; no `PKG_YES_TO_BUILDS`/same-session skip/`build.always_local_after_preview`).

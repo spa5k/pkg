@@ -316,6 +316,8 @@ flowchart TD
 - **Milestone:** M0.5.
 
 #### PR-8 — SPIKE S5: managed-daemon sandbox + approval + resource-boundary
+- **Status:** Complete; DR-005 accepted 2026-08-09 with resource exhaustion and
+  service-manager ceilings retained as disclosed residuals rather than hard-cap claims.
 - **Purpose:** confirm `sandbox=true`/`sandbox-fallback=false` works with the managed daemon on **both Linux and macOS** (including Nix's macOS sandbox primitives and the `nixbld` build group / `nixbld*`/`_nixbld*` users), that we can intercept a build for preview/approval, **what resource boundary actually holds** (`max-jobs=1` bounds concurrent derivations per client/connection (so `pkg` adds a machine-global local-build admission lease across users); `timeout`/`max-silent-time`/`max-build-log-size` are daemon bounds; disk/free-space/load preflight; Nix `use-cgroups` is Linux-only process grouping/cleanup/statistics, **not** caps; service-manager ceilings have **distinct** systemd-vs-launchd semantics and are **Pending** defense-in-depth, not accepted enforcement), and that `pkg` fails closed if sandbox/build-user readiness cannot be verified. The spike must record **real managed-host behavioral evidence** (or stay `Proposed`); until then PR-26 stays gated. **Gates PR-26.**
 - **Owns:** `spikes/s5-sandbox/`, DR-005 in `12`.
 - **Depends:** PR-1.
@@ -330,9 +332,21 @@ flowchart TD
 ### Milestone M1 — Managed Nix lifecycle & state
 
 #### PR-9 — Managed-Nix detection (fail-closed on unmanaged Nix)
+- **Status:** **Completed 2026-08-09** after DR-001 acceptance. The production
+  read-only detector, `pkg doctor` refusal integration, and authenticated ownership-receipt
+  verifier are implemented; a real privileged macOS scan was captured and correctly remained
+  `nix_ownership_unknown` because the S5 spike install has no production receipt. PR-12 still
+  owns creation of the signed asset expectation and atomic receipt installation; that downstream
+  writer dependency does not weaken or reopen PR-9's completed verification contract.
 - **Purpose:** detect any existing **unmanaged** Nix and refuse with remediation text; never
   delete it (`08` T-INST-4, G6).
-- **Owns:** `crates/pkg-nix/src/managed/detect.rs` + tests.
+- **Owns:** `crates/pkg-nix/src/managed/{detect.rs,ownership.rs}` + tests. The ownership verifier
+  accepts only an independently authenticated expectation, a root-only receipt at the fixed
+  platform path, and a complete static privileged-install artifact metadata/content match; a
+  receipt or marker alone never establishes ownership. Dynamic store objects remain Nix/pkg state
+  behind the exclusive daemon boundary rather than a frozen release-receipt inventory. The static
+  artifact list is canonically encoded and SHA-256-bound to the authenticated manifest digest, so
+  truncating or altering the caller-supplied list fails before host verification.
 - **Depends:** PR-3, PR-4 (S1).
 - **Migration/compat:** first user-facing gate; documented in `07`.
 - **Tests & gates:** G-UNIT + G-INTEGRATION (Fake host with "unmanaged Nix" fixture → refuse).
@@ -373,7 +387,9 @@ flowchart TD
   lay it down, launch the daemon; refuse if detection (PR-9) failed.
 - **Owns:** `crates/pkg-nix/src/managed/{provision.rs,daemon.rs}` + tests.
 - **Depends:** PR-9, PR-11.
-- **Migration/compat:** records the managed-Nix asset manifest (consumed by uninstall PR-29).
+- **Migration/compat:** records the managed-Nix asset manifest (consumed by uninstall PR-29) and,
+  only after successful installation, atomically writes the PR-9 ownership receipt bound to that
+  signed manifest. The provisioner must not derive its trusted expectation from the local receipt.
 - **Tests & gates:** G-UNIT + G-INTEGRATION (Fake CDN + FakeNix); Real-Nix smoke deferred to PR-36.
 - **Demo:** provision against a fixture tarball in a temp root.
 - **Reviewers:** primary E; cross F; **A** (security: T-REL-3, T-INST-1).

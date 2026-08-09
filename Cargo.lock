@@ -237,6 +237,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "pkg-core",
+ "pkg-nix",
  "serde",
  "serde_json",
 ]
@@ -256,9 +257,11 @@ dependencies = [
 name = "pkg-nix"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "pkg-core",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

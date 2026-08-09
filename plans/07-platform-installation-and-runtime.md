@@ -425,7 +425,11 @@ obtained via an explicit `sudo`/polkit prompt for the install steps only.
 8. **PATH integration (§10):** write `/etc/profile.d/pkg.sh` and shell-rc
    snippets; print next-step instructions.
 9. Write an **uninstall manifest** (`/opt/pkg/uninstall/manifest.json`) listing
-   every path/user/unit created, for total uninstall (§11).
+   every path/user/unit created, for total uninstall (§11). After all artifacts and services
+   verify, atomically install the root-owned managed-Nix ownership receipt at
+   `/var/lib/pkg/managed-nix/ownership-v1.json` (parent `0700`, file `0600`). Its digest and
+   complete static privileged-install artifact list must come from authenticated release/channel metadata, never by
+   rediscovering and blessing whatever happens to be on disk.
 
 **Unattended:** `pkg-install --yes --target linux` for CI/containers; still
 performs the unmanaged-Nix scan and refuses if found.
@@ -464,7 +468,10 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    the **broker-owned** raw-log dir `/Library/Application Support/pkg/log/broker`
    owned `pkg-nix-broker:pkg-nix-broker` mode `0700` (files `0600`) — the
    **only** non-root-owned path in the service tree (§6.1/§7.4).
-7. PATH integration (§10); uninstall manifest.
+7. PATH integration (§10); uninstall manifest; then, only after the complete artifact set
+   verifies against authenticated release/channel metadata, atomically install
+   `/Library/Application Support/pkg/managed-nix/ownership-v1.json` with a root-owned `0700`
+   parent and `0600` file.
 
 **macOS build readiness:** the macOS daemon runs with `sandbox=true`/
 `sandbox-fallback=false` and the `nixbld` group / `_nixbld*` users created at install
@@ -646,7 +653,7 @@ auto-delete.**
 
 | Signal | Linux | macOS |
 |--------|-------|-------|
-| `/nix` exists and not owned by `root`/our `pkg-nix-broker` | ✓ | ✓ |
+| `/nix` exists without authenticated pkg ownership proof | ✓ | ✓ |
 | `/nix/store` non-empty with paths we didn't create | ✓ | ✓ |
 | `/nix/var/nix/daemon-socket/socket` exists | ✓ | ✓ |
 | a `nix`/`nix-daemon`/`nix-store` on `$PATH` not under our prefix | ✓ | ✓ |
@@ -674,6 +681,31 @@ installation. To proceed:
 
 The product **never** runs `rm -rf /nix` or stops/removes the foreign unit. No
 `--force` flag bypasses this in V1 (flagged in plan 12 as a hard "no").
+
+**Existing managed-install recognition:** a path, service label, broker configuration, or local
+marker is only an ownership *claim*. Runtime/doctor may classify the installation as pkg-managed
+only when all of the following hold:
+
+1. The caller supplies an expected system, exact Nix version, asset-manifest digest, and complete
+   static privileged-install artifact set from separately authenticated release/channel metadata.
+   The manifest uses pkg's canonical versioned encoding; the verifier recomputes its SHA-256 and
+   rejects a digest paired with any truncated, extended, or altered artifact list.
+2. The fixed receipt is root-owned and root-only, with symlink-free non-writable ancestors:
+   `/var/lib/pkg/managed-nix/ownership-v1.json` on Linux or
+   `/Library/Application Support/pkg/managed-nix/ownership-v1.json` on macOS.
+3. The strict versioned receipt matches that trusted expectation exactly (unknown fields,
+   oversized input, duplicates, and out-of-scope paths fail closed).
+4. Every declared file/directory/symlink matches type, root ownership, group, mode, and—where
+   applicable—exact byte size, streaming SHA-256 digest, or symlink target. Parent-path escape and
+   receipt replacement during verification fail closed.
+
+Until PR-12 installs that receipt from signed inputs, even an otherwise healthy product-looking
+Nix tree remains `nix_ownership_unknown`; this is intentional and carries no removal advice.
+The receipt does not freeze an exact `/nix/store` inventory: store paths realized after install are
+dynamic Nix/pkg state. Their exclusive origin follows from the privileged clean preflight performed
+immediately before provisioning plus the product-private daemon/broker boundary; their integrity and
+liveness are checked through Nix metadata, signatures/hashes, pkg state, and GC roots. Root-level
+tampering remains outside the receipt's threat model and is handled as host compromise.
 
 ## 9. The store-prefix spike (consolidated)
 

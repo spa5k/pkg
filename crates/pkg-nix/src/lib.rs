@@ -47,6 +47,7 @@
 pub mod adapter;
 pub mod contract;
 pub mod error;
+pub mod managed;
 
 pub use adapter::NixAdapter;
 pub use contract::{
@@ -57,10 +58,19 @@ pub use contract::{
     VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
+pub use managed::detect::{
+    DetectionDisposition, DetectionFinding, DetectionReport, FindingKind, detect_unmanaged_nix,
+};
+pub use managed::ownership::{
+    ManagedArtifact, ManagedArtifactKind, OwnershipError, OwnershipErrorCode, OwnershipExpectation,
+    VerifiedOwnership, encode_ownership_asset_manifest, encode_ownership_receipt,
+    ownership_receipt_path, verify_ownership_receipt,
+};
 
 // Focused re-exports of the `pkg-core` strong types that appear in this crate's
 // public signatures, so consumers need only depend on `pkg-nix` to name them.
 pub use pkg_core::channel::NixpkgsRevision;
 pub use pkg_core::identity::{DerivationPath, NarHash, OutputName, StorePath};
 pub use pkg_core::selector::{AttributePath, OutputSelection};
+pub use pkg_core::state::Digest;
 pub use pkg_core::system::System;
