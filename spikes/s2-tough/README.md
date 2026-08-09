@@ -194,18 +194,11 @@ in this repository**.
 
 ## 7. Target set (what this models)
 
-> ⚠️ **SUPERSEDED — historical record only; not current architecture.** The
-> accepted design
-> ([`plans/02` §6.4/§6.5](../../plans/02-trust-and-update-model.md),
-> [`plans/03` §6.2](../../plans/03-nixpkgs-source-and-index.md)) does **not** publish
-> Nixpkgs source as a TUF target. Nixpkgs is acquired directly via the bundled Nix
-> locked-flake fetcher (`github:<owner>/<repo>/<rev>?narHash=…`, enforced through
-> `locked.rev`/`locked.narHash`), authenticated transitively because the descriptor
-> is itself a TUF target. The table below is the target set this spike **actually
-> modeled and tested for DR-002** — preserved verbatim as historical evidence,
-> **not** reconciled to current architecture. This spike did **not** exercise the
-> locked-flake acquisition path; it exercised only the `src.tar.gz` TUF-target model
-> shown below.
+The fixture is reconciled to the accepted design: Nixpkgs source is **not** a
+product TUF target. Its `rev`/`narHash` are authenticated transitively by the
+descriptor target, and the later bundled-Nix fetch path verifies
+`locked.rev`/`locked.narHash` (`plans/03` §6.2). This spike does not exercise
+that separate flake-fetch path.
 
 The spike models `pkg`'s real channel target set (`plans/02` §6.4 / §7):
 
@@ -213,7 +206,6 @@ The spike models `pkg`'s real channel target set (`plans/02` §6.4 / §7):
 |--------|-----------|-------|
 | `descriptor.json` | top-level `targets` (1-of-1) | the channel descriptor itself (§10) |
 | `nix/<ver>/<sys>.tar.xz` | top-level `targets` (1-of-1) | managed-Nix runtime, one per supported system |
-| `nixpkgs/<rev>/src.tar.gz` | top-level `targets` (1-of-1) | pinned Nixpkgs source — ⚠️ **SUPERSEDED** (see note above; **not** a target in the accepted architecture — plans/02 §6.5 / plans/03 §6.2) |
 | `index/<seq>/<sys>.json.br` | **delegated** `index` role (1-of-1, paths `index/**`) | disposable per-system catalog index |
 
 ### Delegated targets ARE supported and demonstrated
@@ -329,7 +321,7 @@ All 20 tests pass (5 unit in [`src/descriptor.rs`](src/descriptor.rs), 6 in
 |---|------|--------|
 | 1 | `pinned_root_loads_happy_path` | Pinned trusted root + `FilesystemTransport` + `Safe` + `CONSERVATIVE_LIMITS` + persistent datastore loads the fixture through tough's full client verification (root → timestamp → snapshot → targets → delegated targets). |
 | 2 | `persistent_timestamp_and_snapshot_after_load` | `tough` persists `timestamp.json` + `snapshot.json` into the **persistent** datastore during load — the cross-run rollback memory (§8). |
-| 3 | `read_top_level_targets_after_drain` | Top-level targets (`descriptor.json`, a Nix runtime target, the Nixpkgs source) read back byte-for-byte **after full drain** (TRU-INV-01). |
+| 3 | `read_top_level_targets_after_drain` | Top-level targets (`descriptor.json` and a Nix runtime target) read back byte-for-byte **after full drain** (TRU-INV-01). Nixpkgs is intentionally fetched separately as a pinned flake. |
 | 4 | `read_delegated_index_target` | Delegated `index` role is walked + verified; all four per-system index targets read back byte-for-byte (§7). |
 | 5 | `missing_target_is_none` | An unadvertised target returns `Ok(None)` — the contract PR-11 uses to distinguish "missing" from "tampered". |
 | 6 | `descriptor_per_system_maps_have_all_four_systems_and_match_fixture_bytes` | Both descriptor per-system maps carry exactly the four supported systems, and every descriptor target name/hash matches the actual signed fixture bytes. |
@@ -380,8 +372,9 @@ This spike deliberately does **not** claim:
 - That it evaluates a *real HTTPS* transport — only `FilesystemTransport`
   (spike-only; §5).
 - That it is production code — it is a standalone, `publish = false` spike.
-- That DR-002 is `Accepted` — it is **Proposed** (technical evidence complete;
-  F + A sign-off pending). See [`plans/12`](../../plans/12-open-decisions-and-risks.md).
+- That this spike alone accepted DR-002. The decision was subsequently **Accepted on
+  2026-08-09** after the F+A review recorded in
+  [`findings.md` §11](findings.md) and [`plans/12`](../../plans/12-open-decisions-and-risks.md).
 
 ---
 

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "channel": "pkg-stable-1",
+  "policyVersion": 1,
+  "sequence": 42,
+  "expiresAt": "2036-04-01T00:00:00Z",
+  "supportedSystems": [
+    "x86_64-linux",
+    "aarch64-linux",
+    "x86_64-darwin",
+    "aarch64-darwin"
+  ],
+  "buildPolicy": {
+    "nativeLocalBuilds": {
+      "aarch64-darwin": {
+        "mode": "allow-with-gates"
+      },
+      "aarch64-linux": {
+        "mode": "allow-with-gates"
+      },
+      "x86_64-darwin": {
+        "mode": "allow-with-gates"
+      },
+      "x86_64-linux": {
+        "mode": "allow-with-gates"
+      }
+    }
+  },
+  "nixRuntime": {
+    "version": "2.24.10",
+    "perSystem": {
+      "aarch64-darwin": {
+        "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-darwin.tar.xz",
+        "sha256": "1c5cabe15a6ec3610869acd20981b9ec74f2388eb91014b7cf2fb3f7f26d5b7f"
+      },
+      "aarch64-linux": {
+        "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-aarch64-linux.tar.xz",
+        "sha256": "946dc216b68668a024e61387bc21102ae68ae9b9df2bc5f49ac211d4551b79b2"
+      },
+      "x86_64-darwin": {
+        "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-darwin.tar.xz",
+        "sha256": "f05a8bc7adb5def2c406070d8fb3c3391ddfff07dd627a8c508c5d0a0a211186"
+      },
+      "x86_64-linux": {
+        "url": "https://releases.nixos.org/nix/nix-2.24.10/nix-2.24.10-x86_64-linux.tar.xz",
+        "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3"
+      }
+    }
+  },
+  "nixpkgs": {
+    "owner": "NixOS",
+    "repo": "nixpkgs",
+    "rev": "0123456789abcdef0123456789abcdef01234567",
+    "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  },
+  "index": {
+    "source": "self-built",
+    "perSystem": {
+      "aarch64-darwin": {
+        "target": "index/42/aarch64-darwin.json.br",
+        "sha256": "d03a71e52f4cbc0dc7d071ada951e0578d4e77267f3a15c82ec176b8f97df9d3"
+      },
+      "aarch64-linux": {
+        "target": "index/42/aarch64-linux.json.br",
+        "sha256": "3b328e55458dcd3086ee679860cc8761749d358609718b7f991c559725a3d6f9"
+      },
+      "x86_64-darwin": {
+        "target": "index/42/x86_64-darwin.json.br",
+        "sha256": "65a92ce4700602de379e5b2b4229320054ce82e4c5d3282349cb9bb4c14e0464"
+      },
+      "x86_64-linux": {
+        "target": "index/42/x86_64-linux.json.br",
+        "sha256": "73c94bac27f3df293b543cf667130953d84a11dc8fa68ad9b7faeca0bb89ab73"
+      }
+    }
+  },
+  "substituters": {
+    "urls": [
+      "https://cache.nixos.org"
+    ],
+    "trustedPublicKeys": [
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+    ]
+  }
+}

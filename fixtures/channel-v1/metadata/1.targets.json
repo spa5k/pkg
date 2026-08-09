@@ -1,0 +1,70 @@
+{
+  "signed": {
+    "_type": "targets",
+    "spec_version": "1.0.0",
+    "version": 1,
+    "expires": "2036-08-06T10:46:20.060328Z",
+    "targets": {
+      "nix/2.24.10/x86_64-darwin.tar.xz": {
+        "length": 52,
+        "hashes": {
+          "sha256": "f05a8bc7adb5def2c406070d8fb3c3391ddfff07dd627a8c508c5d0a0a211186"
+        }
+      },
+      "nix/2.24.10/aarch64-linux.tar.xz": {
+        "length": 52,
+        "hashes": {
+          "sha256": "946dc216b68668a024e61387bc21102ae68ae9b9df2bc5f49ac211d4551b79b2"
+        }
+      },
+      "nix/2.24.10/aarch64-darwin.tar.xz": {
+        "length": 53,
+        "hashes": {
+          "sha256": "1c5cabe15a6ec3610869acd20981b9ec74f2388eb91014b7cf2fb3f7f26d5b7f"
+        }
+      },
+      "nix/2.24.10/x86_64-linux.tar.xz": {
+        "length": 51,
+        "hashes": {
+          "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3"
+        }
+      },
+      "descriptor.json": {
+        "length": 2626,
+        "hashes": {
+          "sha256": "df3017f738a89e6f01d4a729df80564c433e0689ff5c5af3ba7a3629f7d4b2ae"
+        }
+      }
+    },
+    "delegations": {
+      "keys": {
+        "80d80b4d84385a4d0400c986bfd08352308d53a0e18f2e9054b788cde33f5dff": {
+          "keytype": "ed25519",
+          "keyval": {
+            "public": "80c3352ae44743db542a05d33d38c6e614e5e3a9f0ac38c772da48ad9e33d3a4"
+          },
+          "scheme": "ed25519"
+        }
+      },
+      "roles": [
+        {
+          "name": "index",
+          "keyids": [
+            "80d80b4d84385a4d0400c986bfd08352308d53a0e18f2e9054b788cde33f5dff"
+          ],
+          "threshold": 1,
+          "paths": [
+            "index/**"
+          ],
+          "terminating": false
+        }
+      ]
+    }
+  },
+  "signatures": [
+    {
+      "keyid": "10fa487c717f3b5b1d153714625abd1b0fef7147b4e865f1359bdc7927e9e06a",
+      "sig": "2ca3945339d6d159e13cd1b1386b8b8ad9e6bc9d9d474651814f0241db507c147d42eda612bcc929189a1aa519d4ef826b35181d454455cc8b959108abacf504"
+    }
+  ]
+}

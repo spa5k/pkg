@@ -7,15 +7,17 @@
 //     * descriptor.json           — the channel descriptor itself
 //     * nix/<ver>/<sys>.tar.xz    — the managed-Nix runtime (one representative
 //                                   target per system; tiny bytes)
-//     * nixpkgs/<rev>/src.tar.gz  — the pinned Nixpkgs source
+// Nixpkgs source is intentionally not a product TUF target; the descriptor
+// authenticates rev/narHash and bundled Nix verifies the direct flake fetch.
 //
 //   delegated "index" role (1-of-1, paths = "index/**") signs:
 //     * index/<seq>/<sys>.json.br — the disposable per-system catalog index
 //                                   (all four systems)
 //
-// The descriptor's declared sha256/narHash values are computed from the actual
-// target bytes so they agree with the TUF-authenticated hashes (defense in
-// depth, plans/02 §11). The fixture uses tough 0.24.0, `default-features =
+// The descriptor's runtime/index sha256 values are computed from actual target
+// bytes so they agree with TUF metadata (defense in depth, plans/02 §11); its
+// Nixpkgs narHash is a separate well-formed synthetic flake pin. The fixture
+// uses tough 0.24.0, `default-features =
 // false`, `FilesystemTransport`, conservative `Limits`,
 // `ExpirationEnforcement::Safe`, consistent snapshots, and a pre-created
 // persistent datastore (required for rollback protection).
@@ -35,7 +37,9 @@ use tempfile::TempDir;
 /// The Nix runtime version the fixture ships (matches `descriptor::NIX_RUNTIME_VERSION`).
 const NIX_VERSION: &str = "2.24.10";
 /// The pinned Nixpkgs revision in the fixture descriptor.
-const NIXPKGS_REV: &str = "abc123";
+const NIXPKGS_REV: &str = "0123456789abcdef0123456789abcdef01234567";
+/// Synthetic but well-formed SRI NAR hash for the separately fetched flake.
+const NIXPKGS_NAR_HASH: &str = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 /// The channel `sequence` (also used in `index/<seq>/...` target paths).
 const SEQUENCE: u64 = 42;
 
@@ -56,8 +60,6 @@ pub struct Fixture {
     pub descriptor_bytes: Vec<u8>,
     /// Representative managed-Nix runtime targets (one per system): (name, bytes).
     pub nix_targets: Vec<(String, Vec<u8>)>,
-    /// The Nixpkgs source target: (name, bytes).
-    pub nixpkgs_target: (String, Vec<u8>),
     /// The four per-system index targets (delegated to the "index" role).
     pub index_targets: Vec<(String, Vec<u8>)>,
     /// The delegated role name holding the index targets.
@@ -89,13 +91,6 @@ fn nix_target_bytes(system: &str) -> Vec<u8> {
     format!("managed nix runtime {NIX_VERSION} {system} (fixture)\n").into_bytes()
 }
 
-fn nixpkgs_target() -> (String, Vec<u8>) {
-    (
-        format!("nixpkgs/{NIXPKGS_REV}/src.tar.gz"),
-        format!("nixpkgs source tarball {NIXPKGS_REV} (fixture)\n").into_bytes(),
-    )
-}
-
 fn index_target_name(system: &str) -> String {
     format!("index/{SEQUENCE}/{system}.json.br")
 }
@@ -117,7 +112,6 @@ pub async fn build_fixture() -> Fixture {
         .iter()
         .map(|sys| (nix_target_name(sys), nix_target_bytes(sys)))
         .collect();
-    let nixpkgs_target = nixpkgs_target();
     let index_targets: Vec<(String, Vec<u8>)> = SUPPORTED_SYSTEMS
         .iter()
         .map(|sys| (index_target_name(sys), index_target_bytes(sys)))
@@ -172,7 +166,7 @@ pub async fn build_fixture() -> Fixture {
         channel: "pkg-stable-1".to_string(),
         policy_version: 1,
         sequence: SEQUENCE,
-        expires_at: "2025-04-01T00:00:00Z".to_string(),
+        expires_at: "2036-04-01T00:00:00Z".to_string(),
         supported_systems: SUPPORTED_SYSTEMS.iter().map(|s| (*s).to_string()).collect(),
         build_policy: crate::descriptor::BuildPolicy {
             native_local_builds,
@@ -185,8 +179,7 @@ pub async fn build_fixture() -> Fixture {
             owner: "NixOS".to_string(),
             repo: "nixpkgs".to_string(),
             rev: NIXPKGS_REV.to_string(),
-            nar_hash: format!("sha256-{}", sha256_hex(&nixpkgs_target.1)),
-            source_target: nixpkgs_target.0.clone(),
+            nar_hash: NIXPKGS_NAR_HASH.to_string(),
         },
         index: Index {
             source: "self-built".to_string(),
@@ -201,16 +194,19 @@ pub async fn build_fixture() -> Fixture {
 
     // --- build the signed repo ---
     let key = SignKey::generate();
-    let spec = crate::repo::RootSpec::single(key, 1, hours_from_now(24 * 30));
+    let long_expiry = hours_from_now(24 * 365 * 10);
+    let spec = crate::repo::RootSpec::single(key, 1, long_expiry);
 
     let mut builder = RepoBuilder::new(repo_dir, spec);
+    builder = builder
+        .targets_expires(long_expiry)
+        .snapshot_expires(long_expiry)
+        .timestamp_expires(long_expiry)
+        .delegated_expires(long_expiry);
     builder = builder.target("descriptor.json", descriptor_bytes.clone());
     for (name, bytes) in &nix_targets {
         builder = builder.target(name.clone(), bytes.clone());
     }
-    let (nixpkgs_name, nixpkgs_bytes) = &nixpkgs_target;
-    builder = builder.target(nixpkgs_name.clone(), nixpkgs_bytes.clone());
-
     builder = builder.delegated_role(DelegationSpec {
         role_name: "index".to_string(),
         key: SignKey::generate(),
@@ -229,7 +225,6 @@ pub async fn build_fixture() -> Fixture {
         datastore,
         descriptor_bytes,
         nix_targets,
-        nixpkgs_target,
         index_targets,
         index_role: "index".to_string(),
     }

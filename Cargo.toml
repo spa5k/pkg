@@ -10,7 +10,13 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/pkg-cli", "crates/pkg-core", "crates/pkg-nix", "crates/pkg-testkit"]
+members = [
+    "crates/pkg-channel",
+    "crates/pkg-cli",
+    "crates/pkg-core",
+    "crates/pkg-nix",
+    "crates/pkg-testkit",
+]
 
 [workspace.package]
 version = "0.0.0"

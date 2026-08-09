@@ -113,16 +113,6 @@ async fn read_top_level_targets_after_drain() {
         "managed-Nix runtime bytes must match exactly after drain"
     );
 
-    // Nixpkgs source target (top-level).
-    let (np_name, np_bytes) = &f.nixpkgs_target;
-    let got = read_target_fully(&repo, &TargetName::new(np_name).unwrap())
-        .await
-        .expect("read nixpkgs")
-        .expect("nixpkgs target present");
-    assert_eq!(
-        got, *np_bytes,
-        "nixpkgs source bytes must match exactly after drain"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -273,15 +263,4 @@ async fn descriptor_per_system_maps_have_all_four_systems_and_match_fixture_byte
             "index.perSystem[{sys}].sha256 must match fixture bytes"
         );
     }
-    //    c) nixpkgs.sourceTarget + narHash  <->  fixture nixpkgs bytes
-    let (np_name, np_bytes) = &f.nixpkgs_target;
-    assert_eq!(
-        descriptor.nixpkgs.source_target, *np_name,
-        "nixpkgs.sourceTarget must match fixture target name"
-    );
-    assert_eq!(
-        descriptor.nixpkgs.nar_hash,
-        format!("sha256-{}", sha256_hex(np_bytes)),
-        "nixpkgs.narHash must match fixture nixpkgs bytes"
-    );
 }

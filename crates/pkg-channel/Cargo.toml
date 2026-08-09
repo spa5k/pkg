@@ -1,0 +1,26 @@
+# `pkg-channel` — authenticated channel loading and V1 policy validation.
+#
+# The crate deliberately exposes verified pkg policy rather than raw TUF
+# metadata or transport configuration. `tough` is the only signature and TUF
+# implementation (DR-002); there is no product-specific cryptography here.
+
+[package]
+name = "pkg-channel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+pkg-core = { path = "../pkg-core" }
+hex = "=0.4.3"
+jiff = { version = "=0.2.35", features = ["serde"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = { version = "=0.10.9", default-features = false, features = ["std"] }
+tough = { version = "=0.24.0", default-features = false, features = ["http"] }
+url = "=2.5.8"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }

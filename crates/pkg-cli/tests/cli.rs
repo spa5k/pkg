@@ -66,9 +66,17 @@ fn completion_is_real_static_source_and_doctor_is_honest_about_deferred_checks()
         .env("PATH", &expected_bin)
         .output()
         .unwrap();
-    assert_eq!(doctor.status.code(), Some(78));
+    // A clean CI host reaches the deferred implementation checks (78). A host
+    // with an installed managed-Nix spike but no authenticated production
+    // receipt must fail earlier at the PR-9 ownership gate (74). Both are
+    // honest, fail-closed outcomes; this integration test must not pretend the
+    // machine's global /nix state is part of its temporary --state directory.
+    assert!(matches!(doctor.status.code(), Some(74 | 78)));
     let value: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
-    assert_eq!(value["overall"], "needs_attention");
+    assert!(matches!(
+        value["overall"].as_str(),
+        Some("needs_attention" | "nix_ownership_unknown")
+    ));
     assert!(
         value["checks"]
             .as_array()

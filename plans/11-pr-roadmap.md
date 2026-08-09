@@ -370,6 +370,16 @@ flowchart TD
 - **Milestone:** M1.
 
 #### PR-11 — `pkg-channel` descriptor + `tough` client + verify
+- **Status:** **Completed 2026-08-09** after DR-002 acceptance. Production `pkg-channel`
+  now loads from canonical HTTPS repository URLs with the embedded root as its only bootstrap,
+  fixed `ExpirationEnforcement::Safe`, conservative metadata limits, fully drained target reads,
+  and a private persistent datastore protected by a lifetime-held cross-process writer lease.
+  Its public surface returns only semantically validated V1 policy: exact schema/policy support,
+  descriptor expiry, sequence/policy rollback and sequence-reuse refusal, all-four-system map and
+  TUF-target hash binding, native-build `allow-with-gates` or emergency `deny`, the sole V1 cache
+  URL with signed cache-key rotation, and canonical Nix/Nixpkgs/index identities. The committed
+  `fixtures/channel-v1/` repository and isolated S2 adversarial suite cover the crypto/TUF path;
+  production tests cover semantic tampering and datastore contention. PR-12 is now unblocked.
 - **Purpose:** load/verify signed channel metadata; enforce version monotonicity, expiry,
   allowed substituters/keys/systems/policyVersion (`02`,`08` §6.5, §7).
 - **Owns:** `crates/pkg-channel/src/{descriptor.rs,tuf.rs,keys.rs,policy.rs}` + tests + fixture `fixtures/channel-v1/`.

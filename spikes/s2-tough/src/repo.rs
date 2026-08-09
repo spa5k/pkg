@@ -296,6 +296,12 @@ impl RepoBuilder {
         self
     }
 
+    /// Set the delegated targets-role expiration.
+    pub fn delegated_expires(mut self, t: jiff::Timestamp) -> Self {
+        self.delegated_expires = t;
+        self
+    }
+
     /// Assemble, sign, and write the repository. Returns on-disk paths + the
     /// trusted root bytes. Targets/snapshot/timestamp (and the delegated role)
     /// are signed by `RepositoryEditor` + `LocalKeySource`; the bootstrap root

@@ -66,8 +66,6 @@ pub struct Nixpkgs {
     pub rev: String,
     #[serde(rename = "narHash")]
     pub nar_hash: String,
-    #[serde(rename = "sourceTarget")]
-    pub source_target: String,
 }
 
 /// The disposable-index block (`plans/03`, DR-010 — not a trust root).
@@ -214,7 +212,7 @@ impl ChannelDescriptor {
             channel: "pkg-stable-1".to_string(),
             policy_version: 1,
             sequence: seq,
-            expires_at: "2025-04-01T00:00:00Z".to_string(),
+            expires_at: "2036-04-01T00:00:00Z".to_string(),
             supported_systems: SUPPORTED_SYSTEMS.iter().map(|s| (*s).to_string()).collect(),
             build_policy: BuildPolicy::canonical_v1(),
             nix_runtime: NixRuntime {
@@ -224,9 +222,8 @@ impl ChannelDescriptor {
             nixpkgs: Nixpkgs {
                 owner: "NixOS".to_string(),
                 repo: "nixpkgs".to_string(),
-                rev: "abc123".to_string(),
-                nar_hash: format!("sha256-{dummy_sha}"),
-                source_target: "nixpkgs/abc123/src.tar.gz".to_string(),
+                rev: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                nar_hash: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string(),
             },
             index: Index {
                 source: "self-built".to_string(),
@@ -349,7 +346,6 @@ mod tests {
         assert!(v["nixRuntime"]["perSystem"]["x86_64-linux"]["sha256"].is_string());
         assert_eq!(v["nixRuntime"]["version"], NIX_RUNTIME_VERSION);
         // nixpkgs.sourceTarget (camelCase) + narHash
-        assert!(v["nixpkgs"]["sourceTarget"].is_string());
         assert!(v["nixpkgs"]["narHash"].is_string());
         // index.perSystem.<sys>.{target,sha256}
         assert!(v["index"]["perSystem"]["aarch64-linux"]["target"].is_string());
@@ -377,7 +373,6 @@ mod tests {
             "nix_runtime",
             "per_system",
             "nar_hash",
-            "source_target",
             "trusted_public_keys",
         ];
         for key in forbidden_keys {

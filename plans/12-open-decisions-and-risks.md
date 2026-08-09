@@ -102,17 +102,13 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
   `f3f1c3c5b8ad91850e0f7c590cf177f7ab022024`; spike S1 (`spikes/s1-store-prefix/findings.md`).
 
 ### DR-002 — Channel signing: real TUF via `tough`
-- **Status:** **Proposed** post **S2 / PR-5** — see `spikes/s2-tough/findings.md`. The
-  spike's **technical recommendation and evidence are complete** (all documented S2 success
-  criteria in `12` §2 — signed fixture metadata verified end-to-end; revocation proven with
-  real `tough` refusals; per-role threshold semantics demonstrated; plus rollback, freeze,
-  endless-data, and drained-stream tamper refusals, each pinning the exact `tough` error
-  variant — are supported by executed evidence, 20 tests passing), but the DR remains
-  **Proposed, not Accepted**: per `11` §2 / `CONTRIBUTING` §5 a spike DR is `Accepted` only
-  after the spike owner **and** the affected area owners (**F + A** for DR-002) sign off.
-  That recorded sign-off has not happened, so the **AC-D1 gate is NOT cleared** by this
-  entry and the dependent PRs (**PR-11** the production channel client, **PR-33**) must not
-  merge on this basis until the DR is Accepted.
+- **Status:** **Accepted 2026-08-09** after F+A foundations/security review of S2 / PR-5.
+  The review re-ran all 20 pinned-`tough` tests and rechecked the production API against current
+  upstream documentation/source: signed fixture loading, per-role thresholds, revocation, root
+  rotation, rollback with a persistent datastore, safe expiry, mix-and-match refusal, bounded
+  metadata, and fully drained target-hash verification all remain supported. The AC-D1 decision
+  gate is cleared for PR-11 and PR-33; those PRs retain their own implementation and security
+  gates. See `spikes/s2-tough/findings.md` §11.
 - **Context:** Need rollback/freeze/mix-match protection, threshold signatures, and revocation
   for a small target set. The brief forbids inventing "TUF-lite" crypto. (`02`,`08` §7)
 - **Decision:** Use the **real TUF** specification via the Rust `tough` crate (AWS Bottlerocket,
@@ -140,13 +136,11 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
     (`schemaVersion`, `policyVersion`, `sequence`, `expiresAt`, systems allowlists,
     `substituters`/`trustedPublicKeys` allowlists, descriptor-hash ↔ TUF-target-hash
     cross-checks) are deferred to PR-11.
-- **Open gates (honesty):** (1) **F + A sign-off pending** — per `11` §2 / `CONTRIBUTING` §5
-  a spike DR requires spike-owner + affected area-owner (F, A) sign-off; this entry records
-  only the technical basis, hence **Proposed**. (2) **Transport is spike-only** — the spike
-  loads over `FilesystemTransport` (a local signed repo); PR-11 selects the production
-  transport (likely HTTPS) and is not bound by this choice. (3) **Endless-data is only
-  partially exercised** — the spike's size-limit test exercises `max_timestamp_size` only;
-  the other conservative caps are configured and applied but not adversarially exercised.
+- **Residuals (honesty):** (1) S2 itself loads over `FilesystemTransport`; PR-11 owns the fixed
+  production HTTPS transport policy. (2) The spike's adversarial endless-data test exercises
+  `max_timestamp_size` only; the other conservative caps are configured and applied but not
+  individually adversarially exercised. (3) `tough` introduces the recorded AWS-LC native build
+  dependency and does not perform pkg's descriptor-semantic validation.
 - **Owner:** F + A. **Source:** `[TUF]`, `[TOUGH]`, `[SIGSTORE]`; spike S2
   (`spikes/s2-tough/findings.md`).
 
@@ -339,7 +333,7 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 | Spike | Question | Success criterion | Blocks (no-merge before DR) | Decision deadline | Status | DR |
 |-------|----------|-------------------|------------------------------|-------------------|--------|----|
 | **S1** (PR-4) | Is `/nix/store` viable for exclusive managed use, and how do we detect/safely refuse unmanaged Nix? | Concrete layout + detection method + refusal text validated on Linux & macOS; go/no-go on alternative prefix. | PR-9, PR-12, PR-27, PR-28 | end of M0.5 | Proposed (technical evidence complete; F/E/A sign-off pending) | DR-001 |
-| **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | Proposed (technical evidence complete; F + A sign-off pending) | DR-002 |
+| **S2** (PR-5) | Does real TUF via `tough` express our target set + revocation + threshold? | Signed fixture metadata verified end-to-end; revocation dry-run passes; threshold demo. | PR-11, PR-33 | end of M0.5 | **Accepted 2026-08-09** (F+A sign-off; 20 tests re-run) | DR-002 |
 | **S3** (PR-7) | Do v1 attrs substitute for `x86_64-darwin`/`aarch64-darwin`, **and** are native macOS local builds viable (sandbox, `_nixbld` users, Xcode toolchain, the honest resource boundary with **no** per-build cap in stock Nix, fail-closed)? Is a notarized installer feasible? | Availability matrix for fixture attrs; a real native sandboxed Darwin build under `_nixbld`; notarized installer/runtime builds & validates. | PR-26, PR-28, PR-36 (macOS lane) | end of M0.5 | Proposed (harness implemented; Complete real Preflight/native-build/notarization evidence pending) | DR-003 |
 | **S4** (PR-6) | What are realistic resolve/reeval costs and index-build costs? | Measured time/memory table; proposed budgets. | PR-14, PR-16, PR-32 | end of M0.5 | Proposed | DR-004 |
 | **S5** (PR-8) | Does managed-daemon sandbox + single-operation approval + the honest resource boundary work for local builds on **both Linux and macOS**? | A **regular** derivation build that is filesystem-sandboxed + network-denied under `sandbox=true`; a fixed-output derivation intentionally network-enabled (hash boundary); `nixbld` group + `nixbld*`/`_nixbld*` users ready; single-operation approval + fail-closed demonstrable; recorded **managed-host behavioral evidence** (boundary = `max-jobs`/timeout/max-silent-time/max-build-log-size + disk/free-space/load preflight; `use-cgroups` is cleanup/statistics on Linux; service-manager ceilings have **distinct** systemd-vs-launchd semantics and are Pending) — **not** a verification of per-build caps (none exist in stock Nix). | PR-26, PR-30 | end of M0.5 | Proposed | DR-005 |

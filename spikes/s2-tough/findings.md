@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | **Spike** | S2 (PR-5) — *Does the real TUF specification, as implemented by the Rust [`tough`](https://docs.rs/tough/) crate (awslabs / AWS Bottlerocket), express `pkg`'s channel/trust requirements — small target set, per-role threshold signatures, key revocation, rollback, freeze, mix-and-match, endless-data, and drained-stream tamper protection — **without** inventing any "TUF-lite" bespoke cryptography (D-09)?* |
-| **Decision it feeds** | DR-002 ([`plans/12`](../../plans/12-open-decisions-and-risks.md)). **Status set by this spike: see §11 (Proposed — technical evidence complete; F + A sign-off pending; never Accepted).** |
+| **Decision it feeds** | DR-002 ([`plans/12`](../../plans/12-open-decisions-and-risks.md)). **Accepted 2026-08-09 after the F+A review recorded in §11.** |
 | **Owner (spike)** | This directory only: `spikes/s2-tough/**`. It is a **standalone** Cargo workspace (`[workspace]` in [`Cargo.toml`](Cargo.toml)), deliberately **not** part of the production workspace at the repo root. `publish = false`, **no** `license` field, **no** SPDX headers (DR-015). |
 | **Crypto boundary** | **No bespoke ("TUF-lite") signature or verification anywhere.** Targets/snapshot/timestamp/delegated targets are signed by `tough::editor::RepositoryEditor` + `tough::key_source::LocalKeySource`; all verification is `tough::RepositoryLoader` over `FilesystemTransport`. The ONE hand-assembled role is the bootstrap `root.json`, built from `tough::schema` types and signed through `tough::sign::Sign` (the narrow test-publisher boundary in [`src/keys.rs`](src/keys.rs)). `aws-lc-rs` is used **only to *generate* ephemeral Ed25519 PKCS#8 test material** — it performs no parsing and no signing here. See §2. |
-| **Evidence labels** | **(a)** actually executed · **(b)** official docs/source inspected. No human F + A sign-off is claimed. |
+| **Evidence labels** | **(a)** actually executed · **(b)** official docs/source inspected. F+A acceptance is recorded separately in §11. |
 
 ---
 
@@ -318,7 +318,8 @@ key is provably absent from v2's and v3's key maps and root-role keyids. Test:
    + `snapshot.json` into the persistent datastore during load (the cross-run rollback
    memory; §5.5).
 3. `read_top_level_targets_after_drain` — top-level targets (`descriptor.json`, a
-   managed-Nix runtime, the Nixpkgs source) read back byte-for-byte after full drain.
+   managed-Nix runtime) read back byte-for-byte after full drain. Nixpkgs is intentionally
+   fetched separately as a pinned flake and is not a product TUF target.
 4. `read_delegated_index_target` — **delegated** `index` role (1-of-1, `paths=["index/**"]`)
    walked + verified; all four per-system index targets read back byte-for-byte through
    the same hash check as a top-level target. (Delegated targets ARE supported and proven —
@@ -467,14 +468,13 @@ This spike deliberately does **not** claim:
   TUF metadata** expiration, against the wall clock (§5.2).
 - That it evaluates a **real HTTPS** transport — only `FilesystemTransport` (spike-only;
   PR-11 decides production transport).
-- That DR-002 is `Accepted` — it is **Proposed** (technical evidence complete; F + A
-  sign-off pending). See §11 and [`plans/12`](../../plans/12-open-decisions-and-risks.md)
-  DR-002.
+- That the spike alone accepted DR-002 — acceptance occurred later, on 2026-08-09, after the
+  recorded F+A review in §11 and [`plans/12`](../../plans/12-open-decisions-and-risks.md).
 - That it is production code — it is a standalone, `publish = false` spike.
 
 ---
 
-## 11. Decision record status (DR-002) — Proposed, never Accepted
+## 11. Decision record status (DR-002) — Accepted 2026-08-09
 
 The documented **success criterion** for S2 (`plans/12` §2) is: *"Signed fixture metadata
 verified end-to-end; revocation dry-run passes; threshold demo."* Against that, **the
@@ -489,21 +489,19 @@ technical recommendation and evidence are complete** (a):
 - ✅ Plus rollback (§5.5), freeze/expiry (§5.2), endless-data (§5.3), drained-stream
   tamper (§5.4) — all with the exact `tough` error variants pinned.
 
-**DR-002 status is `Proposed`, not `Accepted`.** Per `plans/11` §2 / `plans/12` §7 /
-`CONTRIBUTING` §5, a spike DR is `Accepted` only after the **spike owner and the affected
-area owners (F + A for DR-002) sign off**. That recorded sign-off has not happened; this
-document records only the *technical* basis. Therefore:
-
-- **The AC-D1 gate (`plans/12` §8) is NOT cleared by this spike.**
-- **PR-11 (the production channel client) and PR-33 remain gated until DR-002 is
-  Accepted.** They must not merge on this basis until the DR is Accepted.
+**DR-002 was Accepted on 2026-08-09.** The F+A review re-ran the 20-test suite against the
+exact `tough 0.24.0` lock and rechecked the loader/datastore/expiry/transport APIs against
+current upstream documentation and source. It accepted the recommendation without weakening
+the spike's limitations: persistent single-writer state remains mandatory, normal paths remain
+`Safe`, target streams must be drained, and pkg owns semantic validation. The AC-D1 gate is
+cleared; PR-11 and PR-33 still must pass their own production/security gates.
 
 The crisp technical recommendation stands: **adopt the real TUF specification via the
 `tough` crate (exactly `0.24.0`), `FilesystemTransport` for local loads (production
 transport decided by PR-11), `ExpirationEnforcement::Safe` on normal paths, the
 conservative `Limits`, a persistent single-writer datastore (REQUIRED for rollback), the
 mandatory `read_target_fully` full-drain helper, and per-role thresholds (1-of-1 v1 →
-2-of-3 at GA).** The **pending gate** is exactly: recorded F + A sign-off.
+2-of-3 at GA).**
 
 ---
 
