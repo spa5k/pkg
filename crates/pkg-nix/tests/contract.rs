@@ -49,8 +49,8 @@ use pkg_nix::{
     FormatVersion, GcReport, GcStatus, JsonCodec, MalformedKind, MethodKind, NarHash, NarIntegrity,
     NixAdapter, NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId,
     OutputName, OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, RootName,
-    RootRef, SchemaVersion, Signature, StorePath, SubstituteOutcome, SubstituteReport, System,
-    TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    RootRef, SchemaVersion, Signature, StorePath, SubstituteOutcome, SubstituteReceipt,
+    SubstituteReport, System, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
 // Compile assertion: every contract type appearing in the NixAdapter trait
@@ -145,7 +145,19 @@ fn path_info_fixture() -> PathInfoReport {
 }
 
 fn substitute_fixture(outcome: SubstituteOutcome) -> SubstituteReport {
-    SubstituteReport::new(store_path("hello-1.0"), outcome)
+    if outcome == SubstituteOutcome::Fetched {
+        SubstituteReport::fetched(
+            store_path("hello-1.0"),
+            SubstituteReceipt::new(
+                "https://cache.nixos.org",
+                nar_hash(),
+                vec![sig("cache.nixos.org-1")],
+            )
+            .unwrap(),
+        )
+    } else {
+        SubstituteReport::miss(store_path("hello-1.0"), outcome).unwrap()
+    }
 }
 
 fn receipt_fixture() -> BuildApprovalReceipt {
@@ -565,7 +577,29 @@ fn substitute_report_round_trips_all_outcomes() {
         assert_eq!(back.encode().expect("re-encode"), enc);
         assert_eq!(back, r);
         assert_eq!(back.outcome(), outcome);
+        assert_eq!(
+            back.receipt().is_some(),
+            outcome == SubstituteOutcome::Fetched
+        );
+        let debug = format!("{back:?}");
+        assert!(!debug.contains("/nix/store"));
+        assert!(!debug.contains(STORE_HASH));
     }
+
+    let path = format!("/nix/store/{STORE_HASH}-hello-1.0");
+    let fetched_without_receipt =
+        format!(r#"{{"schemaVersion":1,"storePath":"{path}","outcome":"fetched","receipt":null}}"#);
+    assert_eq!(
+        decode_err!(c, SubstituteReport, fetched_without_receipt.as_bytes()).code(),
+        NixAdapterErrorCode::ValidationFailure
+    );
+    let miss_with_receipt = format!(
+        r#"{{"schemaVersion":1,"storePath":"{path}","outcome":"noBinaryAvailable","receipt":{{"sourceUrl":"https://cache.nixos.org","narHash":"{NAR}","signatures":["cache.nixos.org-1:BBBBBBBB"]}}}}"#
+    );
+    assert_eq!(
+        decode_err!(c, SubstituteReport, miss_with_receipt.as_bytes()).code(),
+        NixAdapterErrorCode::ValidationFailure
+    );
 }
 
 #[test]
@@ -983,6 +1017,8 @@ fn decode_rejects_invalid_promoted_values() {
 
 #[test]
 fn constructors_reject_empty_and_duplicate_collections() {
+    assert!(SubstituteReceipt::new("https://cache.nixos.org", nar_hash(), vec![]).is_err());
+    assert!(SubstituteReport::miss(store_path("x"), SubstituteOutcome::Fetched).is_err());
     // EvaluatedDerivation: empty outputs.
     assert!(
         EvaluatedDerivation::new(

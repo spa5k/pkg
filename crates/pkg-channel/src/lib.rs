@@ -13,7 +13,10 @@ mod keys;
 mod policy;
 mod tuf;
 
-pub use descriptor::{BuildMode, ChannelDescriptor, IndexArtifact, NixRuntimeArtifact, NixpkgsPin};
+pub use descriptor::{
+    BuildMode, CachePolicy, CachePublicKey, ChannelDescriptor, IndexArtifact, NixRuntimeArtifact,
+    NixpkgsPin,
+};
 pub use keys::TrustedRoot;
 pub use policy::{AcceptedChannel, ChannelError, RefreshOutcome, VerifiedChannel};
 pub use tuf::ChannelClient;

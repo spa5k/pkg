@@ -160,7 +160,7 @@ unsupported upstream JSON format, validation failure, timeout, unavailable daemo
 transcript mismatch. **Reports model successful semantic results**; an operation-specific
 *expected* result that is not a technical failure — e.g. "no substitute available" — may be a
 **closed report enum** the caller matches on
-(`SubstituteReport { outcome: SubstituteOutcome::MissingFromSubstituters }`). Technical
+(`SubstituteReport { outcome: SubstituteOutcome::AbsentFromSubstituters }`). Technical
 failures are **not** forced into report outcome fields: they are `Err(NixAdapterError)`. The
 request/report types are defined in `pkg-nix`, validated at construction, and **compose
 `pkg-core` strong types** (`StorePath`, `NarHash`, `AttributePath`, `System`, `NixpkgsRevision`, `OutputSelection`, …). Their
@@ -174,7 +174,7 @@ expression-string fields ever appear on any request or report (`01` §11.1):
 | `version` | — | managed-Nix version; accepted/rejected JSON format versions |
 | `evaluate_derivation` | `EvaluateDerivationRequest` (AttributePath, System, NixpkgsRevision, Nixpkgs source NarHash pin, `OutputSelection` — the default selection **or** explicit nonempty output names) — built by the resolver from a Selector + verified source | normalized derivation plan: validated v4 envelope version, canonical derivation closure, expected output paths, authoritative pname/version, document and closure digests; **no** realized store-path identity |
 | `path_info` | `StorePath` | narHash, deriver, narSize, references, signatures, closure size (promoted from the root-level `nix path-info --json --json-format 2` versioned v2 envelope `{version:2,storeDir,info:{…}}`; **no `--deriver` flag**) |
-| `substitute` | `StorePath` | outcome (fetched / absent / no-binary …) — signature/trust failure is `Err(NixAdapterError)`, never a report outcome |
+| `substitute` | `StorePath` | outcome (fetched / absent / no-binary); fetched requires a bounded substitution-time receipt carrying observed cache URL, NAR hash and signatures, while misses carry no receipt — cryptographic signature/trust failure is `Err(NixAdapterError)`, never a report outcome |
 | `build` | `BuildRequest` (**typed `DerivedOutputTarget` targets**, `System`, a typed single-operation `BuildApprovalReceipt` binding the operation id + the exact `BuildPlan` digest + `policyVersion`) — **internal broker-only**; the public RPC carries an opaque operation handle / `buildPlanDigest`, never a raw target | outcome + built outputs with **per-output provenance** (`cache-signed` vs `local-build`) / `ACQUIRE_NO_BINARY` (AC-S13) |
 | `verify` | `VerifyRequest` (paths, recursive/integrity mode only) | per-path NAR/trust status (**read-only**) |
 | `gc` | — (on-disk gcroots are authoritative; the broker-internal GC admission gate, §6.5/§6.6, is **not** an adapter argument) | paths collected / refused-under-lease (T-STATE-4); the exclusive permit is taken only after every in-flight shared GC-inhibit permit has drained (plan 05 §8.5) |

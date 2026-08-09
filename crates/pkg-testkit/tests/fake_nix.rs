@@ -33,8 +33,8 @@ use pkg_nix::{
     FormatVersion, GcReport, GcStatus, MalformedKind, MethodKind, NarHash, NarIntegrity,
     NixAdapter, NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId,
     OutputName, OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, Signature,
-    StorePath, SubstituteOutcome, SubstituteReport, System, TrustStatus, VerifyMode, VerifyReport,
-    VerifyRequest, VersionInfo,
+    StorePath, SubstituteOutcome, SubstituteReceipt, SubstituteReport, System, TrustStatus,
+    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 use pkg_testkit::{FakeNix, TranscriptError};
 
@@ -122,7 +122,19 @@ fn path_info_fixture() -> PathInfoReport {
 }
 
 fn substitute_fixture(outcome: SubstituteOutcome) -> SubstituteReport {
-    SubstituteReport::new(store_path("hello-1.0"), outcome)
+    if outcome == SubstituteOutcome::Fetched {
+        SubstituteReport::fetched(
+            store_path("hello-1.0"),
+            SubstituteReceipt::new(
+                "https://cache.nixos.org",
+                nar_hash(),
+                vec![sig("cache.nixos.org-1")],
+            )
+            .unwrap(),
+        )
+    } else {
+        SubstituteReport::miss(store_path("hello-1.0"), outcome).unwrap()
+    }
 }
 
 fn receipt_fixture() -> BuildApprovalReceipt {

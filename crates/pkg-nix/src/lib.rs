@@ -52,6 +52,7 @@ pub mod framing;
 pub mod maintenance;
 pub mod managed;
 pub mod nixpkgs;
+pub mod substitute;
 
 pub use adapter::NixAdapter;
 pub use broker::{
@@ -63,7 +64,8 @@ pub use contract::{
     DerivationPlanReport, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport,
     GcStatus, JsonCodec, MethodKind, NarIntegrity, NixVersion, OperationId, PathInfoReport,
     PathVerifyResult, RootName, RootRef, SchemaVersion, Signature, SubstituteOutcome,
-    SubstituteReport, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    SubstituteReceipt, SubstituteReport, TrustStatus, VerifyMode, VerifyReport, VerifyRequest,
+    VersionInfo,
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
@@ -93,6 +95,10 @@ pub use managed::provision::{
 pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
     NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,
+};
+pub use substitute::{
+    CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,
+    acquire_substitute,
 };
 
 // Focused re-exports of the `pkg-core` strong types that appear in this crate's

@@ -588,6 +588,15 @@ flowchart TD
 ### Milestone M3 — Install / activate
 
 #### PR-17 — Substitute from `cache.nixos.org` + signature/NAR verify
+- **Status:** **Completed 2026-08-09.** Authenticated channel promotion now
+  retains the fixed cache URL and public-key identity instead of discarding
+  them. Fetched adapter reports require a bounded substitution-time receipt
+  (source URL, NAR hash, observed signatures); normal misses carry no receipt.
+  `acquire_substitute` binds URL and signature key name to channel policy,
+  requires recursive read-only integrity/trust verification, and matches
+  post-copy path metadata to the receipt before returning a redacted
+  `VerifiedSubstitute`. Absence/no-binary remains a normal cache miss; adapter,
+  trust, integrity and metadata failures fail closed.
 - **Purpose:** acquire store paths only from channel-approved substituters/keys; verify
   Ed25519 sig + NAR hash (`08` T-CACHE-1/3).
 - **Owns:** `crates/pkg-nix/src/substitute.rs` + tests + FakeNix fake-cache hooks.

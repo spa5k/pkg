@@ -9,7 +9,8 @@ use tough::{Repository, TargetName};
 use url::Url;
 
 use crate::descriptor::{
-    BuildMode, ChannelDescriptor, IndexArtifact, NixRuntimeArtifact, NixpkgsPin, WireDescriptor,
+    BuildMode, CachePolicy, CachePublicKey, ChannelDescriptor, IndexArtifact, NixRuntimeArtifact,
+    NixpkgsPin, WireDescriptor,
 };
 
 pub(crate) const DESCRIPTOR_TARGET: &str = "descriptor.json";
@@ -363,6 +364,16 @@ pub(crate) fn validate_descriptor(
             index: IndexArtifact {
                 target: index.target.clone(),
                 sha256: index.sha256.clone(),
+            },
+            cache: CachePolicy {
+                url: wire.substituters.urls[0].clone(),
+                trusted_public_keys: wire
+                    .substituters
+                    .trusted_public_keys
+                    .iter()
+                    .map(|value| CachePublicKey::from_validated(value))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or(ChannelError::InvalidSubstituters)?,
             },
             build_mode: wire.build_policy.native_local_builds[host.as_str()].mode,
         },

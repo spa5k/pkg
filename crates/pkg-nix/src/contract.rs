@@ -909,6 +909,12 @@ impl Signature {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Returns the signature key name before the `:` separator.
+    #[must_use]
+    pub fn key_name(&self) -> &str {
+        self.0.split_once(':').map_or("", |(name, _)| name)
+    }
 }
 
 impl fmt::Display for Signature {
@@ -1703,23 +1709,117 @@ pub enum SubstituteOutcome {
     NoBinaryAvailable,
 }
 
+/// Authenticated metadata observed for one fetched substitute.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SubstituteReceipt {
+    source_url: String,
+    nar_hash: NarHash,
+    signatures: Vec<Signature>,
+}
+
+impl SubstituteReceipt {
+    /// Constructs a bounded receipt, requiring at least one observed signature.
+    pub fn new(
+        source_url: &str,
+        nar_hash: NarHash,
+        mut signatures: Vec<Signature>,
+    ) -> Result<Self, NixAdapterError> {
+        if source_url.is_empty()
+            || source_url.len() > 2048
+            || !source_url.starts_with("https://")
+            || source_url.chars().any(char::is_control)
+        {
+            return Err(invalid("invalid substitute source"));
+        }
+        if signatures.is_empty() {
+            return Err(invalid("missing substitute signatures"));
+        }
+        ensure_unique_strings(
+            signatures.iter().map(Signature::as_str),
+            "duplicate substitute signature",
+        )?;
+        signatures.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        check_size_bounds(
+            signatures.iter().map(Signature::as_str),
+            MAX_SIGNATURES,
+            MAX_SIGNATURES_BYTES,
+            "too many substitute signatures",
+        )?;
+        Ok(Self {
+            source_url: source_url.to_owned(),
+            nar_hash,
+            signatures,
+        })
+    }
+
+    /// Returns the cache URL observed for this substitution.
+    #[must_use]
+    pub fn source_url(&self) -> &str {
+        &self.source_url
+    }
+
+    /// Returns the cache-advertised NAR hash.
+    #[must_use]
+    pub const fn nar_hash(&self) -> &NarHash {
+        &self.nar_hash
+    }
+
+    /// Returns the observed cache signatures in canonical order.
+    #[must_use]
+    pub fn signatures(&self) -> &[Signature] {
+        &self.signatures
+    }
+}
+
+impl fmt::Debug for SubstituteReceipt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SubstituteReceipt")
+            .field("nar_hash", &self.nar_hash)
+            .field("signature_count", &self.signatures.len())
+            .finish()
+    }
+}
+
 /// The report returned by `substitute()`: a cache-only outcome for one store
-/// path (`plans/09` §4.1). Substitute is cache-only; trust or signature
-/// failures are [`NixAdapterError`], never an outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// path (`plans/09` §4.1). A fetched outcome must carry the cache metadata Nix
+/// authenticated while substituting; misses carry no receipt. Trust or
+/// signature failures are [`NixAdapterError`], never an outcome.
+#[derive(Clone, PartialEq, Eq)]
 pub struct SubstituteReport {
     store_path: StorePath,
     outcome: SubstituteOutcome,
+    receipt: Option<SubstituteReceipt>,
 }
 
 impl SubstituteReport {
-    /// Constructs a substitute report.
+    /// Constructs a successful substitution report with authenticated cache metadata.
     #[must_use]
-    pub fn new(store_path: StorePath, outcome: SubstituteOutcome) -> Self {
+    pub fn fetched(store_path: StorePath, receipt: SubstituteReceipt) -> Self {
         Self {
             store_path,
-            outcome,
+            outcome: SubstituteOutcome::Fetched,
+            receipt: Some(receipt),
         }
+    }
+
+    /// Constructs a normal cache-miss report.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NixAdapterError::ValidationFailure`] if `outcome` is
+    /// [`SubstituteOutcome::Fetched`], which requires a receipt.
+    pub fn miss(
+        store_path: StorePath,
+        outcome: SubstituteOutcome,
+    ) -> Result<Self, NixAdapterError> {
+        if outcome == SubstituteOutcome::Fetched {
+            return Err(invalid("fetched substitute missing receipt"));
+        }
+        Ok(Self {
+            store_path,
+            outcome,
+            receipt: None,
+        })
     }
 
     /// Returns the store path.
@@ -1732,6 +1832,21 @@ impl SubstituteReport {
     #[must_use]
     pub const fn outcome(&self) -> SubstituteOutcome {
         self.outcome
+    }
+
+    /// Returns authenticated cache metadata only for a fetched outcome.
+    #[must_use]
+    pub const fn receipt(&self) -> Option<&SubstituteReceipt> {
+        self.receipt.as_ref()
+    }
+}
+
+impl fmt::Debug for SubstituteReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SubstituteReport")
+            .field("outcome", &self.outcome)
+            .field("has_receipt", &self.receipt.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -1749,6 +1864,16 @@ struct SubstituteReportWire {
     schema_version: u32,
     store_path: String,
     outcome: SubstituteOutcomeWire,
+    receipt: Option<SubstituteReceiptWire>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SubstituteReceiptWire {
+    source_url: String,
+    nar_hash: String,
+    #[serde(deserialize_with = "deserialize_signatures")]
+    signatures: BoundedStringSeq,
 }
 
 impl SubstituteReport {
@@ -1764,6 +1889,18 @@ impl SubstituteReport {
                 }
                 SubstituteOutcome::NoBinaryAvailable => SubstituteOutcomeWire::NoBinaryAvailable,
             },
+            receipt: self.receipt.as_ref().map(|receipt| SubstituteReceiptWire {
+                source_url: receipt.source_url.clone(),
+                nar_hash: receipt.nar_hash.as_str().to_owned(),
+                signatures: BoundedStringSeq::from_vec(
+                    receipt
+                        .signatures
+                        .iter()
+                        .map(Signature::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                ),
+            }),
         };
         to_json(&dto)
     }
@@ -1782,7 +1919,32 @@ impl SubstituteReport {
             }
             SubstituteOutcomeWire::NoBinaryAvailable => SubstituteOutcome::NoBinaryAvailable,
         };
-        Ok(Self::new(store_path, outcome))
+        let receipt = match dto.receipt {
+            None => None,
+            Some(receipt) => {
+                let nar_hash =
+                    NarHash::new(&receipt.nar_hash).map_err(|_| invalid("invalid nar hash"))?;
+                let signatures = receipt
+                    .signatures
+                    .into_inner()
+                    .into_iter()
+                    .map(|signature| Signature::new(&signature))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Some(SubstituteReceipt::new(
+                    &receipt.source_url,
+                    nar_hash,
+                    signatures,
+                )?)
+            }
+        };
+        match (outcome, receipt) {
+            (SubstituteOutcome::Fetched, Some(receipt)) => Ok(Self::fetched(store_path, receipt)),
+            (SubstituteOutcome::Fetched, None) => {
+                Err(invalid("fetched substitute missing receipt"))
+            }
+            (_, Some(_)) => Err(invalid("cache miss carried receipt")),
+            (outcome, None) => Self::miss(store_path, outcome),
+        }
     }
 }
 

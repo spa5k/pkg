@@ -175,6 +175,66 @@ pub struct NixpkgsPin {
     pub(crate) nar_hash: NarHash,
 }
 
+/// One authenticated Nix binary-cache public key.
+///
+/// Construction is private to channel verification; consumers cannot inject
+/// an arbitrary trust root after the descriptor has been authenticated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachePublicKey {
+    pub(crate) value: String,
+    pub(crate) name_end: usize,
+}
+
+impl CachePublicKey {
+    pub(crate) fn from_validated(value: &str) -> Option<Self> {
+        value.find(':').map(|name_end| Self {
+            value: value.to_owned(),
+            name_end,
+        })
+    }
+
+    /// Returns the complete Nix public-key string (`name:base64`).
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+
+    /// Returns the key name used to identify observed path signatures.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.value[..self.name_end]
+    }
+}
+
+/// Authenticated, fixed binary-cache policy retained from the descriptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachePolicy {
+    pub(crate) url: String,
+    pub(crate) trusted_public_keys: Vec<CachePublicKey>,
+}
+
+impl CachePolicy {
+    /// Returns the sole channel-approved substituter URL.
+    #[must_use]
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// Returns the authenticated trusted public keys.
+    #[must_use]
+    pub fn trusted_public_keys(&self) -> &[CachePublicKey] {
+        &self.trusted_public_keys
+    }
+
+    /// Returns whether an observed signature names an authenticated cache key.
+    #[must_use]
+    pub fn admits_signature_name(&self, name: &str) -> bool {
+        self.trusted_public_keys
+            .iter()
+            .any(|key| key.name() == name)
+    }
+}
+
 impl NixpkgsPin {
     /// Returns the authenticated repository owner.
     #[must_use]
@@ -210,6 +270,7 @@ pub struct ChannelDescriptor {
     pub(crate) runtime: NixRuntimeArtifact,
     pub(crate) nixpkgs: NixpkgsPin,
     pub(crate) index: IndexArtifact,
+    pub(crate) cache: CachePolicy,
     pub(crate) build_mode: BuildMode,
 }
 
@@ -248,6 +309,12 @@ impl ChannelDescriptor {
     #[must_use]
     pub const fn index(&self) -> &IndexArtifact {
         &self.index
+    }
+
+    /// Returns the authenticated binary-cache trust policy.
+    #[must_use]
+    pub const fn cache(&self) -> &CachePolicy {
+        &self.cache
     }
 
     /// Returns the host's native local-build policy.

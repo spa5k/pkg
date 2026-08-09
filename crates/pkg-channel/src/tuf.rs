@@ -170,6 +170,21 @@ mod tests {
         };
         assert_eq!(channel.sequence().get().get(), 42);
         assert_eq!(channel.descriptor().nix_version(), "2.24.10");
+        assert_eq!(
+            channel.descriptor().cache().url(),
+            "https://cache.nixos.org"
+        );
+        assert_eq!(channel.descriptor().cache().trusted_public_keys().len(), 1);
+        assert_eq!(
+            channel.descriptor().cache().trusted_public_keys()[0].name(),
+            "cache.nixos.org-1"
+        );
+        assert!(
+            channel
+                .descriptor()
+                .cache()
+                .admits_signature_name("cache.nixos.org-1")
+        );
 
         let state = channel.accepted_state();
         let second = validate_descriptor(
