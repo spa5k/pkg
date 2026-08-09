@@ -6,6 +6,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use pkg_core::lifecycle::LifecycleState;
 use pkg_core::state::{
     Digest, Generation, JournalPayload, JournalRow, LockedState, Manifest, PreviousRowHash,
     body_digest, canonical_digest, recover_journal,
@@ -13,7 +14,7 @@ use pkg_core::state::{
 use pkg_nix::{GenerationId, MaintenanceAdapter, RemoveRootSetRequest};
 use pkg_store::{
     ActivationEvent, ActivationPlan, PreparedRootSet, RootCandidate, StateLayout,
-    activate_rooted_generation, prepare_root_set, publish_root_set, verify_recorded_activation,
+    activate_generation, prepare_root_set, publish_root_set, verify_recorded_activation,
 };
 use serde_json::{Value, json};
 
@@ -39,6 +40,9 @@ impl CandidateGeneration {
             LockedState::from_json(&lock_bytes).map_err(|_| CommitError::InvalidCandidate)?;
         let generation =
             Generation::from_json(&generation_bytes).map_err(|_| CommitError::InvalidCandidate)?;
+        let lifecycle = LifecycleState::new(manifest.clone(), lock.clone())
+            .map_err(|_| CommitError::InvalidCandidate)?;
+        validate_generation_state(&lifecycle, &generation)?;
         let id = GenerationId::new(generation.id()).map_err(|_| CommitError::InvalidCandidate)?;
         let expected_manifest_snapshot = format!("generations/{}.manifest.json", id.as_str());
         let expected_lock_snapshot = format!("generations/{}.lock.json", id.as_str());
@@ -77,7 +81,7 @@ pub struct PreparedGeneration {
     layout: StateLayout,
     candidate: CandidateGeneration,
     plan: ActivationPlan,
-    roots: PreparedRootSet,
+    roots: Option<PreparedRootSet>,
 }
 
 /// A generation already published through the `current` linearization point.
@@ -147,17 +151,23 @@ impl PreparedGeneration {
         let generation = candidate.generation();
         let generation_id =
             GenerationId::new(generation.id()).map_err(|_| CommitError::InvalidCandidate)?;
-        let roots = prepare_root_set(
-            generation.uid(),
-            generation_id,
-            generation
-                .activation()
-                .output_roots()
-                .iter()
-                .cloned()
-                .map(RootCandidate::from_output_root),
-        )
-        .map_err(|_| CommitError::InvalidCandidate)?;
+        let roots = if generation.activation().output_roots().is_empty() {
+            None
+        } else {
+            Some(
+                prepare_root_set(
+                    generation.uid(),
+                    generation_id,
+                    generation
+                        .activation()
+                        .output_roots()
+                        .iter()
+                        .cloned()
+                        .map(RootCandidate::from_output_root),
+                )
+                .map_err(|_| CommitError::InvalidCandidate)?,
+            )
+        };
 
         write_with_sidecar(
             root,
@@ -195,12 +205,12 @@ impl PreparedGeneration {
     ) -> Result<ActivatedGeneration, CommitError> {
         let root = self.layout.state_root().to_path_buf();
         let op_id = self.candidate.generation().operation().op_id().to_owned();
-        activate_rooted_generation(
+        activate_generation(
             &self.layout,
             &GenerationId::new(self.candidate.generation().id())
                 .map_err(|_| CommitError::InvalidCandidate)?,
             &self.plan,
-            &self.roots,
+            self.roots.as_ref(),
             helper,
             nonce,
             |event| {
@@ -314,17 +324,23 @@ pub fn recover_generation(
     )?;
     let lock = read_verified_snapshot(root, generation.lock_snapshot(), generation.lock_hash())?;
     let candidate = CandidateGeneration::new(manifest, lock, record)?;
-    let roots = prepare_root_set(
-        generation.uid(),
-        generation_id.clone(),
-        generation
-            .activation()
-            .output_roots()
-            .iter()
-            .cloned()
-            .map(RootCandidate::from_output_root),
-    )
-    .map_err(|_| CommitError::InvalidCandidate)?;
+    let roots = if generation.activation().output_roots().is_empty() {
+        None
+    } else {
+        Some(
+            prepare_root_set(
+                generation.uid(),
+                generation_id.clone(),
+                generation
+                    .activation()
+                    .output_roots()
+                    .iter()
+                    .cloned()
+                    .map(RootCandidate::from_output_root),
+            )
+            .map_err(|_| CommitError::InvalidCandidate)?,
+        )
+    };
     if !current_is_generation {
         helper
             .remove_root_set(&RemoveRootSetRequest::new(
@@ -343,7 +359,9 @@ pub fn recover_generation(
         return Ok(RecoveryResult::DiscardedUnactivated);
     }
 
-    publish_root_set(&roots, helper).map_err(|_| CommitError::ActivationFailed)?;
+    if let Some(roots) = &roots {
+        publish_root_set(roots, helper).map_err(|_| CommitError::ActivationFailed)?;
+    }
     let digest = Digest::from_str(generation.activation().tree_digest())
         .map_err(|_| CommitError::InvalidCandidate)?;
     verify_recorded_activation(
@@ -380,6 +398,41 @@ fn validate_plan(
         || activation.output_roots() != plan.output_roots()
     {
         return Err(CommitError::StageMismatch);
+    }
+    Ok(())
+}
+
+fn validate_generation_state(
+    lifecycle: &LifecycleState,
+    generation: &Generation,
+) -> Result<(), CommitError> {
+    if lifecycle.selected_output_paths() != generation.activation().output_roots()
+        || lifecycle.manifest().entries().len() != generation.outputs().len()
+    {
+        return Err(CommitError::InvalidCandidate);
+    }
+    for manifest_entry in lifecycle.manifest().entries() {
+        let locked_entry = &lifecycle.locked().entries()[manifest_entry.id()];
+        let realization = locked_entry.realization();
+        let Some(output) = generation
+            .outputs()
+            .iter()
+            .find(|output| output.id() == manifest_entry.id())
+        else {
+            return Err(CommitError::InvalidCandidate);
+        };
+        if output.attribute() != locked_entry.attribute()
+            || output.nixpkgs_revision() != realization.nixpkgs_revision()
+            || output.store_path() != realization.store_path()
+            || output.deriver() != realization.deriver()
+            || output.outputs_to_install() != realization.outputs_to_install()
+            || output.nar_hash() != realization.nar_hash()
+            || output.closure_nar_size() != realization.closure_nar_size()
+            || output.provenance() != locked_entry.provenance()
+            || output.is_pinned() != manifest_entry.is_pinned()
+        {
+            return Err(CommitError::InvalidCandidate);
+        }
     }
     Ok(())
 }
@@ -739,6 +792,9 @@ mod tests {
     use tempfile::{Builder, TempDir};
 
     const STORE: &str = "/nix/store/00000000000000000000000000000000-demo";
+    const DRV: &str = "/nix/store/11111111111111111111111111111111-demo.drv";
+    const REV: &str = "0123456789abcdef0123456789abcdef01234567";
+    const NAR: &str = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
     struct Fixture {
         _temp: TempDir,
@@ -750,6 +806,14 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
+        fixture_with_outputs(true)
+    }
+
+    fn empty_fixture() -> Fixture {
+        fixture_with_outputs(false)
+    }
+
+    fn fixture_with_outputs(has_output: bool) -> Fixture {
         let temp = Builder::new()
             .prefix("pkg-pipeline-")
             .tempdir_in(".")
@@ -765,16 +829,86 @@ mod tests {
         let staging = state.join("activations/gen-0001.staging");
         fs::create_dir(&staging).unwrap();
         fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
-        symlink(format!("{STORE}/bin/demo"), staging.join("demo")).unwrap();
-        let output_root = pkg_core::StorePath::new(STORE).unwrap();
-        let plan = inspect_staged_activation(&staging, vec![output_root]).unwrap();
+        let output_roots = if has_output {
+            symlink(format!("{STORE}/bin/demo"), staging.join("demo")).unwrap();
+            vec![pkg_core::StorePath::new(STORE).unwrap()]
+        } else {
+            Vec::new()
+        };
+        let plan = inspect_staged_activation(&staging, output_roots).unwrap();
 
-        let manifest_bytes =
-            format!(r#"{{"schemaVersion":1,"channelSeq":1,"uid":{uid},"entries":[],"pins":[]}}"#)
-                .into_bytes();
-        let lock_bytes = format!(
-            r#"{{"schemaVersion":1,"channelSeq":1,"system":"x86_64-linux","uid":{uid},"entries":{{}}}}"#
-        ).into_bytes();
+        let manifest_entries = if has_output {
+            vec![json!({
+                "id": "sel_demo",
+                "selector": "demo",
+                "attribute": "demo",
+                "versionPref": { "kind": "any" },
+                "outputs": null,
+                "sourceRev": "channel:current",
+                "pinned": false,
+                "pinnedTo": null,
+                "addedAt": "2026-08-09T00:00:00Z",
+                "origin": "user:install"
+            })]
+        } else {
+            Vec::new()
+        };
+        let manifest_bytes = serde_json::to_vec(&json!({
+            "schemaVersion": 1,
+            "channelSeq": 1,
+            "uid": uid,
+            "entries": manifest_entries,
+            "pins": []
+        }))
+        .unwrap();
+        let lock_entries = if has_output {
+            json!({
+                "sel_demo": {
+                    "attribute": "demo",
+                    "nixpkgsRev": REV,
+                    "realized": {
+                        "storePath": STORE,
+                        "deriver": DRV,
+                        "outputs": { "out": STORE },
+                        "outputsToInstall": ["out"],
+                        "system": "x86_64-linux",
+                        "narHash": NAR,
+                        "closureNarSize": 42,
+                        "pname": "demo",
+                        "version": "1.0"
+                    },
+                    "lockedAt": "2026-08-09T00:00:01Z",
+                    "provenance": "cache:official",
+                    "sigsObserved": ["official-1:fixture"]
+                }
+            })
+        } else {
+            json!({})
+        };
+        let lock_bytes = serde_json::to_vec(&json!({
+            "schemaVersion": 1,
+            "channelSeq": 1,
+            "system": "x86_64-linux",
+            "uid": uid,
+            "entries": lock_entries
+        }))
+        .unwrap();
+        let generation_outputs = if has_output {
+            vec![json!({
+                "id": "sel_demo",
+                "attribute": "demo",
+                "nixpkgsRev": REV,
+                "storePath": STORE,
+                "deriver": DRV,
+                "outputsToInstall": ["out"],
+                "narHash": NAR,
+                "closureNarSize": 42,
+                "provenance": "cache:official",
+                "pinned": false
+            })]
+        } else {
+            Vec::new()
+        };
         let mut generation = json!({
             "schemaVersion": 1,
             "uid": uid,
@@ -792,10 +926,10 @@ mod tests {
                 "treeDigest": plan.tree_digest().to_string(),
                 "entryCount": plan.entry_count(),
                 "collisionPolicy": "abort",
-                "outputRoots": [STORE],
+                "outputRoots": plan.output_roots().iter().map(pkg_core::StorePath::as_str).collect::<Vec<_>>(),
                 "collisionResolutions": []
             },
-            "outputs": [],
+            "outputs": generation_outputs,
             "operation": {
                 "opId": "op_fixture",
                 "kind": "install",
@@ -863,7 +997,7 @@ mod tests {
         let prepared =
             PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
                 .unwrap();
-        publish_root_set(&prepared.roots, &fixture.maintenance).unwrap();
+        publish_root_set(prepared.roots.as_ref().unwrap(), &fixture.maintenance).unwrap();
         append_phase(
             fixture.layout.state_root(),
             "op_fixture",
@@ -939,6 +1073,26 @@ mod tests {
     }
 
     #[test]
+    fn empty_generation_commits_and_recovers_without_publishing_roots() {
+        let fixture = empty_fixture();
+        PreparedGeneration::prepare(fixture.layout.clone(), fixture.candidate, fixture.plan)
+            .unwrap()
+            .activate(&fixture.maintenance, "empty1")
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(
+            recover_generation(
+                &fixture.layout,
+                &fixture.generation_id,
+                &fixture.maintenance
+            )
+            .unwrap(),
+            RecoveryResult::AlreadyCommitted
+        );
+    }
+
+    #[test]
     fn candidate_hash_or_snapshot_binding_tamper_fails_closed() {
         let fixture = fixture();
         let mut generation = fixture.candidate.generation_bytes.clone();
@@ -949,6 +1103,28 @@ mod tests {
                 fixture.candidate.manifest_bytes,
                 fixture.candidate.lock_bytes,
                 generation
+            ),
+            Err(CommitError::InvalidCandidate)
+        ));
+    }
+
+    #[test]
+    fn candidate_refuses_activation_roots_not_selected_by_lock() {
+        let fixture = fixture();
+        let mut generation: Value =
+            serde_json::from_slice(&fixture.candidate.generation_bytes).unwrap();
+        generation["activation"]["outputRoots"] = json!([]);
+        generation.as_object_mut().unwrap().remove("generationHash");
+        let generation_hash = canonical_digest(&generation).unwrap().to_string();
+        generation
+            .as_object_mut()
+            .unwrap()
+            .insert("generationHash".into(), json!(generation_hash));
+        assert!(matches!(
+            CandidateGeneration::new(
+                fixture.candidate.manifest_bytes,
+                fixture.candidate.lock_bytes,
+                serde_json::to_vec(&generation).unwrap()
             ),
             Err(CommitError::InvalidCandidate)
         ));

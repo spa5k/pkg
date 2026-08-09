@@ -640,6 +640,12 @@ record/`treeDigest`/root-set ground truths.
   leave `current` resolving to a forest with an unrooted output. Because each
   root targets a `/nix/store` output path (not the forest), rooting is
   independent of whether the forest has been renamed to `gen-<id>/` yet.
+- **Empty generations.** Removing the final selector produces an empty,
+  retained activation forest with `outputRoots: []`. The rooted landmark is
+  then vacuously satisfied without calling the helper: its closed grammar
+  deliberately rejects empty root-publication requests. The record, empty
+  forest, atomic `current` switch, snapshots, and journal rows are otherwise
+  identical to a nonempty generation, and recovery remains idempotent.
 - Pruning a generation (§9) removes its entire root-set directory; the next
   `nix store gc` reclaims any output closures no longer rooted by any retained
   generation.

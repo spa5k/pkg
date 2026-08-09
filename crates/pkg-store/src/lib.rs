@@ -15,6 +15,6 @@ pub use activate::{
 };
 pub use current::{
     ActivationEvent, CurrentError, RecoveryAction, RecoveryEvidence, StateLayout,
-    activate_rooted_generation, classify_recovery,
+    activate_generation, activate_rooted_generation, classify_recovery,
 };
 pub use roots::{PreparedRootSet, RootCandidate, RootError, prepare_root_set, publish_root_set};

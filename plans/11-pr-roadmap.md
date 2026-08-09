@@ -664,13 +664,27 @@ flowchart TD
 - **Milestone:** M3.
 
 #### PR-20 — Remove / upgrade-one / upgrade-all + mixed-revision handling
+- **Status:** **Completed 2026-08-09.** `LifecycleState` now proves manifest and
+  lock ownership, channel, selector-id, attribute, pin, system, and exact-rev
+  coherence before any edit or generation commit. Remove validates every
+  target first, then deletes manifest entries, lock entries, and the pin index
+  atomically. Upgrade-one/all emits only eligible resolver requests at the
+  authenticated current revision, preserves every untouched exact lock entry,
+  skips pins unless explicitly bumped, binds replacements to the planned
+  attribute/system/revision, and models removed-upstream refusal versus
+  explicit skip without partial mutation. Candidate commits additionally bind
+  generation outputs and activation roots back to the coherent lifecycle
+  state. Removing the final selector activates and recovers an empty forest
+  without widening the helper's nonempty root-set grammar.
 - **Purpose:** lifecycle ops that edit the desired-state set; handle mixed Nixpkgs revisions
   during selective upgrades (`04`,`05` §7). Per INV-04/`00`, a generation may legitimately
   contain outputs realized from multiple Nixpkgs revisions (selectors may pin
   `channel:current` | `channel:pinned:<id>` | `rev:<gitsha>`), and **every** such rev is
   exact/pinned — never floating; `upgrade` re-resolves only the named/non-pinned selectors at
   the current `channelSeq`.
-- **Owns:** `crates/pkg-core/src/{remove.rs,upgrade.rs}` + tests.
+- **Owns:** `crates/pkg-core/src/{lifecycle.rs,remove.rs,upgrade.rs}` + narrow
+  schema accessors, generation-binding checks in `pkg-pipeline`, empty-state
+  activation support in `pkg-store`, and tests.
 - **Depends:** PR-19.
 - **Migration/compat:** defines the upgrade semantics users see (`06`).
 - **Tests & gates:** G-UNIT + G-INTEGRATION + golden desired-state diffs.

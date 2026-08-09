@@ -242,6 +242,31 @@ pub fn activate_rooted_generation(
     prepared_roots: &PreparedRootSet,
     helper: &dyn MaintenanceAdapter,
     nonce: &str,
+    observe: impl FnMut(ActivationEvent) -> Result<(), CurrentError>,
+) -> Result<(), CurrentError> {
+    activate_generation(
+        layout,
+        generation,
+        plan,
+        Some(prepared_roots),
+        helper,
+        nonce,
+        observe,
+    )
+}
+
+/// Activates either a rooted nonempty generation or a root-free empty one.
+///
+/// `prepared_roots` must be `None` exactly when the activation plan has no
+/// selected outputs. The empty set is trivially durable and never crosses the
+/// privileged helper's deliberately nonempty root-publication grammar.
+pub fn activate_generation(
+    layout: &StateLayout,
+    generation: &GenerationId,
+    plan: &ActivationPlan,
+    prepared_roots: Option<&PreparedRootSet>,
+    helper: &dyn MaintenanceAdapter,
+    nonce: &str,
     mut observe: impl FnMut(ActivationEvent) -> Result<(), CurrentError>,
 ) -> Result<(), CurrentError> {
     layout.revalidate()?;
@@ -254,19 +279,23 @@ pub fn activate_rooted_generation(
     if !staging_metadata.file_type().is_dir() || fs::symlink_metadata(&retained).is_ok() {
         return Err(CurrentError::UnsafePath);
     }
-    if prepared_roots.request().owner_uid() != layout.owner_uid
-        || prepared_roots.request().generation() != generation
-        || prepared_roots
-            .output_roots()
-            .into_iter()
-            .map(StorePath::as_str)
-            .ne(plan.output_roots().iter().map(StorePath::as_str))
-    {
-        return Err(CurrentError::RootPublication);
+    match prepared_roots {
+        Some(prepared_roots)
+            if prepared_roots.request().owner_uid() == layout.owner_uid
+                && prepared_roots.request().generation() == generation
+                && prepared_roots
+                    .output_roots()
+                    .into_iter()
+                    .map(StorePath::as_str)
+                    .eq(plan.output_roots().iter().map(StorePath::as_str)) => {}
+        None if plan.output_roots().is_empty() => {}
+        _ => return Err(CurrentError::RootPublication),
     }
     verify_activation(&staging, plan).map_err(|_| CurrentError::UnsafePath)?;
 
-    publish_root_set(prepared_roots, helper)?;
+    if let Some(prepared_roots) = prepared_roots {
+        publish_root_set(prepared_roots, helper)?;
+    }
     observe(ActivationEvent::Rooted)?;
     fs::rename(&staging, &retained)?;
     sync_dir(&activations)?;
@@ -329,6 +358,55 @@ mod tests {
         assert_eq!(
             fs::read_link(state.join("current")).unwrap(),
             Path::new("activations/gen-0001")
+        );
+        assert_eq!(layout.current_generation().unwrap(), Some(generation));
+    }
+
+    #[test]
+    fn empty_generation_activates_without_an_empty_root_request() {
+        let temp = Builder::new().prefix("pkg-store-").tempdir_in(".").unwrap();
+        let uid = fs::symlink_metadata(temp.path()).unwrap().uid();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let state = temp.path().join("state");
+        fs::create_dir(&state).unwrap();
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+        let activations = state.join("activations");
+        fs::create_dir(&activations).unwrap();
+        fs::set_permissions(&activations, fs::Permissions::from_mode(0o700)).unwrap();
+        let generation = GenerationId::new("gen-0001").unwrap();
+        let plan = crate::activate::stage_from_sources(
+            &activations.join("gen-0001.staging"),
+            &[],
+            CollisionPolicy::Abort,
+        )
+        .unwrap();
+        let layout = StateLayout::open(temp.path(), &state, uid).unwrap();
+        let helper = InProcessHelper::new(991).unwrap();
+        let maintenance = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(uid);
+        let mut events = Vec::new();
+        activate_generation(
+            &layout,
+            &generation,
+            &plan,
+            None,
+            &maintenance,
+            "empty1",
+            |event| {
+                events.push(event);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            events,
+            [
+                ActivationEvent::Rooted,
+                ActivationEvent::ForestRetained,
+                ActivationEvent::Activated
+            ]
         );
         assert_eq!(layout.current_generation().unwrap(), Some(generation));
     }

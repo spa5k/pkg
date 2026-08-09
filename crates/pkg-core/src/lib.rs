@@ -27,11 +27,17 @@
 
 pub mod channel;
 pub mod identity;
+pub mod lifecycle;
 pub mod realization;
+pub mod remove;
 pub mod selector;
 pub mod state;
 pub mod system;
+pub mod upgrade;
 pub mod version;
+
+#[cfg(test)]
+mod lifecycle_test_support;
 
 // Re-export the intentional public surface at the crate root.
 pub use channel::{

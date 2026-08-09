@@ -201,6 +201,28 @@ impl Manifest {
     pub fn pins(&self) -> &[SelectorId] {
         &self.pins
     }
+
+    pub(crate) fn from_lifecycle_parts(
+        channel_seq: ChannelSequence,
+        uid: u32,
+        entries: Vec<ManifestEntry>,
+    ) -> Self {
+        let pins = entries
+            .iter()
+            .filter(|entry| entry.pinned)
+            .map(|entry| entry.id.clone())
+            .collect();
+        Self {
+            channel_seq,
+            uid,
+            entries,
+            pins,
+        }
+    }
+
+    pub(crate) fn into_lifecycle_entries(self) -> Vec<ManifestEntry> {
+        self.entries
+    }
 }
 
 /// One desired selector in a [`Manifest`].
@@ -224,6 +246,31 @@ impl ManifestEntry {
     pub fn id(&self) -> &SelectorId {
         &self.id
     }
+    /// Returns the original user-facing selector input.
+    #[must_use]
+    pub fn selector(&self) -> &SelectorInput {
+        &self.selector
+    }
+    /// Returns the canonical resolved Nixpkgs attribute.
+    #[must_use]
+    pub fn attribute(&self) -> &AttributePath {
+        &self.attribute
+    }
+    /// Returns the requested version constraint.
+    #[must_use]
+    pub fn version_preference(&self) -> &VersionPreference {
+        &self.version_preference
+    }
+    /// Returns the selected outputs, or the package defaults.
+    #[must_use]
+    pub fn outputs(&self) -> &OutputSelection {
+        &self.outputs
+    }
+    /// Returns the exact source-selection intent for this entry.
+    #[must_use]
+    pub fn source_revision(&self) -> &SourceRevision {
+        &self.source_revision
+    }
     /// Returns whether this selector is pinned.
     #[must_use]
     pub const fn is_pinned(&self) -> bool {
@@ -233,6 +280,16 @@ impl ManifestEntry {
     #[must_use]
     pub fn pinned_to(&self) -> Option<&StorePath> {
         self.pinned_to.as_ref()
+    }
+
+    pub(crate) fn retarget_for_upgrade(mut self, attribute: AttributePath, bump_pin: bool) -> Self {
+        self.attribute = attribute;
+        self.source_revision = SourceRevision::CurrentChannel;
+        if bump_pin {
+            self.pinned = false;
+            self.pinned_to = None;
+        }
+        self
     }
 }
 
@@ -276,6 +333,24 @@ impl LockedState {
     pub fn entries(&self) -> &BTreeMap<SelectorId, LockEntry> {
         &self.entries
     }
+
+    pub(crate) fn from_lifecycle_parts(
+        channel_seq: ChannelSequence,
+        system: System,
+        uid: u32,
+        entries: BTreeMap<SelectorId, LockEntry>,
+    ) -> Self {
+        Self {
+            channel_seq,
+            system,
+            uid,
+            entries,
+        }
+    }
+
+    pub(crate) fn into_lifecycle_entries(self) -> BTreeMap<SelectorId, LockEntry> {
+        self.entries
+    }
 }
 
 /// One exact locked realization and its provenance.
@@ -289,10 +364,37 @@ pub struct LockEntry {
 }
 
 impl LockEntry {
+    /// Constructs one exact locked realization with validated provenance text.
+    pub fn new(
+        attribute: AttributePath,
+        realization: Realization,
+        locked_at: String,
+        provenance: String,
+        signatures_observed: Vec<String>,
+    ) -> Result<Self, StateSchemaError> {
+        Ok(Self {
+            attribute,
+            realization,
+            locked_at: nonempty("lockedAt", locked_at)?,
+            provenance: nonempty("provenance", provenance)?,
+            signatures_observed,
+        })
+    }
+
+    /// Returns the canonical attribute that produced this realization.
+    #[must_use]
+    pub fn attribute(&self) -> &AttributePath {
+        &self.attribute
+    }
     /// Returns the validated realization.
     #[must_use]
     pub fn realization(&self) -> &Realization {
         &self.realization
+    }
+    /// Returns the sanitized acquisition provenance.
+    #[must_use]
+    pub fn provenance(&self) -> &str {
+        &self.provenance
     }
 }
 
@@ -364,6 +466,11 @@ impl Generation {
     #[must_use]
     pub fn activation(&self) -> &Activation {
         &self.activation
+    }
+    /// Returns exact selector realizations documented by this generation.
+    #[must_use]
+    pub fn outputs(&self) -> &[GenerationOutput] {
+        &self.outputs
     }
     /// Returns the operation provenance captured by this generation.
     #[must_use]
@@ -460,6 +567,59 @@ pub struct GenerationOutput {
     closure_nar_size: u64,
     provenance: String,
     pinned: bool,
+}
+
+impl GenerationOutput {
+    /// Returns the stable selector id.
+    #[must_use]
+    pub fn id(&self) -> &SelectorId {
+        &self.id
+    }
+    /// Returns the canonical attribute resolved for this selector.
+    #[must_use]
+    pub fn attribute(&self) -> &AttributePath {
+        &self.attribute
+    }
+    /// Returns the exact pinned Nixpkgs revision.
+    #[must_use]
+    pub fn nixpkgs_revision(&self) -> &NixpkgsRevision {
+        &self.nixpkgs_revision
+    }
+    /// Returns the primary realized store path.
+    #[must_use]
+    pub fn store_path(&self) -> &StorePath {
+        &self.store_path
+    }
+    /// Returns the exact derivation path.
+    #[must_use]
+    pub fn deriver(&self) -> &DerivationPath {
+        &self.deriver
+    }
+    /// Returns selected output names in deterministic order.
+    #[must_use]
+    pub fn outputs_to_install(&self) -> &[OutputName] {
+        &self.outputs_to_install
+    }
+    /// Returns the verified NAR hash.
+    #[must_use]
+    pub fn nar_hash(&self) -> &NarHash {
+        &self.nar_hash
+    }
+    /// Returns the verified closure NAR byte count.
+    #[must_use]
+    pub const fn closure_nar_size(&self) -> u64 {
+        self.closure_nar_size
+    }
+    /// Returns the sanitized acquisition provenance.
+    #[must_use]
+    pub fn provenance(&self) -> &str {
+        &self.provenance
+    }
+    /// Returns whether desired state pinned this selector.
+    #[must_use]
+    pub const fn is_pinned(&self) -> bool {
+        self.pinned
+    }
 }
 
 /// Operation provenance attached to a generation.

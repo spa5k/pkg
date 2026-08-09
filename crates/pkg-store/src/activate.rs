@@ -354,23 +354,23 @@ pub fn verify_recorded_activation(
 /// Inspects an already-staged forest without following links.
 ///
 /// This recovery/integration constructor accepts only absolute leaf targets
-/// beneath one of the persisted output roots.
+/// beneath one of the persisted output roots. An empty root set is accepted
+/// only for an actually empty forest.
 pub fn inspect_staged_activation(
     tree: &Path,
     mut output_roots: Vec<StorePath>,
 ) -> Result<ActivationPlan, ActivationError> {
     output_roots.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     output_roots.dedup_by(|left, right| left == right);
-    if output_roots.is_empty() {
-        return Err(ActivationError::UnsafePath);
-    }
     let entries = scan_forest(tree)?;
-    if entries.iter().any(|entry| {
-        !entry.target.is_absolute()
-            || !output_roots
-                .iter()
-                .any(|root| entry.target.starts_with(root.as_str()))
-    }) {
+    if (output_roots.is_empty() && !entries.is_empty())
+        || entries.iter().any(|entry| {
+            !entry.target.is_absolute()
+                || !output_roots
+                    .iter()
+                    .any(|root| entry.target.starts_with(root.as_str()))
+        })
+    {
         return Err(ActivationError::UnsafePath);
     }
     Ok(ActivationPlan {
