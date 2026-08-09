@@ -11,7 +11,7 @@
 //!
 //! - Object safety + `Send + Sync` of `dyn NixAdapter`, and dispatch through
 //!   `Arc<dyn NixAdapter>`.
-//! - A deterministic stub implementing and invoking all eight trait methods.
+//! - A deterministic stub implementing and invoking all seven trait methods.
 //! - Encode/decode round trips for every public request/report type that
 //!   exposes serialization.
 //! - Explicit top-level `schemaVersion = 1`, stable camelCase keys, and stable
@@ -44,13 +44,13 @@ use std::sync::Arc;
 
 use pkg_nix::error::BoundedSummary;
 use pkg_nix::{
-    AcceptedFormats, AddRootRequest, AttributePath, BuildApprovalReceipt, BuildReport,
-    BuildRequest, BuildStatus, DerivationPath, EvalRealizeRequest, FormatVersion, GcReport,
-    GcStatus, JsonCodec, MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter,
-    NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName,
-    OutputSelection, PathInfoReport, PathVerifyResult, RealizationReport, RootName, RootRef,
-    SchemaVersion, Signature, StorePath, SubstituteOutcome, SubstituteReport, System, TrustStatus,
-    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
+    DerivationPath, EvalRealizeRequest, FormatVersion, GcReport, GcStatus, JsonCodec,
+    MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
+    NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName, OutputSelection,
+    PathInfoReport, PathVerifyResult, RealizationReport, RootName, RootRef, SchemaVersion,
+    Signature, StorePath, SubstituteOutcome, SubstituteReport, System, TrustStatus, VerifyMode,
+    VerifyReport, VerifyRequest, VersionInfo,
 };
 
 // Compile assertion: every contract type appearing in the NixAdapter trait
@@ -177,10 +177,6 @@ fn gc_report_refused() -> GcReport {
     GcReport::new(GcStatus::RefusedUnderLease, vec![], 0).unwrap()
 }
 
-fn add_root_fixture() -> AddRootRequest {
-    AddRootRequest::new(RootName::new("gen-0007").unwrap(), store_path("hello-1.0"))
-}
-
 fn root_ref_fixture() -> RootRef {
     RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap()
 }
@@ -240,7 +236,7 @@ fn as_str(bytes: &[u8]) -> &str {
 // ===========================================================================
 
 /// A stub that returns a deterministic `Ok` report for every method, so the
-/// full eight-method signature set compiles and dispatch can be asserted.
+/// full seven-method signature set compiles and dispatch can be asserted.
 struct OkStub;
 
 impl NixAdapter for OkStub {
@@ -264,9 +260,6 @@ impl NixAdapter for OkStub {
     }
     fn gc(&self) -> Result<GcReport, NixAdapterError> {
         Ok(gc_report_collected())
-    }
-    fn add_root(&self, _: &AddRootRequest) -> Result<RootRef, NixAdapterError> {
-        Ok(root_ref_fixture())
     }
 }
 
@@ -295,9 +288,6 @@ impl NixAdapter for UnavailableStub {
         Err(NixAdapterError::Unavailable)
     }
     fn gc(&self) -> Result<GcReport, NixAdapterError> {
-        Err(NixAdapterError::Unavailable)
-    }
-    fn add_root(&self, _: &AddRootRequest) -> Result<RootRef, NixAdapterError> {
         Err(NixAdapterError::Unavailable)
     }
 }
@@ -330,7 +320,7 @@ macro_rules! assert_unknown_field_rejected {
 }
 
 // ===========================================================================
-// Tests: object safety, Send + Sync, eight-method dispatch
+// Tests: object safety, Send + Sync, seven-method dispatch
 // ===========================================================================
 
 #[test]
@@ -347,7 +337,7 @@ fn trait_is_object_safe_send_sync_and_dyn_compatible() {
 }
 
 #[test]
-fn stub_dispatches_all_eight_methods_through_dyn() {
+fn stub_dispatches_all_seven_methods_through_dyn() {
     let a: Arc<dyn NixAdapter> = Arc::new(OkStub);
 
     let v = a.version().expect("version");
@@ -386,12 +376,6 @@ fn stub_dispatches_all_eight_methods_through_dyn() {
     assert_eq!(g.status(), GcStatus::Collected);
     assert_eq!(g.collected(), &[store_path("unreachable-1")]);
     assert_eq!(g.freed_bytes(), 12_345);
-
-    let root = a.add_root(&add_root_fixture()).expect("add_root");
-    assert_eq!(
-        root.as_str(),
-        "/nix/var/nix/gcroots/pkg/users/1001/gen-0007"
-    );
 }
 
 #[test]
@@ -426,15 +410,11 @@ fn adapter_failure_path_is_closed_nix_adapter_error() {
         NixAdapterErrorCode::Unavailable
     );
     assert_eq!(a.gc().unwrap_err().code(), NixAdapterErrorCode::Unavailable);
-    assert_eq!(
-        a.add_root(&add_root_fixture()).unwrap_err().code(),
-        NixAdapterErrorCode::Unavailable
-    );
 }
 
 #[test]
-fn method_kind_has_exactly_eight_variants() {
-    assert_eq!(MethodKind::ALL.len(), 8);
+fn method_kind_has_exactly_seven_variants() {
+    assert_eq!(MethodKind::ALL.len(), 7);
     // Stable camelCase names round-trip.
     for m in MethodKind::ALL {
         let s = m.as_str();
@@ -616,16 +596,6 @@ fn gc_report_round_trips_collected_and_refused() {
 }
 
 #[test]
-fn add_root_request_round_trip() {
-    let c = JsonCodec::production();
-    let r = add_root_fixture();
-    let enc = r.encode().expect("encode");
-    let back = AddRootRequest::decode(&c, &enc).expect("decode");
-    assert_eq!(back.encode().expect("re-encode"), enc);
-    assert_eq!(back, r);
-}
-
-#[test]
 fn root_ref_round_trip() {
     let c = JsonCodec::production();
     let r = root_ref_fixture();
@@ -684,7 +654,6 @@ fn all_shapes() -> Vec<(&'static str, Vec<u8>)> {
             gc_report_collected().encode().unwrap(),
         ),
         ("gcReport(refused)", gc_report_refused().encode().unwrap()),
-        ("addRootRequest", add_root_fixture().encode().unwrap()),
         ("rootRef", root_ref_fixture().encode().unwrap()),
     ]
 }
@@ -811,7 +780,6 @@ fn decode_rejects_unknown_top_level_fields() {
     assert_unknown_field_rejected!(c, VerifyRequest, verify_request_fixture());
     assert_unknown_field_rejected!(c, VerifyReport, verify_report_fixture());
     assert_unknown_field_rejected!(c, GcReport, gc_report_collected());
-    assert_unknown_field_rejected!(c, AddRootRequest, add_root_fixture());
     assert_unknown_field_rejected!(c, RootRef, root_ref_fixture());
 }
 

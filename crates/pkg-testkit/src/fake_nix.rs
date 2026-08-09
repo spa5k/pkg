@@ -48,9 +48,9 @@ use std::fmt;
 use std::sync::Mutex;
 
 use pkg_nix::{
-    AddRootRequest, BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind,
-    NixAdapter, NixAdapterError, PathInfoReport, RealizationReport, RootRef, StorePath,
-    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind, NixAdapter,
+    NixAdapterError, PathInfoReport, RealizationReport, StorePath, SubstituteReport, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 
 use crate::transcript::TranscriptError;
@@ -109,13 +109,6 @@ enum Expectation {
         /// The owned canned result returned for a matching call.
         respond: Result<GcReport, NixAdapterError>,
     },
-    /// `add_root()` — exact request matcher + canned result.
-    AddRoot {
-        /// The exact request the head call must equal.
-        expect: AddRootRequest,
-        /// The owned canned result returned for a matching call.
-        respond: Result<RootRef, NixAdapterError>,
-    },
 }
 
 impl Expectation {
@@ -129,7 +122,6 @@ impl Expectation {
             Expectation::Build { .. } => MethodKind::Build,
             Expectation::Verify { .. } => MethodKind::Verify,
             Expectation::Gc { .. } => MethodKind::Gc,
-            Expectation::AddRoot { .. } => MethodKind::AddRoot,
         }
     }
 }
@@ -270,16 +262,6 @@ impl FakeNix {
     /// it.
     pub fn expect_gc(&self, respond: Result<GcReport, NixAdapterError>) -> &Self {
         self.push(Expectation::Gc { respond })
-    }
-
-    /// Expects exactly one `add_root()` call whose request equals `expect`
-    /// exactly, and returns the owned canned result for it.
-    pub fn expect_add_root(
-        &self,
-        expect: AddRootRequest,
-        respond: Result<RootRef, NixAdapterError>,
-    ) -> &Self {
-        self.push(Expectation::AddRoot { expect, respond })
     }
 
     /// Returns `Ok(())` if every expectation was consumed in order, or
@@ -438,26 +420,6 @@ impl NixAdapter for FakeNix {
             other => Err(NixAdapterError::unexpected_call(
                 other.kind(),
                 MethodKind::Gc,
-            )),
-        }
-    }
-
-    fn add_root(&self, req: &AddRootRequest) -> Result<RootRef, NixAdapterError> {
-        let head = self.take_head(MethodKind::AddRoot)?;
-        match head {
-            Expectation::AddRoot { expect, respond } => {
-                if req == &expect {
-                    respond
-                } else {
-                    Err(NixAdapterError::unexpected_call(
-                        MethodKind::AddRoot,
-                        MethodKind::AddRoot,
-                    ))
-                }
-            }
-            other => Err(NixAdapterError::unexpected_call(
-                other.kind(),
-                MethodKind::AddRoot,
             )),
         }
     }

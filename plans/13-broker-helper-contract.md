@@ -1,0 +1,207 @@
+# 13 — Broker/Helper Framing, Capability, and Lifecycle Contract
+
+> **Status:** Accepted and reference-implemented 2026-08-09 (PR-39). This document closes the
+> wire-design item left open by DR-017. Linux credential/socket bindings remain PR-27; macOS
+> launchd/XPC bindings remain PR-28; Real-Nix execution remains PR-36.
+
+## 1. Scope
+
+This document is the normative V1 contract for:
+
+- the product-owned CLI↔broker and broker↔helper frames;
+- transport-derived peer authentication;
+- opaque operation-handle lifecycle and cancellation;
+- the privileged `MaintenanceAdapter` grammar;
+- expiring, single-use repair capabilities;
+- broker-internal build/GC admission;
+- bundled-Nix child containment; and
+- broker/helper restart handshakes.
+
+It does not choose Linux/macOS socket APIs or service definitions, and it does not implement
+the real Nix command adapter. Those bindings consume this contract without widening it.
+
+## 2. Fixed frame envelope
+
+Every request and response is exactly one length-delimited frame. Integers use network byte
+order. The fixed 20-byte header is:
+
+| Offset | Width | Field | Required value |
+|---:|---:|---|---|
+| 0 | 4 | magic | ASCII `PKG1` |
+| 4 | 2 | protocol version | `1` |
+| 6 | 1 | channel | `1` CLI↔broker; `2` broker↔helper |
+| 7 | 1 | method | closed table below; zero/unknown refused |
+| 8 | 8 | request id | nonzero correlation id; never authorization |
+| 16 | 4 | payload length | exact remaining byte count, maximum 1 MiB |
+
+The payload is one strict JSON object selected by `(channel, direction, method)`. It is not a
+generic JSON-RPC envelope. Duplicate/unknown fields, trailing bytes, unknown enums, invalid
+promoted strong types, wrong channel/version/method, zero request ids, length mismatch, and
+oversized payloads fail before dispatch. The header version replaces a body `schemaVersion`;
+there is exactly one version discriminator, not two independently drifting ones.
+
+### 2.1 CLI↔broker methods
+
+| Method | Request | Response |
+|---:|---|---|
+| 1 | `Begin { operation }` where operation is a closed V1 class | `Started { handle }` |
+| 2 | `Poll { handle }` | `Status { running|completed|cancelled }` |
+| 3 | `Cancel { handle }` | empty `Cancelled` acknowledgement |
+
+The lifecycle frame contains no generic command payload. Each later command integration owns a
+new typed method/body or invokes the lifecycle API internally; it may not add `argv`, expression,
+flake, option, environment, substituter, trust-key, arbitrary path, or arbitrary verb fields.
+
+### 2.2 Broker↔helper methods
+
+| Method | Request | Response |
+|---:|---|---|
+| 1 | validated complete `RootSet` | `RootSetReport` |
+| 2 | `{ ownerUid, generation }`, no filesystem path | empty removal acknowledgement |
+| 3 | validated server-side `VerifiedRepairScope` | opaque maintenance capability |
+| 4 | opaque maintenance capability only | sanitized typed per-path outcomes |
+
+Method 3 transports the broker's already verified scope to helper-private state. Method 4 never
+repeats caller-selected paths or knobs: execution authority is recovered only from the helper's
+server-side capability record.
+
+## 3. Peer authentication is sideband, never payload
+
+- CLI→broker: the broker obtains the real uid from the OS transport. Any payload/metadata uid
+  claim is absent; the in-process reference has separate authenticated/claimed lanes solely to
+  prove an impersonation mismatch is rejected.
+- Broker→helper: the helper accepts only the configured unprivileged broker service uid or the
+  platform-equivalent authorized-client identity. End-user CLI connections are impossible.
+- Request ids, operation handles, and capability bytes do not authenticate a transport peer.
+- PR-27 binds these facts to Linux `SO_PEERCRED` and systemd-owned endpoints. PR-28 binds them
+  to the accepted launchd/XPC authorized-client mechanism. Neither transport may deserialize a
+  request before peer authentication succeeds.
+
+## 4. Operation lifecycle
+
+An operation handle is an opaque `op_` plus 256-bit lowercase token minted from fresh
+broker-private entropy, the broker epoch, a monotonic counter, caller uid, and operation class.
+The raw handle is authorization-sensitive and has redacted `Debug` output.
+
+- A handle is bound to one authenticated uid and one broker epoch.
+- The fixed reference lifetime is 30 minutes; expiry releases every held admission gate.
+- Poll/cancel by another uid returns the same closed invalid-handle failure as an unknown handle.
+- Completion, cancellation, expiry, and CLI disconnect release the build lease, GC lease, and
+  every shared GC-inhibit permit held by that operation.
+- Broker restart rotates entropy and empties handles and admission. Old sessions return
+  `SessionRestarted`; no operation silently resumes.
+- The durable journal remains authoritative for later crash recovery. An in-memory handle is
+  never evidence that a state mutation committed.
+
+## 5. Privileged maintenance grammar
+
+`MaintenanceAdapter` is object-safe, `Send + Sync`, separate from `NixAdapter`, and exposes
+exactly three borrowed-input methods:
+
+```rust
+publish_root_set(&RootSet) -> RootSetReport
+remove_root_set(&RemoveRootSetRequest) -> ()
+repair_store_paths(&RepairStorePathsRequest) -> RepairStorePathsReport
+```
+
+`NixAdapter` has seven unprivileged methods and no repair or root-write operation.
+
+- `RootSet` is nonempty, capped at 4096 entries, sorted by traversal-safe `RootName`, rejects
+  duplicate names, and maps only to typed `StorePath` values.
+- Removal carries only authenticated owner uid plus canonical `gen-<digits>` id. The helper
+  derives the filesystem location.
+- The repair execution request contains only an opaque helper-issued capability.
+- There is no public helper input for raw filesystem paths, installables, derivations,
+  expressions, flakes, argv, options, environment overrides, substituters/keys, output
+  selection, or arbitrary verbs.
+
+The in-process helper models atomic root-set publication in memory. PR-27/28 implement the
+required staged temporary directory, complete symlink set, directory `fsync`, atomic `rename`,
+and parent `fsync` on the real filesystem.
+
+## 6. Maintenance capabilities
+
+A capability is a lowercase opaque 256-bit token with redacted `Debug`. Its helper-private
+record binds all of:
+
+- authenticated caller uid;
+- an existing pkg-owned rooted generation;
+- the nonempty, sorted, de-duplicated full verified damage `StorePath` set (cap 4096);
+- build-plan digest for `mode=build`, absent for `mode=cacheOnly`;
+- nonzero policy version;
+- exact repair mode; and
+- helper epoch, broker epoch, and fixed five-minute expiry.
+
+Issuance refuses an unrooted generation, cross-uid scope, empty/oversized path set, or mode/plan
+mismatch. Redemption removes the record before execution. Reuse reports replay; expiry, unknown
+token, removed generation, cross-uid use, helper restart, or broker restart fail closed. Neither
+capabilities nor consumed-token memory survive restart. Durable root sets do survive restart.
+
+Phase A/B semantics remain those in plans 05/09: cache-only executes with `max-jobs=0` and empty
+builders; build mode requires the ordinary preview/approval and plan digest. PR-30 supplies the
+real state resolution, re-derivation, journal, final verification, and backend execution.
+
+## 7. Machine-global admission
+
+The broker owns one in-memory admission controller:
+
+- one exclusive local-build holder, available only to `Build` and `Repair` operations;
+- one exclusive GC holder, available only to `Gc` operations; and
+- shared GC-inhibit holders, available only to `Build`, `Activate`, and `Repair` operations.
+
+GC cannot begin while any inhibitor exists; inhibitors cannot begin while GC is active. All
+permits are operation-handle state and release on completion/cancel/disconnect/expiry/restart.
+There is no backing-file `flock`. The existing per-user state-mutation lease remains a separate
+filesystem lock.
+
+## 8. Bundled-Nix child containment
+
+The broker constructs child policy once from an exact absolute executable matching
+`/opt/pkg/nix/<validated-version>/bin/nix`; callers cannot select it per operation. Launchers:
+
+- call `env_clear` and install only `HOME=/var/empty`, the fixed managed `NIX_CONFIG`,
+  `NIX_REMOTE=daemon`, and `PATH=/usr/bin:/bin`;
+- create a distinct process group;
+- on cancellation send `SIGTERM` to the group, wait the fixed five-second grace, then `SIGKILL`;
+- accept argv only from typed adapter methods, never from the framed request; and
+- therefore cannot forward `--expr`, `--impure`, substituter/key, flake-registry, environment,
+  or arbitrary option input.
+
+Real spawning and signal code lands with the Real-Nix adapter. The PR-39 reference exposes only
+the immutable policy, so it cannot accidentally become a raw-process API.
+
+## 9. Restart handshake
+
+1. Supervisor restarts broker and/or helper.
+2. Broker rotates its epoch/entropy and clears operations/admission.
+3. Helper restart rotates helper epoch/entropy; broker restart notification rotates broker epoch.
+   Either clears issued/consumed capabilities but preserves durable root sets.
+4. Broker re-authenticates to helper using transport peer identity.
+5. CLI re-authenticates to broker using transport uid and opens a new operation.
+6. Recovery re-reads durable journal/state. Cache-only repair may resume only after a fresh
+   Phase-0 verify; build repair requires fresh preview, approval, plan digest, and capability.
+
+There is no resume-by-token path.
+
+## 10. Contract evidence
+
+The reference tests prove:
+
+- exact request/response round trips on both channels;
+- rejection of wrong magic/version/channel/method/length, extended JSON, raw option/path/flake
+  payloads, forged uppercase tokens, and every truncated header length;
+- uid impersonation and non-broker helper peers fail before dispatch;
+- capability replay, expiry, cross-uid use, unrooted generation, helper restart, and broker
+  restart fail closed;
+- cancellation/disconnect/expiry/restart release build and GC admission;
+- a FakeNix Phase-0 corruption result flows through a framed in-process capability repair; and
+- child policy has a canonical bundled binary, scrubbed environment, process-group termination,
+  and no public argv surface.
+
+## 11. Downstream ownership
+
+- PR-27: Linux authenticated transports, helper filesystem implementation, systemd units.
+- PR-28: macOS authenticated transports, helper filesystem implementation, launchd/XPC.
+- PR-22/26: integrate GC/build gates.
+- PR-30: repair state resolution, capabilities, journaling, and real Phase A/B execution.
+- PR-36: Real-Nix adapter and child launcher, consuming the immutable containment policy.

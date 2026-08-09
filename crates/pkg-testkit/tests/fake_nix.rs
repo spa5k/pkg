@@ -9,7 +9,7 @@
 //!
 //! Coverage map (acceptance criterion #8):
 //!
-//! - All eight `NixAdapter` methods return their canned results.
+//! - All seven `NixAdapter` methods return their canned results.
 //! - Exact first-in-first-out ordering.
 //! - Exact request matching for every request-bearing method.
 //! - Canned `Ok` and canned `Err` results.
@@ -28,13 +28,12 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use pkg_nix::{
-    AcceptedFormats, AddRootRequest, AttributePath, BuildApprovalReceipt, BuildReport,
-    BuildRequest, BuildStatus, DerivationPath, EvalRealizeRequest, FormatVersion, GcReport,
-    GcStatus, MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
-    NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName, OutputSelection,
-    PathInfoReport, PathVerifyResult, RealizationReport, RootName, RootRef, Signature, StorePath,
-    SubstituteOutcome, SubstituteReport, System, TrustStatus, VerifyMode, VerifyReport,
-    VerifyRequest, VersionInfo,
+    AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
+    DerivationPath, EvalRealizeRequest, FormatVersion, GcReport, GcStatus, MalformedKind,
+    MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixAdapterErrorCode,
+    NixVersion, NixpkgsRevision, OperationId, OutputName, OutputSelection, PathInfoReport,
+    PathVerifyResult, RealizationReport, Signature, StorePath, SubstituteOutcome, SubstituteReport,
+    System, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 use pkg_testkit::{FakeNix, TranscriptError};
 
@@ -146,14 +145,6 @@ fn gc_report_collected() -> GcReport {
     .unwrap()
 }
 
-fn add_root_fixture() -> AddRootRequest {
-    AddRootRequest::new(RootName::new("gen-0007").unwrap(), store_path("hello-1.0"))
-}
-
-fn root_ref_fixture() -> RootRef {
-    RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap()
-}
-
 fn eval_request_default_outputs() -> EvalRealizeRequest {
     EvalRealizeRequest::new(
         AttributePath::new("python311.pkgs.requests").unwrap(),
@@ -166,11 +157,11 @@ fn eval_request_default_outputs() -> EvalRealizeRequest {
 }
 
 // ===========================================================================
-// Tests: all eight methods return canned results, in exact FIFO order.
+// Tests: all seven methods return canned results, in exact FIFO order.
 // ===========================================================================
 
 #[test]
-fn all_eight_methods_return_canned_results_in_fifo_order() {
+fn all_seven_methods_return_canned_results_in_fifo_order() {
     let fake = FakeNix::new();
     fake.expect_version(Ok(version_info(33)))
         .expect_eval_realize(eval_request_default_outputs(), Ok(realization_fixture()))
@@ -181,8 +172,7 @@ fn all_eight_methods_return_canned_results_in_fifo_order() {
         )
         .expect_build(build_request_fixture(), Ok(build_report_built()))
         .expect_verify(verify_request_fixture(), Ok(verify_report_fixture()))
-        .expect_gc(Ok(gc_report_collected()))
-        .expect_add_root(add_root_fixture(), Ok(root_ref_fixture()));
+        .expect_gc(Ok(gc_report_collected()));
 
     // The calls must happen in exactly the scripted order (FIFO).
     assert_eq!(fake.version().unwrap().nix_version().as_str(), "2.33.5");
@@ -206,10 +196,6 @@ fn all_eight_methods_return_canned_results_in_fifo_order() {
         1
     );
     assert_eq!(fake.gc().unwrap().status(), GcStatus::Collected);
-    assert_eq!(
-        fake.add_root(&add_root_fixture()).unwrap().as_str(),
-        "/nix/var/nix/gcroots/pkg/users/1001/gen-0007"
-    );
 
     // Everything was consumed in order.
     assert_eq!(fake.assert_exhausted(), Ok(()));
@@ -335,26 +321,6 @@ fn verify_matches_exact_request_only() {
     let other = VerifyRequest::new(vec![store_path("hello-1.0")], VerifyMode::Shallow).unwrap();
     assert_eq!(
         fake.verify(&other).unwrap_err().mismatch_summary(),
-        Some("request mismatch")
-    );
-    assert_eq!(fake.assert_exhausted(), Ok(()));
-}
-
-#[test]
-fn add_root_matches_exact_request_only() {
-    let req = add_root_fixture();
-    let fake = FakeNix::new();
-    fake.expect_add_root(req.clone(), Ok(root_ref_fixture()))
-        .expect_add_root(req.clone(), Ok(root_ref_fixture()));
-    assert_eq!(
-        fake.add_root(&req).unwrap().as_str(),
-        "/nix/var/nix/gcroots/pkg/users/1001/gen-0007"
-    );
-
-    // A different root name mismatches the fresh head.
-    let other = AddRootRequest::new(RootName::new("gen-0008").unwrap(), store_path("hello-1.0"));
-    assert_eq!(
-        fake.add_root(&other).unwrap_err().mismatch_summary(),
         Some("request mismatch")
     );
     assert_eq!(fake.assert_exhausted(), Ok(()));

@@ -2,7 +2,7 @@
 //! layers 1–4 (Fake) (`plans/09` §4).
 //!
 //! PR-3 slice 2 ships the **deterministic exact-FIFO transcript replay** engine
-//! defined in `plans/09` §4.4: a [`FakeNix`] that implements all eight
+//! defined in `plans/09` §4.4: a [`FakeNix`] that implements all seven
 //! [`NixAdapter`] methods and replays a scripted,
 //! first-in-first-out transcript of expectations with byte-stable, hermetic
 //! outputs — **no Nix process, no network, no timing** (`plans/09` §3, §4.4).
@@ -59,7 +59,7 @@ pub use transcript::TranscriptError;
 // them. Construction helpers (NixVersion, OutputName, …) remain available by
 // depending on `pkg-nix` directly.
 pub use pkg_nix::{
-    AddRootRequest, BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind,
-    NixAdapter, NixAdapterError, PathInfoReport, RealizationReport, RootRef, StorePath,
-    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind, NixAdapter,
+    NixAdapterError, PathInfoReport, RealizationReport, StorePath, SubstituteReport, VerifyReport,
+    VerifyRequest, VersionInfo,
 };

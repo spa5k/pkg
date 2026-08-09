@@ -8,11 +8,12 @@
 //! - [`NixVersion`] / [`VersionInfo`]: the managed-Nix version and the upstream
 //!   per-command JSON format versions an adapter accepts/rejects
 //!   (`plans/01` §11, `plans/09` §4.1).
-//! - The eight methods' request/report types, all validated `pkg-nix` types that
+//! - The seven unprivileged methods' request/report types, plus maintenance
+//!   building blocks, all validated `pkg-nix` types that
 //!   **compose `pkg-core` strong types** (`StorePath`, `NarHash`,
 //!   `AttributePath`, `System`, `NixpkgsRevision`, `OutputSelection`, …).
-//! - [`RootName`] / [`AddRootRequest`] / [`RootRef`]: validated, traversal-safe
-//!   GC-root naming.
+//! - [`RootName`] / [`RootRef`]: validated, traversal-safe maintenance
+//!   root-set naming.
 //! - [`JsonCodec`]: the public size-capped decode boundary.
 //!
 //! # Serialization discipline
@@ -656,13 +657,11 @@ pub enum MethodKind {
     Verify,
     /// `gc()`.
     Gc,
-    /// `add_root()`.
-    AddRoot,
 }
 
 impl MethodKind {
-    /// All eight methods, in canonical order.
-    pub const ALL: [MethodKind; 8] = [
+    /// All seven unprivileged methods, in canonical order.
+    pub const ALL: [MethodKind; 7] = [
         MethodKind::Version,
         MethodKind::EvalRealize,
         MethodKind::PathInfo,
@@ -670,7 +669,6 @@ impl MethodKind {
         MethodKind::Build,
         MethodKind::Verify,
         MethodKind::Gc,
-        MethodKind::AddRoot,
     ];
 
     /// Returns the stable camelCase name of this method.
@@ -684,7 +682,6 @@ impl MethodKind {
             MethodKind::Build => "build",
             MethodKind::Verify => "verify",
             MethodKind::Gc => "gc",
-            MethodKind::AddRoot => "addRoot",
         }
     }
 }
@@ -707,7 +704,6 @@ impl FromStr for MethodKind {
             "build" => Ok(MethodKind::Build),
             "verify" => Ok(MethodKind::Verify),
             "gc" => Ok(MethodKind::Gc),
-            "addRoot" => Ok(MethodKind::AddRoot),
             _ => Err(()),
         }
     }
@@ -2264,7 +2260,7 @@ impl GcReport {
 }
 
 // ===========================================================================
-// add_root
+// maintenance root-set path components
 // ===========================================================================
 
 /// A validated GC-root name (`plans/01` §11.1). Rejects path separators,
@@ -2326,68 +2322,8 @@ impl fmt::Display for RootName {
     }
 }
 
-/// A request to create a managed GC root (`plans/09` §4.1). Carries a validated
-/// [`RootName`] and a store target — **not** a user-supplied arbitrary
-/// filesystem path. The real implementation is an authenticated root-helper
-/// filesystem operation (later PR).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddRootRequest {
-    name: RootName,
-    target: StorePath,
-}
-
-impl AddRootRequest {
-    /// Constructs an add-root request from validated components (infallible).
-    #[must_use]
-    pub fn new(name: RootName, target: StorePath) -> Self {
-        Self { name, target }
-    }
-
-    /// Returns the validated root name.
-    #[must_use]
-    pub fn name(&self) -> &RootName {
-        &self.name
-    }
-
-    /// Returns the store target.
-    #[must_use]
-    pub fn target(&self) -> &StorePath {
-        &self.target
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct AddRootRequestWire {
-    schema_version: u32,
-    name: String,
-    target: String,
-}
-
-impl AddRootRequest {
-    /// Deterministically encodes this request to JSON bytes.
-    pub fn encode(&self) -> Result<Vec<u8>, NixAdapterError> {
-        let dto = AddRootRequestWire {
-            schema_version: SCHEMA_VERSION_CURRENT,
-            name: self.name.as_str().to_owned(),
-            target: self.target.as_str().to_owned(),
-        };
-        to_json(&dto)
-    }
-
-    /// Size-checks, strictly parses, schema-checks, and promotes JSON bytes into
-    /// a validated [`AddRootRequest`].
-    pub fn decode(codec: &JsonCodec, bytes: &[u8]) -> Result<Self, NixAdapterError> {
-        let dto: AddRootRequestWire = parse_dto(codec, bytes)?;
-        check_schema(dto.schema_version)?;
-        let name = RootName::new(&dto.name)?;
-        let target = StorePath::new(&dto.target).map_err(|_| invalid("invalid root target"))?;
-        Ok(Self::new(name, target))
-    }
-}
-
-/// The reference returned by `add_root()`: the canonical managed GC-root
-/// symlink path computed by the adapter (`plans/09` §4.1, `plans/01` §9.1).
+/// The canonical managed generation-root reference returned by the privileged
+/// maintenance adapter (`plans/09` §4.1.2, `plans/01` §9.1).
 ///
 /// This is an **adapter-computed** output. It is validated as the canonical
 /// managed gcroot layout `/nix/var/nix/gcroots/pkg/users/<numeric-uid>/...`
@@ -2580,7 +2516,7 @@ mod tests {
             assert_eq!(MethodKind::from_str(s).unwrap(), m);
             assert_eq!(m.to_string(), s);
         }
-        assert_eq!(MethodKind::ALL.len(), 8);
+        assert_eq!(MethodKind::ALL.len(), 7);
         assert!(MethodKind::from_str("nope").is_err());
     }
 

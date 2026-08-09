@@ -1,7 +1,7 @@
 # `pkg` Plan Set — Canonical Entrypoint
 
-> **Status:** Draft (planning only — no implementation code). This `README.md` is the
-> **index and navigator** for the reconciled plan set `00`–`12`. It owns no new decisions;
+> **Status:** Active V1 plan and implementation navigator. This `README.md` is the
+> **index and navigator** for the reconciled plan set `00`–`13`. It owns no new decisions;
 > it summarizes and links. Every binding decision lives in
 > [`00-overview-and-decisions.md`](00-overview-and-decisions.md); every open go/no-go question
 > lives in [`12-open-decisions-and-risks.md`](12-open-decisions-and-risks.md).
@@ -61,7 +61,7 @@ is **per-user, keyed by OS uid**, owned by that user. Two narrow, distinct privi
 privileged root-helper/service** (the **sole root-set filesystem writer** that atomically publishes/removes per-output root sets, handles service control / runtime upgrade / `/nix` ownership, and is the **one exceptional maintenance client** that runs the **two-phase `nix store repair`** as root — the user CLI never calls it directly). The raw Nix daemon socket is never
 exposed to users; the broker is an **allowed-user but not a trusted-user** (root is the sole
 trusted-user; detail in docs 01/07/08). `pkg repair` is **user-initiated and verified non-atomic** (INV-12): cache repair deletes the live path before restore and local repair moves the old output aside before replacement, so `pkg repair` warns affected commands may be temporarily unavailable, journals per path, and marks a path repaired only after a final read-only verify (raw Nix logs are **service-private**; public/user-state logs are sanitized NDJSON). This hidden-Nix broker boundary is **accepted**; its
-detailed framed RPC / peer-auth / operation-lifecycle / child-containment / capability-storage+expiry / restart-handshake design is a **blocking architecture milestone before Real Nix execution**, tracked as **PR-39** in doc 11 (the wire design itself remains open — DR-017).
+detailed framed RPC / peer-auth / operation-lifecycle / child-containment / capability-storage+expiry / restart-handshake contract is fixed by **PR-39** and documented normatively in doc 13. Real OS transports and Real-Nix execution remain downstream work (DR-017).
 
 ---
 
@@ -98,6 +98,8 @@ Document status line is always **Draft (planning only — no implementation code
    order.
 8. [`11-pr-roadmap.md`](11-pr-roadmap.md) and [`12-open-decisions-and-risks.md`](12-open-decisions-and-risks.md)
    — the build plan and the living registry of decisions, risks, and go/no-go spikes.
+9. [`13-broker-helper-contract.md`](13-broker-helper-contract.md) — the accepted framed-RPC,
+   maintenance capability, admission, containment, and restart contract downstream transports implement.
 
 ---
 
@@ -116,8 +118,9 @@ Document status line is always **Draft (planning only — no implementation code
 | 08 | [Security Model](08-security-model.md) | Threat catalog (T-*), trust boundaries, control matrix, crypto/key policy | 00–07 |
 | 09 | [Testing & Validation](09-testing-and-validation.md) | Test pyramid, `FakeNix`/`pkg-testkit`, parity job, CI lanes, release gates | 00–08 |
 | 10 | [Release & Operations](10-release-and-operations.md) | Artifacts/topology, release gates, key custody, channel ops, compat policy, incident runbooks | 00–09 |
-| 11 | [PR Roadmap](11-pr-roadmap.md) | PR DAG (PR-0…PR-38), milestones, parallelism matrix, critical path, guardrails | 00–10 |
+| 11 | [PR Roadmap](11-pr-roadmap.md) | PR DAG (PR-0…PR-39), milestones, parallelism matrix, critical path, guardrails | 00–10 |
 | 12 | [Open Decisions & Risks](12-open-decisions-and-risks.md) | **DR-*** decision records, **S1–S5** spike registry, **RISK-*** register, v1 defaults/deferrals | 00–11 |
+| 13 | [Broker/Helper Contract](13-broker-helper-contract.md) | Framing, peer auth, lifecycle, `MaintenanceAdapter`, capabilities, admission, containment, restart | 00, 01, 04, 05, 08, 09, 11, 12 |
 
 > Schema-authority rule (from 00 §7): the *canonical JSON shape* of each artifact is owned by
 > exactly one doc; **doc 05 owns all versioning/migrations**. Doc 01 owns the *names*;

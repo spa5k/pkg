@@ -36,8 +36,8 @@
 //! journal binding, single-use verification, and rejection (`plans/09` §4.1).
 
 use crate::contract::{
-    AddRootRequest, BuildReport, BuildRequest, EvalRealizeRequest, GcReport, PathInfoReport,
-    RealizationReport, RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    BuildReport, BuildRequest, EvalRealizeRequest, GcReport, PathInfoReport, RealizationReport,
+    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use crate::error::NixAdapterError;
 use pkg_core::identity::StorePath;
@@ -46,7 +46,7 @@ use pkg_core::identity::StorePath;
 /// (`plans/09` §4.1).
 ///
 /// See the [module docs](self) for the object-safety, `Send + Sync`, and
-/// no-per-call-knobs guarantees. There are exactly eight methods; the
+/// no-per-call-knobs guarantees. There are exactly seven methods; the
 /// [`MethodKind`](crate::MethodKind) enum enumerates them in the same order for
 /// the `pkg-testkit` transcript replay engine (`plans/09` §4.4).
 pub trait NixAdapter: Send + Sync {
@@ -76,8 +76,4 @@ pub trait NixAdapter: Send + Sync {
     /// Collect unreachable paths. Consults the on-disk gcroots tree — there is
     /// no roots argument (`plans/01` ARCH-INV-04, `plans/05` T-STATE-4).
     fn gc(&self) -> Result<GcReport, NixAdapterError>;
-
-    /// Create a managed gcroot via the authenticated root-helper filesystem op.
-    /// Returns the canonical managed gcroot [`RootRef`].
-    fn add_root(&self, req: &AddRootRequest) -> Result<RootRef, NixAdapterError>;
 }

@@ -438,6 +438,8 @@ flowchart TD
 > The verified **non-atomic** residual is retained as **RISK-22** (`12`).
 
 #### PR-39 — Broker/helper framed-RPC, peer-auth, operation-lifecycle, child-containment, capability & restart-handshake design (early contract milestone)
+- **Status:** **Completed 2026-08-09.** The accepted contract and reference implementation are
+  recorded in `13-broker-helper-contract.md`; Linux/macOS transport bindings remain PR-27/28.
 - **Purpose:** land the **detailed framed RPC + wire/capability design** that sibling docs flag as
   "the next milestone" (`01` ARCH-INV-01/05/06/07; `07` I7; `04` §5.3.1; `12` DR-017) so the
   accepted broker/helper boundary is **not left vague** before any broker/helper/platform
@@ -467,8 +469,7 @@ flowchart TD
   permit** (AC-S23) — as in-memory broker state (no backing-file `flock`): the gc command (PR-22,
   reclamation logic only) and the build engine (PR-26) **integrate** these gates at runtime, repair
   (PR-30) holds its GC-inhibit permit from here, and the real broker hosts them once its transports
-  land (PR-27/28). *(Exact transport/token-format bytes are decided inside this PR
-  and recorded in the ADR; the planning docs deliberately leave them open — DR-017.)*
+  land (PR-27/28). The fixed frame and token grammar is recorded in doc 13 and DR-017.
 - **Depends:** PR-3 (the `NixAdapter` contract + `StorePath`/JSON surface whose privileged
   counterpart this defines — PR-3 itself depends on PR-2, so the pkg-core domain types are
   satisfied transitively), PR-10 (state schema: the generation/closure types the capability

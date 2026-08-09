@@ -23,7 +23,7 @@
 //!
 //! # Design rules enforced here
 //!
-//! - **Object-safe, `Send + Sync` trait** with eight methods and **borrowed**
+//! - **Object-safe, `Send + Sync` unprivileged trait** with seven methods and **borrowed**
 //!   inputs (`plans/09` §4.1).
 //! - **No per-call trust/flag knobs.** None of `--substituters`,
 //!   `--trusted-public-keys`, `--sandbox`, `--builders`, `--max-jobs`, an
@@ -45,19 +45,36 @@
 #![deny(missing_docs)]
 
 pub mod adapter;
+pub mod broker;
 pub mod contract;
 pub mod error;
+pub mod framing;
+pub mod maintenance;
 pub mod managed;
 
 pub use adapter::NixAdapter;
+pub use broker::{
+    AdmissionSnapshot, AuthenticatedCaller, BrokerError, BrokerErrorCode, BrokerOperationKind,
+    ChildContainmentPolicy, InProcessBroker, InProcessCallerPeer, OperationHandle, OperationStatus,
+};
 pub use contract::{
-    AcceptedFormats, AddRootRequest, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
+    AcceptedFormats, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
     EvalRealizeRequest, FormatVersion, GcReport, GcStatus, JsonCodec, MethodKind, NarIntegrity,
     NixVersion, OperationId, PathInfoReport, PathVerifyResult, RealizationReport, RootName,
     RootRef, SchemaVersion, Signature, SubstituteOutcome, SubstituteReport, TrustStatus,
     VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
+pub use framing::{
+    BrokerHelperRequest, BrokerHelperResponse, CliBrokerRequest, CliBrokerResponse, FrameError,
+    FrameErrorCode, ProductFrameCodec,
+};
+pub use maintenance::{
+    AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,
+    MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
+    RemoveRootSetRequest, RepairMode, RepairOutcomeKind, RepairPathOutcome, RepairStorePathsReport,
+    RepairStorePathsRequest, RootSet, RootSetEntry, RootSetReport, VerifiedRepairScope,
+};
 pub use managed::daemon::{DaemonError, DaemonErrorCode, ManagedDaemon};
 pub use managed::detect::{
     DetectionDisposition, DetectionFinding, DetectionReport, FindingKind, detect_unmanaged_nix,
@@ -75,7 +92,7 @@ pub use managed::provision::{
 
 // Focused re-exports of the `pkg-core` strong types that appear in this crate's
 // public signatures, so consumers need only depend on `pkg-nix` to name them.
-pub use pkg_core::channel::NixpkgsRevision;
+pub use pkg_core::channel::{NixpkgsRevision, PolicyVersion};
 pub use pkg_core::identity::{DerivationPath, NarHash, OutputName, StorePath};
 pub use pkg_core::selector::{AttributePath, OutputSelection};
 pub use pkg_core::state::Digest;
