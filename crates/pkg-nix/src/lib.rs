@@ -60,10 +60,10 @@ pub use broker::{
 };
 pub use contract::{
     AcceptedFormats, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
-    EvalRealizeRequest, FormatVersion, GcReport, GcStatus, JsonCodec, MethodKind, NarIntegrity,
-    NixVersion, OperationId, PathInfoReport, PathVerifyResult, RealizationReport, RootName,
-    RootRef, SchemaVersion, Signature, SubstituteOutcome, SubstituteReport, TrustStatus,
-    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    DerivationPlanReport, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport,
+    GcStatus, JsonCodec, MethodKind, NarIntegrity, NixVersion, OperationId, PathInfoReport,
+    PathVerifyResult, RootName, RootRef, SchemaVersion, Signature, SubstituteOutcome,
+    SubstituteReport, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
@@ -102,3 +102,4 @@ pub use pkg_core::identity::{DerivationPath, NarHash, OutputName, StorePath};
 pub use pkg_core::selector::{AttributePath, OutputSelection};
 pub use pkg_core::state::Digest;
 pub use pkg_core::system::System;
+pub use pkg_core::version::PackageVersion;

@@ -29,11 +29,12 @@ use std::sync::Arc;
 
 use pkg_nix::{
     AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
-    DerivationPath, EvalRealizeRequest, FormatVersion, GcReport, GcStatus, MalformedKind,
-    MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixAdapterErrorCode,
-    NixVersion, NixpkgsRevision, OperationId, OutputName, OutputSelection, PathInfoReport,
-    PathVerifyResult, RealizationReport, Signature, StorePath, SubstituteOutcome, SubstituteReport,
-    System, TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    DerivationPath, DerivationPlanReport, Digest, EvaluateDerivationRequest, EvaluatedDerivation,
+    FormatVersion, GcReport, GcStatus, MalformedKind, MethodKind, NarHash, NarIntegrity,
+    NixAdapter, NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId,
+    OutputName, OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, Signature,
+    StorePath, SubstituteOutcome, SubstituteReport, System, TrustStatus, VerifyMode, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 use pkg_testkit::{FakeNix, TranscriptError};
 
@@ -82,11 +83,29 @@ fn version_info(major: u32) -> VersionInfo {
     )
 }
 
-fn realization_fixture() -> RealizationReport {
-    let out = store_path("hello-1.0");
+fn realization_fixture() -> DerivationPlanReport {
+    let root = drv("hello-1.0");
     let mut outputs = BTreeMap::new();
-    outputs.insert(OutputName::new("out").unwrap(), out.clone());
-    RealizationReport::new(out, drv("hello-1.0"), outputs).unwrap()
+    outputs.insert(OutputName::new("out").unwrap(), store_path("hello-1.0"));
+    let evaluated = EvaluatedDerivation::new(
+        root.clone(),
+        "hello-1.0".into(),
+        System::X8664Linux,
+        outputs,
+        Digest::from_bytes([1; 32]),
+        false,
+    )
+    .unwrap();
+    DerivationPlanReport::new(
+        4,
+        root,
+        vec![OutputName::new("out").unwrap()],
+        vec![evaluated],
+        Digest::from_bytes([2; 32]),
+        "hello".into(),
+        PackageVersion::new("1.0"),
+    )
+    .unwrap()
 }
 
 fn path_info_fixture() -> PathInfoReport {
@@ -145,8 +164,8 @@ fn gc_report_collected() -> GcReport {
     .unwrap()
 }
 
-fn eval_request_default_outputs() -> EvalRealizeRequest {
-    EvalRealizeRequest::new(
+fn eval_request_default_outputs() -> EvaluateDerivationRequest {
+    EvaluateDerivationRequest::new(
         AttributePath::new("python311.pkgs.requests").unwrap(),
         System::X8664Linux,
         nixpkgs_revision(),
@@ -164,7 +183,7 @@ fn eval_request_default_outputs() -> EvalRealizeRequest {
 fn all_seven_methods_return_canned_results_in_fifo_order() {
     let fake = FakeNix::new();
     fake.expect_version(Ok(version_info(33)))
-        .expect_eval_realize(eval_request_default_outputs(), Ok(realization_fixture()))
+        .expect_evaluate_derivation(eval_request_default_outputs(), Ok(realization_fixture()))
         .expect_path_info(store_path("hello-1.0"), Ok(path_info_fixture()))
         .expect_substitute(
             store_path("hello-1.0"),
@@ -176,8 +195,10 @@ fn all_seven_methods_return_canned_results_in_fifo_order() {
 
     // The calls must happen in exactly the scripted order (FIFO).
     assert_eq!(fake.version().unwrap().nix_version().as_str(), "2.33.5");
-    let r = fake.eval_realize(&eval_request_default_outputs()).unwrap();
-    assert_eq!(r.store_path(), &store_path("hello-1.0"));
+    let r = fake
+        .evaluate_derivation(&eval_request_default_outputs())
+        .unwrap();
+    assert_eq!(r.pname(), "hello");
     let pi = fake.path_info(&store_path("hello-1.0")).unwrap();
     assert_eq!(pi.references(), &[store_path("glibc-2.39")]);
     assert_eq!(
@@ -266,16 +287,16 @@ fn substitute_matches_exact_store_path_only() {
 }
 
 #[test]
-fn eval_realize_matches_exact_request_only() {
+fn evaluate_derivation_matches_exact_request_only() {
     let req = eval_request_default_outputs();
     let fake = FakeNix::new();
-    fake.expect_eval_realize(req.clone(), Ok(realization_fixture()))
-        .expect_eval_realize(req.clone(), Ok(realization_fixture()));
+    fake.expect_evaluate_derivation(req.clone(), Ok(realization_fixture()))
+        .expect_evaluate_derivation(req.clone(), Ok(realization_fixture()));
     // Matching request returns the canned result.
-    assert!(fake.eval_realize(&req).is_ok());
+    assert!(fake.evaluate_derivation(&req).is_ok());
 
     // A different-but-valid request mismatches the fresh head.
-    let other = EvalRealizeRequest::new(
+    let other = EvaluateDerivationRequest::new(
         AttributePath::new("ripgrep").unwrap(),
         System::Aarch64Darwin,
         nixpkgs_revision(),
@@ -283,7 +304,7 @@ fn eval_realize_matches_exact_request_only() {
         OutputSelection::default_selection(),
     )
     .unwrap();
-    let err = fake.eval_realize(&other).unwrap_err();
+    let err = fake.evaluate_derivation(&other).unwrap_err();
     assert_eq!(err.code(), NixAdapterErrorCode::UnexpectedCall);
     assert_eq!(err.mismatch_summary(), Some("request mismatch"));
     assert_eq!(fake.assert_exhausted(), Ok(()));
@@ -518,10 +539,10 @@ fn unexpected_extra_call_display_is_bounded_and_redacted() {
     // Debug.
     let fake = FakeNix::new();
     let err = fake
-        .eval_realize(&eval_request_default_outputs())
+        .evaluate_derivation(&eval_request_default_outputs())
         .unwrap_err();
     assert_eq!(err.code(), NixAdapterErrorCode::UnexpectedCall);
-    assert_eq!(err.actual_method(), Some(MethodKind::EvalRealize));
+    assert_eq!(err.actual_method(), Some(MethodKind::EvaluateDerivation));
     assert_eq!(err.mismatch_summary(), Some("extra call"));
     let display = err.to_string();
     let debug = format!("{err:?}");
@@ -529,8 +550,8 @@ fn unexpected_extra_call_display_is_bounded_and_redacted() {
         assert!(
             surface.contains("no expectation remained")
                 || surface.contains("extra call")
-                || surface.contains("evalRealize")
-                || surface.contains("EvalRealize"),
+                || surface.contains("evaluateDerivation")
+                || surface.contains("EvaluateDerivation"),
             "expected a truthful token in {surface:?}"
         );
         // The request's attribute path, revision, NAR hash, and store hash

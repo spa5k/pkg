@@ -68,7 +68,7 @@ flowchart TD
     P13[PR-13 fetch+verify pinned Nixpkgs]
     P14[PR-14 index build disposable]
     P15[PR-15 index query API]
-    P16[PR-16 resolver Selector->Realization]
+    P16[PR-16 resolver Selector->evaluated plan]
 
     P17[PR-17 substitute + sig/NAR verify]
     P18[PR-18 GC roots + activation + current]
@@ -558,14 +558,28 @@ flowchart TD
 - **Parallel:** no.
 - **Milestone:** M2.
 
-#### PR-16 — `pkg-core` resolver (Selector → Realization)
-- **Purpose:** map user intent to exact realization via the pinned Nixpkgs under pure eval
-  (`04`, `08` T-EVAL).
-- **Owns:** `crates/pkg-core/src/resolver.rs` + tests.
+#### PR-16 — `pkg-resolver` (Selector → evaluated derivation plan)
+- **Status:** **Completed 2026-08-09.** A dependency-safe orchestration crate now
+  resolves canonical attributes using the disposable index when its
+  channel/revision/system identity matches, falls back to direct conservative
+  attribute syntax when the index is missing or incomplete, and performs one
+  evaluate-only adapter call against the verified source. The normalized JSON
+  v4 derivation closure contains expected output paths but cannot claim they are
+  realized; evaluated pname/version are authoritative and user version intent
+  is enforced after evaluation.
+- **Purpose:** map user intent to a deterministic evaluate-only derivation plan
+  via pinned Nixpkgs under pure evaluation (`04`, `08` T-EVAL).
+- **Owns:** `crates/pkg-resolver`; the evaluate-only request/report boundary in
+  `crates/pkg-nix`; corresponding `pkg-testkit` transcript support.
 - **Depends:** PR-3 (adapter), PR-13, PR-15.
-- **Migration/compat:** the intent-vs-realization contract (`00`,`05`).
-- **Tests & gates:** G-UNIT + G-INTEGRATION (Fake Nix eval, pure-eval enforced, impure attrs rejected).
-- **Demo:** resolve `openssl` selector → exact realization + closure preview.
+- **Migration/compat:** this intentionally corrects the original `pkg-core`
+  placement, which would create a dependency cycle (`pkg-index` and `pkg-nix`
+  already depend on `pkg-core`), and preserves the intent-vs-realization
+  contract by deferring `Realization` until acquisition (`00`,`05`).
+- **Tests & gates:** G-UNIT + G-INTEGRATION (exact FakeNix evaluate-only call,
+  missing-index direct attr, alias lookup, ambiguity, source/version mismatch,
+  adapter/impure-eval failure closed and redacted).
+- **Demo:** resolve `ripgrep` → exact evaluated derivation closure; no store mutation.
 - **Reviewers:** primary E; cross F; **A** (security: T-EVAL-1/2).
 - **Rollback:** revert.
 - **Parallel:** no.
@@ -1008,7 +1022,7 @@ the per-user state-mutation `flock` only).**
 | **M0.5 Spikes** | 4–8 | All five DRs (DR-001..005) accepted; no irreversible architecture locked before this. |
 | **M1 Managed Nix & state** | 9–12 | Managed Nix can be detected/provisioned in a temp root; state schema v1 + journal + integrity landed; channel verify works on fixtures. |
 | **M1.5 Broker/helper contract & capability** | 39 | Early BLOCKING design/contract milestone: broker↔CLI and broker↔helper framed RPC, peer auth, operation lifecycle, child containment, opaque expiring single-use capability storage/expiry, restart handshake, **and the broker-internal in-memory admission gates (machine-wide build admission lease + GC admission gate / GC-inhibit permit, AC-S19/S23)** — **designed + reference-implemented on FakeNix/in-process** (real OS transports land in PR-27/28); adapter split enforced (NixAdapter has no repair; MaintenanceAdapter/helper owns repair). **Unconditional BLOCKING gate for PR-27/28 (broker/helper integration), PR-30 (two-phase repair), and PR-36 (Real-Nix execution)** — full two-phase mutating repair is an accepted V1 milestone (DR-017; non-atomic residual RISK-22). |
-| **M2 Catalog & resolve** | 13–16 | Pinned Nixpkgs realized + narHash-verified; disposable deterministic index built/queried; Selector→Realization resolves under pure eval. |
+| **M2 Catalog & resolve** | 13–16 | Pinned Nixpkgs fetched + narHash-verified; disposable deterministic index built/queried; Selector→evaluated derivation plan resolves under pure eval, with realization deferred to acquisition. |
 | **M3 Install/activate** | 17–20 | Substitute+verify; atomic activation; install pipeline with rollback-on-failure; remove/upgrade with mixed revisions. |
 | **M4 Generations & UX** | 21–25 | Generations/history/rollback/pin; GC+leases; full CLI wired to Fake Nix; completions + doctor. |
 | **M5 Local build & installers** | 26–29 | Shared cross-platform local-build engine w/ sandbox+approval (Linux + macOS native); Linux + macOS installers with authenticated helpers + `nixbld` build group plus `nixbld*` users on Linux and `_nixbld*` users on macOS; bounded uninstall. |

@@ -1159,6 +1159,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkg-resolver"
+version = "0.0.0"
+dependencies = [
+ "pkg-channel",
+ "pkg-core",
+ "pkg-index",
+ "pkg-nix",
+ "pkg-testkit",
+ "serde_json",
+]
+
+[[package]]
 name = "pkg-testkit"
 version = "0.0.0"
 dependencies = [

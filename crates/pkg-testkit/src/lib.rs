@@ -63,8 +63,8 @@ pub use transcript::TranscriptError;
 // them. Construction helpers (NixVersion, OutputName, …) remain available by
 // depending on `pkg-nix` directly.
 pub use pkg_nix::{
-    BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind, NixAdapter,
-    NixAdapterError, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
-    PathInfoReport, RealizationReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest,
+    BuildReport, BuildRequest, DerivationPlanReport, EvaluateDerivationRequest, GcReport,
+    MethodKind, NixAdapter, NixAdapterError, NixpkgsMetadataCommand, NixpkgsMetadataRunner,
+    NixpkgsSourceError, PathInfoReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest,
     VersionInfo,
 };

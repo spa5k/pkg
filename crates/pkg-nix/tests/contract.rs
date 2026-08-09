@@ -45,12 +45,12 @@ use std::sync::Arc;
 use pkg_nix::error::BoundedSummary;
 use pkg_nix::{
     AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus,
-    DerivationPath, EvalRealizeRequest, FormatVersion, GcReport, GcStatus, JsonCodec,
-    MalformedKind, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
-    NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId, OutputName, OutputSelection,
-    PathInfoReport, PathVerifyResult, RealizationReport, RootName, RootRef, SchemaVersion,
-    Signature, StorePath, SubstituteOutcome, SubstituteReport, System, TrustStatus, VerifyMode,
-    VerifyReport, VerifyRequest, VersionInfo,
+    DerivationPath, DerivationPlanReport, Digest, EvaluateDerivationRequest, EvaluatedDerivation,
+    FormatVersion, GcReport, GcStatus, JsonCodec, MalformedKind, MethodKind, NarHash, NarIntegrity,
+    NixAdapter, NixAdapterError, NixAdapterErrorCode, NixVersion, NixpkgsRevision, OperationId,
+    OutputName, OutputSelection, PackageVersion, PathInfoReport, PathVerifyResult, RootName,
+    RootRef, SchemaVersion, Signature, StorePath, SubstituteOutcome, SubstituteReport, System,
+    TrustStatus, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
 // Compile assertion: every contract type appearing in the NixAdapter trait
@@ -106,11 +106,29 @@ fn version_info_fixture() -> VersionInfo {
     )
 }
 
-fn realization_fixture() -> RealizationReport {
-    let out = store_path("hello-1.0");
+fn realization_fixture() -> DerivationPlanReport {
+    let root = drv("hello-1.0");
     let mut outputs = BTreeMap::new();
-    outputs.insert(OutputName::new("out").unwrap(), out.clone());
-    RealizationReport::new(out, drv("hello-1.0"), outputs).unwrap()
+    outputs.insert(OutputName::new("out").unwrap(), store_path("hello-1.0"));
+    let evaluated = EvaluatedDerivation::new(
+        root.clone(),
+        "hello-1.0".into(),
+        System::X8664Linux,
+        outputs,
+        Digest::from_bytes([1; 32]),
+        false,
+    )
+    .unwrap();
+    DerivationPlanReport::new(
+        4,
+        root,
+        vec![OutputName::new("out").unwrap()],
+        vec![evaluated],
+        Digest::from_bytes([2; 32]),
+        "hello".into(),
+        PackageVersion::new("1.0"),
+    )
+    .unwrap()
 }
 
 fn path_info_fixture() -> PathInfoReport {
@@ -181,8 +199,8 @@ fn root_ref_fixture() -> RootRef {
     RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap()
 }
 
-fn eval_request_default_outputs() -> EvalRealizeRequest {
-    EvalRealizeRequest::new(
+fn eval_request_default_outputs() -> EvaluateDerivationRequest {
+    EvaluateDerivationRequest::new(
         AttributePath::new("python311.pkgs.requests").unwrap(),
         System::X8664Linux,
         nixpkgs_revision(),
@@ -192,8 +210,8 @@ fn eval_request_default_outputs() -> EvalRealizeRequest {
     .unwrap()
 }
 
-fn eval_request_explicit_outputs() -> EvalRealizeRequest {
-    EvalRealizeRequest::new(
+fn eval_request_explicit_outputs() -> EvaluateDerivationRequest {
+    EvaluateDerivationRequest::new(
         AttributePath::new("ripgrep").unwrap(),
         System::Aarch64Darwin,
         nixpkgs_revision(),
@@ -243,7 +261,10 @@ impl NixAdapter for OkStub {
     fn version(&self) -> Result<VersionInfo, NixAdapterError> {
         Ok(version_info_fixture())
     }
-    fn eval_realize(&self, _: &EvalRealizeRequest) -> Result<RealizationReport, NixAdapterError> {
+    fn evaluate_derivation(
+        &self,
+        _: &EvaluateDerivationRequest,
+    ) -> Result<DerivationPlanReport, NixAdapterError> {
         Ok(realization_fixture())
     }
     fn path_info(&self, _: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
@@ -272,7 +293,10 @@ impl NixAdapter for UnavailableStub {
     fn version(&self) -> Result<VersionInfo, NixAdapterError> {
         Err(NixAdapterError::Unavailable)
     }
-    fn eval_realize(&self, _: &EvalRealizeRequest) -> Result<RealizationReport, NixAdapterError> {
+    fn evaluate_derivation(
+        &self,
+        _: &EvaluateDerivationRequest,
+    ) -> Result<DerivationPlanReport, NixAdapterError> {
         Err(NixAdapterError::Unavailable)
     }
     fn path_info(&self, _: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
@@ -345,11 +369,11 @@ fn stub_dispatches_all_seven_methods_through_dyn() {
     assert_eq!(v.accepted_formats().path_info().get(), 1);
 
     let r = a
-        .eval_realize(&eval_request_default_outputs())
-        .expect("eval_realize");
-    assert_eq!(r.store_path(), &store_path("hello-1.0"));
-    assert_eq!(r.deriver(), &drv("hello-1.0"));
-    assert_eq!(r.outputs().len(), 1);
+        .evaluate_derivation(&eval_request_default_outputs())
+        .expect("evaluate_derivation");
+    assert_eq!(r.root(), &drv("hello-1.0"));
+    assert_eq!(r.derivations().len(), 1);
+    assert_eq!(r.derivations()[0].outputs().len(), 1);
 
     let pi = a.path_info(&store_path("hello-1.0")).expect("path_info");
     assert_eq!(pi.nar_hash(), &nar_hash());
@@ -388,7 +412,7 @@ fn adapter_failure_path_is_closed_nix_adapter_error() {
         NixAdapterErrorCode::Unavailable
     );
     assert_eq!(
-        a.eval_realize(&eval_request_default_outputs())
+        a.evaluate_derivation(&eval_request_default_outputs())
             .unwrap_err()
             .code(),
         NixAdapterErrorCode::Unavailable
@@ -461,7 +485,7 @@ fn version_info_round_trip() {
 }
 
 #[test]
-fn eval_realize_request_round_trips_default_and_explicit_outputs() {
+fn evaluate_derivation_request_round_trips_default_and_explicit_outputs() {
     let c = JsonCodec::production();
 
     // Default (meta) outputs encode as JSON null and round-trip.
@@ -472,7 +496,7 @@ fn eval_realize_request_round_trips_default_and_explicit_outputs() {
             .unwrap()
             .contains("\"outputs\":null")
     );
-    let back = EvalRealizeRequest::decode(&c, &enc).expect("decode");
+    let back = EvaluateDerivationRequest::decode(&c, &enc).expect("decode");
     assert_eq!(back.encode().expect("re-encode"), enc);
     assert_eq!(back, def);
     assert!(back.outputs().is_default());
@@ -485,7 +509,7 @@ fn eval_realize_request_round_trips_default_and_explicit_outputs() {
             .unwrap()
             .contains("\"outputs\":[\"out\",\"man\"]")
     );
-    let back = EvalRealizeRequest::decode(&c, &enc).expect("decode");
+    let back = EvaluateDerivationRequest::decode(&c, &enc).expect("decode");
     assert_eq!(back.encode().expect("re-encode"), enc);
     assert_eq!(back, exp);
     assert_eq!(
@@ -500,18 +524,21 @@ fn eval_realize_request_round_trips_default_and_explicit_outputs() {
 }
 
 #[test]
-fn realization_report_round_trip() {
+fn derivation_plan_report_round_trip() {
     let c = JsonCodec::production();
     let r = realization_fixture();
     let enc = r.encode().expect("encode");
-    let back = RealizationReport::decode(&c, &enc).expect("decode");
+    let back = DerivationPlanReport::decode(&c, &enc).expect("decode");
     // Wire-stable.
     assert_eq!(back.encode().expect("re-encode"), enc);
-    // Compare every accessor (pkg-core Realization equality is identity-only;
-    // RealizationReport is compared field-by-field here).
-    assert_eq!(back.store_path(), r.store_path());
-    assert_eq!(back.deriver(), r.deriver());
-    assert_eq!(back.outputs(), r.outputs());
+    assert_eq!(back, r);
+    assert_eq!(back.json_version(), 4);
+    assert_eq!(back.outputs_to_install()[0].as_str(), "out");
+    assert_eq!(back.pname(), "hello");
+    assert_eq!(back.version().as_str(), "1.0");
+    let debug = format!("{back:?}");
+    assert!(!debug.contains("/nix/store/"));
+    assert!(!debug.contains(STORE_HASH));
 }
 
 #[test]
@@ -614,11 +641,11 @@ fn all_shapes() -> Vec<(&'static str, Vec<u8>)> {
     vec![
         ("versionInfo", version_info_fixture().encode().unwrap()),
         (
-            "evalRealizeRequest(default)",
+            "evaluateDerivationRequest(default)",
             eval_request_default_outputs().encode().unwrap(),
         ),
         (
-            "evalRealizeRequest(explicit)",
+            "evaluateDerivationRequest(explicit)",
             eval_request_explicit_outputs().encode().unwrap(),
         ),
         ("realizationReport", realization_fixture().encode().unwrap()),
@@ -767,8 +794,8 @@ fn no_shape_carries_a_forbidden_per_call_knob() {
 fn decode_rejects_unknown_top_level_fields() {
     let c = JsonCodec::production();
     assert_unknown_field_rejected!(c, VersionInfo, version_info_fixture());
-    assert_unknown_field_rejected!(c, EvalRealizeRequest, eval_request_default_outputs());
-    assert_unknown_field_rejected!(c, RealizationReport, realization_fixture());
+    assert_unknown_field_rejected!(c, EvaluateDerivationRequest, eval_request_default_outputs());
+    assert_unknown_field_rejected!(c, DerivationPlanReport, realization_fixture());
     assert_unknown_field_rejected!(c, PathInfoReport, path_info_fixture());
     assert_unknown_field_rejected!(
         c,
@@ -956,8 +983,18 @@ fn decode_rejects_invalid_promoted_values() {
 
 #[test]
 fn constructors_reject_empty_and_duplicate_collections() {
-    // RealizationReport: empty outputs.
-    assert!(RealizationReport::new(store_path("x"), drv("x"), BTreeMap::new()).is_err());
+    // EvaluatedDerivation: empty outputs.
+    assert!(
+        EvaluatedDerivation::new(
+            drv("x"),
+            "x".into(),
+            System::X8664Linux,
+            BTreeMap::new(),
+            Digest::from_bytes([0; 32]),
+            false,
+        )
+        .is_err()
+    );
 
     // PathInfoReport: duplicate signatures, duplicate references.
     let s = sig("k");
@@ -1076,12 +1113,19 @@ fn inconsistent_status_payload_combinations_rejected() {
         .code(),
         NixAdapterErrorCode::ValidationFailure
     );
-    let mut outputs = BTreeMap::new();
-    outputs.insert(OutputName::new("out").unwrap(), store_path("other"));
+    let plan = realization_fixture();
     assert_eq!(
-        RealizationReport::new(store_path("primary"), drv("d"), outputs)
-            .unwrap_err()
-            .code(),
+        DerivationPlanReport::new(
+            4,
+            plan.root().clone(),
+            vec![OutputName::new("dev").unwrap()],
+            plan.derivations().to_vec(),
+            plan.closure_digest(),
+            plan.pname().into(),
+            plan.version().clone(),
+        )
+        .unwrap_err()
+        .code(),
         NixAdapterErrorCode::ValidationFailure
     );
 }
@@ -1111,7 +1155,7 @@ fn path_info_with_signatures(signatures: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Builds a full EvalRealizeRequest JSON object with the given explicit
+/// Builds a full EvaluateDerivationRequest JSON object with the given explicit
 /// `outputs` body (a comma-joined list of quoted strings).
 fn eval_with_outputs(outputs: &str) -> Vec<u8> {
     format!(
@@ -1140,18 +1184,19 @@ fn decode_rejects_eval_outputs_over_count_cap_during_visiting() {
     let c = JsonCodec::production();
     // 1024 explicit output names (the exact cap) decode successfully.
     let at = json_string_array(1024, |i| format!("k{i}"));
-    let back = EvalRealizeRequest::decode(&c, &eval_with_outputs(&at)).expect("at-cap decode");
+    let back =
+        EvaluateDerivationRequest::decode(&c, &eval_with_outputs(&at)).expect("at-cap decode");
     assert!(!back.outputs().is_default());
 
     // 1025 (cap+1) explicit output names are rejected DURING decode.
     let over = json_string_array(1025, |i| format!("k{i}"));
-    let err = decode_err!(c, EvalRealizeRequest, &eval_with_outputs(&over));
+    let err = decode_err!(c, EvaluateDerivationRequest, &eval_with_outputs(&over));
     assert_eq!(err.code(), NixAdapterErrorCode::MalformedPayload);
 }
 
 #[test]
-fn eval_realize_constructor_enforces_output_count_cap() {
-    // Regression: the public EvalRealizeRequest::new constructor enforces the
+fn evaluate_derivation_constructor_enforces_output_count_cap() {
+    // Regression: the public EvaluateDerivationRequest::new constructor enforces the
     // same MAX_EVAL_OUTPUTS (1024) count cap as the decode wire visitor —
     // closing the in-memory bypass where an oversized pkg-core
     // OutputSelection could be handed to the (formerly infallible)
@@ -1162,7 +1207,7 @@ fn eval_realize_constructor_enforces_output_count_cap() {
         let names: Vec<OutputName> = (0..n)
             .map(|i| OutputName::new(&format!("k{i}")).unwrap())
             .collect();
-        EvalRealizeRequest::new(
+        EvaluateDerivationRequest::new(
             AttributePath::new("ripgrep").unwrap(),
             System::X8664Linux,
             nixpkgs_revision(),
@@ -1177,6 +1222,17 @@ fn eval_realize_constructor_enforces_output_count_cap() {
     // One over the cap is rejected by the public constructor.
     let err = mk(1025).unwrap_err();
     assert_eq!(err.code(), NixAdapterErrorCode::ValidationFailure);
+
+    let long_attribute = (0..130).map(|_| "a").collect::<Vec<_>>().join(".");
+    let err = EvaluateDerivationRequest::new(
+        AttributePath::new(&long_attribute).unwrap(),
+        System::X8664Linux,
+        nixpkgs_revision(),
+        nar_hash(),
+        OutputSelection::default_selection(),
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), NixAdapterErrorCode::ValidationFailure);
 }
 
 #[test]
@@ -1189,9 +1245,9 @@ fn decode_rejects_duplicate_realization_output_keys() {
     let p = format!("/nix/store/{STORE_HASH}-hello-1.0");
     let d = format!("/nix/store/{STORE_HASH}-hello-1.0.drv");
     let bad = format!(
-        r#"{{"schemaVersion":1,"storePath":"{p}","deriver":"{d}","outputs":{{"out":"{p}","out":"{p}"}}}}"#
+        r#"{{"schemaVersion":1,"jsonVersion":4,"root":"{d}","outputsToInstall":["out"],"derivations":[{{"derivation":"{d}","name":"hello-1.0","system":"x86_64-linux","outputs":{{"out":"{p}","out":"{p}"}},"documentDigest":"sha256-0101010101010101010101010101010101010101010101010101010101010101","fixedOutput":false}}],"closureDigest":"sha256-0202020202020202020202020202020202020202020202020202020202020202","pname":"hello","version":"1.0"}}"#
     );
-    let err = decode_err!(c, RealizationReport, bad.as_bytes());
+    let err = decode_err!(c, DerivationPlanReport, bad.as_bytes());
     assert_eq!(err.code(), NixAdapterErrorCode::MalformedPayload);
 }
 
@@ -1210,7 +1266,7 @@ fn bounded_collection_encodings_remain_byte_identical() {
 
     let enc = realization_fixture().encode().unwrap();
     assert_eq!(
-        RealizationReport::decode(&c, &enc)
+        DerivationPlanReport::decode(&c, &enc)
             .unwrap()
             .encode()
             .unwrap(),

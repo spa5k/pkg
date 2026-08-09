@@ -94,7 +94,7 @@ flowchart BT
 > plus the two-phase mutating store repair — Phase A cache-only + Phase B approved rebuild, gated by Phase 0 broker read-only verify). Tests therefore split the seam into **two** object-safe traits owned by
 > `pkg-nix` (`01`/`04`/`07`):
 > 1. **`NixAdapter`** — the **unprivileged broker** seam. **Seven** methods, all **JSON-only**
->    (`01` §11, ARCH-INV-01): `version`, `evaluate`, `path_info`, `substitute`, `build`,
+>    (`01` §11, ARCH-INV-01): `version`, `evaluate_derivation`, `path_info`, `substitute`, `build`,
 >    **read-only** `verify`, and a **liveness-respecting** `gc`. It holds **no** destructive
 >    repair and **no** GC-root write — those are privileged. `repair` is denied to the broker by
 >    the daemon (§4.1.2), so it is not even on this trait.
@@ -134,7 +134,7 @@ pub trait NixAdapter: Send + Sync {
 
     /// Evaluate a selector into a normalized derivation plan (evaluate-only; NO realization,
     /// NO store-path identity — realization is acquired post-approval via build/path_info).
-    fn evaluate(&self, req: &EvaluateRequest) -> Result<DerivationPlanReport, NixAdapterError>;
+    fn evaluate_derivation(&self, req: &EvaluateDerivationRequest) -> Result<DerivationPlanReport, NixAdapterError>;
     /// NAR hash, deriver, narSize, references, signatures, closure size for one store
     /// path — promoted from the root-level `nix path-info --json --json-format 2`
     /// versioned v2 envelope (no `--deriver` flag).
@@ -172,7 +172,7 @@ expression-string fields ever appear on any request or report (`01` §11.1):
 | Method | Request carries | Report carries |
 |---|---|---|
 | `version` | — | managed-Nix version; accepted/rejected JSON format versions |
-| `evaluate` | `EvaluateRequest` (AttributePath, System, NixpkgsRevision, Nixpkgs source NarHash pin, `OutputSelection` — the default selection **or** explicit **sorted, de-duplicated, nonempty** output names) — built by the later resolver from a Selector + the accepted channel descriptor | normalized derivation plan: validated v4 envelope top-level `version` field + sorted `derivations` map (`<drvPath>` → name/outputs/inputDrvs/inputSrcs/platform/env); **no** realized store-path identity |
+| `evaluate_derivation` | `EvaluateDerivationRequest` (AttributePath, System, NixpkgsRevision, Nixpkgs source NarHash pin, `OutputSelection` — the default selection **or** explicit nonempty output names) — built by the resolver from a Selector + verified source | normalized derivation plan: validated v4 envelope version, canonical derivation closure, expected output paths, authoritative pname/version, document and closure digests; **no** realized store-path identity |
 | `path_info` | `StorePath` | narHash, deriver, narSize, references, signatures, closure size (promoted from the root-level `nix path-info --json --json-format 2` versioned v2 envelope `{version:2,storeDir,info:{…}}`; **no `--deriver` flag**) |
 | `substitute` | `StorePath` | outcome (fetched / absent / no-binary …) — signature/trust failure is `Err(NixAdapterError)`, never a report outcome |
 | `build` | `BuildRequest` (**typed `DerivedOutputTarget` targets**, `System`, a typed single-operation `BuildApprovalReceipt` binding the operation id + the exact `BuildPlan` digest + `policyVersion`) — **internal broker-only**; the public RPC carries an opaque operation handle / `buildPlanDigest`, never a raw target | outcome + built outputs with **per-output provenance** (`cache-signed` vs `local-build`) / `ACQUIRE_NO_BINARY` (AC-S13) |
@@ -455,7 +455,7 @@ Nix and no network** (§3).
 
 ```text
 Expectation    := { call: MethodKind, expect: RequestMatcher, respond: canned }
-MethodKind     := Version | Evaluate | PathInfo | Substitute | Build
+MethodKind     := Version | EvaluateDerivation | PathInfo | Substitute | Build
                |  Verify | Gc     // seven BROKER methods only (NixAdapter); Repair and
                                  // GC-root publish/remove are privileged (§4.1.2)
 RequestMatcher := the exact request value the head call must equal (per MethodKind)
@@ -472,7 +472,7 @@ remain.
 ```text
 // pkg-nix: the only trait error. Closed, bounded, redacted. Two variants, one code.
 NixAdapterError::UnexpectedCall {           // a head existed and was consumed
-    expected: MethodKind,                   // pkg-nix contract enum (Version | Evaluate | … | Gc)
+    expected: MethodKind,                   // pkg-nix contract enum (Version | EvaluateDerivation | … | Gc)
     actual:   MethodKind,
     mismatch: <redacted, bounded static summary: "method mismatch" | "request mismatch">,
 }
@@ -551,7 +551,7 @@ later roadmap owners** (none of it is implied to land in PR-3, §4.4):
 ## 6. Per-Layer Detail
 
 ### 6.1 Unit (layer 1) — `pkg-core`, `pkg-channel`, `pkg-index`
-- Selector→Realization identity rules (user intent vs exact realization; `05`/`06`).
+- Selector→evaluated-plan rules and the later evaluated-plan→Realization identity boundary (user intent vs exact realization; `05`/`06`).
 - Version/rev comparison, policy-version checks, expiry arithmetic.
 - State Merkle/integrity-tag math; generation ordering; rollback selection.
 - Channel metadata parsing + TUF role validation logic (pure, no network).

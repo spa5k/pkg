@@ -1,0 +1,16 @@
+[package]
+name = "pkg-resolver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+pkg-core = { path = "../pkg-core" }
+pkg-index = { path = "../pkg-index" }
+pkg-nix = { path = "../pkg-nix" }
+
+[dev-dependencies]
+pkg-channel = { path = "../pkg-channel" }
+pkg-testkit = { path = "../pkg-testkit" }
+serde_json = "=1.0.151"

@@ -32,7 +32,9 @@ use crate::error::{BoundedSummary, MalformedKind, NixAdapterError};
 use pkg_core::channel::NixpkgsRevision;
 use pkg_core::identity::{DerivationPath, NarHash, OutputName, StorePath};
 use pkg_core::selector::{AttributePath, OutputSelection};
+use pkg_core::state::Digest;
 use pkg_core::system::System;
+use pkg_core::version::PackageVersion;
 use serde::de::{DeserializeOwned, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::{BTreeMap, HashSet};
@@ -72,19 +74,22 @@ const MAX_REFERENCES_BYTES: usize = 16 * 1024 * 1024;
 const MAX_TARGETS: usize = 1024;
 /// Maximum total bytes of build targets in one build request.
 const MAX_TARGETS_BYTES: usize = 1024 * 1024;
-/// Maximum number of explicit output names in one eval-realize request.
+/// Maximum number of explicit output names in one evaluate request.
 /// Realization/build outputs already share [`MAX_TARGETS`]; the eval selection
 /// is a per-evaluation output list, bounded conservatively at the same count.
 const MAX_EVAL_OUTPUTS: usize = 1024;
-/// Maximum total bytes of explicit output names in one eval-realize request.
+/// Maximum total bytes of explicit output names in one evaluate request.
 const MAX_EVAL_OUTPUTS_BYTES: usize = 256 * 1024;
-/// Maximum number of per-output entries in one realization report. Aligned
-/// with the build/output bounds; a realization report names the outputs of a
-/// single evaluation.
+/// Maximum number of per-output entries in one evaluated derivation.
 const MAX_REALIZATION_OUTPUTS: usize = 1024;
-/// Maximum total bytes of output-name + store-path pairs in one realization
-/// report.
+/// Maximum total bytes of output-name + expected-store-path pairs.
 const MAX_REALIZATION_OUTPUTS_BYTES: usize = 1024 * 1024;
+/// Maximum number of derivations accepted in one evaluated closure.
+const MAX_DERIVATIONS: usize = 65_536;
+/// Maximum byte length of an evaluated derivation display name or pname.
+const MAX_DERIVATION_NAME: usize = 512;
+/// Maximum byte length of a conservative resolver attribute path.
+const MAX_ATTRIBUTE_BYTES: usize = 256;
 /// Maximum number of paths in one verify request.
 const MAX_PATH_LIST: usize = 65_536;
 /// Maximum total bytes of paths in one verify request.
@@ -462,7 +467,7 @@ impl Serialize for BoundedUniqueStringMap {
 }
 
 /// Deserializes an `Option<BoundedStringSeq>` (`null` → `None`, array →
-/// bounded), used by the eval-realize `outputs` field to preserve the
+/// bounded), used by the evaluate-only `outputs` field to preserve the
 /// default-vs-explicit wire shape under a cap.
 fn deserialize_optional_string_seq<'de, D>(
     deserializer: D,
@@ -645,8 +650,8 @@ impl fmt::Display for SchemaVersion {
 pub enum MethodKind {
     /// `version()`.
     Version,
-    /// `eval_realize()`.
-    EvalRealize,
+    /// `evaluate_derivation()`.
+    EvaluateDerivation,
     /// `path_info()`.
     PathInfo,
     /// `substitute()`.
@@ -663,7 +668,7 @@ impl MethodKind {
     /// All seven unprivileged methods, in canonical order.
     pub const ALL: [MethodKind; 7] = [
         MethodKind::Version,
-        MethodKind::EvalRealize,
+        MethodKind::EvaluateDerivation,
         MethodKind::PathInfo,
         MethodKind::Substitute,
         MethodKind::Build,
@@ -676,7 +681,7 @@ impl MethodKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             MethodKind::Version => "version",
-            MethodKind::EvalRealize => "evalRealize",
+            MethodKind::EvaluateDerivation => "evaluateDerivation",
             MethodKind::PathInfo => "pathInfo",
             MethodKind::Substitute => "substitute",
             MethodKind::Build => "build",
@@ -698,7 +703,7 @@ impl FromStr for MethodKind {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "version" => Ok(MethodKind::Version),
-            "evalRealize" => Ok(MethodKind::EvalRealize),
+            "evaluateDerivation" => Ok(MethodKind::EvaluateDerivation),
             "pathInfo" => Ok(MethodKind::PathInfo),
             "substitute" => Ok(MethodKind::Substitute),
             "build" => Ok(MethodKind::Build),
@@ -958,14 +963,14 @@ fn is_standard_base64(s: &[u8]) -> bool {
 }
 
 // ===========================================================================
-// eval_realize
+// evaluate_derivation
 // ===========================================================================
 
-/// A request to evaluate and realize a selector into store outputs
+/// A request to evaluate a selector into a derivation plan without realizing it
 /// (`plans/09` §4.1). Built by the later resolver from a selector plus the
 /// accepted channel descriptor; carries **no** trust/flag knobs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvalRealizeRequest {
+pub struct EvaluateDerivationRequest {
     attribute: AttributePath,
     system: System,
     nixpkgs_revision: NixpkgsRevision,
@@ -973,17 +978,17 @@ pub struct EvalRealizeRequest {
     outputs: OutputSelection,
 }
 
-impl EvalRealizeRequest {
-    /// Constructs an eval-realize request from already-validated strong types.
+impl EvaluateDerivationRequest {
+    /// Constructs an evaluate-only request from already-validated strong types.
     ///
-    /// `EvalRealizeRequest` is advertised as a validated, ready-to-serialize
+    /// `EvaluateDerivationRequest` is a validated, ready-to-serialize
     /// value, so the same count and checked total-byte caps the wire codec
     /// enforces on explicit outputs (the crate's private `MAX_EVAL_OUTPUTS` /
     /// `MAX_EVAL_OUTPUTS_BYTES`) are enforced **here**, at construction, not
     /// only at decode. The [`OutputSelection::default_selection`] is always
     /// accepted; an explicit selection is bounded by count and checked byte
     /// total, so a `pkg-core` [`OutputSelection`] larger than the wire caps
-    /// cannot reach [`EvalRealizeRequest::encode`], which only wraps
+    /// cannot reach [`EvaluateDerivationRequest::encode`], which only wraps
     /// already-validated data.
     ///
     /// # Errors
@@ -997,6 +1002,9 @@ impl EvalRealizeRequest {
         nixpkgs_nar_hash: NarHash,
         outputs: OutputSelection,
     ) -> Result<Self, NixAdapterError> {
+        if attribute.as_str().len() > MAX_ATTRIBUTE_BYTES {
+            return Err(invalid("attribute path too long"));
+        }
         if let Some(names) = outputs.explicit_outputs() {
             check_size_bounds(
                 names.iter().map(OutputName::as_str),
@@ -1047,7 +1055,7 @@ impl EvalRealizeRequest {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct EvalRealizeRequestWire {
+struct EvaluateDerivationRequestWire {
     schema_version: u32,
     attribute: String,
     system: String,
@@ -1057,7 +1065,7 @@ struct EvalRealizeRequestWire {
     outputs: Option<BoundedStringSeq>,
 }
 
-impl EvalRealizeRequest {
+impl EvaluateDerivationRequest {
     /// Deterministically encodes this request to JSON bytes.
     pub fn encode(&self) -> Result<Vec<u8>, NixAdapterError> {
         let outputs = self.outputs.explicit_outputs().map(|xs| {
@@ -1068,7 +1076,7 @@ impl EvalRealizeRequest {
                     .collect::<Vec<_>>(),
             )
         });
-        let dto = EvalRealizeRequestWire {
+        let dto = EvaluateDerivationRequestWire {
             schema_version: SCHEMA_VERSION_CURRENT,
             attribute: self.attribute.as_str().to_owned(),
             system: self.system.as_str().to_owned(),
@@ -1080,9 +1088,9 @@ impl EvalRealizeRequest {
     }
 
     /// Size-checks, strictly parses, schema-checks, and promotes JSON bytes into
-    /// a validated [`EvalRealizeRequest`].
+    /// a validated [`EvaluateDerivationRequest`].
     pub fn decode(codec: &JsonCodec, bytes: &[u8]) -> Result<Self, NixAdapterError> {
-        let dto: EvalRealizeRequestWire = parse_dto(codec, bytes)?;
+        let dto: EvaluateDerivationRequestWire = parse_dto(codec, bytes)?;
         check_schema(dto.schema_version)?;
         let attribute =
             AttributePath::new(&dto.attribute).map_err(|_| invalid("invalid attribute"))?;
@@ -1112,35 +1120,43 @@ impl EvalRealizeRequest {
     }
 }
 
-/// The report returned by `eval_realize()`: the realized store path, its
-/// deriver, and the per-output store paths (`plans/09` §4.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RealizationReport {
-    store_path: StorePath,
-    deriver: DerivationPath,
+/// One derivation in an evaluate-only closure.
+///
+/// Output paths are Nix's expected output paths. Their presence here does not
+/// assert that they exist in the store; only substitute/build may realize them.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EvaluatedDerivation {
+    derivation: DerivationPath,
+    name: String,
+    system: System,
     outputs: BTreeMap<OutputName, StorePath>,
+    document_digest: Digest,
+    fixed_output: bool,
 }
 
-impl RealizationReport {
-    /// Constructs and validates a realization report.
+impl EvaluatedDerivation {
+    /// Constructs one validated evaluated derivation.
     ///
     /// # Errors
     ///
-    /// Returns [`NixAdapterError::ValidationFailure`] if `outputs` is empty or
-    /// `store_path` is not among the `outputs` values.
+    /// Returns [`NixAdapterError::ValidationFailure`] for an invalid display
+    /// name, empty outputs, or an over-budget output map.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        store_path: StorePath,
-        deriver: DerivationPath,
+        derivation: DerivationPath,
+        name: String,
+        system: System,
         outputs: BTreeMap<OutputName, StorePath>,
+        document_digest: Digest,
+        fixed_output: bool,
     ) -> Result<Self, NixAdapterError> {
+        if name.is_empty() || name.len() > MAX_DERIVATION_NAME || name.chars().any(char::is_control)
+        {
+            return Err(invalid("invalid derivation name"));
+        }
         if outputs.is_empty() {
             return Err(invalid("empty outputs"));
         }
-        if !outputs.values().any(|p| p == &store_path) {
-            return Err(invalid("primary store path not an output"));
-        }
-        // Defense-in-depth count + checked total key/value byte cap (also
-        // enforced by the wire visitor during decode).
         let mut count = 0usize;
         let mut total = 0usize;
         for (name, path) in &outputs {
@@ -1156,75 +1172,312 @@ impl RealizationReport {
             }
         }
         Ok(Self {
-            store_path,
-            deriver,
+            derivation,
+            name,
+            system,
             outputs,
+            document_digest,
+            fixed_output,
         })
     }
 
-    /// Returns the primary (realized) store path.
+    /// Returns the evaluated derivation path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
-        &self.store_path
+    pub fn derivation(&self) -> &DerivationPath {
+        &self.derivation
     }
-
-    /// Returns the deriver.
+    /// Returns Nix's bounded display name.
     #[must_use]
-    pub fn deriver(&self) -> &DerivationPath {
-        &self.deriver
+    pub fn name(&self) -> &str {
+        &self.name
     }
-
-    /// Returns the per-output store paths (sorted by output name).
+    /// Returns the derivation system.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.system
+    }
+    /// Returns expected per-output paths, sorted by output name.
     #[must_use]
     pub fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
         &self.outputs
+    }
+    /// Returns the digest of the canonical upstream derivation document.
+    #[must_use]
+    pub const fn document_digest(&self) -> Digest {
+        self.document_digest
+    }
+    /// Returns whether Nix classified this as fixed-output.
+    #[must_use]
+    pub const fn fixed_output(&self) -> bool {
+        self.fixed_output
+    }
+}
+
+impl fmt::Debug for EvaluatedDerivation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EvaluatedDerivation")
+            .field("name", &self.name)
+            .field("system", &self.system)
+            .field("output_count", &self.outputs.len())
+            .field("document_digest", &self.document_digest)
+            .field("fixed_output", &self.fixed_output)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The normalized result of evaluate-only resolution.
+///
+/// This report deliberately cannot represent a realized package. It contains
+/// a closed derivation graph and expected output paths for planning only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DerivationPlanReport {
+    json_version: u32,
+    root: DerivationPath,
+    outputs_to_install: Vec<OutputName>,
+    derivations: Vec<EvaluatedDerivation>,
+    closure_digest: Digest,
+    pname: String,
+    version: PackageVersion,
+}
+
+impl DerivationPlanReport {
+    /// Constructs a canonical, internally consistent evaluate-only plan.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        json_version: u32,
+        root: DerivationPath,
+        mut outputs_to_install: Vec<OutputName>,
+        mut derivations: Vec<EvaluatedDerivation>,
+        closure_digest: Digest,
+        pname: String,
+        version: PackageVersion,
+    ) -> Result<Self, NixAdapterError> {
+        if json_version != 4 {
+            return Err(invalid("unsupported derivation json version"));
+        }
+        if pname.is_empty()
+            || pname.len() > MAX_DERIVATION_NAME
+            || pname.chars().any(char::is_control)
+        {
+            return Err(invalid("invalid package name"));
+        }
+        if version.as_str().len() > MAX_DERIVATION_NAME
+            || version.as_str().chars().any(char::is_control)
+        {
+            return Err(invalid("invalid package version"));
+        }
+        if derivations.is_empty() || derivations.len() > MAX_DERIVATIONS {
+            return Err(invalid("invalid derivation closure size"));
+        }
+        derivations.sort_by(|a, b| a.derivation.as_str().cmp(b.derivation.as_str()));
+        if derivations
+            .windows(2)
+            .any(|pair| pair[0].derivation == pair[1].derivation)
+        {
+            return Err(invalid("duplicate derivation"));
+        }
+        let root_derivation = derivations
+            .iter()
+            .find(|item| item.derivation == root)
+            .ok_or_else(|| invalid("root derivation missing"))?;
+        if outputs_to_install.is_empty() || outputs_to_install.len() > MAX_EVAL_OUTPUTS {
+            return Err(invalid("invalid outputs to install"));
+        }
+        outputs_to_install.sort();
+        if outputs_to_install.windows(2).any(|pair| pair[0] == pair[1])
+            || outputs_to_install
+                .iter()
+                .any(|name| !root_derivation.outputs.contains_key(name))
+        {
+            return Err(invalid("invalid outputs to install"));
+        }
+        Ok(Self {
+            json_version,
+            root,
+            outputs_to_install,
+            derivations,
+            closure_digest,
+            pname,
+            version,
+        })
+    }
+    /// Returns the accepted upstream derivation JSON version.
+    #[must_use]
+    pub const fn json_version(&self) -> u32 {
+        self.json_version
+    }
+    /// Returns the root derivation.
+    #[must_use]
+    pub fn root(&self) -> &DerivationPath {
+        &self.root
+    }
+    /// Returns the canonical outputs selected for installation.
+    #[must_use]
+    pub fn outputs_to_install(&self) -> &[OutputName] {
+        &self.outputs_to_install
+    }
+    /// Returns the canonical derivation closure.
+    #[must_use]
+    pub fn derivations(&self) -> &[EvaluatedDerivation] {
+        &self.derivations
+    }
+    /// Returns the digest of the canonical normalized closure.
+    #[must_use]
+    pub const fn closure_digest(&self) -> Digest {
+        self.closure_digest
+    }
+    /// Returns the authoritative evaluated pname.
+    #[must_use]
+    pub fn pname(&self) -> &str {
+        &self.pname
+    }
+    /// Returns the authoritative evaluated version.
+    #[must_use]
+    pub fn version(&self) -> &PackageVersion {
+        &self.version
+    }
+}
+
+impl fmt::Debug for DerivationPlanReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DerivationPlanReport")
+            .field("json_version", &self.json_version)
+            .field("outputs_to_install", &self.outputs_to_install)
+            .field("derivation_count", &self.derivations.len())
+            .field("closure_digest", &self.closure_digest)
+            .field("pname", &self.pname)
+            .field("version", &self.version)
+            .finish_non_exhaustive()
     }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RealizationReportWire {
-    schema_version: u32,
-    store_path: String,
-    deriver: String,
+struct EvaluatedDerivationWire {
+    derivation: String,
+    name: String,
+    system: String,
     #[serde(deserialize_with = "deserialize_realization_outputs")]
     outputs: BoundedUniqueStringMap,
+    document_digest: String,
+    fixed_output: bool,
 }
 
-impl RealizationReport {
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DerivationPlanReportWire {
+    schema_version: u32,
+    json_version: u32,
+    root: String,
+    #[serde(deserialize_with = "deserialize_eval_outputs")]
+    outputs_to_install: Option<BoundedStringSeq>,
+    #[serde(deserialize_with = "deserialize_derivations")]
+    derivations: BoundedSeq<EvaluatedDerivationWire>,
+    closure_digest: String,
+    pname: String,
+    version: String,
+}
+
+fn deserialize_derivations<'de, D>(
+    deserializer: D,
+) -> Result<BoundedSeq<EvaluatedDerivationWire>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    BoundedSeq::deserialize_bounded(deserializer, MAX_DERIVATIONS)
+}
+
+impl DerivationPlanReport {
     /// Deterministically encodes this report to JSON bytes.
     pub fn encode(&self) -> Result<Vec<u8>, NixAdapterError> {
-        let outputs = BoundedUniqueStringMap::from_map(
-            self.outputs
-                .iter()
-                .map(|(k, v)| (k.as_str().to_owned(), v.as_str().to_owned()))
-                .collect::<BTreeMap<_, _>>(),
-        );
-        let dto = RealizationReportWire {
+        let derivations = self
+            .derivations
+            .iter()
+            .map(|item| EvaluatedDerivationWire {
+                derivation: item.derivation.as_str().to_owned(),
+                name: item.name.clone(),
+                system: item.system.as_str().to_owned(),
+                outputs: BoundedUniqueStringMap::from_map(
+                    item.outputs
+                        .iter()
+                        .map(|(name, path)| (name.as_str().to_owned(), path.as_str().to_owned()))
+                        .collect(),
+                ),
+                document_digest: item.document_digest.to_string(),
+                fixed_output: item.fixed_output,
+            })
+            .collect();
+        let dto = DerivationPlanReportWire {
             schema_version: SCHEMA_VERSION_CURRENT,
-            store_path: self.store_path.as_str().to_owned(),
-            deriver: self.deriver.as_str().to_owned(),
-            outputs,
+            json_version: self.json_version,
+            root: self.root.as_str().to_owned(),
+            outputs_to_install: Some(BoundedStringSeq::from_vec(
+                self.outputs_to_install
+                    .iter()
+                    .map(|o| o.as_str().to_owned())
+                    .collect(),
+            )),
+            derivations: BoundedSeq::from_vec(derivations),
+            closure_digest: self.closure_digest.to_string(),
+            pname: self.pname.clone(),
+            version: self.version.as_str().to_owned(),
         };
         to_json(&dto)
     }
 
     /// Size-checks, strictly parses, schema-checks, and promotes JSON bytes into
-    /// a validated [`RealizationReport`].
+    /// a validated [`DerivationPlanReport`].
     pub fn decode(codec: &JsonCodec, bytes: &[u8]) -> Result<Self, NixAdapterError> {
-        let dto: RealizationReportWire = parse_dto(codec, bytes)?;
+        let dto: DerivationPlanReportWire = parse_dto(codec, bytes)?;
         check_schema(dto.schema_version)?;
-        let store_path =
-            StorePath::new(&dto.store_path).map_err(|_| invalid("invalid store path"))?;
-        let deriver =
-            DerivationPath::from_str(&dto.deriver).map_err(|_| invalid("invalid deriver"))?;
-        let mut outputs = BTreeMap::new();
-        for (name, path) in dto.outputs.into_inner() {
-            let n = OutputName::new(&name).map_err(|_| invalid("invalid output name"))?;
-            let p = StorePath::new(&path).map_err(|_| invalid("invalid output store path"))?;
-            outputs.insert(n, p);
+        let root =
+            DerivationPath::from_str(&dto.root).map_err(|_| invalid("invalid root derivation"))?;
+        let outputs_to_install = dto
+            .outputs_to_install
+            .ok_or_else(|| invalid("missing outputs to install"))?
+            .into_inner()
+            .into_iter()
+            .map(|name| OutputName::new(&name).map_err(|_| invalid("invalid output name")))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut derivations = Vec::new();
+        for item in dto.derivations.into_inner() {
+            let derivation = DerivationPath::from_str(&item.derivation)
+                .map_err(|_| invalid("invalid derivation"))?;
+            let system = System::from_str(&item.system).map_err(|_| invalid("unknown system"))?;
+            let outputs = item
+                .outputs
+                .into_inner()
+                .into_iter()
+                .map(|(name, path)| {
+                    Ok((
+                        OutputName::new(&name).map_err(|_| invalid("invalid output name"))?,
+                        StorePath::new(&path)
+                            .map_err(|_| invalid("invalid expected output path"))?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, NixAdapterError>>()?;
+            let document_digest = Digest::from_str(&item.document_digest)
+                .map_err(|_| invalid("invalid document digest"))?;
+            derivations.push(EvaluatedDerivation::new(
+                derivation,
+                item.name,
+                system,
+                outputs,
+                document_digest,
+                item.fixed_output,
+            )?);
         }
-        Self::new(store_path, deriver, outputs)
+        let closure_digest =
+            Digest::from_str(&dto.closure_digest).map_err(|_| invalid("invalid closure digest"))?;
+        Self::new(
+            dto.json_version,
+            root,
+            outputs_to_install,
+            derivations,
+            closure_digest,
+            dto.pname,
+            PackageVersion::new(dto.version),
+        )
     }
 }
 

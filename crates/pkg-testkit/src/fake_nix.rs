@@ -48,9 +48,9 @@ use std::fmt;
 use std::sync::Mutex;
 
 use pkg_nix::{
-    BuildReport, BuildRequest, EvalRealizeRequest, GcReport, MethodKind, NixAdapter,
-    NixAdapterError, PathInfoReport, RealizationReport, StorePath, SubstituteReport, VerifyReport,
-    VerifyRequest, VersionInfo,
+    BuildReport, BuildRequest, DerivationPlanReport, EvaluateDerivationRequest, GcReport,
+    MethodKind, NixAdapter, NixAdapterError, PathInfoReport, StorePath, SubstituteReport,
+    VerifyReport, VerifyRequest, VersionInfo,
 };
 
 use crate::transcript::TranscriptError;
@@ -62,19 +62,19 @@ use crate::transcript::TranscriptError;
 /// `Result`** returned for a matching call. The type is crate-private: nothing
 /// about a stored matcher or canned result is exposed across the crate
 /// boundary, and the public expectation API is the typed
-/// [`FakeNix::expect_version`] / [`FakeNix::expect_eval_realize`] / … methods.
+/// [`FakeNix::expect_version`] / [`FakeNix::expect_evaluate_derivation`] / … methods.
 enum Expectation {
     /// `version()` — no request.
     Version {
         /// The owned canned result returned for a matching call.
         respond: Result<VersionInfo, NixAdapterError>,
     },
-    /// `eval_realize()` — exact request matcher + canned result.
-    EvalRealize {
+    /// `evaluate_derivation()` — exact request matcher + canned result.
+    EvaluateDerivation {
         /// The exact request the head call must equal.
-        expect: EvalRealizeRequest,
+        expect: EvaluateDerivationRequest,
         /// The owned canned result returned for a matching call.
-        respond: Result<RealizationReport, NixAdapterError>,
+        respond: Result<DerivationPlanReport, NixAdapterError>,
     },
     /// `path_info()` — exact store-path matcher + canned result.
     PathInfo {
@@ -116,7 +116,7 @@ impl Expectation {
     fn kind(&self) -> MethodKind {
         match self {
             Expectation::Version { .. } => MethodKind::Version,
-            Expectation::EvalRealize { .. } => MethodKind::EvalRealize,
+            Expectation::EvaluateDerivation { .. } => MethodKind::EvaluateDerivation,
             Expectation::PathInfo { .. } => MethodKind::PathInfo,
             Expectation::Substitute { .. } => MethodKind::Substitute,
             Expectation::Build { .. } => MethodKind::Build,
@@ -208,14 +208,14 @@ impl FakeNix {
         self.push(Expectation::Version { respond })
     }
 
-    /// Expects exactly one `eval_realize()` call whose request equals `expect`
+    /// Expects exactly one `evaluate_derivation()` call whose request equals `expect`
     /// exactly, and returns the owned canned result for it.
-    pub fn expect_eval_realize(
+    pub fn expect_evaluate_derivation(
         &self,
-        expect: EvalRealizeRequest,
-        respond: Result<RealizationReport, NixAdapterError>,
+        expect: EvaluateDerivationRequest,
+        respond: Result<DerivationPlanReport, NixAdapterError>,
     ) -> &Self {
-        self.push(Expectation::EvalRealize { expect, respond })
+        self.push(Expectation::EvaluateDerivation { expect, respond })
     }
 
     /// Expects exactly one `path_info()` call whose store path equals `expect`
@@ -313,22 +313,25 @@ impl NixAdapter for FakeNix {
         }
     }
 
-    fn eval_realize(&self, req: &EvalRealizeRequest) -> Result<RealizationReport, NixAdapterError> {
-        let head = self.take_head(MethodKind::EvalRealize)?;
+    fn evaluate_derivation(
+        &self,
+        req: &EvaluateDerivationRequest,
+    ) -> Result<DerivationPlanReport, NixAdapterError> {
+        let head = self.take_head(MethodKind::EvaluateDerivation)?;
         match head {
-            Expectation::EvalRealize { expect, respond } => {
+            Expectation::EvaluateDerivation { expect, respond } => {
                 if req == &expect {
                     respond
                 } else {
                     Err(NixAdapterError::unexpected_call(
-                        MethodKind::EvalRealize,
-                        MethodKind::EvalRealize,
+                        MethodKind::EvaluateDerivation,
+                        MethodKind::EvaluateDerivation,
                     ))
                 }
             }
             other => Err(NixAdapterError::unexpected_call(
                 other.kind(),
-                MethodKind::EvalRealize,
+                MethodKind::EvaluateDerivation,
             )),
         }
     }

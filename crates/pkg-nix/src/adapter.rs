@@ -36,8 +36,8 @@
 //! journal binding, single-use verification, and rejection (`plans/09` §4.1).
 
 use crate::contract::{
-    BuildReport, BuildRequest, EvalRealizeRequest, GcReport, PathInfoReport, RealizationReport,
-    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    BuildReport, BuildRequest, DerivationPlanReport, EvaluateDerivationRequest, GcReport,
+    PathInfoReport, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use crate::error::NixAdapterError;
 use pkg_core::identity::StorePath;
@@ -55,8 +55,12 @@ pub trait NixAdapter: Send + Sync {
     /// capability probe taking no input.
     fn version(&self) -> Result<VersionInfo, NixAdapterError>;
 
-    /// Evaluate and realize a selector into a store path, deriver, and outputs.
-    fn eval_realize(&self, req: &EvalRealizeRequest) -> Result<RealizationReport, NixAdapterError>;
+    /// Evaluate a selector into a deterministic derivation plan without
+    /// substituting, building, realizing, or mutating the store.
+    fn evaluate_derivation(
+        &self,
+        req: &EvaluateDerivationRequest,
+    ) -> Result<DerivationPlanReport, NixAdapterError>;
 
     /// NAR hash, signatures, references, and NAR/closure sizes for one store
     /// path.
