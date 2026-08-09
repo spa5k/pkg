@@ -541,6 +541,12 @@ flowchart TD
 - **Milestone:** M2.
 
 #### PR-15 — `pkg-index` query API (search/list/info)
+- **Status:** **Completed 2026-08-09.** The pure offline `IndexQuery` API provides
+  bounded host-filtered ranked search, paged derived-catalog enumeration, and
+  exact/alias/display-name info lookup that preserves ambiguity. Stable JSON
+  goldens expose canonical copy/paste package ids, friendly platform ids, stale
+  state and catalog provenance without store/derivation identities; unavailable
+  advisory/size data is reported honestly rather than invented.
 - **Purpose:** read-side API used by the CLI; pure over the index; no network.
 - **Owns:** `crates/pkg-index/src/{query.rs,search.rs,list.rs,info.rs}` + tests.
 - **Depends:** PR-14.

@@ -478,6 +478,11 @@ fn invalid(path: &str, reason: &'static str) -> IndexBuildError {
 }
 
 #[cfg(test)]
+pub(crate) fn test_record(candidate: IndexCandidate) -> IndexRecord {
+    normalize(candidate).expect("test candidate must satisfy the production schema")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

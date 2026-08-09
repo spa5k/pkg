@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "channelSeq": 42,
+  "system": "macos-apple-silicon",
+  "stale": false,
+  "offset": 1,
+  "total": 3,
+  "packages": [
+    {
+      "package": "ripgrep",
+      "name": "ripgrep",
+      "version": "14.1.1",
+      "description": "Fast recursive search",
+      "licenses": [
+        "MIT",
+        "Unlicense"
+      ],
+      "available": true,
+      "broken": false
+    },
+    {
+      "package": "zoxide",
+      "name": "zoxide",
+      "version": "0.9.8",
+      "description": "A smarter cd command",
+      "licenses": [
+        "MIT"
+      ],
+      "available": true,
+      "broken": false
+    }
+  ]
+}

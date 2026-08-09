@@ -272,7 +272,11 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 
 ## 11. Search / list / info / outdated behavior (contract; UX in doc 06)
 
-- **search `<term>`:** fuzzy/substring over `pname`, `attrPath`, `description`, `aliases`; ranked; host-system-filtered default.
+- **search `<term>`:** bounded fuzzy/keyword/substring matching over `pname`,
+  canonical package id (`attrPath`), `description`, and `aliases`; ranked with
+  exact canonical id first; host-system-filtered by default. Because V1 has no
+  separate curated catalog, the validated `attrPath` is presented as the
+  product `package` id so nested packages remain unambiguous and copy-pastable.
 - **info `<selector>`:** resolve to a single record (or present candidates); show display metadata; mark "realizability unknown until install" (CAT-INV-03).
 - **list:** reads the **lock** (realized state, doc 01 §10.2), not the index — shows what's actually installed.
 - **outdated:** diffs the lock's `pname@version`+`attrPath` against the index for the current `channelSeq`; flags candidates. (Display metadata only; the *real* upgrade decision is made at install-eval, doc 04.)
@@ -328,7 +332,11 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
   `crates/pkg-index/nix/index-meta.nix`; the Real-Nix child-process binding remains
   PR-36.
 - CP-03.5 Implement the install-evaluation contract (§9) → normalized derivation plan (BuildPlan input; feeds doc 04 §5.2.1). Realized store-path identity is recorded **post-acquire** (§9.2.1 / doc 05 lock), never here.
-- CP-03.6 Implement read-only `search`/`info`/`list`/`outdated` minimum paths against the schema (UX polish in doc 06).
+- 🟡 CP-03.6 Implement read-only query paths against the schema. PR-15 completes
+  pure offline `search`, `info`, and bounded derived-catalog enumeration with
+  golden machine-output shapes. User-facing installed `list` reads the lock,
+  and `outdated` composes lock plus index; those stateful halves remain with
+  their roadmap owners (UX polish in doc 06).
 
 ## 17. Acceptance criteria
 

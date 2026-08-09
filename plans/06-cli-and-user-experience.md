@@ -239,18 +239,23 @@ online and the index lags the accepted channel descriptor it is refreshed
 first. Stale-but-usable local data is served with a `stale` note (policy may
 downgrade that to a warning).
 
-**Flags:** `--limit N` (default 25), `--channel <id>`, `--json`,
-`--exact` (exact-name match), `--category <cat>`, `--license <spdx>`.
+**Flags:** `--limit N` (default 25; hard maximum 1000), `--channel <id>`,
+`--json`, `--exact` (exact-name match), `--license <spdx>`. Nixpkgs exposes no
+stable package-category field, so V1 does not invent a category taxonomy;
+the CLI scaffold's provisional `--category` flag is removed when PR-24 wires
+this query API.
 
-**Human:** table of `name | version | description | license`. Selecting an
-entry is copy-paste of `name` (the package name) to `pkg info`/`install`.
+**Human:** table of `package | version | description | license`. Selecting an
+entry is copy-paste of `package` to `pkg info`/`install`.
 
 **Note:** search uses the **disposable derived index**, which is not the
 identity source — `install` re-evaluates the pinned Nixpkgs (plan 04). Search
-results carry a product-owned `package` name (the value to copy into `pkg
-info`/`install`) and a `stale` flag if the index lags the channel; the resolved
-Nixpkgs attribute is an internal index detail, not shown in default human or
-`--json` output.
+results carry a product-owned `package` id (the value to copy into `pkg
+info`/`install`) and a `stale` flag if the index lags the channel. With no
+separate curated catalog, the only stable and unambiguous id is the index's
+validated canonical Nixpkgs attribute path (for example `ripgrep` or
+`python3Packages.requests`); it is presented simply as `package`, while raw
+Nix expressions, store paths, derivations, and hashes remain internal.
 
 **Exit:** 0; 66 `ACQUIRE_NETWORK` only when offline **and** there is no
 usable local index; 64 on bad query.
@@ -274,9 +279,18 @@ from the index's per-system data; rendered as friendly platform names, never
 raw Nix system triples), known vulnerabilities, whether already installed
 (and pinned), and source revision.
 
+The pure PR-15 index response supplies catalog fields, source revision, and an
+honest advisory status. V1 has no vulnerability feed (DR-009), so that status
+is `unavailable`, never an empty list that could be mistaken for “no known
+vulnerabilities.” PR-24 composes installed/pinned state and
+`outputsToInstall` from the lock/manifest; the disposable index does not guess
+them.
+
 **Sizes are honest about what is knowable:**
-- Default `info`: `installedSize` is a **disposable-index estimate** (clearly
-  labeled), not an exact closure value.
+- Default `info`: the schema currently carries no size estimate, so
+  `installedSizeEstimateBytes` is `null`/shown as “unavailable.” A future
+  publisher may add a clearly labeled disposable-index estimate through a
+  schema revision; V1 never fabricates one.
 - `--exact` **never** reports a "normalized" or "exact" realized closure/content
   size for an unbuilt output — that number is unknowable before a build. It
   reports: **exact known cache bytes** (download + content) for **cache-present**
@@ -847,8 +861,9 @@ sequenceDiagram
     verified index / accepted descriptor (with a `stale` note) and return 66
     **only** when offline with no usable local data; `pkg update` is the
     single verb that requires the network.
-14. Default `pkg info <pkg>` is index-served and offline, with `installedSize`
-    labeled as a disposable-index **estimate**. `pkg info <pkg> --exact`
+14. Default `pkg info <pkg>` is index-served and offline; because schema V1 has
+    no size estimate, it reports installed-size estimate as unavailable rather
+    than inventing one. `pkg info <pkg> --exact`
     evaluate-only-inspects the pinned package source (fetches the pinned
     source if absent, never builds/activates): it reports expected outputs +
     cache/buildability metadata — not a realized store identity — with **exact

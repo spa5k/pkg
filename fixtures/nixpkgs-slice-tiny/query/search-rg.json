@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "channelSeq": 42,
+  "system": "macos-apple-silicon",
+  "stale": true,
+  "results": [
+    {
+      "package": "ripgrep",
+      "name": "ripgrep",
+      "version": "14.1.1",
+      "description": "Fast recursive search",
+      "licenses": [
+        "MIT",
+        "Unlicense"
+      ],
+      "available": true,
+      "broken": false
+    }
+  ]
+}

@@ -8,8 +8,16 @@
 #![deny(missing_docs)]
 
 pub mod build;
+pub mod info;
+pub mod list;
+pub mod query;
+pub mod search;
 
 pub use build::{
     BuildMetadata, BuiltIndex, IndexBuildError, IndexCandidate, IndexDocument, IndexRecord,
     IndexSource, build_index, build_index_from_json,
 };
+pub use info::{AdvisoryStatus, InfoLookup, InfoResponse, PackageInfo};
+pub use list::{CatalogListOptions, CatalogListResponse};
+pub use query::{IndexQuery, PackageSummary, QueryError};
+pub use search::{SearchOptions, SearchResponse};
