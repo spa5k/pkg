@@ -610,6 +610,17 @@ flowchart TD
 - **Milestone:** M3.
 
 #### PR-18 — `pkg-store` GC roots + activation + atomic `current`
+- **Status:** **Completed 2026-08-09.** `pkg-store` now derives deterministic,
+  non-user-controlled per-output root names and publishes the complete set only
+  through `MaintenanceAdapter`; stages a sorted Rust-only symlink forest without
+  following source links; enforces abort/keep-first/keep-last collisions and
+  hard file/directory conflicts; binds the forest to a recomputable digest; and
+  performs the required durable ordering `rooted → retain forest → atomic
+  relative current`. State paths are revalidated for ownership, writable bits,
+  and symlink components before mutation. The four reachable transaction tails
+  are represented by a fail-closed recovery classifier; PR-19 consumes those
+  actions to write/restore snapshots and journal rows in the full install state
+  machine.
 - **Purpose:** product-owned GC roots (per-user, uid-scoped under
   `/nix/var/nix/gcroots/pkg/users/<uid>/`, created by the authenticated root-helper —
   D-17/ARCH-INV-06; `05` §8.3), store-relative activation symlinks, atomic current

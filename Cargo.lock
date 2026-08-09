@@ -1171,6 +1171,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkg-store"
+version = "0.0.0"
+dependencies = [
+ "pkg-core",
+ "pkg-nix",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "pkg-testkit"
 version = "0.0.0"
 dependencies = [

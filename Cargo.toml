@@ -17,6 +17,7 @@ members = [
     "crates/pkg-index",
     "crates/pkg-nix",
     "crates/pkg-resolver",
+    "crates/pkg-store",
     "crates/pkg-testkit",
 ]
 

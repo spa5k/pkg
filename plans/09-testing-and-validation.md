@@ -902,6 +902,12 @@ These are **constraints the implementation must satisfy** so testing is even pos
 - **AC-T8** (Multi-user isolation) A two-user e2e on a shared host proves users cannot see or
   edit each other's `<user-state>` and GC roots are uid-scoped (AC-S11/S12).
 - **AC-T9** (Crash ordering + candidate snapshots) A crash at *each* state of the generation transaction (prepared / rooted / activated / committed) recovers correctly (plan 05 §8.4): **prepared**/**rooted** (pre-swap) discard the unreachable staged generation — its record, its **two candidate-view snapshots** `gen-<id>.manifest.json`/`.lock.json` (+ `.sha256` sidecars), its (rooted-only) per-output root set, and its forest — and leave the previous generation active; the **activated** state (after the `current` swap, before the `committed` row) always leaves `current` pointing at a fully-rooted, fully-documented, `treeDigest`-verified tree and recovery **restores the mutable `manifest`/`lock` views from the candidate snapshots** and appends the `committed` row. Because the per-output root set is created **before** the swap, no crash ever leaves `current` pointing at an unrooted tree, and no orphaned unrooted staged path survives `gc`.
+  PR-18 unit coverage fixes the dependency-safe storage boundary: all four
+  reachable evidence combinations map to explicit recovery actions, impossible
+  combinations fail closed, helper refusal leaves staging/current untouched,
+  and the observed durability events are exactly `rooted → forest-retained →
+  activated`. PR-19 supplies the fault-injected snapshot/journal executor that
+  applies those actions end to end.
 - **AC-T10** (GC admission) Same-user `gc` + a same-user mutating op is serialized by the
   **per-user state `flock`** (`STATE_LOCKED`, exit 72; plan 05 §12 — UNCHANGED). Cross-user —
   user B's install in its realize→root window vs user A's `gc` — is made safe by the
