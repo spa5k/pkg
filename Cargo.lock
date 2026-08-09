@@ -1133,6 +1133,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkg-index"
+version = "0.0.0"
+dependencies = [
+ "jiff",
+ "pkg-core",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+]
+
+[[package]]
 name = "pkg-nix"
 version = "0.0.0"
 dependencies = [

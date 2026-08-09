@@ -158,7 +158,8 @@ flowchart LR
 🛠 `pkg` (or the publisher pipeline) evaluates a **meta-only** expression over `legacyPackages.<system>` to emit `{pname, version, meta, outputs, position}` for each attribute, **without building anything**:
 
 ```nix
-# sketch (doc 11 will own the maintained expression)
+# sketch; the maintained bounded expression is
+# crates/pkg-index/nix/index-meta.nix
 # pkgs here = import <fetched nixpkgs> { system = <system>; }
 let
   pkgs = import <nixpkgs> {};
@@ -175,7 +176,14 @@ in
   builtins.mapAttrs metaOf pkgs
 ```
 
-⚠️ **S4** Performance/cost of this meta-eval for four systems must be measured (default expectation: minutes, disposable, cached per `channelSeq`). Mitigations: lazy attr traversal, `tryEval` to swallow per-attr failures, publisher-side precompute (doc 10) so clients normally just download Option-A/self-built bytes by hash.
+✅ **S4 / DR-004 accepted (2026-08-09).** Complete Real Nix 2.34.8 native arm64
+evidence measured exact-attribute p95 at 453 ms on macOS and 325 ms on Linux;
+one-system top-level index p95 was about 3.6–4.7 s with peak RSS about 1.88 GiB.
+The frozen PR-14/16 budgets are exact-attribute p95 `<1.5 s` and `<512 MiB`, and
+one-system index p95 `<10 s` and `<2.5 GiB`; PR-32 additionally guards against a
+greater-than-25% regression from the pinned baseline and expands native x86_64
+coverage before GA. The result remains disposable and cached per `channelSeq`;
+publisher-side precompute (doc 10) remains the preferred normal path.
 
 ✅ **Tolerating per-attribute eval failures** is required because `legacyPackages` is lazy and individual attributes can throw (e.g. `meta.broken` triggers, `assert`s, unsupported system). `builtins.tryEval` is the documented mechanism. — *Nix Reference Manual, `builtins.tryEval`; Nixpkgs flake output schema (`legacyPackages`).*
 
@@ -311,9 +319,14 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 ## 16. Implementation checkpoints (foundation; feeds doc 11)
 
 - ✅ CP-03.1 Implement Nixpkgs source fetch+verify via `nix flake metadata <direct-locked-ref>`: build the ref from the descriptor's `owner`/`repo`/`rev`+`narHash`, read top-level `locked.rev`/`locked.narHash`, cross-check `revision` if present, fail-closed against the descriptor before any eval/index use (CAT-INV-01; §6.2). Contract/reference completed by PR-13; Real-Nix runner binding remains PR-36.
-- CP-03.2 Define & serialize the index record schema (§7) with stable hashing.
+- ✅ CP-03.2 Define & serialize the index record schema (§7) with stable hashing.
+  Completed by PR-14 with bounded closed projection input, deterministic sorting,
+  RFC 8785 bytes, and channel-compatible exact-byte SHA-256.
 - CP-03.3 Implement index loader/verifier (download TUF target → verify sha256 → load; else Option B self-build).
-- CP-03.4 Implement Option B meta-eval expression with `tryEval` per-attr tolerance (SPK-04).
+- ✅ CP-03.4 Implement Option B meta-eval expression with `tryEval` per-attr tolerance
+  (SPK-04). The maintained expression is
+  `crates/pkg-index/nix/index-meta.nix`; the Real-Nix child-process binding remains
+  PR-36.
 - CP-03.5 Implement the install-evaluation contract (§9) → normalized derivation plan (BuildPlan input; feeds doc 04 §5.2.1). Realized store-path identity is recorded **post-acquire** (§9.2.1 / doc 05 lock), never here.
 - CP-03.6 Implement read-only `search`/`info`/`list`/`outdated` minimum paths against the schema (UX polish in doc 06).
 

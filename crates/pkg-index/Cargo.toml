@@ -1,0 +1,17 @@
+# `pkg-index` — deterministic, disposable catalog artifacts derived from a
+# pinned Nixpkgs projection. The index is discovery metadata only: it never
+# carries store paths, NAR hashes, or realized identity.
+
+[package]
+name = "pkg-index"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+jiff = "=0.2.35"
+pkg-core = { path = "../pkg-core" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+serde_json_canonicalizer = "=0.3.2"

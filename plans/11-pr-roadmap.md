@@ -522,6 +522,12 @@ flowchart TD
 - **Milestone:** M2.
 
 #### PR-14 — `pkg-index` disposable, deterministic build
+- **Status:** **Completed 2026-08-09.** `pkg-index` now validates the bounded
+  closed-schema Nix projection, normalizes and RFC 8785-canonicalizes schema-v1
+  records, emits the channel-compatible exact-byte SHA-256, and rejects store-path
+  leakage. The maintained `tryEval` projection lives in
+  `crates/pkg-index/nix/index-meta.nix`; the tiny-slice golden digest is reproduced by
+  native macOS and Linux CI jobs.
 - **Purpose:** derive the search/list/info index from the pinned Nixpkgs; assert
   cross-host determinism (`08` T-IDX-3, `03`).
 - **Owns:** `crates/pkg-index/src/build.rs` + tests + determinism job in CI.

@@ -1,0 +1,46 @@
+[
+  {
+    "attrPath": "zoxide",
+    "pname": "zoxide",
+    "version": "0.9.8",
+    "description": "A smarter cd command",
+    "homepage": "https://github.com/ajeetdsouza/zoxide",
+    "licenses": ["MIT"],
+    "platforms": ["x86_64-linux", "aarch64-darwin", "x86_64-linux"],
+    "availableHere": true,
+    "broken": false,
+    "outputs": ["out"],
+    "aliases": ["z"]
+  },
+  {
+    "attrPath": "python3Packages.requests",
+    "pname": "requests",
+    "version": "2.32.3",
+    "description": "Python HTTP for Humans",
+    "homepage": "https://requests.readthedocs.io",
+    "licenses": ["Apache-2.0", "Apache-2.0"],
+    "platforms": ["aarch64-darwin", "aarch64-linux", "x86_64-darwin", "x86_64-linux"],
+    "availableHere": true,
+    "broken": false,
+    "position": "pkgs/development/python-modules/requests/default.nix:42",
+    "outputs": ["out"],
+    "aliases": ["requests2"]
+  },
+  {
+    "attrPath": "throwingFixture",
+    "skipped": true
+  },
+  {
+    "attrPath": "ripgrep",
+    "pname": "ripgrep",
+    "version": "14.1.1",
+    "description": "Fast recursive search",
+    "homepage": "https://github.com/BurntSushi/ripgrep",
+    "licenses": ["MIT", "Unlicense"],
+    "platforms": ["aarch64-darwin", "aarch64-linux", "x86_64-darwin", "x86_64-linux"],
+    "availableHere": true,
+    "broken": false,
+    "outputs": ["man", "out", "man"],
+    "aliases": ["rg"]
+  }
+]
