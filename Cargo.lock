@@ -1110,7 +1110,10 @@ dependencies = [
  "clap",
  "clap_complete",
  "pkg-core",
+ "pkg-index",
  "pkg-nix",
+ "pkg-pipeline",
+ "pkg-testkit",
  "serde",
  "serde_json",
 ]

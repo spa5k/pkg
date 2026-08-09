@@ -5,6 +5,7 @@
 mod acquire;
 mod activate;
 mod commit;
+mod lifecycle;
 mod preflight;
 mod resolve;
 mod rollback;
@@ -17,6 +18,7 @@ pub use commit::{
     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,
     recover_generation,
 };
+pub use lifecycle::{InstallStateError, assemble_install_state};
 pub use preflight::{PlannedOutput, PreflightError, PreflightInstall, preflight_cache_only};
 pub use resolve::{ResolveBatchError, ResolvedInstall, resolve_install};
 pub use rollback::{RollbackPrepareError, prepare_rollback};

@@ -229,7 +229,7 @@ pub enum Command {
 }
 
 impl Command {
-    const fn name(&self) -> &'static str {
+    pub(crate) const fn name(&self) -> &'static str {
         match self {
             Self::Doctor => "doctor",
             Self::Search(_) => "search",
@@ -265,12 +265,37 @@ pub struct SearchArgs {
     /// Require an exact package-name match.
     #[arg(long)]
     exact: bool,
-    /// Filter by product category.
-    #[arg(long, value_name = "CATEGORY")]
-    category: Option<String>,
     /// Filter by SPDX license identifier.
     #[arg(long, value_name = "SPDX")]
     license: Option<String>,
+}
+
+impl SearchArgs {
+    /// Search text supplied by the user.
+    #[must_use]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+    /// Maximum requested row count.
+    #[must_use]
+    pub const fn limit(&self) -> u16 {
+        self.limit
+    }
+    /// Optional product channel identifier.
+    #[must_use]
+    pub fn channel(&self) -> Option<&str> {
+        self.channel.as_deref()
+    }
+    /// Whether only an exact package id may match.
+    #[must_use]
+    pub const fn exact(&self) -> bool {
+        self.exact
+    }
+    /// Optional SPDX license filter.
+    #[must_use]
+    pub fn license(&self) -> Option<&str> {
+        self.license.as_deref()
+    }
 }
 
 /// Package metadata arguments.
@@ -285,6 +310,24 @@ pub struct InfoArgs {
     /// Select a signed channel by product identifier.
     #[arg(long, value_name = "ID")]
     channel: Option<String>,
+}
+
+impl InfoArgs {
+    /// Package selectors to inspect.
+    #[must_use]
+    pub fn packages(&self) -> &[String] {
+        &self.packages
+    }
+    /// Whether pinned-source evaluation was requested.
+    #[must_use]
+    pub const fn exact(&self) -> bool {
+        self.exact
+    }
+    /// Optional product channel identifier.
+    #[must_use]
+    pub fn channel(&self) -> Option<&str> {
+        self.channel.as_deref()
+    }
 }
 
 /// Install command arguments.
@@ -307,6 +350,34 @@ pub struct InstallArgs {
     channel: Option<String>,
 }
 
+impl InstallArgs {
+    /// Package selectors to install.
+    #[must_use]
+    pub fn packages(&self) -> &[String] {
+        &self.packages
+    }
+    /// Explicit selected outputs.
+    #[must_use]
+    pub fn outputs(&self) -> &[String] {
+        &self.with_outputs
+    }
+    /// Activation collision policy.
+    #[must_use]
+    pub const fn collision_policy(&self) -> CollisionPolicy {
+        self.on_collision
+    }
+    /// Whether target resolution should collect all failures before refusing.
+    #[must_use]
+    pub const fn keep_going(&self) -> bool {
+        self.keep_going
+    }
+    /// Optional product channel identifier.
+    #[must_use]
+    pub fn channel(&self) -> Option<&str> {
+        self.channel.as_deref()
+    }
+}
+
 /// Remove command arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct RemoveArgs {
@@ -316,6 +387,19 @@ pub struct RemoveArgs {
     /// Preview closures that become collectible after removal.
     #[arg(long)]
     orphan_check: bool,
+}
+
+impl RemoveArgs {
+    /// Installed selectors to remove.
+    #[must_use]
+    pub fn packages(&self) -> &[String] {
+        &self.packages
+    }
+    /// Whether collectible closures should be previewed.
+    #[must_use]
+    pub const fn orphan_check(&self) -> bool {
+        self.orphan_check
+    }
 }
 
 /// List command arguments.
@@ -338,6 +422,34 @@ pub struct ListArgs {
     outdated: bool,
 }
 
+impl ListArgs {
+    /// Whether only package names should be rendered.
+    #[must_use]
+    pub const fn name_only(&self) -> bool {
+        self.name_only
+    }
+    /// Whether selected output names should be included.
+    #[must_use]
+    pub const fn with_outputs(&self) -> bool {
+        self.with_outputs
+    }
+    /// Whether realized closure bytes should be included.
+    #[must_use]
+    pub const fn size(&self) -> bool {
+        self.size
+    }
+    /// Whether to return only pinned selectors.
+    #[must_use]
+    pub const fn pinned(&self) -> bool {
+        self.pinned
+    }
+    /// Whether accepted-source outdated state should be included.
+    #[must_use]
+    pub const fn outdated(&self) -> bool {
+        self.outdated
+    }
+}
+
 /// Metadata update arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct UpdateArgs {
@@ -347,6 +459,19 @@ pub struct UpdateArgs {
     /// Re-download metadata even when the local copy is fresh.
     #[arg(long)]
     force: bool,
+}
+
+impl UpdateArgs {
+    /// Whether to check without accepting newer metadata.
+    #[must_use]
+    pub const fn check(&self) -> bool {
+        self.check
+    }
+    /// Whether to refresh even when local metadata is fresh.
+    #[must_use]
+    pub const fn force(&self) -> bool {
+        self.force
+    }
 }
 
 /// Upgrade command arguments.
@@ -382,12 +507,68 @@ pub struct UpgradeArgs {
     channel: Option<String>,
 }
 
+impl UpgradeArgs {
+    /// Named installed selectors to upgrade.
+    #[must_use]
+    pub fn packages(&self) -> &[String] {
+        &self.packages
+    }
+    /// Whether every unpinned selector is in scope.
+    #[must_use]
+    pub const fn all(&self) -> bool {
+        self.all
+    }
+    /// Whether explicitly pinned selectors may move.
+    #[must_use]
+    pub const fn bump_pinned(&self) -> bool {
+        self.bump_pinned
+    }
+    /// Whether any local-build need must refuse the operation.
+    #[must_use]
+    pub const fn no_build(&self) -> bool {
+        self.no_build
+    }
+    /// Whether removed upstream selectors should be reported and skipped.
+    #[must_use]
+    pub const fn include_removed_upstream(&self) -> bool {
+        self.include_removed_upstream
+    }
+    /// Explicit selected outputs.
+    #[must_use]
+    pub fn outputs(&self) -> &[String] {
+        &self.with_outputs
+    }
+    /// Activation collision policy.
+    #[must_use]
+    pub const fn collision_policy(&self) -> CollisionPolicy {
+        self.on_collision
+    }
+    /// Whether target resolution should collect all failures before refusing.
+    #[must_use]
+    pub const fn keep_going(&self) -> bool {
+        self.keep_going
+    }
+    /// Optional product channel identifier.
+    #[must_use]
+    pub fn channel(&self) -> Option<&str> {
+        self.channel.as_deref()
+    }
+}
+
 /// One-or-more package selectors.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct PackageArgs {
     /// Installed package selectors.
     #[arg(required = true, num_args = 1..)]
     packages: Vec<String>,
+}
+
+impl PackageArgs {
+    /// Installed selectors named by the operation.
+    #[must_use]
+    pub fn packages(&self) -> &[String] {
+        &self.packages
+    }
 }
 
 /// History command arguments.
@@ -401,12 +582,33 @@ pub struct HistoryArgs {
     delete: Option<String>,
 }
 
+impl HistoryArgs {
+    /// Optional pair of generation ids to compare.
+    #[must_use]
+    pub fn diff(&self) -> &[String] {
+        &self.diff
+    }
+    /// Optional non-active generation id to prune.
+    #[must_use]
+    pub fn delete(&self) -> Option<&str> {
+        self.delete.as_deref()
+    }
+}
+
 /// Rollback command arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct RollbackArgs {
     /// Generation identifier; defaults to the active generation's parent.
     #[arg(value_name = "ID")]
     generation: Option<String>,
+}
+
+impl RollbackArgs {
+    /// Explicit rollback target, or `None` for the active parent.
+    #[must_use]
+    pub fn generation(&self) -> Option<&str> {
+        self.generation.as_deref()
+    }
 }
 
 /// Garbage-collection command arguments.
@@ -418,6 +620,19 @@ pub struct GcArgs {
     /// Preserve generations no older than this many days.
     #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u32).range(1..))]
     max_age_days: Option<u32>,
+}
+
+impl GcArgs {
+    /// Optional recent-generation retention override.
+    #[must_use]
+    pub const fn keep_generations(&self) -> Option<u32> {
+        self.keep_generations
+    }
+    /// Optional age-window retention override in days.
+    #[must_use]
+    pub const fn max_age_days(&self) -> Option<u32> {
+        self.max_age_days
+    }
 }
 
 /// Repair command arguments.
@@ -435,6 +650,29 @@ pub struct RepairArgs {
     /// Rebuild desired manifest state from verified lock/store reality.
     #[arg(long, conflicts_with_all = ["verify_only", "from_manifest"])]
     from_lock: bool,
+}
+
+impl RepairArgs {
+    /// Explicit generation target, or `None` for active.
+    #[must_use]
+    pub fn generation(&self) -> Option<&str> {
+        self.generation.as_deref()
+    }
+    /// Whether only read-only verification may run.
+    #[must_use]
+    pub const fn verify_only(&self) -> bool {
+        self.verify_only
+    }
+    /// Optional generation whose durable manifest should restore lock state.
+    #[must_use]
+    pub fn from_manifest(&self) -> Option<&str> {
+        self.from_manifest.as_deref()
+    }
+    /// Whether verified lock/store reality should restore desired state.
+    #[must_use]
+    pub const fn from_lock(&self) -> bool {
+        self.from_lock
+    }
 }
 
 /// Completion command arguments.
@@ -577,6 +815,7 @@ mod tests {
     fn collision_and_repair_grammars_fail_closed() {
         assert!(Cli::try_parse(["pkg", "install", "x", "--on-collision", "keep-all"]).is_err());
         assert!(Cli::try_parse(["pkg", "install", "x", "--force"]).is_err());
+        assert!(Cli::try_parse(["pkg", "search", "x", "--category", "tools"]).is_err());
         assert!(Cli::try_parse(["pkg", "repair", "--verify-only", "--from-lock"]).is_err());
     }
 }

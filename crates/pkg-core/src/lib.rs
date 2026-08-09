@@ -29,6 +29,7 @@ pub mod channel;
 pub mod generation;
 pub mod history;
 pub mod identity;
+pub mod install;
 pub mod lifecycle;
 pub mod pin;
 pub mod realization;
@@ -56,6 +57,7 @@ pub use history::{
 pub use identity::{
     DerivationPath, IdentityError, NarHash, OutputName, RealizationIdentity, StorePath,
 };
+pub use install::{InstallEditError, InstallPackage, InstallResult, install_packages};
 pub use pin::{PinAction, PinError, PinResult, edit_pins};
 pub use realization::{Realization, RealizationError};
 pub use selector::{

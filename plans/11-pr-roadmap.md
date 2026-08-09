@@ -748,6 +748,9 @@ flowchart TD
 - **Milestone:** M4.
 
 #### PR-23 — `pkg-cli` clap skeleton + UX/progress/TTY/exit-codes
+- **Status:** **Completed 2026-08-09.** The complete derive-based V1 grammar,
+  stable exit codes, human/JSON/JSONL error envelopes, public progress schema,
+  TTY policy, and parser/contract tests landed in `pkg-cli`.
 - **Purpose:** the command shell: clap structure, progress events, TTY detection, stable exit
   codes, `--json` harness (`06`).
 - **Owns:** `crates/pkg-cli/src/{main.rs,cli.rs,ux.rs,progress.rs,exit.rs}` + tests.
@@ -761,9 +764,26 @@ flowchart TD
 - **Milestone:** M4.
 
 #### PR-24 — Wire all CLI commands to core
+- **Status:** **Completed 2026-08-09.** Every non-bootstrap verb now crosses a
+  typed `CommandRequest` → `CoreOperations` boundary with global confirmation
+  and dry-run policy preserved after parsing. Success output is bounded and
+  recursively rejects reserved fields, raw store/derivation/flake identities,
+  Nix system triples, and trust-control names before human/JSON/JSONL rendering.
+  Offline verified-index `search`/default `info`, active-state `list`, atomic
+  remove/pin/unpin edits, and history views use the real core APIs. The missing
+  atomic install-state editor and resolved+verified pipeline binder were added
+  so the install path no longer needs ad-hoc JSON assembly. The E2E-Fake suite
+  routes every verb, asserts all seven install phases, exact FakeNix calls,
+  output redaction, and policy propagation. The shipped binary deliberately
+  uses `UnavailableEngine` until PR-36 supplies the authenticated private
+  broker connector; PR-24 does not bypass that boundary or claim PR-30 repair
+  execution exists early.
 - **Purpose:** connect `doctor, search, info, install, remove, list, outdated, update,
   upgrade, pin/unpin, history, rollback, gc, repair, completion` to PR-15..22.
-- **Owns:** `crates/pkg-cli/src/commands/*.rs` + e2e-Fake suite.
+- **Owns:** `crates/pkg-cli/src/commands/*.rs` + e2e-Fake suite, plus the narrow
+  missing `pkg-core::install` lifecycle editor and
+  `pkg-pipeline::assemble_install_state` binding required by real install
+  orchestration.
 - **Depends:** PR-16, PR-19, PR-20, PR-21, PR-22, PR-23.
 - **Migration/compat:** first user-complete surface; `06` copy/honesty applied.
 - **Tests & gates:** G-UNIT + G-INTEGRATION + **G-E2E-FAKE** (every command).
@@ -774,6 +794,9 @@ flowchart TD
 - **Milestone:** M4.
 
 #### PR-25 — Shell completion + PATH integration + `doctor`
+- **Status:** **Completed 2026-08-09.** Static completion generation for all
+  supported shells, idempotent managed PATH snippets, shadowing detection, and
+  a versioned fail-closed doctor report are implemented and tested.
 - **Purpose:** completions for supported shells; PATH snippet detection; `doctor` health
   checks (`06`,`07`).
 - **Owns:** `crates/pkg-cli/src/completion.rs`, `crates/pkg-cli/src/commands/doctor.rs` + tests.

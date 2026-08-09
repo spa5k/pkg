@@ -3,6 +3,7 @@ use std::process::ExitCode as ProcessExitCode;
 use clap::Parser;
 use pkg_cli::cli::{Cli, Command};
 use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport};
+use pkg_cli::commands::execute::{UnavailableEngine, execute_command};
 use pkg_cli::completion::write_completion;
 use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
 use pkg_cli::exit::ExitCode;
@@ -47,26 +48,17 @@ fn main() -> ProcessExitCode {
 
     install_crash_reporter(&cli);
 
-    // PR-24 replaces this closed response for the remaining command set.
-    let error = CommandError::new(
-        ExitCode::EngineUnavailable,
-        "command execution is not available in this development build",
-        "use `pkg --help` to inspect the command contract",
-    );
-    let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
-    if write_error(
+    let exit = match execute_command(
+        &cli,
+        &mut UnavailableEngine,
         std::io::stdout(),
         std::io::stderr(),
-        mode,
-        cli.command_name(),
-        &error,
-    )
-    .is_err()
-    {
-        return ProcessExitCode::FAILURE;
-    }
-    write_command_log(&cli, error.exit_code());
-    error.exit_code().into()
+    ) {
+        Ok(exit) => exit,
+        Err(_) => return ProcessExitCode::FAILURE,
+    };
+    write_command_log(&cli, exit);
+    exit.into()
 }
 
 fn observability_root(cli: &Cli) -> Option<std::path::PathBuf> {

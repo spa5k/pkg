@@ -1,3 +1,6 @@
-//! Command implementations that are dependency-ready before the PR-24 wiring apex.
+//! Product command dispatch and implementations.
 
 pub mod doctor;
+pub mod execute;
+pub mod query;
+pub mod state;

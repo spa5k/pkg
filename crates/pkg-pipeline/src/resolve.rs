@@ -1,6 +1,6 @@
 use std::fmt;
 
-use pkg_core::{PackageSelector, System};
+use pkg_core::{ChannelSequence, NixpkgsRevision, PackageSelector, System};
 use pkg_index::IndexDocument;
 use pkg_nix::{NixAdapter, VerifiedNixpkgsSource};
 use pkg_resolver::{ResolveError, ResolvedPackagePlan, resolve_package};
@@ -9,6 +9,9 @@ use pkg_resolver::{ResolveError, ResolvedPackagePlan, resolve_package};
 #[derive(Debug)]
 pub struct ResolvedInstall {
     targets: Vec<ResolvedPackagePlan>,
+    channel_sequence: ChannelSequence,
+    revision: NixpkgsRevision,
+    system: System,
 }
 
 impl ResolvedInstall {
@@ -16,6 +19,24 @@ impl ResolvedInstall {
     #[must_use]
     pub fn targets(&self) -> &[ResolvedPackagePlan] {
         &self.targets
+    }
+
+    /// Returns the authenticated channel sequence used for every target.
+    #[must_use]
+    pub const fn channel_sequence(&self) -> ChannelSequence {
+        self.channel_sequence
+    }
+
+    /// Returns the exact authenticated Nixpkgs revision used for evaluation.
+    #[must_use]
+    pub const fn revision(&self) -> &NixpkgsRevision {
+        &self.revision
+    }
+
+    /// Returns the platform against which every derivation was evaluated.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.system
     }
 }
 
@@ -76,5 +97,10 @@ pub fn resolve_install(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(ResolvedInstall { targets })
+    Ok(ResolvedInstall {
+        targets,
+        channel_sequence: source.channel_sequence(),
+        revision: source.revision().clone(),
+        system,
+    })
 }

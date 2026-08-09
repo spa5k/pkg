@@ -11,8 +11,8 @@ use serde_json::{Map, Number, Value};
 use super::Digest;
 use crate::{
     AttributePath, ChannelSequence, DerivationPath, NarHash, NixpkgsRevision, OutputName,
-    OutputSelection, PackageVersion, Realization, SelectorId, SelectorInput, SourceRevision,
-    StorePath, System, VersionBound, VersionPreference, VersionRange,
+    OutputSelection, PackageSelector, PackageVersion, Realization, SelectorId, SelectorInput,
+    SourceRevision, StorePath, System, VersionBound, VersionPreference, VersionRange,
 };
 
 /// The only state schema version understood by this release.
@@ -280,6 +280,45 @@ impl ManifestEntry {
     #[must_use]
     pub fn pinned_to(&self) -> Option<&StorePath> {
         self.pinned_to.as_ref()
+    }
+
+    pub(crate) fn from_install(
+        selector: &PackageSelector,
+        added_at: String,
+        origin: String,
+    ) -> Result<Self, StateSchemaError> {
+        let attribute = selector
+            .attribute()
+            .cloned()
+            .ok_or_else(|| field_error("attribute", "resolved attribute is required"))?;
+        let pinned_to = selector
+            .pin_state()
+            .pinned_identity()
+            .map(|identity| identity.store_path().clone());
+        if added_at.is_empty()
+            || added_at.len() > 128
+            || added_at.chars().any(char::is_control)
+            || origin.is_empty()
+            || origin.len() > 256
+            || origin.chars().any(char::is_control)
+        {
+            return Err(field_error(
+                "installMetadata",
+                "must be bounded non-control text",
+            ));
+        }
+        Ok(Self {
+            id: selector.id().clone(),
+            selector: selector.selector().clone(),
+            attribute,
+            version_preference: selector.version_preference().clone(),
+            outputs: selector.outputs().clone(),
+            source_revision: selector.source_revision().clone(),
+            pinned: pinned_to.is_some(),
+            pinned_to,
+            added_at,
+            origin,
+        })
     }
 
     pub(crate) fn retarget_for_upgrade(mut self, attribute: AttributePath, bump_pin: bool) -> Self {
