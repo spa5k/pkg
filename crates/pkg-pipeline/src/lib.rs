@@ -4,6 +4,7 @@
 
 mod acquire;
 mod activate;
+mod build_intent;
 mod build_plan;
 mod commit;
 mod lifecycle;
@@ -15,6 +16,9 @@ mod verify;
 
 pub use acquire::{AcquireError, AcquiredInstall, AcquiredOutput, acquire_cache_only};
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
+pub use build_intent::{
+    AuthenticatedBuildIntent, BuildIntentError, BuildIntentErrorCode, BuildPlanningAdapter,
+};
 pub use build_plan::{
     AuthenticatedBuildPolicy, LocalBuildPlanError, LocalBuildPlanErrorCode,
     prepare_local_build_plan,

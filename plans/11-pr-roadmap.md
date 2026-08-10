@@ -1191,7 +1191,14 @@ flowchart TD
   metadata runner: it executes only the command value derived from `NixpkgsFetchSpec` (itself
   promoted from `VerifiedChannel`), under the same scrubbed environment, fixed runtime, bounded
   timeout, and redacted error boundary. This supplies the dispatcher with an independently verified
-  materialized source without adding a caller URL, registry, option, or arbitrary argv seam. The
+  materialized source without adding a caller URL, registry, option, or arbitrary argv seam. A new
+  broker-private `AuthenticatedBuildIntent` now retains only a verified channel, a bounded unique
+  batch of validated selectors, the native target system, and an optional validated index. Each
+  `plan` call reconstructs authority from scratch: promote policy, materialize and independently
+  verify the exact pinned source, check the managed runtime, evaluate selectors, classify the live
+  local/fixed-cache state, and assemble a subject-bound plan from current host readiness. The same
+  object can therefore supply both initial preparation and the admission-time trusted replan without
+  retaining prior derivations, paths, or cache claims as authority. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
