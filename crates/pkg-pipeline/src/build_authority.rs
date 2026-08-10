@@ -54,6 +54,60 @@ impl AuthenticatedBuildAuthority {
         }
     }
 
+    /// Starts broker authority from one exact verified channel/index pair.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an index capability authenticated for any other descriptor.
+    pub fn new_with_index(
+        channel: VerifiedChannel,
+        index: VerifiedIndex,
+        adapter: Arc<dyn BuildPlanningAdapter>,
+    ) -> Result<Self, BuildAuthorityError> {
+        if !index.matches_channel(&channel) {
+            return Err(BuildAuthorityError::new(
+                BuildAuthorityErrorCode::IndexMismatch,
+            ));
+        }
+        Ok(Self {
+            state: Mutex::new(AuthorityState {
+                identity: ChannelAuthorityIdentity::from_channel(&channel),
+                channel,
+                index: Some(index),
+            }),
+            adapter,
+        })
+    }
+
+    /// Atomically publishes one exact verified channel/index pair.
+    ///
+    /// # Errors
+    ///
+    /// Refuses mismatched index identity, rollback, descriptor reuse, policy
+    /// downgrade, or unavailable in-memory state without partial publication.
+    pub fn refresh_with_index(
+        &self,
+        channel: VerifiedChannel,
+        index: VerifiedIndex,
+    ) -> Result<BuildAuthorityUpdate, BuildAuthorityError> {
+        if !index.matches_channel(&channel) {
+            return Err(BuildAuthorityError::new(
+                BuildAuthorityErrorCode::IndexMismatch,
+            ));
+        }
+        let candidate = ChannelAuthorityIdentity::from_channel(&channel);
+        let mut state = self.lock_state()?;
+        let channel_update = compare_channel_identity(state.identity, candidate)?;
+        if channel_update == BuildAuthorityUpdate::Unchanged && state.index.as_ref() == Some(&index)
+        {
+            return Ok(BuildAuthorityUpdate::Unchanged);
+        }
+        state.identity = candidate;
+        state.channel = channel;
+        state.index = Some(index);
+        Ok(BuildAuthorityUpdate::Updated)
+    }
+
     /// Publishes a verified channel monotonically and drops any older index.
     ///
     /// # Errors

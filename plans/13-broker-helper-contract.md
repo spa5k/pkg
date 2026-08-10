@@ -273,7 +273,11 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   durable first-run marker makes interrupted initialization retryable without treating missing
   established state as fresh; an explicit exact-seed migration handles the prior caller-owned state
   format and tightens its legacy lock mode. Indexed refresh advances rollback memory only after its
-  required authenticated target succeeds. Adapter failures cross only the closed error-code envelope;
+  required authenticated target succeeds. Semantic promotion runs through a typed callback while
+  the serialized channel transaction remains held, so sequence commit cannot precede compressed
+  index validation. A long-lived broker refresh owner derives the native system from the compiled
+  target, bootstraps only from the promoted pair, and atomically replaces channel plus index in live
+  authority; none enters from the command wire. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.

@@ -45,7 +45,7 @@ impl std::fmt::Debug for ProductionBuildHostFactsProbe {
 impl ProductionBuildHostFactsProbe {
     /// Binds the fixed-path observer to the exact authenticated managed config.
     pub fn from_verified_channel(channel: &VerifiedChannel) -> Result<Self, BuildHostFactsError> {
-        let system = native_system()?;
+        let system = production_native_system()?;
         let expected_config = render_managed_build_nix_conf(system, channel.descriptor().cache())
             .map_err(|_| BuildHostFactsError)?;
         Ok(Self {
@@ -382,22 +382,22 @@ fn ensure_safe_ancestors(path: &Path) -> Result<(), BuildHostFactsError> {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-const fn native_system() -> Result<System, BuildHostFactsError> {
+pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::X8664Linux)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-const fn native_system() -> Result<System, BuildHostFactsError> {
+pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::Aarch64Linux)
 }
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-const fn native_system() -> Result<System, BuildHostFactsError> {
+pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::X8664Darwin)
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-const fn native_system() -> Result<System, BuildHostFactsError> {
+pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::Aarch64Darwin)
 }
 
@@ -407,7 +407,7 @@ const fn native_system() -> Result<System, BuildHostFactsError> {
     all(target_os = "macos", target_arch = "x86_64"),
     all(target_os = "macos", target_arch = "aarch64")
 )))]
-const fn native_system() -> Result<System, BuildHostFactsError> {
+pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Err(BuildHostFactsError)
 }
 

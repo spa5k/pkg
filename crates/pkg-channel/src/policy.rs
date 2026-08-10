@@ -167,6 +167,8 @@ pub enum ChannelError {
     MissingIndexTarget,
     /// The authenticated host index target exceeds the product byte ceiling.
     IndexTargetTooLarge,
+    /// The trusted consumer refused semantic promotion of the index target.
+    IndexVerificationRefused,
     /// The substituter URL or signed cache key is outside V1 policy.
     InvalidSubstituters,
     /// A descriptor-referenced artifact is absent from authenticated TUF metadata.
@@ -212,6 +214,9 @@ impl fmt::Display for ChannelError {
             Self::MissingIndexTarget => f.write_str("authenticated package index is missing"),
             Self::IndexTargetTooLarge => {
                 f.write_str("authenticated package index exceeds the product limit")
+            }
+            Self::IndexVerificationRefused => {
+                f.write_str("authenticated package index promotion was refused")
             }
             Self::InvalidSubstituters => f.write_str("substituter policy is not the V1 allowlist"),
             Self::MissingTufTarget(name) => write!(f, "TUF target `{name}` is missing"),

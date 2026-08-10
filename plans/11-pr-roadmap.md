@@ -1250,7 +1250,12 @@ flowchart TD
   authoritative accepted identity, refuses fresh/interrupted-new-format stores or conflicts, and
   safely tightens the legacy regular lock file from umask-derived permissions to `0600`. Indexed
   refresh commits the new identity only after the required TUF index target has verified, so a
-  failed index fetch cannot abandon the previous usable channel. The
+  failed index fetch cannot abandon the previous usable channel. Semantic index promotion runs
+  through a synchronous typed verifier while that serialized transaction is still held; durable
+  sequence advancement therefore cannot race ahead of Brotli/schema/canonical verification. A
+  long-lived broker refresh service derives the native system from the compiled target, bootstraps
+  only from that promoted channel/index pair, and atomically replaces both in live build authority.
+  Command callers supply none of those values. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

@@ -5,6 +5,7 @@
 mod acquire;
 mod activate;
 mod build_authority;
+mod build_authority_refresh;
 mod build_intent;
 mod build_plan;
 mod build_preparation;
@@ -21,6 +22,9 @@ pub use acquire::{AcquireError, AcquiredInstall, AcquiredOutput, acquire_cache_o
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
 pub use build_authority::{
     AuthenticatedBuildAuthority, BuildAuthorityError, BuildAuthorityErrorCode, BuildAuthorityUpdate,
+};
+pub use build_authority_refresh::{
+    AuthenticatedBuildAuthorityService, BuildAuthorityRefreshError, BuildAuthorityRefreshErrorCode,
 };
 pub use build_intent::{
     AuthenticatedBuildIntent, AuthenticatedBuildReplanner, BuildHostFacts, BuildHostFactsError,

@@ -12,8 +12,8 @@ use url::Url;
 
 use crate::keys::TrustedRoot;
 use crate::policy::{
-    AcceptedChannel, ChannelError, DESCRIPTOR_TARGET, RefreshOutcome, validate_datastore,
-    validate_descriptor, validate_repository_url,
+    AcceptedChannel, ChannelError, DESCRIPTOR_TARGET, RefreshOutcome, VerifiedChannel,
+    validate_datastore, validate_descriptor, validate_repository_url,
 };
 use crate::state::{AcceptedChannelStore, LOCK_FILE};
 
@@ -65,12 +65,12 @@ impl AuthenticatedIndexTarget {
 
 /// One descriptor refresh and its index from the same authenticated repository view.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChannelRefresh {
+pub struct ChannelRefresh<T> {
     outcome: RefreshOutcome,
-    index: AuthenticatedIndexTarget,
+    index: T,
 }
 
-impl ChannelRefresh {
+impl<T> ChannelRefresh<T> {
     /// Borrows the verified descriptor refresh outcome.
     #[must_use]
     pub const fn outcome(&self) -> &RefreshOutcome {
@@ -79,13 +79,13 @@ impl ChannelRefresh {
 
     /// Borrows the authenticated host-index target.
     #[must_use]
-    pub const fn index(&self) -> &AuthenticatedIndexTarget {
+    pub const fn index(&self) -> &T {
         &self.index
     }
 
     /// Consumes the refresh into its two authenticated capabilities.
     #[must_use]
-    pub fn into_parts(self) -> (RefreshOutcome, AuthenticatedIndexTarget) {
+    pub fn into_parts(self) -> (RefreshOutcome, T) {
         (self.outcome, self.index)
     }
 }
@@ -226,7 +226,11 @@ impl ChannelClient {
     /// Target length is bounded from signed metadata before allocation. Bytes
     /// are returned only after `tough` reaches end-of-stream and validates the
     /// complete target checksum.
-    pub async fn refresh_with_index(&self, host: System) -> Result<ChannelRefresh, ChannelError> {
+    pub async fn refresh_with_index<T>(
+        &self,
+        host: System,
+        verifier: impl FnOnce(&VerifiedChannel, &AuthenticatedIndexTarget) -> Result<T, ()>,
+    ) -> Result<ChannelRefresh<T>, ChannelError> {
         self.refresh_with_index_and_transport(
             host,
             Timestamp::now(),
@@ -236,6 +240,7 @@ impl ChannelClient {
                     .timeout(Duration::from_secs(30))
                     .tries(3),
             ),
+            verifier,
         )
         .await
     }
@@ -276,12 +281,13 @@ impl ChannelClient {
         Ok(outcome)
     }
 
-    async fn refresh_with_index_and_transport(
+    async fn refresh_with_index_and_transport<T>(
         &self,
         host: System,
         now: Timestamp,
         transport: DefaultTransport,
-    ) -> Result<ChannelRefresh, ChannelError> {
+        verifier: impl FnOnce(&VerifiedChannel, &AuthenticatedIndexTarget) -> Result<T, ()>,
+    ) -> Result<ChannelRefresh<T>, ChannelError> {
         let _refresh = self.refresh_lease.lock().await;
         let repository = RepositoryLoader::new(
             &self.trusted_root.bytes(),
@@ -313,14 +319,14 @@ impl ChannelClient {
         };
         let target = channel.descriptor().index().target();
         let bytes = read_required_index_target(&repository, target).await?;
+        let target = AuthenticatedIndexTarget {
+            system: host,
+            bytes,
+        };
+        let index =
+            verifier(channel, &target).map_err(|()| ChannelError::IndexVerificationRefused)?;
         self.persist_outcome(&outcome)?;
-        Ok(ChannelRefresh {
-            outcome,
-            index: AuthenticatedIndexTarget {
-                system: host,
-                bytes,
-            },
-        })
+        Ok(ChannelRefresh { outcome, index })
     }
 
     fn persist_outcome(&self, outcome: &RefreshOutcome) -> Result<(), ChannelError> {
@@ -435,11 +441,25 @@ mod tests {
             refresh_lease: tokio::sync::Mutex::new(()),
             _datastore_lease: lease,
         };
+        client.accepted.initialize(None).unwrap();
+        assert!(matches!(
+            client
+                .refresh_with_index_and_transport(
+                    System::Aarch64Darwin,
+                    "2026-08-09T00:00:00Z".parse().unwrap(),
+                    DefaultTransport::default(),
+                    |_, _| Err::<AuthenticatedIndexTarget, ()>(()),
+                )
+                .await,
+            Err(ChannelError::IndexVerificationRefused)
+        ));
+        assert_eq!(client.accepted.load().unwrap(), None);
         let refresh = client
             .refresh_with_index_and_transport(
                 System::Aarch64Darwin,
                 "2026-08-09T00:00:00Z".parse().unwrap(),
                 DefaultTransport::default(),
+                |_, target| Ok(target.clone()),
             )
             .await
             .unwrap();
@@ -471,6 +491,7 @@ mod tests {
                     System::Aarch64Darwin,
                     "2026-08-09T00:00:00Z".parse().unwrap(),
                     DefaultTransport::default(),
+                    |_, target| Ok(target.clone()),
                 )
                 .await,
             Err(ChannelError::SequenceRollback)
