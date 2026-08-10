@@ -198,6 +198,13 @@ impl NixpkgsMetadataCommand {
     pub fn argv(&self) -> &[String] {
         &self.argv
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(argv: &[&str]) -> Self {
+        Self {
+            argv: argv.iter().map(|value| (*value).to_owned()).collect(),
+        }
+    }
 }
 
 impl fmt::Debug for NixpkgsMetadataCommand {

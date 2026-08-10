@@ -1187,7 +1187,11 @@ flowchart TD
   cache lazily, accepts absence only as the pinned JSON-format-2 `null` result for the exact path,
   and cryptographically verifies every remote hit with `nix store verify --no-contents
   --sigs-needed 1` under the root-owned trust configuration before it can suppress a local build.
-  The
+  The contained Real-Nix adapter now also implements the previously fake-only closed Nixpkgs
+  metadata runner: it executes only the command value derived from `NixpkgsFetchSpec` (itself
+  promoted from `VerifiedChannel`), under the same scrubbed environment, fixed runtime, bounded
+  timeout, and redacted error boundary. This supplies the dispatcher with an independently verified
+  materialized source without adding a caller URL, registry, option, or arbitrary argv seam. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

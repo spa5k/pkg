@@ -30,10 +30,11 @@ use crate::{
     BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus, CachePathObservation,
     DerivationPath, DerivationPlanReport, DerivationSystem, EvaluateDerivationRequest,
     EvaluatedDerivation, FormatVersion, GcReport, GcStatus, MaintenanceError, MethodKind, NarHash,
-    NarIntegrity, NixAdapter, NixAdapterError, NixVersion, OutputName, PathInfoReport,
-    PathVerifyResult, RepairMode, RepairOutcomeKind, Signature, StorePath, SubstituteOutcome,
-    SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope,
-    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    NarIntegrity, NixAdapter, NixAdapterError, NixVersion, NixpkgsMetadataCommand,
+    NixpkgsMetadataRunner, NixpkgsSourceError, OutputName, PathInfoReport, PathVerifyResult,
+    RepairMode, RepairOutcomeKind, Signature, StorePath, SubstituteOutcome, SubstituteReceipt,
+    SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope, VerifyMode,
+    VerifyReport, VerifyRequest, VersionInfo,
 };
 
 const PINNED_NIX_VERSION: &str = "2.34.8";
@@ -315,6 +316,18 @@ impl BuildCacheProbe for RealNixAdapter {
             }
         }
         Ok(observations)
+    }
+}
+
+impl NixpkgsMetadataRunner for RealNixAdapter {
+    fn run_metadata(
+        &self,
+        command: &NixpkgsMetadataCommand,
+    ) -> Result<Vec<u8>, NixpkgsSourceError> {
+        let mut args = base_args();
+        args.extend(command.argv().iter().map(OsString::from));
+        self.require_success(MethodKind::EvaluateDerivation, args, EVALUATE_TIMEOUT)
+            .map_err(|_| NixpkgsSourceError::runner_failure())
     }
 }
 
@@ -1469,6 +1482,46 @@ mod tests {
         assert_eq!(version.nix_version().as_str(), PINNED_NIX_VERSION);
         assert_eq!(version.accepted_formats().path_info().get(), 2);
         Ok(())
+    }
+
+    #[test]
+    fn nixpkgs_metadata_runner_forwards_only_the_closed_typed_command()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let command = NixpkgsMetadataCommand::for_test(&[
+            "flake",
+            "metadata",
+            "--no-use-registries",
+            "github:NixOS/nixpkgs/0123456789abcdef0123456789abcdef01234567?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "--json",
+        ]);
+        let expected = br#"{"locked":{},"path":"private"}"#;
+        let executor = Scripted::new(vec![success(expected.as_slice())]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+
+        assert_eq!(adapter.run_metadata(&command)?, expected);
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 1);
+        let expected_args = base_args()
+            .into_iter()
+            .chain(command.argv().iter().map(OsString::from))
+            .collect::<Vec<_>>();
+        assert_eq!(calls[0], expected_args);
+        for forbidden in ["--impure", "--override-input", "--registry"] {
+            assert!(!calls[0].iter().any(|argument| argument == forbidden));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nixpkgs_metadata_runner_failure_is_closed() {
+        let command = NixpkgsMetadataCommand::for_test(&["flake", "metadata"]);
+        let adapter = RealNixAdapter::scripted(Scripted::new(vec![failure(1)]));
+
+        assert_eq!(
+            adapter.run_metadata(&command).unwrap_err().code(),
+            crate::NixpkgsSourceErrorCode::RunnerFailure
+        );
     }
 
     #[test]
