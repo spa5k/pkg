@@ -1059,6 +1059,14 @@ flowchart TD
 - **Milestone:** M6.
 
 #### PR-34 — Observability: structured logs, redactor, opt-in telemetry, crash record
+- **Status (2026-08-10):** complete in signed commit `57ec5b4` and revalidated at current head.
+  Logs are private, bounded, rotating, allowlisted JSON; arbitrary detail crosses a bounded
+  denylist/control-character redactor. Local aggregate telemetry is disabled by default and its
+  typed schema cannot carry package names, paths, or arguments. Panic handling emits only the
+  allowlisted CLI version, coarse phase, channel sequence, and validated opaque operation id—no
+  payload, environment, backtrace, or memory dump. Main-command logging records only the static
+  command name and exit status. Unit/integration tests, AC-S9, secret scan, and independent P1
+  review are clean.
 - **Purpose:** the `08` T-LOG-* controls and `10` §7 observability.
 - **Owns:** `crates/pkg-cli/src/{log.rs,telemetry.rs,crash.rs}`, redactor unit tests + golden.
 - **Depends:** PR-23.

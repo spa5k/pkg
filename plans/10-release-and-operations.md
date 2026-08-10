@@ -222,6 +222,14 @@ Triggered by suspected/confirmed compromise (`08` T-CHAN-5, T-REL-2):
   last-operation id) — **no** memory dumps by default. Opt-in minidump with redaction.
 - `RUST_BACKTRACE=0` in release; user can enable for a support session.
 
+**PR-34 implementation boundary.** Signed commit `57ec5b4` provides private `0600`, bounded,
+rotating structured command logs; an allowlisted schema; explicit bounded secret redaction;
+control-character escaping; disabled-by-default local aggregate telemetry with only fixed metric
+names and product/system/channel dimensions; and a minimal panic record that excludes payloads,
+arguments, environment, backtraces, and memory dumps. The command path installs the minimal crash
+hook and writes only the static command name plus exit status. The current-head revalidation on
+2026-08-10 passed workspace tests, AC-S9, secret scanning, and independent P1 review.
+
 ### 7.4 Server-side / release-side observability
 - CDN access logs + download counts (aggregate). No per-user tracking.
 - Release-service audit log for every signing operation (who/what/when/key id) — retained
