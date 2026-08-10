@@ -227,9 +227,14 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   one approval. The state is bound by the existing authenticated uid, handle, epoch, status,
   and expiry; cancellation, disconnect, expiry, and restart make it unusable. This API is internal and
   adds no frame method or raw target/receipt input. Cancellation, disconnect, expiry, and restart
-  revoke even an approval whose journal write is in flight. Local build remains unreachable until
-  this capability is connected to admission-time replan and execution. Adapter failures cross only
-  the closed error-code envelope;
+  revoke even an approval whose journal write is in flight. The in-process broker now consumes the
+  private receipt itself: it joins FIFO build admission, takes a GC inhibitor, replans and checks
+  volatile resources under admission, and invokes only the typed adapter. A success retains both
+  permits until authoritative rooting and operation completion; a refusal consumes the approval and
+  releases both. Lifecycle cancellation during the synchronous adapter call is signalled immediately
+  but defers permit release until that call returns, preventing GC from racing in-flight outputs.
+  The wire method remains unassigned until the dispatcher can construct the trusted replan closure
+  internally. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.
