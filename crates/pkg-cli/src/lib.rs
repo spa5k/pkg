@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+#[cfg(unix)]
+pub mod broker;
 pub mod cli;
 pub mod commands;
 pub mod completion;

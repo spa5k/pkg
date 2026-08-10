@@ -195,10 +195,19 @@ runs before frame decoding on every connection.
 
 The Linux broker entry point separately requires the resolved non-root broker uid and the exact
 systemd-activated `/run/pkg/broker.sock`. It authenticates every client from `SO_PEERCRED`, admits
-at most 32 concurrent sessions, and applies finite idle-read and blocked-write deadlines. Over-limit,
+at most 32 concurrent sessions, and applies finite monotonic whole-frame read and write deadlines;
+partial traffic cannot reset them. Over-limit,
 malformed, unauthenticated, and timed-out clients are connection-local failures. The entry point
 currently serves only lifecycle begin/poll/cancel; it does not fabricate command execution before
 the typed product-command dispatcher is connected to the managed adapter.
+
+The CLI-side lifecycle client connects only to the platform's compiled-in broker endpoint, bounds
+connection establishment to five seconds, uses monotonic nonzero request ids, enforces the same
+one-MiB frame ceiling before allocation, and applies one monotonic deadline across the complete
+request-write/response-read transaction. It rejects a response-id or response-kind mismatch and permanently
+refuses reuse of that connection after any framing, transport, or correlation failure. Caller uid
+still never appears in the request. This transport foundation does not replace `UnavailableEngine`:
+that happens only after closed typed command methods and broker execution are connected.
 
 ## 9. Restart handshake
 

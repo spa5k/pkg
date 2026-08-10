@@ -1306,11 +1306,13 @@ dependencies = [
  "clap_complete",
  "pkg-core",
  "pkg-index",
+ "pkg-installer",
  "pkg-nix",
  "pkg-pipeline",
  "pkg-testkit",
  "serde",
  "serde_json",
+ "socket2",
 ]
 
 [[package]]

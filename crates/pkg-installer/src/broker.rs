@@ -11,10 +11,13 @@ use std::{
     io::{self, Read, Write},
     os::unix::net::UnixStream,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 const FRAME_HEADER_BYTES: usize = 20;
 const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
+const FRAME_READ_TIMEOUT: Duration = Duration::from_mins(5);
+const FRAME_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable CLI-to-broker transport failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,16 +109,18 @@ fn serve_frames(
             .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
         let encoded = ProductFrameCodec::encode_cli_response(request_id, &response)
             .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
-        stream
-            .write_all(&encoded)
-            .and_then(|()| stream.flush())
-            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+        let deadline = deadline_after(FRAME_WRITE_TIMEOUT)?;
+        write_all_until(stream, &encoded, deadline)?;
     }
 }
 
 fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, BrokerTransportError> {
+    let deadline = deadline_after(FRAME_READ_TIMEOUT)?;
     let mut header = [0_u8; FRAME_HEADER_BYTES];
     loop {
+        stream
+            .set_read_timeout(Some(remaining(deadline)?))
+            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
         match stream.read(&mut header[..1]) {
             Ok(0) => return Ok(None),
             Ok(1) => break,
@@ -127,9 +132,7 @@ fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, BrokerTranspor
             }
         }
     }
-    stream
-        .read_exact(&mut header[1..])
-        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+    read_exact_until(stream, &mut header[1..], deadline)?;
     let payload_length = u32::from_be_bytes(
         header[16..20]
             .try_into()
@@ -143,10 +146,75 @@ fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, BrokerTranspor
     let mut frame = Vec::with_capacity(FRAME_HEADER_BYTES + payload_length);
     frame.extend_from_slice(&header);
     frame.resize(FRAME_HEADER_BYTES + payload_length, 0);
-    stream
-        .read_exact(&mut frame[FRAME_HEADER_BYTES..])
-        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+    read_exact_until(stream, &mut frame[FRAME_HEADER_BYTES..], deadline)?;
     Ok(Some(frame))
+}
+
+fn write_all_until(
+    stream: &mut UnixStream,
+    mut bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), BrokerTransportError> {
+    while !bytes.is_empty() {
+        stream
+            .set_write_timeout(Some(remaining(deadline)?))
+            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+        match stream.write(bytes) {
+            Ok(0) => {
+                return Err(BrokerTransportError::new(
+                    BrokerTransportErrorCode::TransportFailure,
+                ));
+            }
+            Ok(written) => bytes = &bytes[written..],
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => {
+                return Err(BrokerTransportError::new(
+                    BrokerTransportErrorCode::TransportFailure,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_exact_until(
+    stream: &mut UnixStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+) -> Result<(), BrokerTransportError> {
+    while !bytes.is_empty() {
+        stream
+            .set_read_timeout(Some(remaining(deadline)?))
+            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+        match stream.read(bytes) {
+            Ok(0) => {
+                return Err(BrokerTransportError::new(
+                    BrokerTransportErrorCode::TransportFailure,
+                ));
+            }
+            Ok(read) => bytes = &mut bytes[read..],
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => {
+                return Err(BrokerTransportError::new(
+                    BrokerTransportErrorCode::TransportFailure,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn deadline_after(timeout: Duration) -> Result<Instant, BrokerTransportError> {
+    Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))
+}
+
+fn remaining(deadline: Instant) -> Result<Duration, BrokerTransportError> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]

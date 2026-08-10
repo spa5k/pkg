@@ -1128,8 +1128,9 @@ snippets, or any foreign `/nix`.
     non-root `pkg-nix-broker` account. Every accepted connection is authenticated
     from `SO_PEERCRED` before frame decoding. The process admits at most 32
     concurrent client sessions; excess connections are closed, idle reads expire
-    after five minutes, and blocked writes after 30 seconds. Each session owns its
-    cleanup permit even if its worker exits abnormally. This entry point currently
+    after five minutes, and blocked writes after 30 seconds. These are monotonic
+    whole-frame deadlines, not per-syscall timers a slow-drip peer can reset. Each
+    session owns its cleanup permit even if its worker exits abnormally. This entry point currently
     exposes only the accepted operation-lifecycle protocol; product-command/Real-Nix
     dispatch remains a separate PR-36 wiring slice.
 
