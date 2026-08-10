@@ -20,7 +20,8 @@ pub use assets::{
 };
 pub use broker::{
     BrokerTransportError, BrokerTransportErrorCode, serve_broker_connection,
-    serve_broker_connection_with_nix, serve_broker_connection_with_nix_and_approval,
+    serve_broker_connection_with_build_authority, serve_broker_connection_with_nix,
+    serve_broker_connection_with_nix_and_approval,
 };
 pub use helper::{
     BrokerHelperDispatch, HelperTransportError, HelperTransportErrorCode, LinuxHelperSession,

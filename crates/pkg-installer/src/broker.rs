@@ -1,10 +1,13 @@
 //! Unix CLI-to-broker transport with kernel-derived caller identity.
 
 use crate::{BrokerApprovalAudit, BrokerCallerApprovalJournal, platform::peer_uid};
+use pkg_core::PackageSelector;
 use pkg_nix::{
-    AuthenticatedCaller, CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer,
-    MethodKind, NixAdapter, NixAdapterError, ProductFrameCodec,
+    AuthenticatedCaller, BuildPreview, CliBrokerRequest, CliBrokerResponse, InProcessBroker,
+    InProcessCallerPeer, MethodKind, NixAdapter, NixAdapterError, OperationHandle,
+    ProductFrameCodec,
 };
+use pkg_pipeline::AuthenticatedBuildAuthority;
 use std::{
     error::Error,
     fmt,
@@ -72,7 +75,7 @@ pub fn serve_broker_connection(
     mut stream: UnixStream,
     broker: &Arc<InProcessBroker>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, None, None)
+    serve_broker_connection_inner(&mut stream, broker, None, None, None)
 }
 
 /// Serves lifecycle plus typed managed-Nix calls for one authenticated peer.
@@ -86,7 +89,7 @@ pub fn serve_broker_connection_with_nix(
     broker: &Arc<InProcessBroker>,
     adapter: &Arc<dyn NixAdapter>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None)
+    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None, None)
 }
 
 /// Serves typed managed-Nix calls plus broker-private durable build approval.
@@ -104,7 +107,56 @@ pub fn serve_broker_connection_with_nix_and_approval(
     adapter: &Arc<dyn NixAdapter>,
     approval_audit: &BrokerApprovalAudit,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, Some(adapter), Some(approval_audit))
+    serve_broker_connection_inner(
+        &mut stream,
+        broker,
+        Some(adapter),
+        Some(approval_audit),
+        None,
+    )
+}
+
+/// Serves the complete authenticated build-preparation boundary.
+///
+/// # Errors
+///
+/// Refuses unauthenticated peers, invalid frames, broker failures, or bounded
+/// transport failures without exposing private authority state.
+pub fn serve_broker_connection_with_build_authority(
+    mut stream: UnixStream,
+    broker: &Arc<InProcessBroker>,
+    approval_audit: &BrokerApprovalAudit,
+    authority: &Arc<AuthenticatedBuildAuthority>,
+) -> Result<(), BrokerTransportError> {
+    let adapter = authority.adapter();
+    serve_broker_connection_inner(
+        &mut stream,
+        broker,
+        Some(&adapter),
+        Some(approval_audit),
+        Some(authority.as_ref()),
+    )
+}
+
+trait BuildAuthorityDispatch: Send + Sync {
+    fn prepare(
+        &self,
+        selectors: Vec<PackageSelector>,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+    ) -> Result<BuildPreview, ()>;
+}
+
+impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
+    fn prepare(
+        &self,
+        selectors: Vec<PackageSelector>,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+    ) -> Result<BuildPreview, ()> {
+        self.prepare_and_install(selectors, caller, handle)
+            .map_err(|_| ())
+    }
 }
 
 fn serve_broker_connection_inner(
@@ -112,6 +164,7 @@ fn serve_broker_connection_inner(
     broker: &Arc<InProcessBroker>,
     adapter: Option<&Arc<dyn NixAdapter>>,
     approval_audit: Option<&BrokerApprovalAudit>,
+    authority: Option<&dyn BuildAuthorityDispatch>,
 ) -> Result<(), BrokerTransportError> {
     let uid = peer_uid(stream)
         .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?;
@@ -123,7 +176,13 @@ fn serve_broker_connection_inner(
         .transpose()
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
     let result = serve_frames(stream, |request| {
-        dispatch_request(&caller, request, adapter, approval_journal.as_ref())
+        dispatch_request(
+            &caller,
+            request,
+            adapter,
+            approval_journal.as_ref(),
+            authority,
+        )
     });
     let disconnected = caller.disconnect();
     match (result, disconnected) {
@@ -140,6 +199,7 @@ fn dispatch_request(
     request: CliBrokerRequest,
     adapter: Option<&Arc<dyn NixAdapter>>,
     approval_journal: Option<&BrokerCallerApprovalJournal>,
+    authority: Option<&dyn BuildAuthorityDispatch>,
 ) -> Result<CliBrokerResponse, ()> {
     match request {
         CliBrokerRequest::Begin(kind) => caller
@@ -232,6 +292,10 @@ fn dispatch_request(
             .build_preview(&handle)
             .map(CliBrokerResponse::BuildPreview)
             .map_err(|_| ()),
+        CliBrokerRequest::PrepareBuild(handle, selectors) => authority
+            .ok_or(())?
+            .prepare(selectors, caller, &handle)
+            .map(CliBrokerResponse::BuildPrepared),
     }
 }
 
@@ -381,8 +445,8 @@ mod tests {
     use super::*;
     use pkg_channel::BuildMode;
     use pkg_core::{
-        channel::ChannelSequence,
-        selector::{SelectorId, SelectorInput},
+        channel::{ChannelSequence, SourceRevision},
+        selector::{OutputSelection, SelectorId, SelectorInput},
         state::recover_journal,
         version::VersionPreference,
     };
@@ -460,6 +524,27 @@ mod tests {
         }
     }
 
+    struct TestAuthority(BuildPlan);
+
+    impl BuildAuthorityDispatch for TestAuthority {
+        fn prepare(
+            &self,
+            selectors: Vec<PackageSelector>,
+            caller: &AuthenticatedCaller,
+            handle: &OperationHandle,
+        ) -> Result<BuildPreview, ()> {
+            if selectors.len() != 1 || selectors[0].selector().as_str() != "hello" {
+                return Err(());
+            }
+            let plan = self.0.clone();
+            let preview = plan.preview().map_err(|_| ())?;
+            caller
+                .prepare_build_with_replanner(handle, plan.clone(), Arc::new(TestReplanner(plan)))
+                .map_err(|_| ())?;
+            Ok(preview)
+        }
+    }
+
     fn read_response(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
         let mut header = [0_u8; FRAME_HEADER_BYTES];
         stream.read_exact(&mut header)?;
@@ -531,14 +616,32 @@ mod tests {
         let handle = caller.begin(BrokerOperationKind::Build).unwrap();
         let plan = build_plan();
         let digest = plan.digest().unwrap();
-        caller
-            .prepare_build_with_replanner(&handle, plan.clone(), Arc::new(TestReplanner(plan)))
-            .unwrap();
+        let authority = TestAuthority(plan);
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        let prepared_response = dispatch_request(
+            &caller,
+            CliBrokerRequest::PrepareBuild(handle.clone(), vec![selector]),
+            None,
+            Some(&journal),
+            Some(&authority),
+        )
+        .unwrap();
+        assert!(matches!(
+            prepared_response,
+            CliBrokerResponse::BuildPrepared(_)
+        ));
         let preview_response = dispatch_request(
             &caller,
             CliBrokerRequest::GetBuildPreview(handle.clone()),
             None,
             Some(&journal),
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -562,10 +665,10 @@ mod tests {
             BuildApprovalRequest::new(digest, ApprovalSource::Interactive),
         );
         assert_eq!(
-            dispatch_request(&caller, request.clone(), None, Some(&journal)),
+            dispatch_request(&caller, request.clone(), None, Some(&journal), None),
             Ok(CliBrokerResponse::BuildApproved)
         );
-        assert!(dispatch_request(&caller, request, None, Some(&journal)).is_err());
+        assert!(dispatch_request(&caller, request, None, Some(&journal), None).is_err());
 
         let recovery =
             recover_journal(&std::fs::read(directory.join("approvals.ndjson")).unwrap()).unwrap();

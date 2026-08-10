@@ -3,9 +3,11 @@
 use std::fmt;
 use std::str::FromStr;
 
-use pkg_core::channel::PolicyVersion;
-use pkg_core::identity::StorePath;
+use pkg_core::channel::{PolicyVersion, SourceRevision};
+use pkg_core::identity::{OutputName, StorePath};
+use pkg_core::selector::{OutputSelection, PackageSelector, SelectorId, SelectorInput};
 use pkg_core::state::Digest;
+use pkg_core::version::{PackageVersion, VersionBound, VersionPreference, VersionRange};
 use serde::{Deserialize, Serialize};
 
 use crate::broker::{BrokerOperationKind, OperationHandle, OperationStatus};
@@ -27,6 +29,7 @@ const PROTOCOL_VERSION: u16 = 1;
 const HEADER_BYTES: usize = 20;
 const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 const MAX_ROOT_SET_WIRE_ENTRIES: usize = 4096;
+const MAX_BUILD_SELECTOR_WIRE_ENTRIES: usize = 4096;
 
 const CHANNEL_CLI_BROKER: u8 = 1;
 const CHANNEL_BROKER_HELPER: u8 = 2;
@@ -99,6 +102,8 @@ pub enum CliBrokerRequest {
     Gc(OperationHandle),
     /// Fetch the sanitized preview of a broker-held private build plan.
     GetBuildPreview(OperationHandle),
+    /// Prepare a private build plan from typed selector intent and broker authority.
+    PrepareBuild(OperationHandle, Vec<PackageSelector>),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -126,6 +131,8 @@ pub enum CliBrokerResponse {
     Gc(GcReport),
     /// Sanitized view of the broker-held private build plan.
     BuildPreview(BuildPreview),
+    /// Sanitized view returned after authenticated preparation succeeds.
+    BuildPrepared(BuildPreview),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -264,6 +271,16 @@ impl ProductFrameCodec {
                     handle: handle.as_str(),
                 })?,
             ),
+            CliBrokerRequest::PrepareBuild(handle, selectors) => {
+                validate_prepare_selectors(selectors)?;
+                (
+                    18,
+                    encode_json(&PrepareBuildWire {
+                        handle: handle.as_str(),
+                        selectors: selectors.iter().map(SelectorWire::from).collect(),
+                    })?,
+                )
+            }
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -326,6 +343,21 @@ impl ProductFrameCodec {
                     ),
                 )
             }
+            18 => {
+                let wire: PrepareBuildOwnedWire = decode_json(frame.payload)?;
+                if wire.selectors.is_empty()
+                    || wire.selectors.len() > MAX_BUILD_SELECTOR_WIRE_ENTRIES
+                {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
+                CliBrokerRequest::PrepareBuild(
+                    parse_handle(&wire.handle)?,
+                    wire.selectors
+                        .into_iter()
+                        .map(SelectorOwnedWire::promote)
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, request))
@@ -368,6 +400,12 @@ impl ProductFrameCodec {
             CliBrokerResponse::Gc(report) => (16, report.encode().map_err(adapter_payload)?),
             CliBrokerResponse::BuildPreview(preview) => (
                 17,
+                preview
+                    .to_json_bytes()
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
+            CliBrokerResponse::BuildPrepared(preview) => (
+                18,
                 preview
                     .to_json_bytes()
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
@@ -435,6 +473,10 @@ impl ProductFrameCodec {
                 GcReport::decode(&JsonCodec::default(), frame.payload).map_err(adapter_payload)?,
             ),
             17 => CliBrokerResponse::BuildPreview(
+                BuildPreview::from_json_bytes(frame.payload)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
+            18 => CliBrokerResponse::BuildPrepared(
                 BuildPreview::from_json_bytes(frame.payload)
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
             ),
@@ -648,6 +690,21 @@ fn decode_json<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, FrameError>
 
 fn adapter_payload<T>(_: T) -> FrameError {
     FrameError::new(FrameErrorCode::InvalidPayload)
+}
+
+fn validate_prepare_selectors(selectors: &[PackageSelector]) -> Result<(), FrameError> {
+    if selectors.is_empty()
+        || selectors.len() > MAX_BUILD_SELECTOR_WIRE_ENTRIES
+        || selectors.iter().any(|selector| {
+            selector.attribute().is_some()
+                || selector.pin_state().is_pinned()
+                || !matches!(selector.source_revision(), SourceRevision::CurrentChannel)
+        })
+    {
+        Err(FrameError::new(FrameErrorCode::InvalidPayload))
+    } else {
+        Ok(())
+    }
 }
 
 const fn cli_adapter_method(method: MethodKind) -> Option<u8> {
@@ -871,6 +928,175 @@ struct BuildApprovalOwnedWire {
     handle: String,
     build_plan_digest: String,
     source: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareBuildWire<'a> {
+    handle: &'a str,
+    selectors: Vec<SelectorWire<'a>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareBuildOwnedWire {
+    handle: String,
+    selectors: Vec<SelectorOwnedWire>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SelectorWire<'a> {
+    id: &'a str,
+    selector: &'a str,
+    version_preference: VersionPreferenceWire<'a>,
+    outputs: Option<Vec<&'a str>>,
+}
+
+impl<'a> From<&'a PackageSelector> for SelectorWire<'a> {
+    fn from(selector: &'a PackageSelector) -> Self {
+        Self {
+            id: selector.id().as_str(),
+            selector: selector.selector().as_str(),
+            version_preference: VersionPreferenceWire::from(selector.version_preference()),
+            outputs: selector
+                .outputs()
+                .explicit_outputs()
+                .map(|outputs| outputs.iter().map(OutputName::as_str).collect()),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SelectorOwnedWire {
+    id: String,
+    selector: String,
+    version_preference: VersionPreferenceOwnedWire,
+    outputs: Option<Vec<String>>,
+}
+
+impl SelectorOwnedWire {
+    fn promote(self) -> Result<PackageSelector, FrameError> {
+        let outputs = match self.outputs {
+            None => OutputSelection::default_selection(),
+            Some(outputs) => OutputSelection::explicit(
+                outputs
+                    .into_iter()
+                    .map(|output| OutputName::new(&output).map_err(adapter_payload))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+            .map_err(adapter_payload)?,
+        };
+        Ok(PackageSelector::new(
+            SelectorId::new(&self.id).map_err(adapter_payload)?,
+            SelectorInput::new(&self.selector).map_err(adapter_payload)?,
+            self.version_preference.promote()?,
+            outputs,
+            SourceRevision::CurrentChannel,
+        ))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum VersionPreferenceWire<'a> {
+    Any,
+    Exact {
+        version: &'a str,
+    },
+    Min {
+        version: &'a str,
+    },
+    Range {
+        lower: Option<VersionBoundWire<'a>>,
+        upper: Option<VersionBoundWire<'a>>,
+    },
+}
+
+impl<'a> From<&'a VersionPreference> for VersionPreferenceWire<'a> {
+    fn from(preference: &'a VersionPreference) -> Self {
+        match preference {
+            VersionPreference::Any => Self::Any,
+            VersionPreference::Exact(version) => Self::Exact {
+                version: version.as_str(),
+            },
+            VersionPreference::Minimum(version) => Self::Min {
+                version: version.as_str(),
+            },
+            VersionPreference::Range(range) => Self::Range {
+                lower: range.lower().map(VersionBoundWire::from),
+                upper: range.upper().map(VersionBoundWire::from),
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum VersionPreferenceOwnedWire {
+    Any,
+    Exact {
+        version: String,
+    },
+    Min {
+        version: String,
+    },
+    Range {
+        lower: Option<VersionBoundOwnedWire>,
+        upper: Option<VersionBoundOwnedWire>,
+    },
+}
+
+impl VersionPreferenceOwnedWire {
+    fn promote(self) -> Result<VersionPreference, FrameError> {
+        Ok(match self {
+            Self::Any => VersionPreference::Any,
+            Self::Exact { version } => VersionPreference::Exact(PackageVersion::new(version)),
+            Self::Min { version } => VersionPreference::Minimum(PackageVersion::new(version)),
+            Self::Range { lower, upper } => VersionPreference::Range(
+                VersionRange::new(
+                    lower.map(VersionBoundOwnedWire::promote).transpose()?,
+                    upper.map(VersionBoundOwnedWire::promote).transpose()?,
+                )
+                .map_err(adapter_payload)?,
+            ),
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VersionBoundWire<'a> {
+    version: &'a str,
+    inclusive: bool,
+}
+
+impl<'a> From<&'a VersionBound> for VersionBoundWire<'a> {
+    fn from(bound: &'a VersionBound) -> Self {
+        Self {
+            version: bound.version().as_str(),
+            inclusive: bound.is_inclusive(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VersionBoundOwnedWire {
+    version: String,
+    inclusive: bool,
+}
+
+impl VersionBoundOwnedWire {
+    fn promote(self) -> Result<VersionBound, FrameError> {
+        let version = PackageVersion::new(self.version);
+        Ok(if self.inclusive {
+            VersionBound::inclusive(version)
+        } else {
+            VersionBound::exclusive(version)
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1217,6 +1443,56 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
             Ok((8, CliBrokerResponse::BuildApproved))
+        );
+        let handle = OperationHandle(format!("op_{}", "b".repeat(64)));
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_ripgrep").unwrap(),
+            SelectorInput::new("ripgrep").unwrap(),
+            VersionPreference::Minimum(PackageVersion::new("14.0")),
+            OutputSelection::explicit(vec![OutputName::new("out").unwrap()]).unwrap(),
+            SourceRevision::CurrentChannel,
+        );
+        let prepare = CliBrokerRequest::PrepareBuild(handle, vec![selector]);
+        let encoded = ProductFrameCodec::encode_cli_request(10, &prepare).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        for forbidden in ["source", "revision", "attribute", "pinned", "nixpkgs"] {
+            assert!(!wire.contains(forbidden), "prepare exposed {forbidden}");
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((10, prepare))
+        );
+
+        let resolved = PackageSelector::new(
+            SelectorId::new("sel_resolved").unwrap(),
+            SelectorInput::new("ripgrep").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        )
+        .with_attribute(pkg_core::AttributePath::new("ripgrep").unwrap())
+        .unwrap();
+        assert_eq!(
+            ProductFrameCodec::encode_cli_request(
+                10,
+                &CliBrokerRequest::PrepareBuild(
+                    OperationHandle(format!("op_{}", "b".repeat(64))),
+                    vec![resolved],
+                ),
+            ),
+            Err(FrameError::new(FrameErrorCode::InvalidPayload))
+        );
+
+        let empty = encode_frame(
+            CHANNEL_CLI_BROKER,
+            18,
+            10,
+            format!(r#"{{"handle":"op_{}","selectors":[]}}"#, "b".repeat(64)).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&empty),
+            Err(FrameError::new(FrameErrorCode::InvalidPayload))
         );
         let helper = BrokerHelperRequest::PublishRootSet(root_set());
         let encoded = ProductFrameCodec::encode_helper_request(9, &helper).unwrap();

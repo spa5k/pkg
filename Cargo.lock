@@ -1392,6 +1392,7 @@ dependencies = [
  "pkg-channel",
  "pkg-core",
  "pkg-nix",
+ "pkg-pipeline",
  "pkg-testkit",
  "serde_json",
  "tempfile",

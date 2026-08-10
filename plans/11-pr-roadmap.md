@@ -1258,7 +1258,11 @@ flowchart TD
   Command callers supply none of those values. The committed signed-channel fixture now carries
   structurally real RFC 8785 canonical, Brotli-compressed schema-v1 indexes for all four systems;
   production index verification tests consume those exact signed artifacts, and the exporter uses
-  its manifest directory rather than the caller's working directory. The
+  its manifest directory rather than the caller's working directory. Closed broker method 18 now
+  accepts only a live build handle and bounded unresolved/unpinned `CurrentChannel` selectors,
+  invokes the injected authenticated build authority, and returns only a sanitized preview; no
+  channel, index, system, derivation, path, or Nix option is caller supplied. The production
+  listener remains fail-closed until it bootstraps and injects the long-lived refresh service. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

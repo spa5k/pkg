@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use pkg_core::PackageSelector;
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPreview, BuildReport,
     BuildRequest, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest,
@@ -273,6 +274,18 @@ impl BrokerLifecycleClient {
     ) -> Result<BuildPreview, BrokerClientError> {
         match self.transact(&CliBrokerRequest::GetBuildPreview(handle))? {
             CliBrokerResponse::BuildPreview(preview) => Ok(preview),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Prepares a broker-private plan from typed selectors and returns its public preview.
+    pub fn prepare_build(
+        &mut self,
+        handle: OperationHandle,
+        selectors: Vec<PackageSelector>,
+    ) -> Result<BuildPreview, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::PrepareBuild(handle, selectors))? {
+            CliBrokerResponse::BuildPrepared(preview) => Ok(preview),
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }

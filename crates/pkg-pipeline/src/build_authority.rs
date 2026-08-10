@@ -9,7 +9,7 @@ use std::{
 use pkg_channel::VerifiedChannel;
 use pkg_core::{ChannelSequence, PackageSelector, PolicyVersion};
 use pkg_index::VerifiedIndex;
-use pkg_nix::{AuthenticatedCaller, BuildPreview, OperationHandle};
+use pkg_nix::{AuthenticatedCaller, BuildPreview, NixAdapter, OperationHandle};
 
 use crate::{AuthenticatedBuildPreparation, BuildPlanningAdapter};
 
@@ -182,6 +182,15 @@ impl AuthenticatedBuildAuthority {
         )
         .and_then(|preparation| preparation.install(caller, handle))
         .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::PreparationRefused))
+    }
+
+    /// Returns the exact contained adapter used by this authority for planning.
+    ///
+    /// Trusted broker composition uses this to prevent planning and execution
+    /// from being wired to different managed-runtime backends.
+    #[must_use]
+    pub fn adapter(&self) -> Arc<dyn NixAdapter> {
+        Arc::clone(&self.adapter) as Arc<dyn NixAdapter>
     }
 
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, AuthorityState>, BuildAuthorityError> {
