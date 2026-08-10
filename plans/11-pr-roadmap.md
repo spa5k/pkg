@@ -1235,7 +1235,22 @@ flowchart TD
   before allocation and returns an opaque target capability only after `tough` completes the stream
   hash/length verification; missing, oversized, truncated, or mismatched targets fail closed. The
   target bytes still require the separate compressed-index semantic verification before publication
-  to broker authority. The
+  to broker authority. Product-level rollback memory is now intrinsic to that fixed client: after a
+  successful refresh it atomically writes and fsyncs a closed-schema record containing only the
+  accepted sequence, policy version and exact descriptor digest. Every later refresh, including
+  after process restart, loads that record before descriptor validation; missing state is first-run,
+  while corrupt, oversized, permissive or symlinked state fails closed. The single-writer lock is
+  also opened no-follow with private permissions. Callers can no longer accidentally erase rollback
+  memory by supplying `None`. The
+  complete refresh transaction is serialized inside each client, preventing concurrent validation
+  from persisting accepted sequences out of order or colliding on atomic temp files. A durable
+  initialization marker distinguishes an interrupted first refresh (safe to retry even after TUF
+  metadata was written) from deletion of established rollback memory (refused). Pre-state-format
+  datastores have an explicit one-time migration constructor that requires the formerly
+  authoritative accepted identity, refuses fresh/interrupted-new-format stores or conflicts, and
+  safely tightens the legacy regular lock file from umask-derived permissions to `0600`. Indexed
+  refresh commits the new identity only after the required TUF index target has verified, so a
+  failed index fetch cannot abandon the previous usable channel. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

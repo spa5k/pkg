@@ -11,6 +11,7 @@
 mod descriptor;
 mod keys;
 mod policy;
+mod state;
 mod tuf;
 
 pub use descriptor::{

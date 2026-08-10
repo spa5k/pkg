@@ -266,7 +266,14 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   client obtains descriptor and host index from one authenticated TUF repository view, prechecks the
   signed target length before allocation, and releases bytes only after the complete target stream
   verifies; that TUF target capability is still unusable by build authority until the compressed
-  index verifier promotes it. Adapter failures cross only the closed error-code envelope;
+  index verifier promotes it. The client owns crash-durable accepted descriptor identity in its
+  private datastore and automatically applies it to every refresh, so broker restart cannot reset
+  product sequence/policy rollback checks; the strict record is atomically replaced and directory-
+  fsynced, refresh transactions are async-serialized, and unsafe file types or modes fail closed. A
+  durable first-run marker makes interrupted initialization retryable without treating missing
+  established state as fresh; an explicit exact-seed migration handles the prior caller-owned state
+  format and tightens its legacy lock mode. Indexed refresh advances rollback memory only after its
+  required authenticated target succeeds. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.

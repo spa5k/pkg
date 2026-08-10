@@ -1324,6 +1324,7 @@ version = "0.0.0"
 dependencies = [
  "hex",
  "jiff",
+ "libc",
  "pkg-core",
  "serde",
  "serde_json",

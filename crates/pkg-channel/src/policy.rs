@@ -39,6 +39,24 @@ impl AcceptedChannel {
             descriptor_sha256,
         }
     }
+
+    /// Returns the last accepted channel sequence.
+    #[must_use]
+    pub const fn sequence(&self) -> ChannelSequence {
+        self.sequence
+    }
+
+    /// Returns the last accepted policy version.
+    #[must_use]
+    pub const fn policy_version(&self) -> PolicyVersion {
+        self.policy_version
+    }
+
+    /// Returns the digest of the exact accepted descriptor bytes.
+    #[must_use]
+    pub const fn descriptor_sha256(&self) -> [u8; 32] {
+        self.descriptor_sha256
+    }
 }
 
 /// A channel descriptor after cryptographic and semantic verification.
@@ -101,6 +119,8 @@ pub enum ChannelError {
     InvalidRepositoryUrl,
     /// The persistent TUF datastore is absent, unsafe, or inaccessible.
     DatastoreUnavailable,
+    /// Durable product channel identity is missing, unsafe, or corrupt.
+    AcceptedStateUnavailable,
     /// Another process already holds the datastore writer lease.
     DatastoreBusy,
     /// `tough` rejected the authenticated metadata or target stream.
@@ -163,6 +183,9 @@ impl fmt::Display for ChannelError {
                 f.write_str("repository URLs must be canonical HTTPS URLs")
             }
             Self::DatastoreUnavailable => f.write_str("persistent TUF datastore is unavailable"),
+            Self::AcceptedStateUnavailable => {
+                f.write_str("durable accepted channel state is unavailable")
+            }
             Self::DatastoreBusy => f.write_str("another channel refresh owns the TUF datastore"),
             Self::TufVerification(message) => write!(f, "TUF verification failed: {message}"),
             Self::MissingDescriptor => f.write_str("authenticated descriptor.json is missing"),

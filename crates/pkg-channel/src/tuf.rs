@@ -15,6 +15,7 @@ use crate::policy::{
     AcceptedChannel, ChannelError, DESCRIPTOR_TARGET, RefreshOutcome, validate_datastore,
     validate_descriptor, validate_repository_url,
 };
+use crate::state::{AcceptedChannelStore, LOCK_FILE};
 
 const LIMITS: Limits = Limits {
     max_root_size: 64 * 1024,
@@ -96,6 +97,8 @@ pub struct ChannelClient {
     metadata_url: Url,
     targets_url: Url,
     datastore: PathBuf,
+    accepted: AcceptedChannelStore,
+    refresh_lease: tokio::sync::Mutex<()>,
     _datastore_lease: File,
 }
 
@@ -109,39 +112,103 @@ impl ChannelClient {
         targets_url: Url,
         datastore: impl Into<PathBuf>,
     ) -> Result<Self, ChannelError> {
+        Self::new_inner(
+            trusted_root,
+            metadata_url,
+            targets_url,
+            datastore.into(),
+            None,
+        )
+    }
+
+    /// Opens an established pre-durable-state datastore using its formerly
+    /// caller-owned accepted identity as a one-time migration seed.
+    ///
+    /// This refuses fresh datastores, interrupted new-format initialization,
+    /// and any seed that conflicts with an already durable identity.
+    pub fn migrate_legacy(
+        trusted_root: TrustedRoot,
+        metadata_url: Url,
+        targets_url: Url,
+        datastore: impl Into<PathBuf>,
+        legacy: AcceptedChannel,
+    ) -> Result<Self, ChannelError> {
+        Self::new_inner(
+            trusted_root,
+            metadata_url,
+            targets_url,
+            datastore.into(),
+            Some(&legacy),
+        )
+    }
+
+    fn new_inner(
+        trusted_root: TrustedRoot,
+        metadata_url: Url,
+        targets_url: Url,
+        datastore: PathBuf,
+        legacy: Option<&AcceptedChannel>,
+    ) -> Result<Self, ChannelError> {
         validate_repository_url(&metadata_url)?;
         validate_repository_url(&targets_url)?;
-        let datastore = datastore.into();
         validate_datastore(&datastore)?;
-        let datastore_lease = File::options()
+        let lock_path = datastore.join(LOCK_FILE);
+        if matches!(
+            std::fs::symlink_metadata(&lock_path),
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file()
+        ) {
+            return Err(ChannelError::DatastoreUnavailable);
+        }
+        let mut lock_options = File::options();
+        lock_options
             .read(true)
             .write(true)
             .create(true)
-            .truncate(false)
-            .open(datastore.join("pkg-channel.lock"))
+            .truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let datastore_lease = lock_options
+            .open(&lock_path)
             .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let metadata = datastore_lease
+                .metadata()
+                .map_err(|_| ChannelError::DatastoreUnavailable)?;
+            if metadata.permissions().mode() & 0o177 != 0 {
+                datastore_lease
+                    .set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .map_err(|_| ChannelError::DatastoreUnavailable)?;
+                datastore_lease
+                    .sync_all()
+                    .map_err(|_| ChannelError::DatastoreUnavailable)?;
+            }
+        }
         datastore_lease.try_lock().map_err(|error| match error {
             std::fs::TryLockError::WouldBlock => ChannelError::DatastoreBusy,
             std::fs::TryLockError::Error(_) => ChannelError::DatastoreUnavailable,
         })?;
+        let accepted = AcceptedChannelStore::new(&datastore);
+        accepted.initialize(legacy)?;
         Ok(Self {
             trusted_root,
             metadata_url,
             targets_url,
+            accepted,
             datastore,
+            refresh_lease: tokio::sync::Mutex::new(()),
             _datastore_lease: datastore_lease,
         })
     }
 
     /// Refreshes TUF metadata and returns only fully verified V1 policy.
-    pub async fn refresh(
-        &self,
-        host: System,
-        previous: Option<&AcceptedChannel>,
-    ) -> Result<RefreshOutcome, ChannelError> {
+    pub async fn refresh(&self, host: System) -> Result<RefreshOutcome, ChannelError> {
         self.refresh_with_transport(
             host,
-            previous,
             Timestamp::now(),
             DefaultTransport::new_with_http_settings(
                 HttpTransportBuilder::new()
@@ -159,14 +226,9 @@ impl ChannelClient {
     /// Target length is bounded from signed metadata before allocation. Bytes
     /// are returned only after `tough` reaches end-of-stream and validates the
     /// complete target checksum.
-    pub async fn refresh_with_index(
-        &self,
-        host: System,
-        previous: Option<&AcceptedChannel>,
-    ) -> Result<ChannelRefresh, ChannelError> {
+    pub async fn refresh_with_index(&self, host: System) -> Result<ChannelRefresh, ChannelError> {
         self.refresh_with_index_and_transport(
             host,
-            previous,
             Timestamp::now(),
             DefaultTransport::new_with_http_settings(
                 HttpTransportBuilder::new()
@@ -181,10 +243,10 @@ impl ChannelClient {
     async fn refresh_with_transport(
         &self,
         host: System,
-        previous: Option<&AcceptedChannel>,
         now: Timestamp,
         transport: DefaultTransport,
     ) -> Result<RefreshOutcome, ChannelError> {
+        let _refresh = self.refresh_lease.lock().await;
         let repository = RepositoryLoader::new(
             &self.trusted_root.bytes(),
             self.metadata_url.clone(),
@@ -208,16 +270,19 @@ impl ChannelClient {
         let bytes = IntoVec::into_vec(stream)
             .await
             .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
-        validate_descriptor(&bytes, &repository, host, previous, now)
+        let previous = self.accepted.load()?;
+        let outcome = validate_descriptor(&bytes, &repository, host, previous.as_ref(), now)?;
+        self.persist_outcome(&outcome)?;
+        Ok(outcome)
     }
 
     async fn refresh_with_index_and_transport(
         &self,
         host: System,
-        previous: Option<&AcceptedChannel>,
         now: Timestamp,
         transport: DefaultTransport,
     ) -> Result<ChannelRefresh, ChannelError> {
+        let _refresh = self.refresh_lease.lock().await;
         let repository = RepositoryLoader::new(
             &self.trusted_root.bytes(),
             self.metadata_url.clone(),
@@ -241,12 +306,14 @@ impl ChannelClient {
         let bytes = IntoVec::into_vec(descriptor_stream)
             .await
             .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
-        let outcome = validate_descriptor(&bytes, &repository, host, previous, now)?;
+        let previous = self.accepted.load()?;
+        let outcome = validate_descriptor(&bytes, &repository, host, previous.as_ref(), now)?;
         let channel = match &outcome {
             RefreshOutcome::Updated(channel) | RefreshOutcome::Unchanged(channel) => channel,
         };
         let target = channel.descriptor().index().target();
         let bytes = read_required_index_target(&repository, target).await?;
+        self.persist_outcome(&outcome)?;
         Ok(ChannelRefresh {
             outcome,
             index: AuthenticatedIndexTarget {
@@ -254,6 +321,13 @@ impl ChannelClient {
                 bytes,
             },
         })
+    }
+
+    fn persist_outcome(&self, outcome: &RefreshOutcome) -> Result<(), ChannelError> {
+        let channel = match outcome {
+            RefreshOutcome::Updated(channel) | RefreshOutcome::Unchanged(channel) => channel,
+        };
+        self.accepted.persist(&channel.accepted_state())
     }
 }
 
@@ -282,8 +356,10 @@ async fn read_required_index_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::{ChannelError, validate_descriptor};
+    use crate::policy::{AcceptedChannel, ChannelError, validate_descriptor};
     use pkg_core::{ChannelSequence, PolicyVersion};
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
     use tempfile::TempDir;
     use tough::Repository;
 
@@ -355,12 +431,13 @@ mod tests {
             metadata_url: Url::from_directory_path(fixture.join("metadata")).unwrap(),
             targets_url: Url::from_directory_path(fixture.join("targets")).unwrap(),
             datastore: datastore.path().to_path_buf(),
+            accepted: AcceptedChannelStore::new(datastore.path()),
+            refresh_lease: tokio::sync::Mutex::new(()),
             _datastore_lease: lease,
         };
         let refresh = client
             .refresh_with_index_and_transport(
                 System::Aarch64Darwin,
-                None,
                 "2026-08-09T00:00:00Z".parse().unwrap(),
                 DefaultTransport::default(),
             )
@@ -372,6 +449,32 @@ mod tests {
             refresh.index().bytes(),
             b"[ fixture catalog index for aarch64-darwin ]\n"
         );
+        assert_eq!(
+            client.accepted.load().unwrap(),
+            Some(match refresh.outcome() {
+                RefreshOutcome::Updated(channel) | RefreshOutcome::Unchanged(channel) => {
+                    channel.accepted_state()
+                }
+            })
+        );
+        client
+            .accepted
+            .persist(&AcceptedChannel::new(
+                ChannelSequence::from_u64(43).unwrap(),
+                PolicyVersion::from_u64(1).unwrap(),
+                [0x43; 32],
+            ))
+            .unwrap();
+        assert!(matches!(
+            client
+                .refresh_with_index_and_transport(
+                    System::Aarch64Darwin,
+                    "2026-08-09T00:00:00Z".parse().unwrap(),
+                    DefaultTransport::default(),
+                )
+                .await,
+            Err(ChannelError::SequenceRollback)
+        ));
     }
 
     #[tokio::test]
@@ -540,5 +643,51 @@ mod tests {
         ));
         drop(first);
         assert!(ChannelClient::new(root, metadata, targets, temp.path()).is_ok());
+    }
+
+    #[test]
+    fn established_tuf_datastore_without_rollback_memory_is_not_first_run() {
+        let temp = TempDir::new().unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            temp.path(),
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("root.json"), b"legacy tuf state").unwrap();
+        std::fs::write(temp.path().join(LOCK_FILE), b"").unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            temp.path().join(LOCK_FILE),
+            std::os::unix::fs::PermissionsExt::from_mode(0o644),
+        )
+        .unwrap();
+        let root = TrustedRoot::from_embedded(ROOT).unwrap();
+        let metadata = Url::parse("https://updates.example/metadata/").unwrap();
+        let targets = Url::parse("https://updates.example/targets/").unwrap();
+        assert!(matches!(
+            ChannelClient::new(root.clone(), metadata.clone(), targets.clone(), temp.path()),
+            Err(ChannelError::AcceptedStateUnavailable)
+        ));
+        let legacy = AcceptedChannel::new(
+            ChannelSequence::from_u64(41).unwrap(),
+            PolicyVersion::from_u64(1).unwrap(),
+            [0x41; 32],
+        );
+        let migrated =
+            ChannelClient::migrate_legacy(root, metadata, targets, temp.path(), legacy.clone())
+                .unwrap();
+        assert_eq!(migrated.accepted.load().unwrap(), Some(legacy));
+        #[cfg(unix)]
+        assert_eq!(
+            migrated
+                ._datastore_lease
+                .metadata()
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 }
