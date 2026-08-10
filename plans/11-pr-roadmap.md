@@ -1120,7 +1120,11 @@ flowchart TD
   Exact argv/unit tests prove fixed store selection, bounded jobs, empty remote builders,
   post-repair verification, and fail-closed command/store errors. Linux systemd and macOS launchd
   assets now also provision a distinct root-owned helper HOME/TMPDIR (and root-only helper log
-  directory), so privileged Nix never writes into the unprivileged broker's private home. This does **not**
+  directory), so privileged Nix never writes into the unprivileged broker's private home. The
+  Linux `pkg-root-helper` executable now consumes exactly one systemd-activated listener, validates
+  root/broker identities and the exact endpoint, safely initializes only the pkg GC-root subtree,
+  and binds authenticated requests to the real fixed local-store executor; Linux container tests
+  compile and exercise its platform-only contracts. This does **not**
   yet claim the full PR: production installer/broker executables, CLI wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

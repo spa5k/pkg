@@ -1109,15 +1109,20 @@ snippets, or any foreign `/nix`.
     cache-only repair** (Phase A) of still-failing/missing paths, while
     repeating a **local rebuild** requires a fresh Phase B preview, explicit
     approval, and a fresh single-use capability.
-18. Raw Nix build/repair logs live **only** in the **broker-owned**
-    `/var/lib/pkg/log/broker` directory
-    (`/Library/Application Support/pkg/log/broker` on macOS) — carved out of
-    the root-owned service tree and **owned/writable only by the unprivileged
-    `pkg-nix-broker` account** (directory `0700`, files `0600`, **no access to
-    any user**; §6.1) — only sanitized, versioned NDJSON may be copied into
-    `<user-state>`; `doctor`/a test confirms no raw Nix log reaches a user's
-    state dir and that the dir is `pkg-nix-broker`-owned `0700` (**not**
-    root-owned).
+18. Raw normal-operation Nix logs live only in the broker-owned `log/broker`
+    directory; raw privileged repair logs live only in the distinct root-owned
+    `log/helper` directory. Both are `0700` with `0600` files and inaccessible
+    to ordinary users; only sanitized, versioned NDJSON may reach user state.
+    The helper likewise uses a distinct root-owned private HOME/TMPDIR and never
+    writes into the broker-owned private home.
+19. On Linux, `pkg-root-helper` consumes exactly one systemd-activated Unix
+    listener and verifies it is `/run/pkg-helper/root-helper.sock`. Startup
+    fails closed for a non-root uid, missing/root-valued broker account, wrong
+    listener, unsafe managed runtime/private home, or unsafe GC-root ancestors.
+    Beneath an already trusted `/nix/var/nix/gcroots`, it creates only the
+    root-owned `pkg/users` subtree, then binds the authenticated capability
+    session to the real fixed local-store executor. Malformed or unauthenticated
+    connections are rejected locally without widening the helper grammar.
 
 ## 17. Unresolved questions / spikes
 

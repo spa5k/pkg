@@ -186,6 +186,13 @@ option, substituter, or key input. Cache-only pins `max-jobs=0` and empty builde
 the path and reports `CacheMiss` only when the repair command succeeded, the path remains damaged,
 and the local store is still responsive. Build mode pins `max-jobs=1` and must verify clean.
 
+The Linux production entry point consumes exactly one systemd-activated listener and validates its
+pathname before initializing state. It requires effective uid 0 and resolves the dedicated broker
+uid from the installed account database; uid 0 is never accepted as the broker. It safely creates
+only `pkg/users` beneath an already trusted root-owned `/nix/var/nix/gcroots`, constructs the
+`RootNixRepairExecutor`, and injects it into the helper capability engine. Peer authentication still
+runs before frame decoding on every connection.
+
 ## 9. Restart handshake
 
 1. Supervisor restarts broker and/or helper.

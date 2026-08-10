@@ -15,7 +15,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-const PRODUCTION_ROOTS: &str = "/nix/var/nix/gcroots/pkg/users";
+const PRODUCTION_GCROOTS: &str = "/nix/var/nix/gcroots";
 const MAX_ROOT_ENTRIES: usize = 4096;
 static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 
@@ -150,9 +150,9 @@ impl LinuxRootSetStore {
     /// Returns a stable error if any ancestor is symlinked, writable by a
     /// non-root principal, missing, or not root-owned.
     pub fn production() -> Result<Self, LinuxPlatformError> {
-        let root = PathBuf::from(PRODUCTION_ROOTS);
-        ensure_safe_ancestors(&root, 0)?;
-        Self::new_at(root, 0)
+        let gcroots = Path::new(PRODUCTION_GCROOTS);
+        ensure_safe_ancestors(gcroots, 0)?;
+        provision_product_root(gcroots, 0)
     }
 
     pub(crate) fn new_at(
@@ -297,6 +297,20 @@ impl LinuxRootSetStore {
         RootSet::new(owner_uid, generation.clone(), entries)
             .map_err(|_| LinuxPlatformError::new(LinuxPlatformErrorCode::UnsafeFilesystemState))
     }
+}
+
+fn provision_product_root(
+    gcroots: &Path,
+    owner_uid: u32,
+) -> Result<LinuxRootSetStore, LinuxPlatformError> {
+    ensure_trusted_directory(gcroots, owner_uid)?;
+    let product = gcroots.join("pkg");
+    ensure_owned_child_directory(&product, owner_uid)?;
+    let users = product.join("users");
+    ensure_owned_child_directory(&users, owner_uid)?;
+    sync_directory(&product)?;
+    sync_directory(gcroots)?;
+    LinuxRootSetStore::new_at(users, owner_uid)
 }
 
 fn ensure_trusted_directory(path: &Path, owner_uid: u32) -> Result<(), LinuxPlatformError> {
@@ -530,6 +544,31 @@ mod tests {
                 .map_err(LinuxPlatformError::code),
             Err(LinuxPlatformErrorCode::UnsafeFilesystemState)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn product_root_initialization_is_narrow_idempotent_and_symlink_safe()
+    -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new("product-root")?;
+        let owner = Uid::current().as_raw();
+        let first = provision_product_root(&scratch.0, owner)?;
+        let second = provision_product_root(&scratch.0, owner)?;
+        let users = scratch.0.join("pkg/users");
+        assert_eq!(first.root, users);
+        assert_eq!(second.root, users);
+        assert_eq!(
+            fs::metadata(scratch.0.join("pkg"))?.permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(fs::metadata(&users)?.permissions().mode() & 0o777, 0o700);
+
+        fs::remove_dir(&users)?;
+        symlink("/tmp", &users)?;
+        assert!(matches!(
+            provision_product_root(&scratch.0, owner).map_err(LinuxPlatformError::code),
+            Err(LinuxPlatformErrorCode::UnsafeFilesystemState)
+        ));
         Ok(())
     }
 

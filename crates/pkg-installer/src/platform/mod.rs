@@ -11,7 +11,7 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32, ()> {
     #[cfg(target_os = "linux")]
     {
         return linux::peer_credentials(stream)
-            .map(|peer| peer.uid())
+            .map(linux::LinuxPeerCredentials::uid)
             .map_err(|_| ());
     }
     #[cfg(target_os = "macos")]

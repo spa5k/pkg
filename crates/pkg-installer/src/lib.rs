@@ -9,6 +9,7 @@ mod helper;
 mod installer;
 pub mod platform;
 mod repair;
+mod service;
 mod uninstall;
 
 pub use assets::{
@@ -39,6 +40,7 @@ pub use repair::{
     RepairCoordinatorErrorCode, RepairJournal, RepairJournalEntry, RepairJournalStatus,
     RepairRecoveryAction, RepairRequest, RepairResult, recover_repair, repair_generation,
 };
+pub use service::{ServiceError, ServiceErrorCode, run_linux_root_helper_from_activation};
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,
     UninstallError, UninstallErrorCode, UninstallManifest, UninstallPlan, UninstallReport,
