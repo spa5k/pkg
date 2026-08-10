@@ -53,6 +53,12 @@ impl ProductionBuildHostFactsProbe {
             expected_config,
         })
     }
+
+    /// Returns the compile-time native system bound into this trusted probe.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.system
+    }
 }
 
 impl BuildHostFactsProbe for ProductionBuildHostFactsProbe {

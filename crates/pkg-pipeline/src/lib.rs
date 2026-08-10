@@ -6,6 +6,7 @@ mod acquire;
 mod activate;
 mod build_intent;
 mod build_plan;
+mod build_preparation;
 mod commit;
 mod host_facts;
 mod lifecycle;
@@ -24,6 +25,9 @@ pub use build_intent::{
 pub use build_plan::{
     AuthenticatedBuildPolicy, LocalBuildPlanError, LocalBuildPlanErrorCode,
     prepare_local_build_plan,
+};
+pub use build_preparation::{
+    AuthenticatedBuildPreparation, BuildPreparationError, BuildPreparationErrorCode,
 };
 pub use commit::{
     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,

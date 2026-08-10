@@ -1211,7 +1211,11 @@ flowchart TD
   process in its service cgroup. Account enumeration uses the configured system search view; changing
   or hiding identities through administrator-controlled NSS/OpenDirectory configuration remains in
   the documented root/admin-can-win boundary. Darwin deliberately reports both cgroup fields false. No path, config value, or
-  readiness assertion is caller supplied. The
+  readiness assertion is caller supplied. A new non-serializable production preparation object now
+  composes that observer with a retained verified channel, typed selectors, optional validated index,
+  and the contained planning adapter. It derives the native target internally, creates the initial
+  private plan and trusted replanner together, and can install them only through an authenticated
+  caller's live build handle; it exposes neither as data. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
