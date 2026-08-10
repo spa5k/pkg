@@ -6,8 +6,8 @@
 //! [`NixAdapter`] methods and replays a scripted,
 //! first-in-first-out transcript of expectations with byte-stable, hermetic
 //! outputs — **no Nix process, no network, no timing** (`plans/09` §3, §4.4).
-//! Richer simulation (keyed responses, latency, partial writes, fake cache/CDN,
-//! chaos) is explicitly deferred to later checkpoints (`plans/09` §4.5).
+//! [`chaos`] and [`http`] provide the bounded process-checkpoint and loopback
+//! cache/CDN fault seams used by the PR-31 security and nightly lanes.
 //! [`FakeNixpkgsRunner`] separately replays the closed pinned-source metadata
 //! seam introduced by PR-13; it cannot widen the seven-method adapter.
 //!
@@ -50,12 +50,21 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod chaos;
 pub mod fake_nix;
 pub mod fake_nixpkgs;
+pub mod http;
 pub mod transcript;
 
+pub use chaos::{
+    ChaosCheckpoint, ChaosChild, ChaosCommand, ChaosConfigError, ChaosError, FsyncMode,
+    publish_checkpoint,
+};
 pub use fake_nix::FakeNix;
 pub use fake_nixpkgs::{FakeNixpkgsError, FakeNixpkgsRunner};
+pub use http::{
+    ExpectedRequest, FixtureHttpServer, FixtureResponse, HttpExchange, HttpFault, HttpFixtureError,
+};
 pub use transcript::TranscriptError;
 
 // Focused re-export of the `pkg-nix` contract types that appear in `FakeNix`'s

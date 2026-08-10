@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "AC-S1",
+      "description": "Expired channel metadata is refused.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "--manifest-path", "spikes/s2-tough/Cargo.toml", "expiration_safe_refuses_expired_targets_against_real_clock", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S2",
+      "description": "Persisted rollback and mix-and-match replay are refused.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "--manifest-path", "spikes/s2-tough/Cargo.toml", "cross_run_rollback_refuses_older_timestamp_via_persisted_datastore", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "--manifest-path", "spikes/s2-tough/Cargo.toml", "mix_and_match_spliced_older_snapshot_refused_for_hash_mismatch", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S3",
+      "description": "Untrusted or corrupt substitutes fail closed and repair is final-verify gated.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-nix", "substitute::tests::unapproved_signature_and_corrupt_nar_fail_before_metadata_use", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-installer", "repair::tests::cache_repair_is_final_verify_gated_and_releases_admission", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S4",
+      "description": "Symlink and permissive-ancestor redirection is rejected.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-store", "current::tests::rejects_symlinked_or_world_writable_state_components", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-store", "leases::tests::symlink_and_permissive_state_are_refused", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S5",
+      "description": "Concurrent state and crash tails recover to a consistent generation.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-pipeline", "commit::tests::prepared_fault_discards_record_snapshots_and_staging", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-pipeline", "commit::tests::rooted_fault_removes_roots_and_leaves_current_unchanged", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-pipeline", "commit::tests::activated_fault_restores_views_and_commits_forward", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-installer", "helper::tests::concurrent_root_transactions_keep_logical_and_durable_state_consistent", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S6",
+      "description": "Unauthenticated helper callers and grammar widening are rejected.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-nix", "maintenance::tests::unauthenticated_peer_and_stale_session_fail_closed", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-nix", "framing::tests::helper_grammar_rejects_raw_paths_options_and_forged_capabilities", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S7",
+      "description": "Unmanaged Nix evidence refuses installation before mutation.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-nix", "managed::provision::tests::unmanaged_nix_refuses_before_fetch", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-installer", "installer::tests::privileged_host_scan_refuses_before_any_mutation", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S8",
+      "description": "Dependency policy and RustSec audit are clean.",
+      "commands": [],
+      "externalGates": ["cargo-deny", "cargo-audit"]
+    },
+    {
+      "id": "AC-S9",
+      "description": "Logs and public errors redact secrets, arguments, and controls.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-cli", "log::tests::redactor_golden_removes_known_and_structural_secrets_and_controls", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-cli", "ux::tests::raw_managed_runtime_identities_are_redacted_at_the_public_error_boundary", "--", "--exact"]
+      ],
+      "externalGates": []
+    },
+    {
+      "id": "AC-S10",
+      "description": "Package info and build reports retain sanitized provenance.",
+      "commands": [
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-index", "--test", "query", "info_output_matches_golden_and_is_honest_about_unavailable_data", "--", "--exact"],
+        ["cargo", "test", "--offline", "--locked", "-p", "pkg-nix", "--test", "contract", "build_report_requires_explicit_output_provenance", "--", "--exact"]
+      ],
+      "externalGates": []
+    }
+  ]
+}

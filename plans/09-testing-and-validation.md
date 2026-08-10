@@ -649,6 +649,15 @@ prove recovery to a consistent state.
 fsync toggles; on macOS use `rename` atomicity + `kill`. Fault tests are tagged
 `#[ignore]`-by-default in local runs, run in nightly.
 
+**PR-31 implementation boundary (2026-08-10):** `pkg-testkit::chaos` uses a cooperative,
+durable named-checkpoint marker only for synchronization; the parent owns termination and always
+reaps the child. `pkg-testkit::http` is loopback-only and exact-transcript, with bounded complete,
+drop, and declared-length truncation responses. The dedicated AC-S1..S10 manifest runs only
+locked/offline Cargo tests with no shell surface; its CI job fetches dependencies and runs
+deny/audit before rejecting all non-loopback IPv4/IPv6 egress. The nightly workflow exercises the
+fault primitives on Linux and macOS. PR-36 still owns authenticated Real-Nix connector/platform
+execution, so PR-31 does not label this hermetic evidence as a complete Real-Nix nightly lane.
+
 ### 6.6 Security (layer 6) — `08` §13 AC-S1..S13 mapped 1:1; `08` §13 AC-S31..S33 (repair) covered by existing 09 tests; plus 09-internal AC-S14..S30
 Each AC-S*n* becomes one or more tests. AC-S1..S13 map 1:1 to `08` §13. AC-S14..S30 are
 09-internal acceptance criteria derived from plans `03`/`04`/`05`/`06`/`07`/`08` and tracked
@@ -895,8 +904,8 @@ These are **constraints the implementation must satisfy** so testing is even pos
 - **CP-T-1** `pkg-testkit` crate + `NixAdapter`/`FakeNix` skeleton (with `pkg-nix`); defines the **two seams** — the unprivileged broker `NixAdapter` (7 methods) and the privileged `MaintenanceAdapter` closed grammar (§4.1/§4.1.2). (`11`)
 - **CP-T-2** Fixture generators + frozen `nixpkgs-slice-tiny` + fake cache + fake channel. (`11`)
 - **CP-T-3** Fast CI lane (unit+contract+integration+e2e-Fake+lint). (`11`)
-- **CP-T-4** Security lane mapping AC-S1..S30 (incl. broker-repair-denied, helper-grammar-cannot-widen, two-phase repair correctness/capability/crash-safety, broker-internal admission, platform socket/config, output contracts, journal integrity, prune order). (`11`)
-- **CP-T-5** Fault-injection harness (`pkg-testkit::chaos`). (`11`)
+- **CP-T-4** Security lane mapping AC-S1..S30 (incl. broker-repair-denied, helper-grammar-cannot-widen, two-phase repair correctness/capability/crash-safety, broker-internal admission, platform socket/config, output contracts, journal integrity, prune order). (`11`) **PR-31 lands the closed AC-S1..S10 lane; later owning PRs extend the same manifest/lane to S11..S30 as their privileged/Real-Nix seams become executable.**
+- **CP-T-5** Fault-injection harness (`pkg-testkit::chaos`) plus the loopback exact-transcript HTTP fault fixture. (`11`) **Implemented by PR-31; destructive product checkpoint cases remain nightly-only.**
 - **CP-T-6** Real-Nix nightly lane + golden capture/replay parity. (`11`)
 - **CP-T-7** Performance benches + budget regression gate. (`11`)
 - **CP-T-8** Platform matrix runners (aarch64-linux, arm64-darwin). (`11`)

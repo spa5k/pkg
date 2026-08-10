@@ -980,6 +980,13 @@ flowchart TD
 - **Milestone:** M6.
 
 #### PR-31 — Security test lane + fault-injection harness
+- **Status (2026-08-10):** the closed AC-S1..S10 manifest/runner, offline/no-shell enforcement,
+  dependency deny/audit job, non-loopback egress barrier, deterministic process-checkpoint chaos
+  harness, loopback exact-transcript HTTP drop/truncation fixture, and Linux/macOS nightly harness
+  jobs are implemented and locally evidence-gated. The exact AC-S1..S10 lane, full workspace
+  tests/lints/docs, dependency audit, Linux `--network none` testkit run, workflow contract tests,
+  and independent P1 review pass. The workflow intentionally does not claim the PR-36-owned
+  authenticated Real-Nix connector/platform lane.
 - **Purpose:** the `09` security lane (AC-S1..S10) + `pkg-testkit::chaos` + nightly Full job.
 - **Owns:** `crates/pkg-testkit/src/{chaos.rs,http.rs}`, `tests/security/`, CI `security.yml` + `nightly.yml`.
 - **Depends:** PR-11, PR-18, PR-19.
