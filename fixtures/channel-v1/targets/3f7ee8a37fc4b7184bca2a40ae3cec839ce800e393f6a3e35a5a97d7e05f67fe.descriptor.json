@@ -66,19 +66,19 @@
     "perSystem": {
       "aarch64-darwin": {
         "target": "index/42/aarch64-darwin.json.br",
-        "sha256": "d03a71e52f4cbc0dc7d071ada951e0578d4e77267f3a15c82ec176b8f97df9d3"
+        "sha256": "36f261dcb207178def9855f625b8016adb150cb8bc3904403fa3ae9f6b7d0b0b"
       },
       "aarch64-linux": {
         "target": "index/42/aarch64-linux.json.br",
-        "sha256": "3b328e55458dcd3086ee679860cc8761749d358609718b7f991c559725a3d6f9"
+        "sha256": "be09632abb2f186821b4f90788e0373dc1d8c14064fa4fa14897f22d7f7dbe31"
       },
       "x86_64-darwin": {
         "target": "index/42/x86_64-darwin.json.br",
-        "sha256": "65a92ce4700602de379e5b2b4229320054ce82e4c5d3282349cb9bb4c14e0464"
+        "sha256": "18b633a713db2b53f25e7e32e8e5f85fb058cbb608e17617f26e6dfbc3a25fd7"
       },
       "x86_64-linux": {
         "target": "index/42/x86_64-linux.json.br",
-        "sha256": "73c94bac27f3df293b543cf667130953d84a11dc8fa68ad9b7faeca0bb89ab73"
+        "sha256": "2fedc40944fcb009ec0742abab6bb427a62fc2e8f62c59f6f9828dad863ac958"
       }
     }
   },

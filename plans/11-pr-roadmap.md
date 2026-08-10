@@ -1255,7 +1255,10 @@ flowchart TD
   sequence advancement therefore cannot race ahead of Brotli/schema/canonical verification. A
   long-lived broker refresh service derives the native system from the compiled target, bootstraps
   only from that promoted channel/index pair, and atomically replaces both in live build authority.
-  Command callers supply none of those values. The
+  Command callers supply none of those values. The committed signed-channel fixture now carries
+  structurally real RFC 8785 canonical, Brotli-compressed schema-v1 indexes for all four systems;
+  production index verification tests consume those exact signed artifacts, and the exporter uses
+  its manifest directory rather than the caller's working directory. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

@@ -4,38 +4,38 @@
     "spec_version": "1.0.0",
     "consistent_snapshot": true,
     "version": 1,
-    "expires": "2036-08-06T11:26:42.684729Z",
+    "expires": "2036-08-07T23:05:02.651293Z",
     "keys": {
-      "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25": {
+      "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd": {
         "keytype": "ed25519",
         "keyval": {
-          "public": "c851c1e7b81a075f2f1fdebd8cfa76ddb48b59e9cd5b53841844ed751a7e3489"
+          "public": "86a4c4b4a4dfdb0f43cebb4350b26008ff1a39ffb8c44d63e0beab8b45afa450"
         },
         "scheme": "ed25519"
       }
     },
     "roles": {
-      "root": {
+      "snapshot": {
         "keyids": [
-          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
+          "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd"
         ],
         "threshold": 1
       },
-      "snapshot": {
+      "root": {
         "keyids": [
-          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
+          "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd"
         ],
         "threshold": 1
       },
       "targets": {
         "keyids": [
-          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
+          "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd"
         ],
         "threshold": 1
       },
       "timestamp": {
         "keyids": [
-          "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25"
+          "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd"
         ],
         "threshold": 1
       }
@@ -43,8 +43,8 @@
   },
   "signatures": [
     {
-      "keyid": "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25",
-      "sig": "09bbe1f7ae0374a126bf4dc94e9237f494a3d4459d6c5069cab13a4610c828881f035c9442160c5ef2369ffba9fc9a9d7412369d318506185e087eb4888f1c0c"
+      "keyid": "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd",
+      "sig": "eeed0a5c340a2250451666501f469bbf07f09cd0775ed2fd3de9c9f77d70f08b148e31236e4bf1fbb466b73c5245ae8746eb3745f6376b0f106e0726c35b150b"
     }
   ]
 }

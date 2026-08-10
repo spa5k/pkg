@@ -784,6 +784,43 @@ mod tests {
     }
 
     #[test]
+    fn committed_signed_fixture_contains_real_canonical_indexes() {
+        let targets = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/channel-v1/targets");
+        let revision = "0123456789abcdef0123456789abcdef01234567";
+
+        for system in System::ALL {
+            let artifact = std::fs::read_dir(&targets)
+                .unwrap()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.ends_with(".index"))
+                })
+                .map(|path| path.join("42").join(format!("{}.json.br", system.as_str())))
+                .find(|path| path.is_file())
+                .unwrap_or_else(|| panic!("missing signed fixture index for {system}"));
+            let compressed = std::fs::read(artifact).unwrap();
+            let expected_sha256 = digest_hex(body_digest(&compressed));
+            let verified = verify_index_bytes(
+                &compressed,
+                42,
+                system,
+                revision,
+                &expected_sha256,
+                [0x42; 32],
+            )
+            .unwrap();
+
+            assert_eq!(verified.document().system(), system.as_str());
+            assert_eq!(verified.document().source(), IndexSource::SelfBuilt);
+            assert!(verified.document().records().is_empty());
+        }
+    }
+
+    #[test]
     fn record_order_is_canonical_and_skips_failed_or_unsafe_attrs() {
         let built = build_index(
             metadata("2025-01-01T00:00:00Z"),

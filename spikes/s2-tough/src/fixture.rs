@@ -34,6 +34,7 @@ use crate::keys::SignKey;
 use crate::repo::{DelegationSpec, RepoBuilder, RepoPaths, hours_from_now, sha256_hex};
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::io::{Cursor, Read as _};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -159,8 +160,33 @@ fn index_target_name(system: &str) -> String {
     format!("index/{SEQUENCE}/{system}.json.br")
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogIndex<'a> {
+    schema_version: u64,
+    channel_seq: u64,
+    system: &'a str,
+    nixpkgs_rev: &'static str,
+    generated_at: &'static str,
+    source: &'static str,
+    records: Vec<serde_json::Value>,
+}
+
 fn index_target_bytes(system: &str) -> Vec<u8> {
-    format!("[ fixture catalog index for {system} ]\n").into_bytes()
+    let canonical = serde_json_canonicalizer::to_vec(&CatalogIndex {
+        schema_version: 1,
+        channel_seq: SEQUENCE,
+        system,
+        nixpkgs_rev: NIXPKGS_REV,
+        generated_at: "2025-01-01T00:00:00Z",
+        source: "self-built",
+        records: Vec::new(),
+    })
+    .unwrap();
+    let mut encoder = brotli::CompressorReader::new(Cursor::new(canonical), 4 * 1024, 5, 22);
+    let mut compressed = Vec::new();
+    encoder.read_to_end(&mut compressed).unwrap();
+    compressed
 }
 
 /// Build the fixture: a fresh temp dir, a 1-of-1 signed repo, and a persistent

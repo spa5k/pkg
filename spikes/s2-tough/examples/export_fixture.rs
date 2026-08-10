@@ -27,8 +27,8 @@ fn replace_tree(source: &Path, destination: &Path) {
 #[tokio::main]
 async fn main() {
     let fixture = build_fixture().await;
-    let destination = Path::new("../../fixtures/channel-v1");
-    std::fs::create_dir_all(destination).unwrap();
+    let destination = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/channel-v1");
+    std::fs::create_dir_all(&destination).unwrap();
     std::fs::write(destination.join("root.json"), fixture.root_bytes()).unwrap();
     replace_tree(&fixture.repo.metadata_dir, &destination.join("metadata"));
     replace_tree(&fixture.repo.targets_dir, &destination.join("targets"));

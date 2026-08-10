@@ -3,30 +3,30 @@
     "_type": "targets",
     "spec_version": "1.0.0",
     "version": 1,
-    "expires": "2036-08-06T11:26:42.684729Z",
+    "expires": "2036-08-07T23:05:02.651293Z",
     "targets": {
-      "index/42/aarch64-linux.json.br": {
-        "length": 44,
-        "hashes": {
-          "sha256": "3b328e55458dcd3086ee679860cc8761749d358609718b7f991c559725a3d6f9"
-        }
-      },
-      "index/42/x86_64-linux.json.br": {
-        "length": 43,
-        "hashes": {
-          "sha256": "73c94bac27f3df293b543cf667130953d84a11dc8fa68ad9b7faeca0bb89ab73"
-        }
-      },
       "index/42/aarch64-darwin.json.br": {
-        "length": 45,
+        "length": 133,
         "hashes": {
-          "sha256": "d03a71e52f4cbc0dc7d071ada951e0578d4e77267f3a15c82ec176b8f97df9d3"
+          "sha256": "36f261dcb207178def9855f625b8016adb150cb8bc3904403fa3ae9f6b7d0b0b"
         }
       },
       "index/42/x86_64-darwin.json.br": {
-        "length": 44,
+        "length": 132,
         "hashes": {
-          "sha256": "65a92ce4700602de379e5b2b4229320054ce82e4c5d3282349cb9bb4c14e0464"
+          "sha256": "18b633a713db2b53f25e7e32e8e5f85fb058cbb608e17617f26e6dfbc3a25fd7"
+        }
+      },
+      "index/42/x86_64-linux.json.br": {
+        "length": 129,
+        "hashes": {
+          "sha256": "2fedc40944fcb009ec0742abab6bb427a62fc2e8f62c59f6f9828dad863ac958"
+        }
+      },
+      "index/42/aarch64-linux.json.br": {
+        "length": 130,
+        "hashes": {
+          "sha256": "be09632abb2f186821b4f90788e0373dc1d8c14064fa4fa14897f22d7f7dbe31"
         }
       }
     },
@@ -37,8 +37,8 @@
   },
   "signatures": [
     {
-      "keyid": "172649fa1f3b750f5b6ca922a6fa613704bf8100d8f8427191aa793994574b9b",
-      "sig": "b799c56e977d157697c73d57b49bd39cc39b4d966eed9e201a24bdfeff370468ef9f6e53704484220d4cb48bca518c57ea55c2f2ab718a8113e4c64219e05c02"
+      "keyid": "70774dc8c52aeaf42bb88b6a94e25cd96d8f6781e80afaf5dc78b0619998d3fa",
+      "sig": "57209eefd292b29d1536ab1e828fce11ceaab79527347411242b6da2e376828f76b1eb673729e8dda40bd90a1fec32ad02d492147dc29ce6e33547b000962503"
     }
   ]
 }

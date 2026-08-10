@@ -3,7 +3,7 @@
     "_type": "targets",
     "spec_version": "1.0.0",
     "version": 1,
-    "expires": "2036-08-06T11:26:42.684729Z",
+    "expires": "2036-08-07T23:05:02.651293Z",
     "targets": {
       "nix/2.24.10/aarch64-darwin.tar.xz": {
         "length": 53,
@@ -11,10 +11,40 @@
           "sha256": "1c5cabe15a6ec3610869acd20981b9ec74f2388eb91014b7cf2fb3f7f26d5b7f"
         }
       },
+      "nix/2.24.10/aarch64-linux.assets.json": {
+        "length": 430,
+        "hashes": {
+          "sha256": "8bd1bd1db4d67177e480499db87bcb82a8ad5f22ecae1646afdac35665980a3b"
+        }
+      },
+      "nix/2.24.10/x86_64-linux.tar.xz": {
+        "length": 51,
+        "hashes": {
+          "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3"
+        }
+      },
+      "nix/2.24.10/x86_64-darwin.assets.json": {
+        "length": 430,
+        "hashes": {
+          "sha256": "7a99411dd5b037c1aaef4bbef8e6a4db349dfd42a21bd7c9fe6e480503b35215"
+        }
+      },
       "nix/2.24.10/aarch64-darwin.assets.json": {
         "length": 431,
         "hashes": {
           "sha256": "ee9d3425387cf96fdea2b7d0aca5b55223b3c5f77c34721f43feaf40c7faf84e"
+        }
+      },
+      "descriptor.json": {
+        "length": 3310,
+        "hashes": {
+          "sha256": "3f7ee8a37fc4b7184bca2a40ae3cec839ce800e393f6a3e35a5a97d7e05f67fe"
+        }
+      },
+      "nix/2.24.10/x86_64-linux.assets.json": {
+        "length": 429,
+        "hashes": {
+          "sha256": "9906b990559e25b7bc6cb5ebbf05680bb473ca81787d94754d9df715f707a0ee"
         }
       },
       "nix/2.24.10/x86_64-darwin.tar.xz": {
@@ -28,44 +58,14 @@
         "hashes": {
           "sha256": "946dc216b68668a024e61387bc21102ae68ae9b9df2bc5f49ac211d4551b79b2"
         }
-      },
-      "nix/2.24.10/aarch64-linux.assets.json": {
-        "length": 430,
-        "hashes": {
-          "sha256": "8bd1bd1db4d67177e480499db87bcb82a8ad5f22ecae1646afdac35665980a3b"
-        }
-      },
-      "nix/2.24.10/x86_64-darwin.assets.json": {
-        "length": 430,
-        "hashes": {
-          "sha256": "7a99411dd5b037c1aaef4bbef8e6a4db349dfd42a21bd7c9fe6e480503b35215"
-        }
-      },
-      "descriptor.json": {
-        "length": 3310,
-        "hashes": {
-          "sha256": "033a735e6e6bc3d101cf87975ed80b4060c4565cef1bba054f32e80090d4fbaa"
-        }
-      },
-      "nix/2.24.10/x86_64-linux.tar.xz": {
-        "length": 51,
-        "hashes": {
-          "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3"
-        }
-      },
-      "nix/2.24.10/x86_64-linux.assets.json": {
-        "length": 429,
-        "hashes": {
-          "sha256": "9906b990559e25b7bc6cb5ebbf05680bb473ca81787d94754d9df715f707a0ee"
-        }
       }
     },
     "delegations": {
       "keys": {
-        "172649fa1f3b750f5b6ca922a6fa613704bf8100d8f8427191aa793994574b9b": {
+        "70774dc8c52aeaf42bb88b6a94e25cd96d8f6781e80afaf5dc78b0619998d3fa": {
           "keytype": "ed25519",
           "keyval": {
-            "public": "2afaacc451f01a8f412dee132045944d41dbbbc6d8f6c48ff83de2fcab455340"
+            "public": "7f4c2babed5185ef88e1b43b19856889549a6c9c8fb4655c6822f971c9a52544"
           },
           "scheme": "ed25519"
         }
@@ -74,7 +74,7 @@
         {
           "name": "index",
           "keyids": [
-            "172649fa1f3b750f5b6ca922a6fa613704bf8100d8f8427191aa793994574b9b"
+            "70774dc8c52aeaf42bb88b6a94e25cd96d8f6781e80afaf5dc78b0619998d3fa"
           ],
           "threshold": 1,
           "paths": [
@@ -87,8 +87,8 @@
   },
   "signatures": [
     {
-      "keyid": "cdfcd7d1f158eff7205f120502848e7616e0139bdb740dcc6fe7d47119154c25",
-      "sig": "28568816faddb2fe8cdf824908a67662669c7671a92d894e870e07fa23614d415d38ee33ffc66186a0ad160dfa8592d264c6ff05ade06c8e051e191a9d71dc0e"
+      "keyid": "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd",
+      "sig": "559fe11b2afcfd327586ea9cb51f8af4fe2f2e595a45babcea2ae929ccdaa51a114464918928cf325f6dd6b1bbffcd3d309e4796ec52f63b3e5ce081a0870007"
     }
   ]
 }

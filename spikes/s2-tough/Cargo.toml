@@ -40,9 +40,11 @@ aws-lc-rs = "1"
 olpc-cjson = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_json_canonicalizer = "=0.3.2"
 jiff = { version = "0.2", features = ["serde"] }
 url = "2"
 tempfile = "3"
+brotli = "=8.0.4"
 # The verifier + publisher helpers are async; tests use the tokio multi-thread
 # runtime. (tough itself depends on tokio.)
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "fs"] }
