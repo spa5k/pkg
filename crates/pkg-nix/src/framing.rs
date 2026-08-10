@@ -15,8 +15,9 @@ use crate::maintenance::{
     RootSetReport, VerifiedRepairScope,
 };
 use crate::{
-    ApprovalSource, DerivationPlanReport, EvaluateDerivationRequest, GcReport, JsonCodec,
-    PathInfoReport, RootName, RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    ApprovalSource, BuildPreview, DerivationPlanReport, EvaluateDerivationRequest, GcReport,
+    JsonCodec, PathInfoReport, RootName, RootRef, SubstituteReport, VerifyReport, VerifyRequest,
+    VersionInfo,
 };
 use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
@@ -96,6 +97,8 @@ pub enum CliBrokerRequest {
     Verify(OperationHandle, VerifyRequest),
     /// Collect unreachable paths using the managed root set.
     Gc(OperationHandle),
+    /// Fetch the sanitized preview of a broker-held private build plan.
+    GetBuildPreview(OperationHandle),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -121,6 +124,8 @@ pub enum CliBrokerResponse {
     Verify(VerifyReport),
     /// Validated garbage-collection result.
     Gc(GcReport),
+    /// Sanitized view of the broker-held private build plan.
+    BuildPreview(BuildPreview),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -253,6 +258,12 @@ impl ProductFrameCodec {
                     handle: handle.as_str(),
                 })?,
             ),
+            CliBrokerRequest::GetBuildPreview(handle) => (
+                17,
+                encode_json(&HandleWire {
+                    handle: handle.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -265,7 +276,7 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 | 10 | 16 => {
+            2 | 3 | 10 | 16 | 17 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
                 match frame.method {
@@ -273,6 +284,7 @@ impl ProductFrameCodec {
                     3 => CliBrokerRequest::Cancel(handle),
                     10 => CliBrokerRequest::Version(handle),
                     16 => CliBrokerRequest::Gc(handle),
+                    17 => CliBrokerRequest::GetBuildPreview(handle),
                     _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
                 }
             }
@@ -354,6 +366,12 @@ impl ProductFrameCodec {
             CliBrokerResponse::BuildApproved => (14, encode_json(&EmptyWire {})?),
             CliBrokerResponse::Verify(report) => (15, report.encode().map_err(adapter_payload)?),
             CliBrokerResponse::Gc(report) => (16, report.encode().map_err(adapter_payload)?),
+            CliBrokerResponse::BuildPreview(preview) => (
+                17,
+                preview
+                    .to_json_bytes()
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -415,6 +433,10 @@ impl ProductFrameCodec {
             ),
             16 => CliBrokerResponse::Gc(
                 GcReport::decode(&JsonCodec::default(), frame.payload).map_err(adapter_payload)?,
+            ),
+            17 => CliBrokerResponse::BuildPreview(
+                BuildPreview::from_json_bytes(frame.payload)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
             ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };

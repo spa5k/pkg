@@ -1167,6 +1167,9 @@ flowchart TD
   operation-id retry from reviving the earlier journal call. The durable row may remain as audit
   evidence, but no receipt is issued for a revoked reservation. Strict nested request bytes remain intact through
   framing so the domain codecs still reject duplicates and unknown fields. The
+  closed method-17 preview fetch now exposes only the strict sanitized `BuildPreview` for a live
+  caller-bound handle; the preview has a validating decoder and rejects unknown nested fields,
+  invalid platform/readiness/resource claims, malformed digests, and private extensions. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

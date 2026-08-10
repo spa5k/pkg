@@ -228,6 +228,10 @@ fn dispatch_request(
                 CliBrokerResponse::Gc,
             ))
         }
+        CliBrokerRequest::GetBuildPreview(handle) => caller
+            .build_preview(&handle)
+            .map(CliBrokerResponse::BuildPreview)
+            .map_err(|_| ()),
     }
 }
 
@@ -519,6 +523,29 @@ mod tests {
         let plan = build_plan();
         let digest = plan.digest().unwrap();
         caller.prepare_build(&handle, plan).unwrap();
+        let preview_response = dispatch_request(
+            &caller,
+            CliBrokerRequest::GetBuildPreview(handle.clone()),
+            None,
+            Some(&journal),
+        )
+        .unwrap();
+        assert!(matches!(
+            preview_response,
+            CliBrokerResponse::BuildPreview(_)
+        ));
+        let CliBrokerResponse::BuildPreview(preview) = preview_response else {
+            return;
+        };
+        let encoded = ProductFrameCodec::encode_cli_response(
+            17,
+            &CliBrokerResponse::BuildPreview(preview.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((17, CliBrokerResponse::BuildPreview(preview)))
+        );
         let request = CliBrokerRequest::ApproveBuild(
             handle,
             BuildApprovalRequest::new(digest, ApprovalSource::Interactive),

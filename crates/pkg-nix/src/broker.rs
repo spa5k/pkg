@@ -561,6 +561,21 @@ impl AuthenticatedCaller {
         Ok(preview)
     }
 
+    /// Returns only the sanitized preview of the private plan retained under
+    /// this exact caller-bound build handle.
+    pub fn build_preview(&self, handle: &OperationHandle) -> Result<BuildPreview, BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+        let record = self.record_mut(&mut state, handle)?;
+        record
+            .prepared_build
+            .as_ref()
+            .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?
+            .plan
+            .preview()
+            .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidBuildPlan))
+    }
+
     /// Durably approves the exact broker-held plan for one later execution.
     ///
     /// The journal write happens inside the broker authority boundary before a

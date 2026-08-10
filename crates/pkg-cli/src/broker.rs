@@ -10,11 +10,11 @@ use std::{
 };
 
 use pkg_nix::{
-    ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildReport, BuildRequest,
-    CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest,
-    GcReport, MethodKind, NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle,
-    OperationStatus, PathInfoReport, ProductFrameCodec, StorePath, SubstituteReport, VerifyReport,
-    VerifyRequest, VersionInfo,
+    ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPreview, BuildReport,
+    BuildRequest, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest,
+    EvaluateDerivationRequest, GcReport, MethodKind, NixAdapter, NixAdapterError,
+    NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport, ProductFrameCodec,
+    StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -262,6 +262,17 @@ impl BrokerLifecycleClient {
         let approval = BuildApprovalRequest::new(digest, source);
         match self.transact(&CliBrokerRequest::ApproveBuild(handle, approval))? {
             CliBrokerResponse::BuildApproved => Ok(()),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Fetches the only public view of a broker-held private build plan.
+    pub fn build_preview(
+        &mut self,
+        handle: OperationHandle,
+    ) -> Result<BuildPreview, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::GetBuildPreview(handle))? {
+            CliBrokerResponse::BuildPreview(preview) => Ok(preview),
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }

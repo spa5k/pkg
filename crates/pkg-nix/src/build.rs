@@ -15,7 +15,7 @@ use pkg_core::{
     AttributePath, ChannelSequence, NarHash, NixpkgsRevision, OutputName, PolicyVersion,
     SelectorId, SelectorInput, System, VersionPreference,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus, DerivationPlanReport,
@@ -23,6 +23,8 @@ use crate::{
 };
 
 const MAX_TEXT: usize = 256;
+const MAX_PREVIEW_ITEMS: usize = 4096;
+const RESOURCE_NOTICE: &str = "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation.";
 const BUILD_USERS_GROUP: &str = "nixbld";
 const MAX_JOBS: u32 = 1;
 const CORES_HINT: u32 = 0;
@@ -588,7 +590,10 @@ impl BuildPlan {
         names.sort();
         Ok(BuildPreview {
             schema_version: 1,
-            platform: PreviewPlatform { os, arch },
+            platform: PreviewPlatform {
+                os: os.to_owned(),
+                arch: arch.to_owned(),
+            },
             policy_version: self.policy_version,
             build_plan_digest: digest_string(digest),
             targets: self
@@ -617,9 +622,9 @@ impl BuildPlan {
                 build_isolation_ready: self.readiness.build_users_ready,
                 native_build: true,
                 resource_boundary: PreviewResourceBoundary {
-                    isolation: "sandbox",
+                    isolation: "sandbox".to_owned(),
                     per_build_resource_cap: false,
-                    notice: "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation.",
+                    notice: RESOURCE_NOTICE.to_owned(),
                 },
             },
             approval_required: true,
@@ -672,8 +677,8 @@ fn product_platform(system: System) -> (&'static str, &'static str) {
 }
 
 /// Public sanitized local-build preview; no store or derivation identity exists.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildPreview {
     schema_version: u32,
     platform: PreviewPlatform,
@@ -689,8 +694,8 @@ pub struct BuildPreview {
 }
 
 /// Heuristic public estimates measured outside the approval-bound plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildPreviewEstimates {
     approx_build_minutes: Option<String>,
     approx_new_disk_bytes: Option<u64>,
@@ -722,8 +727,8 @@ impl BuildPreviewEstimates {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PreviewTarget {
     selector: String,
     package_name: String,
@@ -743,31 +748,121 @@ impl BuildPreview {
         serde_json::to_value(self)
             .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
     }
+
+    /// Serializes the strict sanitized preview for the private product frame.
+    pub fn to_json_bytes(&self) -> Result<Vec<u8>, BuildEngineError> {
+        serde_json::to_vec(self)
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+    }
+
+    /// Decodes and revalidates one strict sanitized preview from the broker.
+    pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, BuildEngineError> {
+        let preview: Self = serde_json::from_slice(bytes)
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+        preview.validate()?;
+        Ok(preview)
+    }
+
+    fn validate(&self) -> Result<(), BuildEngineError> {
+        if self.schema_version != 1
+            || self.policy_version == 0
+            || !is_public_digest(&self.build_plan_digest)
+            || self.targets.is_empty()
+            || self.targets.len() > MAX_PREVIEW_ITEMS
+            || self.build.count == 0
+            || self.build.count != self.build.names.len()
+            || self.build.count > MAX_PREVIEW_ITEMS
+            || self.unknown_local_outputs == 0
+            || !self.approval_required
+            || !matches!(
+                (self.platform.os.as_str(), self.platform.arch.as_str()),
+                ("linux" | "macos", "x86_64" | "arm64")
+            )
+            || !self.readiness.sandboxed
+            || !self.readiness.build_isolation_ready
+            || !self.readiness.native_build
+            || self.readiness.resource_boundary.isolation != "sandbox"
+            || self.readiness.resource_boundary.per_build_resource_cap
+            || self.readiness.resource_boundary.notice != RESOURCE_NOTICE
+        {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        self.estimates.validate()?;
+        for target in &self.targets {
+            checked_text(&target.selector)?;
+            checked_text(&target.package_name)?;
+            checked_text(&target.version)?;
+            if target.outputs_to_install.is_empty()
+                || target.outputs_to_install.len() > MAX_PREVIEW_ITEMS
+                || target
+                    .outputs_to_install
+                    .iter()
+                    .any(|output| OutputName::new(output).is_err())
+                || target
+                    .outputs_to_install
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != target.outputs_to_install.len()
+            {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+            }
+        }
+        if self
+            .build
+            .names
+            .iter()
+            .any(|name| checked_text(name).is_err())
+        {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        Ok(())
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+impl BuildPreviewEstimates {
+    fn validate(&self) -> Result<(), BuildEngineError> {
+        self.approx_build_minutes
+            .as_deref()
+            .map(checked_text)
+            .transpose()?;
+        Ok(())
+    }
+}
+
+fn is_public_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PreviewPlatform {
-    os: &'static str,
-    arch: &'static str,
+    os: String,
+    arch: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PreviewBuild {
     count: usize,
     names: Vec<String>,
     has_fixed_output: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PreviewCache {
     known_download_bytes: u64,
     known_content_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PreviewReadiness {
     sandboxed: bool,
     build_isolation_ready: bool,
@@ -775,12 +870,12 @@ struct PreviewReadiness {
     resource_boundary: PreviewResourceBoundary,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PreviewResourceBoundary {
-    isolation: &'static str,
+    isolation: String,
     per_build_resource_cap: bool,
-    notice: &'static str,
+    notice: String,
 }
 
 /// One-operation approval source recorded durably before issuance.
@@ -1607,12 +1702,13 @@ mod tests {
         assert_eq!(first.digest().unwrap(), same.digest().unwrap());
         assert_ne!(first.digest().unwrap(), changed.digest().unwrap());
 
-        let preview = first
-            .preview()
-            .unwrap()
-            .to_json_value()
-            .unwrap()
-            .to_string();
+        let preview_object = first.preview().unwrap();
+        let preview_bytes = preview_object.to_json_bytes().unwrap();
+        assert_eq!(
+            BuildPreview::from_json_bytes(&preview_bytes).unwrap(),
+            preview_object
+        );
+        let preview = String::from_utf8(preview_bytes).unwrap();
         assert!(preview.contains("\"approvalRequired\":true"));
         assert!(preview.contains("\"buildPlanDigest\":\"sha256:"));
         assert!(preview.contains("\"selector\":\"hello\""));
@@ -1637,6 +1733,13 @@ mod tests {
         assert!(estimated.contains("\"approxNewDiskBytes\":332000000"));
         assert_eq!(first.digest().unwrap(), same.digest().unwrap());
         assert!(BuildPreviewEstimates::new(Some("bad\nvalue"), None, None).is_err());
+
+        let mut extended = serde_json::to_value(&preview_object).unwrap();
+        extended
+            .as_object_mut()
+            .unwrap()
+            .insert("privatePlan".to_owned(), serde_json::json!("forbidden"));
+        assert!(BuildPreview::from_json_bytes(&serde_json::to_vec(&extended).unwrap()).is_err());
     }
 
     #[test]

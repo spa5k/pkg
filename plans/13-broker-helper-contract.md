@@ -229,7 +229,9 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   broker-derived private operation identity before retaining the private receipt, and permits only
   one approval. The state is bound by the existing authenticated uid, handle, epoch, status,
   and expiry; cancellation, disconnect, expiry, and restart make it unusable. This API is internal and
-  adds no frame method or raw target/receipt input. Cancellation, disconnect, expiry, and restart
+  adds no raw target/receipt input. Closed method 17 fetches only the strict `BuildPreview` from an
+  already prepared caller-bound plan; nested unknown fields, invalid invariants, and private-plan
+  extensions fail decoding. Cancellation, disconnect, expiry, and restart
   revoke even an approval whose journal write is in flight. The in-process broker now consumes the
   private receipt itself: it joins FIFO build admission, takes a GC inhibitor, replans and checks
   volatile resources under admission, and invokes only the typed adapter. A success retains both
