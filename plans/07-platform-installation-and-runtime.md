@@ -1123,6 +1123,15 @@ snippets, or any foreign `/nix`.
     root-owned `pkg/users` subtree, then binds the authenticated capability
     session to the real fixed local-store executor. Malformed or unauthenticated
     connections are rejected locally without widening the helper grammar.
+20. On Linux, `pkg-nix-broker` likewise consumes exactly one systemd-activated
+    listener and verifies `/run/pkg/broker.sock`, but must run as the resolved
+    non-root `pkg-nix-broker` account. Every accepted connection is authenticated
+    from `SO_PEERCRED` before frame decoding. The process admits at most 32
+    concurrent client sessions; excess connections are closed, idle reads expire
+    after five minutes, and blocked writes after 30 seconds. Each session owns its
+    cleanup permit even if its worker exits abnormally. This entry point currently
+    exposes only the accepted operation-lifecycle protocol; product-command/Real-Nix
+    dispatch remains a separate PR-36 wiring slice.
 
 ## 17. Unresolved questions / spikes
 

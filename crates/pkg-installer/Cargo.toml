@@ -28,3 +28,7 @@ panic = "deny"
 [[bin]]
 name = "pkg-root-helper"
 path = "src/bin/pkg-root-helper.rs"
+
+[[bin]]
+name = "pkg-nix-broker"
+path = "src/bin/pkg-nix-broker.rs"

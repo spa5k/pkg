@@ -193,6 +193,13 @@ only `pkg/users` beneath an already trusted root-owned `/nix/var/nix/gcroots`, c
 `RootNixRepairExecutor`, and injects it into the helper capability engine. Peer authentication still
 runs before frame decoding on every connection.
 
+The Linux broker entry point separately requires the resolved non-root broker uid and the exact
+systemd-activated `/run/pkg/broker.sock`. It authenticates every client from `SO_PEERCRED`, admits
+at most 32 concurrent sessions, and applies finite idle-read and blocked-write deadlines. Over-limit,
+malformed, unauthenticated, and timed-out clients are connection-local failures. The entry point
+currently serves only lifecycle begin/poll/cancel; it does not fabricate command execution before
+the typed product-command dispatcher is connected to the managed adapter.
+
 ## 9. Restart handshake
 
 1. Supervisor restarts broker and/or helper.

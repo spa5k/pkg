@@ -1,25 +1,44 @@
 //! Production service entry points with fixed socket and identity contracts.
 
 #[cfg(target_os = "linux")]
-use crate::{LinuxHelperSession, LinuxRootSetStore, serve_helper_connection};
+use crate::{
+    LinuxHelperSession, LinuxRootSetStore, serve_broker_connection, serve_helper_connection,
+};
 #[cfg(target_os = "linux")]
 use listenfd::ListenFd;
 #[cfg(target_os = "linux")]
 use nix::unistd::{Uid, User};
 #[cfg(target_os = "linux")]
-use pkg_nix::{InProcessHelper, InProcessPeer, RootNixRepairExecutor, VerifiedRepairExecutor};
+use pkg_nix::{
+    InProcessBroker, InProcessHelper, InProcessPeer, RootNixRepairExecutor, VerifiedRepairExecutor,
+};
 use std::{error::Error, fmt};
 #[cfg(target_os = "linux")]
-use std::{io, os::unix::net::UnixListener, path::Path, sync::Arc};
+use std::{
+    io,
+    os::unix::net::{UnixListener, UnixStream},
+    path::Path,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 #[cfg(target_os = "linux")]
 const BROKER_ACCOUNT: &str = "pkg-nix-broker";
+#[cfg(target_os = "linux")]
+const LINUX_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
 #[cfg(target_os = "linux")]
 const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_HOME: &str = "/var/lib/pkg/helper-home";
+#[cfg(target_os = "linux")]
+const MAX_BROKER_CONNECTIONS: usize = 32;
+#[cfg(target_os = "linux")]
+const BROKER_READ_TIMEOUT: Duration = Duration::from_mins(5);
+#[cfg(target_os = "linux")]
+const BROKER_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable production-service startup/runtime failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +55,8 @@ pub enum ServiceErrorCode {
     InitializationFailed,
     /// The activated listener failed while accepting connections.
     ListenerFailed,
+    /// A bounded broker connection worker could not be started.
+    WorkerUnavailable,
 }
 
 /// Redacted production-service failure.
@@ -63,6 +84,69 @@ impl fmt::Display for ServiceError {
 }
 
 impl Error for ServiceError {}
+
+/// Runs the unprivileged Linux broker from one systemd-activated Unix listener.
+///
+/// The service must run as the installed broker account. It validates the exact
+/// public endpoint, authenticates every caller from kernel peer credentials,
+/// and limits concurrent sessions before starting a connection worker. Idle
+/// readers and blocked writers have finite deadlines. Invalid clients are
+/// connection-local failures and do not terminate the broker.
+///
+/// This entry point currently serves the authenticated operation-lifecycle
+/// protocol. Product-command dispatch to the managed Nix adapter is a separate
+/// wiring step and is not synthesized here.
+///
+/// # Errors
+///
+/// Returns a redacted error for identity, activation, initialization, listener,
+/// or worker-start failures.
+#[cfg(target_os = "linux")]
+pub fn run_linux_broker_from_activation() -> Result<(), ServiceError> {
+    let expected_uid = broker_uid()?;
+    if Uid::effective().as_raw() != expected_uid {
+        return Err(ServiceError::new(ServiceErrorCode::WrongIdentity));
+    }
+    let listener = activated_unix_listener(LINUX_BROKER_SOCKET)?;
+    let broker = InProcessBroker::new()
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
+    let limiter = ConnectionLimiter::new(MAX_BROKER_CONNECTIONS);
+
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let Some(permit) = limiter.try_acquire() else {
+                    drop(stream);
+                    continue;
+                };
+                if configure_broker_stream(&stream).is_err() {
+                    drop(permit);
+                    continue;
+                }
+                let connection_broker = Arc::clone(&broker);
+                thread::Builder::new()
+                    .name(String::from("pkg-broker-client"))
+                    .spawn(move || {
+                        let _permit = permit;
+                        let _ = serve_broker_connection(stream, &connection_broker);
+                    })
+                    .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => return Err(ServiceError::new(ServiceErrorCode::ListenerFailed)),
+        }
+    }
+}
+
+/// Reports the Linux broker entry point as unavailable on other hosts.
+///
+/// # Errors
+///
+/// Always returns `InvalidRuntime` outside Linux.
+#[cfg(not(target_os = "linux"))]
+pub const fn run_linux_broker_from_activation() -> Result<(), ServiceError> {
+    Err(ServiceError::new(ServiceErrorCode::InvalidRuntime))
+}
 
 /// Runs the Linux root helper from exactly one systemd-activated Unix listener.
 ///
@@ -157,6 +241,60 @@ fn validate_listener_path(listener: &UnixListener, expected: &Path) -> Result<()
     }
 }
 
+#[cfg(target_os = "linux")]
+fn configure_broker_stream(stream: &UnixStream) -> io::Result<()> {
+    stream.set_read_timeout(Some(BROKER_READ_TIMEOUT))?;
+    stream.set_write_timeout(Some(BROKER_WRITE_TIMEOUT))
+}
+
+#[cfg(target_os = "linux")]
+struct ConnectionLimiter {
+    active: Mutex<usize>,
+    limit: usize,
+}
+
+#[cfg(target_os = "linux")]
+impl ConnectionLimiter {
+    fn new(limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            active: Mutex::new(0),
+            limit,
+        })
+    }
+
+    fn try_acquire(self: &Arc<Self>) -> Option<ConnectionPermit> {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *active >= self.limit {
+            return None;
+        }
+        *active += 1;
+        drop(active);
+        Some(ConnectionPermit {
+            limiter: Arc::clone(self),
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct ConnectionPermit {
+    limiter: Arc<ConnectionLimiter>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        let mut active = self
+            .limiter
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active = active.saturating_sub(1);
+    }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
@@ -192,5 +330,17 @@ mod tests {
         };
         assert_eq!(error.code(), ServiceErrorCode::InvalidActivatedSocket);
         Ok(())
+    }
+
+    #[test]
+    fn broker_connection_limit_is_exact_and_permits_return_on_drop() {
+        let limiter = ConnectionLimiter::new(2);
+        let first = limiter.try_acquire();
+        let second = limiter.try_acquire();
+        assert!(first.is_some());
+        assert!(second.is_some());
+        assert!(limiter.try_acquire().is_none());
+        drop(first);
+        assert!(limiter.try_acquire().is_some());
     }
 }

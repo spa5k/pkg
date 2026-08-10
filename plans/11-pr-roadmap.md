@@ -1124,8 +1124,11 @@ flowchart TD
   Linux `pkg-root-helper` executable now consumes exactly one systemd-activated listener, validates
   root/broker identities and the exact endpoint, safely initializes only the pkg GC-root subtree,
   and binds authenticated requests to the real fixed local-store executor; Linux container tests
-  compile and exercise its platform-only contracts. This does **not**
-  yet claim the full PR: production installer/broker executables, CLI wiring, the authenticated
+  compile and exercise its platform-only contracts. The Linux `pkg-nix-broker` executable now
+  validates its dedicated non-root identity and exact systemd-activated public socket, authenticates
+  callers from peer credentials, and bounds concurrent sessions plus idle/write time. It deliberately
+  serves only the existing operation-lifecycle protocol until command dispatch is wired. This does
+  **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real
   parity, and self-host the product on Real Nix end-to-end (`09` §7).
