@@ -791,7 +791,12 @@ separate binary or `pkg self-uninstall`) requires `--yes` and:
 
 1. Re-reads the uninstall (asset) manifest `/opt/pkg/uninstall/manifest.json`
    (assembled from the managed-Nix + installer asset manifests recorded by
-   plan 11 PR-12/27/28).
+   plan 11 PR-12/27/28). The local manifest records only the target `system`,
+   the authenticated managed-runtime manifest digest, and one exact entry for
+   every compiled platform asset: stable `id` plus `created`/`preExisting`.
+   It contains no deletion path, account name, unit name, argv, or option.
+   PR-29 rejects missing, duplicate, unknown, or malformed ids and resolves all
+   targets from the compiled Linux/macOS allowlists.
 2. Refuses if any unmanaged-Nix signals are present that we didn't create
    (safety: don't touch a `/nix` someone else populated).
 3. Stops & removes our daemon **and broker** units (systemd/launchd) — both
@@ -811,6 +816,16 @@ separate binary or `pkg self-uninstall`) requires `--yes` and:
    automatic-GC timer/unit/launchd job** — none is ever installed (§5.4); any
    foreign GC scheduler found is left untouched.
 8. Prints a final summary.
+
+PR-29 implements this as a pure deterministic `plan_uninstall` preview followed
+by a separate privileged execution step. Execution revalidates that the plan is
+the exact plan for the manifest, checks privilege, authenticates the ownership
+receipt and complete signed asset set, and repeats the unmanaged-Nix scan before
+the first mutation. Stopping services is a hard barrier: if it fails, nothing is
+removed. After that barrier cleanup is best-effort across every remaining exact
+action, and the final action always checks for privileged residue. A failed
+cleanup or residue check reports an incomplete uninstall; reinstall is the only
+supported recovery path.
 
 **Partial uninstall is intentionally unsupported** (I6). If the user wants to
 keep packages but remove the product, that's not a V1 path (they'd lose the

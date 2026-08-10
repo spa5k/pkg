@@ -879,6 +879,8 @@ flowchart TD
 - **Milestone:** M5.
 
 #### PR-29 — Uninstall boundaries (asset manifest; never touch unmanaged Nix)
+- **Status (2026-08-10):** implementation complete locally; signed commit and external
+  privileged install→uninstall evidence gate pending.
 - **Purpose:** remove only recorded product assets; dry-run preview; refuse to touch
   unmanaged Nix; verify zero privileged residue (`08` T-UNINST-1/2/3).
 - **Owns:** `crates/pkg-installer/src/uninstall.rs` + tests.

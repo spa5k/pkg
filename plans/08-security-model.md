@@ -455,8 +455,8 @@ Impact (L/M/H) using the rubric in §6.0.
 
 | ID | Threat | STRIDE | Detail | Controls | Residual | Refs |
 |----|--------|--------|--------|----------|----------|------|
-| **T-UNINST-1** | Uninstall removes the user's **own** Nix install/profile | Destruction | Over-broad cleanup | Uninstall removes **only** paths it created & recorded in an asset manifest; refuses to touch `/nix` if an unmanaged Nix is detected; dry-run preview | L | `07` |
-| **T-UNINST-2** | Uninstall leaves privileged residue (daemon, root service/helper) | Persistence | Incomplete cleanup | Asset manifest is authoritative; uninstall verifies zero privileged residue and reports; `doctor --post-uninstall` | L | `07` |
+| **T-UNINST-1** | Uninstall removes the user's **own** Nix install/profile | Destruction | Over-broad cleanup | The local manifest carries only complete compiled asset ids + created/pre-existing state, never paths; every target is resolved from the authenticated/compiled allowlists; privilege + ownership + unmanaged-Nix preflights repeat immediately before mutation; `/nix` removal is a separate exclusive-ownership action; deterministic dry-run preview | L | `07` |
+| **T-UNINST-2** | Uninstall leaves privileged residue (daemon, root service/helper) | Persistence | Incomplete cleanup | Service stop is a hard barrier; later exact cleanup attempts continue after individual failures; the final privileged-residue check always runs and incomplete cleanup is reported; `doctor --post-uninstall` corroborates | L | `07` |
 | **T-UNINST-3** | Partial uninstall corrupts shell PATH permanently | DoS | Bad edit | PATH edits via a managed snippet file `source`d from rc, not inline edits; removal = delete snippet + warn | L | `06`,`07` |
 
 ### 6.14 Compromised packages at runtime

@@ -702,7 +702,13 @@ security lane) for S31..S33. The table below remains the 09-internal AC-S1..S30 
 | (`10` AC-O4) | rotated-out TUF key can't sign new targets; rotation accepted within one `timestamp` window (T-CHAN-5) | e2e + fake channel |
 
 Additional security tests beyond ACs: T-PATH-* matrix, T-LOG-* injection, T-REL-4 dependency
-review, T-INST-2 TOCTOU, T-INST-6 cross-user/UID-confusion, T-UNINST-1/2 boundary checks.
+review, T-INST-2 TOCTOU, T-INST-6 cross-user/UID-confusion, and T-UNINST-1/2/3 boundary checks.
+The uninstall unit/contract lane rejects missing, duplicate, unknown, path-like, and oversized
+asset ids; proves dry-run determinism on all four V1 systems; proves pre-existing assets never
+become removal targets; proves all three preflights precede mutation; proves service-stop failure
+is a hard barrier; and proves later cleanup failure cannot skip final privileged-residue
+verification. Privileged e2e remains responsible for install → dry-run → uninstall →
+`doctor --post-uninstall` and zero-residue evidence on Linux and macOS.
 
 ### 6.7 Performance (layer 7)
 - **Budgets (DR-004 accepted 2026-08-09):**

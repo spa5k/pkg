@@ -8,6 +8,7 @@ mod broker;
 mod helper;
 mod installer;
 pub mod platform;
+mod uninstall;
 
 pub use assets::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets,
@@ -31,4 +32,9 @@ pub use platform::macos::{
     MacOsLaunchdAssets, MacOsPeerCredentials, MacOsReleaseStep, MacOsReleaseTarget,
     MacOsRootSetStore, MacOsSandboxReadiness, MacOsSocketContract, MacOsStoreVolumeContract,
     MacOsToolchainReadiness, install_macos, macos_install_assets, macos_release_steps,
+};
+pub use uninstall::{
+    RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,
+    UninstallError, UninstallErrorCode, UninstallManifest, UninstallPlan, UninstallReport,
+    execute_uninstall, plan_uninstall,
 };
