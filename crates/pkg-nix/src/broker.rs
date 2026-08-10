@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest as _, Sha256};
 
-use crate::maintenance::random_secret;
+use crate::{BuildPlan, BuildPreview, Digest, maintenance::random_secret};
 
 const OPERATION_TTL: Duration = Duration::from_secs(30 * 60);
 
@@ -27,6 +27,12 @@ pub enum BrokerErrorCode {
     AdmissionBusy,
     /// The requested gate transition violated the operation lifecycle.
     InvalidAdmissionTransition,
+    /// The broker could not derive a valid private build plan or preview.
+    InvalidBuildPlan,
+    /// The approved digest did not identify the broker-held private plan.
+    BuildApprovalMismatch,
+    /// The private build plan was not approved or was already consumed.
+    BuildApprovalUnavailable,
     /// A managed child policy contained a non-canonical runtime path.
     InvalidChildPolicy,
     /// Fresh session entropy could not be obtained from the operating system.
@@ -128,6 +134,15 @@ struct OperationRecord {
     kind: BrokerOperationKind,
     status: OperationStatus,
     expires_at: Instant,
+    build_prepared: bool,
+    prepared_build: Option<PreparedBuild>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedBuild {
+    plan: BuildPlan,
+    digest: Digest,
+    approved: bool,
 }
 
 #[derive(Debug)]
@@ -349,6 +364,95 @@ impl AuthenticatedCaller {
         self.require_running_kind(&mut state, handle, allowed)
     }
 
+    /// Retains one broker-derived private plan and returns only its public preview.
+    ///
+    /// This is an in-broker API, not an RPC shape: callers never provide raw
+    /// targets or a [`crate::BuildRequest`]. A build operation may prepare only
+    /// one plan; a changed plan requires a fresh operation and fresh approval.
+    pub fn prepare_build(
+        &self,
+        handle: &OperationHandle,
+        plan: BuildPlan,
+    ) -> Result<BuildPreview, BrokerError> {
+        let digest = plan
+            .digest()
+            .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidBuildPlan))?;
+        let preview = plan
+            .preview()
+            .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidBuildPlan))?;
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+        let record = self.record_mut(&mut state, handle)?;
+        if record.build_prepared {
+            return Err(BrokerError::new(
+                BrokerErrorCode::InvalidAdmissionTransition,
+            ));
+        }
+        record.prepared_build = Some(PreparedBuild {
+            plan,
+            digest,
+            approved: false,
+        });
+        record.build_prepared = true;
+        Ok(preview)
+    }
+
+    /// Marks the exact broker-held plan approved for one later consumption.
+    ///
+    /// The product dispatcher calls this only after recording the explicit
+    /// approval. The public IPC request carries the opaque operation handle and
+    /// digest pointer; it never carries a receipt or build targets.
+    pub fn approve_build(
+        &self,
+        handle: &OperationHandle,
+        digest: Digest,
+    ) -> Result<(), BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+        let record = self.record_mut(&mut state, handle)?;
+        let prepared = record
+            .prepared_build
+            .as_mut()
+            .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
+        if prepared.digest != digest {
+            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
+        }
+        if prepared.approved {
+            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable));
+        }
+        prepared.approved = true;
+        Ok(())
+    }
+
+    /// Consumes and returns the exact approved private plan once.
+    ///
+    /// Only broker execution code calls this method. The plan remains absent
+    /// from every public response and cannot be reconstructed from the digest.
+    pub fn take_approved_build(
+        &self,
+        handle: &OperationHandle,
+        digest: Digest,
+    ) -> Result<BuildPlan, BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+        let record = self.record_mut(&mut state, handle)?;
+        let prepared = record
+            .prepared_build
+            .as_ref()
+            .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
+        if prepared.digest != digest {
+            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
+        }
+        if !prepared.approved {
+            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable));
+        }
+        record
+            .prepared_build
+            .take()
+            .map(|prepared| prepared.plan)
+            .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))
+    }
+
     /// Acquires the machine-wide local-build lease for this operation.
     pub fn acquire_build(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
@@ -425,6 +529,7 @@ impl AuthenticatedCaller {
             release_admission(&mut state, &handle);
             if let Some(record) = state.operations.get_mut(&handle) {
                 record.status = OperationStatus::Cancelled;
+                record.prepared_build = None;
             }
         }
         Ok(())
@@ -447,6 +552,8 @@ impl AuthenticatedCaller {
                 kind,
                 status: OperationStatus::Running,
                 expires_at,
+                build_prepared: false,
+                prepared_build: None,
             },
         );
         Ok(handle)
@@ -461,6 +568,7 @@ impl AuthenticatedCaller {
             .get_mut(handle)
             .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
         record.status = status;
+        record.prepared_build = None;
         Ok(())
     }
 
@@ -663,6 +771,74 @@ fn is_managed_nix_executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
+
+    use pkg_channel::BuildMode;
+    use pkg_core::{
+        AttributePath, ChannelSequence, NarHash, NixpkgsRevision, OutputName, PackageVersion,
+        PolicyVersion, SelectorId, SelectorInput, StorePath, System, VersionPreference,
+    };
+
+    use crate::{
+        BuildPlanTarget, BuildReadiness, CacheClassification, DerivationPath, DerivationPlanReport,
+        EvaluatedDerivation, NixVersion,
+    };
+
+    const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
+    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+    const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+
+    fn build_plan(document_byte: u8) -> BuildPlan {
+        let derivation =
+            DerivationPath::from_str(&format!("/nix/store/{STORE_HASH}-hello-1.0.drv")).unwrap();
+        let mut outputs = BTreeMap::new();
+        outputs.insert(
+            OutputName::new("out").unwrap(),
+            StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+        );
+        let evaluated = EvaluatedDerivation::new(
+            derivation.clone(),
+            "hello-1.0".to_owned(),
+            System::X8664Linux,
+            outputs,
+            Digest::from_bytes([document_byte; 32]),
+            false,
+        )
+        .unwrap();
+        let report = DerivationPlanReport::new(
+            4,
+            derivation.clone(),
+            vec![OutputName::new("out").unwrap()],
+            vec![evaluated],
+            Digest::from_bytes([document_byte.wrapping_add(1); 32]),
+            "hello".to_owned(),
+            PackageVersion::new("1.0"),
+        )
+        .unwrap();
+        BuildPlan::new(
+            &NixVersion::new("2.34.8").unwrap(),
+            Digest::from_bytes([3; 32]),
+            PolicyVersion::from_u64(7).unwrap(),
+            ChannelSequence::from_u64(42).unwrap(),
+            &NixpkgsRevision::new(REVISION).unwrap(),
+            &NarHash::new(NAR_HASH).unwrap(),
+            System::X8664Linux,
+            System::X8664Linux,
+            BuildMode::AllowWithGates,
+            vec![BuildPlanTarget::new(
+                SelectorId::new("sel_hello").unwrap(),
+                SelectorInput::new("hello").unwrap(),
+                AttributePath::new("hello").unwrap(),
+                VersionPreference::Any,
+                report,
+            )],
+            vec![derivation],
+            CacheClassification::new(Digest::from_bytes([4; 32]), 2, 1, 100, 200).unwrap(),
+            BuildReadiness::new(true, false, true, true, true),
+            4,
+        )
+        .unwrap()
+    }
 
     #[test]
     fn caller_identity_is_transport_bound() {
@@ -731,6 +907,145 @@ mod tests {
             BrokerErrorCode::SessionRestarted
         );
         assert_eq!(broker.admission_snapshot().operation_count(), 0);
+    }
+
+    #[test]
+    fn private_build_plan_approval_is_uid_bound_exact_and_single_use() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let other = broker
+            .connect(InProcessCallerPeer::authenticated(1002))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let plan = build_plan(1);
+        let digest = plan.digest().unwrap();
+        let preview = caller.prepare_build(&handle, plan.clone()).unwrap();
+        assert_eq!(preview.build_plan_digest().len(), 71);
+
+        assert_eq!(
+            caller
+                .take_approved_build(&handle, digest)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::BuildApprovalUnavailable
+        );
+        assert_eq!(
+            other.approve_build(&handle, digest).unwrap_err().code(),
+            BrokerErrorCode::InvalidOperationHandle
+        );
+        assert_eq!(
+            caller
+                .approve_build(&handle, Digest::from_bytes([9; 32]))
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::BuildApprovalMismatch
+        );
+        caller.approve_build(&handle, digest).unwrap();
+        assert_eq!(
+            caller.approve_build(&handle, digest).unwrap_err().code(),
+            BrokerErrorCode::BuildApprovalUnavailable
+        );
+        assert_eq!(
+            caller
+                .take_approved_build(&handle, Digest::from_bytes([8; 32]))
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::BuildApprovalMismatch
+        );
+        assert_eq!(caller.take_approved_build(&handle, digest).unwrap(), plan);
+        assert_eq!(
+            caller
+                .take_approved_build(&handle, digest)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::BuildApprovalUnavailable
+        );
+        assert_eq!(
+            caller
+                .prepare_build(&handle, build_plan(2))
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+    }
+
+    #[test]
+    fn private_build_plan_is_invalidated_by_cancel_disconnect_and_restart() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+
+        let wrong_kind = caller.begin(BrokerOperationKind::Acquire).unwrap();
+        assert_eq!(
+            caller
+                .prepare_build(&wrong_kind, build_plan(0))
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+
+        let expired = caller
+            .begin_with_deadline(BrokerOperationKind::Build, Instant::now())
+            .unwrap();
+        assert_eq!(
+            caller
+                .prepare_build(&expired, build_plan(0))
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidOperationHandle
+        );
+
+        let cancelled = caller.begin(BrokerOperationKind::Build).unwrap();
+        let cancelled_plan = build_plan(1);
+        let cancelled_digest = cancelled_plan.digest().unwrap();
+        caller.prepare_build(&cancelled, cancelled_plan).unwrap();
+        caller.approve_build(&cancelled, cancelled_digest).unwrap();
+        caller.cancel(&cancelled).unwrap();
+        assert_eq!(
+            caller
+                .take_approved_build(&cancelled, cancelled_digest)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+
+        let disconnected = caller.begin(BrokerOperationKind::Build).unwrap();
+        let disconnected_plan = build_plan(2);
+        let disconnected_digest = disconnected_plan.digest().unwrap();
+        caller
+            .prepare_build(&disconnected, disconnected_plan)
+            .unwrap();
+        caller
+            .approve_build(&disconnected, disconnected_digest)
+            .unwrap();
+        caller.disconnect().unwrap();
+        assert_eq!(
+            caller
+                .take_approved_build(&disconnected, disconnected_digest)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+
+        let fresh = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let restarted = fresh.begin(BrokerOperationKind::Build).unwrap();
+        let restarted_plan = build_plan(3);
+        let restarted_digest = restarted_plan.digest().unwrap();
+        fresh.prepare_build(&restarted, restarted_plan).unwrap();
+        fresh.approve_build(&restarted, restarted_digest).unwrap();
+        broker.restart().unwrap();
+        assert_eq!(
+            fresh
+                .take_approved_build(&restarted, restarted_digest)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::SessionRestarted
+        );
     }
 
     #[test]

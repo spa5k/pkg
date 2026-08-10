@@ -1131,7 +1131,11 @@ flowchart TD
   of an authorized class gates each exposed fixed `RealNixAdapter` method, and GC acquires its
   machine-wide admission before execution. Build remains deliberately absent because a
   caller-constructed `BuildApprovalReceipt` cannot be treated as authority; its wire method stays
-  unassigned until the broker holds and consumes an authenticated approval capability. Strict nested request bytes remain intact through
+  unassigned. The in-process broker now supplies the underlying authenticated capability state: one
+  private `BuildPlan` is retained behind the caller/epoch-bound build handle, only its sanitized
+  preview/digest is public, exact approval is one-shot, and wrong-UID/digest, replay, cancellation,
+  disconnect, expiry, or restart invalidate it. Wire exposure still waits for dispatcher-owned
+  approval journaling plus admission-time replan/execution. Strict nested request bytes remain intact through
   framing so the domain codecs still reject duplicates and unknown fields. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
@@ -1144,7 +1148,7 @@ flowchart TD
   into the domain error, and best-effort cancels before disconnect. Its `build` implementation fails
   locally with `PermissionDenied` and never contacts the broker, so the caller still cannot turn the
   public receipt carrier into authority. The shipped command engine remains fail-closed until
-  authenticated build capability and product-command wiring land. This does
+  authenticated build execution and product-command wiring land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real
