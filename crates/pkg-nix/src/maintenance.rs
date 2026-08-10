@@ -415,6 +415,32 @@ pub struct RepairStorePathsReport {
     outcomes: Vec<RepairPathOutcome>,
 }
 
+/// Executes one capability-validated repair scope without accepting raw Nix
+/// arguments, paths, or policy overrides from the transport request.
+///
+/// Implementations return exactly one outcome kind for each path in the
+/// supplied, sorted scope. The helper reconstructs the report from those
+/// trusted paths and refuses a cardinality mismatch.
+pub trait VerifiedRepairExecutor: Send + Sync {
+    /// Runs the fixed repair mode selected by the verified scope.
+    fn execute(
+        &self,
+        scope: &VerifiedRepairScope,
+    ) -> Result<Vec<RepairOutcomeKind>, MaintenanceError>;
+}
+
+#[derive(Debug, Default)]
+struct ReferenceRepairExecutor;
+
+impl VerifiedRepairExecutor for ReferenceRepairExecutor {
+    fn execute(
+        &self,
+        scope: &VerifiedRepairScope,
+    ) -> Result<Vec<RepairOutcomeKind>, MaintenanceError> {
+        Ok(vec![RepairOutcomeKind::Restored; scope.paths().len()])
+    }
+}
+
 impl RepairStorePathsReport {
     pub(crate) fn new(mode: RepairMode, outcomes: Vec<RepairPathOutcome>) -> Self {
         Self { mode, outcomes }
@@ -483,6 +509,7 @@ struct HelperState {
 pub struct InProcessHelper {
     broker_uid: u32,
     state: Mutex<HelperState>,
+    repair_executor: Arc<dyn VerifiedRepairExecutor>,
 }
 
 impl fmt::Debug for InProcessHelper {
@@ -494,6 +521,16 @@ impl fmt::Debug for InProcessHelper {
 impl InProcessHelper {
     /// Creates a helper pinned to one broker service uid.
     pub fn new(broker_uid: u32) -> Result<Arc<Self>, MaintenanceError> {
+        Self::with_repair_executor(broker_uid, Arc::new(ReferenceRepairExecutor))
+    }
+
+    /// Creates a helper pinned to one broker uid and one closed repair
+    /// executor. Production services use this seam for the fixed root-owned
+    /// Nix repair operation; tests may supply a deterministic executor.
+    pub fn with_repair_executor(
+        broker_uid: u32,
+        repair_executor: Arc<dyn VerifiedRepairExecutor>,
+    ) -> Result<Arc<Self>, MaintenanceError> {
         Ok(Arc::new(Self {
             broker_uid,
             state: Mutex::new(HelperState {
@@ -505,6 +542,7 @@ impl InProcessHelper {
                 capabilities: BTreeMap::new(),
                 consumed: BTreeSet::new(),
             }),
+            repair_executor,
         }))
     }
 
@@ -737,17 +775,19 @@ impl CallerMaintenance {
                 MaintenanceErrorCode::CapabilityMismatch,
             ));
         }
-        let kind = match record.scope.mode {
-            RepairMode::CacheOnly => RepairOutcomeKind::Restored,
-            RepairMode::Build => RepairOutcomeKind::Restored,
-        };
+        let kinds = self.session.helper.repair_executor.execute(&record.scope)?;
+        if kinds.len() != record.scope.paths.len() {
+            return Err(MaintenanceError::new(MaintenanceErrorCode::BackendFailure));
+        }
+        let mode = record.scope.mode;
         let outcomes = record
             .scope
             .paths
             .into_iter()
-            .map(|path| RepairPathOutcome::new(path, kind))
+            .zip(kinds)
+            .map(|(path, kind)| RepairPathOutcome::new(path, kind))
             .collect();
-        Ok(RepairStorePathsReport::new(record.scope.mode, outcomes))
+        Ok(RepairStorePathsReport::new(mode, outcomes))
     }
 }
 
@@ -790,6 +830,7 @@ fn mint_capability(state: &HelperState, scope: &VerifiedRepairScope) -> Maintena
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU64;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use pkg_core::state::body_digest;
 
@@ -831,6 +872,22 @@ mod tests {
             .connect(InProcessPeer::authenticated_uid(991))
             .unwrap();
         (helper, session.for_caller(uid))
+    }
+
+    #[derive(Debug)]
+    struct RecordingRepairExecutor {
+        calls: AtomicUsize,
+        outcomes: Vec<RepairOutcomeKind>,
+    }
+
+    impl VerifiedRepairExecutor for RecordingRepairExecutor {
+        fn execute(
+            &self,
+            _scope: &VerifiedRepairScope,
+        ) -> Result<Vec<RepairOutcomeKind>, MaintenanceError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.outcomes.clone())
+        }
     }
 
     #[test]
@@ -936,6 +993,57 @@ mod tests {
                 .unwrap_err()
                 .code(),
             MaintenanceErrorCode::CapabilityMismatch
+        );
+    }
+
+    #[test]
+    fn validated_scope_is_the_only_input_to_the_repair_executor() {
+        let executor = Arc::new(RecordingRepairExecutor {
+            calls: AtomicUsize::new(0),
+            outcomes: vec![RepairOutcomeKind::CacheMiss],
+        });
+        let helper = InProcessHelper::with_repair_executor(991, executor.clone()).unwrap();
+        let caller = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(1001);
+        caller.publish_root_set(&root_set(1001)).unwrap();
+        let capability = caller
+            .issue_repair_capability(&scope(1001, RepairMode::CacheOnly))
+            .unwrap();
+        let report = caller
+            .repair_store_paths(&RepairStorePathsRequest::new(capability))
+            .unwrap();
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(report.mode(), RepairMode::CacheOnly);
+        assert_eq!(report.outcomes()[0].path(), &path("hello-1.0"));
+        assert_eq!(report.outcomes()[0].kind(), RepairOutcomeKind::CacheMiss);
+    }
+
+    #[test]
+    fn executor_cardinality_mismatch_fails_closed_and_consumes_capability() {
+        let executor = Arc::new(RecordingRepairExecutor {
+            calls: AtomicUsize::new(0),
+            outcomes: Vec::new(),
+        });
+        let helper = InProcessHelper::with_repair_executor(991, executor.clone()).unwrap();
+        let caller = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(1001);
+        caller.publish_root_set(&root_set(1001)).unwrap();
+        let capability = caller
+            .issue_repair_capability(&scope(1001, RepairMode::Build))
+            .unwrap();
+        let request = RepairStorePathsRequest::new(capability);
+        assert_eq!(
+            caller.repair_store_paths(&request).unwrap_err().code(),
+            MaintenanceErrorCode::BackendFailure
+        );
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            caller.repair_store_paths(&request).unwrap_err().code(),
+            MaintenanceErrorCode::CapabilityReplayed
         );
     }
 

@@ -1109,7 +1109,11 @@ flowchart TD
   follow-up runtime-alignment slice makes Linux systemd assets, macOS launchd assets, installer
   paths, and the broker child environment agree on the canonical managed configuration, daemon
   socket, state directory, and private HOME/TMPDIR. Exact systemd, tmpfiles, and plist validation,
-  affected tests, workspace diagnostics/Clippy, and independent P1 review pass. This does **not**
+  affected tests, workspace diagnostics/Clippy, and independent P1 review pass. The helper's
+  capability layer now delegates repair only through a typed verified-scope executor, reconstructs
+  results from trusted paths, rejects cardinality drift, and consumes failed capabilities; the
+  former in-memory success synthesis is isolated as an explicit reference backend rather than an
+  implicit production behavior. This does **not**
   yet claim the full PR: production installer/broker executables, CLI wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

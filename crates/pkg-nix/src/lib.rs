@@ -85,7 +85,8 @@ pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
     RemoveRootSetRequest, RepairMode, RepairOutcomeKind, RepairPathOutcome, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetEntry, RootSetReport, VerifiedRepairScope,
+    RepairStorePathsRequest, RootSet, RootSetEntry, RootSetReport, VerifiedRepairExecutor,
+    VerifiedRepairScope,
 };
 pub use managed::daemon::{DaemonError, DaemonErrorCode, ManagedDaemon};
 pub use managed::detect::{
