@@ -4,6 +4,7 @@
 
 mod acquire;
 mod activate;
+mod build_plan;
 mod commit;
 mod lifecycle;
 mod preflight;
@@ -14,6 +15,10 @@ mod verify;
 
 pub use acquire::{AcquireError, AcquiredInstall, AcquiredOutput, acquire_cache_only};
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
+pub use build_plan::{
+    AuthenticatedBuildPolicy, LocalBuildPlanError, LocalBuildPlanErrorCode,
+    prepare_local_build_plan,
+};
 pub use commit::{
     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,
     recover_generation,

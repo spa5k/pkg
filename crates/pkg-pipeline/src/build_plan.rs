@@ -1,0 +1,237 @@
+use std::fmt;
+
+use pkg_channel::{BuildMode, VerifiedChannel};
+use pkg_core::state::Digest;
+use pkg_core::{ChannelSequence, NarHash, NixpkgsRevision, PolicyVersion, System};
+use pkg_nix::{
+    BuildEngineError, BuildEngineErrorCode, BuildPlan, BuildReadiness, CacheClassification,
+    DerivationPath, NixVersion, VersionInfo,
+};
+
+use crate::ResolvedInstall;
+
+/// Authenticated deterministic policy needed to construct a private local-build plan.
+///
+/// Instances can only be derived from a fully verified channel. The type is not
+/// serializable and is never part of the CLI/broker wire grammar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthenticatedBuildPolicy {
+    channel_sequence: ChannelSequence,
+    policy_version: PolicyVersion,
+    descriptor_sha256: [u8; 32],
+    nix_runtime_version: NixVersion,
+    revision: NixpkgsRevision,
+    nar_hash: NarHash,
+    build_mode: BuildMode,
+}
+
+impl AuthenticatedBuildPolicy {
+    /// Extracts build authority only from an authenticated, semantically valid channel.
+    pub fn from_verified_channel(channel: &VerifiedChannel) -> Result<Self, LocalBuildPlanError> {
+        let descriptor = channel.descriptor();
+        Ok(Self {
+            channel_sequence: channel.sequence(),
+            policy_version: channel.policy_version(),
+            descriptor_sha256: channel.descriptor_sha256(),
+            nix_runtime_version: NixVersion::new(descriptor.nix_version())
+                .map_err(|_| LocalBuildPlanError::new(LocalBuildPlanErrorCode::InvalidPolicy))?,
+            revision: NixpkgsRevision::new(descriptor.nixpkgs().revision())
+                .map_err(|_| LocalBuildPlanError::new(LocalBuildPlanErrorCode::InvalidPolicy))?,
+            nar_hash: NarHash::new(descriptor.nixpkgs().nar_hash())
+                .map_err(|_| LocalBuildPlanError::new(LocalBuildPlanErrorCode::InvalidPolicy))?,
+            build_mode: descriptor.build_mode(),
+        })
+    }
+
+    fn matches_resolved(&self, resolved: &ResolvedInstall) -> bool {
+        self.matches_source_identity(
+            resolved.channel_sequence(),
+            resolved.policy_version(),
+            resolved.descriptor_sha256(),
+            resolved.revision(),
+            resolved.nar_hash(),
+        )
+    }
+
+    fn matches_source_identity(
+        &self,
+        sequence: ChannelSequence,
+        policy_version: PolicyVersion,
+        descriptor_sha256: [u8; 32],
+        revision: &NixpkgsRevision,
+        nar_hash: &NarHash,
+    ) -> bool {
+        self.channel_sequence == sequence
+            && self.policy_version == policy_version
+            && self.descriptor_sha256 == descriptor_sha256
+            && &self.revision == revision
+            && &self.nar_hash == nar_hash
+    }
+}
+
+/// Stable fail-closed private-plan construction categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalBuildPlanErrorCode {
+    /// Authenticated channel policy could not be promoted into strong types.
+    InvalidPolicy,
+    /// Resolve results do not belong to the same authenticated channel identity.
+    SourceIdentityMismatch,
+    /// The running managed Nix version differs from the authenticated descriptor.
+    RuntimeMismatch,
+    /// Resolver-owned targets could not be promoted without rebinding.
+    InvalidResolvedTarget,
+    /// Native policy, readiness, cache facts, or plan invariants refused the build.
+    BuildRejected,
+}
+
+/// Redacted private-plan construction failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalBuildPlanError {
+    code: LocalBuildPlanErrorCode,
+    engine_code: Option<BuildEngineErrorCode>,
+}
+
+impl LocalBuildPlanError {
+    const fn new(code: LocalBuildPlanErrorCode) -> Self {
+        Self {
+            code,
+            engine_code: None,
+        }
+    }
+
+    const fn from_engine(error: BuildEngineError) -> Self {
+        Self {
+            code: LocalBuildPlanErrorCode::BuildRejected,
+            engine_code: Some(error.code()),
+        }
+    }
+
+    /// Returns the stable orchestration failure class.
+    #[must_use]
+    pub const fn code(self) -> LocalBuildPlanErrorCode {
+        self.code
+    }
+
+    /// Returns the underlying closed build-engine category when plan validation ran.
+    #[must_use]
+    pub const fn engine_code(self) -> Option<BuildEngineErrorCode> {
+        self.engine_code
+    }
+}
+
+impl fmt::Display for LocalBuildPlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("private local-build planning refused")
+    }
+}
+
+impl std::error::Error for LocalBuildPlanError {}
+
+/// Constructs one private deterministic plan from authenticated policy and
+/// resolver-owned operation state.
+///
+/// Missing derivations and cache/readiness observations are broker-private
+/// planning facts. This function does not serialize the resulting plan and
+/// accepts no installable string, flake reference, Nix option, or command argv.
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_local_build_plan(
+    policy: &AuthenticatedBuildPolicy,
+    resolved: &ResolvedInstall,
+    runtime: &VersionInfo,
+    host_system: System,
+    missing_derivations: Vec<DerivationPath>,
+    cache_classification: CacheClassification,
+    readiness: BuildReadiness,
+    host_cores: u32,
+) -> Result<BuildPlan, LocalBuildPlanError> {
+    if !policy.matches_resolved(resolved) {
+        return Err(LocalBuildPlanError::new(
+            LocalBuildPlanErrorCode::SourceIdentityMismatch,
+        ));
+    }
+    if runtime.nix_version() != &policy.nix_runtime_version {
+        return Err(LocalBuildPlanError::new(
+            LocalBuildPlanErrorCode::RuntimeMismatch,
+        ));
+    }
+    let targets = resolved
+        .build_plan_targets()
+        .map_err(|_| LocalBuildPlanError::new(LocalBuildPlanErrorCode::InvalidResolvedTarget))?;
+    BuildPlan::new(
+        &policy.nix_runtime_version,
+        Digest::from_bytes(policy.descriptor_sha256),
+        policy.policy_version,
+        policy.channel_sequence,
+        &policy.revision,
+        &policy.nar_hash,
+        resolved.system(),
+        host_system,
+        policy.build_mode,
+        targets,
+        missing_derivations,
+        cache_classification,
+        readiness,
+        host_cores,
+    )
+    .map_err(LocalBuildPlanError::from_engine)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+    const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+
+    fn policy() -> AuthenticatedBuildPolicy {
+        AuthenticatedBuildPolicy {
+            channel_sequence: ChannelSequence::from_u64(42).unwrap(),
+            policy_version: PolicyVersion::from_u64(7).unwrap(),
+            descriptor_sha256: [3; 32],
+            nix_runtime_version: NixVersion::new("2.34.8").unwrap(),
+            revision: NixpkgsRevision::new(REVISION).unwrap(),
+            nar_hash: NarHash::new(NAR_HASH).unwrap(),
+            build_mode: BuildMode::AllowWithGates,
+        }
+    }
+
+    #[test]
+    fn authenticated_identity_match_binds_every_source_field() {
+        let policy = policy();
+        let sequence = ChannelSequence::from_u64(42).unwrap();
+        let version = PolicyVersion::from_u64(7).unwrap();
+        let revision = NixpkgsRevision::new(REVISION).unwrap();
+        let nar_hash = NarHash::new(NAR_HASH).unwrap();
+        assert!(policy.matches_source_identity(sequence, version, [3; 32], &revision, &nar_hash));
+
+        assert!(!policy.matches_source_identity(
+            ChannelSequence::from_u64(43).unwrap(),
+            version,
+            [3; 32],
+            &revision,
+            &nar_hash
+        ));
+        assert!(!policy.matches_source_identity(
+            sequence,
+            PolicyVersion::from_u64(8).unwrap(),
+            [3; 32],
+            &revision,
+            &nar_hash
+        ));
+        assert!(!policy.matches_source_identity(sequence, version, [4; 32], &revision, &nar_hash));
+        assert!(!policy.matches_source_identity(
+            sequence,
+            version,
+            [3; 32],
+            &NixpkgsRevision::new("1123456789abcdef0123456789abcdef01234567").unwrap(),
+            &nar_hash
+        ));
+        assert!(!policy.matches_source_identity(
+            sequence,
+            version,
+            [3; 32],
+            &revision,
+            &NarHash::new("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap()
+        ));
+    }
+}

@@ -1173,7 +1173,11 @@ flowchart TD
   trusted resolve result now also retains the authenticated policy version, exact descriptor
   digest, and Nixpkgs NAR identity alongside sequence/revision/system, and promotes targets into
   private build-plan inputs only from resolver-owned typed selector/derivation pairs. It accepts no
-  raw installable, flake reference, derivation path, or Nix option. The
+  raw installable, flake reference, derivation path, or Nix option. A non-serializable
+  `AuthenticatedBuildPolicy` can now be created only from a verified channel; private-plan
+  construction cross-checks its sequence, policy, descriptor digest, revision, NAR hash, pinned
+  managed-Nix version, build mode, and native host system against the opaque resolved operation
+  before invoking `BuildPlan::new`. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
