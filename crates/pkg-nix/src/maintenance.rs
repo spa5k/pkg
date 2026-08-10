@@ -63,6 +63,12 @@ impl MaintenanceError {
     pub const fn code(self) -> MaintenanceErrorCode {
         self.code
     }
+
+    /// Creates the closed failure used by platform helper implementations.
+    #[must_use]
+    pub const fn backend_failure() -> Self {
+        Self::new(MaintenanceErrorCode::BackendFailure)
+    }
 }
 
 impl fmt::Display for MaintenanceError {

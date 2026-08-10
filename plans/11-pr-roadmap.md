@@ -829,6 +829,14 @@ flowchart TD
 - **Milestone:** M5.
 
 #### PR-27 — Linux installer + root helper (polkit/socket-cred; implements the PR-39 contract)
+- **Status:** **Completed 2026-08-10.** The Linux integration crate now provides
+  a privileged production-host preflight contract, exact authenticated install
+  assets with failure-atomic rollback ordering, validated systemd/tmpfiles
+  definitions, kernel-derived `SO_PEERCRED` authentication on both RPC hops,
+  bounded strict frames, serialized PR-39 capability/root transactions, and
+  crash-durable atomic per-user GC-root sets. Linux container validation covers
+  peer auth, concurrency/restart behavior, systemd unit verification, and `/run`
+  ownership recreation; release packaging remains PR-33/35.
 - **Purpose:** install the product + managed Nix with a least-privilege privileged helper that
   implements the broker↔helper contract (PR-39) on Linux — the real framed-RPC **transport** (Unix
   socket + length-prefixed frames), the real **peer-auth** (caller uid via socket credentials /

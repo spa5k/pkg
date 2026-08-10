@@ -15,6 +15,7 @@ members = [
     "crates/pkg-cli",
     "crates/pkg-core",
     "crates/pkg-index",
+    "crates/pkg-installer",
     "crates/pkg-nix",
     "crates/pkg-pipeline",
     "crates/pkg-resolver",

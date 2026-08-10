@@ -415,7 +415,10 @@ obtained via an explicit `sudo`/polkit prompt for the install steps only.
    02) — installer ships an initial descriptor+signature for bootstrapping.
 6. Enable + start the daemon; `nix ping-store` health check [^ping-store].
 7. Install the `pkg` binary to `/usr/local/bin/pkg` (or `/opt/pkg/bin`) and
-   create the **root-owned service root** `/var/lib/pkg` (channel/index/source/cache/log);
+   create the **root-owned service root** `/var/lib/pkg` (channel/index/source/cache/log).
+   The root and `log/` ancestor are `root:pkg-nix-broker` mode `0710`: the broker
+   receives search-only traversal to its daemon socket and private log leaf, but
+   cannot list either ancestor. All other root-owned subtrees remain inaccessible;
    carve out the **broker-owned** raw-log dir `/var/lib/pkg/log/broker` owned
    `pkg-nix-broker:pkg-nix-broker` mode `0700` (files `0600`) — the **only**
    non-root-owned path in the service tree (§6.1/§7.4). **Per-user authoritative
