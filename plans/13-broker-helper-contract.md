@@ -54,6 +54,11 @@ there is exactly one version discriminator, not two independently drifting ones.
 | 15 | `Verify { handle, request }` | validated `VerifyReport` |
 | 16 | `Gc { handle }` | validated `GcReport` |
 
+Every exposed adapter method may return the same method id with the alternative strict body
+`{ "error": <closed NixAdapterErrorCode> }`. It carries no stdout, stderr, paths, argv, or free
+text. A recognized adapter failure is a completed RPC and does not poison the connection; malformed,
+unknown, or method-mismatched failures are protocol errors and do.
+
 The lifecycle frame contains no generic command payload. Each later command integration owns a
 new typed method/body or invokes the lifecycle API internally; it may not add `argv`, expression,
 flake, option, environment, substituter, trust-key, arbitrary path, or arbitrary verb fields.
@@ -209,9 +214,10 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   `RealNixAdapter`; `Gc` also acquires exclusive GC admission. Method 14 (`Build`) is deliberately
   unassigned on the wire: a structurally valid caller-created `BuildApprovalReceipt` is not
   authorization, so local build remains unreachable until a broker-held, single-use approval
-  capability is designed and verified. Adapter failures currently fail the connection closed; a
-  later wiring slice adds the closed error envelope required by the CLI-side `NixAdapter` proxy.
-  Product-command execution is still not fabricated before that proxy and dispatcher are connected.
+  capability is designed and verified. Adapter failures cross only the closed error-code envelope;
+  authorization, admission, framing, and transport failures still terminate the connection without
+  disclosing private state. Product-command execution is still not fabricated before the CLI-side
+  `NixAdapter` proxy and dispatcher are connected.
 
 The CLI-side lifecycle client connects only to the platform's compiled-in broker endpoint, bounds
 connection establishment to five seconds, uses monotonic nonzero request ids, enforces the same

@@ -3,7 +3,7 @@
 use crate::platform::peer_uid;
 use pkg_nix::{
     CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer, MethodKind,
-    NixAdapter, ProductFrameCodec,
+    NixAdapter, NixAdapterError, ProductFrameCodec,
 };
 use std::{
     error::Error,
@@ -116,62 +116,62 @@ fn serve_broker_connection_inner(
             caller
                 .authorize_adapter_call(&handle, MethodKind::Version)
                 .map_err(|_| ())?;
-            adapter
-                .ok_or(())?
-                .version()
-                .map(CliBrokerResponse::Version)
-                .map_err(|_| ())
+            Ok(adapter_response(
+                MethodKind::Version,
+                adapter.ok_or(())?.version(),
+                CliBrokerResponse::Version,
+            ))
         }
         CliBrokerRequest::EvaluateDerivation(handle, request) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::EvaluateDerivation)
                 .map_err(|_| ())?;
-            adapter
-                .ok_or(())?
-                .evaluate_derivation(&request)
-                .map(CliBrokerResponse::DerivationPlan)
-                .map_err(|_| ())
+            Ok(adapter_response(
+                MethodKind::EvaluateDerivation,
+                adapter.ok_or(())?.evaluate_derivation(&request),
+                CliBrokerResponse::DerivationPlan,
+            ))
         }
         CliBrokerRequest::PathInfo(handle, path) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::PathInfo)
                 .map_err(|_| ())?;
-            adapter
-                .ok_or(())?
-                .path_info(&path)
-                .map(CliBrokerResponse::PathInfo)
-                .map_err(|_| ())
+            Ok(adapter_response(
+                MethodKind::PathInfo,
+                adapter.ok_or(())?.path_info(&path),
+                CliBrokerResponse::PathInfo,
+            ))
         }
         CliBrokerRequest::Substitute(handle, path) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::Substitute)
                 .map_err(|_| ())?;
-            adapter
-                .ok_or(())?
-                .substitute(&path)
-                .map(CliBrokerResponse::Substitute)
-                .map_err(|_| ())
+            Ok(adapter_response(
+                MethodKind::Substitute,
+                adapter.ok_or(())?.substitute(&path),
+                CliBrokerResponse::Substitute,
+            ))
         }
         CliBrokerRequest::Verify(handle, request) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::Verify)
                 .map_err(|_| ())?;
-            adapter
-                .ok_or(())?
-                .verify(&request)
-                .map(CliBrokerResponse::Verify)
-                .map_err(|_| ())
+            Ok(adapter_response(
+                MethodKind::Verify,
+                adapter.ok_or(())?.verify(&request),
+                CliBrokerResponse::Verify,
+            ))
         }
         CliBrokerRequest::Gc(handle) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::Gc)
                 .map_err(|_| ())?;
             caller.acquire_gc(&handle).map_err(|_| ())?;
-            adapter
-                .ok_or(())?
-                .gc()
-                .map(CliBrokerResponse::Gc)
-                .map_err(|_| ())
+            Ok(adapter_response(
+                MethodKind::Gc,
+                adapter.ok_or(())?.gc(),
+                CliBrokerResponse::Gc,
+            ))
         }
     });
     let disconnected = caller.disconnect();
@@ -181,6 +181,17 @@ fn serve_broker_connection_inner(
             BrokerTransportErrorCode::BrokerFailure,
         )),
         (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn adapter_response<T>(
+    method: MethodKind,
+    result: Result<T, NixAdapterError>,
+    success: impl FnOnce(T) -> CliBrokerResponse,
+) -> CliBrokerResponse {
+    match result {
+        Ok(value) => success(value),
+        Err(error) => CliBrokerResponse::AdapterFailure(method, error.code()),
     }
 }
 

@@ -1135,9 +1135,10 @@ snippets, or any foreign `/nix`.
     binary and broker-private home. Method/operation authorization is explicit, and GC admission is
     acquired before collection. Build is intentionally not exposed: caller-created receipt fields
     cannot authorize privileged execution, so a broker-held single-use approval capability must land
-    first. Closed adapter-error propagation, the CLI-side adapter proxy, authenticated build, and
-    product-command dispatch remain PR-36 wiring slices; there is still no generic argv or
-    Nix-expression surface.
+    first. Adapter failures now return only a closed `NixAdapterErrorCode` and leave a valid
+    connection reusable, while authorization/protocol failures remain connection-fatal. The
+    CLI-side adapter proxy, authenticated build, and product-command dispatch remain PR-36 wiring
+    slices; there is still no generic argv or Nix-expression surface.
 
 ## 17. Unresolved questions / spikes
 

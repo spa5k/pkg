@@ -11,8 +11,9 @@ use std::{
 
 use pkg_nix::{
     BrokerOperationKind, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport,
-    EvaluateDerivationRequest, GcReport, OperationHandle, OperationStatus, PathInfoReport,
-    ProductFrameCodec, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    EvaluateDerivationRequest, GcReport, MethodKind, NixAdapterErrorCode, OperationHandle,
+    OperationStatus, PathInfoReport, ProductFrameCodec, StorePath, SubstituteReport, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -43,23 +44,43 @@ pub enum BrokerClientErrorCode {
     RequestIdExhausted,
     /// A prior protocol or transport failure made reuse unsafe.
     ConnectionFailed,
+    /// The authenticated broker returned a closed adapter failure code.
+    AdapterFailure,
 }
 
 /// Redacted failure from the private broker connector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BrokerClientError {
     code: BrokerClientErrorCode,
+    adapter_code: Option<NixAdapterErrorCode>,
 }
 
 impl BrokerClientError {
     const fn new(code: BrokerClientErrorCode) -> Self {
-        Self { code }
+        Self {
+            code,
+            adapter_code: None,
+        }
+    }
+
+    const fn adapter_failure(adapter_code: NixAdapterErrorCode) -> Self {
+        Self {
+            code: BrokerClientErrorCode::AdapterFailure,
+            adapter_code: Some(adapter_code),
+        }
     }
 
     /// Returns the stable failure class.
     #[must_use]
     pub const fn code(self) -> BrokerClientErrorCode {
         self.code
+    }
+
+    /// Returns the redacted adapter code when the broker completed the RPC with
+    /// an adapter failure rather than a transport or protocol failure.
+    #[must_use]
+    pub const fn adapter_code(self) -> Option<NixAdapterErrorCode> {
+        self.adapter_code
     }
 }
 
@@ -178,6 +199,9 @@ impl BrokerLifecycleClient {
     pub fn version(&mut self, handle: OperationHandle) -> Result<VersionInfo, BrokerClientError> {
         match self.transact(&CliBrokerRequest::Version(handle))? {
             CliBrokerResponse::Version(report) => Ok(report),
+            CliBrokerResponse::AdapterFailure(MethodKind::Version, code) => {
+                Err(BrokerClientError::adapter_failure(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -190,6 +214,9 @@ impl BrokerLifecycleClient {
     ) -> Result<DerivationPlanReport, BrokerClientError> {
         match self.transact(&CliBrokerRequest::EvaluateDerivation(handle, request))? {
             CliBrokerResponse::DerivationPlan(report) => Ok(report),
+            CliBrokerResponse::AdapterFailure(MethodKind::EvaluateDerivation, code) => {
+                Err(BrokerClientError::adapter_failure(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -202,6 +229,9 @@ impl BrokerLifecycleClient {
     ) -> Result<PathInfoReport, BrokerClientError> {
         match self.transact(&CliBrokerRequest::PathInfo(handle, path))? {
             CliBrokerResponse::PathInfo(report) => Ok(report),
+            CliBrokerResponse::AdapterFailure(MethodKind::PathInfo, code) => {
+                Err(BrokerClientError::adapter_failure(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -214,6 +244,9 @@ impl BrokerLifecycleClient {
     ) -> Result<SubstituteReport, BrokerClientError> {
         match self.transact(&CliBrokerRequest::Substitute(handle, path))? {
             CliBrokerResponse::Substitute(report) => Ok(report),
+            CliBrokerResponse::AdapterFailure(MethodKind::Substitute, code) => {
+                Err(BrokerClientError::adapter_failure(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -226,6 +259,9 @@ impl BrokerLifecycleClient {
     ) -> Result<VerifyReport, BrokerClientError> {
         match self.transact(&CliBrokerRequest::Verify(handle, request))? {
             CliBrokerResponse::Verify(report) => Ok(report),
+            CliBrokerResponse::AdapterFailure(MethodKind::Verify, code) => {
+                Err(BrokerClientError::adapter_failure(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -234,6 +270,9 @@ impl BrokerLifecycleClient {
     pub fn gc(&mut self, handle: OperationHandle) -> Result<GcReport, BrokerClientError> {
         match self.transact(&CliBrokerRequest::Gc(handle))? {
             CliBrokerResponse::Gc(report) => Ok(report),
+            CliBrokerResponse::AdapterFailure(MethodKind::Gc, code) => {
+                Err(BrokerClientError::adapter_failure(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -371,8 +410,8 @@ mod tests {
     use pkg_installer::serve_broker_connection_with_nix;
     use pkg_nix::{
         AcceptedFormats, AttributePath, DerivationPath, Digest, EvaluatedDerivation, FormatVersion,
-        GcStatus, InProcessBroker, NarHash, NarIntegrity, NixAdapter, NixVersion, NixpkgsRevision,
-        OutputName, OutputSelection, PackageVersion, PathVerifyResult, Signature,
+        GcStatus, InProcessBroker, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion,
+        NixpkgsRevision, OutputName, OutputSelection, PackageVersion, PathVerifyResult, Signature,
         SubstituteReceipt, System, TrustStatus, VerifyMode, VersionInfo,
     };
     use pkg_testkit::FakeNix;
@@ -537,7 +576,9 @@ mod tests {
             .expect_path_info(expected_path.clone(), Ok(expected_path_info.clone()))
             .expect_substitute(expected_path.clone(), Ok(expected_substitute.clone()))
             .expect_verify(expected_verify_request.clone(), Ok(expected_verify.clone()))
-            .expect_gc(Ok(expected_gc.clone()));
+            .expect_gc(Ok(expected_gc.clone()))
+            .expect_version(Err(NixAdapterError::TrustFailure))
+            .expect_version(Ok(expected_version.clone()));
         let server_adapter: Arc<dyn NixAdapter> = fake.clone();
         let worker = thread::spawn(move || {
             let (server, _) = listener.accept()?;
@@ -576,6 +617,16 @@ mod tests {
         let gc_handle = client.begin(BrokerOperationKind::Gc)?;
         assert_eq!(client.gc(gc_handle.clone())?, expected_gc);
         client.cancel(gc_handle)?;
+
+        let doctor_handle = client.begin(BrokerOperationKind::Doctor)?;
+        let failure = client.version(doctor_handle.clone()).unwrap_err();
+        assert_eq!(failure.code(), BrokerClientErrorCode::AdapterFailure);
+        assert_eq!(
+            failure.adapter_code(),
+            Some(NixAdapterErrorCode::TrustFailure)
+        );
+        assert_eq!(client.version(doctor_handle.clone())?, expected_version);
+        client.cancel(doctor_handle)?;
         client.stream.shutdown(Shutdown::Write)?;
         worker
             .join()

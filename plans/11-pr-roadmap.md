@@ -1136,10 +1136,11 @@ flowchart TD
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
-  six-method FakeNix dispatch, and admission cleanup. Adapter errors still close the connection
-  rather than crossing a typed error envelope, and the shipped command engine remains fail-closed
-  until that error lane, authenticated build capability, a CLI-side `NixAdapter` proxy, and
-  product-command wiring land. This does
+  six-method FakeNix dispatch, admission cleanup, and a redacted adapter failure followed by
+  successful reuse of the same connection. Adapter errors cross only a closed stable code; malformed
+  or method-mismatched error frames still poison the connection. The shipped command engine remains
+  fail-closed until authenticated build capability, a CLI-side `NixAdapter` proxy, and product-command
+  wiring land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

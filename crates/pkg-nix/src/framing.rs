@@ -18,6 +18,7 @@ use crate::{
     DerivationPlanReport, EvaluateDerivationRequest, GcReport, JsonCodec, PathInfoReport, RootName,
     RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
+use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
 
 const MAGIC: [u8; 4] = *b"PKG1";
@@ -116,6 +117,8 @@ pub enum CliBrokerResponse {
     Verify(VerifyReport),
     /// Validated garbage-collection result.
     Gc(GcReport),
+    /// Redacted adapter failure for one exposed typed method.
+    AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
 
 /// Closed privileged requests on the broker-to-helper channel.
@@ -296,6 +299,13 @@ impl ProductFrameCodec {
             }
             CliBrokerResponse::Verify(report) => (15, report.encode().map_err(adapter_payload)?),
             CliBrokerResponse::Gc(report) => (16, report.encode().map_err(adapter_payload)?),
+            CliBrokerResponse::AdapterFailure(method, code) => (
+                cli_adapter_method(*method)
+                    .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
+                encode_json(&AdapterFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -303,6 +313,14 @@ impl ProductFrameCodec {
     /// Decodes one exact broker-to-CLI lifecycle response.
     pub fn decode_cli_response(bytes: &[u8]) -> Result<(u64, CliBrokerResponse), FrameError> {
         let frame = decode_frame(bytes, CHANNEL_CLI_BROKER)?;
+        if let Some(method) = adapter_method(frame.method)
+            && let Some(code) = decode_adapter_failure(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::AdapterFailure(method, code),
+            ));
+        }
         let response = match frame.method {
             1 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
@@ -551,6 +569,55 @@ fn adapter_payload<T>(_: T) -> FrameError {
     FrameError::new(FrameErrorCode::InvalidPayload)
 }
 
+const fn cli_adapter_method(method: MethodKind) -> Option<u8> {
+    match method {
+        MethodKind::Version => Some(10),
+        MethodKind::EvaluateDerivation => Some(11),
+        MethodKind::PathInfo => Some(12),
+        MethodKind::Substitute => Some(13),
+        MethodKind::Build => None,
+        MethodKind::Verify => Some(15),
+        MethodKind::Gc => Some(16),
+    }
+}
+
+const fn adapter_method(method: u8) -> Option<MethodKind> {
+    match method {
+        10 => Some(MethodKind::Version),
+        11 => Some(MethodKind::EvaluateDerivation),
+        12 => Some(MethodKind::PathInfo),
+        13 => Some(MethodKind::Substitute),
+        15 => Some(MethodKind::Verify),
+        16 => Some(MethodKind::Gc),
+        _ => None,
+    }
+}
+
+fn decode_adapter_failure(bytes: &[u8]) -> Result<Option<NixAdapterErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<AdapterFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_adapter_error_code(&wire.error).map(Some)
+}
+
+fn parse_adapter_error_code(value: &str) -> Result<NixAdapterErrorCode, FrameError> {
+    match value {
+        "unexpected_call" => Ok(NixAdapterErrorCode::UnexpectedCall),
+        "oversized_input" => Ok(NixAdapterErrorCode::OversizedInput),
+        "malformed_payload" => Ok(NixAdapterErrorCode::MalformedPayload),
+        "unsupported_schema_version" => Ok(NixAdapterErrorCode::UnsupportedSchemaVersion),
+        "unsupported_upstream_format" => Ok(NixAdapterErrorCode::UnsupportedUpstreamFormat),
+        "validation_failure" => Ok(NixAdapterErrorCode::ValidationFailure),
+        "timeout" => Ok(NixAdapterErrorCode::Timeout),
+        "unavailable" => Ok(NixAdapterErrorCode::Unavailable),
+        "trust_failure" => Ok(NixAdapterErrorCode::TrustFailure),
+        "integrity_failure" => Ok(NixAdapterErrorCode::IntegrityFailure),
+        "permission_denied" => Ok(NixAdapterErrorCode::PermissionDenied),
+        "operation_failed" => Ok(NixAdapterErrorCode::OperationFailed),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
 fn encode_handle_body(handle: &OperationHandle, body: &[u8]) -> Result<Vec<u8>, FrameError> {
     let body: Box<RawValue> = decode_json(body)?;
     encode_json(&HandleBodyWire {
@@ -655,6 +722,18 @@ struct HandleWire<'a> {
 #[serde(deny_unknown_fields)]
 struct HandleOwnedWire {
     handle: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct AdapterFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdapterFailureOwnedWire {
+    error: String,
 }
 
 #[derive(Serialize)]
@@ -1038,6 +1117,16 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
             Ok((14, version_response))
+        );
+
+        let adapter_failure = CliBrokerResponse::AdapterFailure(
+            MethodKind::Substitute,
+            NixAdapterErrorCode::TrustFailure,
+        );
+        let encoded = ProductFrameCodec::encode_cli_response(15, &adapter_failure).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((15, adapter_failure))
         );
 
         let issued =
