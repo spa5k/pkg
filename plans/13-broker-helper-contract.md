@@ -253,8 +253,13 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   non-serializable object accepts only a retained verified channel, typed selectors, optional authenticated
   index and the contained adapter; it derives the native target, produces the initial plan/replanner
   pair, and installs both through the authenticated caller's live build handle. The framed method
-  remains unassigned until a broker-owned current-channel/index authority can supply those inputs;
-  they will not be accepted from the wire. The authenticated index is a non-forgeable Rust capability
+  remains unassigned until the trusted service refresh/persistence path and command dispatcher are
+  connected; channel and index inputs will not be accepted from the wire. The broker-owned
+  in-memory authority now supplies a consistent verified-channel/authenticated-index snapshot,
+  rejects rollback, policy downgrade and same-sequence descriptor reuse, drops a stale index on
+  channel advance, and accepts a replacement index only when bound to the exact current descriptor.
+  Its production prepare-and-install entry accepts only typed selectors plus the transport-derived
+  caller and live handle, and releases its state lock before host/Nix work. The authenticated index is a non-forgeable Rust capability
   produced only after descriptor-digest, source-identity, strict-schema, invariant-rebuild and canonical-byte
   checks; a caller-created `IndexDocument` cannot enter production preparation. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without

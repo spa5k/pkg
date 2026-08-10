@@ -4,6 +4,7 @@
 
 mod acquire;
 mod activate;
+mod build_authority;
 mod build_intent;
 mod build_plan;
 mod build_preparation;
@@ -18,6 +19,9 @@ mod verify;
 
 pub use acquire::{AcquireError, AcquiredInstall, AcquiredOutput, acquire_cache_only};
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
+pub use build_authority::{
+    AuthenticatedBuildAuthority, BuildAuthorityError, BuildAuthorityErrorCode, BuildAuthorityUpdate,
+};
 pub use build_intent::{
     AuthenticatedBuildIntent, AuthenticatedBuildReplanner, BuildHostFacts, BuildHostFactsError,
     BuildHostFactsProbe, BuildIntentError, BuildIntentErrorCode, BuildPlanningAdapter,

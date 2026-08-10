@@ -300,6 +300,7 @@ impl BuiltIndex {
 #[derive(Clone, PartialEq, Eq)]
 pub struct VerifiedIndex {
     document: IndexDocument,
+    channel_descriptor_sha256: [u8; 32],
 }
 
 impl fmt::Debug for VerifiedIndex {
@@ -317,6 +318,17 @@ impl VerifiedIndex {
     #[must_use]
     pub const fn document(&self) -> &IndexDocument {
         &self.document
+    }
+
+    /// Returns whether this capability was authenticated for this exact channel.
+    ///
+    /// Sequence and source fields alone are insufficient because a same-sequence
+    /// descriptor conflict must never let an index cross an authority boundary.
+    #[must_use]
+    pub fn matches_channel(&self, channel: &VerifiedChannel) -> bool {
+        self.channel_descriptor_sha256 == channel.descriptor_sha256()
+            && self.document.channel_seq == channel.sequence().get().get()
+            && self.document.nixpkgs_rev == channel.descriptor().nixpkgs().revision()
     }
 
     /// Consumes the authentication capability into its validated document.
@@ -366,6 +378,7 @@ pub fn verify_index_artifact(
         system,
         channel.descriptor().nixpkgs().revision(),
         channel.descriptor().index().sha256(),
+        channel.descriptor_sha256(),
     )
 }
 
@@ -375,6 +388,7 @@ fn verify_index_bytes(
     system: System,
     nixpkgs_rev: &str,
     expected_sha256: &str,
+    channel_descriptor_sha256: [u8; 32],
 ) -> Result<VerifiedIndex, IndexVerifyError> {
     if bytes.len() > MAX_PROJECTION_BYTES {
         return Err(IndexVerifyError::TooLarge);
@@ -422,7 +436,10 @@ fn verify_index_bytes(
     if rebuilt.bytes() != bytes {
         return Err(IndexVerifyError::NonCanonical);
     }
-    Ok(VerifiedIndex { document })
+    Ok(VerifiedIndex {
+        document,
+        channel_descriptor_sha256,
+    })
 }
 
 fn digest_hex(digest: Digest) -> String {
@@ -671,16 +688,17 @@ mod tests {
         let built =
             build_index(metadata("2025-01-01T00:00:00Z"), vec![candidate("ripgrep")]).unwrap();
         let revision = "0123456789abcdef0123456789abcdef01234567";
-        assert!(
-            verify_index_bytes(
-                built.bytes(),
-                42,
-                System::Aarch64Darwin,
-                revision,
-                &built.sha256_hex(),
-            )
-            .is_ok()
-        );
+        let verified = verify_index_bytes(
+            built.bytes(),
+            42,
+            System::Aarch64Darwin,
+            revision,
+            &built.sha256_hex(),
+            [0x42; 32],
+        )
+        .unwrap();
+        assert_eq!(verified.document(), built.document());
+        assert_eq!(verified.channel_descriptor_sha256, [0x42; 32]);
         assert_eq!(
             verify_index_bytes(
                 built.bytes(),
@@ -688,6 +706,7 @@ mod tests {
                 System::Aarch64Darwin,
                 revision,
                 &built.sha256_hex(),
+                [0x42; 32],
             ),
             Err(IndexVerifyError::SourceMismatch)
         );
@@ -702,6 +721,7 @@ mod tests {
                 System::Aarch64Darwin,
                 revision,
                 &noncanonical_hash,
+                [0x42; 32],
             ),
             Err(IndexVerifyError::NonCanonical)
         );
@@ -712,6 +732,7 @@ mod tests {
                 System::Aarch64Darwin,
                 revision,
                 &"0".repeat(64),
+                [0x42; 32],
             ),
             Err(IndexVerifyError::DigestMismatch)
         );

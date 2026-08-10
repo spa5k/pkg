@@ -1221,6 +1221,14 @@ flowchart TD
   validation/canonicalization pipeline, and requiring byte-for-byte canonical equality plus matching
   sequence/system/Nixpkgs revision. A plain structural `IndexDocument` is no longer accepted at the
   production preparation boundary. The
+  broker now owns an opaque, mutex-protected snapshot of the current verified channel and optional
+  authenticated index. Channel publication is monotonic, refuses policy rollback and
+  same-sequence descriptor reuse, and atomically discards the previous index when a newer channel
+  becomes current. Index publication is accepted only when the capability is bound to the exact
+  current descriptor digest. Build preparation snapshots these capabilities without holding the
+  authority lock across host observation or Nix I/O, and its public production entry accepts only
+  typed package selectors plus the already authenticated caller/operation handle; channel, system,
+  index, derivation, path, and Nix options remain absent from the request boundary. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
