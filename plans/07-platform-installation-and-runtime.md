@@ -329,11 +329,13 @@ External-Nix residual roots remain a sole-manager concern (§11).
     (macOS): `channel/` (TUF + descriptor), `index/<seq>/`, `nixpkgs/<rev>/`,
     `cache/`, `log/`. This is the runtime/channel/index/source service —
     **not** package environment state. **One deliberate exception:** the raw
-    adapter/Nix log dir `log/broker/` (i.e. `/var/lib/pkg/log/broker` on Linux,
+    adapter/Nix log and authority-audit dir `log/broker/` (i.e. `/var/lib/pkg/log/broker` on Linux,
     `/Library/Application Support/pkg/log/broker` on macOS) is **not** part of
     the root-owned service tree — it is **owned and writable only by the
     unprivileged `pkg-nix-broker` account** (directory `0700`, files `0600`,
-    **no access to any user**, including other service accounts; created that
+    **no access to any user**, including other service accounts; its allowlisted
+    hash-chained `approvals.ndjson` is service-private authority evidence, while raw adapter logs
+    remain separate files. The directory is created that
     way by the installer, §7.2/§7.3). Only **sanitized, versioned NDJSON** may
     leave it into a caller's `<user-state>` (§7.4/§12, plan 04 §10).
   - **Per-user authoritative package state** `<user-state>` (owned by the

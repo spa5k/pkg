@@ -3,6 +3,7 @@
 //! This crate owns closed platform operations. It never accepts raw Nix
 //! commands, arbitrary install paths, or caller-supplied identities.
 
+mod approval_audit;
 mod assets;
 mod broker;
 mod helper;
@@ -12,6 +13,7 @@ mod repair;
 mod service;
 mod uninstall;
 
+pub use approval_audit::{BrokerApprovalAudit, BrokerCallerApprovalJournal};
 pub use assets::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets,
     linux_install_assets,

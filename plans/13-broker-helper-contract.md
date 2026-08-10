@@ -242,6 +242,18 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.
 
+Approval durability has two deliberately separate sinks. The invoking CLI appends the public,
+sanitized approval phase to its uid-owned operation journal while it holds the existing exclusive
+state lease. The broker independently appends the authority-side grant to
+`log/broker/approvals.ndjson`, bound to the kernel-authenticated uid and private operation id, before
+issuing a receipt. This service-private audit is hash-chained, sequence-contiguous, `0700`/`0600`,
+append+fsync, replay-refusing, and fails closed on a symlink, unsafe owner/mode, interior corruption,
+torn suffix, size overflow, or duplicate operation id. The broker never receives write access to a
+user's state directory, and a CLI-only row never constitutes broker authority.
+The broker-private sink implementation may land before the approval wire method, but the production
+service must not merely open and retain it: activation belongs in the same change that passes the
+kernel-authenticated caller-bound journal to `approve_build` before any receipt can be retained.
+
 The CLI-side lifecycle client connects only to the platform's compiled-in broker endpoint, bounds
 connection establishment to five seconds, uses monotonic nonzero request ids, enforces the same
 one-MiB frame ceiling before allocation, and applies one monotonic deadline across the complete

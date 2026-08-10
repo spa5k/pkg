@@ -1353,6 +1353,8 @@ dependencies = [
  "pkg-core",
  "pkg-nix",
  "pkg-testkit",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
