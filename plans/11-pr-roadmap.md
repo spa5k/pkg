@@ -1170,6 +1170,10 @@ flowchart TD
   closed method-17 preview fetch now exposes only the strict sanitized `BuildPreview` for a live
   caller-bound handle; the preview has a validating decoder and rejects unknown nested fields,
   invalid platform/readiness/resource claims, malformed digests, and private extensions. The
+  trusted resolve result now also retains the authenticated policy version, exact descriptor
+  digest, and Nixpkgs NAR identity alongside sequence/revision/system, and promotes targets into
+  private build-plan inputs only from resolver-owned typed selector/derivation pairs. It accepts no
+  raw installable, flake reference, derivation path, or Nix option. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

@@ -16,7 +16,7 @@ use pkg_core::{
 };
 use pkg_index::{IndexDocument, IndexQuery, InfoLookup};
 use pkg_nix::{
-    DerivationPlanReport, EvaluateDerivationRequest, NixAdapter, NixAdapterError,
+    BuildPlanTarget, DerivationPlanReport, EvaluateDerivationRequest, NixAdapter, NixAdapterError,
     VerifiedNixpkgsSource,
 };
 
@@ -38,6 +38,24 @@ impl ResolvedPackagePlan {
     #[must_use]
     pub const fn plan(&self) -> &DerivationPlanReport {
         &self.plan
+    }
+
+    /// Promotes this opaque resolver-owned pair into one private build target.
+    ///
+    /// The selector and report cannot be rebound independently because both are
+    /// recovered from this resolver-produced value.
+    pub fn build_plan_target(&self) -> Result<BuildPlanTarget, ResolveError> {
+        let attribute = self
+            .selector
+            .attribute()
+            .ok_or_else(|| ResolveError::new(ResolveErrorCode::InvalidSelector))?;
+        Ok(BuildPlanTarget::new(
+            self.selector.id().clone(),
+            self.selector.selector().clone(),
+            attribute.clone(),
+            self.selector.version_preference().clone(),
+            self.plan.clone(),
+        ))
     }
 }
 
@@ -330,6 +348,7 @@ mod tests {
             resolve_for_test(&selector("ripgrep", VersionPreference::Any), None, &fake).unwrap();
         assert_eq!(resolved.selector().attribute().unwrap().as_str(), "ripgrep");
         assert_eq!(resolved.plan().version().as_str(), "14.1.0");
+        assert!(resolved.build_plan_target().is_ok());
         assert_eq!(fake.assert_exhausted(), Ok(()));
     }
 
