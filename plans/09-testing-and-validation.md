@@ -740,6 +740,16 @@ privileged Linux/macOS gate and is not claimed by the fake lane.
   on >25% regression vs. pinned baseline **or** an absolute ceiling (`10` perf
   gate). Bench vs. Fake for stability; Real for absolute budgets. Native x86_64
   reference baselines must be added before GA; QEMU timing is diagnostic only.
+  PR-32 binds each baseline to its named native runner and refuses a runner-name or
+  platform mismatch, so heterogeneous hosted hardware cannot silently produce a false
+  regression. The first fixed host is native Apple M4 arm64: Darwin runs directly and
+  Linux runs as native `linux/arm64` in a digest-pinned container. Search, Fake-style
+  info, and tiny-index build are gated there. The accepted Real Nix ceilings remain
+  explicitly `pending-pr36` until the privileged lane measures them; fixture timing is
+  never promoted to Real-Nix evidence. The persistent reference host never executes a
+  pull-request revision: G-PERF runs after `main` updates or an explicit `main`-only
+  maintainer dispatch (the job rejects other refs and checkout is fixed to `main`), while
+  ordinary PRs use hermetic tests/review rather than the host or Docker daemon.
 
 ### 6.8 Platform matrix (layer 8)
 | OS | Arch | Lane | Frequency |

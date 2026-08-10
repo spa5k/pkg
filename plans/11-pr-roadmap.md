@@ -998,6 +998,15 @@ flowchart TD
 - **Milestone:** M6.
 
 #### PR-32 — Performance bench lane + budget gate
+- **Status (2026-08-10):** complete for the fixed native arm64 reference host. Criterion
+  measures tiny-index build, fixture search, and Fake-style info; a closed-schema Python
+  gate rejects incomplete/foreign Criterion output, non-native or mismatched-runner
+  provenance, any absolute ceiling failure, and any regression above 25%. Native Darwin
+  and native-container Linux baselines are pinned to the named Apple M4 self-hosted runner,
+  and the post-merge/manual workflow pins checkout, Rust, and the Linux container digest;
+  pull-request revisions cannot execute on that persistent host or its Docker daemon.
+  Real-Nix budgets remain honestly `pending-pr36`; native x86_64 baseline expansion remains
+  required before GA, and QEMU is not accepted as release evidence.
 - **Purpose:** `criterion` benches + budget regression gate (`09` §6.7, DR-004 budgets).
 - **Owns:** `benches/`, CI perf job, baseline pinning.
 - **Depends:** PR-14, PR-19.

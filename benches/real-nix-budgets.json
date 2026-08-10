@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "evidenceClass": "real-nix",
+  "status": "pending-pr36",
+  "budgets": {
+    "infoCachedP95Ms": 2000,
+    "installCacheHitColdMs": 8000,
+    "resolveSingleAttrP95Ms": 1500,
+    "resolveSingleAttrPeakRssMiB": 512,
+    "indexOneSystemP95Ms": 10000,
+    "indexOneSystemPeakRssMiB": 2560,
+    "publisherFourSystemsSequentialP95Ms": 30000,
+    "publisherFourSystemsSequentialPeakRssMiB": 2560
+  }
+}

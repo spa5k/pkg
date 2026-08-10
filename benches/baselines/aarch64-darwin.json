@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "platform": "aarch64-darwin",
+  "maxRegressionPercent": 25,
+  "provenance": {
+    "evidenceClass": "native",
+    "runner": "pkg-perf-reference-m4",
+    "rust": "1.96.1",
+    "collectedAt": "2026-08-10",
+    "command": "cargo bench --locked -p pkg-index --bench v1 -- --noplot"
+  },
+  "benchmarks": {
+    "index_build_tiny": {
+      "baselineNs": 23054,
+      "absoluteCeilingNs": 5000000000
+    },
+    "search_ripgrep": {
+      "baselineNs": 651,
+      "absoluteCeilingNs": 150000000
+    },
+    "info_requests": {
+      "baselineNs": 324,
+      "absoluteCeilingNs": 300000000
+    }
+  }
+}

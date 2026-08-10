@@ -169,8 +169,10 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Consequences:** Resolve may show a progress step; full index evaluation is
   publisher-preferred and client self-build is recovery because observed
   per-system p95 was `3.6–4.7 s` with up to `1.88 GiB` RSS. Observed exact-attr
-  p95 was `325 ms` Linux arm64 / `453 ms` macOS arm64. Native x86_64 baseline
-  expansion remains PR-32 work before GA; QEMU timing is not accepted evidence.
+  p95 was `325 ms` Linux arm64 / `453 ms` macOS arm64. PR-32 pins the in-process
+  arm64 reference baselines and gate; native x86_64 expansion remains a release-readiness
+  requirement before GA. QEMU timing is not accepted evidence, and PR-36 still owns the
+  authoritative Real-Nix budget execution.
 - **Owner:** E + F. **Source:** `[NIXPKGS-MANUAL]`; spike S4.
 
 ### DR-005 — Managed-daemon local builds: sandbox + approval + resource-boundary
