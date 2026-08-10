@@ -216,16 +216,21 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   authorization, so local build remains unreachable until a broker-held, single-use approval
   capability is designed and verified. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
-  disclosing private state. Product-command execution is still not fabricated before the CLI-side
-  `NixAdapter` proxy and dispatcher are connected.
+  disclosing private state. Product-command execution is still not fabricated before the dispatcher
+  is connected.
 
 The CLI-side lifecycle client connects only to the platform's compiled-in broker endpoint, bounds
 connection establishment to five seconds, uses monotonic nonzero request ids, enforces the same
 one-MiB frame ceiling before allocation, and applies one monotonic deadline across the complete
 request-write/response-read transaction. It rejects a response-id or response-kind mismatch and permanently
 refuses reuse of that connection after any framing, transport, or correlation failure. Caller uid
-still never appears in the request. This transport foundation does not replace `UnavailableEngine`:
-that happens only after closed typed command methods and broker execution are connected.
+still never appears in the request. `BrokerNixAdapter` wraps this lifecycle transport for the six
+exposed typed methods, using a fresh connection and operation handle per call. It converts an
+authenticated adapter-failure envelope back into a redacted `NixAdapterError` with the same closed
+code; transport and protocol failures remain generic operation failures. `build` returns
+`PermissionDenied` locally without opening a connection. This adapter foundation does not replace
+`UnavailableEngine`: that happens only after the product-command dispatcher and authenticated build
+capability are connected.
 
 ## 9. Restart handshake
 

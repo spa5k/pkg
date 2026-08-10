@@ -1138,9 +1138,13 @@ flowchart TD
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
   six-method FakeNix dispatch, admission cleanup, and a redacted adapter failure followed by
   successful reuse of the same connection. Adapter errors cross only a closed stable code; malformed
-  or method-mismatched error frames still poison the connection. The shipped command engine remains
-  fail-closed until authenticated build capability, a CLI-side `NixAdapter` proxy, and product-command
-  wiring land. This does
+  or method-mismatched error frames still poison the connection. A CLI-side `BrokerNixAdapter` now
+  presents those six methods through the existing typed `NixAdapter` contract, opens a bounded
+  fixed-endpoint lifecycle connection per call, maps only the broker's closed adapter-error code back
+  into the domain error, and best-effort cancels before disconnect. Its `build` implementation fails
+  locally with `PermissionDenied` and never contacts the broker, so the caller still cannot turn the
+  public receipt carrier into authority. The shipped command engine remains fail-closed until
+  authenticated build capability and product-command wiring land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

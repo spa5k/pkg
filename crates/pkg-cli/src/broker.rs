@@ -5,15 +5,15 @@ use std::{
     fmt,
     io::{self, Read, Write},
     os::unix::net::UnixStream,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use pkg_nix::{
-    BrokerOperationKind, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport,
-    EvaluateDerivationRequest, GcReport, MethodKind, NixAdapterErrorCode, OperationHandle,
-    OperationStatus, PathInfoReport, ProductFrameCodec, StorePath, SubstituteReport, VerifyReport,
-    VerifyRequest, VersionInfo,
+    BrokerOperationKind, BuildReport, BuildRequest, CliBrokerRequest, CliBrokerResponse,
+    DerivationPlanReport, EvaluateDerivationRequest, GcReport, MethodKind, NixAdapter,
+    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
+    ProductFrameCodec, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -404,14 +404,112 @@ fn remaining(deadline: Instant) -> Result<Duration, BrokerClientError> {
         .ok_or_else(|| BrokerClientError::new(BrokerClientErrorCode::TransportFailure))
 }
 
+/// `NixAdapter` proxy backed only by the fixed authenticated product broker.
+#[derive(Debug, Clone, Default)]
+pub struct BrokerNixAdapter {
+    endpoint: Option<PathBuf>,
+}
+
+impl BrokerNixAdapter {
+    /// Constructs the production proxy for the platform's fixed broker endpoint.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { endpoint: None }
+    }
+
+    #[cfg(test)]
+    fn at(endpoint: PathBuf) -> Self {
+        Self {
+            endpoint: Some(endpoint),
+        }
+    }
+
+    fn connect(&self) -> Result<BrokerLifecycleClient, BrokerClientError> {
+        match &self.endpoint {
+            Some(endpoint) => BrokerLifecycleClient::connect(endpoint),
+            None => BrokerLifecycleClient::connect_default(),
+        }
+    }
+
+    fn call<T>(
+        &self,
+        operation: BrokerOperationKind,
+        invoke: impl FnOnce(&mut BrokerLifecycleClient, OperationHandle) -> Result<T, BrokerClientError>,
+    ) -> Result<T, NixAdapterError> {
+        let mut client = self.connect().map_err(map_broker_error)?;
+        let handle = client.begin(operation).map_err(map_broker_error)?;
+        let result = invoke(&mut client, handle.clone()).map_err(map_broker_error);
+        let _ = client.cancel(handle);
+        result
+    }
+}
+
+impl NixAdapter for BrokerNixAdapter {
+    fn version(&self) -> Result<VersionInfo, NixAdapterError> {
+        self.call(BrokerOperationKind::Doctor, BrokerLifecycleClient::version)
+    }
+
+    fn evaluate_derivation(
+        &self,
+        request: &EvaluateDerivationRequest,
+    ) -> Result<DerivationPlanReport, NixAdapterError> {
+        self.call(BrokerOperationKind::Resolve, |client, handle| {
+            client.evaluate_derivation(handle, request.clone())
+        })
+    }
+
+    fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
+        self.call(BrokerOperationKind::Doctor, |client, handle| {
+            client.path_info(handle, path.clone())
+        })
+    }
+
+    fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
+        self.call(BrokerOperationKind::Acquire, |client, handle| {
+            client.substitute(handle, path.clone())
+        })
+    }
+
+    fn build(&self, _request: &BuildRequest) -> Result<BuildReport, NixAdapterError> {
+        Err(NixAdapterError::PermissionDenied)
+    }
+
+    fn verify(&self, request: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
+        self.call(BrokerOperationKind::Doctor, |client, handle| {
+            client.verify(handle, request.clone())
+        })
+    }
+
+    fn gc(&self) -> Result<GcReport, NixAdapterError> {
+        self.call(BrokerOperationKind::Gc, BrokerLifecycleClient::gc)
+    }
+}
+
+fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
+    if let Some(code) = error.adapter_code() {
+        return NixAdapterError::remote(code);
+    }
+    match error.code() {
+        BrokerClientErrorCode::UnsupportedPlatform
+        | BrokerClientErrorCode::Unavailable
+        | BrokerClientErrorCode::ConnectionFailed => NixAdapterError::Unavailable,
+        BrokerClientErrorCode::TransportFailure
+        | BrokerClientErrorCode::InvalidFrame
+        | BrokerClientErrorCode::UnexpectedResponse
+        | BrokerClientErrorCode::RequestIdExhausted
+        | BrokerClientErrorCode::AdapterFailure => NixAdapterError::OperationFailed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pkg_installer::serve_broker_connection_with_nix;
     use pkg_nix::{
-        AcceptedFormats, AttributePath, DerivationPath, Digest, EvaluatedDerivation, FormatVersion,
-        GcStatus, InProcessBroker, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion,
-        NixpkgsRevision, OutputName, OutputSelection, PackageVersion, PathVerifyResult, Signature,
+        AcceptedFormats, AttributePath, BuildApprovalReceipt, DerivationPath, DerivedOutputTarget,
+        Digest, EvaluatedDerivation, FormatVersion, GcStatus, InProcessBroker, NarHash,
+        NarIntegrity, NixAdapter, NixAdapterError, NixVersion, NixpkgsRevision, OperationId,
+        OutputName, OutputSelection, PackageVersion, PathVerifyResult, PolicyVersion, Signature,
         SubstituteReceipt, System, TrustStatus, VerifyMode, VersionInfo,
     };
     use pkg_testkit::FakeNix;
@@ -531,6 +629,22 @@ mod tests {
         .unwrap()
     }
 
+    fn build_request() -> BuildRequest {
+        BuildRequest::new(
+            vec![
+                DerivedOutputTarget::new(drv("hello-1.0"), vec![OutputName::new("out").unwrap()])
+                    .unwrap(),
+            ],
+            System::X8664Linux,
+            BuildApprovalReceipt::new(
+                OperationId::new("op-0001").unwrap(),
+                Digest::from_bytes([0x42; 32]),
+                PolicyVersion::from_u64(7).unwrap(),
+            ),
+        )
+        .unwrap()
+    }
+
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -628,6 +742,70 @@ mod tests {
         assert_eq!(client.version(doctor_handle.clone())?, expected_version);
         client.cancel(doctor_handle)?;
         client.stream.shutdown(Shutdown::Write)?;
+        worker
+            .join()
+            .map_err(|_| io::Error::other("broker worker panicked"))??;
+        let snapshot = broker.admission_snapshot();
+        assert!(!snapshot.build_held());
+        assert_eq!(snapshot.gc_inhibitor_count(), 0);
+        fake.assert_exhausted()?;
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn broker_nix_adapter_proxies_safe_calls_and_refuses_build() -> Result<(), Box<dyn Error>> {
+        let broker = InProcessBroker::new()?;
+        let scratch = Scratch::new()?;
+        let socket = scratch.0.join("broker.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket)?;
+        let server_broker = Arc::clone(&broker);
+        let expected_version = version_info();
+        let expected_eval_request = eval_request();
+        let expected_plan = derivation_plan();
+        let expected_path = store_path("hello-1.0");
+        let expected_path_info = path_info_report();
+        let expected_substitute = substitute_report();
+        let expected_verify_request = verify_request();
+        let expected_verify = verify_report();
+        let expected_gc = gc_report();
+        let fake = Arc::new(FakeNix::new());
+        fake.expect_version(Ok(expected_version.clone()))
+            .expect_evaluate_derivation(expected_eval_request.clone(), Ok(expected_plan.clone()))
+            .expect_path_info(expected_path.clone(), Ok(expected_path_info.clone()))
+            .expect_substitute(expected_path.clone(), Ok(expected_substitute.clone()))
+            .expect_verify(expected_verify_request.clone(), Ok(expected_verify.clone()))
+            .expect_gc(Ok(expected_gc.clone()))
+            .expect_version(Err(NixAdapterError::TrustFailure));
+        let server_adapter: Arc<dyn NixAdapter> = fake.clone();
+        let worker = thread::spawn(move || -> Result<(), io::Error> {
+            for _ in 0..7 {
+                let (server, _) = listener.accept()?;
+                serve_broker_connection_with_nix(server, &server_broker, &server_adapter)
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+            }
+            Ok(())
+        });
+        let adapter = BrokerNixAdapter::at(socket);
+
+        assert_eq!(adapter.version()?, expected_version);
+        assert_eq!(
+            adapter.evaluate_derivation(&expected_eval_request)?,
+            expected_plan
+        );
+        assert_eq!(adapter.path_info(&expected_path)?, expected_path_info);
+        assert_eq!(adapter.substitute(&expected_path)?, expected_substitute);
+        assert_eq!(adapter.verify(&expected_verify_request)?, expected_verify);
+        assert_eq!(adapter.gc()?, expected_gc);
+        assert_eq!(
+            adapter.build(&build_request()).unwrap_err().code(),
+            NixAdapterErrorCode::PermissionDenied
+        );
+        assert_eq!(
+            adapter.version().unwrap_err().code(),
+            NixAdapterErrorCode::TrustFailure
+        );
+
         worker
             .join()
             .map_err(|_| io::Error::other("broker worker panicked"))??;

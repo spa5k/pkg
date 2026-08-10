@@ -338,6 +338,12 @@ pub enum NixAdapterError {
     /// Carries no data: the operation exited non-zero, a file failed to read,
     /// a child process was killed, etc.
     OperationFailed,
+    /// A broker transported only this stable error code and intentionally
+    /// omitted variant-specific private metadata.
+    RemoteFailure {
+        /// The exact redacted code returned by the authenticated broker.
+        code: NixAdapterErrorCode,
+    },
 }
 
 impl NixAdapterError {
@@ -385,6 +391,13 @@ impl NixAdapterError {
         }
     }
 
+    /// Reconstructs a redacted adapter failure from the broker's closed
+    /// error-code envelope without inventing omitted private metadata.
+    #[must_use]
+    pub const fn remote(code: NixAdapterErrorCode) -> Self {
+        Self::RemoteFailure { code }
+    }
+
     /// Returns the stable [`NixAdapterErrorCode`] for this error.
     #[must_use]
     pub const fn code(&self) -> NixAdapterErrorCode {
@@ -404,6 +417,7 @@ impl NixAdapterError {
             Self::IntegrityFailure => NixAdapterErrorCode::IntegrityFailure,
             Self::PermissionDenied => NixAdapterErrorCode::PermissionDenied,
             Self::OperationFailed => NixAdapterErrorCode::OperationFailed,
+            Self::RemoteFailure { code } => *code,
         }
     }
 
@@ -485,6 +499,7 @@ impl fmt::Display for NixAdapterError {
             Self::IntegrityFailure => f.write_str("integrity failure"),
             Self::PermissionDenied => f.write_str("permission denied"),
             Self::OperationFailed => f.write_str("backend operation failed"),
+            Self::RemoteFailure { code } => write!(f, "remote adapter failure: {code}"),
         }
     }
 }
@@ -586,6 +601,10 @@ mod tests {
         assert_eq!(
             NixAdapterError::OperationFailed.code(),
             NixAdapterErrorCode::OperationFailed
+        );
+        assert_eq!(
+            NixAdapterError::remote(NixAdapterErrorCode::TrustFailure).code(),
+            NixAdapterErrorCode::TrustFailure
         );
     }
 
