@@ -143,6 +143,7 @@ struct OperationRecord {
     build_prepared: bool,
     build_operation_id: Option<OperationId>,
     prepared_build: Option<PreparedBuild>,
+    cancellation: Arc<CancellationToken>,
 }
 
 #[derive(Debug, Clone)]
@@ -217,7 +218,8 @@ impl FairBuildGate {
     fn wait(
         &self,
         handle: &OperationHandle,
-        cancellation: &CancellationToken,
+        caller_cancellation: &CancellationToken,
+        operation_cancellation: &CancellationToken,
     ) -> Result<(), BrokerError> {
         let mut state = self.lock();
         if state.holder.as_ref() == Some(handle) {
@@ -227,7 +229,7 @@ impl FairBuildGate {
             return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
         }
         loop {
-            if cancellation.is_cancelled() {
+            if caller_cancellation.is_cancelled() || operation_cancellation.is_cancelled() {
                 state.waiting.retain(|waiting| waiting != handle);
                 self.changed.notify_all();
                 return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
@@ -400,6 +402,7 @@ impl InProcessBroker {
             random_secret().map_err(|_| BrokerError::new(BrokerErrorCode::EntropyUnavailable))?;
         let mut state = self.lock();
         for record in state.operations.values() {
+            record.cancellation.cancel();
             if let Some(operation_id) = build_operation_id(record) {
                 self.build_engine.cancel_approval(operation_id);
             }
@@ -465,6 +468,7 @@ impl AuthenticatedCaller {
         self.check_epoch(&state)?;
         let record = self.record_mut(&mut state, handle)?;
         if Instant::now() >= record.expires_at {
+            record.cancellation.cancel();
             if let Some(operation_id) = build_operation_id(record) {
                 self.broker.build_engine.cancel_approval(operation_id);
             }
@@ -644,7 +648,7 @@ impl AuthenticatedCaller {
         handle: &OperationHandle,
         cancellation: &CancellationToken,
     ) -> Result<(), BrokerError> {
-        let acquired = {
+        let (acquired, operation_cancellation) = {
             let mut state = self.broker.lock();
             self.require_running_kind(
                 &mut state,
@@ -657,11 +661,18 @@ impl AuthenticatedCaller {
             if cancellation.is_cancelled() {
                 return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
             }
-            self.broker.build_gate.enqueue(handle)?
+            let operation_cancellation =
+                Arc::clone(&self.record_mut(&mut state, handle)?.cancellation);
+            (
+                self.broker.build_gate.enqueue(handle)?,
+                operation_cancellation,
+            )
         };
         if !acquired {
-            self.broker.build_gate.wait(handle, cancellation)?;
-        } else if cancellation.is_cancelled() {
+            self.broker
+                .build_gate
+                .wait(handle, cancellation, &operation_cancellation)?;
+        } else if cancellation.is_cancelled() || operation_cancellation.is_cancelled() {
             self.broker.build_gate.release(handle);
             return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
         }
@@ -745,6 +756,7 @@ impl AuthenticatedCaller {
         for handle in handles {
             release_admission(&mut state, &self.broker.build_gate, &handle);
             if let Some(record) = state.operations.get_mut(&handle) {
+                record.cancellation.cancel();
                 if let Some(operation_id) = build_operation_id(record) {
                     self.broker.build_engine.cancel_approval(operation_id);
                 }
@@ -785,6 +797,7 @@ impl AuthenticatedCaller {
                 build_prepared: false,
                 build_operation_id,
                 prepared_build: None,
+                cancellation: Arc::new(CancellationToken::default()),
             },
         );
         Ok(handle)
@@ -798,6 +811,7 @@ impl AuthenticatedCaller {
             .operations
             .get_mut(handle)
             .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
+        record.cancellation.cancel();
         if let Some(operation_id) = build_operation_id(record) {
             self.broker.build_engine.cancel_approval(operation_id);
         }
@@ -894,10 +908,11 @@ fn purge_expired(
         .collect::<Vec<_>>();
     for handle in expired {
         release_admission(state, build_gate, &handle);
-        if let Some(record) = state.operations.remove(&handle)
-            && let Some(operation_id) = build_operation_id(&record)
-        {
-            build_engine.cancel_approval(operation_id);
+        if let Some(record) = state.operations.remove(&handle) {
+            record.cancellation.cancel();
+            if let Some(operation_id) = build_operation_id(&record) {
+                build_engine.cancel_approval(operation_id);
+            }
         }
     }
 }
@@ -1273,6 +1288,61 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         panic!("build admission queue did not reach expected size");
+    }
+
+    fn operation_cancellation(
+        broker: &InProcessBroker,
+        handle: &OperationHandle,
+    ) -> Arc<CancellationToken> {
+        Arc::clone(
+            &broker
+                .lock()
+                .operations
+                .get(handle)
+                .expect("test operation must exist")
+                .cancellation,
+        )
+    }
+
+    #[test]
+    fn terminal_lifecycle_signals_private_operation_cancellation() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+
+        let completed = caller.begin(BrokerOperationKind::Resolve).unwrap();
+        let completed_token = operation_cancellation(&broker, &completed);
+        caller.complete(&completed).unwrap();
+        assert!(completed_token.is_cancelled());
+
+        let cancelled = caller.begin(BrokerOperationKind::Build).unwrap();
+        let cancelled_token = operation_cancellation(&broker, &cancelled);
+        caller.cancel(&cancelled).unwrap();
+        assert!(cancelled_token.is_cancelled());
+
+        let disconnected = caller.begin(BrokerOperationKind::Acquire).unwrap();
+        let disconnected_token = operation_cancellation(&broker, &disconnected);
+        caller.disconnect().unwrap();
+        assert!(disconnected_token.is_cancelled());
+
+        let fresh = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let expired = fresh
+            .begin_with_deadline(BrokerOperationKind::Build, Instant::now())
+            .unwrap();
+        let expired_token = operation_cancellation(&broker, &expired);
+        assert_eq!(
+            fresh.poll(&expired).unwrap_err().code(),
+            BrokerErrorCode::OperationExpired
+        );
+        assert!(expired_token.is_cancelled());
+
+        let restarted = fresh.begin(BrokerOperationKind::Build).unwrap();
+        let restarted_token = operation_cancellation(&broker, &restarted);
+        broker.restart().unwrap();
+        assert!(restarted_token.is_cancelled());
     }
 
     #[test]

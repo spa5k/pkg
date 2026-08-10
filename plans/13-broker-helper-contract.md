@@ -162,6 +162,10 @@ The broker owns one in-memory admission controller:
 
 GC cannot begin while any inhibitor exists; inhibitors cannot begin while GC is active. All
 permits are operation-handle state and release on completion/cancel/disconnect/expiry/restart.
+Each operation also owns a private cooperative-cancellation token. Terminal lifecycle transitions
+signal that token before discarding private state. Build-admission waits consume it alongside any
+local caller cancellation; broker-owned execution will consume the same authority when that path
+lands. No cancellation authority crosses the IPC boundary.
 Contended build/repair operations may join the in-memory FIFO and wait with cooperative
 cancellation; lifecycle cancellation removes queued waiters as well as holders, and a nonblocking
 repair probe cannot bypass an existing waiter. Admission registration is serialized with operation

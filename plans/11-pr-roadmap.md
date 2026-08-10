@@ -1141,7 +1141,11 @@ flowchart TD
   cooperative cancellation, cannot be bypassed by a nonblocking probe, and is removed on lifecycle
   cancellation/restart without a validation-to-enqueue race. Exclusive GC also refuses while a build
   holder or queued reservation exists, including the handoff gap between them. Wire exposure still
-  waits for admission-time replan/execution. The shared local-build approval engine now
+  waits for admission-time replan/execution. Every operation now carries a broker-private
+  cooperative-cancellation token signalled by completion, cancellation, disconnect, expiry, and
+  restart. FIFO admission consumes that token alongside local caller cancellation, and the
+  forthcoming broker execution path will consume the same authority; no cancellation authority
+  crosses IPC. The shared local-build approval engine now
   reserves an operation before journal I/O without holding its authority mutex across that I/O;
   cancellation can revoke an in-flight recording, and a monotonic reservation identity prevents an
   operation-id retry from reviving the earlier journal call. The durable row may remain as audit
