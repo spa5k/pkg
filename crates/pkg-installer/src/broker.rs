@@ -390,7 +390,8 @@ mod tests {
         ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPlan, BuildPlanTarget,
         BuildReadiness, CacheClassification, DerivationPath, DerivationPlanReport, Digest,
         EvaluatedDerivation, NarHash, NixVersion, NixpkgsRevision, OperationStatus, OutputName,
-        PackageVersion, PolicyVersion, StorePath, System,
+        PackageVersion, PolicyVersion, StorePath, System, TrustedBuildReplanner,
+        TrustedReplanError,
     };
     use std::{
         collections::BTreeMap, io, net::Shutdown, os::unix::fs::PermissionsExt, str::FromStr,
@@ -449,6 +450,14 @@ mod tests {
             4,
         )
         .unwrap()
+    }
+
+    struct TestReplanner(BuildPlan);
+
+    impl TrustedBuildReplanner for TestReplanner {
+        fn replan(&self) -> Result<BuildPlan, TrustedReplanError> {
+            Ok(self.0.clone())
+        }
     }
 
     fn read_response(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
@@ -522,7 +531,9 @@ mod tests {
         let handle = caller.begin(BrokerOperationKind::Build).unwrap();
         let plan = build_plan();
         let digest = plan.digest().unwrap();
-        caller.prepare_build(&handle, plan).unwrap();
+        caller
+            .prepare_build_with_replanner(&handle, plan.clone(), Arc::new(TestReplanner(plan)))
+            .unwrap();
         let preview_response = dispatch_request(
             &caller,
             CliBrokerRequest::GetBuildPreview(handle.clone()),

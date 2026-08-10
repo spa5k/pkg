@@ -72,6 +72,10 @@ impl BuildEngineError {
         Self { code }
     }
 
+    pub(crate) const fn approval_invalidated() -> Self {
+        Self::new(BuildEngineErrorCode::ApprovalInvalidated)
+    }
+
     /// Returns the stable public mapping category.
     #[must_use]
     pub const fn code(self) -> BuildEngineErrorCode {

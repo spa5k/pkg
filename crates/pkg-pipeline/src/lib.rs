@@ -17,7 +17,8 @@ mod verify;
 pub use acquire::{AcquireError, AcquiredInstall, AcquiredOutput, acquire_cache_only};
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
 pub use build_intent::{
-    AuthenticatedBuildIntent, BuildIntentError, BuildIntentErrorCode, BuildPlanningAdapter,
+    AuthenticatedBuildIntent, AuthenticatedBuildReplanner, BuildHostFacts, BuildHostFactsError,
+    BuildHostFactsProbe, BuildIntentError, BuildIntentErrorCode, BuildPlanningAdapter,
 };
 pub use build_plan::{
     AuthenticatedBuildPolicy, LocalBuildPlanError, LocalBuildPlanErrorCode,

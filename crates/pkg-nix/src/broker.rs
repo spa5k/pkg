@@ -154,12 +154,44 @@ struct OperationRecord {
     build_executing: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct PreparedBuild {
     plan: BuildPlan,
     digest: Digest,
     approval: PreparedBuildApproval,
+    replanner: Option<Arc<dyn TrustedBuildReplanner>>,
 }
+
+impl fmt::Debug for PreparedBuild {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedBuild")
+            .field("digest", &self.digest)
+            .field("has_replanner", &self.replanner.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Broker-retained authority for reconstructing a private plan at admission.
+///
+/// Implementations are installed only by trusted in-process orchestration. No
+/// implementation, error detail, target, or callback crosses product framing.
+pub trait TrustedBuildReplanner: Send + Sync {
+    /// Reconstructs the plan from current authenticated source and host facts.
+    fn replan(&self) -> Result<BuildPlan, TrustedReplanError>;
+}
+
+/// Redacted refusal from a broker-retained trusted replanner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrustedReplanError;
+
+impl fmt::Display for TrustedReplanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("trusted build replan refused")
+    }
+}
+
+impl std::error::Error for TrustedReplanError {}
 
 #[derive(Debug, Clone)]
 enum PreparedBuildApproval {
@@ -533,10 +565,34 @@ impl AuthenticatedCaller {
     /// This is an in-broker API, not an RPC shape: callers never provide raw
     /// targets or a [`crate::BuildRequest`]. A build operation may prepare only
     /// one plan; a changed plan requires a fresh operation and fresh approval.
-    pub fn prepare_build(
+    #[cfg(test)]
+    fn prepare_build(
         &self,
         handle: &OperationHandle,
         plan: BuildPlan,
+    ) -> Result<BuildPreview, BrokerError> {
+        self.prepare_build_inner(handle, plan, None)
+    }
+
+    /// Retains a private plan together with its in-process trusted replanner.
+    ///
+    /// The replanner is a capability installed by broker orchestration, never a
+    /// framed request value. It is consumed only after exact approval and build
+    /// admission to reconstruct current plan authority.
+    pub fn prepare_build_with_replanner(
+        &self,
+        handle: &OperationHandle,
+        plan: BuildPlan,
+        replanner: Arc<dyn TrustedBuildReplanner>,
+    ) -> Result<BuildPreview, BrokerError> {
+        self.prepare_build_inner(handle, plan, Some(replanner))
+    }
+
+    fn prepare_build_inner(
+        &self,
+        handle: &OperationHandle,
+        plan: BuildPlan,
+        replanner: Option<Arc<dyn TrustedBuildReplanner>>,
     ) -> Result<BuildPreview, BrokerError> {
         let digest = plan
             .digest()
@@ -556,6 +612,7 @@ impl AuthenticatedCaller {
             plan,
             digest,
             approval: PreparedBuildApproval::Unapproved,
+            replanner,
         });
         record.build_prepared = true;
         Ok(preview)
@@ -664,7 +721,7 @@ impl AuthenticatedCaller {
     /// opaque handle and digest. The private receipt and raw targets never cross
     /// the broker boundary. Successful output remains admitted until the caller
     /// roots it and completes the operation.
-    pub fn execute_build(
+    pub(crate) fn execute_build(
         &self,
         handle: &OperationHandle,
         digest: Digest,
@@ -747,6 +804,49 @@ impl AuthenticatedCaller {
                 Err(map_build_engine_error(error.code()))
             }
         }
+    }
+
+    /// Executes using only the replanner retained with the approved plan.
+    ///
+    /// This is the dispatcher-facing path: no caller-provided replan closure is
+    /// accepted. A missing or failed retained capability invalidates approval
+    /// before the managed adapter can build.
+    pub fn execute_prepared_build(
+        &self,
+        handle: &OperationHandle,
+        digest: Digest,
+        estimate: VolatileBuildEstimate,
+        resources: &dyn ResourceProbe,
+        adapter: &dyn NixAdapter,
+    ) -> Result<BuildReport, BrokerError> {
+        let replanner = {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+            let prepared = self
+                .record_mut(&mut state, handle)?
+                .prepared_build
+                .as_ref()
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
+            if prepared.digest != digest {
+                return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
+            }
+            prepared
+                .replanner
+                .clone()
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?
+        };
+        self.execute_build(
+            handle,
+            digest,
+            move || {
+                replanner
+                    .replan()
+                    .map_err(|_| BuildEngineError::approval_invalidated())
+            },
+            estimate,
+            resources,
+            adapter,
+        )
     }
 
     /// Acquires the machine-wide local-build lease for this operation.
@@ -1339,6 +1439,33 @@ mod tests {
         release: Mutex<Option<mpsc::Receiver<()>>>,
     }
 
+    struct RetainedReplanner {
+        plan: BuildPlan,
+        calls: AtomicUsize,
+        refuse: bool,
+    }
+
+    impl RetainedReplanner {
+        fn new(plan: BuildPlan, refuse: bool) -> Self {
+            Self {
+                plan,
+                calls: AtomicUsize::new(0),
+                refuse,
+            }
+        }
+    }
+
+    impl TrustedBuildReplanner for RetainedReplanner {
+        fn replan(&self) -> Result<BuildPlan, TrustedReplanError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.refuse {
+                Err(TrustedReplanError)
+            } else {
+                Ok(self.plan.clone())
+            }
+        }
+    }
+
     impl ExecutionAdapter {
         fn immediate() -> Self {
             Self {
@@ -1841,6 +1968,92 @@ mod tests {
         let released = broker.admission_snapshot();
         assert!(!released.build_held());
         assert_eq!(released.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn dispatcher_execution_uses_only_the_replanner_retained_before_approval() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let journal = Journal::default();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let plan = build_plan(1);
+        let digest = plan.digest().unwrap();
+        let replanner = Arc::new(RetainedReplanner::new(plan.clone(), false));
+        caller
+            .prepare_build_with_replanner(&handle, plan, replanner.clone())
+            .unwrap();
+        caller
+            .approve_build(
+                &handle,
+                digest,
+                ApprovalSource::Interactive,
+                "2026-08-11T00:00:00Z",
+                &journal,
+            )
+            .unwrap();
+        let adapter = ExecutionAdapter::immediate();
+
+        assert_eq!(
+            caller
+                .execute_prepared_build(
+                    &handle,
+                    digest,
+                    VolatileBuildEstimate::new(100),
+                    &ExecutionProbe,
+                    &adapter,
+                )
+                .unwrap()
+                .status(),
+            BuildStatus::Built
+        );
+        assert_eq!(replanner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn refused_retained_replan_consumes_approval_before_adapter_build() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let plan = build_plan(1);
+        let digest = plan.digest().unwrap();
+        caller
+            .prepare_build_with_replanner(
+                &handle,
+                plan.clone(),
+                Arc::new(RetainedReplanner::new(plan, true)),
+            )
+            .unwrap();
+        caller
+            .approve_build(
+                &handle,
+                digest,
+                ApprovalSource::Interactive,
+                "2026-08-11T00:00:00Z",
+                &Journal::default(),
+            )
+            .unwrap();
+        let adapter = ExecutionAdapter::immediate();
+
+        assert_eq!(
+            caller
+                .execute_prepared_build(
+                    &handle,
+                    digest,
+                    VolatileBuildEstimate::new(100),
+                    &ExecutionProbe,
+                    &adapter,
+                )
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::BuildApprovalInvalidated
+        );
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(broker.build_engine.approval_count(), 0);
     }
 
     #[test]

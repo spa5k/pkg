@@ -62,6 +62,7 @@ pub use adapter::NixAdapter;
 pub use broker::{
     AdmissionSnapshot, AuthenticatedCaller, BrokerError, BrokerErrorCode, BrokerOperationKind,
     ChildContainmentPolicy, InProcessBroker, InProcessCallerPeer, OperationHandle, OperationStatus,
+    TrustedBuildReplanner, TrustedReplanError,
 };
 pub use build::{
     ApprovalJournal, ApprovalJournalError, ApprovalJournalRecord, ApprovalSource, BuildEngineError,

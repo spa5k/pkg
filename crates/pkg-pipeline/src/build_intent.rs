@@ -2,13 +2,15 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::Arc;
 
 use pkg_channel::VerifiedChannel;
 use pkg_core::{PackageSelector, System};
 use pkg_index::IndexDocument;
 use pkg_nix::{
     BuildCacheErrorCode, BuildCacheProbe, BuildPlan, BuildReadiness, NixAdapter, NixpkgsFetchSpec,
-    NixpkgsMetadataRunner, classify_build_cache, fetch_verified_nixpkgs,
+    NixpkgsMetadataRunner, TrustedBuildReplanner, TrustedReplanError, classify_build_cache,
+    fetch_verified_nixpkgs,
 };
 
 use crate::{AuthenticatedBuildPolicy, prepare_local_build_plan, resolve_install};
@@ -172,6 +174,102 @@ impl fmt::Display for BuildIntentError {
 
 impl std::error::Error for BuildIntentError {}
 
+/// Current trusted host facts included in deterministic build planning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildHostFacts {
+    system: System,
+    readiness: BuildReadiness,
+    host_cores: u32,
+}
+
+impl BuildHostFacts {
+    /// Constructs one host observation; a zero core count is never authoritative.
+    pub fn new(
+        system: System,
+        readiness: BuildReadiness,
+        host_cores: u32,
+    ) -> Result<Self, BuildHostFactsError> {
+        if host_cores == 0 {
+            return Err(BuildHostFactsError);
+        }
+        Ok(Self {
+            system,
+            readiness,
+            host_cores,
+        })
+    }
+}
+
+/// Redacted failure to observe current build host facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildHostFactsError;
+
+impl fmt::Display for BuildHostFactsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("build host facts unavailable")
+    }
+}
+
+impl std::error::Error for BuildHostFactsError {}
+
+/// Trusted observer invoked separately for preview and admission-time replan.
+pub trait BuildHostFactsProbe: Send + Sync {
+    /// Observes the native system, build readiness, and available core count.
+    fn observe(&self) -> Result<BuildHostFacts, BuildHostFactsError>;
+}
+
+/// Broker-retained implementation of the trusted replanning capability.
+pub struct AuthenticatedBuildReplanner {
+    intent: AuthenticatedBuildIntent,
+    adapter: Arc<dyn BuildPlanningAdapter>,
+    host: Arc<dyn BuildHostFactsProbe>,
+}
+
+impl fmt::Debug for AuthenticatedBuildReplanner {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedBuildReplanner")
+            .field("intent", &self.intent)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AuthenticatedBuildReplanner {
+    /// Binds authenticated intent to the contained adapter and host observer.
+    #[must_use]
+    pub fn new(
+        intent: AuthenticatedBuildIntent,
+        adapter: Arc<dyn BuildPlanningAdapter>,
+        host: Arc<dyn BuildHostFactsProbe>,
+    ) -> Self {
+        Self {
+            intent,
+            adapter,
+            host,
+        }
+    }
+
+    /// Produces the initial private plan used for the public preview.
+    pub fn initial_plan(&self) -> Result<BuildPlan, BuildIntentError> {
+        let facts = self
+            .host
+            .observe()
+            .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::PlanRejected))?;
+        self.intent.plan(
+            self.adapter.as_ref(),
+            facts.system,
+            facts.readiness,
+            facts.host_cores,
+        )
+    }
+}
+
+impl TrustedBuildReplanner for AuthenticatedBuildReplanner {
+    fn replan(&self) -> Result<BuildPlan, TrustedReplanError> {
+        self.initial_plan().map_err(|_| TrustedReplanError)
+    }
+}
+
 fn validate_selectors(selectors: &[PackageSelector]) -> Result<(), BuildIntentError> {
     if selectors.is_empty() || selectors.len() > MAX_BUILD_SELECTORS {
         return Err(BuildIntentError::new(BuildIntentErrorCode::InvalidIntent));
@@ -215,5 +313,15 @@ mod tests {
             BuildIntentErrorCode::InvalidIntent
         );
         assert!(validate_selectors(&[selector("sel_one"), selector("sel_two")]).is_ok());
+    }
+
+    #[test]
+    fn host_facts_refuse_unknown_core_capacity() {
+        let readiness = BuildReadiness::new(true, false, true, true, true);
+        assert!(BuildHostFacts::new(System::X8664Linux, readiness.clone(), 8).is_ok());
+        assert_eq!(
+            BuildHostFacts::new(System::X8664Linux, readiness, 0),
+            Err(BuildHostFactsError)
+        );
     }
 }

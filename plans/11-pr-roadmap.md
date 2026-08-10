@@ -1198,7 +1198,12 @@ flowchart TD
   verify the exact pinned source, check the managed runtime, evaluate selectors, classify the live
   local/fixed-cache state, and assemble a subject-bound plan from current host readiness. The same
   object can therefore supply both initial preparation and the admission-time trusted replan without
-  retaining prior derivations, paths, or cache claims as authority. The
+  retaining prior derivations, paths, or cache claims as authority. The in-process broker now retains
+  that replanner as an opaque capability alongside the private plan before approval. Its
+  dispatcher-facing execution path accepts no closure and invokes only the retained capability;
+  missing/refused replanning consumes approval and stops before the managed adapter builds. The old
+  arbitrary-plan preparation helper is test-only, so production code can install a private plan only
+  together with a trusted replanner. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

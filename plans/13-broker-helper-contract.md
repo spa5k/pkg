@@ -241,8 +241,12 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   The production resource seam is fixed to the managed `/nix` filesystem and the host one-minute
   load average. It uses safe filesystem statistics plus bounded, fixed OS load sources and rejects
   unavailable, malformed, non-finite, negative, zero-capacity, or overflowing measurements.
-  Build execution remains unassigned until the dispatcher can construct the trusted replan closure
-  internally. Adapter failures cross only the closed error-code envelope;
+  The broker now retains that trusted replanner capability with the private plan before approval;
+  dispatcher-facing execution accepts only the handle, exact digest, private resource inputs, and
+  managed adapter, and invokes no caller-supplied closure. The concrete replanner re-observes host
+  facts and runs the authenticated source/evaluation/cache/plan pipeline on every call. The framed
+  execution method remains unassigned until production host-fact observation and command-intent
+  preparation are connected to this internal path. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.
