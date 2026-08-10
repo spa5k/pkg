@@ -260,7 +260,8 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   channel advance, and accepts a replacement index only when bound to the exact current descriptor.
   Its production prepare-and-install entry accepts only typed selectors plus the transport-derived
   caller and live handle, and releases its state lock before host/Nix work. The authenticated index is a non-forgeable Rust capability
-  produced only after descriptor-digest, source-identity, strict-schema, invariant-rebuild and canonical-byte
+  produced only after the downloaded compressed artifact matches the descriptor digest, bounded
+  Brotli decoding produces a bounded document, and source-identity, strict-schema, invariant-rebuild and canonical-byte
   checks; a caller-created `IndexDocument` cannot enter production preparation. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher

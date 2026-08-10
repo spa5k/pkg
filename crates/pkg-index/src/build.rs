@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::io::{Cursor, Read as _};
 
 use jiff::Timestamp;
 use pkg_channel::VerifiedChannel;
@@ -17,6 +18,8 @@ pub const INDEX_SCHEMA_VERSION: u64 = 1;
 pub const MAX_CANDIDATES: usize = 200_000;
 /// Hard ceiling for serialized Nix projection input before JSON decoding.
 pub const MAX_PROJECTION_BYTES: usize = 128 * 1024 * 1024;
+/// Hard ceiling for a downloaded compressed index artifact.
+pub const MAX_INDEX_ARTIFACT_BYTES: usize = 128 * 1024 * 1024;
 /// Hard ceiling for every string supplied by the metadata projection.
 pub const MAX_STRING_BYTES: usize = 4 * 1024;
 /// Hard ceiling for each record's list-valued metadata field.
@@ -345,6 +348,8 @@ pub enum IndexVerifyError {
     TooLarge,
     /// Exact bytes did not match the authenticated descriptor digest.
     DigestMismatch,
+    /// Brotli decoding failed before a complete bounded document was produced.
+    InvalidCompression,
     /// JSON/schema/field invariants were malformed or unsupported.
     InvalidDocument,
     /// Sequence, system, or Nixpkgs revision differed from the channel.
@@ -361,12 +366,16 @@ impl fmt::Display for IndexVerifyError {
 
 impl std::error::Error for IndexVerifyError {}
 
-/// Verifies one downloaded index against the exact authenticated channel pin.
+/// Verifies one downloaded Brotli index against the authenticated channel pin.
 ///
 /// # Errors
 ///
-/// Refuses oversized, digest-mismatched, malformed, source-mismatched, or
-/// non-canonical bytes before returning any usable document.
+/// The descriptor digest authenticates the exact compressed `*.json.br`
+/// artifact. Only after that match is it decompressed under a fixed output
+/// ceiling and checked as the unique canonical JSON document.
+///
+/// Refuses oversized, digest-mismatched, compression-invalid, malformed,
+/// source-mismatched, or non-canonical bytes before returning a usable document.
 pub fn verify_index_artifact(
     bytes: &[u8],
     channel: &VerifiedChannel,
@@ -383,20 +392,21 @@ pub fn verify_index_artifact(
 }
 
 fn verify_index_bytes(
-    bytes: &[u8],
+    compressed_bytes: &[u8],
     channel_seq: u64,
     system: System,
     nixpkgs_rev: &str,
     expected_sha256: &str,
     channel_descriptor_sha256: [u8; 32],
 ) -> Result<VerifiedIndex, IndexVerifyError> {
-    if bytes.len() > MAX_PROJECTION_BYTES {
+    if compressed_bytes.len() > MAX_INDEX_ARTIFACT_BYTES {
         return Err(IndexVerifyError::TooLarge);
     }
-    if digest_hex(body_digest(bytes)) != expected_sha256 {
+    if digest_hex(body_digest(compressed_bytes)) != expected_sha256 {
         return Err(IndexVerifyError::DigestMismatch);
     }
-    let document = serde_json::from_slice::<IndexDocument>(bytes)
+    let bytes = decompress_index(compressed_bytes)?;
+    let document = serde_json::from_slice::<IndexDocument>(&bytes)
         .map_err(|_| IndexVerifyError::InvalidDocument)?;
     if document.schema_version != INDEX_SCHEMA_VERSION
         || document.channel_seq != channel_seq
@@ -433,13 +443,26 @@ fn verify_index_bytes(
         .collect();
     let rebuilt =
         build_index(metadata, candidates).map_err(|_| IndexVerifyError::InvalidDocument)?;
-    if rebuilt.bytes() != bytes {
+    if rebuilt.bytes() != bytes.as_slice() {
         return Err(IndexVerifyError::NonCanonical);
     }
     Ok(VerifiedIndex {
         document,
         channel_descriptor_sha256,
     })
+}
+
+fn decompress_index(compressed_bytes: &[u8]) -> Result<Vec<u8>, IndexVerifyError> {
+    let decoder = brotli::Decompressor::new(Cursor::new(compressed_bytes), 64 * 1024);
+    let mut bounded = decoder.take((MAX_PROJECTION_BYTES as u64) + 1);
+    let mut bytes = Vec::new();
+    bounded
+        .read_to_end(&mut bytes)
+        .map_err(|_| IndexVerifyError::InvalidCompression)?;
+    if bytes.len() > MAX_PROJECTION_BYTES {
+        return Err(IndexVerifyError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 fn digest_hex(digest: Digest) -> String {
@@ -643,6 +666,13 @@ pub(crate) fn test_record(candidate: IndexCandidate) -> IndexRecord {
 mod tests {
     use super::*;
 
+    fn compress(bytes: &[u8]) -> Vec<u8> {
+        let mut encoder = brotli::CompressorReader::new(Cursor::new(bytes), 4 * 1024, 5, 22);
+        let mut compressed = Vec::new();
+        encoder.read_to_end(&mut compressed).unwrap();
+        compressed
+    }
+
     fn metadata(at: &str) -> BuildMetadata {
         BuildMetadata::new(
             ChannelSequence::from_u64(42).unwrap(),
@@ -688,12 +718,14 @@ mod tests {
         let built =
             build_index(metadata("2025-01-01T00:00:00Z"), vec![candidate("ripgrep")]).unwrap();
         let revision = "0123456789abcdef0123456789abcdef01234567";
+        let compressed = compress(built.bytes());
+        let compressed_hash = digest_hex(body_digest(&compressed));
         let verified = verify_index_bytes(
-            built.bytes(),
+            &compressed,
             42,
             System::Aarch64Darwin,
             revision,
-            &built.sha256_hex(),
+            &compressed_hash,
             [0x42; 32],
         )
         .unwrap();
@@ -701,11 +733,11 @@ mod tests {
         assert_eq!(verified.channel_descriptor_sha256, [0x42; 32]);
         assert_eq!(
             verify_index_bytes(
-                built.bytes(),
+                &compressed,
                 43,
                 System::Aarch64Darwin,
                 revision,
-                &built.sha256_hex(),
+                &compressed_hash,
                 [0x42; 32],
             ),
             Err(IndexVerifyError::SourceMismatch)
@@ -713,6 +745,7 @@ mod tests {
 
         let mut noncanonical = built.bytes().to_vec();
         noncanonical.push(b'\n');
+        let noncanonical = compress(&noncanonical);
         let noncanonical_hash = digest_hex(body_digest(&noncanonical));
         assert_eq!(
             verify_index_bytes(
@@ -727,7 +760,7 @@ mod tests {
         );
         assert_eq!(
             verify_index_bytes(
-                built.bytes(),
+                &compressed,
                 42,
                 System::Aarch64Darwin,
                 revision,
@@ -735,6 +768,18 @@ mod tests {
                 [0x42; 32],
             ),
             Err(IndexVerifyError::DigestMismatch)
+        );
+        let invalid_compression = b"not a brotli stream";
+        assert_eq!(
+            verify_index_bytes(
+                invalid_compression,
+                42,
+                System::Aarch64Darwin,
+                revision,
+                &digest_hex(body_digest(invalid_compression)),
+                [0x42; 32],
+            ),
+            Err(IndexVerifyError::InvalidCompression)
         );
     }
 

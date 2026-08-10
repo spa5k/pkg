@@ -1216,8 +1216,9 @@ flowchart TD
   and the contained planning adapter. It derives the native target internally, creates the initial
   private plan and trusted replanner together, and can install them only through an authenticated
   caller's live build handle; it exposes neither as data. The index capability can now be constructed
-  only by bounding the downloaded artifact, matching its exact-byte SHA-256 to the verified channel
-  descriptor, strictly decoding its closed schema, rebuilding every record through the normal
+  only by bounding the downloaded `*.json.br` artifact, matching that compressed exact-byte SHA-256
+  to the verified channel descriptor, Brotli-decoding under a separate fixed output ceiling,
+  strictly decoding its closed schema, rebuilding every record through the normal
   validation/canonicalization pipeline, and requiring byte-for-byte canonical equality plus matching
   sequence/system/Nixpkgs revision. A plain structural `IndexDocument` is no longer accepted at the
   production preparation boundary. The

@@ -10,6 +10,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+brotli = "=8.0.4"
 jiff = "=0.2.35"
 pkg-channel = { path = "../pkg-channel" }
 pkg-core = { path = "../pkg-core" }
