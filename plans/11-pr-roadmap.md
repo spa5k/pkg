@@ -1018,6 +1018,33 @@ flowchart TD
 - **Milestone:** M6.
 
 #### PR-33 — Release signing (offline root + threshold) + channel/index publish
+- **Status (2026-08-10):** provider-neutral release trust boundary implemented. A closed manifest
+  requires the exact V1 TUF target set, three separate non-TUF CLI/Sigstore artifacts, exact
+  bytes, and distinct authenticated release/security approvals. A provider authority lease
+  reserves the authoritative next sequence and supplies the authenticated signing identity;
+  `pkg-release` consumes signed offline-root metadata, signs only online roles through
+  `tough::KeySource`, binds hashes to the reviewed manifest, rehashes before signing, writes
+  immutable consistent-snapshot output, verifies it with the real client, seals publication bytes
+  into anonymous read-only files, records a mandatory create-only audit event, and coordinates
+  resumable ensure/remote-verify across both destinations, then activates GitHub source-of-truth
+  before the CDN mirror. Root, channel, and timestamp versions are independent; a separately
+  authorized timestamp-only refresh
+  atomically advances the stable route before its 48-hour expiry. The CI dry
+  run generates memory-only keys, proves a 2-of-3 root and independent online roles, and loads and
+  drains the result with the real `tough` client. No production local-key adapter or cloud secret
+  is present. KMS/HSM provider, release-authority and destination adapters, protected environments,
+  and the real custodian roster remain deployment configuration and require key-custodian sign-off;
+  the repository does not claim that a live channel was published.
+  Remote publication accepts only an atomically persisted transaction containing exact blobs,
+  hashes, and opaque lease id; the external authority binds the transaction digest, and restart
+  recovery rehashes the blobs and reacquires only that exact lease/digest pair.
+  Root expiry must cover every issued child-metadata expiry.
+  The reviewed manifest and timestamp authority bind the exact current trusted-root digest;
+  arbitrary self-signed roots are refused, and a future rotation must provide the full update chain.
+  Sealed metadata is freshness-checked before upload and activation with a one-hour safety margin;
+  expired recovery transactions are refused rather than made discoverable.
+  Exact authoritative activation is remotely queryable, so an aged retry can finish only the
+  already-active digest's mirror and authority reconciliation without activating a stale newcomer.
 - **Purpose:** the release-service that signs TUF metadata and publishes the channel (TUF),
   index, and managed-Nix runtime to GitHub Releases + CDN; the CLI is published alongside with
   Sigstore attestation + pinned checksum (it is **not** a TUF channel target — `10` §2,

@@ -1,0 +1,30 @@
+"""Structural release-workflow security contract."""
+
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+
+class ReleaseWorkflowTests(unittest.TestCase):
+    def test_dry_run_has_read_only_permissions_and_pinned_checkout(self) -> None:
+        self.assertIn("permissions:\n  contents: read", WORKFLOW)
+        self.assertIn(
+            "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+            WORKFLOW,
+        )
+        self.assertIn("persist-credentials: false", WORKFLOW)
+        self.assertIn("cargo test --locked -p pkg-release", WORKFLOW)
+
+    def test_workflow_never_loads_a_production_key_or_publishes(self) -> None:
+        self.assertNotIn("secrets.", WORKFLOW)
+        self.assertNotIn("contents: write", WORKFLOW)
+        self.assertNotIn("gh release", WORKFLOW)
+        self.assertNotIn("aws-actions", WORKFLOW)
+        self.assertIn("in-memory Ed25519 test keys", (ROOT / "tools/release/README.md").read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()

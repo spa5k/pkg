@@ -227,6 +227,41 @@ Triggered by suspected/confirmed compromise (`08` T-CHAN-5, T-REL-2):
 - Release-service audit log for every signing operation (who/what/when/key id) — retained
   for incident forensics (T-REL-1/2).
 
+**PR-33 implementation boundary.** `pkg-release` validates a closed release manifest and
+the exact 13 channel targets (descriptor; four runtime archives; four static asset manifests;
+four indexes), while three CLI binaries and their Sigstore bundles remain explicitly outside
+TUF. A provider-supplied authorization lease authenticates both independent approvals, reserves
+the authoritative next sequence, supplies the authenticated signing-service identity, keeps the
+lease reacquirable until separately authorized cleanup, and commits idempotently after publication.
+The signer accepts only already-signed offline-root metadata and provider-supplied online
+`KeySource`s, derives TUF hashes from the reviewed manifest, binds the exact current trusted-root
+digest into that approval, rehashes artifacts immediately before signing, creates
+consistent-snapshot targets through `tough`, verifies the repository with a real client, seals all bytes into
+anonymous read-only files, and emits a mandatory create-only allowlisted audit event. Its
+destination-neutral publisher preflights, idempotently ensures, and remotely verifies immutable
+objects at the CDN and GitHub, then activates GitHub source-of-truth before the CDN mirror. The repo
+deliberately contains no local-key/authority/publisher production adapter, cloud credentials, or
+reusable test key. CI signs with fresh in-memory keys and verifies with the real client.
+Selecting/deploying the KMS/HSM and concrete GitHub/CDN adapters remains operational configuration;
+it cannot silently fall back to plaintext GitHub secrets.
+Short-lived timestamp metadata has its own monotonic version and authority lease: it can be
+re-signed against the currently verified snapshot and atomically routed at both destinations
+without inventing a new product channel sequence. Exact partial uploads and post-publication
+authority-commit failures are retryable with the same sealed transaction; conflicting bytes fail
+closed.
+Before the first remote write, the exact blobs, closed transaction manifest, hashes, and opaque
+authority lease id are atomically persisted with private permissions. Restart recovery rehashes
+those blobs and reacquires the same durable lease only when the authority-bound transaction digest
+matches; it never re-signs a half-published release or trusts a substituted local record.
+Root-expiry policy also requires the trusted root to outlive every child metadata expiry.
+Timestamp refresh authority independently checks that same root digest. V1 refuses root
+substitution; root rotation later requires the complete sequential update chain.
+For a not-yet-active transaction, publication re-parses sealed metadata before upload and before
+authoritative activation, requiring at least one hour of remaining validity; an aged-out
+transaction cannot become a new authoritative release. If GitHub already reports the exact digest active, recovery may finish only that same
+mirror and authority lease after expiry; remote status prevents expiry from stranding
+reconciliation.
+
 ---
 
 ## 8. Incident Response

@@ -21,6 +21,7 @@ members = [
     "crates/pkg-resolver",
     "crates/pkg-store",
     "crates/pkg-testkit",
+    "tools/release",
 ]
 
 [workspace.package]

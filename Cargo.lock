@@ -1372,6 +1372,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkg-release"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "aws-lc-rs",
+ "hex",
+ "jiff",
+ "olpc-cjson",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tough",
+ "url",
+]
+
+[[package]]
 name = "pkg-resolver"
 version = "0.0.0"
 dependencies = [
