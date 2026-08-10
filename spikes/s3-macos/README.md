@@ -10,7 +10,13 @@ excluded from the repo-root workspace lanes — the same isolation model as
 The pin lives in [`fixtures.json`](fixtures.json); the harness embeds that file at
 compile time and validates it ([`src/validate.rs`](src/validate.rs)).
 
-> **This spike is not a result.** It is the harness that would *produce* evidence.
+> **This spike is primarily an evidence harness.** A reviewed Complete real
+> Detect run was added on 2026-08-10; see
+> [`evidence/2026-08-10-detect-aarch64-darwin/RUN.md`](evidence/2026-08-10-detect-aarch64-darwin/RUN.md)
+> and the current addendum in [`FINDINGS.md`](FINDINGS.md). Cache Preflight and
+> real Developer-ID signing/notarization remain Pending.
+>
+> The harness itself is not a result. It is the mechanism that produces evidence.
 > See [Fake vs Observed vs Designed](#fake-vs-observed-vs-designed) and
 > [Complete vs Incomplete vs Pending](#complete-vs-incomplete-vs-pending). No
 > coverage, capability, build, or signing outcome lives in this repo. The existing

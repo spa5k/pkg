@@ -25,3 +25,10 @@ pub use platform::linux::{
     LinuxPeerCredentials, LinuxPlatformError, LinuxPlatformErrorCode, LinuxRootSetStore,
     authenticate_broker_peer, peer_credentials,
 };
+pub use platform::macos::{
+    MacOsAssetKind, MacOsAssetPrincipal, MacOsBuildReadiness, MacOsBuildUsersReadiness, MacOsError,
+    MacOsErrorCode, MacOsHelperSession, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallReport,
+    MacOsLaunchdAssets, MacOsPeerCredentials, MacOsReleaseStep, MacOsReleaseTarget,
+    MacOsRootSetStore, MacOsSandboxReadiness, MacOsSocketContract, MacOsStoreVolumeContract,
+    MacOsToolchainReadiness, install_macos, macos_install_assets, macos_release_steps,
+};

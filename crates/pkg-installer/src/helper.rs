@@ -1,6 +1,6 @@
-//! Authenticated Linux broker-to-helper framed transport.
+//! Authenticated Unix broker-to-helper framed transport.
 
-use crate::platform::linux::{LinuxRootSetStore, authenticate_broker_peer};
+use crate::platform::{authenticate_broker, linux::LinuxRootSetStore};
 use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
@@ -187,8 +187,8 @@ pub fn serve_helper_connection(
     broker_uid: u32,
     dispatcher: &dyn BrokerHelperDispatch,
 ) -> Result<(), HelperTransportError> {
-    authenticate_broker_peer(&stream, broker_uid)
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::UnauthenticatedPeer))?;
+    authenticate_broker(&stream, broker_uid)
+        .map_err(|()| HelperTransportError::new(HelperTransportErrorCode::UnauthenticatedPeer))?;
 
     let mut header = [0_u8; FRAME_HEADER_BYTES];
     stream
@@ -235,7 +235,7 @@ const fn platform_failure() -> MaintenanceError {
     MaintenanceError::backend_failure()
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
     use crate::platform::linux::LinuxRootSetStore;

@@ -252,6 +252,7 @@ pub fn install_linux(
     })();
 
     if result.is_err() {
+        let mut rollback_incomplete = false;
         for mutation in mutations.into_iter().rev() {
             let rollback = match mutation {
                 InstallMutation::Asset(asset) => backend.rollback_asset(asset),
@@ -259,8 +260,11 @@ pub fn install_linux(
                 InstallMutation::Services => backend.rollback_services(),
             };
             if rollback.is_err() {
-                return Err(InstallError::new(InstallErrorCode::RollbackIncomplete));
+                rollback_incomplete = true;
             }
+        }
+        if rollback_incomplete {
+            return Err(InstallError::new(InstallErrorCode::RollbackIncomplete));
         }
     }
     result
@@ -291,6 +295,7 @@ mod tests {
         fail_after: Option<usize>,
         states: BTreeSet<&'static str>,
         rollback_events: Vec<&'static str>,
+        rollback_failures: BTreeSet<&'static str>,
         fail_health_check: bool,
         fail_service_activation: bool,
     }
@@ -304,6 +309,7 @@ mod tests {
                 fail_after: None,
                 states: BTreeSet::new(),
                 rollback_events: Vec::new(),
+                rollback_failures: BTreeSet::new(),
                 fail_health_check: false,
                 fail_service_activation: false,
             }
@@ -362,7 +368,11 @@ mod tests {
         fn rollback_services(&mut self) -> Result<(), InstallError> {
             self.states.remove("services");
             self.rollback_events.push("services");
-            Ok(())
+            if self.rollback_failures.contains("services") {
+                Err(InstallError::new(InstallErrorCode::BackendFailure))
+            } else {
+                Ok(())
+            }
         }
 
         fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
@@ -377,7 +387,11 @@ mod tests {
         fn rollback_managed_runtime(&mut self) -> Result<(), InstallError> {
             self.states.remove("runtime");
             self.rollback_events.push("runtime");
-            Ok(())
+            if self.rollback_failures.contains("runtime") {
+                Err(InstallError::new(InstallErrorCode::BackendFailure))
+            } else {
+                Ok(())
+            }
         }
 
         fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
@@ -397,7 +411,11 @@ mod tests {
             self.existing.remove(asset.id());
             self.rolled_back.push(asset.id());
             self.rollback_events.push(asset.id());
-            Ok(())
+            if self.rollback_failures.contains(asset.id()) {
+                Err(InstallError::new(InstallErrorCode::BackendFailure))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -499,6 +517,21 @@ mod tests {
         );
         assert_eq!(backend.rollback_events.first(), Some(&"runtime"));
         assert!(!backend.states.contains("runtime"));
+        assert!(backend.existing.is_empty());
+    }
+
+    #[test]
+    fn rollback_failure_does_not_skip_older_linux_mutations() {
+        let mut backend = FakeBackend::clean();
+        backend.fail_health_check = true;
+        backend.rollback_failures.extend(["services", "runtime"]);
+        let result = install_linux(System::X8664Linux, &mut backend);
+        assert_eq!(
+            result.map_err(InstallError::code),
+            Err(InstallErrorCode::RollbackIncomplete)
+        );
+        assert_eq!(backend.rollback_events.first(), Some(&"services"));
+        assert!(backend.rollback_events.contains(&"runtime"));
         assert!(backend.existing.is_empty());
     }
 }

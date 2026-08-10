@@ -448,9 +448,16 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    (§8) including `/nix`, `~/.nix-profile`, `~/.nix-defexpr`, Homebrew's
    `nix`, `launchctl list | grep nix`, `/Library/LaunchDaemons/org.nixos.*` —
    refuse with remediation if found.
-2. Create the **`pkg-nix-broker`** unprivileged service user/group; create
-   `/nix` (root:admin), `/nix/store`, `/nix/var/nix/...` (standard Nix on macOS
-   still uses `/nix`) with the **`daemon-socket` parent dir `root:pkg-nix-broker`
+2. Create the **`pkg-nix-broker`** unprivileged service user/group. Before
+   touching `/nix`, provision a product-owned, encrypted, ownership-enabled
+   APFS volume mounted at `/nix`: merge only the exact `nix` entry into
+   `/etc/synthetic.conf`, keep the generated unlock secret in the System
+   keychain with root-only access, and journal the volume UUID, keychain item,
+   prior synthetic-file state, and mount state for exact rollback/receipt
+   ownership. A fixed `org.pkg.store-volume` launchd job invokes only the root
+   helper's closed `--mount-store-volume` verb; no secret or UUID is placed in
+   plist argv or logs. Then create `/nix/store`, `/nix/var/nix/...` (stock Nix
+   still uses `/nix/store`) with the **`daemon-socket` parent dir `root:pkg-nix-broker`
    `0750`** (Nix self-creates the socket `0666` on macOS; traversal +
    `allowed-users = pkg-nix-broker` is the boundary — there is no socket
    activation on macOS); create the `nixbld` group + `_nixbld1..N` build users
@@ -459,19 +466,32 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
 3. Extract bundled Nix to `/opt/pkg/nix` **root:pkg-nix-broker**, group-
    executable/traversable by `pkg-nix-broker` only (broker spawns it; ordinary
    users cannot).
-4. Install `org.pkg.nix-daemon.plist` (daemon runs as **root**, substitutes/
-   builds via `_nixbld`) and the **broker** launchd job (runs as
-   `pkg-nix-broker`) into `/Library/LaunchDaemons` and `launchctl load`.
+4. Install `org.pkg.store-volume.plist`, `org.pkg.nix-daemon.plist` (daemon
+   waits for the mounted store, runs as **root**, substitutes/builds via
+   `_nixbld`), `org.pkg.root-helper.plist`, and the **broker** launchd job (runs
+   as `pkg-nix-broker`) into `/Library/LaunchDaemons` and bootstrap them in the
+   system domain.
+   `pkg-root-helper` is `root:wheel` `0700`; the broker cannot execute it and
+   reaches only its private socket. The mount verb independently requires uid 0
+   plus the root-only ownership receipt and accepts no UUID, path, keychain
+   handle, or secret from argv.
 5. Write root-owned `nix.conf` (`trusted-users = root`, `allowed-users =
    pkg-nix-broker`, `sandbox=true`, `sandbox-fallback=false`,
    `build-users-group=nixbld`; substituters/keys from descriptor) — the complete
    block in §5.2.
 6. Install `pkg` to `/usr/local/bin/pkg` (or `/opt/pkg/bin`); create the
-   **root-owned service root** `/Library/Application Support/pkg` and carve out
+   **root-owned service root** `/Library/Application Support/pkg` mode `0711`
+   (search-only for ordinary users, so they can reach only the known public
+   broker endpoint). Its `run/` ancestor is `root:pkg-nix-broker` `0751`, the
+   public `run/broker/` leaf is `root:pkg-nix-broker` `0771`, and the broker
+   socket is `0666`; callers can traverse/connect but cannot list or replace
+   the endpoint. The private `run/helper/` leaf remains
+   `root:pkg-nix-broker` `0750` with a `0660` helper socket. Carve out
    the **broker-owned** raw-log dir `/Library/Application Support/pkg/log/broker`
    owned `pkg-nix-broker:pkg-nix-broker` mode `0700` (files `0600`) — the
    **only** non-root-owned path in the service tree (§6.1/§7.4).
-7. PATH integration (§10); uninstall manifest; then, only after the complete artifact set
+7. PATH integration (§10); uninstall manifest (including the exact APFS volume,
+   System-keychain item, synthetic entry, and mount job); then, only after the complete artifact set
    verifies against authenticated release/channel metadata, atomically install
    `/Library/Application Support/pkg/managed-nix/ownership-v1.json` with a root-owned `0700`
    parent and `0600` file.
@@ -506,7 +526,7 @@ Tools); the installer verifies its presence and `doctor` reports it.
   `collectGarbage`, but **rejects the mutating `nix store repair`** (I7).
 - **Peer-authenticated privilege boundary (D-17/ARCH-INV-06):** the broker
   authenticates each calling user via socket peer credentials (`SO_PEERCRED` on
-  Linux; `getpeereid` / launchd `Audit Token` on macOS), and the **root helper
+  Linux; `getpeereid` on the launchd-managed Unix transport on macOS), and the **root helper
   re-checks the broker-authenticated caller** — the helper is reachable **only**
   from the broker over a **private closed channel**, never from the CLI. The
   helper is **non-setuid** and is the **sole root-set filesystem writer**. The

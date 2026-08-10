@@ -307,6 +307,9 @@ flowchart TD
 - **Milestone:** M0.5.
 
 #### PR-7 — SPIKE S3: macOS binary coverage + Apple signing/notarization
+- **Status:** Partial real evidence. S5 records the native sandboxed build; a
+  reviewed 2026-08-10 S3 Detect is Complete. Broker-run cache coverage and real
+  Developer-ID signing/notarization remain Pending, so DR-003 stays Proposed.
 - **Purpose:** confirm Darwin binary coverage on `cache.nixos.org` for `x86_64-darwin`/`aarch64-darwin`, **and** that real macOS local builds are viable (native sandboxed build, `nixbld` build-user group / `_nixbld*` build users, Xcode/CLT toolchain availability, the honest resource boundary with **no** per-build memory/CPU/IO cap in stock Nix 2.34.8, `sandbox-fallback=false` fail-closed), and that a notarized signed installer/runtime is achievable. **Gates PR-28 and the Real-Nix macOS lane (`09`).**
 - **Owns:** `spikes/s3-macos/`, DR-003 in `12`.
 - **Depends:** PR-1.
@@ -856,7 +859,15 @@ flowchart TD
 - **Milestone:** M5.
 
 #### PR-28 — macOS installer + Darwin build integration + launchd + signing/notarization (implements the PR-39 contract)
-- **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and the honest resource boundary (**no** per-build memory/CPU/IO cap in stock Nix 2.34.8) (`07`, DR-003 from S3). It implements the broker↔helper contract (PR-39) on macOS — the real framed-RPC **transport**, **peer-auth** (caller uid via launchd/XPC authorized client), **capability transport**, and the **launchd** service definitions for broker and helper. The OS credential/transport APIs are implemented **here**, not in PR-39. Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
+- **Status:** **Implementation complete 2026-08-10; external evidence gate remains open.**
+  Rust/macOS tests cover `getpeereid`, strict framed transports, durable helper
+  restart behavior, failure-atomic encrypted-APFS/store installation contracts,
+  exact 32-user/readiness gates, valid launchd plists, and a closed product-only
+  signing/notarization plan. S5 already supplies native sandbox/build evidence;
+  the refreshed S3 Detect is Complete but found zero Developer ID identities.
+  Therefore PR-28 is **not marked merge-complete** until a Complete broker-run
+  cache Preflight and real Developer-ID/notarization validation are recorded.
+- **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and the honest resource boundary (**no** per-build memory/CPU/IO cap in stock Nix 2.34.8) (`07`, DR-003 from S3). It implements the broker↔helper contract (PR-39) on macOS — the real framed-RPC **transport**, **peer-auth** (caller uid via `getpeereid` on launchd-managed Unix sockets), **capability transport**, and the **launchd** service definitions for broker and helper. The OS credential/transport APIs are implemented **here**, not in PR-39. Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
 - **Owns:** `crates/pkg-installer/src/platform/macos.rs` (including the macOS transport binding of PR-39's `MaintenanceAdapter` + peer-auth + capability transport and the generated launchd plists), `_nixbld` build-user provisioning, notarization tooling, packaging.
 - **Depends:** PR-12, PR-7 (S3), PR-26 (shared engine), **PR-39 (the contract/core/fake this transport implements)**.
 - **Migration/compat:** macOS supports approved native sandboxed local builds (D-11); not binary-only.

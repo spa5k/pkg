@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "mode": "detect",
+  "harnessOnly": false,
+  "pin": {
+    "schemaVersion": 1,
+    "nix": { "version": "2.34.8" },
+    "nixpkgs": {
+      "owner": "NixOS",
+      "repo": "nixpkgs",
+      "rev": "a62e6edd6d5e1fa0329b8653c801147986f8d446",
+      "narHash": "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw="
+    },
+    "systems": ["x86_64-darwin", "aarch64-darwin"],
+    "attrs": ["hello", "ripgrep", "git"],
+    "cacheStoreUrl": "https://cache.nixos.org/"
+  },
+  "lanes": {
+    "fake": { "mode": "fake", "state": "pending", "reason": "notSelected" },
+    "detect": {
+      "mode": "detect",
+      "state": "complete",
+      "observation": {
+        "source": "observed",
+        "hostSystem": "aarch64-darwin",
+        "nixPresent": true,
+        "toolCapabilities": {
+          "codesign": true,
+          "xcrun": true,
+          "notarytool": true,
+          "stapler": true,
+          "productbuild": true,
+          "productsign": true,
+          "pkgbuild": true,
+          "spctl": true,
+          "security": true
+        },
+        "xcodeSelection": "fullXcode",
+        "applicationIdentityCount": 0,
+        "installerIdentityCount": 0,
+        "nixbldGroupPresent": true,
+        "nixbldUserCount": 32
+      }
+    },
+    "preflight": { "mode": "preflight", "state": "pending", "reason": "notSelected" },
+    "buildProbe": { "mode": "buildProbe", "state": "pending", "reason": "notSelected" },
+    "signPlan": { "mode": "signPlan", "state": "pending", "reason": "notSelected" }
+  }
+}

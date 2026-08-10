@@ -21,6 +21,30 @@ Complete real run exists for that lane. Nothing is invented.
 - **Recorded (host UTC):** 2026-08-07. **Host lane of this session:** macOS,
   ProductVersion 26.6, Darwin kernel 25.6.0, `aarch64` (`aarch64-darwin`).
 
+## 2026-08-10 evidence addendum (current)
+
+A reviewed real Detect CLI run is now **Complete** on native
+`aarch64-darwin`; its report and run context are preserved under
+[`evidence/2026-08-10-detect-aarch64-darwin/RUN.md`](evidence/2026-08-10-detect-aarch64-darwin/RUN.md).
+It observed Nix 2.34.8 present, full Xcode, all required Apple packaging/
+notarization tools, the `nixbld` group and 32 `_nixbld*` users. It also observed
+**zero** Developer ID Application identities and **zero** Developer ID Installer
+identities. Those zeroes are valid negative capability evidence: signing and
+notarization remain Pending, not failed and not simulated.
+
+The S5 ledger already records a real native sandboxed Darwin build and the
+build-user/network boundary. S3 cache Preflight remains Pending: the product's
+intentional `root:pkg-nix-broker` `0750` daemon-socket parent correctly denied
+the ordinary console user. The attempted run verified Nix 2.34.8, then became
+Incomplete before prefetch; it is diagnostic only. A reviewed run as the
+singleton broker is still required. Therefore **DR-003 remains Proposed** and
+PR-28 remains evidence-gated despite its implementation being complete.
+
+The original 2026-08-07 ledger below is retained as historical evidence. Its
+“no usable Nix” environment statement describes that earlier session and is
+superseded only by this addendum; its warnings about Pending cache/signing lanes
+still apply.
+
 ---
 
 ## 1. Harness evidence (what the spike proves today)
@@ -155,7 +179,7 @@ run (see §5.2), so this is a contract/source review, **not** observed evidence.
 
 ---
 
-## 3. Environment limitation (what was NOT produced)
+## 3. Historical 2026-08-07 environment limitation (what was NOT produced then)
 
 There is **no usable Nix `2.34.8` installation** in this implementation
 environment — `nix` is absent from `PATH` and the common install paths, and no

@@ -1,6 +1,6 @@
-//! Linux CLI-to-broker transport with kernel-derived caller identity.
+//! Unix CLI-to-broker transport with kernel-derived caller identity.
 
-use crate::platform::linux::peer_credentials;
+use crate::platform::peer_uid;
 use pkg_nix::{
     BrokerError, CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer,
     ProductFrameCodec,
@@ -57,7 +57,8 @@ impl Error for BrokerTransportError {}
 
 /// Authenticates one connection and serves lifecycle frames until disconnect.
 ///
-/// The uid is obtained once from `SO_PEERCRED`; no payload identity is read.
+/// The uid is obtained once from `SO_PEERCRED` (Linux) or `getpeereid`
+/// (macOS); no payload identity is read.
 /// Disconnect always invokes broker-owned cleanup for this caller session.
 ///
 /// # Errors
@@ -68,9 +69,8 @@ pub fn serve_broker_connection(
     mut stream: UnixStream,
     broker: &Arc<InProcessBroker>,
 ) -> Result<(), BrokerTransportError> {
-    let uid = peer_credentials(&stream)
-        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?
-        .uid();
+    let uid = peer_uid(&stream)
+        .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?;
     let caller = broker
         .connect(InProcessCallerPeer::authenticated(uid))
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
@@ -149,7 +149,7 @@ fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, BrokerTranspor
     Ok(Some(frame))
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
     use pkg_nix::{BrokerOperationKind, OperationStatus};
