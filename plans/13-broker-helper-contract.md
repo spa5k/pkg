@@ -214,12 +214,14 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   `RealNixAdapter`; `Gc` also acquires exclusive GC admission. Method 14 (`Build`) is deliberately
   unassigned on the wire: a structurally valid caller-created `BuildApprovalReceipt` is not
   authorization. The broker's in-memory build operation now retains at most one private `BuildPlan`,
-  returns only its sanitized preview/digest, validates approval against that exact digest, and permits
-  one plan consumption. The state is bound by the existing authenticated uid, handle, epoch, status,
+  returns only its sanitized preview/digest, validates approval against that exact digest, journals a
+  broker-derived private operation identity before retaining the private receipt, and permits only
+  one approval. The state is bound by the existing authenticated uid, handle, epoch, status,
   and expiry; cancellation, disconnect, expiry, and restart make it unusable. This API is internal and
-  adds no frame method or raw target/receipt input. Local build remains unreachable until the product
-  dispatcher journals the explicit approval and connects this capability to admission-time replan and
-  execution. Adapter failures cross only the closed error-code envelope;
+  adds no frame method or raw target/receipt input. Cancellation, disconnect, expiry, and restart
+  revoke even an approval whose journal write is in flight. Local build remains unreachable until
+  this capability is connected to admission-time replan and execution. Adapter failures cross only
+  the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.

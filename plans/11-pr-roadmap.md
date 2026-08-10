@@ -1134,8 +1134,10 @@ flowchart TD
   unassigned. The in-process broker now supplies the underlying authenticated capability state: one
   private `BuildPlan` is retained behind the caller/epoch-bound build handle, only its sanitized
   preview/digest is public, exact approval is one-shot, and wrong-UID/digest, replay, cancellation,
-  disconnect, expiry, or restart invalidate it. Wire exposure still waits for dispatcher-owned
-  approval journaling plus admission-time replan/execution. The shared local-build approval engine now
+  disconnect, expiry, or restart invalidate it. Approval journaling is now broker-owned: a private
+  operation identity derived from the authenticated opaque handle is journaled before the broker
+  retains the receipt, and every terminal lifecycle path revokes the corresponding engine grant.
+  Wire exposure still waits for admission-time replan/execution. The shared local-build approval engine now
   reserves an operation before journal I/O without holding its authority mutex across that I/O;
   cancellation can revoke an in-flight recording, and a monotonic reservation identity prevents an
   operation-id retry from reviving the earlier journal call. The durable row may remain as audit

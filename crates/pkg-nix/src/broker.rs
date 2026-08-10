@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest as _, Sha256};
 
-use crate::{BuildPlan, BuildPreview, Digest, maintenance::random_secret};
+use crate::{
+    ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildPlan, BuildPreview, Digest,
+    LocalBuildEngine, OperationId, maintenance::random_secret,
+};
 
 const OPERATION_TTL: Duration = Duration::from_secs(30 * 60);
 
@@ -135,6 +138,7 @@ struct OperationRecord {
     status: OperationStatus,
     expires_at: Instant,
     build_prepared: bool,
+    build_operation_id: Option<OperationId>,
     prepared_build: Option<PreparedBuild>,
 }
 
@@ -142,7 +146,14 @@ struct OperationRecord {
 struct PreparedBuild {
     plan: BuildPlan,
     digest: Digest,
-    approved: bool,
+    approval: PreparedBuildApproval,
+}
+
+#[derive(Debug, Clone)]
+enum PreparedBuildApproval {
+    Unapproved,
+    Recording,
+    Approved { _receipt: BuildApprovalReceipt },
 }
 
 #[derive(Debug)]
@@ -221,6 +232,7 @@ impl InProcessCallerPeer {
 /// In-process reference broker with memory-only operation and admission state.
 pub struct InProcessBroker {
     state: Mutex<BrokerState>,
+    build_engine: LocalBuildEngine,
 }
 
 impl fmt::Debug for InProcessBroker {
@@ -243,6 +255,7 @@ impl InProcessBroker {
                 gc_holder: None,
                 gc_inhibitors: BTreeSet::new(),
             }),
+            build_engine: LocalBuildEngine::new(),
         }))
     }
 
@@ -264,10 +277,16 @@ impl InProcessBroker {
 
     /// Restarts the broker and empties all handles and admission state.
     pub fn restart(&self) -> Result<(), BrokerError> {
-        let mut state = self.lock();
-        state.epoch = state.epoch.saturating_add(1);
-        state.secret =
+        let secret =
             random_secret().map_err(|_| BrokerError::new(BrokerErrorCode::EntropyUnavailable))?;
+        let mut state = self.lock();
+        for record in state.operations.values() {
+            if let Some(operation_id) = build_operation_id(record) {
+                self.build_engine.cancel_approval(operation_id);
+            }
+        }
+        state.epoch = state.epoch.saturating_add(1);
+        state.secret = secret;
         state.next_operation = 0;
         state.operations.clear();
         state.build_holder = None;
@@ -280,7 +299,7 @@ impl InProcessBroker {
     #[must_use]
     pub fn admission_snapshot(&self) -> AdmissionSnapshot {
         let mut state = self.lock();
-        purge_expired(&mut state, Instant::now());
+        purge_expired(&mut state, Instant::now(), &self.build_engine);
         AdmissionSnapshot {
             operation_count: state.operations.len(),
             build_held: state.build_holder.is_some(),
@@ -322,6 +341,9 @@ impl AuthenticatedCaller {
         self.check_epoch(&state)?;
         let record = self.record_mut(&mut state, handle)?;
         if Instant::now() >= record.expires_at {
+            if let Some(operation_id) = build_operation_id(record) {
+                self.broker.build_engine.cancel_approval(operation_id);
+            }
             release_admission(&mut state, handle);
             state.operations.remove(handle);
             return Err(BrokerError::new(BrokerErrorCode::OperationExpired));
@@ -391,66 +413,91 @@ impl AuthenticatedCaller {
         record.prepared_build = Some(PreparedBuild {
             plan,
             digest,
-            approved: false,
+            approval: PreparedBuildApproval::Unapproved,
         });
         record.build_prepared = true;
         Ok(preview)
     }
 
-    /// Marks the exact broker-held plan approved for one later consumption.
+    /// Durably approves the exact broker-held plan for one later execution.
     ///
-    /// The product dispatcher calls this only after recording the explicit
-    /// approval. The public IPC request carries the opaque operation handle and
-    /// digest pointer; it never carries a receipt or build targets.
+    /// The journal write happens inside the broker authority boundary before a
+    /// private receipt is retained. The public IPC request will carry only the
+    /// opaque operation handle and digest pointer; it never carries a receipt
+    /// or build targets.
     pub fn approve_build(
         &self,
         handle: &OperationHandle,
         digest: Digest,
+        source: ApprovalSource,
+        timestamp: &str,
+        journal: &dyn ApprovalJournal,
     ) -> Result<(), BrokerError> {
-        let mut state = self.broker.lock();
-        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
-        let record = self.record_mut(&mut state, handle)?;
-        let prepared = record
-            .prepared_build
-            .as_mut()
-            .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
-        if prepared.digest != digest {
-            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
-        }
-        if prepared.approved {
-            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable));
-        }
-        prepared.approved = true;
-        Ok(())
-    }
+        let (plan, operation_id) = {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+            let record = self.record_mut(&mut state, handle)?;
+            let operation_id = build_operation_id(record)
+                .cloned()
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
+            let prepared = record
+                .prepared_build
+                .as_mut()
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
+            if prepared.digest != digest {
+                return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
+            }
+            if !matches!(prepared.approval, PreparedBuildApproval::Unapproved) {
+                return Err(BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable));
+            }
+            prepared.approval = PreparedBuildApproval::Recording;
+            (prepared.plan.clone(), operation_id)
+        };
 
-    /// Consumes and returns the exact approved private plan once.
-    ///
-    /// Only broker execution code calls this method. The plan remains absent
-    /// from every public response and cannot be reconstructed from the digest.
-    pub fn take_approved_build(
-        &self,
-        handle: &OperationHandle,
-        digest: Digest,
-    ) -> Result<BuildPlan, BrokerError> {
-        let mut state = self.broker.lock();
-        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
-        let record = self.record_mut(&mut state, handle)?;
-        let prepared = record
-            .prepared_build
-            .as_ref()
-            .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
-        if prepared.digest != digest {
-            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
+        let receipt = match self.broker.build_engine.approve(
+            operation_id.clone(),
+            &plan,
+            source,
+            timestamp,
+            journal,
+        ) {
+            Ok(receipt) => receipt,
+            Err(_) => {
+                let mut state = self.broker.lock();
+                if self.check_epoch(&state).is_ok()
+                    && let Ok(record) = self.record_mut(&mut state, handle)
+                    && let Some(prepared) = record.prepared_build.as_mut()
+                    && prepared.digest == digest
+                    && matches!(prepared.approval, PreparedBuildApproval::Recording)
+                {
+                    prepared.approval = PreparedBuildApproval::Unapproved;
+                }
+                return Err(BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable));
+            }
+        };
+
+        let retained = {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])
+                .and_then(|()| {
+                    let record = self.record_mut(&mut state, handle)?;
+                    let prepared = record.prepared_build.as_mut().ok_or_else(|| {
+                        BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable)
+                    })?;
+                    if prepared.digest != digest {
+                        return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
+                    }
+                    if !matches!(prepared.approval, PreparedBuildApproval::Recording) {
+                        return Err(BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable));
+                    }
+                    prepared.approval = PreparedBuildApproval::Approved { _receipt: receipt };
+                    Ok(())
+                })
+        };
+        if retained.is_err() {
+            self.broker.build_engine.cancel_approval(&operation_id);
         }
-        if !prepared.approved {
-            return Err(BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable));
-        }
-        record
-            .prepared_build
-            .take()
-            .map(|prepared| prepared.plan)
-            .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))
+        retained
     }
 
     /// Acquires the machine-wide local-build lease for this operation.
@@ -528,6 +575,9 @@ impl AuthenticatedCaller {
         for handle in handles {
             release_admission(&mut state, &handle);
             if let Some(record) = state.operations.get_mut(&handle) {
+                if let Some(operation_id) = build_operation_id(record) {
+                    self.broker.build_engine.cancel_approval(operation_id);
+                }
                 record.status = OperationStatus::Cancelled;
                 record.prepared_build = None;
             }
@@ -542,9 +592,14 @@ impl AuthenticatedCaller {
     ) -> Result<OperationHandle, BrokerError> {
         let mut state = self.broker.lock();
         self.check_epoch(&state)?;
-        purge_expired(&mut state, Instant::now());
+        purge_expired(&mut state, Instant::now(), &self.broker.build_engine);
         state.next_operation = state.next_operation.saturating_add(1);
         let handle = mint_handle(&state, self.uid, kind);
+        let build_operation_id = if kind == BrokerOperationKind::Build {
+            Some(mint_build_operation_id(&handle)?)
+        } else {
+            None
+        };
         state.operations.insert(
             handle.clone(),
             OperationRecord {
@@ -553,6 +608,7 @@ impl AuthenticatedCaller {
                 status: OperationStatus::Running,
                 expires_at,
                 build_prepared: false,
+                build_operation_id,
                 prepared_build: None,
             },
         );
@@ -567,6 +623,9 @@ impl AuthenticatedCaller {
             .operations
             .get_mut(handle)
             .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
+        if let Some(operation_id) = build_operation_id(record) {
+            self.broker.build_engine.cancel_approval(operation_id);
+        }
         record.status = status;
         record.prepared_build = None;
         Ok(())
@@ -601,7 +660,7 @@ impl AuthenticatedCaller {
         handle: &OperationHandle,
     ) -> Result<(), BrokerError> {
         self.check_epoch(state)?;
-        purge_expired(state, Instant::now());
+        purge_expired(state, Instant::now(), &self.broker.build_engine);
         let record = self.record_mut(state, handle)?;
         if record.status != OperationStatus::Running {
             return Err(BrokerError::new(
@@ -639,7 +698,7 @@ fn release_admission(state: &mut BrokerState, handle: &OperationHandle) {
     state.gc_inhibitors.remove(handle);
 }
 
-fn purge_expired(state: &mut BrokerState, now: Instant) {
+fn purge_expired(state: &mut BrokerState, now: Instant, build_engine: &LocalBuildEngine) {
     let expired = state
         .operations
         .iter()
@@ -648,8 +707,28 @@ fn purge_expired(state: &mut BrokerState, now: Instant) {
         .collect::<Vec<_>>();
     for handle in expired {
         release_admission(state, &handle);
-        state.operations.remove(&handle);
+        if let Some(record) = state.operations.remove(&handle)
+            && let Some(operation_id) = build_operation_id(&record)
+        {
+            build_engine.cancel_approval(operation_id);
+        }
     }
+}
+
+fn build_operation_id(record: &OperationRecord) -> Option<&OperationId> {
+    record.build_operation_id.as_ref()
+}
+
+fn mint_build_operation_id(handle: &OperationHandle) -> Result<OperationId, BrokerError> {
+    let token = handle
+        .as_str()
+        .strip_prefix("op_")
+        .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
+    let token = token
+        .get(..58)
+        .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
+    OperationId::new(&format!("build_{token}"))
+        .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))
 }
 
 fn mint_handle(state: &BrokerState, uid: u32, kind: BrokerOperationKind) -> OperationHandle {
@@ -780,13 +859,36 @@ mod tests {
     };
 
     use crate::{
-        BuildPlanTarget, BuildReadiness, CacheClassification, DerivationPath, DerivationPlanReport,
-        EvaluatedDerivation, NixVersion,
+        ApprovalJournalError, ApprovalJournalRecord, BuildPlanTarget, BuildReadiness,
+        CacheClassification, DerivationPath, DerivationPlanReport, EvaluatedDerivation, NixVersion,
     };
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
     const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
     const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+
+    #[derive(Default)]
+    struct Journal {
+        rows: Mutex<Vec<ApprovalJournalRecord>>,
+    }
+
+    impl ApprovalJournal for Journal {
+        fn record(&self, record: &ApprovalJournalRecord) -> Result<(), ApprovalJournalError> {
+            self.rows
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(record.clone());
+            Ok(())
+        }
+    }
+
+    struct FailingJournal;
+
+    impl ApprovalJournal for FailingJournal {
+        fn record(&self, _record: &ApprovalJournalRecord) -> Result<(), ApprovalJournalError> {
+            Err(ApprovalJournalError::new())
+        }
+    }
 
     fn build_plan(document_byte: u8) -> BuildPlan {
         let derivation =
@@ -910,7 +1012,7 @@ mod tests {
     }
 
     #[test]
-    fn private_build_plan_approval_is_uid_bound_exact_and_single_use() {
+    fn private_build_plan_approval_is_uid_bound_exact_and_journaled() {
         let broker = InProcessBroker::new().unwrap();
         let caller = broker
             .connect(InProcessCallerPeer::authenticated(1001))
@@ -921,47 +1023,81 @@ mod tests {
         let handle = caller.begin(BrokerOperationKind::Build).unwrap();
         let plan = build_plan(1);
         let digest = plan.digest().unwrap();
+        let journal = Journal::default();
         let preview = caller.prepare_build(&handle, plan.clone()).unwrap();
         assert_eq!(preview.build_plan_digest().len(), 71);
 
         assert_eq!(
-            caller
-                .take_approved_build(&handle, digest)
+            other
+                .approve_build(
+                    &handle,
+                    digest,
+                    ApprovalSource::Interactive,
+                    "2026-08-11T00:00:00Z",
+                    &journal,
+                )
                 .unwrap_err()
                 .code(),
-            BrokerErrorCode::BuildApprovalUnavailable
-        );
-        assert_eq!(
-            other.approve_build(&handle, digest).unwrap_err().code(),
             BrokerErrorCode::InvalidOperationHandle
         );
         assert_eq!(
             caller
-                .approve_build(&handle, Digest::from_bytes([9; 32]))
+                .approve_build(
+                    &handle,
+                    Digest::from_bytes([9; 32]),
+                    ApprovalSource::Interactive,
+                    "2026-08-11T00:00:00Z",
+                    &journal,
+                )
                 .unwrap_err()
                 .code(),
             BrokerErrorCode::BuildApprovalMismatch
         );
-        caller.approve_build(&handle, digest).unwrap();
-        assert_eq!(
-            caller.approve_build(&handle, digest).unwrap_err().code(),
-            BrokerErrorCode::BuildApprovalUnavailable
-        );
         assert_eq!(
             caller
-                .take_approved_build(&handle, Digest::from_bytes([8; 32]))
-                .unwrap_err()
-                .code(),
-            BrokerErrorCode::BuildApprovalMismatch
-        );
-        assert_eq!(caller.take_approved_build(&handle, digest).unwrap(), plan);
-        assert_eq!(
-            caller
-                .take_approved_build(&handle, digest)
+                .approve_build(
+                    &handle,
+                    digest,
+                    ApprovalSource::Interactive,
+                    "2026-08-11T00:00:00Z",
+                    &FailingJournal,
+                )
                 .unwrap_err()
                 .code(),
             BrokerErrorCode::BuildApprovalUnavailable
         );
+        assert_eq!(broker.build_engine.approval_count(), 0);
+        caller
+            .approve_build(
+                &handle,
+                digest,
+                ApprovalSource::AssumeYes,
+                "2026-08-11T00:00:00Z",
+                &journal,
+            )
+            .unwrap();
+        assert_eq!(
+            caller
+                .approve_build(
+                    &handle,
+                    digest,
+                    ApprovalSource::Interactive,
+                    "2026-08-11T00:00:01Z",
+                    &journal,
+                )
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::BuildApprovalUnavailable
+        );
+        let rows = journal
+            .rows
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].build_plan_digest(), digest);
+        assert_eq!(rows[0].source(), ApprovalSource::AssumeYes);
+        drop(rows);
+        assert_eq!(broker.build_engine.approval_count(), 1);
         assert_eq!(
             caller
                 .prepare_build(&handle, build_plan(2))
@@ -977,6 +1113,7 @@ mod tests {
         let caller = broker
             .connect(InProcessCallerPeer::authenticated(1001))
             .unwrap();
+        let journal = Journal::default();
 
         let wrong_kind = caller.begin(BrokerOperationKind::Acquire).unwrap();
         assert_eq!(
@@ -1002,15 +1139,17 @@ mod tests {
         let cancelled_plan = build_plan(1);
         let cancelled_digest = cancelled_plan.digest().unwrap();
         caller.prepare_build(&cancelled, cancelled_plan).unwrap();
-        caller.approve_build(&cancelled, cancelled_digest).unwrap();
+        caller
+            .approve_build(
+                &cancelled,
+                cancelled_digest,
+                ApprovalSource::Interactive,
+                "2026-08-11T00:00:00Z",
+                &journal,
+            )
+            .unwrap();
         caller.cancel(&cancelled).unwrap();
-        assert_eq!(
-            caller
-                .take_approved_build(&cancelled, cancelled_digest)
-                .unwrap_err()
-                .code(),
-            BrokerErrorCode::InvalidAdmissionTransition
-        );
+        assert_eq!(broker.build_engine.approval_count(), 0);
 
         let disconnected = caller.begin(BrokerOperationKind::Build).unwrap();
         let disconnected_plan = build_plan(2);
@@ -1019,16 +1158,16 @@ mod tests {
             .prepare_build(&disconnected, disconnected_plan)
             .unwrap();
         caller
-            .approve_build(&disconnected, disconnected_digest)
+            .approve_build(
+                &disconnected,
+                disconnected_digest,
+                ApprovalSource::Interactive,
+                "2026-08-11T00:00:01Z",
+                &journal,
+            )
             .unwrap();
         caller.disconnect().unwrap();
-        assert_eq!(
-            caller
-                .take_approved_build(&disconnected, disconnected_digest)
-                .unwrap_err()
-                .code(),
-            BrokerErrorCode::InvalidAdmissionTransition
-        );
+        assert_eq!(broker.build_engine.approval_count(), 0);
 
         let fresh = broker
             .connect(InProcessCallerPeer::authenticated(1001))
@@ -1037,15 +1176,17 @@ mod tests {
         let restarted_plan = build_plan(3);
         let restarted_digest = restarted_plan.digest().unwrap();
         fresh.prepare_build(&restarted, restarted_plan).unwrap();
-        fresh.approve_build(&restarted, restarted_digest).unwrap();
+        fresh
+            .approve_build(
+                &restarted,
+                restarted_digest,
+                ApprovalSource::Interactive,
+                "2026-08-11T00:00:02Z",
+                &journal,
+            )
+            .unwrap();
         broker.restart().unwrap();
-        assert_eq!(
-            fresh
-                .take_approved_build(&restarted, restarted_digest)
-                .unwrap_err()
-                .code(),
-            BrokerErrorCode::SessionRestarted
-        );
+        assert_eq!(broker.build_engine.approval_count(), 0);
     }
 
     #[test]
@@ -1060,12 +1201,28 @@ mod tests {
                 Instant::now() + Duration::from_secs(60),
             )
             .unwrap();
+        let plan = build_plan(4);
+        let digest = plan.digest().unwrap();
+        caller.prepare_build(&build, plan).unwrap();
+        caller
+            .approve_build(
+                &build,
+                digest,
+                ApprovalSource::Interactive,
+                "2026-08-11T00:00:03Z",
+                &Journal::default(),
+            )
+            .unwrap();
         caller.acquire_build(&build).unwrap();
         caller.acquire_gc_inhibit(&build).unwrap();
 
         {
             let mut state = broker.lock();
-            purge_expired(&mut state, Instant::now() + Duration::from_secs(61));
+            purge_expired(
+                &mut state,
+                Instant::now() + Duration::from_secs(61),
+                &broker.build_engine,
+            );
         }
 
         let snapshot = broker.admission_snapshot();
@@ -1073,6 +1230,7 @@ mod tests {
         assert!(!snapshot.build_held());
         assert!(!snapshot.gc_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
+        assert_eq!(broker.build_engine.approval_count(), 0);
     }
 
     #[test]

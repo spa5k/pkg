@@ -845,8 +845,34 @@ impl ApprovalJournalRecord {
 /// Closed persistence seam for the authoritative append-only journal.
 pub trait ApprovalJournal: Send + Sync {
     /// Durably records approval before a receipt may be issued.
-    fn record(&self, record: &ApprovalJournalRecord) -> Result<(), BuildEngineError>;
+    fn record(&self, record: &ApprovalJournalRecord) -> Result<(), ApprovalJournalError>;
 }
+
+/// Redacted persistence failure returned by approval journal implementations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApprovalJournalError;
+
+impl ApprovalJournalError {
+    /// Constructs the only public journal failure value.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ApprovalJournalError {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Display for ApprovalJournalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("approval journal failed")
+    }
+}
+
+impl std::error::Error for ApprovalJournalError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ApprovalGrant {
@@ -1074,6 +1100,11 @@ impl LocalBuildEngine {
     /// so an abandoned receipt cannot remain live inside the singleton broker.
     pub fn cancel_approval(&self, operation_id: &OperationId) -> bool {
         lock_recover(&self.approvals).remove(operation_id).is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn approval_count(&self) -> usize {
+        lock_recover(&self.approvals).len()
     }
 
     /// Executes only after fair admission, exact replan, and two-shot resources.
@@ -1363,7 +1394,7 @@ mod tests {
     }
 
     impl ApprovalJournal for Journal {
-        fn record(&self, record: &ApprovalJournalRecord) -> Result<(), BuildEngineError> {
+        fn record(&self, record: &ApprovalJournalRecord) -> Result<(), ApprovalJournalError> {
             lock_recover(&self.rows).push(record.clone());
             Ok(())
         }
@@ -1376,14 +1407,14 @@ mod tests {
     }
 
     impl ApprovalJournal for BlockingJournal {
-        fn record(&self, record: &ApprovalJournalRecord) -> Result<(), BuildEngineError> {
+        fn record(&self, record: &ApprovalJournalRecord) -> Result<(), ApprovalJournalError> {
             lock_recover(&self.rows).push(record.clone());
             self.entered
                 .send(())
-                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::JournalFailed))?;
+                .map_err(|_| ApprovalJournalError::new())?;
             lock_recover(&self.release)
                 .recv()
-                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::JournalFailed))
+                .map_err(|_| ApprovalJournalError::new())
         }
     }
 
