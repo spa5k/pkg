@@ -15,8 +15,8 @@ use crate::maintenance::{
     RootSetReport, VerifiedRepairScope,
 };
 use crate::{
-    DerivationPlanReport, EvaluateDerivationRequest, GcReport, JsonCodec, PathInfoReport, RootName,
-    RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    ApprovalSource, DerivationPlanReport, EvaluateDerivationRequest, GcReport, JsonCodec,
+    PathInfoReport, RootName, RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
@@ -90,6 +90,8 @@ pub enum CliBrokerRequest {
     PathInfo(OperationHandle, StorePath),
     /// Attempt substitution for one promoted store path.
     Substitute(OperationHandle, StorePath),
+    /// Approve the exact private plan already held under a build operation.
+    ApproveBuild(OperationHandle, BuildApprovalRequest),
     /// Verify one validated closed request.
     Verify(OperationHandle, VerifyRequest),
     /// Collect unreachable paths using the managed root set.
@@ -113,12 +115,45 @@ pub enum CliBrokerResponse {
     PathInfo(PathInfoReport),
     /// Validated substitution result.
     Substitute(SubstituteReport),
+    /// The exact private plan was durably approved for this operation.
+    BuildApproved,
     /// Validated verification result.
     Verify(VerifyReport),
     /// Validated garbage-collection result.
     Gc(GcReport),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
+}
+
+/// Closed user-approval pointer. It carries no receipt, target, derivation, or
+/// runtime option; the broker resolves the digest only against its private plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildApprovalRequest {
+    build_plan_digest: Digest,
+    source: ApprovalSource,
+}
+
+impl BuildApprovalRequest {
+    /// Constructs an approval pointer for one displayed private-plan digest.
+    #[must_use]
+    pub const fn new(build_plan_digest: Digest, source: ApprovalSource) -> Self {
+        Self {
+            build_plan_digest,
+            source,
+        }
+    }
+
+    /// Returns the exact displayed plan digest.
+    #[must_use]
+    pub const fn build_plan_digest(&self) -> Digest {
+        self.build_plan_digest
+    }
+
+    /// Returns the explicit one-operation approval source.
+    #[must_use]
+    pub const fn source(&self) -> ApprovalSource {
+        self.source
+    }
 }
 
 /// Closed privileged requests on the broker-to-helper channel.
@@ -200,6 +235,14 @@ impl ProductFrameCodec {
                     path: path.as_str(),
                 })?,
             ),
+            CliBrokerRequest::ApproveBuild(handle, approval) => (
+                14,
+                encode_json(&BuildApprovalWire {
+                    handle: handle.as_str(),
+                    build_plan_digest: approval.build_plan_digest.to_string(),
+                    source: approval_source_name(approval.source),
+                })?,
+            ),
             CliBrokerRequest::Verify(handle, request) => (
                 15,
                 encode_handle_body(handle, &request.encode().map_err(adapter_payload)?)?,
@@ -260,6 +303,17 @@ impl ProductFrameCodec {
                     CliBrokerRequest::Substitute(handle, path)
                 }
             }
+            14 => {
+                let wire: BuildApprovalOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::ApproveBuild(
+                    parse_handle(&wire.handle)?,
+                    BuildApprovalRequest::new(
+                        Digest::from_str(&wire.build_plan_digest)
+                            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                        parse_approval_source(&wire.source)?,
+                    ),
+                )
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, request))
@@ -297,6 +351,7 @@ impl ProductFrameCodec {
             CliBrokerResponse::Substitute(report) => {
                 (13, report.encode().map_err(adapter_payload)?)
             }
+            CliBrokerResponse::BuildApproved => (14, encode_json(&EmptyWire {})?),
             CliBrokerResponse::Verify(report) => (15, report.encode().map_err(adapter_payload)?),
             CliBrokerResponse::Gc(report) => (16, report.encode().map_err(adapter_payload)?),
             CliBrokerResponse::AdapterFailure(method, code) => (
@@ -350,6 +405,10 @@ impl ProductFrameCodec {
                 SubstituteReport::decode(&JsonCodec::default(), frame.payload)
                     .map_err(adapter_payload)?,
             ),
+            14 => {
+                let _: EmptyWire = decode_json(frame.payload)?;
+                CliBrokerResponse::BuildApproved
+            }
             15 => CliBrokerResponse::Verify(
                 VerifyReport::decode(&JsonCodec::default(), frame.payload)
                     .map_err(adapter_payload)?,
@@ -675,6 +734,18 @@ fn parse_status(value: &str) -> Result<OperationStatus, FrameError> {
     }
 }
 
+const fn approval_source_name(source: ApprovalSource) -> &'static str {
+    source.as_str()
+}
+
+fn parse_approval_source(value: &str) -> Result<ApprovalSource, FrameError> {
+    match value {
+        "interactive" => Ok(ApprovalSource::Interactive),
+        "yes" => Ok(ApprovalSource::AssumeYes),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
 fn parse_handle(value: &str) -> Result<OperationHandle, FrameError> {
     let tail = value.strip_prefix("op_").unwrap_or_default();
     if tail.len() == 64
@@ -762,6 +833,22 @@ struct HandlePathWire<'a> {
 struct HandlePathOwnedWire {
     handle: String,
     path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildApprovalWire<'a> {
+    handle: &'a str,
+    build_plan_digest: String,
+    source: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildApprovalOwnedWire {
+    handle: String,
+    build_plan_digest: String,
+    source: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1087,6 +1174,28 @@ mod tests {
             Ok((7, cli))
         );
 
+        let handle = OperationHandle(format!("op_{}", "a".repeat(64)));
+        let approval = CliBrokerRequest::ApproveBuild(
+            handle,
+            BuildApprovalRequest::new(Digest::from_bytes([0x42; 32]), ApprovalSource::Interactive),
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(8, &approval).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("buildPlanDigest"));
+        for forbidden in ["receipt", "derivation", "target", "substituter", "maxJobs"] {
+            assert!(!wire.contains(forbidden), "approval exposed {forbidden}");
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((8, approval))
+        );
+
+        let encoded =
+            ProductFrameCodec::encode_cli_response(8, &CliBrokerResponse::BuildApproved).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((8, CliBrokerResponse::BuildApproved))
+        );
         let helper = BrokerHelperRequest::PublishRootSet(root_set());
         let encoded = ProductFrameCodec::encode_helper_request(9, &helper).unwrap();
         assert_eq!(

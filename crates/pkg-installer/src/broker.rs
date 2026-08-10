@@ -1,9 +1,9 @@
 //! Unix CLI-to-broker transport with kernel-derived caller identity.
 
-use crate::platform::peer_uid;
+use crate::{BrokerApprovalAudit, BrokerCallerApprovalJournal, platform::peer_uid};
 use pkg_nix::{
-    CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer, MethodKind,
-    NixAdapter, NixAdapterError, ProductFrameCodec,
+    AuthenticatedCaller, CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer,
+    MethodKind, NixAdapter, NixAdapterError, ProductFrameCodec,
 };
 use std::{
     error::Error,
@@ -11,7 +11,7 @@ use std::{
     io::{self, Read, Write},
     os::unix::net::UnixStream,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const FRAME_HEADER_BYTES: usize = 20;
@@ -72,7 +72,7 @@ pub fn serve_broker_connection(
     mut stream: UnixStream,
     broker: &Arc<InProcessBroker>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, None)
+    serve_broker_connection_inner(&mut stream, broker, None, None)
 }
 
 /// Serves lifecycle plus typed managed-Nix calls for one authenticated peer.
@@ -86,20 +86,62 @@ pub fn serve_broker_connection_with_nix(
     broker: &Arc<InProcessBroker>,
     adapter: &Arc<dyn NixAdapter>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, Some(adapter))
+    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None)
+}
+
+/// Serves typed managed-Nix calls plus broker-private durable build approval.
+///
+/// The audit is bound to the kernel-derived peer uid inside this function.
+/// No caller-supplied identity or receipt is accepted.
+///
+/// # Errors
+///
+/// Returns a redacted transport error for authentication, framing, lifecycle,
+/// adapter, audit, or bounded I/O failures.
+pub fn serve_broker_connection_with_nix_and_approval(
+    mut stream: UnixStream,
+    broker: &Arc<InProcessBroker>,
+    adapter: &Arc<dyn NixAdapter>,
+    approval_audit: &BrokerApprovalAudit,
+) -> Result<(), BrokerTransportError> {
+    serve_broker_connection_inner(&mut stream, broker, Some(adapter), Some(approval_audit))
 }
 
 fn serve_broker_connection_inner(
     stream: &mut UnixStream,
     broker: &Arc<InProcessBroker>,
     adapter: Option<&Arc<dyn NixAdapter>>,
+    approval_audit: Option<&BrokerApprovalAudit>,
 ) -> Result<(), BrokerTransportError> {
     let uid = peer_uid(stream)
         .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?;
     let caller = broker
         .connect(InProcessCallerPeer::authenticated(uid))
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
-    let result = serve_frames(stream, |request| match request {
+    let approval_journal = approval_audit
+        .map(|audit| audit.for_caller(uid))
+        .transpose()
+        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
+    let result = serve_frames(stream, |request| {
+        dispatch_request(&caller, request, adapter, approval_journal.as_ref())
+    });
+    let disconnected = caller.disconnect();
+    match (result, disconnected) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Err(_)) => Err(BrokerTransportError::new(
+            BrokerTransportErrorCode::BrokerFailure,
+        )),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn dispatch_request(
+    caller: &AuthenticatedCaller,
+    request: CliBrokerRequest,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+    approval_journal: Option<&BrokerCallerApprovalJournal>,
+) -> Result<CliBrokerResponse, ()> {
+    match request {
         CliBrokerRequest::Begin(kind) => caller
             .begin(kind)
             .map(CliBrokerResponse::Started)
@@ -152,6 +194,19 @@ fn serve_broker_connection_inner(
                 CliBrokerResponse::Substitute,
             ))
         }
+        CliBrokerRequest::ApproveBuild(handle, approval) => {
+            let timestamp = broker_timestamp()?;
+            caller
+                .approve_build(
+                    &handle,
+                    approval.build_plan_digest(),
+                    approval.source(),
+                    &timestamp,
+                    approval_journal.ok_or(())?,
+                )
+                .map_err(|_| ())?;
+            Ok(CliBrokerResponse::BuildApproved)
+        }
         CliBrokerRequest::Verify(handle, request) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::Verify)
@@ -173,15 +228,14 @@ fn serve_broker_connection_inner(
                 CliBrokerResponse::Gc,
             ))
         }
-    });
-    let disconnected = caller.disconnect();
-    match (result, disconnected) {
-        (Err(error), _) => Err(error),
-        (Ok(()), Err(_)) => Err(BrokerTransportError::new(
-            BrokerTransportErrorCode::BrokerFailure,
-        )),
-        (Ok(()), Ok(())) => Ok(()),
     }
+}
+
+fn broker_timestamp() -> Result<String, ()> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ())?;
+    Ok(format!("unix-ms:{}", elapsed.as_millis()))
 }
 
 fn adapter_response<T>(
@@ -318,10 +372,80 @@ fn remaining(deadline: Instant) -> Result<Duration, BrokerTransportError> {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use pkg_nix::{BrokerOperationKind, OperationStatus};
-    use std::{io, net::Shutdown, thread};
+    use pkg_channel::BuildMode;
+    use pkg_core::{
+        channel::ChannelSequence,
+        selector::{SelectorId, SelectorInput},
+        state::recover_journal,
+        version::VersionPreference,
+    };
+    use pkg_nix::{
+        ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPlan, BuildPlanTarget,
+        BuildReadiness, CacheClassification, DerivationPath, DerivationPlanReport, Digest,
+        EvaluatedDerivation, NarHash, NixVersion, NixpkgsRevision, OperationStatus, OutputName,
+        PackageVersion, PolicyVersion, StorePath, System,
+    };
+    use std::{
+        collections::BTreeMap, io, net::Shutdown, os::unix::fs::PermissionsExt, str::FromStr,
+        thread,
+    };
+    use tempfile::TempDir;
+
+    const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
+    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+    const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+
+    fn build_plan() -> BuildPlan {
+        let derivation =
+            DerivationPath::from_str(&format!("/nix/store/{STORE_HASH}-hello-1.0.drv")).unwrap();
+        let output = StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap();
+        let output_name = OutputName::new("out").unwrap();
+        let evaluated = EvaluatedDerivation::new(
+            derivation.clone(),
+            "hello-1.0".to_owned(),
+            System::X8664Linux,
+            BTreeMap::from([(output_name.clone(), output)]),
+            Digest::from_bytes([1; 32]),
+            false,
+        )
+        .unwrap();
+        let report = DerivationPlanReport::new(
+            4,
+            derivation.clone(),
+            vec![output_name],
+            vec![evaluated],
+            Digest::from_bytes([2; 32]),
+            "hello".to_owned(),
+            PackageVersion::new("1.0"),
+        )
+        .unwrap();
+        BuildPlan::new(
+            &NixVersion::new("2.34.8").unwrap(),
+            Digest::from_bytes([3; 32]),
+            PolicyVersion::from_u64(7).unwrap(),
+            ChannelSequence::from_u64(42).unwrap(),
+            &NixpkgsRevision::new(REVISION).unwrap(),
+            &NarHash::new(NAR_HASH).unwrap(),
+            System::X8664Linux,
+            System::X8664Linux,
+            BuildMode::AllowWithGates,
+            vec![BuildPlanTarget::new(
+                SelectorId::new("sel_hello").unwrap(),
+                SelectorInput::new("hello").unwrap(),
+                pkg_nix::AttributePath::new("hello").unwrap(),
+                VersionPreference::Any,
+                report,
+            )],
+            vec![derivation],
+            CacheClassification::new(Digest::from_bytes([4; 32]), 2, 1, 100, 200).unwrap(),
+            BuildReadiness::new(true, false, true, true, true),
+            4,
+        )
+        .unwrap()
+    }
 
     fn read_response(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
         let mut header = [0_u8; FRAME_HEADER_BYTES];
@@ -376,5 +500,45 @@ mod tests {
         assert!(!snapshot.gc_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
         Ok(())
+    }
+
+    #[test]
+    fn approval_dispatch_records_authenticated_uid_before_acknowledgement() {
+        let temporary = TempDir::new().unwrap();
+        let directory = temporary.path().join("broker");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let audit =
+            BrokerApprovalAudit::open(&directory, nix::unistd::Uid::effective().as_raw()).unwrap();
+        let journal = audit.for_caller(1001).unwrap();
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let plan = build_plan();
+        let digest = plan.digest().unwrap();
+        caller.prepare_build(&handle, plan).unwrap();
+        let request = CliBrokerRequest::ApproveBuild(
+            handle,
+            BuildApprovalRequest::new(digest, ApprovalSource::Interactive),
+        );
+        assert_eq!(
+            dispatch_request(&caller, request.clone(), None, Some(&journal)),
+            Ok(CliBrokerResponse::BuildApproved)
+        );
+        assert!(dispatch_request(&caller, request, None, Some(&journal)).is_err());
+
+        let recovery =
+            recover_journal(&std::fs::read(directory.join("approvals.ndjson")).unwrap()).unwrap();
+        assert!(recovery.quarantined_suffix().is_empty());
+        assert_eq!(recovery.accepted().len(), 1);
+        assert_eq!(
+            recovery.accepted()[0]
+                .payload()
+                .fields()
+                .get("authenticatedUid"),
+            Some(&serde_json::json!(1001))
+        );
     }
 }

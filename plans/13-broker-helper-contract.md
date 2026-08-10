@@ -219,9 +219,12 @@ partial traffic cannot reset them. Over-limit,
 malformed, unauthenticated, and timed-out clients are connection-local failures. The entry point
   serves lifecycle begin/poll/cancel plus six typed adapter methods. The broker checks that the
   caller owns a live operation handle of an authorized class before invoking its fixed
-  `RealNixAdapter`; `Gc` also acquires exclusive GC admission. Method 14 (`Build`) is deliberately
-  unassigned on the wire: a structurally valid caller-created `BuildApprovalReceipt` is not
-  authorization. The broker's in-memory build operation now retains at most one private `BuildPlan`,
+  `RealNixAdapter`; `Gc` also acquires exclusive GC admission. Method 14 is the closed
+  `ApproveBuild` pointer: it carries only the live handle, displayed plan digest, allowlisted approval
+  source. The broker adds its own observed timestamp inside the authority boundary. The request
+  carries no caller-created `BuildApprovalReceipt`, target,
+  derivation, or Nix option, and therefore cannot create authority unless a trusted dispatcher has
+  already retained the exact private plan under that caller-bound handle. The broker's in-memory build operation now retains at most one private `BuildPlan`,
   returns only its sanitized preview/digest, validates approval against that exact digest, journals a
   broker-derived private operation identity before retaining the private receipt, and permits only
   one approval. The state is bound by the existing authenticated uid, handle, epoch, status,
@@ -236,7 +239,7 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   The production resource seam is fixed to the managed `/nix` filesystem and the host one-minute
   load average. It uses safe filesystem statistics plus bounded, fixed OS load sources and rejects
   unavailable, malformed, non-finite, negative, zero-capacity, or overflowing measurements.
-  The wire method remains unassigned until the dispatcher can construct the trusted replan closure
+  Build execution remains unassigned until the dispatcher can construct the trusted replan closure
   internally. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
@@ -250,9 +253,8 @@ issuing a receipt. This service-private audit is hash-chained, sequence-contiguo
 append+fsync, replay-refusing, and fails closed on a symlink, unsafe owner/mode, interior corruption,
 torn suffix, size overflow, or duplicate operation id. The broker never receives write access to a
 user's state directory, and a CLI-only row never constitutes broker authority.
-The broker-private sink implementation may land before the approval wire method, but the production
-service must not merely open and retain it: activation belongs in the same change that passes the
-kernel-authenticated caller-bound journal to `approve_build` before any receipt can be retained.
+The production service opens this sink only in the approval-wire change and passes a journal bound
+to the kernel-authenticated peer uid into `approve_build`; a receipt cannot be retained first.
 
 The CLI-side lifecycle client connects only to the platform's compiled-in broker endpoint, bounds
 connection establishment to five seconds, uses monotonic nonzero request ids, enforces the same

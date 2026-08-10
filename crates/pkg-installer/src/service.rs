@@ -2,8 +2,8 @@
 
 #[cfg(target_os = "linux")]
 use crate::{
-    LinuxHelperSession, LinuxRootSetStore, serve_broker_connection_with_nix,
-    serve_helper_connection,
+    BrokerApprovalAudit, LinuxHelperSession, LinuxRootSetStore,
+    serve_broker_connection_with_nix_and_approval, serve_helper_connection,
 };
 #[cfg(target_os = "linux")]
 use listenfd::ListenFd;
@@ -37,6 +37,8 @@ const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 const LINUX_HELPER_HOME: &str = "/var/lib/pkg/helper-home";
 #[cfg(target_os = "linux")]
 const LINUX_BROKER_HOME: &str = "/var/lib/pkg/broker-home";
+#[cfg(target_os = "linux")]
+const LINUX_BROKER_LOG: &str = "/var/lib/pkg/log/broker";
 #[cfg(target_os = "linux")]
 const MAX_BROKER_CONNECTIONS: usize = 32;
 #[cfg(target_os = "linux")]
@@ -114,6 +116,8 @@ pub fn run_linux_broker_from_activation() -> Result<(), ServiceError> {
     let listener = activated_unix_listener(LINUX_BROKER_SOCKET)?;
     let broker = InProcessBroker::new()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
+    let approval_audit = BrokerApprovalAudit::open(Path::new(LINUX_BROKER_LOG), expected_uid)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
     let adapter: Arc<dyn NixAdapter> = Arc::new(
         RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(LINUX_BROKER_HOME))
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
@@ -133,14 +137,16 @@ pub fn run_linux_broker_from_activation() -> Result<(), ServiceError> {
                 }
                 let connection_broker = Arc::clone(&broker);
                 let connection_adapter = Arc::clone(&adapter);
+                let connection_approval_audit = approval_audit.clone();
                 thread::Builder::new()
                     .name(String::from("pkg-broker-client"))
                     .spawn(move || {
                         let _permit = permit;
-                        let _ = serve_broker_connection_with_nix(
+                        let _ = serve_broker_connection_with_nix_and_approval(
                             stream,
                             &connection_broker,
                             &connection_adapter,
+                            &connection_approval_audit,
                         );
                     })
                     .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;

@@ -1153,14 +1153,15 @@ flowchart TD
   one-minute host load from `/proc/loadavg` on Linux or the fixed `/usr/sbin/sysctl vm.loadavg`
   query on macOS; malformed, non-finite, negative, unavailable, or overflowing measurements fail
   the dynamic preflight closed and remain outside the approval digest. A hardened installer-layer
-  primitive is ready for the broker's durable authority-side approval audit under its existing
+  primitive backs the broker's durable authority-side approval audit under its existing
   private log directory: rows bind the
   authenticated uid, private operation id, plan digest, policy, source, and timestamp in a
   hash-chained replay-refusing `0700`/`0600` file. This is separate from the CLI-written per-user
   operation journal, so the unprivileged service gains no access to user state and a CLI-only row is
-  never authority. It is deliberately not opened by the production service until the closed
-  approval dispatcher can pass its kernel-authenticated caller journal into `approve_build`; startup
-  validation alone would falsely imply that grants are being recorded. The shared local-build approval engine now
+  never authority. The closed method-14 approval pointer contains only a live handle, displayed
+  digest and allowlisted source; the broker supplies its own observed timestamp. The production service binds its private audit
+  journal to the socket-authenticated uid and passes it into `approve_build` before any receipt is
+  retained. No plan, target, receipt, or Nix option crosses that request. The shared local-build approval engine now
   reserves an operation before journal I/O without holding its authority mutex across that I/O;
   cancellation can revoke an in-flight recording, and a monotonic reservation identity prevents an
   operation-id retry from reviving the earlier journal call. The durable row may remain as audit

@@ -1350,6 +1350,7 @@ version = "0.0.0"
 dependencies = [
  "listenfd",
  "nix",
+ "pkg-channel",
  "pkg-core",
  "pkg-nix",
  "pkg-testkit",

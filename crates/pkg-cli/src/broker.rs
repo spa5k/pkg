@@ -10,10 +10,11 @@ use std::{
 };
 
 use pkg_nix::{
-    BrokerOperationKind, BuildReport, BuildRequest, CliBrokerRequest, CliBrokerResponse,
-    DerivationPlanReport, EvaluateDerivationRequest, GcReport, MethodKind, NixAdapter,
-    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
-    ProductFrameCodec, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildReport, BuildRequest,
+    CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest,
+    GcReport, MethodKind, NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle,
+    OperationStatus, PathInfoReport, ProductFrameCodec, StorePath, SubstituteReport, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -247,6 +248,20 @@ impl BrokerLifecycleClient {
             CliBrokerResponse::AdapterFailure(MethodKind::Substitute, code) => {
                 Err(BrokerClientError::adapter_failure(code))
             }
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Durably approves the broker-held private plan matching the displayed digest.
+    pub fn approve_build(
+        &mut self,
+        handle: OperationHandle,
+        digest: Digest,
+        source: ApprovalSource,
+    ) -> Result<(), BrokerClientError> {
+        let approval = BuildApprovalRequest::new(digest, source);
+        match self.transact(&CliBrokerRequest::ApproveBuild(handle, approval))? {
+            CliBrokerResponse::BuildApproved => Ok(()),
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
