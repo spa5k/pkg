@@ -38,6 +38,9 @@ serde_json = "=1.0.151"
 # reads and opens regular files with O_NOFOLLOW at the trust boundary.
 sha2 = "=0.10.9"
 libc = "=0.2.189"
+# Safe process-group signaling keeps timeout cleanup bounded even when Nix
+# descendants inherit the capture pipes.
+rustix = { version = "=1.1.4", features = ["process"] }
 
 # Runtime archives are streamed through a pure-Rust XZ decoder and inspected
 # entry-by-entry. tar's ambient unpack helpers are deliberately not used: the

@@ -434,7 +434,7 @@ impl BuildPlan {
         let mut expected_outputs = BTreeSet::new();
         for target in &targets {
             for derivation in target.plan.derivations() {
-                if derivation.system() != system {
+                if !derivation.system().is_compatible_with(system) {
                     return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
                 }
                 let identity = ClosureDocumentIdentity {

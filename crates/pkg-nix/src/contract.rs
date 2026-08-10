@@ -1119,6 +1119,58 @@ impl EvaluateDerivationRequest {
     }
 }
 
+/// The execution system recorded on an evaluated Nix derivation.
+///
+/// Nix uses the literal `builtin` for fetchers implemented by Nix itself;
+/// ordinary derivations carry one of pkg's supported platform triples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DerivationSystem {
+    /// A derivation executed for a supported host platform.
+    Platform(System),
+    /// A derivation executed by a Nix builtin rather than a platform builder.
+    Builtin,
+}
+
+impl DerivationSystem {
+    /// Returns the exact normalized Nix system spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Platform(system) => system.as_str(),
+            Self::Builtin => "builtin",
+        }
+    }
+
+    /// Returns whether this derivation can participate in a plan for `system`.
+    #[must_use]
+    pub fn is_compatible_with(self, system: System) -> bool {
+        match self {
+            Self::Platform(observed) => observed == system,
+            Self::Builtin => true,
+        }
+    }
+}
+
+impl From<System> for DerivationSystem {
+    fn from(system: System) -> Self {
+        Self::Platform(system)
+    }
+}
+
+impl FromStr for DerivationSystem {
+    type Err = NixAdapterError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == "builtin" {
+            Ok(Self::Builtin)
+        } else {
+            System::from_str(value)
+                .map(Self::Platform)
+                .map_err(|_| invalid("unknown derivation system"))
+        }
+    }
+}
+
 /// One derivation in an evaluate-only closure.
 ///
 /// Output paths are Nix's expected output paths. Their presence here does not
@@ -1127,7 +1179,7 @@ impl EvaluateDerivationRequest {
 pub struct EvaluatedDerivation {
     derivation: DerivationPath,
     name: String,
-    system: System,
+    system: DerivationSystem,
     outputs: BTreeMap<OutputName, StorePath>,
     document_digest: Digest,
     fixed_output: bool,
@@ -1144,7 +1196,7 @@ impl EvaluatedDerivation {
     pub fn new(
         derivation: DerivationPath,
         name: String,
-        system: System,
+        system: impl Into<DerivationSystem>,
         outputs: BTreeMap<OutputName, StorePath>,
         document_digest: Digest,
         fixed_output: bool,
@@ -1173,7 +1225,7 @@ impl EvaluatedDerivation {
         Ok(Self {
             derivation,
             name,
-            system,
+            system: system.into(),
             outputs,
             document_digest,
             fixed_output,
@@ -1192,7 +1244,7 @@ impl EvaluatedDerivation {
     }
     /// Returns the derivation system.
     #[must_use]
-    pub const fn system(&self) -> System {
+    pub const fn system(&self) -> DerivationSystem {
         self.system
     }
     /// Returns expected per-output paths, sorted by output name.
@@ -1442,7 +1494,7 @@ impl DerivationPlanReport {
         for item in dto.derivations.into_inner() {
             let derivation = DerivationPath::from_str(&item.derivation)
                 .map_err(|_| invalid("invalid derivation"))?;
-            let system = System::from_str(&item.system).map_err(|_| invalid("unknown system"))?;
+            let system = DerivationSystem::from_str(&item.system)?;
             let outputs = item
                 .outputs
                 .into_inner()
@@ -3152,6 +3204,17 @@ mod tests {
         }
         assert_eq!(MethodKind::ALL.len(), 7);
         assert!(MethodKind::from_str("nope").is_err());
+    }
+
+    #[test]
+    fn builtin_derivations_are_explicit_and_platform_compatible() {
+        let builtin = DerivationSystem::from_str("builtin").unwrap();
+        assert_eq!(builtin, DerivationSystem::Builtin);
+        assert!(builtin.is_compatible_with(System::Aarch64Linux));
+        let platform = DerivationSystem::from_str("x86_64-linux").unwrap();
+        assert!(platform.is_compatible_with(System::X8664Linux));
+        assert!(!platform.is_compatible_with(System::Aarch64Linux));
+        assert!(DerivationSystem::from_str("foreign-system").is_err());
     }
 
     #[test]

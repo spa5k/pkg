@@ -53,6 +53,7 @@ pub mod framing;
 pub mod maintenance;
 pub mod managed;
 pub mod nixpkgs;
+pub mod real;
 pub mod substitute;
 pub mod verify;
 
@@ -69,7 +70,7 @@ pub use build::{
 };
 pub use contract::{
     AcceptedFormats, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance, BuildReport,
-    BuildRequest, BuildStatus, DerivationPlanReport, DerivedOutputTarget,
+    BuildRequest, BuildStatus, DerivationPlanReport, DerivationSystem, DerivedOutputTarget,
     EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport, GcStatus, JsonCodec,
     MethodKind, NarIntegrity, NixVersion, OperationId, PathInfoReport, PathVerifyResult, RootName,
     RootRef, SchemaVersion, Signature, SubstituteOutcome, SubstituteReceipt, SubstituteReport,
@@ -104,6 +105,7 @@ pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
     NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,
 };
+pub use real::RealNixAdapter;
 pub use substitute::{
     CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,
     acquire_substitute,

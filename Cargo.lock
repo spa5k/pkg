@@ -1349,6 +1349,7 @@ dependencies = [
  "lzma-rust2",
  "pkg-channel",
  "pkg-core",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
