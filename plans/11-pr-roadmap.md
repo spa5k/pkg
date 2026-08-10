@@ -1127,14 +1127,19 @@ flowchart TD
   compile and exercise its platform-only contracts. The Linux `pkg-nix-broker` executable now
   validates its dedicated non-root identity and exact systemd-activated public socket, authenticates
   callers from peer credentials, and bounds concurrent sessions plus idle/write time. It deliberately
-  serves the existing operation lifecycle plus the first typed adapter probe: a caller-owned live
-  handle authorizes `Version`, which invokes the fixed managed `RealNixAdapter` and returns only its
-  validated `VersionInfo`. The other six adapter methods and command dispatch are not yet wired. The
+  serves the existing operation lifecycle plus six typed adapter calls: a caller-owned live handle
+  of an authorized class gates each exposed fixed `RealNixAdapter` method, and GC acquires its
+  machine-wide admission before execution. Build remains deliberately absent because a
+  caller-constructed `BuildApprovalReceipt` cannot be treated as authority; its wire method stays
+  unassigned until the broker holds and consumes an authenticated approval capability. Strict nested request bytes remain intact through
+  framing so the domain codecs still reject duplicates and unknown fields. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
-  version dispatch, and admission cleanup. The shipped command engine remains fail-closed until the
-  remaining typed methods and product-command wiring land. This does
+  six-method FakeNix dispatch, and admission cleanup. Adapter errors still close the connection
+  rather than crossing a typed error envelope, and the shipped command engine remains fail-closed
+  until that error lane, authenticated build capability, a CLI-side `NixAdapter` proxy, and
+  product-command wiring land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

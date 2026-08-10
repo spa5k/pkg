@@ -14,7 +14,11 @@ use crate::maintenance::{
     RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetEntry,
     RootSetReport, VerifiedRepairScope,
 };
-use crate::{JsonCodec, RootName, RootRef, VersionInfo};
+use crate::{
+    DerivationPlanReport, EvaluateDerivationRequest, GcReport, JsonCodec, PathInfoReport, RootName,
+    RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+};
+use serde_json::value::RawValue;
 
 const MAGIC: [u8; 4] = *b"PKG1";
 const PROTOCOL_VERSION: u16 = 1;
@@ -79,6 +83,16 @@ pub enum CliBrokerRequest {
     Cancel(OperationHandle),
     /// Query the pinned managed runtime under an authorized operation.
     Version(OperationHandle),
+    /// Evaluate one validated derivation request under a resolve operation.
+    EvaluateDerivation(OperationHandle, EvaluateDerivationRequest),
+    /// Query validated metadata for one promoted store path.
+    PathInfo(OperationHandle, StorePath),
+    /// Attempt substitution for one promoted store path.
+    Substitute(OperationHandle, StorePath),
+    /// Verify one validated closed request.
+    Verify(OperationHandle, VerifyRequest),
+    /// Collect unreachable paths using the managed root set.
+    Gc(OperationHandle),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -92,6 +106,16 @@ pub enum CliBrokerResponse {
     Cancelled,
     /// Validated pinned managed-runtime version information.
     Version(VersionInfo),
+    /// Validated derivation evaluation result.
+    DerivationPlan(DerivationPlanReport),
+    /// Validated path metadata result.
+    PathInfo(PathInfoReport),
+    /// Validated substitution result.
+    Substitute(SubstituteReport),
+    /// Validated verification result.
+    Verify(VerifyReport),
+    /// Validated garbage-collection result.
+    Gc(GcReport),
 }
 
 /// Closed privileged requests on the broker-to-helper channel.
@@ -155,6 +179,34 @@ impl ProductFrameCodec {
                     handle: handle.as_str(),
                 })?,
             ),
+            CliBrokerRequest::EvaluateDerivation(handle, request) => (
+                11,
+                encode_handle_body(handle, &request.encode().map_err(adapter_payload)?)?,
+            ),
+            CliBrokerRequest::PathInfo(handle, path) => (
+                12,
+                encode_json(&HandlePathWire {
+                    handle: handle.as_str(),
+                    path: path.as_str(),
+                })?,
+            ),
+            CliBrokerRequest::Substitute(handle, path) => (
+                13,
+                encode_json(&HandlePathWire {
+                    handle: handle.as_str(),
+                    path: path.as_str(),
+                })?,
+            ),
+            CliBrokerRequest::Verify(handle, request) => (
+                15,
+                encode_handle_body(handle, &request.encode().map_err(adapter_payload)?)?,
+            ),
+            CliBrokerRequest::Gc(handle) => (
+                16,
+                encode_json(&HandleWire {
+                    handle: handle.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -167,14 +219,42 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 | 10 => {
+            2 | 3 | 10 | 16 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
                 match frame.method {
                     2 => CliBrokerRequest::Poll(handle),
                     3 => CliBrokerRequest::Cancel(handle),
                     10 => CliBrokerRequest::Version(handle),
+                    16 => CliBrokerRequest::Gc(handle),
                     _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
+                }
+            }
+            11 | 15 => {
+                let (handle, body) = decode_handle_body(frame.payload)?;
+                let codec = JsonCodec::default();
+                match frame.method {
+                    11 => CliBrokerRequest::EvaluateDerivation(
+                        handle,
+                        EvaluateDerivationRequest::decode(&codec, body.get().as_bytes())
+                            .map_err(adapter_payload)?,
+                    ),
+                    15 => CliBrokerRequest::Verify(
+                        handle,
+                        VerifyRequest::decode(&codec, body.get().as_bytes())
+                            .map_err(adapter_payload)?,
+                    ),
+                    _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
+                }
+            }
+            12 | 13 => {
+                let wire: HandlePathOwnedWire = decode_json(frame.payload)?;
+                let handle = parse_handle(&wire.handle)?;
+                let path = StorePath::new(&wire.path).map_err(adapter_payload)?;
+                if frame.method == 12 {
+                    CliBrokerRequest::PathInfo(handle, path)
+                } else {
+                    CliBrokerRequest::Substitute(handle, path)
                 }
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
@@ -207,6 +287,15 @@ impl ProductFrameCodec {
                     .encode()
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
             ),
+            CliBrokerResponse::DerivationPlan(report) => {
+                (11, report.encode().map_err(adapter_payload)?)
+            }
+            CliBrokerResponse::PathInfo(report) => (12, report.encode().map_err(adapter_payload)?),
+            CliBrokerResponse::Substitute(report) => {
+                (13, report.encode().map_err(adapter_payload)?)
+            }
+            CliBrokerResponse::Verify(report) => (15, report.encode().map_err(adapter_payload)?),
+            CliBrokerResponse::Gc(report) => (16, report.encode().map_err(adapter_payload)?),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -230,6 +319,25 @@ impl ProductFrameCodec {
             10 => CliBrokerResponse::Version(
                 VersionInfo::decode(&JsonCodec::default(), frame.payload)
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
+            11 => CliBrokerResponse::DerivationPlan(
+                DerivationPlanReport::decode(&JsonCodec::default(), frame.payload)
+                    .map_err(adapter_payload)?,
+            ),
+            12 => CliBrokerResponse::PathInfo(
+                PathInfoReport::decode(&JsonCodec::default(), frame.payload)
+                    .map_err(adapter_payload)?,
+            ),
+            13 => CliBrokerResponse::Substitute(
+                SubstituteReport::decode(&JsonCodec::default(), frame.payload)
+                    .map_err(adapter_payload)?,
+            ),
+            15 => CliBrokerResponse::Verify(
+                VerifyReport::decode(&JsonCodec::default(), frame.payload)
+                    .map_err(adapter_payload)?,
+            ),
+            16 => CliBrokerResponse::Gc(
+                GcReport::decode(&JsonCodec::default(), frame.payload).map_err(adapter_payload)?,
             ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
@@ -439,6 +547,23 @@ fn decode_json<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, FrameError>
     serde_json::from_slice(bytes).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
 }
 
+fn adapter_payload<T>(_: T) -> FrameError {
+    FrameError::new(FrameErrorCode::InvalidPayload)
+}
+
+fn encode_handle_body(handle: &OperationHandle, body: &[u8]) -> Result<Vec<u8>, FrameError> {
+    let body: Box<RawValue> = decode_json(body)?;
+    encode_json(&HandleBodyWire {
+        handle: handle.as_str(),
+        request: &body,
+    })
+}
+
+fn decode_handle_body(bytes: &[u8]) -> Result<(OperationHandle, Box<RawValue>), FrameError> {
+    let wire: HandleBodyOwnedWire = decode_json(bytes)?;
+    Ok((parse_handle(&wire.handle)?, wire.request))
+}
+
 fn operation_name(kind: BrokerOperationKind) -> &'static str {
     match kind {
         BrokerOperationKind::Doctor => "doctor",
@@ -530,6 +655,34 @@ struct HandleWire<'a> {
 #[serde(deny_unknown_fields)]
 struct HandleOwnedWire {
     handle: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct HandleBodyWire<'a> {
+    handle: &'a str,
+    request: &'a RawValue,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HandleBodyOwnedWire {
+    handle: String,
+    request: Box<RawValue>,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct HandlePathWire<'a> {
+    handle: &'a str,
+    path: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HandlePathOwnedWire {
+    handle: String,
+    path: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -893,6 +1046,26 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_helper_response(&encoded),
             Ok((12, issued))
+        );
+    }
+
+    #[test]
+    fn typed_adapter_envelopes_preserve_nested_strictness_and_promote_paths() {
+        let handle = format!("op_{}", "3".repeat(64));
+        let duplicate_nested =
+            format!(r#"{{"handle":"{handle}","request":{{"schemaVersion":1,"schemaVersion":1}}}}"#);
+        let encoded =
+            encode_frame(CHANNEL_CLI_BROKER, 11, 91, duplicate_nested.as_bytes()).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Err(FrameError::new(FrameErrorCode::InvalidPayload))
+        );
+
+        let arbitrary_path = format!(r#"{{"handle":"{handle}","path":"/tmp/not-store"}}"#);
+        let encoded = encode_frame(CHANNEL_CLI_BROKER, 12, 92, arbitrary_path.as_bytes()).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Err(FrameError::new(FrameErrorCode::InvalidPayload))
         );
     }
 

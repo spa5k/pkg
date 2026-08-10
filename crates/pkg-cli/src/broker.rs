@@ -10,8 +10,9 @@ use std::{
 };
 
 use pkg_nix::{
-    BrokerOperationKind, CliBrokerRequest, CliBrokerResponse, OperationHandle, OperationStatus,
-    ProductFrameCodec, VersionInfo,
+    BrokerOperationKind, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport,
+    EvaluateDerivationRequest, GcReport, OperationHandle, OperationStatus, PathInfoReport,
+    ProductFrameCodec, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -181,6 +182,62 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Evaluates one closed derivation request under a live resolve handle.
+    pub fn evaluate_derivation(
+        &mut self,
+        handle: OperationHandle,
+        request: EvaluateDerivationRequest,
+    ) -> Result<DerivationPlanReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::EvaluateDerivation(handle, request))? {
+            CliBrokerResponse::DerivationPlan(report) => Ok(report),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Queries validated metadata for one promoted store path.
+    pub fn path_info(
+        &mut self,
+        handle: OperationHandle,
+        path: StorePath,
+    ) -> Result<PathInfoReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::PathInfo(handle, path))? {
+            CliBrokerResponse::PathInfo(report) => Ok(report),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Attempts substitution for one promoted store path.
+    pub fn substitute(
+        &mut self,
+        handle: OperationHandle,
+        path: StorePath,
+    ) -> Result<SubstituteReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::Substitute(handle, path))? {
+            CliBrokerResponse::Substitute(report) => Ok(report),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Verifies one validated closed request.
+    pub fn verify(
+        &mut self,
+        handle: OperationHandle,
+        request: VerifyRequest,
+    ) -> Result<VerifyReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::Verify(handle, request))? {
+            CliBrokerResponse::Verify(report) => Ok(report),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Collects unreachable paths using only the managed on-disk roots.
+    pub fn gc(&mut self, handle: OperationHandle) -> Result<GcReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::Gc(handle))? {
+            CliBrokerResponse::Gc(report) => Ok(report),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     fn transact(
         &mut self,
         request: &CliBrokerRequest,
@@ -313,16 +370,127 @@ mod tests {
     use super::*;
     use pkg_installer::serve_broker_connection_with_nix;
     use pkg_nix::{
-        AcceptedFormats, FormatVersion, InProcessBroker, NixAdapter, NixVersion, VersionInfo,
+        AcceptedFormats, AttributePath, DerivationPath, Digest, EvaluatedDerivation, FormatVersion,
+        GcStatus, InProcessBroker, NarHash, NarIntegrity, NixAdapter, NixVersion, NixpkgsRevision,
+        OutputName, OutputSelection, PackageVersion, PathVerifyResult, Signature,
+        SubstituteReceipt, System, TrustStatus, VerifyMode, VersionInfo,
     };
     use pkg_testkit::FakeNix;
     use std::{
+        collections::BTreeMap,
         fs,
         net::Shutdown,
         path::PathBuf,
+        str::FromStr,
         sync::{Arc, mpsc},
         thread,
     };
+
+    const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
+    const NAR: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+    const REV: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn store_path(name: &str) -> StorePath {
+        StorePath::new(&format!("/nix/store/{STORE_HASH}-{name}")).unwrap()
+    }
+
+    fn drv(name: &str) -> DerivationPath {
+        DerivationPath::from_str(&format!("/nix/store/{STORE_HASH}-{name}.drv")).unwrap()
+    }
+
+    fn nar_hash() -> NarHash {
+        NarHash::new(NAR).unwrap()
+    }
+
+    fn version_info() -> VersionInfo {
+        VersionInfo::new(
+            NixVersion::new("2.34.8").unwrap(),
+            AcceptedFormats::new(FormatVersion::new(1).unwrap()),
+        )
+    }
+
+    fn eval_request() -> EvaluateDerivationRequest {
+        EvaluateDerivationRequest::new(
+            AttributePath::new("hello").unwrap(),
+            System::X8664Linux,
+            NixpkgsRevision::new(REV).unwrap(),
+            nar_hash(),
+            OutputSelection::default_selection(),
+        )
+        .unwrap()
+    }
+
+    fn derivation_plan() -> DerivationPlanReport {
+        let root = drv("hello-1.0");
+        let mut outputs = BTreeMap::new();
+        outputs.insert(OutputName::new("out").unwrap(), store_path("hello-1.0"));
+        let evaluated = EvaluatedDerivation::new(
+            root.clone(),
+            "hello-1.0".into(),
+            System::X8664Linux,
+            outputs,
+            Digest::from_bytes([1; 32]),
+            false,
+        )
+        .unwrap();
+        DerivationPlanReport::new(
+            4,
+            root,
+            vec![OutputName::new("out").unwrap()],
+            vec![evaluated],
+            Digest::from_bytes([2; 32]),
+            "hello".into(),
+            PackageVersion::new("1.0"),
+        )
+        .unwrap()
+    }
+
+    fn path_info_report() -> PathInfoReport {
+        PathInfoReport::new(
+            store_path("hello-1.0"),
+            nar_hash(),
+            vec![Signature::new("cache:BBBBBBBB").unwrap()],
+            vec![],
+            Some(drv("hello-1.0")),
+            1024,
+            4096,
+        )
+        .unwrap()
+    }
+
+    fn substitute_report() -> SubstituteReport {
+        SubstituteReport::fetched(
+            store_path("hello-1.0"),
+            SubstituteReceipt::new(
+                "https://cache.nixos.org",
+                nar_hash(),
+                vec![Signature::new("cache:BBBBBBBB").unwrap()],
+            )
+            .unwrap(),
+        )
+    }
+
+    fn verify_request() -> VerifyRequest {
+        VerifyRequest::new(vec![store_path("hello-1.0")], VerifyMode::Recursive).unwrap()
+    }
+
+    fn verify_report() -> VerifyReport {
+        VerifyReport::new(vec![PathVerifyResult::new(
+            store_path("hello-1.0"),
+            NarIntegrity::Intact,
+            TrustStatus::Trusted,
+        )])
+        .unwrap()
+    }
+
+    fn gc_report() -> GcReport {
+        GcReport::new(
+            GcStatus::Collected,
+            vec![store_path("unreachable-1")],
+            12_345,
+        )
+        .unwrap()
+    }
 
     struct Scratch(PathBuf);
 
@@ -347,18 +515,29 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn real_transport_round_trips_lifecycle_and_cleanup() -> Result<(), Box<dyn Error>> {
+    fn real_transport_round_trips_all_exposed_typed_calls_and_cleanup() -> Result<(), Box<dyn Error>>
+    {
         let broker = InProcessBroker::new()?;
         let scratch = Scratch::new()?;
         let socket = scratch.0.join("broker.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket)?;
         let server_broker = Arc::clone(&broker);
-        let expected_version = VersionInfo::new(
-            NixVersion::new("2.34.8")?,
-            AcceptedFormats::new(FormatVersion::new(1)?),
-        );
+        let expected_version = version_info();
+        let expected_eval_request = eval_request();
+        let expected_plan = derivation_plan();
+        let expected_path = store_path("hello-1.0");
+        let expected_path_info = path_info_report();
+        let expected_substitute = substitute_report();
+        let expected_verify_request = verify_request();
+        let expected_verify = verify_report();
+        let expected_gc = gc_report();
         let fake = Arc::new(FakeNix::new());
-        fake.expect_version(Ok(expected_version.clone()));
+        fake.expect_version(Ok(expected_version.clone()))
+            .expect_evaluate_derivation(expected_eval_request.clone(), Ok(expected_plan.clone()))
+            .expect_path_info(expected_path.clone(), Ok(expected_path_info.clone()))
+            .expect_substitute(expected_path.clone(), Ok(expected_substitute.clone()))
+            .expect_verify(expected_verify_request.clone(), Ok(expected_verify.clone()))
+            .expect_gc(Ok(expected_gc.clone()));
         let server_adapter: Arc<dyn NixAdapter> = fake.clone();
         let worker = thread::spawn(move || {
             let (server, _) = listener.accept()?;
@@ -367,10 +546,36 @@ mod tests {
         });
         let mut client = BrokerLifecycleClient::connect(&socket)?;
 
-        let handle = client.begin(BrokerOperationKind::Build)?;
-        assert_eq!(client.version(handle.clone())?, expected_version);
-        assert_eq!(client.poll(handle.clone())?, OperationStatus::Running);
-        client.cancel(handle)?;
+        let resolve_handle = client.begin(BrokerOperationKind::Resolve)?;
+        assert_eq!(client.version(resolve_handle.clone())?, expected_version);
+        assert_eq!(
+            client.poll(resolve_handle.clone())?,
+            OperationStatus::Running
+        );
+        assert_eq!(
+            client.evaluate_derivation(resolve_handle.clone(), expected_eval_request)?,
+            expected_plan
+        );
+        assert_eq!(
+            client.path_info(resolve_handle.clone(), expected_path.clone())?,
+            expected_path_info
+        );
+        client.cancel(resolve_handle)?;
+
+        let acquire_handle = client.begin(BrokerOperationKind::Acquire)?;
+        assert_eq!(
+            client.substitute(acquire_handle.clone(), expected_path)?,
+            expected_substitute
+        );
+        assert_eq!(
+            client.verify(acquire_handle.clone(), expected_verify_request)?,
+            expected_verify
+        );
+        client.cancel(acquire_handle)?;
+
+        let gc_handle = client.begin(BrokerOperationKind::Gc)?;
+        assert_eq!(client.gc(gc_handle.clone())?, expected_gc);
+        client.cancel(gc_handle)?;
         client.stream.shutdown(Shutdown::Write)?;
         worker
             .join()

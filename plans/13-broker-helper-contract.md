@@ -48,6 +48,11 @@ there is exactly one version discriminator, not two independently drifting ones.
 | 2 | `Poll { handle }` | `Status { running|completed|cancelled }` |
 | 3 | `Cancel { handle }` | empty `Cancelled` acknowledgement |
 | 10 | `Version { handle }` | validated `VersionInfo` from the pinned managed runtime |
+| 11 | `EvaluateDerivation { handle, request }` | validated `DerivationPlanReport` |
+| 12 | `PathInfo { handle, path }` | validated `PathInfoReport` |
+| 13 | `Substitute { handle, path }` | validated `SubstituteReport` |
+| 15 | `Verify { handle, request }` | validated `VerifyReport` |
+| 16 | `Gc { handle }` | validated `GcReport` |
 
 The lifecycle frame contains no generic command payload. Each later command integration owns a
 new typed method/body or invokes the lifecycle API internally; it may not add `argv`, expression,
@@ -199,10 +204,14 @@ systemd-activated `/run/pkg/broker.sock`. It authenticates every client from `SO
 at most 32 concurrent sessions, and applies finite monotonic whole-frame read and write deadlines;
 partial traffic cannot reset them. Over-limit,
 malformed, unauthenticated, and timed-out clients are connection-local failures. The entry point
-  serves lifecycle begin/poll/cancel plus the first typed adapter probe, `Version`. The broker checks
-  that the caller owns a live operation handle before invoking its fixed `RealNixAdapter`; it still
-  does not fabricate product-command execution before the remaining typed adapter methods and
-  product-command dispatcher are connected.
+  serves lifecycle begin/poll/cancel plus six typed adapter methods. The broker checks that the
+  caller owns a live operation handle of an authorized class before invoking its fixed
+  `RealNixAdapter`; `Gc` also acquires exclusive GC admission. Method 14 (`Build`) is deliberately
+  unassigned on the wire: a structurally valid caller-created `BuildApprovalReceipt` is not
+  authorization, so local build remains unreachable until a broker-held, single-use approval
+  capability is designed and verified. Adapter failures currently fail the connection closed; a
+  later wiring slice adds the closed error envelope required by the CLI-side `NixAdapter` proxy.
+  Product-command execution is still not fabricated before that proxy and dispatcher are connected.
 
 The CLI-side lifecycle client connects only to the platform's compiled-in broker endpoint, bounds
 connection establishment to five seconds, uses monotonic nonzero request ids, enforces the same

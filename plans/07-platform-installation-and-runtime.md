@@ -1131,9 +1131,13 @@ snippets, or any foreign `/nix`.
     after five minutes, and blocked writes after 30 seconds. These are monotonic
     whole-frame deadlines, not per-syscall timers a slow-drip peer can reset. Each
     session owns its cleanup permit even if its worker exits abnormally. This entry point exposes the
-    accepted operation lifecycle and the first closed Real-Nix method, `Version`, using the fixed
-    managed binary and broker-private home. The other six adapter methods and product-command
-    dispatch remain PR-36 wiring slices; there is still no generic argv or Nix-expression surface.
+    accepted operation lifecycle and six closed Real-Nix adapter methods using the fixed managed
+    binary and broker-private home. Method/operation authorization is explicit, and GC admission is
+    acquired before collection. Build is intentionally not exposed: caller-created receipt fields
+    cannot authorize privileged execution, so a broker-held single-use approval capability must land
+    first. Closed adapter-error propagation, the CLI-side adapter proxy, authenticated build, and
+    product-command dispatch remain PR-36 wiring slices; there is still no generic argv or
+    Nix-expression surface.
 
 ## 17. Unresolved questions / spikes
 
