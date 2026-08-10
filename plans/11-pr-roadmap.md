@@ -1177,7 +1177,17 @@ flowchart TD
   `AuthenticatedBuildPolicy` can now be created only from a verified channel; private-plan
   construction cross-checks its sequence, policy, descriptor digest, revision, NAR hash, pinned
   managed-Nix version, build mode, and native host system against the opaque resolved operation
-  before invoking `BuildPlan::new`. The
+  before invoking `BuildPlan::new`. A broker-private cache classifier now derives its path subjects
+  only from those opaque resolved pairs, requires exact one-for-one probe coverage, computes the
+  canonical sorted path-presence digest and checked known-byte totals, and returns the private
+  derivation set requiring local build; all-hit, duplicate, incomplete, foreign, and overflowed
+  evidence fails closed. A second canonical digest binds that evidence to the exact normalized
+  resolved derivation/output graph and is rechecked by authenticated plan construction before the
+  evidence is consumed. Its managed-Nix probe checks the live local store first, contacts the fixed
+  cache lazily, accepts absence only as the pinned JSON-format-2 `null` result for the exact path,
+  and cryptographically verifies every remote hit with `nix store verify --no-contents
+  --sigs-needed 1` under the root-owned trust configuration before it can suppress a local build.
+  The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

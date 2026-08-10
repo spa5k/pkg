@@ -16,8 +16,8 @@ use pkg_core::{
 };
 use pkg_index::{IndexDocument, IndexQuery, InfoLookup};
 use pkg_nix::{
-    BuildPlanTarget, DerivationPlanReport, EvaluateDerivationRequest, NixAdapter, NixAdapterError,
-    VerifiedNixpkgsSource,
+    BuildCacheSubject, BuildPlanTarget, DerivationPlanReport, EvaluateDerivationRequest,
+    NixAdapter, NixAdapterError, VerifiedNixpkgsSource,
 };
 
 /// A selector paired with the authoritative result of pinned evaluation.
@@ -56,6 +56,21 @@ impl ResolvedPackagePlan {
             self.selector.version_preference().clone(),
             self.plan.clone(),
         ))
+    }
+
+    /// Returns cache subjects from this same opaque resolver-owned pair.
+    pub fn build_cache_subjects(&self) -> Result<Vec<BuildCacheSubject>, ResolveError> {
+        self.plan
+            .derivations()
+            .iter()
+            .map(|derivation| {
+                BuildCacheSubject::new(
+                    derivation.derivation().clone(),
+                    derivation.outputs().values().cloned().collect(),
+                )
+                .map_err(|_| ResolveError::new(ResolveErrorCode::InvalidSelector))
+            })
+            .collect()
     }
 }
 
@@ -349,6 +364,7 @@ mod tests {
         assert_eq!(resolved.selector().attribute().unwrap().as_str(), "ripgrep");
         assert_eq!(resolved.plan().version().as_str(), "14.1.0");
         assert!(resolved.build_plan_target().is_ok());
+        assert_eq!(resolved.build_cache_subjects().unwrap().len(), 1);
         assert_eq!(fake.assert_exhausted(), Ok(()));
     }
 

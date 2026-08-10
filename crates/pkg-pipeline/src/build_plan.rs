@@ -4,8 +4,8 @@ use pkg_channel::{BuildMode, VerifiedChannel};
 use pkg_core::state::Digest;
 use pkg_core::{ChannelSequence, NarHash, NixpkgsRevision, PolicyVersion, System};
 use pkg_nix::{
-    BuildEngineError, BuildEngineErrorCode, BuildPlan, BuildReadiness, CacheClassification,
-    DerivationPath, NixVersion, VersionInfo,
+    BuildCacheEvidence, BuildEngineError, BuildEngineErrorCode, BuildPlan, BuildReadiness,
+    NixVersion, VersionInfo,
 };
 
 use crate::ResolvedInstall;
@@ -80,6 +80,8 @@ pub enum LocalBuildPlanErrorCode {
     RuntimeMismatch,
     /// Resolver-owned targets could not be promoted without rebinding.
     InvalidResolvedTarget,
+    /// Cache facts were classified for a different resolved derivation/output set.
+    CacheEvidenceMismatch,
     /// Native policy, readiness, cache facts, or plan invariants refused the build.
     BuildRejected,
 }
@@ -130,17 +132,17 @@ impl std::error::Error for LocalBuildPlanError {}
 /// Constructs one private deterministic plan from authenticated policy and
 /// resolver-owned operation state.
 ///
-/// Missing derivations and cache/readiness observations are broker-private
-/// planning facts. This function does not serialize the resulting plan and
-/// accepts no installable string, flake reference, Nix option, or command argv.
-#[allow(clippy::too_many_arguments)]
+/// Cache evidence and readiness observations are broker-private planning facts.
+/// The opaque cache evidence keeps the classification identity paired with the
+/// exact missing derivations. This function does not serialize the resulting
+/// plan and accepts no installable string, flake reference, Nix option, or
+/// command argv.
 pub fn prepare_local_build_plan(
     policy: &AuthenticatedBuildPolicy,
     resolved: &ResolvedInstall,
     runtime: &VersionInfo,
     host_system: System,
-    missing_derivations: Vec<DerivationPath>,
-    cache_classification: CacheClassification,
+    cache_evidence: BuildCacheEvidence,
     readiness: BuildReadiness,
     host_cores: u32,
 ) -> Result<BuildPlan, LocalBuildPlanError> {
@@ -157,6 +159,15 @@ pub fn prepare_local_build_plan(
     let targets = resolved
         .build_plan_targets()
         .map_err(|_| LocalBuildPlanError::new(LocalBuildPlanErrorCode::InvalidResolvedTarget))?;
+    let cache_subjects = resolved
+        .build_cache_subjects()
+        .map_err(|_| LocalBuildPlanError::new(LocalBuildPlanErrorCode::InvalidResolvedTarget))?;
+    if !cache_evidence.matches_subjects(&cache_subjects) {
+        return Err(LocalBuildPlanError::new(
+            LocalBuildPlanErrorCode::CacheEvidenceMismatch,
+        ));
+    }
+    let (cache_classification, missing_derivations) = cache_evidence.into_parts();
     BuildPlan::new(
         &policy.nix_runtime_version,
         Digest::from_bytes(policy.descriptor_sha256),

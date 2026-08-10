@@ -47,6 +47,7 @@
 pub mod adapter;
 pub mod broker;
 pub mod build;
+pub mod build_cache;
 pub mod contract;
 pub mod error;
 pub mod framing;
@@ -68,6 +69,10 @@ pub use build::{
     BuildReadiness, BuildResources, CacheClassification, CancellationToken, HostResourceProbe,
     LocalBuildEngine, ResourceProbe, ResourceSnapshot, VolatileBuildEstimate,
     render_managed_build_nix_conf,
+};
+pub use build_cache::{
+    BuildCacheError, BuildCacheErrorCode, BuildCacheEvidence, BuildCacheProbe, BuildCacheSubject,
+    CachePathObservation, classify_build_cache,
 };
 pub use contract::{
     AcceptedFormats, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance, BuildReport,

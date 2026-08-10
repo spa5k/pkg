@@ -2,7 +2,7 @@ use std::fmt;
 
 use pkg_core::{ChannelSequence, NarHash, NixpkgsRevision, PackageSelector, PolicyVersion, System};
 use pkg_index::IndexDocument;
-use pkg_nix::{BuildPlanTarget, NixAdapter, VerifiedNixpkgsSource};
+use pkg_nix::{BuildCacheSubject, BuildPlanTarget, NixAdapter, VerifiedNixpkgsSource};
 use pkg_resolver::{ResolveError, ResolvedPackagePlan, resolve_package};
 
 /// All selectors resolved without realizing a store path.
@@ -70,6 +70,15 @@ impl ResolvedInstall {
             .iter()
             .map(ResolvedPackagePlan::build_plan_target)
             .collect()
+    }
+
+    /// Returns union cache subjects derived only from opaque resolved pairs.
+    pub fn build_cache_subjects(&self) -> Result<Vec<BuildCacheSubject>, ResolveError> {
+        self.targets
+            .iter()
+            .map(ResolvedPackagePlan::build_cache_subjects)
+            .collect::<Result<Vec<_>, _>>()
+            .map(|subjects| subjects.into_iter().flatten().collect())
     }
 }
 
