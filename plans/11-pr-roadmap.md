@@ -1127,11 +1127,14 @@ flowchart TD
   compile and exercise its platform-only contracts. The Linux `pkg-nix-broker` executable now
   validates its dedicated non-root identity and exact systemd-activated public socket, authenticates
   callers from peer credentials, and bounds concurrent sessions plus idle/write time. It deliberately
-  serves only the existing operation-lifecycle protocol until command dispatch is wired. The CLI
-  crate now has the matching fixed-endpoint lifecycle client: connect and I/O waits have finite
+  serves the existing operation lifecycle plus the first typed adapter probe: a caller-owned live
+  handle authorizes `Version`, which invokes the fixed managed `RealNixAdapter` and returns only its
+  validated `VersionInfo`. The other six adapter methods and command dispatch are not yet wired. The
+  CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
-  fails that connection. An end-to-end Unix-pair test exercises the actual broker server and admission
-  cleanup. The shipped command engine remains fail-closed until typed command methods land. This does
+  fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
+  version dispatch, and admission cleanup. The shipped command engine remains fail-closed until the
+  remaining typed methods and product-command wiring land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

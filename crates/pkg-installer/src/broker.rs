@@ -2,8 +2,8 @@
 
 use crate::platform::peer_uid;
 use pkg_nix::{
-    BrokerError, CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer,
-    ProductFrameCodec,
+    CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer, MethodKind,
+    NixAdapter, ProductFrameCodec,
 };
 use std::{
     error::Error,
@@ -72,17 +72,55 @@ pub fn serve_broker_connection(
     mut stream: UnixStream,
     broker: &Arc<InProcessBroker>,
 ) -> Result<(), BrokerTransportError> {
-    let uid = peer_uid(&stream)
+    serve_broker_connection_inner(&mut stream, broker, None)
+}
+
+/// Serves lifecycle plus typed managed-Nix calls for one authenticated peer.
+///
+/// # Errors
+///
+/// Returns a redacted transport error for authentication, framing, lifecycle,
+/// adapter, or bounded I/O failures.
+pub fn serve_broker_connection_with_nix(
+    mut stream: UnixStream,
+    broker: &Arc<InProcessBroker>,
+    adapter: &Arc<dyn NixAdapter>,
+) -> Result<(), BrokerTransportError> {
+    serve_broker_connection_inner(&mut stream, broker, Some(adapter))
+}
+
+fn serve_broker_connection_inner(
+    stream: &mut UnixStream,
+    broker: &Arc<InProcessBroker>,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+) -> Result<(), BrokerTransportError> {
+    let uid = peer_uid(stream)
         .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?;
     let caller = broker
         .connect(InProcessCallerPeer::authenticated(uid))
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
-    let result = serve_frames(&mut stream, |request| match request {
-        CliBrokerRequest::Begin(kind) => caller.begin(kind).map(CliBrokerResponse::Started),
-        CliBrokerRequest::Poll(handle) => caller.poll(&handle).map(CliBrokerResponse::Status),
+    let result = serve_frames(stream, |request| match request {
+        CliBrokerRequest::Begin(kind) => caller
+            .begin(kind)
+            .map(CliBrokerResponse::Started)
+            .map_err(|_| ()),
+        CliBrokerRequest::Poll(handle) => caller
+            .poll(&handle)
+            .map(CliBrokerResponse::Status)
+            .map_err(|_| ()),
         CliBrokerRequest::Cancel(handle) => {
-            caller.cancel(&handle)?;
+            caller.cancel(&handle).map_err(|_| ())?;
             Ok(CliBrokerResponse::Cancelled)
+        }
+        CliBrokerRequest::Version(handle) => {
+            caller
+                .authorize_adapter_call(&handle, MethodKind::Version)
+                .map_err(|_| ())?;
+            adapter
+                .ok_or(())?
+                .version()
+                .map(CliBrokerResponse::Version)
+                .map_err(|_| ())
         }
     });
     let disconnected = caller.disconnect();
@@ -97,7 +135,7 @@ pub fn serve_broker_connection(
 
 fn serve_frames(
     stream: &mut UnixStream,
-    mut dispatch: impl FnMut(CliBrokerRequest) -> Result<CliBrokerResponse, BrokerError>,
+    mut dispatch: impl FnMut(CliBrokerRequest) -> Result<CliBrokerResponse, ()>,
 ) -> Result<(), BrokerTransportError> {
     loop {
         let Some(frame) = read_frame(stream)? else {
@@ -106,7 +144,7 @@ fn serve_frames(
         let (request_id, request) = ProductFrameCodec::decode_cli_request(&frame)
             .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
         let response = dispatch(request)
-            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
+            .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
         let encoded = ProductFrameCodec::encode_cli_response(request_id, &response)
             .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
         let deadline = deadline_after(FRAME_WRITE_TIMEOUT)?;

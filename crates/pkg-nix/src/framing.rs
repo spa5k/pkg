@@ -14,7 +14,7 @@ use crate::maintenance::{
     RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetEntry,
     RootSetReport, VerifiedRepairScope,
 };
-use crate::{RootName, RootRef};
+use crate::{JsonCodec, RootName, RootRef, VersionInfo};
 
 const MAGIC: [u8; 4] = *b"PKG1";
 const PROTOCOL_VERSION: u16 = 1;
@@ -68,7 +68,7 @@ impl fmt::Display for FrameError {
 
 impl std::error::Error for FrameError {}
 
-/// Closed lifecycle controls on the CLI-to-broker channel.
+/// Closed controls on the CLI-to-broker channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliBrokerRequest {
     /// Begin one closed operation class.
@@ -77,9 +77,11 @@ pub enum CliBrokerRequest {
     Poll(OperationHandle),
     /// Cancel one opaque operation handle.
     Cancel(OperationHandle),
+    /// Query the pinned managed runtime under an authorized operation.
+    Version(OperationHandle),
 }
 
-/// Closed lifecycle responses on the broker-to-CLI channel.
+/// Closed responses on the broker-to-CLI channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliBrokerResponse {
     /// A fresh caller-bound operation was opened.
@@ -88,6 +90,8 @@ pub enum CliBrokerResponse {
     Status(OperationStatus),
     /// Cancellation was accepted and admission released.
     Cancelled,
+    /// Validated pinned managed-runtime version information.
+    Version(VersionInfo),
 }
 
 /// Closed privileged requests on the broker-to-helper channel.
@@ -145,6 +149,12 @@ impl ProductFrameCodec {
                     handle: handle.as_str(),
                 })?,
             ),
+            CliBrokerRequest::Version(handle) => (
+                10,
+                encode_json(&HandleWire {
+                    handle: handle.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -157,13 +167,14 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 => {
+            2 | 3 | 10 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
-                if frame.method == 2 {
-                    CliBrokerRequest::Poll(handle)
-                } else {
-                    CliBrokerRequest::Cancel(handle)
+                match frame.method {
+                    2 => CliBrokerRequest::Poll(handle),
+                    3 => CliBrokerRequest::Cancel(handle),
+                    10 => CliBrokerRequest::Version(handle),
+                    _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
                 }
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
@@ -190,6 +201,12 @@ impl ProductFrameCodec {
                 })?,
             ),
             CliBrokerResponse::Cancelled => (3, encode_json(&EmptyWire {})?),
+            CliBrokerResponse::Version(report) => (
+                10,
+                report
+                    .encode()
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -210,6 +227,10 @@ impl ProductFrameCodec {
                 let _: EmptyWire = decode_json(frame.payload)?;
                 CliBrokerResponse::Cancelled
             }
+            10 => CliBrokerResponse::Version(
+                VersionInfo::decode(&JsonCodec::default(), frame.payload)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -804,6 +825,7 @@ mod tests {
     use pkg_core::state::body_digest;
 
     use super::*;
+    use crate::{AcceptedFormats, FormatVersion, NixVersion};
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
 
@@ -845,6 +867,24 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
             Ok((11, started))
+        );
+
+        let handle = OperationHandle(format!("op_{}", "2".repeat(64)));
+        let version_request = CliBrokerRequest::Version(handle);
+        let encoded = ProductFrameCodec::encode_cli_request(13, &version_request).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((13, version_request))
+        );
+
+        let version_response = CliBrokerResponse::Version(VersionInfo::new(
+            NixVersion::new("2.34.8").unwrap(),
+            AcceptedFormats::new(FormatVersion::new(1).unwrap()),
+        ));
+        let encoded = ProductFrameCodec::encode_cli_response(14, &version_response).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((14, version_response))
         );
 
         let issued =

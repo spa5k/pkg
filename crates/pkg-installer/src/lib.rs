@@ -16,7 +16,10 @@ pub use assets::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets,
     linux_install_assets,
 };
-pub use broker::{BrokerTransportError, BrokerTransportErrorCode, serve_broker_connection};
+pub use broker::{
+    BrokerTransportError, BrokerTransportErrorCode, serve_broker_connection,
+    serve_broker_connection_with_nix,
+};
 pub use helper::{
     BrokerHelperDispatch, HelperTransportError, HelperTransportErrorCode, LinuxHelperSession,
     serve_helper_connection,

@@ -2,7 +2,8 @@
 
 #[cfg(target_os = "linux")]
 use crate::{
-    LinuxHelperSession, LinuxRootSetStore, serve_broker_connection, serve_helper_connection,
+    LinuxHelperSession, LinuxRootSetStore, serve_broker_connection_with_nix,
+    serve_helper_connection,
 };
 #[cfg(target_os = "linux")]
 use listenfd::ListenFd;
@@ -10,7 +11,8 @@ use listenfd::ListenFd;
 use nix::unistd::{Uid, User};
 #[cfg(target_os = "linux")]
 use pkg_nix::{
-    InProcessBroker, InProcessHelper, InProcessPeer, RootNixRepairExecutor, VerifiedRepairExecutor,
+    InProcessBroker, InProcessHelper, InProcessPeer, NixAdapter, RealNixAdapter,
+    RootNixRepairExecutor, VerifiedRepairExecutor,
 };
 use std::{error::Error, fmt};
 #[cfg(target_os = "linux")]
@@ -33,6 +35,8 @@ const LINUX_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
 const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_HOME: &str = "/var/lib/pkg/helper-home";
+#[cfg(target_os = "linux")]
+const LINUX_BROKER_HOME: &str = "/var/lib/pkg/broker-home";
 #[cfg(target_os = "linux")]
 const MAX_BROKER_CONNECTIONS: usize = 32;
 #[cfg(target_os = "linux")]
@@ -110,6 +114,10 @@ pub fn run_linux_broker_from_activation() -> Result<(), ServiceError> {
     let listener = activated_unix_listener(LINUX_BROKER_SOCKET)?;
     let broker = InProcessBroker::new()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
+    let adapter: Arc<dyn NixAdapter> = Arc::new(
+        RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(LINUX_BROKER_HOME))
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+    );
     let limiter = ConnectionLimiter::new(MAX_BROKER_CONNECTIONS);
 
     loop {
@@ -124,11 +132,16 @@ pub fn run_linux_broker_from_activation() -> Result<(), ServiceError> {
                     continue;
                 }
                 let connection_broker = Arc::clone(&broker);
+                let connection_adapter = Arc::clone(&adapter);
                 thread::Builder::new()
                     .name(String::from("pkg-broker-client"))
                     .spawn(move || {
                         let _permit = permit;
-                        let _ = serve_broker_connection(stream, &connection_broker);
+                        let _ = serve_broker_connection_with_nix(
+                            stream,
+                            &connection_broker,
+                            &connection_adapter,
+                        );
                     })
                     .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;
             }

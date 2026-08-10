@@ -47,6 +47,7 @@ there is exactly one version discriminator, not two independently drifting ones.
 | 1 | `Begin { operation }` where operation is a closed V1 class | `Started { handle }` |
 | 2 | `Poll { handle }` | `Status { running|completed|cancelled }` |
 | 3 | `Cancel { handle }` | empty `Cancelled` acknowledgement |
+| 10 | `Version { handle }` | validated `VersionInfo` from the pinned managed runtime |
 
 The lifecycle frame contains no generic command payload. Each later command integration owns a
 new typed method/body or invokes the lifecycle API internally; it may not add `argv`, expression,
@@ -198,8 +199,10 @@ systemd-activated `/run/pkg/broker.sock`. It authenticates every client from `SO
 at most 32 concurrent sessions, and applies finite monotonic whole-frame read and write deadlines;
 partial traffic cannot reset them. Over-limit,
 malformed, unauthenticated, and timed-out clients are connection-local failures. The entry point
-currently serves only lifecycle begin/poll/cancel; it does not fabricate command execution before
-the typed product-command dispatcher is connected to the managed adapter.
+  serves lifecycle begin/poll/cancel plus the first typed adapter probe, `Version`. The broker checks
+  that the caller owns a live operation handle before invoking its fixed `RealNixAdapter`; it still
+  does not fabricate product-command execution before the remaining typed adapter methods and
+  product-command dispatcher are connected.
 
 The CLI-side lifecycle client connects only to the platform's compiled-in broker endpoint, bounds
 connection establishment to five seconds, uses monotonic nonzero request ids, enforces the same

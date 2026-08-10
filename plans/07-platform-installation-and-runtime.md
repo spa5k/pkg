@@ -1130,9 +1130,10 @@ snippets, or any foreign `/nix`.
     concurrent client sessions; excess connections are closed, idle reads expire
     after five minutes, and blocked writes after 30 seconds. These are monotonic
     whole-frame deadlines, not per-syscall timers a slow-drip peer can reset. Each
-    session owns its cleanup permit even if its worker exits abnormally. This entry point currently
-    exposes only the accepted operation-lifecycle protocol; product-command/Real-Nix
-    dispatch remains a separate PR-36 wiring slice.
+    session owns its cleanup permit even if its worker exits abnormally. This entry point exposes the
+    accepted operation lifecycle and the first closed Real-Nix method, `Version`, using the fixed
+    managed binary and broker-private home. The other six adapter methods and product-command
+    dispatch remain PR-36 wiring slices; there is still no generic argv or Nix-expression surface.
 
 ## 17. Unresolved questions / spikes
 

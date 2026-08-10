@@ -80,6 +80,19 @@ pub enum BrokerOperationKind {
     Repair,
 }
 
+impl BrokerOperationKind {
+    const ALL: [Self; 8] = [
+        Self::Doctor,
+        Self::Refresh,
+        Self::Resolve,
+        Self::Acquire,
+        Self::Build,
+        Self::Activate,
+        Self::Gc,
+        Self::Repair,
+    ];
+}
+
 /// Opaque broker-issued operation handle.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OperationHandle(pub(crate) String);
@@ -299,6 +312,41 @@ impl AuthenticatedCaller {
             return Err(BrokerError::new(BrokerErrorCode::OperationExpired));
         }
         Ok(record.status)
+    }
+
+    /// Authorizes one typed adapter call against a running caller-owned handle.
+    ///
+    /// This never executes Nix and accepts no argv or configuration. It only
+    /// proves that the operation class may invoke the closed adapter method.
+    pub fn authorize_adapter_call(
+        &self,
+        handle: &OperationHandle,
+        method: crate::MethodKind,
+    ) -> Result<(), BrokerError> {
+        let allowed = match method {
+            crate::MethodKind::Version => &BrokerOperationKind::ALL[..],
+            crate::MethodKind::EvaluateDerivation => &[BrokerOperationKind::Resolve],
+            crate::MethodKind::PathInfo => &[
+                BrokerOperationKind::Doctor,
+                BrokerOperationKind::Resolve,
+                BrokerOperationKind::Acquire,
+                BrokerOperationKind::Build,
+                BrokerOperationKind::Activate,
+                BrokerOperationKind::Gc,
+                BrokerOperationKind::Repair,
+            ],
+            crate::MethodKind::Substitute => &[BrokerOperationKind::Acquire],
+            crate::MethodKind::Build => &[BrokerOperationKind::Build],
+            crate::MethodKind::Verify => &[
+                BrokerOperationKind::Doctor,
+                BrokerOperationKind::Acquire,
+                BrokerOperationKind::Build,
+                BrokerOperationKind::Repair,
+            ],
+            crate::MethodKind::Gc => &[BrokerOperationKind::Gc],
+        };
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, allowed)
     }
 
     /// Acquires the machine-wide local-build lease for this operation.
@@ -731,6 +779,16 @@ mod tests {
             caller.acquire_gc(&doctor).unwrap_err().code(),
             BrokerErrorCode::InvalidAdmissionTransition
         );
+        assert_eq!(
+            caller
+                .authorize_adapter_call(&doctor, crate::MethodKind::Build)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        caller
+            .authorize_adapter_call(&doctor, crate::MethodKind::Version)
+            .unwrap();
 
         let build = caller.begin(BrokerOperationKind::Build).unwrap();
         assert_eq!(

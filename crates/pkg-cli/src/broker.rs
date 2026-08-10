@@ -11,7 +11,7 @@ use std::{
 
 use pkg_nix::{
     BrokerOperationKind, CliBrokerRequest, CliBrokerResponse, OperationHandle, OperationStatus,
-    ProductFrameCodec,
+    ProductFrameCodec, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -168,6 +168,19 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Queries the validated pinned managed-runtime version under one handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted connector error for framing, transport, correlation,
+    /// authorization, adapter, or response-kind failures.
+    pub fn version(&mut self, handle: OperationHandle) -> Result<VersionInfo, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::Version(handle))? {
+            CliBrokerResponse::Version(report) => Ok(report),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     fn transact(
         &mut self,
         request: &CliBrokerRequest,
@@ -298,9 +311,18 @@ fn remaining(deadline: Instant) -> Result<Duration, BrokerClientError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pkg_installer::serve_broker_connection;
-    use pkg_nix::InProcessBroker;
-    use std::{fs, net::Shutdown, path::PathBuf, sync::Arc, thread};
+    use pkg_installer::serve_broker_connection_with_nix;
+    use pkg_nix::{
+        AcceptedFormats, FormatVersion, InProcessBroker, NixAdapter, NixVersion, VersionInfo,
+    };
+    use pkg_testkit::FakeNix;
+    use std::{
+        fs,
+        net::Shutdown,
+        path::PathBuf,
+        sync::{Arc, mpsc},
+        thread,
+    };
 
     struct Scratch(PathBuf);
 
@@ -331,14 +353,22 @@ mod tests {
         let socket = scratch.0.join("broker.sock");
         let listener = std::os::unix::net::UnixListener::bind(&socket)?;
         let server_broker = Arc::clone(&broker);
+        let expected_version = VersionInfo::new(
+            NixVersion::new("2.34.8")?,
+            AcceptedFormats::new(FormatVersion::new(1)?),
+        );
+        let fake = Arc::new(FakeNix::new());
+        fake.expect_version(Ok(expected_version.clone()));
+        let server_adapter: Arc<dyn NixAdapter> = fake.clone();
         let worker = thread::spawn(move || {
             let (server, _) = listener.accept()?;
-            serve_broker_connection(server, &server_broker)
+            serve_broker_connection_with_nix(server, &server_broker, &server_adapter)
                 .map_err(|error| io::Error::other(error.to_string()))
         });
         let mut client = BrokerLifecycleClient::connect(&socket)?;
 
         let handle = client.begin(BrokerOperationKind::Build)?;
+        assert_eq!(client.version(handle.clone())?, expected_version);
         assert_eq!(client.poll(handle.clone())?, OperationStatus::Running);
         client.cancel(handle)?;
         client.stream.shutdown(Shutdown::Write)?;
@@ -348,12 +378,14 @@ mod tests {
         let snapshot = broker.admission_snapshot();
         assert!(!snapshot.build_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
+        fake.assert_exhausted()?;
         Ok(())
     }
 
     #[test]
     fn mismatched_response_poisoning_prevents_stream_reuse() -> Result<(), Box<dyn Error>> {
         let (mut server, client) = UnixStream::pair()?;
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || -> Result<(), io::Error> {
             let deadline = Instant::now()
                 .checked_add(RESPONSE_TIMEOUT)
@@ -362,7 +394,10 @@ mod tests {
             server.write_all(
                 &ProductFrameCodec::encode_cli_response(999, &CliBrokerResponse::Cancelled)
                     .map_err(io::Error::other)?,
-            )
+            )?;
+            release_rx
+                .recv()
+                .map_err(|_| io::Error::other("client dropped before release"))
         });
         let mut client = BrokerLifecycleClient::from_stream(client);
         assert_eq!(
@@ -377,6 +412,7 @@ mod tests {
                 .map_err(|error| error.code()),
             Err(BrokerClientErrorCode::ConnectionFailed)
         );
+        release_tx.send(())?;
         worker
             .join()
             .map_err(|_| io::Error::other("fake broker panicked"))??;
