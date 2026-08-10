@@ -402,6 +402,14 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
     ),
     MacOsInstallAsset::path(
+        "helper-log-dir",
+        MacOsAssetKind::Directory,
+        "/Library/Application Support/pkg/log/helper",
+        0o700,
+        MacOsAssetPrincipal::Root,
+        MacOsAssetPrincipal::Wheel,
+    ),
+    MacOsInstallAsset::path(
         "broker-home",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/broker-home",
@@ -416,6 +424,22 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         0o700,
         MacOsAssetPrincipal::Broker,
         MacOsAssetPrincipal::Broker,
+    ),
+    MacOsInstallAsset::path(
+        "helper-home",
+        MacOsAssetKind::Directory,
+        "/Library/Application Support/pkg/helper-home",
+        0o700,
+        MacOsAssetPrincipal::Root,
+        MacOsAssetPrincipal::Wheel,
+    ),
+    MacOsInstallAsset::path(
+        "helper-tmp",
+        MacOsAssetKind::Directory,
+        "/Library/Application Support/pkg/helper-home/tmp",
+        0o700,
+        MacOsAssetPrincipal::Root,
+        MacOsAssetPrincipal::Wheel,
     ),
     MacOsInstallAsset::path(
         "broker-binary",
@@ -587,11 +611,13 @@ impl MacOsLaunchdAssets {
 <plist version="1.0"><dict>
 <key>Label</key><string>org.pkg.root-helper</string>
 <key>ProgramArguments</key><array><string>/opt/pkg/bin/pkg-root-helper</string><string>--serve-macos</string></array>
+<key>EnvironmentVariables</key><dict><key>HOME</key><string>/Library/Application Support/pkg/helper-home</string><key>TMPDIR</key><string>/Library/Application Support/pkg/helper-home/tmp</string></dict>
+<key>WorkingDirectory</key><string>/Library/Application Support/pkg/helper-home</string>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 <key>UserName</key><string>root</string><key>GroupName</key><string>pkg-nix-broker</string>
 <key>ProcessType</key><string>Standard</string><key>Umask</key><integer>63</integer>
-<key>StandardOutPath</key><string>/Library/Application Support/pkg/log/root-helper.log</string>
-<key>StandardErrorPath</key><string>/Library/Application Support/pkg/log/root-helper.log</string>
+<key>StandardOutPath</key><string>/Library/Application Support/pkg/log/helper/root-helper.log</string>
+<key>StandardErrorPath</key><string>/Library/Application Support/pkg/log/helper/root-helper.log</string>
 </dict></plist>
 "#;
 
@@ -1217,6 +1243,21 @@ mod tests {
                 "/Library/Application Support/pkg/broker-home/tmp",
                 MacOsAssetPrincipal::Broker,
             ),
+            (
+                "helper-home",
+                "/Library/Application Support/pkg/helper-home",
+                MacOsAssetPrincipal::Root,
+            ),
+            (
+                "helper-tmp",
+                "/Library/Application Support/pkg/helper-home/tmp",
+                MacOsAssetPrincipal::Root,
+            ),
+            (
+                "helper-log-dir",
+                "/Library/Application Support/pkg/log/helper",
+                MacOsAssetPrincipal::Root,
+            ),
         ] {
             let asset = MACOS_ASSETS
                 .iter()
@@ -1253,6 +1294,12 @@ mod tests {
             "<key>TMPDIR</key><string>/Library/Application Support/pkg/broker-home/tmp</string>"
         ));
         assert!(MacOsLaunchdAssets::ROOT_HELPER.contains("pkg-root-helper"));
+        assert!(MacOsLaunchdAssets::ROOT_HELPER.contains(
+            "<key>HOME</key><string>/Library/Application Support/pkg/helper-home</string>"
+        ));
+        assert!(MacOsLaunchdAssets::ROOT_HELPER.contains(
+            "<key>TMPDIR</key><string>/Library/Application Support/pkg/helper-home/tmp</string>"
+        ));
         assert!(
             MacOsLaunchdAssets::ROOT_HELPER
                 .contains("<key>GroupName</key><string>pkg-nix-broker</string>")

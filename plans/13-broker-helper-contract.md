@@ -177,7 +177,10 @@ the immutable policy, so it cannot accidentally become a raw-process API.
 The privileged repair executor is a distinct fixed launcher. Nix 2.34.8 returns
 `repairPath is not supported by store 'daemon'`, including for root, so each helper repair/verify
 probe pins `--store local` against the exclusively managed `/nix/var/nix` store. The helper still
-clears the environment, uses the root-owned managed config, bounds output/time, and accepts only a
+clears the environment, uses the root-owned managed config, and has a distinct root-owned private
+home/tmp pair (`/var/lib/pkg/helper-home{,/tmp}` on Linux;
+`/Library/Application Support/pkg/helper-home{,/tmp}` on macOS). It never reuses the
+broker-owned home. The launcher bounds output/time and accepts only a
 capability-resolved `VerifiedRepairScope`; there is no framed or public store URL, path, argv,
 option, substituter, or key input. Cache-only pins `max-jobs=0` and empty builders, then verifies
 the path and reports `CacheMiss` only when the repair command succeeded, the path remains damaged,

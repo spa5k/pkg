@@ -199,12 +199,30 @@ const ASSETS: &[LinuxInstallAsset] = &[
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
     LinuxInstallAsset::new(
+        "helper-log-dir",
+        LinuxAssetKind::Directory,
+        "/var/lib/pkg/log/helper",
+        Some(0o700),
+    ),
+    LinuxInstallAsset::new(
         "broker-home",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/broker-home",
         Some(0o700),
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
+    LinuxInstallAsset::new(
+        "helper-home",
+        LinuxAssetKind::Directory,
+        "/var/lib/pkg/helper-home",
+        Some(0o700),
+    ),
+    LinuxInstallAsset::new(
+        "helper-tmp",
+        LinuxAssetKind::Directory,
+        "/var/lib/pkg/helper-home/tmp",
+        Some(0o700),
+    ),
     LinuxInstallAsset::new(
         "broker-tmp",
         LinuxAssetKind::Directory,
@@ -313,7 +331,7 @@ impl LinuxSystemdAssets {
     pub const HELPER_SOCKET: &'static str = "[Unit]\nDescription=pkg privileged root helper socket\n\n[Socket]\nListenStream=/run/pkg-helper/root-helper.sock\nSocketUser=root\nSocketGroup=pkg-nix-broker\nSocketMode=0660\nDirectoryMode=0750\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
 
     /// Narrow root helper; it has no shell and no public command grammar.
-    pub const HELPER_SERVICE: &'static str = "[Unit]\nDescription=pkg privileged root helper\nRequires=pkg-root-helper.socket\nAfter=pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-root-helper\nUser=root\nGroup=root\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/nix/var/nix/gcroots/pkg /nix/store /var/lib/pkg/log\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
+    pub const HELPER_SERVICE: &'static str = "[Unit]\nDescription=pkg privileged root helper\nRequires=pkg-root-helper.socket\nAfter=pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-root-helper\nUser=root\nGroup=root\nEnvironment=HOME=/var/lib/pkg/helper-home\nEnvironment=TMPDIR=/var/lib/pkg/helper-home/tmp\nWorkingDirectory=/var/lib/pkg/helper-home\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/nix/var/nix/gcroots/pkg /nix/store /nix/var/nix /var/lib/pkg/log/helper /var/lib/pkg/helper-home\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
 
     /// End-user broker socket. The broker authenticates every uid with peer creds.
     pub const BROKER_SOCKET: &'static str = "[Unit]\nDescription=pkg broker socket\n\n[Socket]\nListenStream=/run/pkg/broker.sock\nSocketUser=root\nSocketGroup=root\nSocketMode=0666\nDirectoryMode=0755\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
@@ -411,6 +429,14 @@ mod tests {
         );
         assert!(LinuxSystemdAssets::HELPER_SERVICE.contains("User=root"));
         assert!(
+            LinuxSystemdAssets::HELPER_SERVICE
+                .contains("Environment=HOME=/var/lib/pkg/helper-home")
+        );
+        assert!(
+            LinuxSystemdAssets::HELPER_SERVICE
+                .contains("Environment=TMPDIR=/var/lib/pkg/helper-home/tmp")
+        );
+        assert!(
             !LinuxSystemdAssets::all()
                 .into_iter()
                 .any(|(_, text)| text.contains("MemoryMax=") || text.contains("CPUQuota="))
@@ -430,6 +456,9 @@ mod tests {
             ("nix-config", "/opt/pkg/etc/pkg/nix.conf"),
             ("broker-home", "/var/lib/pkg/broker-home"),
             ("broker-tmp", "/var/lib/pkg/broker-home/tmp"),
+            ("helper-home", "/var/lib/pkg/helper-home"),
+            ("helper-tmp", "/var/lib/pkg/helper-home/tmp"),
+            ("helper-log-dir", "/var/lib/pkg/log/helper"),
         ] {
             assert!(linux_install_assets().iter().any(|asset| {
                 asset.id() == id
