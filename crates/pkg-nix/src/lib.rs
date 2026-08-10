@@ -106,7 +106,7 @@ pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
     NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,
 };
-pub use real::RealNixAdapter;
+pub use real::{RealNixAdapter, RootNixRepairExecutor};
 pub use substitute::{
     CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,
     acquire_substitute,

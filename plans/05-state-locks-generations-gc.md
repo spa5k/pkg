@@ -1098,12 +1098,11 @@ are **separate** modern commands — `verify` is **read-only**, `repair`
 [^store-repair]); and (b) `Store::repairPath` **first tries a Repair-mode
 substitution**, and only if that fails **and** the output has a valid deriver
 does it **rebuild ALL outputs of that deriver** (`bmRepair`) ([^store-repair]).
-Because repair mutates and the Nix daemon **rejects repair for untrusted
-clients** (the broker is an unprivileged `allowed-user`, never a `trusted-user`;
-plan 01 ARCH-INV-01/05; verified Nix 2.34.8), **every repair mutation runs as
-the one fixed maintenance operation of the root helper** — the broker never
-mutates the store itself. Read-only verify stays **broker-mediated** (an
-`allowed-user` may verify). The phases are:
+Nix 2.34.8's daemon protocol reports `repairPath` unsupported even for root.
+Therefore **every repair mutation runs as the root helper's fixed
+`nix --store local store repair` operation** — the broker never mutates the
+store and the helper accepts no store selector. Read-only verify stays
+broker-mediated. The phases are:
 
 - **Phase 0 — broker read-only verify (mutates nothing; not a repair phase).**
   §10.1. Computes the **damage set**.
@@ -1634,8 +1633,8 @@ post-crash views.
 - **plan 00** — product decisions (multi-user authoritative state per D-17; retention defaults).
 - **plan 01** — where the state module sits in the layering; the **privilege
   split** the repair phases depend on (ARCH-INV-01/05/07/10: the unprivileged
-  broker runs read-only `nix store verify` (Phase 0); the root helper is the one
-  exceptional maintenance client that runs the fixed mutative `nix store repair`
+  broker runs read-only `nix store verify` (Phase 0); the root helper is the sole
+  fixed local-store repair executor running `nix --store local store repair`
   in the two mutating phases A and B). Plan 01 and this document use the same
   model: `verify` is read-only, `repair` is the separate mutating command (there
   is **no** `nix store verify --repair`; verified Nix 2.34.8), the capability and
@@ -1965,8 +1964,8 @@ https://nixos.org/manual/nix/stable/command-ref/nix-collect-garbage.html
   it). Nix Reference Manual →
   https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-store-verify.html
 [^store-repair]: `nix store repair` — the **separate mutative** modern command
-  (distinct from read-only `verify`; the daemon **rejects repair for untrusted
-  clients**, so it is run only by the root helper). Verified against Nix 2.34.8
+  (distinct from read-only `verify`; Nix 2.34.8's daemon store does not implement
+  `repairPath` even for root, so the root helper pins `--store local`). Verified against Nix 2.34.8
   source: `Store::repairPath` **first tries a Repair-mode substitution**; only
   if that fails **and** the output has a valid deriver does it **rebuild ALL
   outputs of that deriver** (`bmRepair`). **Repair is not atomic (§10.9):** on a

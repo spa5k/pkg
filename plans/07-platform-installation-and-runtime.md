@@ -41,7 +41,7 @@ is **not relocatable** in stock Nix; the product must not assume otherwise.
 | I4 | Trust knobs (substituters, trusted keys, `require-sigs`, sandbox) are **root-owned and channel-locked**; user env overrides (`NIX_*`, `FLAKE_*`) are ignored and flagged by `doctor`. |
 | I5 | The **product binary is not setuid**. The privileged surface is a single **non-setuid root helper/service** (`pkg-root-helper`), reachable **only** from the **unprivileged singleton broker** over a private closed channel; the CLI never invokes the helper directly. The broker (`pkg-nix-broker`) is the sole general Nix client/mediator and bundled-CLI spawner. |
 | I6 | Uninstall is **explicit and total only** (removes product + managed Nix + state). There is no partial uninstall that leaves a half-managed Nix. |
-| I7 | The raw Nix daemon socket is **not exposed to ordinary users**. The **unprivileged singleton broker** (`pkg-nix-broker`) is the sole **general** client of the managed daemon and the single mediator for substitution, build admission, `verify`, liveness-respecting `gc`, and per-output GC-root creation (D-18). The root helper (`pkg-root-helper`) is the sole **other** — and only **exceptional maintenance** — client, restricted to the fixed store-repair path of §7.4. The broker is in `allowed-users` but **never** `trusted-users` (`trusted-users = root` only); in Nix 2.34.8 trusted-users are effectively root-equivalent, so the daemon **rejects the broker's mutating `nix store repair`** while accepting its normal build/substitute, its **read-only `nix store verify`**, and `collectGarbage`. Store repair is therefore a fixed, narrow root-maintenance op run by the helper (§7.4). The framed public broker RPC/peer-auth/capability schemas are the next required milestone — the broker/helper boundary itself is **accepted**. |
+| I7 | The raw Nix daemon socket is **not exposed to ordinary users**. The **unprivileged singleton broker** (`pkg-nix-broker`) is the sole client of the managed daemon and the single mediator for substitution, build admission, `verify`, liveness-respecting `gc`, and per-output GC-root creation (D-18). The broker is in `allowed-users` but **never** `trusted-users` (`trusted-users = root` only); in Nix 2.34.8 trusted-users are effectively root-equivalent, so the daemon rejects the broker's mutating repair. Nix 2.34.8 also rejects `repairPath` over the daemon protocol even for root, so the root helper does **not** connect to the daemon: for the capability-gated repair operation only, it opens the exclusively managed store explicitly as `--store local` and accepts no caller-selected store URL, path, argv, or option (§7.4). The framed public broker RPC/peer-auth/capability schemas are the next required milestone — the broker/helper boundary itself is **accepted**. |
 
 ## 4. Architecture & `system` detection
 
@@ -191,10 +191,9 @@ The bundled Nix runs as a **daemon** (`nix-daemon`):
   socket mode is hard-coded `0666` and **not** a `nix.conf` knob, so we own the
   socket via the unit instead). **Only the unprivileged singleton broker
   (§7.4)** — running as the dedicated `pkg-nix-broker` user — connects to
-  **this** socket for **ordinary** operations; the **root helper
-  (`pkg-root-helper`) is the sole other — and only exceptional maintenance —
-  connector, used only for the fixed store-repair path of §7.4**. Ordinary user
-  processes are not in the
+  **this** socket. The root helper's fixed repair path opens the exclusively
+  managed local store directly because the Nix 2.34.8 daemon protocol does not
+  implement `repairPath`; it never accepts a store selector. Ordinary user processes are not in the
   `pkg-nix-broker` group and cannot traverse/connect (I7). Build users: a `nixbld` group +
   `nixbld1..N` users created by the installer (*confirmed multi-user model* [^multi-user]).
 - **macOS:** a `launchd` daemon
@@ -217,14 +216,14 @@ The bundled Nix runs as a **daemon** (`nix-daemon`):
 The product's CLI never talks to the raw Nix daemon socket; it goes through
 `pkg`'s **unprivileged singleton broker** (§7.4; the broker/helper boundary is
 **accepted** — the framed public broker RPC/peer-auth/capability schemas are the
-next required milestone), which is the sole **general** client of the managed daemon (the root helper `pkg-root-helper` is the only **exceptional maintenance** client, used solely for the fixed store-repair path of §7.4) and the
+next required milestone), which is the sole client of the managed daemon and the
 **bundled-Nix-CLI spawner**. The broker configures Nix via the generated
 `nix.conf` + env at the adapter call site (plan 04). Neither the CLI nor user
 processes rely on a system `$PATH` `nix`. The **bundled Nix CLI is installed
 group-executable by `pkg-nix-broker` only** (not world-executable): the broker
 spawns it for all normal build/substitute/`verify`/`gc` ops, and the **root
-helper executes it only for the fixed repair path** (as the trusted root
-identity, since the daemon rejects the mutating `nix store repair` from the untrusted broker); ordinary
+helper executes it only for the fixed `--store local` repair path** (as root,
+because the daemon protocol does not implement `repairPath`); ordinary
 users cannot execute it at all.
 
 ### 5.4 Process & resource limits (recap from plan 04 §8)
@@ -298,9 +297,9 @@ substitute / build / realization** and **holds it through durable GC-root
 publication** by the root helper (§7.4) — or through a clean abort. A
 broker-mediated `gc` obtains the **exclusive** slot: it waits for all shared
 holders to drain, then runs liveness-respecting `collectGarbage`. (Nix 2.34.8
-allows the unprivileged broker's normal build/substitute, its **read-only
-`nix store verify`**, and `collectGarbage`, but **rejects the mutating `nix store
-repair`** for untrusted clients; store repair is therefore a fixed, narrow
+allows the unprivileged broker's normal build/substitute, its read-only verify,
+and `collectGarbage`, but the daemon protocol **does not implement `repairPath`
+even for root**; store repair is therefore a fixed, narrow local-store
 root-maintenance op run by the helper — §7.4 — whose **approved rebuild**
 (`build`) mode still acquires this gate's shared GC-inhibit and the broker build
 mutex.) GC-inhibit is released only after the root helper confirms the
@@ -519,7 +518,7 @@ Tools); the installer verifies its presence and `doctor` reports it.
   `gc`, and per-output GC-root *selection* — is mediated by `pkg`'s
   **unprivileged singleton broker** (the broker/helper boundary is **accepted**;
   the framed public broker RPC/peer-auth/capability schemas are the next required
-  milestone). The broker runs as the dedicated **`pkg-nix-broker`** user, is the sole **general** client of the managed `nix-daemon` (the root helper `pkg-root-helper` is the only **exceptional maintenance** client, used solely for the fixed `nix store repair` path below), and is the **bundled-CLI spawner**.
+  milestone). The broker runs as the dedicated **`pkg-nix-broker`** user, is the sole client of the managed `nix-daemon`, and is the **bundled-CLI spawner** for normal operations. The root helper invokes the same pinned CLI only for fixed local-store maintenance below and never connects to the daemon.
   It is `allowed-users` but **never** `trusted-users`; in Nix 2.34.8 trusted-users
   are effectively root-equivalent, so the daemon accepts the broker's normal
   build/substitute requests, its **read-only `nix store verify`**, and
@@ -541,9 +540,11 @@ Tools); the installer verifies its presence and `doctor` reports it.
 - **Store repair is split into a read-only verify and a mutating repair.**
   `nix store verify` is **read-only**; the broker runs it itself (allowed, not
   trusted) to detect corrupt/missing paths. `nix store repair` is the **separate
-  mutating** command, which the daemon rejects from the untrusted broker (in
-  Nix 2.34.8 trusted-users are root-equivalent), so the **helper/service runs
-  repair as root**. Under the hood `Store::repairPath` first **substitutes**, and
+  mutating** command. The daemon rejects it from the untrusted broker, and the
+  Nix 2.34.8 remote-store protocol also reports `repairPath is not supported by
+  store 'daemon'` for root. The **helper/service therefore runs the fixed command
+  as root with `--store local`** against the exclusively managed store. Under
+  the hood `Store::repairPath` first **substitutes**, and
   only on a cache miss with a valid deriver may **rebuild all outputs** of that
   derivation — so the helper bounds that rebuild explicitly across the fixed
   phases below: **Phase 0** (read-only `nix store verify`), **Phase A**
@@ -1046,22 +1047,23 @@ snippets, or any foreign `/nix`.
     selects the outputs and the root helper creates one GC root per selected
     output** before the `current` swap. The raw Nix daemon socket is never
     exposed to ordinary users (I7); the unprivileged singleton broker is the
-    sole **general** daemon client (the root helper `pkg-root-helper` is the only
-    **exceptional maintenance** client — I7).
+    sole daemon client; the root helper uses only the capability-gated local-store
+    repair operation and never connects to the daemon (I7).
 14. The rendered root-owned `nix.conf` sets `builders =` (empty) on **both**
     Linux and macOS (no remote/distributed builders in v1, D-11/INV-08);
     `doctor` verifies it (checksum).
 15. The rendered root-owned `nix.conf` carries exactly `trusted-users = root`
     and `allowed-users = pkg-nix-broker` on **both** Linux and macOS; `doctor`
     verifies these lines (checksum) and flags drift. The broker user is never
-    trusted, so the broker's **mutating `nix store repair`** is rejected by the
-    daemon (its read-only `nix store verify` is accepted) and rerouted to the
+    trusted. The daemon protocol does not implement mutating repair even for root
+    (read-only `nix store verify` is accepted), so repair is routed to the
     fixed helper path, which accepts **only an opaque helper-issued maintenance
     capability** (caller UID + pkg-owned rooted closure + a server-derived
     path set (validated as members of the exact stored closure reachable from
     that caller uid's rooted generation, not a subset of
     `activation.outputRoots`) + plan digest covering all outputs +
     `policyVersion` + mode) and never raw broker `StorePath`s/argv/options (§7.4).
+    The helper pins `--store local`; no store URL can cross the transport.
 16. On Linux the daemon socket is `root:pkg-nix-broker` `0660` (parent
     `daemon-socket` dir `0750`) via systemd socket activation; on macOS the
     socket is Nix's hard-coded `0666` inside a `root:pkg-nix-broker` `0750`
@@ -1069,9 +1071,10 @@ snippets, or any foreign `/nix`.
     users (not in the `pkg-nix-broker` group) cannot traverse/connect on either
     OS; `doctor` verifies these modes/owners. There is **no** blanket socket-mode
     `0600` claim.
-17. Store repair is split into a **read-only `nix store verify`** (broker-run,
-    allowed) and a **mutating `nix store repair`** (daemon-rejected for the
-    untrusted broker, so helper-run as root). The helper accepts **only** an
+17. Store repair is split into a **read-only `nix store verify`** (broker-run
+    through the daemon) and a **mutating `nix --store local store repair`**
+    (helper-run as root because Nix 2.34.8's daemon protocol rejects
+    `repairPath`, including for root). The helper accepts **only** an
     opaque, expiring, single-use capability bound server-side to caller UID + a
     pkg-owned rooted generation/closure + the server-derived typed path set,
     validated as **members of the exact stored closure reachable from that

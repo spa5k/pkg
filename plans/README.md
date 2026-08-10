@@ -58,7 +58,7 @@ and store *service* are **root-owned and machine-global (shared, read-only to us
 is **per-user, keyed by OS uid**, owned by that user. Two narrow, distinct privilege boundaries exist (D-19): an **unprivileged singleton broker**
 (authenticates the caller, is the **sole general Nix daemon client and sole spawner of the bundled `nix` CLI for all normal operations**, and the sole
 **mediator/requester** for per-output GC-root operations and for asking the helper to run repair; it also hosts the **broker-internal in-memory build/GC admission gates** — not backing-file `flock`s, while the per-user state-mutation lease remains a filesystem `flock`) and a **narrow
-privileged root-helper/service** (the **sole root-set filesystem writer** that atomically publishes/removes per-output root sets, handles service control / runtime upgrade / `/nix` ownership, and is the **one exceptional maintenance client** that runs the **two-phase `nix store repair`** as root — the user CLI never calls it directly). The raw Nix daemon socket is never
+privileged root-helper/service** (the **sole root-set filesystem writer** that atomically publishes/removes per-output root sets, handles service control / runtime upgrade / `/nix` ownership, and is the **sole fixed local-store repair executor** running two-phase `nix --store local store repair` as root — the user CLI never calls it directly). Nix 2.34.8's daemon protocol rejects `repairPath` even for root. The raw Nix daemon socket is never
 exposed to users; the broker is an **allowed-user but not a trusted-user** (root is the sole
 trusted-user; detail in docs 01/07/08). `pkg repair` is **user-initiated and verified non-atomic** (INV-12): cache repair deletes the live path before restore and local repair moves the old output aside before replacement, so `pkg repair` warns affected commands may be temporarily unavailable, journals per path, and marks a path repaired only after a final read-only verify (raw Nix logs are **service-private**; public/user-state logs are sanitized NDJSON). This hidden-Nix broker boundary is **accepted**; its
 detailed framed RPC / peer-auth / operation-lifecycle / child-containment / capability-storage+expiry / restart-handshake contract is fixed by **PR-39** and documented normatively in doc 13. Real OS transports and Real-Nix execution remain downstream work (DR-017).
@@ -357,8 +357,8 @@ doc 08 §6, control matrix in doc 08 §8):
    sole **mediator/requester** for per-output GC-root operations and for helper-run repair, and the
    host of the **broker-internal in-memory build/GC admission gates**; the **narrow privileged
    root-helper/service** is the sole root-set filesystem writer that atomically publishes/removes
-   per-output root sets under uid-scoped dirs **and the one exceptional maintenance client** running
-   the two-phase `nix store repair` as root (the user CLI never calls it directly; raw Nix logs are
+   per-output root sets under uid-scoped dirs **and the sole fixed local-store repair executor** running
+   two-phase `nix --store local store repair` as root (the user CLI never calls it directly; raw Nix logs are
    service-private); the raw Nix daemon socket is never exposed to users (T-DAEMON-*, T-INST-*,
    T-PATH-*).
 4. **User space → host FS (state, `~`).** Per-user 0700 state dirs; `O_NOFOLLOW`/`openat`;
@@ -551,8 +551,8 @@ The non-obvious corrections encoded across `00`–`12`:
 - **Broker/helper privilege split & two-phase repair (D-19 / DR-017).** The **unprivileged singleton
   broker** is the sole general daemon client and sole bundled-`nix`-CLI spawner for all normal
   operations (an `allowed-user`, never a `trusted-user`); the **privileged root helper** is the sole
-  root-set filesystem writer **and the one exceptional maintenance client** running the two-phase
-  `nix store repair` as root (Phase 0 read-only verify via broker → Phase A cache-only repair via
+  root-set filesystem writer **and the sole fixed local-store repair executor** running two-phase
+  `nix --store local store repair` as root (Phase 0 read-only verify via broker → Phase A cache-only repair via
   helper, `max-jobs=0`/`builders` empty, stop-before-build → Phase B approved local repair via
   helper, bounded nonzero `max-jobs`/`builders` empty, broker build mutex + shared GC permit). The
   helper resolves an opaque expiring single-use capability bound server-side to uid / rooted

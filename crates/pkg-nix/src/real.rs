@@ -28,9 +28,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AcceptedFormats, BuildOutput, BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus,
     DerivationPath, DerivationPlanReport, DerivationSystem, EvaluateDerivationRequest,
-    EvaluatedDerivation, FormatVersion, GcReport, GcStatus, MethodKind, NarHash, NarIntegrity,
-    NixAdapter, NixAdapterError, NixVersion, OutputName, PathInfoReport, PathVerifyResult,
-    Signature, StorePath, SubstituteOutcome, SubstituteReceipt, SubstituteReport, TrustStatus,
+    EvaluatedDerivation, FormatVersion, GcReport, GcStatus, MaintenanceError, MethodKind, NarHash,
+    NarIntegrity, NixAdapter, NixAdapterError, NixVersion, OutputName, PathInfoReport,
+    PathVerifyResult, RepairMode, RepairOutcomeKind, Signature, StorePath, SubstituteOutcome,
+    SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope,
     VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
@@ -49,10 +50,104 @@ const SHORT_TIMEOUT: Duration = Duration::from_secs(60);
 const EVALUATE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const BUILD_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const GC_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+const REPAIR_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Real, version-pinned adapter around the product-managed Nix executable.
 pub struct RealNixAdapter {
     executor: Arc<dyn CommandExecutor>,
+}
+
+/// Root-helper-only executor for the fixed, capability-validated Nix repair
+/// operation.
+///
+/// This type accepts no raw command, option, substituter, or path outside the
+/// [`VerifiedRepairScope`]. Cache-only mode disables every build worker and
+/// verifies each path after the repair attempt before reporting a cache miss.
+pub struct RootNixRepairExecutor {
+    executor: Arc<dyn CommandExecutor>,
+}
+
+impl std::fmt::Debug for RootNixRepairExecutor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RootNixRepairExecutor")
+            .finish_non_exhaustive()
+    }
+}
+
+impl RootNixRepairExecutor {
+    /// Constructs the root-only repair executor from installer-authenticated
+    /// absolute binary and private-home paths.
+    pub fn new(nix_binary: &Path, private_home: &Path) -> Result<Self, NixAdapterError> {
+        Ok(Self {
+            executor: Arc::new(validated_process_executor(nix_binary, private_home)?),
+        })
+    }
+
+    #[cfg(test)]
+    fn scripted(executor: impl CommandExecutor + 'static) -> Self {
+        Self {
+            executor: Arc::new(executor),
+        }
+    }
+
+    fn run(
+        &self,
+        args: Vec<OsString>,
+        timeout: Duration,
+    ) -> Result<CommandOutcome, MaintenanceError> {
+        execute_checked(self.executor.as_ref(), NixProgram::Modern, args, timeout)
+            .map_err(|_| MaintenanceError::backend_failure())
+    }
+}
+
+impl VerifiedRepairExecutor for RootNixRepairExecutor {
+    fn execute(
+        &self,
+        scope: &VerifiedRepairScope,
+    ) -> Result<Vec<RepairOutcomeKind>, MaintenanceError> {
+        let mut outcomes = Vec::with_capacity(scope.paths().len());
+        for path in scope.paths() {
+            let mut repair = root_store_args();
+            repair.extend(os_args([
+                "--option",
+                "max-jobs",
+                match scope.mode() {
+                    RepairMode::CacheOnly => "0",
+                    RepairMode::Build => "1",
+                },
+                "--option",
+                "builders",
+                "",
+                "store",
+                "repair",
+            ]));
+            repair.push(OsString::from(path.as_str()));
+            if self.run(repair, REPAIR_TIMEOUT)?.code != Some(0) {
+                return Err(MaintenanceError::backend_failure());
+            }
+
+            let mut verify = root_store_args();
+            verify.extend(os_args(["store", "verify", "--no-trust"]));
+            verify.push(OsString::from(path.as_str()));
+            let verify = self.run(verify, SHORT_TIMEOUT)?;
+            if verify.code == Some(0) {
+                outcomes.push(RepairOutcomeKind::Restored);
+                continue;
+            }
+            if scope.mode() != RepairMode::CacheOnly {
+                return Err(MaintenanceError::backend_failure());
+            }
+
+            let mut info = root_store_args();
+            info.extend(os_args(["store", "info"]));
+            if self.run(info, SHORT_TIMEOUT)?.code != Some(0) {
+                return Err(MaintenanceError::backend_failure());
+            }
+            outcomes.push(RepairOutcomeKind::CacheMiss);
+        }
+        Ok(outcomes)
+    }
 }
 
 impl std::fmt::Debug for RealNixAdapter {
@@ -69,36 +164,8 @@ impl RealNixAdapter {
     /// This constructor does not create or repair either path. The privileged installer owns
     /// their provenance and permissions.
     pub fn new(nix_binary: &Path, private_home: &Path) -> Result<Self, NixAdapterError> {
-        if !nix_binary.is_absolute() || !private_home.is_absolute() {
-            return Err(NixAdapterError::ValidationFailure {
-                summary: crate::error::BoundedSummary::new("adapter path is not absolute"),
-            });
-        }
-        let home = fs::symlink_metadata(private_home).map_err(|_| NixAdapterError::Unavailable)?;
-        if home.file_type().is_symlink() || !home.is_dir() || !is_private(&home) {
-            return Err(NixAdapterError::PermissionDenied);
-        }
-        let temporary = fs::symlink_metadata(private_home.join("tmp"))
-            .map_err(|_| NixAdapterError::Unavailable)?;
-        if temporary.file_type().is_symlink() || !temporary.is_dir() || !is_private(&temporary) {
-            return Err(NixAdapterError::PermissionDenied);
-        }
-        let binary = fs::metadata(nix_binary).map_err(|_| NixAdapterError::Unavailable)?;
-        if !binary.is_file() {
-            return Err(NixAdapterError::Unavailable);
-        }
-        let nix_store_binary = nix_binary.with_file_name("nix-store");
-        let legacy_binary =
-            fs::metadata(&nix_store_binary).map_err(|_| NixAdapterError::Unavailable)?;
-        if !legacy_binary.is_file() {
-            return Err(NixAdapterError::Unavailable);
-        }
         Ok(Self {
-            executor: Arc::new(ProcessExecutor {
-                nix_binary: nix_binary.to_path_buf(),
-                nix_store_binary,
-                private_home: private_home.to_path_buf(),
-            }),
+            executor: Arc::new(validated_process_executor(nix_binary, private_home)?),
         })
     }
 
@@ -125,26 +192,7 @@ impl RealNixAdapter {
         args: Vec<OsString>,
         timeout: Duration,
     ) -> Result<CommandOutcome, NixAdapterError> {
-        let outcome = self.executor.execute(CommandSpec {
-            program,
-            args,
-            timeout,
-        })?;
-        if outcome.stdout_oversized || outcome.stderr_oversized {
-            return Err(NixAdapterError::OversizedInput {
-                limit_bytes: if outcome.stdout_oversized {
-                    MAX_STDOUT_BYTES
-                } else {
-                    MAX_STDERR_BYTES
-                },
-            });
-        }
-        if outcome.timed_out {
-            return Err(NixAdapterError::Timeout);
-        }
-        if outcome.code.is_none() {
-            return Err(NixAdapterError::OperationFailed);
-        }
+        let outcome = execute_checked(self.executor.as_ref(), program, args, timeout)?;
         let _ = method;
         Ok(outcome)
     }
@@ -404,6 +452,70 @@ trait CommandExecutor: Send + Sync {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError>;
 }
 
+fn validated_process_executor(
+    nix_binary: &Path,
+    private_home: &Path,
+) -> Result<ProcessExecutor, NixAdapterError> {
+    if !nix_binary.is_absolute() || !private_home.is_absolute() {
+        return Err(NixAdapterError::ValidationFailure {
+            summary: crate::error::BoundedSummary::new("adapter path is not absolute"),
+        });
+    }
+    let home = fs::symlink_metadata(private_home).map_err(|_| NixAdapterError::Unavailable)?;
+    if home.file_type().is_symlink() || !home.is_dir() || !is_private(&home) {
+        return Err(NixAdapterError::PermissionDenied);
+    }
+    let temporary =
+        fs::symlink_metadata(private_home.join("tmp")).map_err(|_| NixAdapterError::Unavailable)?;
+    if temporary.file_type().is_symlink() || !temporary.is_dir() || !is_private(&temporary) {
+        return Err(NixAdapterError::PermissionDenied);
+    }
+    let binary = fs::metadata(nix_binary).map_err(|_| NixAdapterError::Unavailable)?;
+    if !binary.is_file() {
+        return Err(NixAdapterError::Unavailable);
+    }
+    let nix_store_binary = nix_binary.with_file_name("nix-store");
+    let legacy_binary =
+        fs::metadata(&nix_store_binary).map_err(|_| NixAdapterError::Unavailable)?;
+    if !legacy_binary.is_file() {
+        return Err(NixAdapterError::Unavailable);
+    }
+    Ok(ProcessExecutor {
+        nix_binary: nix_binary.to_path_buf(),
+        nix_store_binary,
+        private_home: private_home.to_path_buf(),
+    })
+}
+
+fn execute_checked(
+    executor: &dyn CommandExecutor,
+    program: NixProgram,
+    args: Vec<OsString>,
+    timeout: Duration,
+) -> Result<CommandOutcome, NixAdapterError> {
+    let outcome = executor.execute(CommandSpec {
+        program,
+        args,
+        timeout,
+    })?;
+    if outcome.stdout_oversized || outcome.stderr_oversized {
+        return Err(NixAdapterError::OversizedInput {
+            limit_bytes: if outcome.stdout_oversized {
+                MAX_STDOUT_BYTES
+            } else {
+                MAX_STDERR_BYTES
+            },
+        });
+    }
+    if outcome.timed_out {
+        return Err(NixAdapterError::Timeout);
+    }
+    if outcome.code.is_none() {
+        return Err(NixAdapterError::OperationFailed);
+    }
+    Ok(outcome)
+}
+
 #[derive(Debug)]
 struct ProcessExecutor {
     nix_binary: PathBuf,
@@ -563,6 +675,15 @@ fn base_args() -> Vec<OsString> {
         "allow-import-from-derivation",
         "false",
     ])
+}
+
+fn root_store_args() -> Vec<OsString> {
+    let mut args = base_args();
+    // Nix 2.34.8's daemon protocol rejects repairPath even for root. The
+    // privileged helper therefore opens only the fixed managed local store;
+    // no caller-selectable store URL crosses the capability boundary.
+    args.extend(os_args(["--store", "local"]));
+    args
 }
 
 fn os_args<const N: usize>(values: [&str; N]) -> Vec<OsString> {
@@ -1117,6 +1238,126 @@ mod tests {
         let mut outcome = success(Vec::new());
         outcome.stderr = stderr.into();
         outcome
+    }
+
+    fn failure(code: i32) -> CommandOutcome {
+        let mut outcome = success(Vec::new());
+        outcome.code = Some(code);
+        outcome
+    }
+
+    fn repair_scope(mode: RepairMode) -> Result<VerifiedRepairScope, Box<dyn std::error::Error>> {
+        Ok(VerifiedRepairScope::new(
+            1001,
+            crate::GenerationId::new("gen-0007")?,
+            [StorePath::new(
+                "/nix/store/22222222222222222222222222222222-demo",
+            )?],
+            (mode == RepairMode::Build).then(|| body_digest(b"approved repair plan")),
+            PolicyVersion::from_u64(1).ok_or("policy version")?,
+            mode,
+        )?)
+    }
+
+    #[test]
+    fn root_repair_cache_miss_requires_successful_repair_and_live_local_store()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scripted = Scripted::new(vec![success(Vec::new()), failure(1), success(Vec::new())]);
+        let calls = Arc::clone(&scripted.calls);
+        let executor = RootNixRepairExecutor::scripted(scripted);
+        let outcomes = executor.execute(&repair_scope(RepairMode::CacheOnly)?)?;
+        assert_eq!(outcomes, vec![RepairOutcomeKind::CacheMiss]);
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 3);
+        assert!(calls.iter().all(|call| {
+            call.windows(2)
+                .any(|arguments| arguments == [OsString::from("--store"), OsString::from("local")])
+        }));
+        assert!(calls[0].windows(3).any(|arguments| {
+            arguments
+                == [
+                    OsString::from("--option"),
+                    OsString::from("max-jobs"),
+                    OsString::from("0"),
+                ]
+        }));
+        assert!(calls[0].windows(3).any(|arguments| {
+            arguments
+                == [
+                    OsString::from("--option"),
+                    OsString::from("builders"),
+                    OsString::new(),
+                ]
+        }));
+        assert_eq!(
+            &calls[0][calls[0].len() - 3..],
+            [
+                OsString::from("store"),
+                OsString::from("repair"),
+                OsString::from("/nix/store/22222222222222222222222222222222-demo"),
+            ]
+        );
+        assert_eq!(
+            &calls[1][calls[1].len() - 4..],
+            [
+                OsString::from("store"),
+                OsString::from("verify"),
+                OsString::from("--no-trust"),
+                OsString::from("/nix/store/22222222222222222222222222222222-demo"),
+            ]
+        );
+        assert_eq!(
+            &calls[2][calls[2].len() - 2..],
+            [OsString::from("store"), OsString::from("info")]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_repair_build_is_bounded_and_must_verify_clean() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let scripted = Scripted::new(vec![success(Vec::new()), success(Vec::new())]);
+        let calls = Arc::clone(&scripted.calls);
+        let executor = RootNixRepairExecutor::scripted(scripted);
+        assert_eq!(
+            executor.execute(&repair_scope(RepairMode::Build)?)?,
+            vec![RepairOutcomeKind::Restored]
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 2);
+        assert!(calls[0].windows(3).any(|arguments| {
+            arguments
+                == [
+                    OsString::from("--option"),
+                    OsString::from("max-jobs"),
+                    OsString::from("1"),
+                ]
+        }));
+
+        let executor =
+            RootNixRepairExecutor::scripted(Scripted::new(vec![success(Vec::new()), failure(1)]));
+        assert_eq!(
+            executor
+                .execute(&repair_scope(RepairMode::Build)?)
+                .unwrap_err()
+                .code(),
+            crate::MaintenanceErrorCode::BackendFailure
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_repair_command_failure_is_not_downgraded_to_cache_miss()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let executor = RootNixRepairExecutor::scripted(Scripted::new(vec![failure(1)]));
+        assert_eq!(
+            executor
+                .execute(&repair_scope(RepairMode::CacheOnly)?)
+                .unwrap_err()
+                .code(),
+            crate::MaintenanceErrorCode::BackendFailure
+        );
+        Ok(())
     }
 
     #[test]

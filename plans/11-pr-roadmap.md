@@ -1113,7 +1113,12 @@ flowchart TD
   capability layer now delegates repair only through a typed verified-scope executor, reconstructs
   results from trusted paths, rejects cardinality drift, and consumes failed capabilities; the
   former in-memory success synthesis is isolated as an explicit reference backend rather than an
-  implicit production behavior. This does **not**
+  implicit production behavior. The next slice adds the real root repair executor and an isolated
+  Nix 2.34.8 regression: daemon repair is unsupported even for root, so the helper fixes
+  `--store local`; cache-only repair of an intentionally uncached corrupt derivation returns
+  `CacheMiss` without building, and a separately approved build-mode capability restores it.
+  Exact argv/unit tests prove fixed store selection, bounded jobs, empty remote builders,
+  post-repair verification, and fail-closed command/store errors. This does **not**
   yet claim the full PR: production installer/broker executables, CLI wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

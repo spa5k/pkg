@@ -174,6 +174,15 @@ The broker constructs child policy once from an exact absolute executable matchi
 Real spawning and signal code lands with the Real-Nix adapter. The PR-39 reference exposes only
 the immutable policy, so it cannot accidentally become a raw-process API.
 
+The privileged repair executor is a distinct fixed launcher. Nix 2.34.8 returns
+`repairPath is not supported by store 'daemon'`, including for root, so each helper repair/verify
+probe pins `--store local` against the exclusively managed `/nix/var/nix` store. The helper still
+clears the environment, uses the root-owned managed config, bounds output/time, and accepts only a
+capability-resolved `VerifiedRepairScope`; there is no framed or public store URL, path, argv,
+option, substituter, or key input. Cache-only pins `max-jobs=0` and empty builders, then verifies
+the path and reports `CacheMiss` only when the repair command succeeded, the path remains damaged,
+and the local store is still responsive. Build mode pins `max-jobs=1` and must verify clean.
+
 ## 9. Restart handshake
 
 1. Supervisor restarts broker and/or helper.
