@@ -1338,6 +1338,7 @@ version = "0.0.0"
 dependencies = [
  "criterion",
  "jiff",
+ "pkg-channel",
  "pkg-core",
  "serde",
  "serde_json",

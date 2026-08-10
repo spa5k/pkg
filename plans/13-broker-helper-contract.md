@@ -250,11 +250,13 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   state, fixed non-root/non-login native build users through the configured system account-search
   view, host cores, and actual managed-daemon membership in the Linux cgroup-v2 service (with no
   Darwin cgroup claim). Production command-intent preparation is also connected internally: a
-  non-serializable object accepts only a retained verified channel, typed selectors, optional validated
+  non-serializable object accepts only a retained verified channel, typed selectors, optional authenticated
   index and the contained adapter; it derives the native target, produces the initial plan/replanner
   pair, and installs both through the authenticated caller's live build handle. The framed method
   remains unassigned until a broker-owned current-channel/index authority can supply those inputs;
-  they will not be accepted from the wire. Adapter failures cross only the closed error-code envelope;
+  they will not be accepted from the wire. The authenticated index is a non-forgeable Rust capability
+  produced only after descriptor-digest, source-identity, strict-schema, invariant-rebuild and canonical-byte
+  checks; a caller-created `IndexDocument` cannot enter production preparation. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.

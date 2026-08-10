@@ -4,7 +4,7 @@ use std::{error::Error, fmt, sync::Arc};
 
 use pkg_channel::VerifiedChannel;
 use pkg_core::PackageSelector;
-use pkg_index::IndexDocument;
+use pkg_index::VerifiedIndex;
 use pkg_nix::{AuthenticatedCaller, BuildPreview, OperationHandle};
 
 use crate::{
@@ -37,15 +37,20 @@ impl AuthenticatedBuildPreparation {
     pub fn from_verified_channel(
         channel: VerifiedChannel,
         selectors: Vec<PackageSelector>,
-        index: Option<IndexDocument>,
+        index: Option<VerifiedIndex>,
         adapter: Arc<dyn BuildPlanningAdapter>,
     ) -> Result<Self, BuildPreparationError> {
         let host = Arc::new(
             ProductionBuildHostFactsProbe::from_verified_channel(&channel)
                 .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::HostRefused))?,
         );
-        let intent = AuthenticatedBuildIntent::new(channel, selectors, host.system(), index)
-            .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::IntentRefused))?;
+        let intent = AuthenticatedBuildIntent::new(
+            channel,
+            selectors,
+            host.system(),
+            index.map(VerifiedIndex::into_document),
+        )
+        .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::IntentRefused))?;
         let replanner = Arc::new(AuthenticatedBuildReplanner::new(intent, adapter, host));
         let initial_plan = replanner
             .initial_plan()

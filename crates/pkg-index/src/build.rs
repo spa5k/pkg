@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use jiff::Timestamp;
+use pkg_channel::VerifiedChannel;
 use pkg_core::state::{Digest, body_digest};
 use pkg_core::{
     AttributePath, ChannelSequence, NixpkgsRevision, OutputName, SelectorInput, System,
@@ -99,7 +100,7 @@ pub struct IndexCandidate {
 }
 
 /// Provenance label stored in an index envelope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum IndexSource {
     /// Locally or publisher-side derived from the pinned Nixpkgs source.
@@ -107,8 +108,8 @@ pub enum IndexSource {
 }
 
 /// A validated schema-version 1 index document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IndexDocument {
     schema_version: u64,
     channel_seq: u64,
@@ -164,8 +165,8 @@ impl IndexDocument {
 }
 
 /// One validated display-only catalog record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IndexRecord {
     attr_path: String,
     pname: String,
@@ -292,6 +293,145 @@ impl BuiltIndex {
         }
         output
     }
+}
+
+/// An index document whose exact canonical bytes match the authenticated
+/// channel descriptor's SHA-256 and native source identity.
+#[derive(Clone, PartialEq, Eq)]
+pub struct VerifiedIndex {
+    document: IndexDocument,
+}
+
+impl fmt::Debug for VerifiedIndex {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerifiedIndex")
+            .field("channel_seq", &self.document.channel_seq)
+            .field("system", &self.document.system)
+            .finish_non_exhaustive()
+    }
+}
+
+impl VerifiedIndex {
+    /// Borrows the validated discovery document.
+    #[must_use]
+    pub const fn document(&self) -> &IndexDocument {
+        &self.document
+    }
+
+    /// Consumes the authentication capability into its validated document.
+    #[must_use]
+    pub fn into_document(self) -> IndexDocument {
+        self.document
+    }
+}
+
+/// Stable authenticated-index refusal categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexVerifyError {
+    /// The artifact exceeded the fixed byte ceiling.
+    TooLarge,
+    /// Exact bytes did not match the authenticated descriptor digest.
+    DigestMismatch,
+    /// JSON/schema/field invariants were malformed or unsupported.
+    InvalidDocument,
+    /// Sequence, system, or Nixpkgs revision differed from the channel.
+    SourceMismatch,
+    /// Bytes were valid JSON but not the unique canonical index encoding.
+    NonCanonical,
+}
+
+impl fmt::Display for IndexVerifyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("authenticated index verification refused")
+    }
+}
+
+impl std::error::Error for IndexVerifyError {}
+
+/// Verifies one downloaded index against the exact authenticated channel pin.
+///
+/// # Errors
+///
+/// Refuses oversized, digest-mismatched, malformed, source-mismatched, or
+/// non-canonical bytes before returning any usable document.
+pub fn verify_index_artifact(
+    bytes: &[u8],
+    channel: &VerifiedChannel,
+    system: System,
+) -> Result<VerifiedIndex, IndexVerifyError> {
+    verify_index_bytes(
+        bytes,
+        channel.sequence().get().get(),
+        system,
+        channel.descriptor().nixpkgs().revision(),
+        channel.descriptor().index().sha256(),
+    )
+}
+
+fn verify_index_bytes(
+    bytes: &[u8],
+    channel_seq: u64,
+    system: System,
+    nixpkgs_rev: &str,
+    expected_sha256: &str,
+) -> Result<VerifiedIndex, IndexVerifyError> {
+    if bytes.len() > MAX_PROJECTION_BYTES {
+        return Err(IndexVerifyError::TooLarge);
+    }
+    if digest_hex(body_digest(bytes)) != expected_sha256 {
+        return Err(IndexVerifyError::DigestMismatch);
+    }
+    let document = serde_json::from_slice::<IndexDocument>(bytes)
+        .map_err(|_| IndexVerifyError::InvalidDocument)?;
+    if document.schema_version != INDEX_SCHEMA_VERSION
+        || document.channel_seq != channel_seq
+        || document.system != system.as_str()
+        || document.nixpkgs_rev != nixpkgs_rev
+    {
+        return Err(IndexVerifyError::SourceMismatch);
+    }
+    let sequence =
+        ChannelSequence::from_u64(document.channel_seq).ok_or(IndexVerifyError::InvalidDocument)?;
+    let revision = NixpkgsRevision::new(&document.nixpkgs_rev)
+        .map_err(|_| IndexVerifyError::InvalidDocument)?;
+    let metadata = BuildMetadata::new(sequence, system, revision, &document.generated_at)
+        .map_err(|_| IndexVerifyError::InvalidDocument)?;
+    let candidates = document
+        .records
+        .iter()
+        .cloned()
+        .map(|record| IndexCandidate {
+            attr_path: record.attr_path,
+            pname: Some(record.pname),
+            version: Some(record.version),
+            description: Some(record.description),
+            homepage: Some(record.homepage),
+            licenses: record.licenses,
+            platforms: record.platforms,
+            available_here: record.available_here,
+            broken: record.broken,
+            position: Some(record.position),
+            outputs: record.outputs,
+            aliases: record.aliases,
+            skipped: false,
+        })
+        .collect();
+    let rebuilt =
+        build_index(metadata, candidates).map_err(|_| IndexVerifyError::InvalidDocument)?;
+    if rebuilt.bytes() != bytes {
+        return Err(IndexVerifyError::NonCanonical);
+    }
+    Ok(VerifiedIndex { document })
+}
+
+fn digest_hex(digest: Digest) -> String {
+    let mut output = String::with_capacity(64);
+    for byte in digest.as_bytes() {
+        use fmt::Write as _;
+        write!(output, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    output
 }
 
 /// Closed failures from projection validation or deterministic serialization.
@@ -524,6 +664,57 @@ mod tests {
         let b = build_index(metadata("2024-12-31T19:00:00-05:00"), vec![right]).unwrap();
         assert_eq!(a.bytes(), b.bytes());
         assert_eq!(a.digest(), b.digest());
+    }
+
+    #[test]
+    fn authenticated_index_verification_binds_digest_source_and_canonical_bytes() {
+        let built =
+            build_index(metadata("2025-01-01T00:00:00Z"), vec![candidate("ripgrep")]).unwrap();
+        let revision = "0123456789abcdef0123456789abcdef01234567";
+        assert!(
+            verify_index_bytes(
+                built.bytes(),
+                42,
+                System::Aarch64Darwin,
+                revision,
+                &built.sha256_hex(),
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            verify_index_bytes(
+                built.bytes(),
+                43,
+                System::Aarch64Darwin,
+                revision,
+                &built.sha256_hex(),
+            ),
+            Err(IndexVerifyError::SourceMismatch)
+        );
+
+        let mut noncanonical = built.bytes().to_vec();
+        noncanonical.push(b'\n');
+        let noncanonical_hash = digest_hex(body_digest(&noncanonical));
+        assert_eq!(
+            verify_index_bytes(
+                &noncanonical,
+                42,
+                System::Aarch64Darwin,
+                revision,
+                &noncanonical_hash,
+            ),
+            Err(IndexVerifyError::NonCanonical)
+        );
+        assert_eq!(
+            verify_index_bytes(
+                built.bytes(),
+                42,
+                System::Aarch64Darwin,
+                revision,
+                &"0".repeat(64),
+            ),
+            Err(IndexVerifyError::DigestMismatch)
+        );
     }
 
     #[test]

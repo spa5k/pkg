@@ -1212,10 +1212,15 @@ flowchart TD
   or hiding identities through administrator-controlled NSS/OpenDirectory configuration remains in
   the documented root/admin-can-win boundary. Darwin deliberately reports both cgroup fields false. No path, config value, or
   readiness assertion is caller supplied. A new non-serializable production preparation object now
-  composes that observer with a retained verified channel, typed selectors, optional validated index,
+  composes that observer with a retained verified channel, typed selectors, optional authenticated index,
   and the contained planning adapter. It derives the native target internally, creates the initial
   private plan and trusted replanner together, and can install them only through an authenticated
-  caller's live build handle; it exposes neither as data. The
+  caller's live build handle; it exposes neither as data. The index capability can now be constructed
+  only by bounding the downloaded artifact, matching its exact-byte SHA-256 to the verified channel
+  descriptor, strictly decoding its closed schema, rebuilding every record through the normal
+  validation/canonicalization pipeline, and requiring byte-for-byte canonical equality plus matching
+  sequence/system/Nixpkgs revision. A plain structural `IndexDocument` is no longer accepted at the
+  production preparation boundary. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
