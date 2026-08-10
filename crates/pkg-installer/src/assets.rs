@@ -139,6 +139,18 @@ const ASSETS: &[LinuxInstallAsset] = &[
         Some(0o755),
     ),
     LinuxInstallAsset::new(
+        "product-config-root",
+        LinuxAssetKind::Directory,
+        "/opt/pkg/etc",
+        Some(0o755),
+    ),
+    LinuxInstallAsset::new(
+        "product-config-dir",
+        LinuxAssetKind::Directory,
+        "/opt/pkg/etc/pkg",
+        Some(0o755),
+    ),
+    LinuxInstallAsset::new(
         "service-bin-dir",
         LinuxAssetKind::Directory,
         "/opt/pkg/bin",
@@ -155,7 +167,7 @@ const ASSETS: &[LinuxInstallAsset] = &[
     LinuxInstallAsset::new(
         "daemon-socket-dir",
         LinuxAssetKind::Directory,
-        "/var/lib/pkg/daemon-socket",
+        "/nix/var/nix/daemon-socket",
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
@@ -187,6 +199,20 @@ const ASSETS: &[LinuxInstallAsset] = &[
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
     LinuxInstallAsset::new(
+        "broker-home",
+        LinuxAssetKind::Directory,
+        "/var/lib/pkg/broker-home",
+        Some(0o700),
+    )
+    .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
+    LinuxInstallAsset::new(
+        "broker-tmp",
+        LinuxAssetKind::Directory,
+        "/var/lib/pkg/broker-home/tmp",
+        Some(0o700),
+    )
+    .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
+    LinuxInstallAsset::new(
         "root-helper-binary",
         LinuxAssetKind::File,
         "/opt/pkg/bin/pkg-root-helper",
@@ -200,6 +226,12 @@ const ASSETS: &[LinuxInstallAsset] = &[
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
+    LinuxInstallAsset::new(
+        "nix-config",
+        LinuxAssetKind::File,
+        "/opt/pkg/etc/pkg/nix.conf",
+        Some(0o644),
+    ),
     LinuxInstallAsset::new(
         "daemon-socket-unit",
         LinuxAssetKind::File,
@@ -272,10 +304,10 @@ impl LinuxSystemdAssets {
         "d /run/pkg-helper 0750 root pkg-nix-broker -\nd /run/pkg 0755 root root -\n";
 
     /// Root daemon socket, reachable only by the broker group.
-    pub const DAEMON_SOCKET: &'static str = "[Unit]\nDescription=pkg managed Nix daemon socket\n\n[Socket]\nListenStream=/var/lib/pkg/daemon-socket/nix-daemon.sock\nSocketUser=root\nSocketGroup=pkg-nix-broker\nSocketMode=0660\nDirectoryMode=0750\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
+    pub const DAEMON_SOCKET: &'static str = "[Unit]\nDescription=pkg managed Nix daemon socket\n\n[Socket]\nListenStream=/nix/var/nix/daemon-socket/socket\nSocketUser=root\nSocketGroup=pkg-nix-broker\nSocketMode=0660\nDirectoryMode=0750\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
 
     /// Root Nix daemon consuming only the managed configuration.
-    pub const DAEMON_SERVICE: &'static str = "[Unit]\nDescription=pkg managed Nix daemon\nRequires=pkg-nix-daemon.socket\nAfter=pkg-nix-daemon.socket\nRequiresMountsFor=/nix/store /nix/var/nix\n\n[Service]\nExecStart=@/opt/pkg/nix/current/bin/nix-daemon nix-daemon --daemon\nEnvironment=NIX_CONF_DIR=/var/lib/pkg/nix-conf\nKillMode=process\nLimitNOFILE=1048576\nDelegate=yes\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/nix /var/lib/pkg/log\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
+    pub const DAEMON_SERVICE: &'static str = "[Unit]\nDescription=pkg managed Nix daemon\nRequires=pkg-nix-daemon.socket\nAfter=pkg-nix-daemon.socket\nRequiresMountsFor=/nix/store /nix/var/nix\n\n[Service]\nExecStart=@/opt/pkg/nix/current/bin/nix-daemon nix-daemon --daemon\nEnvironment=NIX_CONF_DIR=/opt/pkg/etc/pkg\nEnvironment=NIX_DAEMON_SOCKET_PATH=/nix/var/nix/daemon-socket/socket\nEnvironment=NIX_STATE_DIR=/nix/var/nix\nKillMode=process\nLimitNOFILE=1048576\nDelegate=yes\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/nix /var/lib/pkg/log\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
 
     /// Broker-only privileged-helper socket; peer credentials remain mandatory.
     pub const HELPER_SOCKET: &'static str = "[Unit]\nDescription=pkg privileged root helper socket\n\n[Socket]\nListenStream=/run/pkg-helper/root-helper.sock\nSocketUser=root\nSocketGroup=pkg-nix-broker\nSocketMode=0660\nDirectoryMode=0750\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
@@ -287,7 +319,7 @@ impl LinuxSystemdAssets {
     pub const BROKER_SOCKET: &'static str = "[Unit]\nDescription=pkg broker socket\n\n[Socket]\nListenStream=/run/pkg/broker.sock\nSocketUser=root\nSocketGroup=root\nSocketMode=0666\nDirectoryMode=0755\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
 
     /// Singleton unprivileged broker service.
-    pub const BROKER_SERVICE: &'static str = "[Unit]\nDescription=pkg package broker\nRequires=pkg-nix-daemon.socket pkg-root-helper.socket\nAfter=pkg-nix-daemon.socket pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-nix-broker\nUser=pkg-nix-broker\nGroup=pkg-nix-broker\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/var/lib/pkg/log/broker\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
+    pub const BROKER_SERVICE: &'static str = "[Unit]\nDescription=pkg package broker\nRequires=pkg-nix-daemon.socket pkg-root-helper.socket\nAfter=pkg-nix-daemon.socket pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-nix-broker\nUser=pkg-nix-broker\nGroup=pkg-nix-broker\nEnvironment=HOME=/var/lib/pkg/broker-home\nEnvironment=TMPDIR=/var/lib/pkg/broker-home/tmp\nWorkingDirectory=/var/lib/pkg/broker-home\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/var/lib/pkg/log/broker /var/lib/pkg/broker-home\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
 
     /// Returns all unit names and exact text in deterministic order.
     #[must_use]
@@ -337,6 +369,10 @@ mod tests {
 
     #[test]
     fn socket_and_service_security_contract_is_exact() {
+        assert!(
+            LinuxSystemdAssets::DAEMON_SOCKET
+                .contains("ListenStream=/nix/var/nix/daemon-socket/socket")
+        );
         assert!(LinuxSystemdAssets::DAEMON_SOCKET.contains("SocketMode=0660"));
         assert!(LinuxSystemdAssets::DAEMON_SOCKET.contains("SocketGroup=pkg-nix-broker"));
         assert!(LinuxSystemdAssets::HELPER_SOCKET.contains("SocketMode=0660"));
@@ -356,7 +392,23 @@ mod tests {
                 .contains("ExecStart=@/opt/pkg/nix/current/bin/nix-daemon nix-daemon --daemon")
         );
         assert!(LinuxSystemdAssets::DAEMON_SERVICE.contains("Delegate=yes"));
+        assert!(
+            LinuxSystemdAssets::DAEMON_SERVICE
+                .contains("Environment=NIX_CONF_DIR=/opt/pkg/etc/pkg")
+        );
+        assert!(
+            LinuxSystemdAssets::DAEMON_SERVICE
+                .contains("Environment=NIX_DAEMON_SOCKET_PATH=/nix/var/nix/daemon-socket/socket")
+        );
         assert!(LinuxSystemdAssets::BROKER_SERVICE.contains("User=pkg-nix-broker"));
+        assert!(
+            LinuxSystemdAssets::BROKER_SERVICE
+                .contains("Environment=HOME=/var/lib/pkg/broker-home")
+        );
+        assert!(
+            LinuxSystemdAssets::BROKER_SERVICE
+                .contains("Environment=TMPDIR=/var/lib/pkg/broker-home/tmp")
+        );
         assert!(LinuxSystemdAssets::HELPER_SERVICE.contains("User=root"));
         assert!(
             !LinuxSystemdAssets::all()
@@ -367,12 +419,24 @@ mod tests {
             .iter()
             .find(|asset| asset.id() == "daemon-socket-dir");
         assert_eq!(
-            daemon_dir.map(|asset| (asset.owner(), asset.group())),
+            daemon_dir.map(|asset| (asset.path_or_name(), asset.owner(), asset.group())),
             Some((
+                "/nix/var/nix/daemon-socket",
                 Some(LinuxAssetPrincipal::Root),
                 Some(LinuxAssetPrincipal::Broker)
             ))
         );
+        for (id, path) in [
+            ("nix-config", "/opt/pkg/etc/pkg/nix.conf"),
+            ("broker-home", "/var/lib/pkg/broker-home"),
+            ("broker-tmp", "/var/lib/pkg/broker-home/tmp"),
+        ] {
+            assert!(linux_install_assets().iter().any(|asset| {
+                asset.id() == id
+                    && asset.path_or_name() == path
+                    && asset.mode() == Some(if id == "nix-config" { 0o644 } else { 0o700 })
+            }));
+        }
         let service_root = linux_install_assets()
             .iter()
             .find(|asset| asset.id() == "service-root");

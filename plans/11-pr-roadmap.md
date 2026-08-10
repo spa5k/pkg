@@ -1102,6 +1102,16 @@ flowchart TD
 ### Milestone M7 — Technical Preview
 
 #### PR-36 — Technical-preview hardening + Real-Nix nightly CI + e2e parity
+- **Status (2026-08-10):** in progress. The first production Real-Nix connector slice is landed:
+  the pinned Nix 2.34.8 adapter executes version/eval/substitute/path-info/verify/build/GC through
+  the managed daemon with bounded process-group cancellation, strict JSON parsing, and provenance
+  checks, and its isolated Linux daemon smoke covers both substitution and local build paths. The
+  follow-up runtime-alignment slice makes Linux systemd assets, macOS launchd assets, installer
+  paths, and the broker child environment agree on the canonical managed configuration, daemon
+  socket, state directory, and private HOME/TMPDIR. Exact systemd, tmpfiles, and plist validation,
+  affected tests, workspace diagnostics/Clippy, and independent P1 review pass. This does **not**
+  yet claim the full PR: production installer/broker executables, CLI wiring, the authenticated
+  Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real
   parity, and self-host the product on Real Nix end-to-end (`09` §7).
 - **Owns:** `.github/workflows/nightly.yml` (Full), golden capture harness, parity diffing.

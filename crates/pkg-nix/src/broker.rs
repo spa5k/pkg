@@ -522,19 +522,33 @@ pub struct ChildContainmentPolicy {
 
 impl ChildContainmentPolicy {
     /// Constructs the fixed child policy for one bundled Nix executable.
-    pub fn new(executable: impl Into<PathBuf>) -> Result<Self, BrokerError> {
+    pub fn new(
+        executable: impl Into<PathBuf>,
+        private_home: impl Into<PathBuf>,
+    ) -> Result<Self, BrokerError> {
         let executable = executable.into();
-        if !is_managed_nix_executable(&executable) {
+        let private_home = private_home.into();
+        if !is_managed_nix_executable(&executable) || !is_managed_broker_home(&private_home) {
             return Err(BrokerError::new(BrokerErrorCode::InvalidChildPolicy));
         }
+        let private_home = private_home
+            .to_str()
+            .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidChildPolicy))?;
         let environment = BTreeMap::from([
-            ("HOME".to_owned(), "/var/empty".to_owned()),
+            ("HOME".to_owned(), private_home.to_owned()),
             (
                 "NIX_CONFIG".to_owned(),
                 "include /opt/pkg/etc/pkg/nix.conf".to_owned(),
             ),
+            (
+                "NIX_DAEMON_SOCKET_PATH".to_owned(),
+                "/nix/var/nix/daemon-socket/socket".to_owned(),
+            ),
             ("NIX_REMOTE".to_owned(), "daemon".to_owned()),
+            ("NIX_STATE_DIR".to_owned(), "/nix/var/nix".to_owned()),
+            ("NIX_USER_CONF_FILES".to_owned(), String::new()),
             ("PATH".to_owned(), "/usr/bin:/bin".to_owned()),
+            ("TMPDIR".to_owned(), format!("{private_home}/tmp")),
         ]);
         Ok(Self {
             executable,
@@ -566,6 +580,13 @@ impl ChildContainmentPolicy {
     pub const fn terminate_process_group(&self) -> bool {
         true
     }
+}
+
+fn is_managed_broker_home(path: &Path) -> bool {
+    matches!(
+        path.to_str(),
+        Some("/var/lib/pkg/broker-home" | "/Library/Application Support/pkg/broker-home")
+    )
 }
 
 fn is_managed_nix_executable(path: &Path) -> bool {
@@ -730,27 +751,42 @@ mod tests {
 
     #[test]
     fn contained_child_policy_is_absolute_fixed_and_scrubbed() {
-        let policy = ChildContainmentPolicy::new("/opt/pkg/nix/2.34.8/bin/nix").unwrap();
+        let policy =
+            ChildContainmentPolicy::new("/opt/pkg/nix/2.34.8/bin/nix", "/var/lib/pkg/broker-home")
+                .unwrap();
         assert_eq!(
             policy.executable(),
             Path::new("/opt/pkg/nix/2.34.8/bin/nix")
         );
         assert_eq!(
             policy.environment().keys().cloned().collect::<Vec<_>>(),
-            ["HOME", "NIX_CONFIG", "NIX_REMOTE", "PATH"]
+            [
+                "HOME",
+                "NIX_CONFIG",
+                "NIX_DAEMON_SOCKET_PATH",
+                "NIX_REMOTE",
+                "NIX_STATE_DIR",
+                "NIX_USER_CONF_FILES",
+                "PATH",
+                "TMPDIR",
+            ]
         );
-        for forbidden in [
-            "NIX_PATH",
-            "NIXPKGS_CONFIG",
-            "NIX_USER_CONF_FILES",
-            "http_proxy",
-            "SSH_AUTH_SOCK",
-        ] {
+        assert_eq!(policy.environment()["HOME"], "/var/lib/pkg/broker-home");
+        assert_eq!(
+            policy.environment()["TMPDIR"],
+            "/var/lib/pkg/broker-home/tmp"
+        );
+        assert!(policy.environment()["NIX_USER_CONF_FILES"].is_empty());
+        for forbidden in ["NIX_PATH", "NIXPKGS_CONFIG", "http_proxy", "SSH_AUTH_SOCK"] {
             assert!(!policy.environment().contains_key(forbidden));
         }
-        assert!(ChildContainmentPolicy::new("nix").is_err());
-        assert!(ChildContainmentPolicy::new("/usr/bin/nix").is_err());
-        assert!(ChildContainmentPolicy::new("/opt/pkg/nix/../evil/nix").is_err());
+        assert!(ChildContainmentPolicy::new("nix", "/var/lib/pkg/broker-home").is_err());
+        assert!(ChildContainmentPolicy::new("/usr/bin/nix", "/var/lib/pkg/broker-home").is_err());
+        assert!(
+            ChildContainmentPolicy::new("/opt/pkg/nix/../evil/nix", "/var/lib/pkg/broker-home")
+                .is_err()
+        );
+        assert!(ChildContainmentPolicy::new("/opt/pkg/nix/2.34.8/bin/nix", "/var/empty").is_err());
         assert_eq!(policy.cancel_grace(), Duration::from_secs(5));
         assert!(policy.terminate_process_group());
     }

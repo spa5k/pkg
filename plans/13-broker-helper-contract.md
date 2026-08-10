@@ -159,8 +159,12 @@ filesystem lock.
 The broker constructs child policy once from an exact absolute executable matching
 `/opt/pkg/nix/<validated-version>/bin/nix`; callers cannot select it per operation. Launchers:
 
-- call `env_clear` and install only `HOME=/var/empty`, the fixed managed `NIX_CONFIG`,
-  `NIX_REMOTE=daemon`, and `PATH=/usr/bin:/bin`;
+- call `env_clear` and install only the platform-fixed private broker `HOME` and its `TMPDIR`,
+  the fixed managed `NIX_CONFIG`, `NIX_REMOTE=daemon`, `NIX_STATE_DIR=/nix/var/nix`,
+  `NIX_DAEMON_SOCKET_PATH=/nix/var/nix/daemon-socket/socket`, an explicitly empty
+  `NIX_USER_CONF_FILES`, and `PATH=/usr/bin:/bin`; Linux uses
+  `/var/lib/pkg/broker-home`, while macOS uses
+  `/Library/Application Support/pkg/broker-home`;
 - create a distinct process group;
 - on cancellation send `SIGTERM` to the group, wait the fixed five-second grace, then `SIGKILL`;
 - accept argv only from typed adapter methods, never from the framed request; and

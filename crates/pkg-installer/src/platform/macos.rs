@@ -322,6 +322,22 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Wheel,
     ),
     MacOsInstallAsset::path(
+        "product-config-root",
+        MacOsAssetKind::Directory,
+        "/opt/pkg/etc",
+        0o755,
+        MacOsAssetPrincipal::Root,
+        MacOsAssetPrincipal::Wheel,
+    ),
+    MacOsInstallAsset::path(
+        "product-config-dir",
+        MacOsAssetKind::Directory,
+        "/opt/pkg/etc/pkg",
+        0o755,
+        MacOsAssetPrincipal::Root,
+        MacOsAssetPrincipal::Wheel,
+    ),
+    MacOsInstallAsset::path(
         "product-bin",
         MacOsAssetKind::Directory,
         "/opt/pkg/bin",
@@ -342,14 +358,6 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg",
         0o711,
-        MacOsAssetPrincipal::Root,
-        MacOsAssetPrincipal::Broker,
-    ),
-    MacOsInstallAsset::path(
-        "nix-config-dir",
-        MacOsAssetKind::Directory,
-        "/Library/Application Support/pkg/nix-conf",
-        0o750,
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
@@ -394,6 +402,22 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
     ),
     MacOsInstallAsset::path(
+        "broker-home",
+        MacOsAssetKind::Directory,
+        "/Library/Application Support/pkg/broker-home",
+        0o700,
+        MacOsAssetPrincipal::Broker,
+        MacOsAssetPrincipal::Broker,
+    ),
+    MacOsInstallAsset::path(
+        "broker-tmp",
+        MacOsAssetKind::Directory,
+        "/Library/Application Support/pkg/broker-home/tmp",
+        0o700,
+        MacOsAssetPrincipal::Broker,
+        MacOsAssetPrincipal::Broker,
+    ),
+    MacOsInstallAsset::path(
         "broker-binary",
         MacOsAssetKind::File,
         "/opt/pkg/bin/pkg-nix-broker",
@@ -420,7 +444,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
     MacOsInstallAsset::path(
         "nix-config",
         MacOsAssetKind::File,
-        "/Library/Application Support/pkg/nix-conf/nix.conf",
+        "/opt/pkg/etc/pkg/nix.conf",
         0o644,
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
@@ -548,7 +572,7 @@ impl MacOsLaunchdAssets {
 <plist version="1.0"><dict>
 <key>Label</key><string>org.pkg.nix-daemon</string>
 <key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>/bin/wait4path /nix/var/nix/daemon-socket &amp;&amp; exec /opt/pkg/nix/current/bin/nix-daemon</string></array>
-<key>EnvironmentVariables</key><dict><key>NIX_CONF_DIR</key><string>/Library/Application Support/pkg/nix-conf</string></dict>
+<key>EnvironmentVariables</key><dict><key>NIX_CONF_DIR</key><string>/opt/pkg/etc/pkg</string><key>NIX_DAEMON_SOCKET_PATH</key><string>/nix/var/nix/daemon-socket/socket</string><key>NIX_STATE_DIR</key><string>/nix/var/nix</string></dict>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 <key>UserName</key><string>root</string><key>GroupName</key><string>wheel</string>
 <key>ProcessType</key><string>Standard</string><key>Umask</key><integer>63</integer>
@@ -579,6 +603,8 @@ impl MacOsLaunchdAssets {
 <plist version="1.0"><dict>
 <key>Label</key><string>org.pkg.nix-broker</string>
 <key>ProgramArguments</key><array><string>/opt/pkg/bin/pkg-nix-broker</string><string>--serve-macos</string></array>
+<key>EnvironmentVariables</key><dict><key>HOME</key><string>/Library/Application Support/pkg/broker-home</string><key>TMPDIR</key><string>/Library/Application Support/pkg/broker-home/tmp</string></dict>
+<key>WorkingDirectory</key><string>/Library/Application Support/pkg/broker-home</string>
 <key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
 <key>UserName</key><string>pkg-nix-broker</string><key>GroupName</key><string>pkg-nix-broker</string>
 <key>ProcessType</key><string>Standard</string><key>Umask</key><integer>63</integer>
@@ -1175,6 +1201,30 @@ mod tests {
         assert_eq!(helper.mode, Some(0o700));
         assert_eq!(helper.owner, Some(MacOsAssetPrincipal::Root));
         assert_eq!(helper.group, Some(MacOsAssetPrincipal::Wheel));
+        for (id, path, owner) in [
+            (
+                "nix-config",
+                "/opt/pkg/etc/pkg/nix.conf",
+                MacOsAssetPrincipal::Root,
+            ),
+            (
+                "broker-home",
+                "/Library/Application Support/pkg/broker-home",
+                MacOsAssetPrincipal::Broker,
+            ),
+            (
+                "broker-tmp",
+                "/Library/Application Support/pkg/broker-home/tmp",
+                MacOsAssetPrincipal::Broker,
+            ),
+        ] {
+            let asset = MACOS_ASSETS
+                .iter()
+                .find(|asset| asset.id == id)
+                .ok_or_else(|| std::io::Error::other("missing managed runtime asset"))?;
+            assert_eq!(asset.path_or_name, path);
+            assert_eq!(asset.owner, Some(owner));
+        }
         Ok(())
     }
 
@@ -1188,7 +1238,20 @@ mod tests {
             assert!(!plist.contains("SoftResourceLimits"));
         }
         assert!(MacOsLaunchdAssets::NIX_DAEMON.contains("<string>root</string>"));
+        assert!(
+            MacOsLaunchdAssets::NIX_DAEMON
+                .contains("<key>NIX_CONF_DIR</key><string>/opt/pkg/etc/pkg</string>")
+        );
+        assert!(MacOsLaunchdAssets::NIX_DAEMON.contains(
+            "<key>NIX_DAEMON_SOCKET_PATH</key><string>/nix/var/nix/daemon-socket/socket</string>"
+        ));
         assert!(MacOsLaunchdAssets::BROKER.contains("<string>pkg-nix-broker</string>"));
+        assert!(MacOsLaunchdAssets::BROKER.contains(
+            "<key>HOME</key><string>/Library/Application Support/pkg/broker-home</string>"
+        ));
+        assert!(MacOsLaunchdAssets::BROKER.contains(
+            "<key>TMPDIR</key><string>/Library/Application Support/pkg/broker-home/tmp</string>"
+        ));
         assert!(MacOsLaunchdAssets::ROOT_HELPER.contains("pkg-root-helper"));
         assert!(
             MacOsLaunchdAssets::ROOT_HELPER
