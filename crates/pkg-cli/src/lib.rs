@@ -11,5 +11,6 @@ pub mod exit;
 pub mod log;
 pub mod path;
 pub mod progress;
+pub mod support;
 pub mod telemetry;
 pub mod ux;

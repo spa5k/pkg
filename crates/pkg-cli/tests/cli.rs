@@ -87,6 +87,48 @@ fn completion_is_real_static_source_and_doctor_is_honest_about_deferred_checks()
 }
 
 #[test]
+fn doctor_support_is_preview_only_and_available_on_an_unhealthy_host() {
+    let state = std::env::temp_dir().join(format!(
+        "pkg-cli-support-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let output = pkg()
+        .args(["--state", state.to_str().unwrap(), "doctor", "--support"])
+        .env("PATH", state.join("current/bin"))
+        .env("PKG_TEST_SECRET", "must-not-leak")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["type"], "support_bundle");
+    assert_eq!(value["privacy"]["previewOnly"], true);
+    assert_eq!(value["privacy"]["uploaded"], false);
+    assert_eq!(value["privacy"]["packageNamesIncluded"], false);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.contains("must-not-leak"));
+    assert!(!text.contains(state.to_str().unwrap()));
+}
+
+#[test]
+fn doctor_support_refuses_competing_machine_output_modes() {
+    for args in [
+        ["--json", "doctor", "--support"],
+        ["doctor", "--support", "--json"],
+        ["--jsonl", "doctor", "--support"],
+        ["doctor", "--support", "--jsonl"],
+    ] {
+        let output = pkg().args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["error"]["symbol"], "USAGE");
+        assert_eq!(value["command"], "doctor");
+    }
+}
+
+#[test]
 fn command_logging_records_only_the_command_not_package_arguments() {
     let state = std::env::temp_dir().join(format!(
         "pkg-cli-log-{}-{:?}",

@@ -1078,6 +1078,16 @@ flowchart TD
 - **Milestone:** M6.
 
 #### PR-35 — Docs site + install scripts + `doctor` support export
+- **Status (2026-08-10):** implementation complete locally. The docs site covers safe installation,
+  daily commands, support, privacy, and the unpublished-release boundary. The POSIX installer
+  template accepts no caller URL/checksum/target, requires HTTPS redirects, verifies an embedded
+  per-platform SHA-256 before privilege, and refuses before network access while any release token
+  is unresolved. `doctor --support` is a preview-only typed JSON projection that succeeds on an
+  unhealthy host, reads bounded private logs into phase/outcome only, reports aggregate state
+  health, and excludes args/env/package names/paths/contents/raw details/Nix identities. Authenticated
+  channel/runtime/index observations are explicitly null/deferred until wired. Docs/link/script,
+  CLI unit/integration, redaction, and output-mode tests pass. PR-36 must render the release template
+  from its final signed installer artifacts; no unpublished installer or checksum is fabricated.
 - **Purpose:** user-facing docs, install instructions (pinned checksums), and `doctor
   --support` previewable export (`06`,`10` §9).
 - **Owns:** `docs/`, `docs/install.sh` (pinned), support-export code in `pkg-cli`.

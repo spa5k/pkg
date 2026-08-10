@@ -314,6 +314,17 @@ reconciliation.
 > **📐 DECISION.** Support export is **preview-before-send** and the user is shown the exact
   bundle. Privacy review is a release gate for any new field (`08` T-LOG-1, GDPR/minimization).
 
+**PR-35 implementation boundary.** `pkg doctor --support` emits one deterministic, typed JSON
+preview and performs no upload. It remains available when health checks fail. The bundle projects
+private logs down to coarse phase/outcome, bounds every scan, refuses symlinked or permissive log
+roots, and includes no arguments, environment values, package names, paths, contents, raw log
+detail, network addresses, or managed-Nix identities. Channel/runtime/index fields remain honestly
+`null`/`deferred` until their authenticated doctor observations are wired; a future sender must
+transmit the exact already-previewed bytes. The docs site and release installer template are
+repository-local and network-free to validate. Until PR-36 produces signed platform installer
+artifacts and replaces all reviewed release/checksum placeholders, the template refuses before its
+first network operation rather than fetching an unpinned “latest” release.
+
 ### 9.2 Data retention
 - Client logs: rotating, max size configurable, default cap (e.g., 50 MB total).
 - Server-side: signing audit logs retained per policy; CDN logs per provider policy, minimal.

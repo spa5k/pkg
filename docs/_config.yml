@@ -1,0 +1,6 @@
+title: pkg documentation
+description: Familiar package management backed by a private managed Nix runtime
+markdown: kramdown
+exclude:
+  - install.sh
+  - tests

@@ -1,7 +1,7 @@
 use std::process::ExitCode as ProcessExitCode;
 
 use clap::Parser;
-use pkg_cli::cli::{Cli, Command};
+use pkg_cli::cli::{Cli, Command, DoctorArgs};
 use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport};
 use pkg_cli::commands::execute::{UnavailableEngine, execute_command};
 use pkg_cli::completion::write_completion;
@@ -9,17 +9,14 @@ use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
 use pkg_cli::exit::ExitCode;
 use pkg_cli::log::{LogConfig, LogLevel, LogRecord, StructuredLog};
 use pkg_cli::path::{HostFamily, PathObservation, default_state_root};
+use pkg_cli::support::SupportBundle;
 use pkg_cli::ux::{CommandError, OutputMode, write_error};
 use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
 
 fn main() -> ProcessExitCode {
     let cli = Cli::parse();
     if let Err(error) = cli.validate() {
-        let command_error = CommandError::new(
-            error.exit_code(),
-            error.to_string(),
-            "name one or more installed packages, or pass --all",
-        );
+        let command_error = CommandError::new(error.exit_code(), error.to_string(), error.hint());
         let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
         if write_error(
             std::io::stdout(),
@@ -42,7 +39,7 @@ fn main() -> ProcessExitCode {
                 Err(_) => ProcessExitCode::FAILURE,
             };
         }
-        Command::Doctor => return run_doctor(&cli),
+        Command::Doctor(args) => return run_doctor(&cli, args),
         _ => {}
     }
 
@@ -97,7 +94,7 @@ fn write_command_log(cli: &Cli, exit_code: ExitCode) {
     ));
 }
 
-fn run_doctor(cli: &Cli) -> ProcessExitCode {
+fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
     let Some(host) = HostFamily::detect() else {
         return ExitCode::Config.into();
     };
@@ -138,6 +135,14 @@ fn run_doctor(cli: &Cli) -> ProcessExitCode {
         };
     }
     let report = DoctorReport::evaluate(&inputs);
+    if args.support() {
+        let bundle = SupportBundle::collect(&report, &inputs.state_root);
+        return if bundle.write_preview(std::io::stdout()).is_ok() {
+            ExitCode::Ok.into()
+        } else {
+            ProcessExitCode::FAILURE
+        };
+    }
     let rendered = match OutputMode::from_flags(cli.json(), cli.jsonl()) {
         OutputMode::Human => report.write_human(std::io::stdout()),
         OutputMode::Json => report.write_json(std::io::stdout()),

@@ -41,3 +41,8 @@ jobs:
 
       - name: Check docs links
         run: python3 .github/scripts/check_docs_links.py
+
+      - name: Validate docs site and installer template
+        run: |
+          sh -n docs/install.sh
+          python3 -m unittest discover -s docs/tests -p 'test_*.py' -v

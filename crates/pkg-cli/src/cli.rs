@@ -81,6 +81,12 @@ impl Cli {
         &self,
         upgrade_default: Option<&str>,
     ) -> Result<(), CliValidationError> {
+        if let Command::Doctor(args) = &self.command
+            && args.support
+            && (self.json || self.jsonl)
+        {
+            return Err(CliValidationError::SupportOutputConflict);
+        }
         if let Command::Upgrade(args) = &self.command
             && args.packages.is_empty()
             && !args.all
@@ -167,6 +173,8 @@ impl Cli {
 /// Validation failure for a syntactically parsed CLI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliValidationError {
+    /// Support previews are already one exact JSON document.
+    SupportOutputConflict,
     /// `upgrade` named neither packages nor `--all` and no explicit environment default applies.
     UpgradeScopeRequired,
 }
@@ -177,11 +185,25 @@ impl CliValidationError {
     pub const fn exit_code(self) -> ExitCode {
         ExitCode::Usage
     }
+
+    /// Product-facing remediation for this grammar failure.
+    #[must_use]
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Self::SupportOutputConflict => {
+                "use doctor --support without --json or --jsonl; the preview is already JSON"
+            }
+            Self::UpgradeScopeRequired => "name one or more installed packages, or pass --all",
+        }
+    }
 }
 
 impl std::fmt::Display for CliValidationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::SupportOutputConflict => {
+                formatter.write_str("doctor --support cannot be combined with --json or --jsonl")
+            }
             Self::UpgradeScopeRequired => {
                 formatter.write_str("upgrade requires package names or --all")
             }
@@ -195,7 +217,7 @@ impl std::error::Error for CliValidationError {}
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Command {
     /// Check environment, trust, managed runtime, state, and activation health.
-    Doctor,
+    Doctor(DoctorArgs),
     /// Search the locally verified package index.
     Search(SearchArgs),
     /// Show package metadata.
@@ -231,7 +253,7 @@ pub enum Command {
 impl Command {
     pub(crate) const fn name(&self) -> &'static str {
         match self {
-            Self::Doctor => "doctor",
+            Self::Doctor(_) => "doctor",
             Self::Search(_) => "search",
             Self::Info(_) => "info",
             Self::Install(_) => "install",
@@ -248,6 +270,22 @@ impl Command {
             Self::Repair(_) => "repair",
             Self::Completion(_) => "completion",
         }
+    }
+}
+
+/// Read-only doctor command arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Args)]
+pub struct DoctorArgs {
+    /// Preview a privacy-minimized support bundle; nothing is uploaded.
+    #[arg(long)]
+    support: bool,
+}
+
+impl DoctorArgs {
+    /// Whether to emit the exact support-bundle preview.
+    #[must_use]
+    pub const fn support(&self) -> bool {
+        self.support
     }
 }
 
