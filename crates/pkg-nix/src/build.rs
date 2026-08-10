@@ -2,6 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -1000,6 +1003,84 @@ pub trait ResourceProbe: Send + Sync {
     fn measure(&self) -> Result<ResourceSnapshot, BuildEngineError>;
 }
 
+/// Production resource probe for the fixed managed `/nix` filesystem.
+///
+/// Dynamic measurements are deliberately excluded from the approval digest
+/// and are sampled only under broker build admission.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct HostResourceProbe;
+
+impl HostResourceProbe {
+    /// Constructs the fixed-path host probe.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl ResourceProbe for HostResourceProbe {
+    fn measure(&self) -> Result<ResourceSnapshot, BuildEngineError> {
+        Ok(ResourceSnapshot {
+            free_bytes: available_bytes(Path::new("/nix"))?,
+            load_average: host_load_average()?,
+        })
+    }
+}
+
+fn available_bytes(path: &Path) -> Result<u64, BuildEngineError> {
+    let statistics = rustix::fs::statvfs(path)
+        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::ResourcePreflightFailed))?;
+    statistics
+        .f_bavail
+        .checked_mul(statistics.f_frsize)
+        .filter(|bytes| *bytes > 0)
+        .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::ResourcePreflightFailed))
+}
+
+#[cfg(target_os = "linux")]
+fn host_load_average() -> Result<f64, BuildEngineError> {
+    let text = std::fs::read_to_string("/proc/loadavg")
+        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::ResourcePreflightFailed))?;
+    parse_load_average(&text)
+}
+
+#[cfg(target_os = "macos")]
+fn host_load_average() -> Result<f64, BuildEngineError> {
+    let output = Command::new("/usr/sbin/sysctl")
+        .args(["-n", "vm.loadavg"])
+        .env_clear()
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::ResourcePreflightFailed))?;
+    if !output.status.success() || output.stdout.len() > 1024 {
+        return Err(BuildEngineError::new(
+            BuildEngineErrorCode::ResourcePreflightFailed,
+        ));
+    }
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::ResourcePreflightFailed))?;
+    parse_load_average(text)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn host_load_average() -> Result<f64, BuildEngineError> {
+    Err(BuildEngineError::new(
+        BuildEngineErrorCode::ResourcePreflightFailed,
+    ))
+}
+
+fn parse_load_average(text: &str) -> Result<f64, BuildEngineError> {
+    let value = text
+        .trim()
+        .trim_start_matches('{')
+        .split_ascii_whitespace()
+        .next()
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::ResourcePreflightFailed))?;
+    Ok(value)
+}
+
 /// Heuristic size input deliberately excluded from the approval digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VolatileBuildEstimate {
@@ -1502,6 +1583,19 @@ mod tests {
         ResourceSnapshot {
             free_bytes: 10_000,
             load_average: 1.0,
+        }
+    }
+
+    #[test]
+    fn host_resource_probe_uses_safe_fixed_inputs_and_strict_load_parsing() {
+        assert!(available_bytes(Path::new("/")).unwrap() > 0);
+        assert_eq!(parse_load_average("1.25 0.50 0.25 1/2 3").unwrap(), 1.25);
+        assert_eq!(parse_load_average("{ 2.5 1.0 0.5 }").unwrap(), 2.5);
+        for invalid in ["", "{ }", "nan 1 1", "inf 1 1", "-1 1 1", "nope"] {
+            assert_eq!(
+                parse_load_average(invalid).unwrap_err().code(),
+                BuildEngineErrorCode::ResourcePreflightFailed
+            );
         }
     }
 

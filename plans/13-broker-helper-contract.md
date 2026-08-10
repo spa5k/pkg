@@ -233,6 +233,9 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   permits until authoritative rooting and operation completion; a refusal consumes the approval and
   releases both. Lifecycle cancellation during the synchronous adapter call is signalled immediately
   but defers permit release until that call returns, preventing GC from racing in-flight outputs.
+  The production resource seam is fixed to the managed `/nix` filesystem and the host one-minute
+  load average. It uses safe filesystem statistics plus bounded, fixed OS load sources and rejects
+  unavailable, malformed, non-finite, negative, zero-capacity, or overflowing measurements.
   The wire method remains unassigned until the dispatcher can construct the trusted replan closure
   internally. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without

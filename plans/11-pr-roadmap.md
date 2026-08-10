@@ -1149,7 +1149,10 @@ flowchart TD
   in-flight outputs. Every operation carries a broker-private
   cooperative-cancellation token signalled by completion, cancellation, disconnect, expiry, and
   restart. FIFO admission and execution consume that token; no cancellation authority crosses IPC.
-  The shared local-build approval engine now
+  The production resource probe uses safe `statvfs` against the fixed `/nix` mount and samples the
+  one-minute host load from `/proc/loadavg` on Linux or the fixed `/usr/sbin/sysctl vm.loadavg`
+  query on macOS; malformed, non-finite, negative, unavailable, or overflowing measurements fail
+  the dynamic preflight closed and remain outside the approval digest. The shared local-build approval engine now
   reserves an operation before journal I/O without holding its authority mutex across that I/O;
   cancellation can revoke an in-flight recording, and a monotonic reservation identity prevents an
   operation-id retry from reviving the earlier journal call. The durable row may remain as audit
