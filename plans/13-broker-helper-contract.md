@@ -244,9 +244,13 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   The broker now retains that trusted replanner capability with the private plan before approval;
   dispatcher-facing execution accepts only the handle, exact digest, private resource inputs, and
   managed adapter, and invokes no caller-supplied closure. The concrete replanner re-observes host
-  facts and runs the authenticated source/evaluation/cache/plan pipeline on every call. The framed
-  execution method remains unassigned until production host-fact observation and command-intent
-  preparation are connected to this internal path. Adapter failures cross only the closed error-code envelope;
+  facts and runs the authenticated source/evaluation/cache/plan pipeline on every call. The
+  production observer is now available: construction binds it to the exact managed `nix.conf`
+  rendered from the retained verified channel, and observation rechecks root-owned safe filesystem
+  state, fixed non-root/non-login native build users through the configured system account-search
+  view, host cores, and actual managed-daemon membership in the Linux cgroup-v2 service (with no
+  Darwin cgroup claim). The framed execution method remains unassigned until command-intent
+  preparation connects that observer to this internal path. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.

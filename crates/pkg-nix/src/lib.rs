@@ -95,6 +95,9 @@ pub use maintenance::{
     RepairStorePathsRequest, RootSet, RootSetEntry, RootSetReport, VerifiedRepairExecutor,
     VerifiedRepairScope,
 };
+pub use managed::accounts::{
+    BuildAccount, BuildAccountDirectory, BuildAccountError, observe_build_accounts,
+};
 pub use managed::daemon::{DaemonError, DaemonErrorCode, ManagedDaemon};
 pub use managed::detect::{
     DetectionDisposition, DetectionFinding, DetectionReport, FindingKind, detect_unmanaged_nix,

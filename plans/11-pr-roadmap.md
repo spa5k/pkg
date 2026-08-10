@@ -1203,7 +1203,15 @@ flowchart TD
   dispatcher-facing execution path accepts no closure and invokes only the retained capability;
   missing/refused replanning consumes approval and stops before the managed adapter builds. The old
   arbitrary-plan preparation helper is test-only, so production code can install a private plan only
-  together with a trusted replanner. The
+  together with a trusted replanner. The production host observer is now bound to the exact
+  authenticated-channel rendering of the root-owned managed `nix.conf`; every preview and replan
+  rereads it through safe ancestors and refuses any byte change. It also rechecks the native system,
+  fixed build-user names, distinct non-root UIDs, primary/explicit group membership, non-login
+  shell/home shape, nonzero logical-core count, and Linux cgroup-v2 plus the actual managed daemon
+  process in its service cgroup. Account enumeration uses the configured system search view; changing
+  or hiding identities through administrator-controlled NSS/OpenDirectory configuration remains in
+  the documented root/admin-can-win boundary. Darwin deliberately reports both cgroup fields false. No path, config value, or
+  readiness assertion is caller supplied. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

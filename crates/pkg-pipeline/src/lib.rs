@@ -7,6 +7,7 @@ mod activate;
 mod build_intent;
 mod build_plan;
 mod commit;
+mod host_facts;
 mod lifecycle;
 mod preflight;
 mod resolve;
@@ -28,6 +29,7 @@ pub use commit::{
     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,
     recover_generation,
 };
+pub use host_facts::ProductionBuildHostFactsProbe;
 pub use lifecycle::{InstallStateError, assemble_install_state};
 pub use preflight::{PlannedOutput, PreflightError, PreflightInstall, preflight_cache_only};
 pub use resolve::{ResolveBatchError, ResolvedInstall, resolve_install};
