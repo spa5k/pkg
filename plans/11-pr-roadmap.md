@@ -1135,7 +1135,11 @@ flowchart TD
   private `BuildPlan` is retained behind the caller/epoch-bound build handle, only its sanitized
   preview/digest is public, exact approval is one-shot, and wrong-UID/digest, replay, cancellation,
   disconnect, expiry, or restart invalidate it. Wire exposure still waits for dispatcher-owned
-  approval journaling plus admission-time replan/execution. Strict nested request bytes remain intact through
+  approval journaling plus admission-time replan/execution. The shared local-build approval engine now
+  reserves an operation before journal I/O without holding its authority mutex across that I/O;
+  cancellation can revoke an in-flight recording, and a monotonic reservation identity prevents an
+  operation-id retry from reviving the earlier journal call. The durable row may remain as audit
+  evidence, but no receipt is issued for a revoked reservation. Strict nested request bytes remain intact through
   framing so the domain codecs still reject duplicates and unknown fields. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -854,6 +854,15 @@ struct ApprovalGrant {
     policy_version: PolicyVersion,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ApprovalState {
+    Recording {
+        grant: ApprovalGrant,
+        reservation: u64,
+    },
+    Approved(ApprovalGrant),
+}
+
 #[derive(Debug, Default)]
 struct AdmissionState {
     next_ticket: u64,
@@ -984,7 +993,8 @@ impl VolatileBuildEstimate {
 /// Shared V1 build engine: plan approval, fair admission, revalidation, build.
 #[derive(Debug, Default)]
 pub struct LocalBuildEngine {
-    approvals: Mutex<BTreeMap<OperationId, ApprovalGrant>>,
+    approvals: Mutex<BTreeMap<OperationId, ApprovalState>>,
+    next_approval_reservation: AtomicU64,
     admission: BuildAdmission,
 }
 
@@ -1013,22 +1023,44 @@ impl LocalBuildEngine {
             source,
             timestamp,
         };
+        let grant = ApprovalGrant {
+            digest,
+            policy_version: plan.policy_identity,
+        };
+        let reservation = self
+            .next_approval_reservation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::ApprovalUnavailable))?;
+        let recording = ApprovalState::Recording {
+            grant: grant.clone(),
+            reservation,
+        };
+        {
+            let mut approvals = lock_recover(&self.approvals);
+            if approvals.contains_key(&operation_id) {
+                return Err(BuildEngineError::new(
+                    BuildEngineErrorCode::ApprovalUnavailable,
+                ));
+            }
+            approvals.insert(operation_id.clone(), recording.clone());
+        }
+        if journal.record(&record).is_err() {
+            let mut approvals = lock_recover(&self.approvals);
+            if approvals.get(&operation_id) == Some(&recording) {
+                approvals.remove(&operation_id);
+            }
+            return Err(BuildEngineError::new(BuildEngineErrorCode::JournalFailed));
+        }
         let mut approvals = lock_recover(&self.approvals);
-        if approvals.contains_key(&operation_id) {
+        if approvals.get(&operation_id) != Some(&recording) {
             return Err(BuildEngineError::new(
                 BuildEngineErrorCode::ApprovalUnavailable,
             ));
         }
-        journal
-            .record(&record)
-            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::JournalFailed))?;
-        approvals.insert(
-            operation_id.clone(),
-            ApprovalGrant {
-                digest,
-                policy_version: plan.policy_identity,
-            },
-        );
+        approvals.insert(operation_id.clone(), ApprovalState::Approved(grant));
+        drop(approvals);
         Ok(BuildApprovalReceipt::new(
             operation_id,
             digest,
@@ -1087,7 +1119,9 @@ impl LocalBuildEngine {
         }
         {
             let approvals = lock_recover(&self.approvals);
-            if approvals.get(receipt.operation_id()) != Some(&expected_grant) {
+            if approvals.get(receipt.operation_id())
+                != Some(&ApprovalState::Approved(expected_grant.clone()))
+            {
                 return Err(BuildEngineError::new(
                     BuildEngineErrorCode::ApprovalRequired,
                 ));
@@ -1118,7 +1152,7 @@ impl LocalBuildEngine {
             ));
         }
         let removed = lock_recover(&self.approvals).remove(receipt.operation_id());
-        if removed != Some(expected_grant) {
+        if removed != Some(ApprovalState::Approved(expected_grant)) {
             return Err(BuildEngineError::new(
                 BuildEngineErrorCode::ApprovalUnavailable,
             ));
@@ -1230,8 +1264,10 @@ mod tests {
     use super::*;
     use std::collections::{BTreeMap, VecDeque};
     use std::str::FromStr;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, mpsc};
+    use std::thread;
+    use std::time::Duration;
 
     use pkg_core::PackageVersion;
 
@@ -1330,6 +1366,24 @@ mod tests {
         fn record(&self, record: &ApprovalJournalRecord) -> Result<(), BuildEngineError> {
             lock_recover(&self.rows).push(record.clone());
             Ok(())
+        }
+    }
+
+    struct BlockingJournal {
+        rows: Mutex<Vec<ApprovalJournalRecord>>,
+        entered: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl ApprovalJournal for BlockingJournal {
+        fn record(&self, record: &ApprovalJournalRecord) -> Result<(), BuildEngineError> {
+            lock_recover(&self.rows).push(record.clone());
+            self.entered
+                .send(())
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::JournalFailed))?;
+            lock_recover(&self.release)
+                .recv()
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::JournalFailed))
         }
     }
 
@@ -1583,6 +1637,71 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code(), BuildEngineErrorCode::ApprovalRequired);
         assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn approval_recording_does_not_block_lifecycle_cancellation() {
+        let engine = Arc::new(LocalBuildEngine::new());
+        let plan = plan(1, System::X8664Linux, linux_readiness());
+        let retry_plan = plan.clone();
+        let operation_id = OperationId::new("op-recording").unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let journal = Arc::new(BlockingJournal {
+            rows: Mutex::new(Vec::new()),
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        });
+
+        let approving_engine = Arc::clone(&engine);
+        let approving_journal = Arc::clone(&journal);
+        let approving_id = operation_id.clone();
+        let approval = thread::spawn(move || {
+            approving_engine.approve(
+                approving_id,
+                &plan,
+                ApprovalSource::Interactive,
+                "2026-08-10T00:00:00Z",
+                approving_journal.as_ref(),
+            )
+        });
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let cancelling_engine = Arc::clone(&engine);
+        let cancelling_id = operation_id.clone();
+        let (cancelled_tx, cancelled_rx) = mpsc::channel();
+        let cancellation = thread::spawn(move || {
+            let cancelled = cancelling_engine.cancel_approval(&cancelling_id);
+            let _ = cancelled_tx.send(cancelled);
+        });
+        let cancelled = cancelled_rx.recv_timeout(Duration::from_secs(1));
+        assert!(cancelled.unwrap());
+        cancellation.join().unwrap();
+
+        let retry_engine = Arc::clone(&engine);
+        let retry_journal = Arc::clone(&journal);
+        let retry_id = operation_id.clone();
+        let retry = thread::spawn(move || {
+            retry_engine.approve(
+                retry_id,
+                &retry_plan,
+                ApprovalSource::Interactive,
+                "2026-08-10T00:00:01Z",
+                retry_journal.as_ref(),
+            )
+        });
+
+        release_tx.send(()).unwrap();
+
+        assert_eq!(
+            approval.join().unwrap().unwrap_err().code(),
+            BuildEngineErrorCode::ApprovalUnavailable
+        );
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        release_tx.send(()).unwrap();
+        assert!(retry.join().unwrap().is_ok());
+        assert_eq!(lock_recover(&journal.rows).len(), 2);
+        assert!(engine.cancel_approval(&operation_id));
     }
 
     #[test]
