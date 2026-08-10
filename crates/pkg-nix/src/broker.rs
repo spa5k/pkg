@@ -157,6 +157,8 @@ struct OperationRecord {
 #[derive(Clone)]
 struct PreparedBuild {
     plan: BuildPlan,
+    preview: BuildPreview,
+    estimate: Option<VolatileBuildEstimate>,
     digest: Digest,
     approval: PreparedBuildApproval,
     replanner: Option<Arc<dyn TrustedBuildReplanner>>,
@@ -167,6 +169,7 @@ impl fmt::Debug for PreparedBuild {
         formatter
             .debug_struct("PreparedBuild")
             .field("digest", &self.digest)
+            .field("has_estimate", &self.estimate.is_some())
             .field("has_replanner", &self.replanner.is_some())
             .finish_non_exhaustive()
     }
@@ -571,7 +574,12 @@ impl AuthenticatedCaller {
         handle: &OperationHandle,
         plan: BuildPlan,
     ) -> Result<BuildPreview, BrokerError> {
-        self.prepare_build_inner(handle, plan, None)
+        self.prepare_build_inner(
+            handle,
+            plan,
+            crate::BuildPreviewEstimates::unavailable(),
+            None,
+        )
     }
 
     /// Retains a private plan together with its in-process trusted replanner.
@@ -585,21 +593,43 @@ impl AuthenticatedCaller {
         plan: BuildPlan,
         replanner: Arc<dyn TrustedBuildReplanner>,
     ) -> Result<BuildPreview, BrokerError> {
-        self.prepare_build_inner(handle, plan, Some(replanner))
+        self.prepare_build_inner(
+            handle,
+            plan,
+            crate::BuildPreviewEstimates::unavailable(),
+            Some(replanner),
+        )
+    }
+
+    /// Retains trusted heuristic estimates with the private plan and replanner.
+    ///
+    /// The estimate is installed only by in-process broker orchestration. It is
+    /// shown in the public preview, retained for admission, and never accepted
+    /// from the later execution request.
+    pub fn prepare_build_with_replanner_and_estimates(
+        &self,
+        handle: &OperationHandle,
+        plan: BuildPlan,
+        estimates: crate::BuildPreviewEstimates,
+        replanner: Arc<dyn TrustedBuildReplanner>,
+    ) -> Result<BuildPreview, BrokerError> {
+        self.prepare_build_inner(handle, plan, estimates, Some(replanner))
     }
 
     fn prepare_build_inner(
         &self,
         handle: &OperationHandle,
         plan: BuildPlan,
+        estimates: crate::BuildPreviewEstimates,
         replanner: Option<Arc<dyn TrustedBuildReplanner>>,
     ) -> Result<BuildPreview, BrokerError> {
         let digest = plan
             .digest()
             .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidBuildPlan))?;
         let preview = plan
-            .preview()
+            .preview_with_estimates(estimates.clone())
             .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidBuildPlan))?;
+        let estimate = estimates.execution_disk_estimate();
         let mut state = self.broker.lock();
         self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
         let record = self.record_mut(&mut state, handle)?;
@@ -610,6 +640,8 @@ impl AuthenticatedCaller {
         }
         record.prepared_build = Some(PreparedBuild {
             plan,
+            preview: preview.clone(),
+            estimate,
             digest,
             approval: PreparedBuildApproval::Unapproved,
             replanner,
@@ -624,13 +656,12 @@ impl AuthenticatedCaller {
         let mut state = self.broker.lock();
         self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
         let record = self.record_mut(&mut state, handle)?;
-        record
+        Ok(record
             .prepared_build
             .as_ref()
             .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?
-            .plan
-            .preview()
-            .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidBuildPlan))
+            .preview
+            .clone())
     }
 
     /// Durably approves the exact broker-held plan for one later execution.
@@ -815,11 +846,10 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         digest: Digest,
-        estimate: VolatileBuildEstimate,
         resources: &dyn ResourceProbe,
         adapter: &dyn NixAdapter,
     ) -> Result<BuildReport, BrokerError> {
-        let replanner = {
+        let (replanner, estimate) = {
             let mut state = self.broker.lock();
             self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
             let prepared = self
@@ -830,10 +860,14 @@ impl AuthenticatedCaller {
             if prepared.digest != digest {
                 return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
             }
-            prepared
+            let replanner = prepared
                 .replanner
                 .clone()
-                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
+            let estimate = prepared
+                .estimate
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildResourcePreflightFailed))?;
+            (replanner, estimate)
         };
         self.execute_build(
             handle,
@@ -1982,7 +2016,12 @@ mod tests {
         let digest = plan.digest().unwrap();
         let replanner = Arc::new(RetainedReplanner::new(plan.clone(), false));
         caller
-            .prepare_build_with_replanner(&handle, plan, replanner.clone())
+            .prepare_build_with_replanner_and_estimates(
+                &handle,
+                plan,
+                crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
+                replanner.clone(),
+            )
             .unwrap();
         caller
             .approve_build(
@@ -1997,19 +2036,53 @@ mod tests {
 
         assert_eq!(
             caller
-                .execute_prepared_build(
-                    &handle,
-                    digest,
-                    VolatileBuildEstimate::new(100),
-                    &ExecutionProbe,
-                    &adapter,
-                )
+                .execute_prepared_build(&handle, digest, &ExecutionProbe, &adapter,)
                 .unwrap()
                 .status(),
             BuildStatus::Built
         );
         assert_eq!(replanner.calls.load(Ordering::SeqCst), 1);
         assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dispatcher_execution_refuses_an_unavailable_preparation_estimate() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let plan = build_plan(1);
+        let digest = plan.digest().unwrap();
+        let preview = caller
+            .prepare_build_with_replanner(
+                &handle,
+                plan.clone(),
+                Arc::new(RetainedReplanner::new(plan, false)),
+            )
+            .unwrap();
+        assert_eq!(caller.build_preview(&handle).unwrap(), preview);
+        caller
+            .approve_build(
+                &handle,
+                digest,
+                ApprovalSource::Interactive,
+                "2026-08-11T00:00:00Z",
+                &Journal::default(),
+            )
+            .unwrap();
+        let adapter = ExecutionAdapter::immediate();
+
+        assert_eq!(
+            caller
+                .execute_prepared_build(&handle, digest, &ExecutionProbe, &adapter)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::BuildResourcePreflightFailed
+        );
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 0);
+        caller.cancel(&handle).unwrap();
+        assert_eq!(broker.build_engine.approval_count(), 0);
     }
 
     #[test]
@@ -2022,9 +2095,10 @@ mod tests {
         let plan = build_plan(1);
         let digest = plan.digest().unwrap();
         caller
-            .prepare_build_with_replanner(
+            .prepare_build_with_replanner_and_estimates(
                 &handle,
                 plan.clone(),
+                crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
                 Arc::new(RetainedReplanner::new(plan, true)),
             )
             .unwrap();
@@ -2041,13 +2115,7 @@ mod tests {
 
         assert_eq!(
             caller
-                .execute_prepared_build(
-                    &handle,
-                    digest,
-                    VolatileBuildEstimate::new(100),
-                    &ExecutionProbe,
-                    &adapter,
-                )
+                .execute_prepared_build(&handle, digest, &ExecutionProbe, &adapter,)
                 .unwrap_err()
                 .code(),
             BrokerErrorCode::BuildApprovalInvalidated

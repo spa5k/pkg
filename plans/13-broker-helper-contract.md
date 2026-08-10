@@ -242,8 +242,12 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   load average. It uses safe filesystem statistics plus bounded, fixed OS load sources and rejects
   unavailable, malformed, non-finite, negative, zero-capacity, or overflowing measurements.
   The broker now retains that trusted replanner capability with the private plan before approval;
-  dispatcher-facing execution accepts only the handle, exact digest, private resource inputs, and
-  managed adapter, and invokes no caller-supplied closure. The concrete replanner re-observes host
+  dispatcher-facing execution accepts only the handle, exact digest, a trusted in-process resource
+  probe, and managed adapter, and invokes no caller-supplied closure. The heuristic disk estimate is
+  fixed during trusted preparation, retained beside the private plan, and reused for both the public
+  preview and admission; execution accepts no estimate. An unavailable estimate remains honest in
+  the preview and makes execution fail closed before the adapter runs, while an explicit zero-byte
+  estimate is invalid. The concrete replanner re-observes host
   facts and runs the authenticated source/evaluation/cache/plan pipeline on every call. The
   production observer is now available: construction binds it to the exact managed `nix.conf`
   rendered from the retained verified channel, and observation rechecks root-owned safe filesystem

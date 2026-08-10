@@ -584,6 +584,7 @@ impl BuildPlan {
         &self,
         estimates: BuildPreviewEstimates,
     ) -> Result<BuildPreview, BuildEngineError> {
+        estimates.validate()?;
         let digest = self.digest()?;
         let (os, arch) = product_platform(self.system_identity);
         let mut names = self
@@ -723,11 +724,22 @@ impl BuildPreviewEstimates {
         approx_new_disk_bytes: Option<u64>,
         approx_total_closure_bytes: Option<u64>,
     ) -> Result<Self, BuildEngineError> {
-        Ok(Self {
+        let estimates = Self {
             approx_build_minutes: approx_build_minutes.map(checked_text).transpose()?,
             approx_new_disk_bytes,
             approx_total_closure_bytes,
-        })
+        };
+        estimates.validate()?;
+        Ok(estimates)
+    }
+
+    pub(crate) const fn execution_disk_estimate(&self) -> Option<VolatileBuildEstimate> {
+        match self.approx_new_disk_bytes {
+            Some(estimated_new_bytes) => Some(VolatileBuildEstimate {
+                estimated_new_bytes,
+            }),
+            None => None,
+        }
     }
 }
 
@@ -826,6 +838,9 @@ impl BuildPreview {
 
 impl BuildPreviewEstimates {
     fn validate(&self) -> Result<(), BuildEngineError> {
+        if self.approx_new_disk_bytes == Some(0) {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
         self.approx_build_minutes
             .as_deref()
             .map(checked_text)
@@ -1737,6 +1752,13 @@ mod tests {
         assert!(estimated.contains("\"approxNewDiskBytes\":332000000"));
         assert_eq!(first.digest().unwrap(), same.digest().unwrap());
         assert!(BuildPreviewEstimates::new(Some("bad\nvalue"), None, None).is_err());
+        assert!(BuildPreviewEstimates::new(None, Some(0), None).is_err());
+
+        let mut zero_estimate = serde_json::to_value(&preview_object).unwrap();
+        zero_estimate["estimates"]["approxNewDiskBytes"] = serde_json::json!(0);
+        assert!(
+            BuildPreview::from_json_bytes(&serde_json::to_vec(&zero_estimate).unwrap()).is_err()
+        );
 
         let mut extended = serde_json::to_value(&preview_object).unwrap();
         extended

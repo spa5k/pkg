@@ -1262,7 +1262,11 @@ flowchart TD
   accepts only a live build handle and bounded unresolved/unpinned `CurrentChannel` selectors,
   invokes the injected authenticated build authority, and returns only a sanitized preview; no
   channel, index, system, derivation, path, or Nix option is caller supplied. The production
-  listener remains fail-closed until it bootstraps and injects the long-lived refresh service. The
+  listener remains fail-closed until it bootstraps and injects the long-lived refresh service. Build
+  execution can no longer receive a volatile disk estimate: trusted preparation fixes the estimate,
+  stores it with the private plan, and returns that same value in the sanitized preview. Missing
+  estimates fail execution before Nix runs and zero-byte estimates are invalid, closing the former
+  in-process admission-bypass seam before method 19 is assigned. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
