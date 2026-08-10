@@ -1230,6 +1230,12 @@ flowchart TD
   authority lock across host observation or Nix I/O, and its public production entry accepts only
   typed package selectors plus the already authenticated caller/operation handle; channel, system,
   index, derivation, path, and Nix options remain absent from the request boundary. The
+  fixed-policy channel client can now refresh the descriptor and fetch its host-specific index from
+  one loaded TUF repository view. It checks the signed target length against the product ceiling
+  before allocation and returns an opaque target capability only after `tough` completes the stream
+  hash/length verification; missing, oversized, truncated, or mismatched targets fail closed. The
+  target bytes still require the separate compressed-index semantic verification before publication
+  to broker authority. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

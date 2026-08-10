@@ -262,7 +262,11 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   caller and live handle, and releases its state lock before host/Nix work. The authenticated index is a non-forgeable Rust capability
   produced only after the downloaded compressed artifact matches the descriptor digest, bounded
   Brotli decoding produces a bounded document, and source-identity, strict-schema, invariant-rebuild and canonical-byte
-  checks; a caller-created `IndexDocument` cannot enter production preparation. Adapter failures cross only the closed error-code envelope;
+  checks; a caller-created `IndexDocument` cannot enter production preparation. The fixed channel
+  client obtains descriptor and host index from one authenticated TUF repository view, prechecks the
+  signed target length before allocation, and releases bytes only after the complete target stream
+  verifies; that TUF target capability is still unusable by build authority until the compressed
+  index verifier promotes it. Adapter failures cross only the closed error-code envelope;
   authorization, admission, framing, and transport failures still terminate the connection without
   disclosing private state. Product-command execution is still not fabricated before the dispatcher
   is connected.

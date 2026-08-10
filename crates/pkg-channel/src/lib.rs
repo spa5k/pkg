@@ -19,4 +19,4 @@ pub use descriptor::{
 };
 pub use keys::TrustedRoot;
 pub use policy::{AcceptedChannel, ChannelError, RefreshOutcome, VerifiedChannel};
-pub use tuf::ChannelClient;
+pub use tuf::{AuthenticatedIndexTarget, ChannelClient, ChannelRefresh};

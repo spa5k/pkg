@@ -143,6 +143,10 @@ pub enum ChannelError {
     InvalidNixpkgsPin,
     /// An index target name, source, or digest is invalid.
     InvalidIndexArtifact,
+    /// The authenticated host index target is absent.
+    MissingIndexTarget,
+    /// The authenticated host index target exceeds the product byte ceiling.
+    IndexTargetTooLarge,
     /// The substituter URL or signed cache key is outside V1 policy.
     InvalidSubstituters,
     /// A descriptor-referenced artifact is absent from authenticated TUF metadata.
@@ -182,6 +186,10 @@ impl fmt::Display for ChannelError {
             Self::InvalidRuntimeArtifact => f.write_str("managed Nix artifact is invalid"),
             Self::InvalidNixpkgsPin => f.write_str("Nixpkgs source pin is invalid"),
             Self::InvalidIndexArtifact => f.write_str("package index artifact is invalid"),
+            Self::MissingIndexTarget => f.write_str("authenticated package index is missing"),
+            Self::IndexTargetTooLarge => {
+                f.write_str("authenticated package index exceeds the product limit")
+            }
             Self::InvalidSubstituters => f.write_str("substituter policy is not the V1 allowlist"),
             Self::MissingTufTarget(name) => write!(f, "TUF target `{name}` is missing"),
             Self::TargetHashMismatch(name) => {
