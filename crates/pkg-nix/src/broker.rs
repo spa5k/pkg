@@ -1,19 +1,20 @@
 //! In-process broker reference for authenticated operation lifecycle and admission.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildPlan, BuildPreview, Digest,
-    LocalBuildEngine, OperationId, maintenance::random_secret,
+    ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildPlan, BuildPreview,
+    CancellationToken, Digest, LocalBuildEngine, OperationId, maintenance::random_secret,
 };
 
 const OPERATION_TTL: Duration = Duration::from_secs(30 * 60);
+const ADMISSION_WAIT_POLL: Duration = Duration::from_millis(25);
 
 /// Stable in-process broker failure categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,8 @@ pub enum BrokerErrorCode {
     OperationExpired,
     /// A machine-global admission gate is currently held by another operation.
     AdmissionBusy,
+    /// Admission waiting was cancelled by the caller or operation lifecycle.
+    AdmissionCancelled,
     /// The requested gate transition violated the operation lifecycle.
     InvalidAdmissionTransition,
     /// The broker could not derive a valid private build plan or preview.
@@ -162,9 +165,124 @@ struct BrokerState {
     secret: [u8; 32],
     next_operation: u64,
     operations: BTreeMap<OperationHandle, OperationRecord>,
-    build_holder: Option<OperationHandle>,
     gc_holder: Option<OperationHandle>,
     gc_inhibitors: BTreeSet<OperationHandle>,
+}
+
+#[derive(Debug, Default)]
+struct BuildGateState {
+    holder: Option<OperationHandle>,
+    waiting: VecDeque<OperationHandle>,
+}
+
+#[derive(Debug, Default)]
+struct FairBuildGate {
+    state: Mutex<BuildGateState>,
+    changed: Condvar,
+}
+
+impl FairBuildGate {
+    fn try_acquire(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
+        let mut state = self.lock();
+        if state.holder.as_ref() == Some(handle) {
+            return Ok(());
+        }
+        if state.holder.is_none() && state.waiting.is_empty() {
+            state.holder = Some(handle.clone());
+            Ok(())
+        } else {
+            Err(BrokerError::new(BrokerErrorCode::AdmissionBusy))
+        }
+    }
+
+    fn enqueue(&self, handle: &OperationHandle) -> Result<bool, BrokerError> {
+        let mut state = self.lock();
+        if state.holder.as_ref() == Some(handle) {
+            return Ok(true);
+        }
+        if state.waiting.contains(handle) {
+            return Err(BrokerError::new(
+                BrokerErrorCode::InvalidAdmissionTransition,
+            ));
+        }
+        if state.holder.is_none() && state.waiting.is_empty() {
+            state.holder = Some(handle.clone());
+            Ok(true)
+        } else {
+            state.waiting.push_back(handle.clone());
+            Ok(false)
+        }
+    }
+
+    fn wait(
+        &self,
+        handle: &OperationHandle,
+        cancellation: &CancellationToken,
+    ) -> Result<(), BrokerError> {
+        let mut state = self.lock();
+        if state.holder.as_ref() == Some(handle) {
+            return Ok(());
+        }
+        if !state.waiting.contains(handle) {
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        loop {
+            if cancellation.is_cancelled() {
+                state.waiting.retain(|waiting| waiting != handle);
+                self.changed.notify_all();
+                return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+            }
+            if state.holder.is_none() && state.waiting.front() == Some(handle) {
+                state.waiting.pop_front();
+                state.holder = Some(handle.clone());
+                return Ok(());
+            }
+            if !state.waiting.contains(handle) {
+                return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+            }
+            state = self
+                .changed
+                .wait_timeout(state, ADMISSION_WAIT_POLL)
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
+        }
+    }
+
+    fn release(&self, handle: &OperationHandle) {
+        let mut state = self.lock();
+        if state.holder.as_ref() == Some(handle) {
+            state.holder = None;
+        }
+        state.waiting.retain(|waiting| waiting != handle);
+        self.changed.notify_all();
+    }
+
+    fn reset(&self) {
+        let mut state = self.lock();
+        state.holder = None;
+        state.waiting.clear();
+        self.changed.notify_all();
+    }
+
+    fn held(&self) -> bool {
+        self.lock().holder.is_some()
+    }
+
+    fn blocks_gc(&self) -> bool {
+        let state = self.lock();
+        state.holder.is_some() || !state.waiting.is_empty()
+    }
+
+    #[cfg(test)]
+    fn waiting_count(&self) -> usize {
+        self.lock().waiting.len()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, BuildGateState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 /// Read-only admission snapshot for tests, diagnostics, and restart handshakes.
@@ -232,6 +350,7 @@ impl InProcessCallerPeer {
 /// In-process reference broker with memory-only operation and admission state.
 pub struct InProcessBroker {
     state: Mutex<BrokerState>,
+    build_gate: FairBuildGate,
     build_engine: LocalBuildEngine,
 }
 
@@ -251,10 +370,10 @@ impl InProcessBroker {
                     .map_err(|_| BrokerError::new(BrokerErrorCode::EntropyUnavailable))?,
                 next_operation: 0,
                 operations: BTreeMap::new(),
-                build_holder: None,
                 gc_holder: None,
                 gc_inhibitors: BTreeSet::new(),
             }),
+            build_gate: FairBuildGate::default(),
             build_engine: LocalBuildEngine::new(),
         }))
     }
@@ -289,7 +408,7 @@ impl InProcessBroker {
         state.secret = secret;
         state.next_operation = 0;
         state.operations.clear();
-        state.build_holder = None;
+        self.build_gate.reset();
         state.gc_holder = None;
         state.gc_inhibitors.clear();
         Ok(())
@@ -299,10 +418,15 @@ impl InProcessBroker {
     #[must_use]
     pub fn admission_snapshot(&self) -> AdmissionSnapshot {
         let mut state = self.lock();
-        purge_expired(&mut state, Instant::now(), &self.build_engine);
+        purge_expired(
+            &mut state,
+            Instant::now(),
+            &self.build_gate,
+            &self.build_engine,
+        );
         AdmissionSnapshot {
             operation_count: state.operations.len(),
-            build_held: state.build_holder.is_some(),
+            build_held: self.build_gate.held(),
             gc_held: state.gc_holder.is_some(),
             gc_inhibitor_count: state.gc_inhibitors.len(),
         }
@@ -344,7 +468,7 @@ impl AuthenticatedCaller {
             if let Some(operation_id) = build_operation_id(record) {
                 self.broker.build_engine.cancel_approval(operation_id);
             }
-            release_admission(&mut state, handle);
+            release_admission(&mut state, &self.broker.build_gate, handle);
             state.operations.remove(handle);
             return Err(BrokerError::new(BrokerErrorCode::OperationExpired));
         }
@@ -508,15 +632,58 @@ impl AuthenticatedCaller {
             handle,
             &[BrokerOperationKind::Build, BrokerOperationKind::Repair],
         )?;
-        if state
-            .build_holder
-            .as_ref()
-            .is_some_and(|holder| holder != handle)
-        {
+        if state.gc_holder.is_some() {
             return Err(BrokerError::new(BrokerErrorCode::AdmissionBusy));
         }
-        state.build_holder = Some(handle.clone());
-        Ok(())
+        self.broker.build_gate.try_acquire(handle)
+    }
+
+    /// Waits in FIFO order for machine-wide build admission or cancellation.
+    pub fn acquire_build_wait(
+        &self,
+        handle: &OperationHandle,
+        cancellation: &CancellationToken,
+    ) -> Result<(), BrokerError> {
+        let acquired = {
+            let mut state = self.broker.lock();
+            self.require_running_kind(
+                &mut state,
+                handle,
+                &[BrokerOperationKind::Build, BrokerOperationKind::Repair],
+            )?;
+            if state.gc_holder.is_some() {
+                return Err(BrokerError::new(BrokerErrorCode::AdmissionBusy));
+            }
+            if cancellation.is_cancelled() {
+                return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+            }
+            self.broker.build_gate.enqueue(handle)?
+        };
+        if !acquired {
+            self.broker.build_gate.wait(handle, cancellation)?;
+        } else if cancellation.is_cancelled() {
+            self.broker.build_gate.release(handle);
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        let validation = {
+            let mut state = self.broker.lock();
+            self.require_running_kind(
+                &mut state,
+                handle,
+                &[BrokerOperationKind::Build, BrokerOperationKind::Repair],
+            )
+            .and_then(|()| {
+                if state.gc_holder.is_some() {
+                    Err(BrokerError::new(BrokerErrorCode::AdmissionBusy))
+                } else {
+                    Ok(())
+                }
+            })
+        };
+        if validation.is_err() {
+            self.broker.build_gate.release(handle);
+        }
+        validation
     }
 
     /// Acquires one shared permit that prevents garbage collection.
@@ -542,7 +709,10 @@ impl AuthenticatedCaller {
     pub fn acquire_gc(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
         self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Gc])?;
-        if state.gc_holder.is_some() || !state.gc_inhibitors.is_empty() {
+        if state.gc_holder.is_some()
+            || !state.gc_inhibitors.is_empty()
+            || self.broker.build_gate.blocks_gc()
+        {
             return Err(BrokerError::new(BrokerErrorCode::AdmissionBusy));
         }
         state.gc_holder = Some(handle.clone());
@@ -573,7 +743,7 @@ impl AuthenticatedCaller {
             .map(|(handle, _)| handle.clone())
             .collect::<Vec<_>>();
         for handle in handles {
-            release_admission(&mut state, &handle);
+            release_admission(&mut state, &self.broker.build_gate, &handle);
             if let Some(record) = state.operations.get_mut(&handle) {
                 if let Some(operation_id) = build_operation_id(record) {
                     self.broker.build_engine.cancel_approval(operation_id);
@@ -592,7 +762,12 @@ impl AuthenticatedCaller {
     ) -> Result<OperationHandle, BrokerError> {
         let mut state = self.broker.lock();
         self.check_epoch(&state)?;
-        purge_expired(&mut state, Instant::now(), &self.broker.build_engine);
+        purge_expired(
+            &mut state,
+            Instant::now(),
+            &self.broker.build_gate,
+            &self.broker.build_engine,
+        );
         state.next_operation = state.next_operation.saturating_add(1);
         let handle = mint_handle(&state, self.uid, kind);
         let build_operation_id = if kind == BrokerOperationKind::Build {
@@ -618,7 +793,7 @@ impl AuthenticatedCaller {
     fn finish(&self, handle: &OperationHandle, status: OperationStatus) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
         self.require_running(&mut state, handle)?;
-        release_admission(&mut state, handle);
+        release_admission(&mut state, &self.broker.build_gate, handle);
         let record = state
             .operations
             .get_mut(handle)
@@ -660,7 +835,12 @@ impl AuthenticatedCaller {
         handle: &OperationHandle,
     ) -> Result<(), BrokerError> {
         self.check_epoch(state)?;
-        purge_expired(state, Instant::now(), &self.broker.build_engine);
+        purge_expired(
+            state,
+            Instant::now(),
+            &self.broker.build_gate,
+            &self.broker.build_engine,
+        );
         let record = self.record_mut(state, handle)?;
         if record.status != OperationStatus::Running {
             return Err(BrokerError::new(
@@ -688,17 +868,24 @@ impl AuthenticatedCaller {
     }
 }
 
-fn release_admission(state: &mut BrokerState, handle: &OperationHandle) {
-    if state.build_holder.as_ref() == Some(handle) {
-        state.build_holder = None;
-    }
+fn release_admission(
+    state: &mut BrokerState,
+    build_gate: &FairBuildGate,
+    handle: &OperationHandle,
+) {
+    build_gate.release(handle);
     if state.gc_holder.as_ref() == Some(handle) {
         state.gc_holder = None;
     }
     state.gc_inhibitors.remove(handle);
 }
 
-fn purge_expired(state: &mut BrokerState, now: Instant, build_engine: &LocalBuildEngine) {
+fn purge_expired(
+    state: &mut BrokerState,
+    now: Instant,
+    build_gate: &FairBuildGate,
+    build_engine: &LocalBuildEngine,
+) {
     let expired = state
         .operations
         .iter()
@@ -706,7 +893,7 @@ fn purge_expired(state: &mut BrokerState, now: Instant, build_engine: &LocalBuil
         .map(|(handle, _)| handle.clone())
         .collect::<Vec<_>>();
     for handle in expired {
-        release_admission(state, &handle);
+        release_admission(state, build_gate, &handle);
         if let Some(record) = state.operations.remove(&handle)
             && let Some(operation_id) = build_operation_id(&record)
         {
@@ -851,6 +1038,8 @@ fn is_managed_nix_executable(path: &Path) -> bool {
 mod tests {
     use super::*;
     use std::str::FromStr;
+    use std::sync::mpsc;
+    use std::thread;
 
     use pkg_channel::BuildMode;
     use pkg_core::{
@@ -980,6 +1169,110 @@ mod tests {
         assert!(!snapshot.build_held());
         assert!(!snapshot.gc_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn build_admission_waits_fifo_and_lifecycle_cancel_removes_waiter() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let first = caller.begin(BrokerOperationKind::Build).unwrap();
+        let second = caller.begin(BrokerOperationKind::Build).unwrap();
+        let third = caller.begin(BrokerOperationKind::Repair).unwrap();
+        caller.acquire_build(&first).unwrap();
+
+        let (second_tx, second_rx) = mpsc::channel();
+        let second_caller = caller.clone();
+        let second_handle = second.clone();
+        let second_waiter = thread::spawn(move || {
+            let result = second_caller
+                .acquire_build_wait(&second_handle, &CancellationToken::default())
+                .map_err(BrokerError::code);
+            let _ = second_tx.send(result);
+        });
+        wait_for_build_queue(&broker, 1);
+
+        let (third_tx, third_rx) = mpsc::channel();
+        let third_caller = caller.clone();
+        let third_handle = third.clone();
+        let third_waiter = thread::spawn(move || {
+            let result = third_caller
+                .acquire_build_wait(&third_handle, &CancellationToken::default())
+                .map_err(BrokerError::code);
+            let _ = third_tx.send(result);
+        });
+        wait_for_build_queue(&broker, 2);
+
+        caller.cancel(&first).unwrap();
+        assert_eq!(
+            second_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Ok(())
+        );
+        assert!(matches!(
+            third_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        caller.cancel(&third).unwrap();
+        assert_eq!(
+            third_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Err(BrokerErrorCode::AdmissionCancelled)
+        );
+        caller.cancel(&second).unwrap();
+        second_waiter.join().unwrap();
+        third_waiter.join().unwrap();
+
+        let fourth = caller.begin(BrokerOperationKind::Build).unwrap();
+        caller.acquire_build(&fourth).unwrap();
+        let fifth = caller.begin(BrokerOperationKind::Build).unwrap();
+        let cancelled = CancellationToken::default();
+        cancelled.cancel();
+        assert_eq!(
+            caller
+                .acquire_build_wait(&fifth, &cancelled)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::AdmissionCancelled
+        );
+        assert_eq!(broker.build_gate.waiting_count(), 0);
+        caller.cancel(&fourth).unwrap();
+        caller.cancel(&fifth).unwrap();
+    }
+
+    #[test]
+    fn queued_build_reservation_blocks_gc_during_handoff() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let holder = caller.begin(BrokerOperationKind::Build).unwrap();
+        let queued = caller.begin(BrokerOperationKind::Repair).unwrap();
+        let gc = caller.begin(BrokerOperationKind::Gc).unwrap();
+        caller.acquire_build(&holder).unwrap();
+        assert!(!broker.build_gate.enqueue(&queued).unwrap());
+
+        caller.cancel(&holder).unwrap();
+        assert!(!broker.build_gate.held());
+        assert_eq!(broker.build_gate.waiting_count(), 1);
+        assert_eq!(
+            caller.acquire_gc(&gc).unwrap_err().code(),
+            BrokerErrorCode::AdmissionBusy
+        );
+
+        caller.cancel(&queued).unwrap();
+        caller.acquire_gc(&gc).unwrap();
+        caller.cancel(&gc).unwrap();
+    }
+
+    fn wait_for_build_queue(broker: &InProcessBroker, expected: usize) {
+        for _ in 0..200 {
+            if broker.build_gate.waiting_count() == expected {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!("build admission queue did not reach expected size");
     }
 
     #[test]
@@ -1221,6 +1514,7 @@ mod tests {
             purge_expired(
                 &mut state,
                 Instant::now() + Duration::from_secs(61),
+                &broker.build_gate,
                 &broker.build_engine,
             );
         }

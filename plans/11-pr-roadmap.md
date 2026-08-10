@@ -1137,7 +1137,11 @@ flowchart TD
   disconnect, expiry, or restart invalidate it. Approval journaling is now broker-owned: a private
   operation identity derived from the authenticated opaque handle is journaled before the broker
   retains the receipt, and every terminal lifecycle path revokes the corresponding engine grant.
-  Wire exposure still waits for admission-time replan/execution. The shared local-build approval engine now
+  The broker's build/repair admission is now an in-memory FIFO: a contending operation waits with
+  cooperative cancellation, cannot be bypassed by a nonblocking probe, and is removed on lifecycle
+  cancellation/restart without a validation-to-enqueue race. Exclusive GC also refuses while a build
+  holder or queued reservation exists, including the handoff gap between them. Wire exposure still
+  waits for admission-time replan/execution. The shared local-build approval engine now
   reserves an operation before journal I/O without holding its authority mutex across that I/O;
   cancellation can revoke an in-flight recording, and a monotonic reservation identity prevents an
   operation-id retry from reviving the earlier journal call. The durable row may remain as audit

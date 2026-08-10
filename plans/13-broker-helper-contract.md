@@ -156,14 +156,18 @@ real state resolution, re-derivation, journal, final verification, and backend e
 
 The broker owns one in-memory admission controller:
 
-- one exclusive local-build holder, available only to `Build` and `Repair` operations;
+- one exclusive FIFO local-build holder, available only to `Build` and `Repair` operations;
 - one exclusive GC holder, available only to `Gc` operations; and
 - shared GC-inhibit holders, available only to `Build`, `Activate`, and `Repair` operations.
 
 GC cannot begin while any inhibitor exists; inhibitors cannot begin while GC is active. All
 permits are operation-handle state and release on completion/cancel/disconnect/expiry/restart.
-There is no backing-file `flock`. The existing per-user state-mutation lease remains a separate
-filesystem lock.
+Contended build/repair operations may join the in-memory FIFO and wait with cooperative
+cancellation; lifecycle cancellation removes queued waiters as well as holders, and a nonblocking
+repair probe cannot bypass an existing waiter. Admission registration is serialized with operation
+validation so cancellation/restart cannot strand a just-validated waiter. A queued reservation
+continues to block GC during the holder-to-waiter handoff. There is no backing-file `flock`. The
+existing per-user state-mutation lease remains a separate filesystem lock.
 
 ## 8. Bundled-Nix child containment
 
