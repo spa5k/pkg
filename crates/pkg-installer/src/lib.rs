@@ -8,6 +8,7 @@ mod broker;
 mod helper;
 mod installer;
 pub mod platform;
+mod repair;
 mod uninstall;
 
 pub use assets::{
@@ -32,6 +33,11 @@ pub use platform::macos::{
     MacOsLaunchdAssets, MacOsPeerCredentials, MacOsReleaseStep, MacOsReleaseTarget,
     MacOsRootSetStore, MacOsSandboxReadiness, MacOsSocketContract, MacOsStoreVolumeContract,
     MacOsToolchainReadiness, install_macos, macos_install_assets, macos_release_steps,
+};
+pub use repair::{
+    MemoryRepairJournal, RepairApprovalGate, RepairApprovalScope, RepairCoordinatorError,
+    RepairCoordinatorErrorCode, RepairJournal, RepairJournalEntry, RepairJournalStatus,
+    RepairRecoveryAction, RepairRequest, RepairResult, recover_repair, repair_generation,
 };
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,

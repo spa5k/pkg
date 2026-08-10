@@ -710,6 +710,14 @@ is a hard barrier; and proves later cleanup failure cannot skip final privileged
 verification. Privileged e2e remains responsible for install → dry-run → uninstall →
 `doctor --post-uninstall` and zero-residue evidence on Linux and macOS.
 
+The PR-30 repair contract lane additionally proves exact Phase-0 report coverage; distinct
+corrupt/missing/untrusted damage classification; cache-only capability execution under a held
+GC inhibitor; cache-miss stop-before-build; approved build admission; fresh final verification
+before `repaired`; legal contiguous per-path journal transitions; permit release; approval
+follow-up re-entry through fresh Phase 0; and recovery that retries cache-only work but maps every
+interrupted build to `needsFreshApproval`. Real-Nix deletion-window and raw-log evidence remains a
+privileged Linux/macOS gate and is not claimed by the fake lane.
+
 ### 6.7 Performance (layer 7)
 - **Budgets (DR-004 accepted 2026-08-09):**
   - `search` p95 over fixture index: < 150 ms.

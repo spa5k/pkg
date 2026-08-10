@@ -1191,6 +1191,13 @@ status-less `verify`, exit status **plus** an independently validated
 postcondition is checked, never human-output scraping — doc 04 I2 / doc 09
 §4.1.)
 
+PR-30 implements this boundary in `pkg-nix::verify_closure`: it accepts only a
+nonempty duplicate-free typed full closure, issues only `VerifyMode::Recursive`,
+and rejects a report unless its result path set exactly equals that closure.
+`NarIntegrity` explicitly distinguishes `missing` from `corrupt`; either state,
+or an untrusted result, enters the canonical sorted damage set. There is no
+repair call, command builder, helper handle, or approval surface in this module.
+
 ### 10.2 Repair capability (helper-issued, opaque, single-use)
 
 Every repair mutation is delegated to the root helper as a **single fixed

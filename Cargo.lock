@@ -1181,6 +1181,7 @@ dependencies = [
  "nix",
  "pkg-core",
  "pkg-nix",
+ "pkg-testkit",
 ]
 
 [[package]]

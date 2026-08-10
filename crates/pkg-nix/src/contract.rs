@@ -2573,6 +2573,8 @@ pub enum NarIntegrity {
     Intact,
     /// The NAR is corrupt.
     Corrupt,
+    /// The registered or expected closure path is absent on disk.
+    Missing,
 }
 
 /// The observed trust status of one path under a read-only verify. This is an
@@ -2665,6 +2667,7 @@ impl VerifyReport {
 enum NarIntegrityWire {
     Intact,
     Corrupt,
+    Missing,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2703,6 +2706,7 @@ impl VerifyReport {
                         nar_integrity: match r.nar_integrity() {
                             NarIntegrity::Intact => NarIntegrityWire::Intact,
                             NarIntegrity::Corrupt => NarIntegrityWire::Corrupt,
+                            NarIntegrity::Missing => NarIntegrityWire::Missing,
                         },
                         trust: match r.trust() {
                             TrustStatus::Trusted => TrustStatusWire::Trusted,
@@ -2728,6 +2732,7 @@ impl VerifyReport {
             let nar_integrity = match r.nar_integrity {
                 NarIntegrityWire::Intact => NarIntegrity::Intact,
                 NarIntegrityWire::Corrupt => NarIntegrity::Corrupt,
+                NarIntegrityWire::Missing => NarIntegrity::Missing,
             };
             let trust = match r.trust {
                 TrustStatusWire::Trusted => TrustStatus::Trusted,

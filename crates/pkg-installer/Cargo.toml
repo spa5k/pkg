@@ -10,6 +10,9 @@ nix = { version = "0.31.3", features = ["socket", "user"] }
 pkg-core = { path = "../pkg-core" }
 pkg-nix = { path = "../pkg-nix" }
 
+[dev-dependencies]
+pkg-testkit = { path = "../pkg-testkit" }
+
 [lints.rust]
 unsafe_code = "forbid"
 

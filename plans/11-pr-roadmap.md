@@ -896,6 +896,14 @@ flowchart TD
 ### Milestone M6 — Hardening & operations
 
 #### PR-30 — Two-phase `pkg repair` + corruption recovery (privilege-split; non-atomic)
+- **Status (2026-08-10):** Phase-0 exact-closure verification, missing-path contract,
+  capability-driven Phase A/B coordinator, broker admission integration, final-verify gate,
+  scope-bound single-use build approval, checked admission cleanup, validated per-path journal
+  state machine, clean-after-crash reconciliation, and cache-only/fresh-approval restart policy are
+  implemented and locally evidence-gated. Workspace tests/lints/docs, docs link checks,
+  dependency policy/audit, Linux container tests, and independent P1 review pass. Real-Nix 2.34.8
+  Linux/macOS fault evidence and the PR-36 production broker connector remain external merge
+  gates; no Real-Nix completion claim is made here.
 - **Purpose:** `pkg repair` is **explicitly user-initiated** and **verified non-atomic** (`00`
   D-19/INV-12; `05` §10; `08` T-CACHE-3/T-INST-7). It re-verifies integrity and restores it across
   the broker/helper privilege split: (Phase 0) **read-only** `nix store verify --recursive` (**no**

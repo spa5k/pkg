@@ -54,6 +54,7 @@ pub mod maintenance;
 pub mod managed;
 pub mod nixpkgs;
 pub mod substitute;
+pub mod verify;
 
 pub use adapter::NixAdapter;
 pub use broker::{
@@ -107,6 +108,7 @@ pub use substitute::{
     CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,
     acquire_substitute,
 };
+pub use verify::{DamageSet, VerifyPhaseError, VerifyPhaseErrorCode, verify_closure};
 
 // Focused re-exports of the `pkg-core` strong types that appear in this crate's
 // public signatures, so consumers need only depend on `pkg-nix` to name them.
