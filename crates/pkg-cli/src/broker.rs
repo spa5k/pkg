@@ -12,13 +12,13 @@ use std::{
 use pkg_core::PackageSelector;
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CliBrokerRequest,
-    CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
-    GenerationId, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, MethodKind, NixAdapter, NixAdapterError,
-    NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport, ProductFrameCodec,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, StorePath,
-    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CacheInstallErrorCode,
+    CacheInstallOutcome, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest,
+    EvaluateDerivationRequest, GcReport, GenerationId, GenerationRootAttestationErrorCode,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, MethodKind, NixAdapter,
+    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
+    ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -62,6 +62,8 @@ pub enum BrokerClientErrorCode {
     GenerationRootRemovalRefused,
     /// Protected generation root attestation returned a stable refusal code.
     GenerationRootAttestationRefused,
+    /// Cache-first installation returned a stable refusal code.
+    InstallAcquisitionRefused,
 }
 
 /// Redacted failure from the private broker connector.
@@ -74,6 +76,7 @@ pub struct BrokerClientError {
     generation_root_transition_code: Option<GenerationRootTransitionErrorCode>,
     generation_root_removal_code: Option<GenerationRootRemovalErrorCode>,
     generation_root_attestation_code: Option<GenerationRootAttestationErrorCode>,
+    cache_install_code: Option<CacheInstallErrorCode>,
 }
 
 impl BrokerClientError {
@@ -86,6 +89,7 @@ impl BrokerClientError {
             generation_root_transition_code: None,
             generation_root_removal_code: None,
             generation_root_attestation_code: None,
+            cache_install_code: None,
         }
     }
 
@@ -98,6 +102,7 @@ impl BrokerClientError {
             generation_root_transition_code: None,
             generation_root_removal_code: None,
             generation_root_attestation_code: None,
+            cache_install_code: None,
         }
     }
 
@@ -110,6 +115,7 @@ impl BrokerClientError {
             generation_root_transition_code: None,
             generation_root_removal_code: None,
             generation_root_attestation_code: None,
+            cache_install_code: None,
         }
     }
 
@@ -122,6 +128,7 @@ impl BrokerClientError {
             generation_root_transition_code: None,
             generation_root_removal_code: None,
             generation_root_attestation_code: None,
+            cache_install_code: None,
         }
     }
 
@@ -136,6 +143,7 @@ impl BrokerClientError {
             generation_root_transition_code: Some(generation_root_transition_code),
             generation_root_removal_code: None,
             generation_root_attestation_code: None,
+            cache_install_code: None,
         }
     }
 
@@ -150,6 +158,7 @@ impl BrokerClientError {
             generation_root_transition_code: None,
             generation_root_removal_code: Some(generation_root_removal_code),
             generation_root_attestation_code: None,
+            cache_install_code: None,
         }
     }
 
@@ -164,6 +173,20 @@ impl BrokerClientError {
             generation_root_transition_code: None,
             generation_root_removal_code: None,
             generation_root_attestation_code: Some(generation_root_attestation_code),
+            cache_install_code: None,
+        }
+    }
+
+    const fn install_acquisition_refused(cache_install_code: CacheInstallErrorCode) -> Self {
+        Self {
+            code: BrokerClientErrorCode::InstallAcquisitionRefused,
+            adapter_code: None,
+            build_execution_code: None,
+            build_root_code: None,
+            generation_root_transition_code: None,
+            generation_root_removal_code: None,
+            generation_root_attestation_code: None,
+            cache_install_code: Some(cache_install_code),
         }
     }
 
@@ -212,6 +235,12 @@ impl BrokerClientError {
         self,
     ) -> Option<GenerationRootAttestationErrorCode> {
         self.generation_root_attestation_code
+    }
+
+    /// Returns the closed refusal code from cache-first installation.
+    #[must_use]
+    pub const fn cache_install_code(self) -> Option<CacheInstallErrorCode> {
+        self.cache_install_code
     }
 }
 
@@ -425,6 +454,25 @@ impl BrokerLifecycleClient {
     ) -> Result<BuildPreview, BrokerClientError> {
         match self.transact(&CliBrokerRequest::PrepareBuild(handle, selectors))? {
             CliBrokerResponse::BuildPrepared(preview) => Ok(preview),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Runs cache-first acquisition through broker-owned authority.
+    pub fn acquire_install(
+        &mut self,
+        handle: OperationHandle,
+        selectors: Vec<PackageSelector>,
+    ) -> Result<CacheInstallOutcome, BrokerClientError> {
+        match self.transact_with_timeout(
+            &CliBrokerRequest::AcquireInstall(handle, selectors),
+            LONG_RUNNING_RESPONSE_TIMEOUT,
+        )? {
+            CliBrokerResponse::InstallAcquired => Ok(CacheInstallOutcome::Acquired),
+            CliBrokerResponse::InstallBuildRequired => Ok(CacheInstallOutcome::BuildRequired),
+            CliBrokerResponse::InstallAcquisitionRefused(code) => {
+                Err(BrokerClientError::install_acquisition_refused(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -791,15 +839,15 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::BuildRootRefused
         | BrokerClientErrorCode::GenerationRootTransitionRefused
         | BrokerClientErrorCode::GenerationRootRemovalRefused
-        | BrokerClientErrorCode::GenerationRootAttestationRefused => {
-            NixAdapterError::OperationFailed
-        }
+        | BrokerClientErrorCode::GenerationRootAttestationRefused
+        | BrokerClientErrorCode::InstallAcquisitionRefused => NixAdapterError::OperationFailed,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkg_core::{SelectorId, SelectorInput, SourceRevision, VersionPreference};
     use pkg_installer::serve_broker_connection_with_nix;
     use pkg_nix::{
         AcceptedFormats, AttributePath, BuildApprovalReceipt, DerivationPath, DerivedOutputTarget,
@@ -1163,6 +1211,53 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&request)?,
             (1, CliBrokerRequest::ExecuteBuild(handle, digest))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cache_acquisition_refusal_is_typed_and_keeps_the_connection_usable()
+    -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Acquire)?;
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello")?,
+            SelectorInput::new("hello")?,
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::InstallAcquisitionRefused(
+                CacheInstallErrorCode::AuthorityUnavailable,
+            ),
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client
+            .acquire_install(handle.clone(), vec![selector.clone()])
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            BrokerClientErrorCode::InstallAcquisitionRefused
+        );
+        assert_eq!(
+            error.cache_install_code(),
+            Some(CacheInstallErrorCode::AuthorityUnavailable)
+        );
+        assert!(client.healthy);
+        let request = read_frame(
+            &mut server,
+            Instant::now()
+                .checked_add(RESPONSE_TIMEOUT)
+                .ok_or_else(|| io::Error::other("deadline overflow"))?,
+        )?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&request)?,
+            (1, CliBrokerRequest::AcquireInstall(handle, vec![selector]))
         );
         Ok(())
     }

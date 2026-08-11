@@ -61,8 +61,9 @@ pub mod verify;
 pub use adapter::NixAdapter;
 pub use broker::{
     AdmissionSnapshot, AuthenticatedCaller, BrokerError, BrokerErrorCode, BrokerOperationKind,
-    ChildContainmentPolicy, InProcessBroker, InProcessCallerPeer, OperationHandle, OperationStatus,
-    TrustedBuildReplanner, TrustedReplanError,
+    CacheInstallAttempt, CacheInstallOutcome, ChildContainmentPolicy, InProcessBroker,
+    InProcessCallerPeer, OperationHandle, OperationStatus, TrustedBuildReplanner,
+    TrustedReplanError,
 };
 pub use build::{
     ApprovalJournal, ApprovalJournalError, ApprovalJournalRecord, ApprovalSource, BuildEngineError,
@@ -86,8 +87,8 @@ pub use contract::{
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode,
-    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    BuildRootPublicationErrorCode, CacheInstallErrorCode, CliBrokerRequest, CliBrokerResponse,
+    FrameError, FrameErrorCode, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
     GenerationRootTransitionErrorCode, ProductFrameCodec,
 };
 pub use maintenance::{

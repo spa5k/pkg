@@ -37,6 +37,8 @@ pub enum BrokerErrorCode {
     AdmissionCancelled,
     /// The requested gate transition violated the operation lifecycle.
     InvalidAdmissionTransition,
+    /// The trusted cache acquisition callback failed after admission.
+    CacheAcquisitionFailed,
     /// The broker could not derive a valid private build plan or preview.
     InvalidBuildPlan,
     /// The approved digest did not identify the broker-held private plan.
@@ -104,6 +106,23 @@ pub enum BrokerOperationKind {
     Repair,
 }
 
+/// Trusted in-process result of one cache-first install attempt.
+pub enum CacheInstallAttempt {
+    /// Every selected output was substituted and verified.
+    Acquired(InstallEvidence),
+    /// At least one selected output requires the approved local-build path.
+    BuildRequired,
+}
+
+/// Public cache-first outcome. Install evidence stays behind the operation handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheInstallOutcome {
+    /// Verified evidence is retained until root publication or cancellation.
+    Acquired,
+    /// No evidence was retained and local-build approval is required.
+    BuildRequired,
+}
+
 impl BrokerOperationKind {
     const ALL: [Self; 8] = [
         Self::Doctor,
@@ -157,6 +176,7 @@ struct OperationRecord {
     prepared_build: Option<PreparedBuild>,
     cancellation: Arc<CancellationToken>,
     build_executing: bool,
+    cache_acquiring: bool,
     root_transition_executing: bool,
     awaiting_root_outputs: Option<BTreeSet<String>>,
     install_evidence: Option<InstallEvidence>,
@@ -164,7 +184,7 @@ struct OperationRecord {
 
 impl OperationRecord {
     const fn authority_executing(&self) -> bool {
-        self.build_executing || self.root_transition_executing
+        self.build_executing || self.cache_acquiring || self.root_transition_executing
     }
 }
 
@@ -853,18 +873,78 @@ impl AuthenticatedCaller {
         }
     }
 
-    /// Returns the immutable post-execution evidence retained for this build.
+    /// Runs one trusted cache-first acquisition while preventing concurrent GC.
     ///
-    /// Evidence exists only after successful execution and before root
-    /// publication completes the operation.
+    /// The callback is installed only by broker orchestration. A cache hit
+    /// retains its evidence and GC inhibitor until exact roots are published.
+    /// A cache miss releases admission and returns `BuildRequired` without
+    /// creating evidence or approving a build.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the wrong operation class, concurrent GC, repeated acquisition,
+    /// lifecycle cancellation, invalid evidence, or a failed trusted callback.
+    pub fn acquire_cache_install(
+        &self,
+        handle: &OperationHandle,
+        acquire: impl FnOnce() -> Result<CacheInstallAttempt, ()>,
+    ) -> Result<CacheInstallOutcome, BrokerError> {
+        {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Acquire])?;
+            if state.gc_holder.is_some() {
+                return Err(BrokerError::new(BrokerErrorCode::AdmissionBusy));
+            }
+            let record = self.record_mut(&mut state, handle)?;
+            if record.cache_acquiring
+                || record.awaiting_root_outputs.is_some()
+                || record.install_evidence.is_some()
+            {
+                return Err(BrokerError::new(
+                    BrokerErrorCode::InvalidAdmissionTransition,
+                ));
+            }
+            record.cache_acquiring = true;
+            state.gc_inhibitors.insert(handle.clone());
+        }
+
+        match acquire() {
+            Ok(CacheInstallAttempt::Acquired(evidence)) => {
+                self.finish_cache_acquisition(handle, evidence)
+            }
+            Ok(CacheInstallAttempt::BuildRequired) => match self.finish_cache_miss(handle) {
+                Ok(()) => Ok(CacheInstallOutcome::BuildRequired),
+                Err(error) => {
+                    self.fail_cache_acquisition(handle);
+                    Err(error)
+                }
+            },
+            Err(()) => {
+                self.fail_cache_acquisition(handle);
+                Err(BrokerError::new(BrokerErrorCode::CacheAcquisitionFailed))
+            }
+        }
+    }
+
+    /// Returns the immutable post-acquisition evidence retained for this install.
+    ///
+    /// Evidence exists only after successful cache acquisition or build
+    /// execution and before root publication completes the operation.
     pub fn install_evidence(
         &self,
         handle: &OperationHandle,
     ) -> Result<InstallEvidence, BrokerError> {
         let mut state = self.broker.lock();
-        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+        self.require_running_kind(
+            &mut state,
+            handle,
+            &[BrokerOperationKind::Acquire, BrokerOperationKind::Build],
+        )?;
         let record = self.record_mut(&mut state, handle)?;
-        if record.build_executing || record.awaiting_root_outputs.is_none() {
+        if record.build_executing
+            || record.cache_acquiring
+            || record.awaiting_root_outputs.is_none()
+        {
             return Err(BrokerError::new(
                 BrokerErrorCode::InvalidAdmissionTransition,
             ));
@@ -921,18 +1001,19 @@ impl AuthenticatedCaller {
         )
     }
 
-    /// Publishes a complete generation root set while retaining build/GC admission.
+    /// Publishes a complete generation root set while retaining GC protection.
     ///
     /// The root set must belong to the transport-authenticated caller and
-    /// match every output returned by the successful build exactly once. The helper
-    /// callback runs outside the broker mutex, but cancellation and disconnect
-    /// defer admission release until it returns, preventing GC from racing root
-    /// publication.
+    /// match every output returned by successful cache acquisition or build
+    /// execution exactly once. The helper callback runs outside the broker
+    /// mutex, but cancellation and disconnect defer admission release until it
+    /// returns, preventing GC from racing root publication.
     ///
     /// # Errors
     ///
-    /// Refuses a non-build handle, a build that has not successfully executed,
-    /// caller/output mismatch, lifecycle cancellation, or helper failure.
+    /// Refuses a non-install handle, an install without retained acquired
+    /// outputs, caller/output mismatch, lifecycle cancellation, or helper
+    /// failure.
     pub fn publish_built_root_set(
         &self,
         handle: &OperationHandle,
@@ -941,7 +1022,11 @@ impl AuthenticatedCaller {
     ) -> Result<RootSetReport, BrokerError> {
         {
             let mut state = self.broker.lock();
-            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+            self.require_running_kind(
+                &mut state,
+                handle,
+                &[BrokerOperationKind::Acquire, BrokerOperationKind::Build],
+            )?;
             if root_set.owner_uid() != self.uid {
                 return Err(BrokerError::new(
                     BrokerErrorCode::InvalidAdmissionTransition,
@@ -960,6 +1045,7 @@ impl AuthenticatedCaller {
             if required != &root_targets
                 || root_set.entries().len() != required.len()
                 || record.build_executing
+                || record.cache_acquiring
             {
                 return Err(BrokerError::new(
                     BrokerErrorCode::InvalidAdmissionTransition,
@@ -1299,6 +1385,7 @@ impl AuthenticatedCaller {
                 prepared_build: None,
                 cancellation: Arc::new(CancellationToken::default()),
                 build_executing: false,
+                cache_acquiring: false,
                 root_transition_executing: false,
                 awaiting_root_outputs: None,
                 install_evidence: None,
@@ -1383,6 +1470,84 @@ impl AuthenticatedCaller {
             record.install_evidence = Some(evidence);
         }
         Ok(report)
+    }
+
+    fn finish_cache_acquisition(
+        &self,
+        handle: &OperationHandle,
+        evidence: InstallEvidence,
+    ) -> Result<CacheInstallOutcome, BrokerError> {
+        let output_paths = evidence
+            .targets()
+            .iter()
+            .flat_map(|target| target.acquired())
+            .map(|output| output.path_info().store_path().as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        let cache_only = evidence.targets().iter().all(|target| {
+            target
+                .acquired()
+                .iter()
+                .all(|output| output.provenance() == crate::BuildOutputProvenance::CacheSigned)
+        });
+        if output_paths.is_empty() || !cache_only {
+            self.fail_cache_acquisition(handle);
+            return Err(BrokerError::new(
+                BrokerErrorCode::InvalidAdmissionTransition,
+            ));
+        }
+        let mut state = self.broker.lock();
+        if self.check_epoch(&state).is_err() {
+            release_admission(&mut state, &self.broker.build_gate, handle);
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        let running = state.operations.get(handle).is_some_and(|record| {
+            record.owner_uid == self.uid
+                && record.status == OperationStatus::Running
+                && record.cache_acquiring
+                && !record.cancellation.is_cancelled()
+        });
+        if !running {
+            if let Some(record) = state.operations.get_mut(handle) {
+                record.cache_acquiring = false;
+                record.awaiting_root_outputs = None;
+                record.install_evidence = None;
+            }
+            release_admission(&mut state, &self.broker.build_gate, handle);
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        let record = state
+            .operations
+            .get_mut(handle)
+            .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
+        record.cache_acquiring = false;
+        record.awaiting_root_outputs = Some(output_paths);
+        record.install_evidence = Some(evidence);
+        Ok(CacheInstallOutcome::Acquired)
+    }
+
+    fn finish_cache_miss(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Acquire])?;
+        let record = self.record_mut(&mut state, handle)?;
+        if !record.cache_acquiring || record.cancellation.is_cancelled() {
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        record.cache_acquiring = false;
+        release_admission(&mut state, &self.broker.build_gate, handle);
+        Ok(())
+    }
+
+    fn fail_cache_acquisition(&self, handle: &OperationHandle) {
+        let mut state = self.broker.lock();
+        if self.check_epoch(&state).is_ok()
+            && let Some(record) = state.operations.get_mut(handle)
+            && record.owner_uid == self.uid
+        {
+            record.cache_acquiring = false;
+            record.awaiting_root_outputs = None;
+            record.install_evidence = None;
+        }
+        release_admission(&mut state, &self.broker.build_gate, handle);
     }
 
     fn finish_root_publication(
@@ -2046,6 +2211,48 @@ mod tests {
         .unwrap()
     }
 
+    fn cache_install_evidence() -> InstallEvidence {
+        let store_path = format!("/nix/store/{STORE_HASH}-hello-1.0");
+        let derivation = format!("{store_path}.drv");
+        InstallEvidence::from_json_bytes(
+            &serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "descriptorHash": format!("sha256-{}", "0".repeat(64)),
+                "channelSequence": 42,
+                "policyVersion": 7,
+                "revision": REVISION,
+                "sourceNarHash": NAR_HASH,
+                "system": "x86_64-linux",
+                "targets": [{
+                    "selectorId": "sel_hello",
+                    "selector": "hello",
+                    "attribute": "hello",
+                    "versionPreference": { "kind": "any" },
+                    "requestedOutputs": null,
+                    "sourceRevision": "channel:current",
+                    "rootDerivation": derivation,
+                    "rootOutputs": [{ "name": "out", "storePath": store_path }],
+                    "outputsToInstall": ["out"],
+                    "packageName": "hello",
+                    "packageVersion": "1.0",
+                    "acquired": [{
+                        "outputName": "out",
+                        "storePath": store_path,
+                        "narHash": NAR_HASH,
+                        "signatures": ["cache.nixos.org-1:AAAA"],
+                        "references": [],
+                        "deriver": derivation,
+                        "narSize": 20,
+                        "closureSize": 42,
+                        "provenance": "cacheSigned"
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn caller_identity_is_transport_bound() {
         let broker = InProcessBroker::new().unwrap();
@@ -2572,6 +2779,120 @@ mod tests {
         let released = broker.admission_snapshot();
         assert!(!released.build_held());
         assert_eq!(released.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn cache_hit_retains_gc_inhibition_until_exact_roots_are_published() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+        let evidence = cache_install_evidence();
+
+        assert_eq!(
+            caller
+                .acquire_cache_install(&handle, || {
+                    Ok(CacheInstallAttempt::Acquired(evidence.clone()))
+                })
+                .unwrap(),
+            CacheInstallOutcome::Acquired
+        );
+        assert_eq!(caller.install_evidence(&handle).unwrap(), evidence);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+        assert_eq!(
+            caller.complete(&handle).unwrap_err().code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+
+        let helper = InProcessHelper::new(991).unwrap();
+        let maintenance = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(1001);
+        caller
+            .publish_built_root_set(&handle, &built_root_set(1001), |roots| {
+                maintenance.publish_root_set(roots)
+            })
+            .unwrap();
+
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn cache_miss_releases_gc_inhibition_and_permits_completion() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+
+        assert_eq!(
+            caller
+                .acquire_cache_install(&handle, || Ok(CacheInstallAttempt::BuildRequired))
+                .unwrap(),
+            CacheInstallOutcome::BuildRequired
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+        assert_eq!(
+            caller.install_evidence(&handle).unwrap_err().code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        caller.complete(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+    }
+
+    #[test]
+    fn cache_failure_has_a_distinct_code_and_releases_gc_inhibition() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+
+        assert_eq!(
+            caller
+                .acquire_cache_install(&handle, || Err(()))
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::CacheAcquisitionFailed
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+        caller.complete(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+    }
+
+    #[test]
+    fn cancellation_during_cache_acquisition_defers_inhibitor_release() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+        let worker_caller = caller.clone();
+        let worker_handle = handle.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            worker_caller.acquire_cache_install(&worker_handle, || {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok(CacheInstallAttempt::Acquired(cache_install_evidence()))
+            })
+        });
+
+        entered_rx.recv().unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+        caller.cancel(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().code(),
+            BrokerErrorCode::AdmissionCancelled
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
     }
 
     #[test]

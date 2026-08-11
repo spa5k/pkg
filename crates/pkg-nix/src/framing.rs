@@ -121,6 +121,8 @@ pub enum CliBrokerRequest {
     GetInstallEvidence(OperationHandle),
     /// Attest an already durable generation after restart or lost acknowledgement.
     AttestGenerationRoots(OperationHandle, GenerationId),
+    /// Run cache-first acquisition from broker-retained channel authority.
+    AcquireInstall(OperationHandle, Vec<PackageSelector>),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -176,8 +178,40 @@ pub enum CliBrokerResponse {
     GenerationRootsAttested(RootSetReport),
     /// Stable redacted refusal from protected root attestation.
     GenerationRootAttestationRefused(GenerationRootAttestationErrorCode),
+    /// Every selected output was acquired and retained as private evidence.
+    InstallAcquired,
+    /// At least one selected output requires the approved local-build path.
+    InstallBuildRequired,
+    /// Stable redacted refusal from cache-first acquisition.
+    InstallAcquisitionRefused(CacheInstallErrorCode),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
+}
+
+/// Stable public failure categories for cache-first acquisition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheInstallErrorCode {
+    /// The handle, operation class, or retained intent was invalid.
+    InvalidIntent,
+    /// Authenticated resolution, substitution, or verification failed.
+    AcquisitionFailed,
+    /// Lifecycle cancellation won while acquisition was in flight.
+    Cancelled,
+    /// Broker-owned channel or acquisition authority was unavailable.
+    AuthorityUnavailable,
+}
+
+impl CacheInstallErrorCode {
+    /// Returns the closed wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidIntent => "invalid-intent",
+            Self::AcquisitionFailed => "acquisition-failed",
+            Self::Cancelled => "cancelled",
+            Self::AuthorityUnavailable => "authority-unavailable",
+        }
+    }
 }
 
 /// Stable redacted build-execution refusal categories exposed to the CLI.
@@ -535,6 +569,16 @@ impl ProductFrameCodec {
                     generation: generation.as_str(),
                 })?,
             ),
+            CliBrokerRequest::AcquireInstall(handle, selectors) => {
+                validate_prepare_selectors(selectors)?;
+                (
+                    26,
+                    encode_json(&PrepareBuildWire {
+                        handle: handle.as_str(),
+                        selectors: selectors.iter().map(SelectorWire::from).collect(),
+                    })?,
+                )
+            }
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -600,20 +644,24 @@ impl ProductFrameCodec {
                     ),
                 )
             }
-            18 => {
+            18 | 26 => {
                 let wire: PrepareBuildOwnedWire = decode_json(frame.payload)?;
                 if wire.selectors.is_empty()
                     || wire.selectors.len() > MAX_BUILD_SELECTOR_WIRE_ENTRIES
                 {
                     return Err(FrameError::new(FrameErrorCode::InvalidPayload));
                 }
-                CliBrokerRequest::PrepareBuild(
-                    parse_handle(&wire.handle)?,
-                    wire.selectors
-                        .into_iter()
-                        .map(SelectorOwnedWire::promote)
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
+                let handle = parse_handle(&wire.handle)?;
+                let selectors = wire
+                    .selectors
+                    .into_iter()
+                    .map(SelectorOwnedWire::promote)
+                    .collect::<Result<Vec<_>, _>>()?;
+                if frame.method == 18 {
+                    CliBrokerRequest::PrepareBuild(handle, selectors)
+                } else {
+                    CliBrokerRequest::AcquireInstall(handle, selectors)
+                }
             }
             19 => {
                 let wire: BuildExecutionOwnedWire = decode_json(frame.payload)?;
@@ -770,6 +818,24 @@ impl ProductFrameCodec {
             CliBrokerResponse::GenerationRootAttestationRefused(code) => (
                 25,
                 encode_json(&GenerationRootAttestationFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
+            CliBrokerResponse::InstallAcquired => (
+                26,
+                encode_json(&InstallAcquisitionWire {
+                    outcome: "acquired",
+                })?,
+            ),
+            CliBrokerResponse::InstallBuildRequired => (
+                26,
+                encode_json(&InstallAcquisitionWire {
+                    outcome: "build-required",
+                })?,
+            ),
+            CliBrokerResponse::InstallAcquisitionRefused(code) => (
+                26,
+                encode_json(&InstallAcquisitionFailureWire {
                     error: code.as_str(),
                 })?,
             ),
@@ -931,6 +997,18 @@ impl ProductFrameCodec {
                     wire.entry_count,
                     parse_mapping_digest(&wire.mapping_digest)?,
                 ))
+            }
+            26 => {
+                if let Some(code) = decode_install_acquisition_failure(frame.payload)? {
+                    CliBrokerResponse::InstallAcquisitionRefused(code)
+                } else {
+                    let wire: InstallAcquisitionOwnedWire = decode_json(frame.payload)?;
+                    match wire.outcome.as_str() {
+                        "acquired" => CliBrokerResponse::InstallAcquired,
+                        "build-required" => CliBrokerResponse::InstallBuildRequired,
+                        _ => return Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+                    }
+                }
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
@@ -1306,6 +1384,25 @@ fn decode_generation_root_attestation_failure(
     parse_generation_root_attestation_error_code(&wire.error).map(Some)
 }
 
+fn decode_install_acquisition_failure(
+    bytes: &[u8],
+) -> Result<Option<CacheInstallErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<InstallAcquisitionFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_cache_install_error_code(&wire.error).map(Some)
+}
+
+fn parse_cache_install_error_code(value: &str) -> Result<CacheInstallErrorCode, FrameError> {
+    match value {
+        "invalid-intent" => Ok(CacheInstallErrorCode::InvalidIntent),
+        "acquisition-failed" => Ok(CacheInstallErrorCode::AcquisitionFailed),
+        "cancelled" => Ok(CacheInstallErrorCode::Cancelled),
+        "authority-unavailable" => Ok(CacheInstallErrorCode::AuthorityUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
 fn parse_build_execution_error_code(value: &str) -> Result<BuildExecutionErrorCode, FrameError> {
     match value {
         "approval_unavailable" => Ok(BuildExecutionErrorCode::ApprovalUnavailable),
@@ -1571,6 +1668,30 @@ struct GenerationRootAttestationFailureWire<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GenerationRootAttestationFailureOwnedWire {
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct InstallAcquisitionWire<'a> {
+    outcome: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstallAcquisitionOwnedWire {
+    outcome: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct InstallAcquisitionFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstallAcquisitionFailureOwnedWire {
     error: String,
 }
 
@@ -2634,18 +2755,61 @@ mod tests {
                 Ok((17, response))
             );
         }
-        let complete =
-            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
-        let encoded = ProductFrameCodec::encode_cli_request(18, &complete).unwrap();
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        let acquisition = CliBrokerRequest::AcquireInstall(
+            OperationHandle(format!("op_{}", "e".repeat(64))),
+            vec![selector],
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(18, &acquisition).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        for forbidden in ["ownerUid", "/nix/", "derivation", "substituter", "key"] {
+            assert!(!wire.contains(forbidden), "acquisition exposed {forbidden}");
+        }
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&encoded),
-            Ok((18, complete))
+            Ok((18, acquisition))
+        );
+        for response in [
+            CliBrokerResponse::InstallAcquired,
+            CliBrokerResponse::InstallBuildRequired,
+        ] {
+            let encoded = ProductFrameCodec::encode_cli_response(18, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((18, response))
+            );
+        }
+        for code in [
+            CacheInstallErrorCode::InvalidIntent,
+            CacheInstallErrorCode::AcquisitionFailed,
+            CacheInstallErrorCode::Cancelled,
+            CacheInstallErrorCode::AuthorityUnavailable,
+        ] {
+            let response = CliBrokerResponse::InstallAcquisitionRefused(code);
+            let encoded = ProductFrameCodec::encode_cli_response(18, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((18, response))
+            );
+        }
+        let complete =
+            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
+        let encoded = ProductFrameCodec::encode_cli_request(19, &complete).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((19, complete))
         );
         let encoded =
-            ProductFrameCodec::encode_cli_response(18, &CliBrokerResponse::Completed).unwrap();
+            ProductFrameCodec::encode_cli_response(19, &CliBrokerResponse::Completed).unwrap();
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
-            Ok((18, CliBrokerResponse::Completed))
+            Ok((19, CliBrokerResponse::Completed))
         );
 
         let helper = BrokerHelperRequest::PublishRootSet(root_set());

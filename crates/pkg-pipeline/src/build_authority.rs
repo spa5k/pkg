@@ -9,9 +9,16 @@ use std::{
 use pkg_channel::VerifiedChannel;
 use pkg_core::{ChannelSequence, PackageSelector, PolicyVersion};
 use pkg_index::VerifiedIndex;
-use pkg_nix::{AuthenticatedCaller, BuildPreview, NixAdapter, OperationHandle};
+use pkg_nix::{
+    AuthenticatedCaller, BrokerErrorCode, BuildPreview, CacheInstallAttempt, CacheInstallOutcome,
+    NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
+};
 
-use crate::{AuthenticatedBuildPreparation, BuildPlanningAdapter};
+use crate::{
+    AcquireError, AuthenticatedBuildPreparation, BuildPlanningAdapter, acquire_cache_only,
+    assemble_cache_install_evidence, host_facts::production_native_system, preflight_cache_only,
+    resolve_install, verify_acquired,
+};
 
 /// Result of publishing authenticated service state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,6 +191,78 @@ impl AuthenticatedBuildAuthority {
         .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::PreparationRefused))
     }
 
+    /// Acquires one cache-first install from the current authenticated authority snapshot.
+    ///
+    /// The broker holds GC inhibition across substitution and retains it with
+    /// the resulting evidence until the caller publishes the exact root set.
+    /// A cache miss is a successful classification, not an authority failure.
+    ///
+    /// # Errors
+    ///
+    /// Refuses unavailable state, invalid authenticated source/index data,
+    /// resolution drift, substitute verification failure, or broker lifecycle
+    /// cancellation through one redacted category.
+    pub fn acquire_install(
+        &self,
+        selectors: Vec<PackageSelector>,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+    ) -> Result<CacheInstallOutcome, BuildAuthorityError> {
+        let (channel, index) = {
+            let state = self.lock_state()?;
+            (state.channel.clone(), state.index.clone())
+        };
+        let adapter = Arc::clone(&self.adapter);
+        caller
+            .acquire_cache_install(handle, || {
+                let source_spec =
+                    NixpkgsFetchSpec::from_verified_channel(&channel).map_err(|_| ())?;
+                let source =
+                    fetch_verified_nixpkgs(&source_spec, adapter.as_ref()).map_err(|_| ())?;
+                let system = production_native_system().map_err(|_| ())?;
+                let resolved = resolve_install(
+                    &selectors,
+                    &source,
+                    system,
+                    index.as_ref().map(VerifiedIndex::document),
+                    adapter.as_ref(),
+                )
+                .map_err(|_| ())?;
+                let preflight = preflight_cache_only(&resolved).map_err(|_| ())?;
+                let acquired =
+                    match acquire_cache_only(&resolved, &preflight, &channel, adapter.as_ref()) {
+                        Ok(acquired) => acquired,
+                        Err(AcquireError::BuildRequired) => {
+                            return Ok(CacheInstallAttempt::BuildRequired);
+                        }
+                        Err(AcquireError::Refused) => return Err(()),
+                    };
+                let verified = verify_acquired(acquired).map_err(|_| ())?;
+                let evidence =
+                    assemble_cache_install_evidence(&resolved, &verified, adapter.as_ref())
+                        .map_err(|_| ())?;
+                Ok(CacheInstallAttempt::Acquired(evidence))
+            })
+            .map_err(|error| {
+                let code = match error.code() {
+                    BrokerErrorCode::AdmissionCancelled
+                    | BrokerErrorCode::SessionRestarted
+                    | BrokerErrorCode::OperationExpired => {
+                        BuildAuthorityErrorCode::AcquisitionCancelled
+                    }
+                    BrokerErrorCode::InvalidOperationHandle
+                    | BrokerErrorCode::InvalidAdmissionTransition => {
+                        BuildAuthorityErrorCode::AcquisitionIntentRefused
+                    }
+                    BrokerErrorCode::CacheAcquisitionFailed => {
+                        BuildAuthorityErrorCode::AcquisitionRefused
+                    }
+                    _ => BuildAuthorityErrorCode::AcquisitionRefused,
+                };
+                BuildAuthorityError::new(code)
+            })
+    }
+
     /// Returns the exact contained adapter used by this authority for planning.
     ///
     /// Trusted broker composition uses this to prevent planning and execution
@@ -264,6 +343,12 @@ pub enum BuildAuthorityErrorCode {
     StateUnavailable,
     /// Authenticated planning or caller-bound installation refused.
     PreparationRefused,
+    /// Cache-first acquisition or its broker lifecycle failed closed.
+    AcquisitionRefused,
+    /// Cache-first acquisition was cancelled by the operation lifecycle.
+    AcquisitionCancelled,
+    /// Cache-first acquisition was requested with an invalid operation intent.
+    AcquisitionIntentRefused,
 }
 
 /// Redacted failure at the broker-owned build-authority boundary.

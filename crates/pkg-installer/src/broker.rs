@@ -10,13 +10,14 @@ use nix::{
 use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
-    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest, GenerationId,
-    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
-    MaintenanceError, MethodKind, NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
+    BuildRootPublicationErrorCode, CacheInstallErrorCode, CacheInstallOutcome, CliBrokerRequest,
+    CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
+    InProcessBroker, InProcessCallerPeer, MaintenanceError, MethodKind, NixAdapter,
+    NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
+    RootSetTransitionIntent, RootSetTransitionReport,
 };
-use pkg_pipeline::AuthenticatedBuildAuthority;
+use pkg_pipeline::{AuthenticatedBuildAuthority, BuildAuthorityErrorCode};
 use std::{
     error::Error,
     fmt,
@@ -175,6 +176,13 @@ pub fn serve_broker_connection_with_build_and_root_authority(
 }
 
 trait BuildAuthorityDispatch: Send + Sync {
+    fn acquire(
+        &self,
+        selectors: Vec<PackageSelector>,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+    ) -> Result<CacheInstallOutcome, CacheInstallErrorCode>;
+
     fn prepare(
         &self,
         selectors: Vec<PackageSelector>,
@@ -279,6 +287,25 @@ impl RootAuthorityDispatch for RootHelperClient {
 }
 
 impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
+    fn acquire(
+        &self,
+        selectors: Vec<PackageSelector>,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+    ) -> Result<CacheInstallOutcome, CacheInstallErrorCode> {
+        self.acquire_install(selectors, caller, handle)
+            .map_err(|error| match error.code() {
+                BuildAuthorityErrorCode::AcquisitionCancelled => CacheInstallErrorCode::Cancelled,
+                BuildAuthorityErrorCode::AcquisitionIntentRefused => {
+                    CacheInstallErrorCode::InvalidIntent
+                }
+                BuildAuthorityErrorCode::AcquisitionRefused => {
+                    CacheInstallErrorCode::AcquisitionFailed
+                }
+                _ => CacheInstallErrorCode::AuthorityUnavailable,
+            })
+    }
+
     fn prepare(
         &self,
         selectors: Vec<PackageSelector>,
@@ -361,16 +388,7 @@ fn dispatch_request(
             .map_err(|_| ()),
         CliBrokerRequest::Cancel(handle) => cancel_response(caller, &handle),
         CliBrokerRequest::Complete(handle) => complete_response(caller, &handle),
-        CliBrokerRequest::Version(handle) => {
-            caller
-                .authorize_adapter_call(&handle, MethodKind::Version)
-                .map_err(|_| ())?;
-            Ok(adapter_response(
-                MethodKind::Version,
-                adapter.ok_or(())?.version(),
-                CliBrokerResponse::Version,
-            ))
-        }
+        CliBrokerRequest::Version(handle) => dispatch_version(caller, adapter, &handle),
         CliBrokerRequest::EvaluateDerivation(handle, request) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::EvaluateDerivation)
@@ -447,6 +465,42 @@ fn dispatch_request(
         CliBrokerRequest::AttestGenerationRoots(handle, generation) => Ok(
             generation_root_attestation_response(roots, caller, &handle, generation),
         ),
+        CliBrokerRequest::AcquireInstall(handle, selectors) => Ok(install_acquisition_response(
+            authority, caller, &handle, selectors,
+        )),
+    }
+}
+
+fn dispatch_version(
+    caller: &AuthenticatedCaller,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .authorize_adapter_call(handle, MethodKind::Version)
+        .map_err(|_| ())?;
+    Ok(adapter_response(
+        MethodKind::Version,
+        adapter.ok_or(())?.version(),
+        CliBrokerResponse::Version,
+    ))
+}
+
+fn install_acquisition_response(
+    authority: Option<&dyn BuildAuthorityDispatch>,
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    selectors: Vec<PackageSelector>,
+) -> CliBrokerResponse {
+    let Some(authority) = authority else {
+        return CliBrokerResponse::InstallAcquisitionRefused(
+            CacheInstallErrorCode::AuthorityUnavailable,
+        );
+    };
+    match authority.acquire(selectors, caller, handle) {
+        Ok(CacheInstallOutcome::Acquired) => CliBrokerResponse::InstallAcquired,
+        Ok(CacheInstallOutcome::BuildRequired) => CliBrokerResponse::InstallBuildRequired,
+        Err(code) => CliBrokerResponse::InstallAcquisitionRefused(code),
     }
 }
 
@@ -499,6 +553,7 @@ const fn map_generation_root_attestation_error(
         | BrokerErrorCode::BuildApprovalInvalidated
         | BrokerErrorCode::BuildResourcePreflightFailed
         | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::CacheAcquisitionFailed
         | BrokerErrorCode::InvalidChildPolicy
         | BrokerErrorCode::EntropyUnavailable => {
             GenerationRootAttestationErrorCode::AuthorityUnavailable
@@ -583,6 +638,7 @@ const fn map_generation_root_removal_error(
         | BrokerErrorCode::BuildApprovalInvalidated
         | BrokerErrorCode::BuildResourcePreflightFailed
         | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::CacheAcquisitionFailed
         | BrokerErrorCode::InvalidChildPolicy
         | BrokerErrorCode::EntropyUnavailable => {
             GenerationRootRemovalErrorCode::AuthorityUnavailable
@@ -631,6 +687,7 @@ const fn map_generation_root_transition_error(
         | BrokerErrorCode::BuildApprovalInvalidated
         | BrokerErrorCode::BuildResourcePreflightFailed
         | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::CacheAcquisitionFailed
         | BrokerErrorCode::InvalidChildPolicy
         | BrokerErrorCode::EntropyUnavailable => {
             GenerationRootTransitionErrorCode::AuthorityUnavailable
@@ -689,6 +746,7 @@ const fn map_build_root_error(code: BrokerErrorCode) -> BuildRootPublicationErro
         | BrokerErrorCode::BuildApprovalInvalidated
         | BrokerErrorCode::BuildResourcePreflightFailed
         | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::CacheAcquisitionFailed
         | BrokerErrorCode::InvalidChildPolicy
         | BrokerErrorCode::EntropyUnavailable => {
             BuildRootPublicationErrorCode::AuthorityUnavailable
@@ -731,6 +789,7 @@ const fn map_build_execution_error(code: BrokerErrorCode) -> BuildExecutionError
         | BrokerErrorCode::AdmissionBusy
         | BrokerErrorCode::InvalidAdmissionTransition
         | BrokerErrorCode::InvalidBuildPlan
+        | BrokerErrorCode::CacheAcquisitionFailed
         | BrokerErrorCode::InvalidChildPolicy
         | BrokerErrorCode::EntropyUnavailable => BuildExecutionErrorCode::AuthorityUnavailable,
     }
@@ -1016,6 +1075,18 @@ mod tests {
     struct TestAuthority(BuildPlan);
 
     impl BuildAuthorityDispatch for TestAuthority {
+        fn acquire(
+            &self,
+            selectors: Vec<PackageSelector>,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+        ) -> Result<CacheInstallOutcome, CacheInstallErrorCode> {
+            if selectors.len() != 1 || selectors[0].selector().as_str() != "hello" {
+                return Err(CacheInstallErrorCode::InvalidIntent);
+            }
+            Ok(CacheInstallOutcome::BuildRequired)
+        }
+
         fn prepare(
             &self,
             selectors: Vec<PackageSelector>,
@@ -1164,6 +1235,48 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
             Ok((17, CliBrokerResponse::BuildPreview(preview)))
+        );
+    }
+
+    #[test]
+    fn cache_acquisition_dispatch_is_closed_and_reports_build_required() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        let authority = TestAuthority(build_plan());
+
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::AcquireInstall(handle.clone(), vec![selector.clone()]),
+                None,
+                None,
+                Some(&authority),
+                None,
+            ),
+            Ok(CliBrokerResponse::InstallBuildRequired)
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::AcquireInstall(handle, vec![selector]),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::InstallAcquisitionRefused(
+                CacheInstallErrorCode::AuthorityUnavailable
+            ))
         );
     }
 

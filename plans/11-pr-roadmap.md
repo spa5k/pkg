@@ -1444,10 +1444,15 @@ flowchart TD
   `VerifiedSubstitute` capabilities may be bound to resolver-owned build targets, every selected
   output must be covered with no foreign output, and a fresh path-info read must exactly match the
   verified hash, signatures, references, and sizes. The result records `CacheSigned` provenance in
-  the same `InstallEvidence` schema used after local builds. The remaining production install slice
-  must run that cache-first path under broker GC inhibition, expose its acquired-versus-build-required
-  outcome through the closed dispatcher, and connect initial install plus attested recovery to the
-  CLI.
+  the same `InstallEvidence` schema used after local builds. That cache-first path now runs under a
+  broker GC inhibitor. Closed method 26 accepts only the live `Acquire` handle plus bounded current-
+  channel selectors, resolves from the broker's verified channel/index snapshot, and returns only
+  `acquired`, `build-required`, or one of four stable refusal codes. A hit retains evidence and GC
+  protection until exact roots are published. A miss creates no approval/evidence and releases the
+  inhibitor. Cancellation during substitution defers release until the authority call returns. The
+  fixed-endpoint CLI client preserves ordinary refusal codes without poisoning its connection. The
+  remaining production install slice must connect initial install plus attested recovery to this
+  closed acquisition/build/root/commit sequence.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

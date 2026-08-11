@@ -301,7 +301,7 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   typed `BuildReport`; failure returns one of six stable redacted refusal codes without killing an
   otherwise healthy connection. No receipt, estimate, resource measurement, target, path, or Nix
   control crosses the execution request. Closed method 20 performs the protected handoff after a
-  successful build. Its request contains the live handle plus a validated generation and complete
+  successful cache acquisition or build. Its request contains the live handle plus a validated generation and complete
   root entries, but no caller uid; the broker injects the kernel-authenticated uid and rejects an
   intent that omits any privately retained built output. It marks root publication in flight before
   calling the injected maintenance authority, returns only a typed root report or one of four stable
@@ -342,7 +342,7 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   in-memory authority now supplies a consistent verified-channel/authenticated-index snapshot,
   rejects rollback, policy downgrade and same-sequence descriptor reuse, drops a stale index on
   channel advance, and accepts a replacement index only when bound to the exact current descriptor.
-  Its production prepare-and-install entry accepts only typed selectors plus the transport-derived
+  Its production build-preparation entry accepts only typed selectors plus the transport-derived
   caller and live handle, and releases its state lock before host/Nix work. The authenticated index is a non-forgeable Rust capability
   produced only after the downloaded compressed artifact matches the descriptor digest, bounded
   Brotli decoding produces a bounded document, and source-identity, strict-schema, invariant-rebuild and canonical-byte
@@ -361,10 +361,23 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   the serialized channel transaction remains held, so sequence commit cannot precede compressed
   index validation. A long-lived broker refresh owner derives the native system from the compiled
   target, bootstraps only from the promoted pair, and atomically replaces channel plus index in live
-  authority; none enters from the command wire. Adapter failures cross only the closed error-code envelope;
-  authorization, admission, framing, and transport failures still terminate the connection without
-  disclosing private state. Product-command execution is still not fabricated before the dispatcher
-  is connected.
+  authority; none enters from the command wire. Closed method 26 supplies the separate cache-first
+  install entry. Its request carries only a live `Acquire` handle plus the same bounded, unresolved,
+  unpinned `CurrentChannel` selectors accepted by method 18. The authority snapshots the verified
+  channel/authenticated index, independently materializes and verifies the pinned Nixpkgs source,
+  resolves the native output graph, attempts only the descriptor-authorized signed cache, recursively
+  verifies each acquired output, rereads exact path metadata, and retains the strict private
+  `InstallEvidence`. The broker installs a GC inhibitor before this work starts. A complete cache hit
+  returns only `acquired` and retains that inhibitor until method 20 publishes the exact output roots;
+  a cache miss returns only `build-required`, creates no evidence or approval, and releases the
+  inhibitor. Cancellation cannot release it while substitution is in flight. Ordinary refusal returns
+  one of four closed codes (`invalid-intent`, `acquisition-failed`, `cancelled`,
+  `authority-unavailable`) without poisoning the connection. No channel, index, system, derivation,
+  store path, substituter, key, Nix option, or raw command crosses method 26. Adapter failures cross
+  only the closed error-code envelope; authorization, admission, framing, and transport failures still
+  terminate the connection without disclosing private state. The production dispatcher and
+  fixed-endpoint lifecycle client implement method 26; end-user install transaction orchestration
+  remains the next CLI-layer step.
 
 Approval durability has two deliberately separate sinks. The invoking CLI appends the public,
 sanitized approval phase to its uid-owned operation journal while it holds the existing exclusive
@@ -383,13 +396,14 @@ one-MiB frame ceiling before allocation, and applies one monotonic deadline acro
 request-write/response-read transaction. It rejects a response-id or response-kind mismatch and permanently
 refuses reuse of that connection after any framing, transport, or correlation failure. Caller uid
 still never appears in the request, including the method-20 root intent; ordinary protected-root
-refusals preserve connection health and expose only the closed refusal code. `BrokerNixAdapter` wraps this lifecycle transport for the six
+refusals preserve connection health and expose only the closed refusal code. The lifecycle client
+also exposes method 26 with the long-running response budget and preserves its closed refusal code
+while keeping an ordinary refused connection reusable. `BrokerNixAdapter` wraps this lifecycle transport for the six
 exposed typed methods, using a fresh connection and operation handle per call. It converts an
 authenticated adapter-failure envelope back into a redacted `NixAdapterError` with the same closed
 code; transport and protocol failures remain generic operation failures. `build` returns
-`PermissionDenied` locally without opening a connection. This adapter foundation does not replace
-`UnavailableEngine`: that happens only after the product-command dispatcher and authenticated build
-capability are connected.
+`PermissionDenied` locally without opening a connection. Product commands use cache/build authority
+only through their transaction coordinator; they never receive a raw adapter or Nix control surface.
 
 The CLI-facing broker server also changes the authenticated stream to nonblocking mode before its
 first frame read. Each complete request frame receives one five-minute monotonic poll budget and
