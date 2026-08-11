@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::io::{self, Write};
+use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
@@ -10,8 +11,12 @@ use crate::cli::{
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
 use crate::exit::ExitCode;
+use crate::log::PublicOperationLog;
 use crate::progress::PublicEvent;
-use crate::ux::{CommandError, OutputMode, PUBLIC_SCHEMA_VERSION, write_error, write_json_line};
+use crate::ux::{
+    CommandError, OutputMode, PUBLIC_SCHEMA_VERSION, json_line_bytes, terminal_error_ndjson_line,
+    write_error_with_operation, write_json_line,
+};
 
 const MAX_RESULT_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PUBLIC_DEPTH: usize = 16;
@@ -115,7 +120,7 @@ pub trait CommandEngine {
     fn execute_with_progress(
         &mut self,
         request: &CommandRequest,
-        _progress: &mut dyn FnMut(PublicEvent),
+        _progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
     ) -> Result<CommandResult, CommandError> {
         self.execute(request)
     }
@@ -142,7 +147,7 @@ pub trait CoreOperations {
         &mut self,
         args: &InstallArgs,
         policy: OperationPolicy,
-        _progress: &mut dyn FnMut(PublicEvent),
+        _progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
     ) -> Result<CommandResult, CommandError> {
         self.install(args, policy)
     }
@@ -254,13 +259,13 @@ impl<C> CoreEngine<C> {
 
 impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
     fn execute(&mut self, request: &CommandRequest) -> Result<CommandResult, CommandError> {
-        self.execute_with_progress(request, &mut |_| {})
+        self.execute_with_progress(request, &mut |_| Ok(()))
     }
 
     fn execute_with_progress(
         &mut self,
         request: &CommandRequest,
-        progress: &mut dyn FnMut(PublicEvent),
+        progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
     ) -> Result<CommandResult, CommandError> {
         let policy = OperationPolicy {
             yes: request.yes(),
@@ -330,69 +335,237 @@ impl std::error::Error for PublicResultError {}
 pub fn execute_command(
     cli: &Cli,
     engine: &mut dyn CommandEngine,
+    stdout: impl Write,
+    stderr: impl Write,
+) -> io::Result<ExitCode> {
+    execute_command_inner(cli, engine, None, stdout, stderr)
+}
+
+/// Execute one command while durably mirroring its sanitized public operation stream.
+pub fn execute_command_with_operation_log(
+    cli: &Cli,
+    engine: &mut dyn CommandEngine,
+    log_directory: &Path,
+    mut stdout: impl Write,
+    mut stderr: impl Write,
+) -> io::Result<ExitCode> {
+    let log = match PublicOperationLog::open(log_directory) {
+        Ok(log) => log,
+        Err(error) => {
+            let error = public_stream_unavailable(error);
+            write_error_with_operation(
+                &mut stdout,
+                &mut stderr,
+                OutputMode::from_flags(cli.json(), cli.jsonl()),
+                cli.command_name(),
+                &error,
+                None,
+            )?;
+            return Ok(error.exit_code());
+        }
+    };
+    execute_command_inner(cli, engine, Some(log), stdout, stderr)
+}
+
+fn execute_command_inner(
+    cli: &Cli,
+    engine: &mut dyn CommandEngine,
+    operation_log: Option<PublicOperationLog>,
     mut stdout: impl Write,
     mut stderr: impl Write,
 ) -> io::Result<ExitCode> {
     let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
-    let mut progress_error = None;
+    let mut journal = operation_log.map(PublicOperationJournal::new);
     let result = {
-        let mut progress = |event: PublicEvent| {
-            if progress_error.is_some() {
-                return;
+        let mut progress = |event: PublicEvent| -> Result<(), CommandError> {
+            let bytes = event.to_ndjson_line().map_err(public_stream_unavailable)?;
+            if let Some(journal) = journal.as_mut() {
+                journal
+                    .append_event(event.op_id(), &bytes)
+                    .map_err(public_stream_unavailable)?;
             }
-            let result = match mode {
+            match mode {
                 OutputMode::Human if !cli.quiet() => event.write_human(&mut stderr),
-                OutputMode::JsonLines => event.write_ndjson(&mut stdout),
+                OutputMode::JsonLines => stdout.write_all(&bytes),
                 OutputMode::Human | OutputMode::Json => Ok(()),
-            };
-            if let Err(error) = result {
-                progress_error = Some(error);
             }
+            .map_err(public_stream_unavailable)
         };
         engine.execute_with_progress(&CommandRequest::from_cli(cli), &mut progress)
     };
-    if let Some(error) = progress_error {
-        return Err(error);
-    }
+    let operation_id = journal
+        .as_ref()
+        .and_then(PublicOperationJournal::operation_id)
+        .map(str::to_owned);
     match result {
         Ok(result) => {
-            write_success(&mut stdout, mode, cli.command_name(), &result)?;
+            let lines = success_jsonl_lines(cli.command_name(), &result, operation_id.as_deref())?;
+            if let Some(journal) = journal.as_mut() {
+                let _ = journal.append_records(&lines);
+            }
+            write_success_lines(
+                &mut stdout,
+                mode,
+                cli.command_name(),
+                &result,
+                operation_id.as_deref(),
+                &lines,
+            )?;
             Ok(ExitCode::Ok)
         }
         Err(error) => {
-            write_error(&mut stdout, &mut stderr, mode, cli.command_name(), &error)?;
+            let terminal =
+                terminal_error_ndjson_line(cli.command_name(), &error, operation_id.as_deref())?;
+            if let Some(journal) = journal.as_mut() {
+                let _ = journal.append_record(&terminal);
+            }
+            if mode == OutputMode::JsonLines {
+                stdout.write_all(&terminal)?;
+            } else {
+                write_error_with_operation(
+                    &mut stdout,
+                    &mut stderr,
+                    mode,
+                    cli.command_name(),
+                    &error,
+                    operation_id.as_deref(),
+                )?;
+            }
             Ok(error.exit_code())
         }
     }
 }
 
+struct PublicOperationJournal {
+    log: PublicOperationLog,
+    operation_id: Option<String>,
+}
+
+impl PublicOperationJournal {
+    fn new(log: PublicOperationLog) -> Self {
+        Self {
+            log,
+            operation_id: None,
+        }
+    }
+
+    fn operation_id(&self) -> Option<&str> {
+        self.operation_id.as_deref()
+    }
+
+    fn append_event(&mut self, operation_id: &str, record: &[u8]) -> io::Result<()> {
+        match self.operation_id.as_deref() {
+            Some(bound) if bound != operation_id => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "public progress operation id changed",
+            )),
+            Some(_) => self.log.append(operation_id, record),
+            None => {
+                self.log.append(operation_id, record)?;
+                self.operation_id = Some(operation_id.to_owned());
+                Ok(())
+            }
+        }
+    }
+
+    fn append_record(&mut self, record: &[u8]) -> io::Result<()> {
+        let Some(operation_id) = self.operation_id.as_deref() else {
+            return Ok(());
+        };
+        self.log.append(operation_id, record)
+    }
+
+    fn append_records(&mut self, records: &[Vec<u8>]) -> io::Result<()> {
+        if self.operation_id.is_some() {
+            for record in records {
+                self.append_record(record)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn public_stream_unavailable(_: io::Error) -> CommandError {
+    CommandError::new(
+        ExitCode::Config,
+        "the sanitized operation stream is unavailable",
+        "check the private user-state log directory and retry",
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn write_success(
     mut writer: impl Write,
     mode: OutputMode,
     command: &str,
     result: &CommandResult,
 ) -> io::Result<()> {
+    let lines = success_jsonl_lines(command, result, None)?;
+    write_success_lines(&mut writer, mode, command, result, None, &lines)
+}
+
+fn write_success_lines(
+    mut writer: impl Write,
+    mode: OutputMode,
+    command: &str,
+    result: &CommandResult,
+    operation_id: Option<&str>,
+    jsonl_lines: &[Vec<u8>],
+) -> io::Result<()> {
     match mode {
         OutputMode::Human => writeln!(writer, "{}", result.summary()),
         OutputMode::Json => {
             let mut value = result.fields().clone();
+            bind_operation_id(&mut value, operation_id)?;
             value.insert("schemaVersion".into(), json!(PUBLIC_SCHEMA_VERSION));
             value.insert("ok".into(), json!(true));
             value.insert("command".into(), json!(command));
             write_json_line(writer, &value)
         }
         OutputMode::JsonLines => {
-            for record in result.records() {
-                let mut value = record.clone();
-                value.insert("schemaVersion".into(), json!(PUBLIC_SCHEMA_VERSION));
-                write_json_line(&mut writer, &value)?;
+            for line in jsonl_lines {
+                writer.write_all(line)?;
             }
-            let mut value = result.fields().clone();
-            value.insert("schemaVersion".into(), json!(PUBLIC_SCHEMA_VERSION));
-            value.insert("type".into(), json!("result"));
-            value.insert("ok".into(), json!(true));
-            value.insert("command".into(), json!(command));
-            write_json_line(writer, &value)
+            Ok(())
+        }
+    }
+}
+
+fn success_jsonl_lines(
+    command: &str,
+    result: &CommandResult,
+    operation_id: Option<&str>,
+) -> io::Result<Vec<Vec<u8>>> {
+    let mut lines = Vec::with_capacity(result.records().len() + 1);
+    for record in result.records() {
+        let mut value = record.clone();
+        bind_operation_id(&mut value, operation_id)?;
+        value.insert("schemaVersion".into(), json!(PUBLIC_SCHEMA_VERSION));
+        lines.push(json_line_bytes(&value)?);
+    }
+    let mut terminal = result.fields().clone();
+    bind_operation_id(&mut terminal, operation_id)?;
+    terminal.insert("schemaVersion".into(), json!(PUBLIC_SCHEMA_VERSION));
+    terminal.insert("type".into(), json!("result"));
+    terminal.insert("ok".into(), json!(true));
+    terminal.insert("command".into(), json!(command));
+    lines.push(json_line_bytes(&terminal)?);
+    Ok(lines)
+}
+
+fn bind_operation_id(value: &mut Map<String, Value>, operation_id: Option<&str>) -> io::Result<()> {
+    let Some(operation_id) = operation_id else {
+        return Ok(());
+    };
+    match value.get("opId") {
+        Some(existing) if existing.as_str() == Some(operation_id) => Ok(()),
+        Some(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "terminal result operation id does not match progress stream",
+        )),
+        None => {
+            value.insert("opId".into(), json!(operation_id));
+            Ok(())
         }
     }
 }
@@ -501,13 +674,13 @@ mod tests {
     struct ProgressEngine;
     impl CommandEngine for ProgressEngine {
         fn execute(&mut self, request: &CommandRequest) -> Result<CommandResult, CommandError> {
-            self.execute_with_progress(request, &mut |_| {})
+            self.execute_with_progress(request, &mut |_| Ok(()))
         }
 
         fn execute_with_progress(
             &mut self,
             _request: &CommandRequest,
-            progress: &mut dyn FnMut(PublicEvent),
+            progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
         ) -> Result<CommandResult, CommandError> {
             for event in [
                 PublicEvent::phase("op_fixture", "acquire", "started").unwrap(),
@@ -518,7 +691,7 @@ mod tests {
                 PublicEvent::phase("op_fixture", "activate", "completed").unwrap(),
                 PublicEvent::committed("op_fixture", "gen-0001").unwrap(),
             ] {
-                progress(event);
+                progress(event)?;
             }
             CommandResult::new(
                 "Installed 1 package(s) as gen-0001.",
@@ -739,6 +912,219 @@ mod tests {
         execute_command(&json, &mut ProgressEngine, &mut stdout, &mut stderr).unwrap();
         assert_eq!(stdout.iter().filter(|byte| **byte == b'\n').count(), 1);
         assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn operation_log_is_byte_identical_in_every_output_mode() {
+        for flags in [&[][..], &["--quiet"][..], &["--json"][..], &["--jsonl"][..]] {
+            let root = tempfile::tempdir().unwrap();
+            let mut args = vec!["pkg", "install", "hello", "--yes"];
+            args.extend_from_slice(flags);
+            let cli = Cli::try_parse(args).unwrap();
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                execute_command_with_operation_log(
+                    &cli,
+                    &mut ProgressEngine,
+                    &root.path().join("logs"),
+                    &mut stdout,
+                    &mut stderr,
+                )
+                .unwrap(),
+                ExitCode::Ok
+            );
+            let journal = std::fs::read(root.path().join("logs/op_fixture.ndjson")).unwrap();
+            assert_eq!(
+                journal,
+                include_bytes!("../../../../fixtures/cli-v1/install-progress.jsonl")
+            );
+            if flags == ["--jsonl"] {
+                assert_eq!(stdout, journal);
+            }
+        }
+    }
+
+    struct FailingProgressEngine;
+
+    impl CommandEngine for FailingProgressEngine {
+        fn execute(&mut self, _: &CommandRequest) -> Result<CommandResult, CommandError> {
+            unreachable!()
+        }
+
+        fn execute_with_progress(
+            &mut self,
+            _: &CommandRequest,
+            progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
+        ) -> Result<CommandResult, CommandError> {
+            progress(PublicEvent::phase("op_failure", "build", "started").unwrap())?;
+            Err(CommandError::new(
+                ExitCode::BuildFailed,
+                "package build failed",
+                "inspect the sanitized operation log",
+            ))
+        }
+    }
+
+    #[test]
+    fn failed_jsonl_stream_and_operation_log_share_the_exact_terminal_record() {
+        let root = tempfile::tempdir().unwrap();
+        let cli = Cli::try_parse(["pkg", "install", "hello", "--yes", "--jsonl"]).unwrap();
+        let mut stdout = Vec::new();
+        assert_eq!(
+            execute_command_with_operation_log(
+                &cli,
+                &mut FailingProgressEngine,
+                &root.path().join("logs"),
+                &mut stdout,
+                Vec::new(),
+            )
+            .unwrap(),
+            ExitCode::BuildFailed
+        );
+        let journal = std::fs::read(root.path().join("logs/op_failure.ndjson")).unwrap();
+        assert_eq!(stdout, journal);
+        let terminal: Value = serde_json::from_slice(
+            journal
+                .split(|byte| *byte == b'\n')
+                .rfind(|row| !row.is_empty())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(terminal["type"], "result");
+        assert_eq!(terminal["opId"], "op_failure");
+        assert_eq!(terminal["error"]["symbol"], "BUILD_FAILED");
+    }
+
+    struct GuardedMutationEngine {
+        mutated: bool,
+    }
+
+    impl CommandEngine for GuardedMutationEngine {
+        fn execute(&mut self, _: &CommandRequest) -> Result<CommandResult, CommandError> {
+            unreachable!()
+        }
+
+        fn execute_with_progress(
+            &mut self,
+            _: &CommandRequest,
+            progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
+        ) -> Result<CommandResult, CommandError> {
+            progress(PublicEvent::phase("op_guard", "acquire", "started").unwrap())?;
+            self.mutated = true;
+            CommandResult::new("completed", Map::new(), vec![])
+                .map_err(|_| CommandError::new(ExitCode::Config, "invalid", "report a bug"))
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unsafe_operation_log_stops_the_engine_before_mutation() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let root = tempfile::tempdir().unwrap();
+        let logs = root.path().join("logs");
+        std::fs::create_dir(&logs).unwrap();
+        std::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let target = root.path().join("target");
+        std::fs::write(&target, b"unchanged").unwrap();
+        symlink(&target, logs.join("op_guard.ndjson")).unwrap();
+        let cli = Cli::try_parse(["pkg", "install", "hello", "--yes", "--jsonl"]).unwrap();
+        let mut engine = GuardedMutationEngine { mutated: false };
+        let mut stdout = Vec::new();
+        assert_eq!(
+            execute_command_with_operation_log(&cli, &mut engine, &logs, &mut stdout, Vec::new(),)
+                .unwrap(),
+            ExitCode::Config
+        );
+        assert!(!engine.mutated);
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
+        let terminal: Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(terminal["error"]["symbol"], "CONFIG");
+        assert!(terminal.get("opId").is_none());
+    }
+
+    struct TerminalJournalFailureEngine {
+        journal_path: std::path::PathBuf,
+    }
+
+    impl CommandEngine for TerminalJournalFailureEngine {
+        fn execute(&mut self, _: &CommandRequest) -> Result<CommandResult, CommandError> {
+            unreachable!()
+        }
+
+        fn execute_with_progress(
+            &mut self,
+            _: &CommandRequest,
+            progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
+        ) -> Result<CommandResult, CommandError> {
+            progress(PublicEvent::phase("op_committed", "activate", "started").unwrap())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(
+                    &self.journal_path,
+                    std::fs::Permissions::from_mode(0o644),
+                )
+                .unwrap();
+            }
+            CommandResult::new(
+                "Installed 1 package.",
+                Map::from_iter([("opId".into(), json!("op_committed"))]),
+                vec![],
+            )
+            .map_err(|_| CommandError::new(ExitCode::Config, "invalid", "report a bug"))
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn terminal_journal_fault_does_not_report_a_committed_success_as_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let logs = root.path().join("logs");
+        let cli = Cli::try_parse(["pkg", "install", "hello", "--yes", "--jsonl"]).unwrap();
+        let mut engine = TerminalJournalFailureEngine {
+            journal_path: logs.join("op_committed.ndjson"),
+        };
+        let mut stdout = Vec::new();
+        assert_eq!(
+            execute_command_with_operation_log(&cli, &mut engine, &logs, &mut stdout, Vec::new(),)
+                .unwrap(),
+            ExitCode::Ok
+        );
+        let rows = stdout
+            .split(|byte| *byte == b'\n')
+            .filter(|row| !row.is_empty())
+            .map(|row| serde_json::from_slice::<Value>(row).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.last().unwrap()["ok"], true);
+        assert_eq!(rows.last().unwrap()["opId"], "op_committed");
+        let journal = std::fs::read(engine.journal_path).unwrap();
+        assert_eq!(journal.iter().filter(|byte| **byte == b'\n').count(), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unsafe_log_directory_returns_a_stable_public_error_before_engine_entry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let logs = root.path().join("logs");
+        std::fs::create_dir(&logs).unwrap();
+        std::fs::set_permissions(&logs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cli = Cli::try_parse(["pkg", "install", "hello", "--yes", "--jsonl"]).unwrap();
+        let mut engine = GuardedMutationEngine { mutated: false };
+        let mut stdout = Vec::new();
+        assert_eq!(
+            execute_command_with_operation_log(&cli, &mut engine, &logs, &mut stdout, Vec::new(),)
+                .unwrap(),
+            ExitCode::Config
+        );
+        assert!(!engine.mutated);
+        let terminal: Value = serde_json::from_slice(&stdout).unwrap();
+        assert_eq!(terminal["type"], "result");
+        assert_eq!(terminal["error"]["symbol"], "CONFIG");
     }
 
     #[test]

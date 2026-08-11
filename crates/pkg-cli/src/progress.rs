@@ -6,7 +6,7 @@ use std::io::{self, Write};
 
 use serde::Serialize;
 
-use crate::ux::{PUBLIC_SCHEMA_VERSION, write_json_line};
+use crate::ux::{PUBLIC_SCHEMA_VERSION, json_line_bytes};
 
 const MAX_PUBLIC_FIELD_CHARS: usize = 256;
 
@@ -246,7 +246,27 @@ impl PublicEvent {
 
     /// Serialize one independently self-describing NDJSON record.
     pub fn write_ndjson(&self, writer: impl Write) -> io::Result<()> {
-        write_json_line(writer, self)
+        let mut writer = writer;
+        writer.write_all(&self.to_ndjson_line()?)
+    }
+
+    /// Serialize one complete record for both live output and durable mirroring.
+    pub fn to_ndjson_line(&self) -> io::Result<Vec<u8>> {
+        json_line_bytes(self)
+    }
+
+    /// Return the validated product operation identity carried by this event.
+    #[must_use]
+    pub fn op_id(&self) -> &str {
+        match &self.0 {
+            EventKind::Phase(event) => &event.op_id,
+            EventKind::DownloadStarted(event) => &event.op_id,
+            EventKind::DownloadProgress(event) => &event.op_id,
+            EventKind::BuildStarted(event) => &event.op_id,
+            EventKind::BuildProgress(event) => &event.op_id,
+            EventKind::Collision(event) => &event.op_id,
+            EventKind::Committed(event) => &event.op_id,
+        }
     }
 
     /// Render one stable line for the human progress stream.

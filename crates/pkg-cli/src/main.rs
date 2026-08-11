@@ -4,7 +4,7 @@ use clap::Parser;
 use nix::unistd::Uid;
 use pkg_cli::cli::{Cli, Command, DoctorArgs};
 use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport};
-use pkg_cli::commands::execute::{CoreEngine, execute_command};
+use pkg_cli::commands::execute::{CoreEngine, execute_command_with_operation_log};
 use pkg_cli::commands::local::LocalStateOperations;
 use pkg_cli::completion::write_completion;
 use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
@@ -57,7 +57,13 @@ fn main() -> ProcessExitCode {
         Uid::effective().as_raw(),
     ));
 
-    let exit = match execute_command(&cli, &mut engine, std::io::stdout(), std::io::stderr()) {
+    let exit = match execute_command_with_operation_log(
+        &cli,
+        &mut engine,
+        &state_root.join("logs"),
+        std::io::stdout(),
+        std::io::stderr(),
+    ) {
         Ok(exit) => exit,
         Err(_) => return ProcessExitCode::FAILURE,
     };

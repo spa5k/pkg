@@ -191,14 +191,14 @@ impl CoreOperations for LocalStateOperations {
         args: &InstallArgs,
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        self.install_packages(args, policy, &mut |_| {})
+        self.install_packages(args, policy, &mut |_| Ok(()))
     }
 
     fn install_with_progress(
         &mut self,
         args: &InstallArgs,
         policy: OperationPolicy,
-        progress: &mut dyn FnMut(PublicEvent),
+        progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
     ) -> Result<CommandResult, CommandError> {
         self.install_packages(args, policy, progress)
     }
@@ -319,7 +319,7 @@ impl LocalStateOperations {
         &self,
         args: &InstallArgs,
         policy: OperationPolicy,
-        progress: &mut dyn FnMut(PublicEvent),
+        progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
         require_supported_install_options(args)?;
@@ -333,11 +333,11 @@ impl LocalStateOperations {
         }
         self.recover_pending_install(&layout, &mut broker)?;
 
-        let (handle, evidence, build_approval) =
+        let (handle, public_operation_id, evidence, build_approval) =
             acquire_install_evidence(&mut broker, selectors, policy, progress)?;
         let mut local_committed = false;
         let result = (|| {
-            emit_phase(progress, handle.as_str(), "stage", "started")?;
+            emit_phase(progress, &public_operation_id, "stage", "started")?;
             let created_at = utc_now()?;
             let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
                 .map_err(state_lease_error)?;
@@ -366,8 +366,8 @@ impl LocalStateOperations {
                 ),
             )
             .map_err(map_install_generation_error)?;
-            emit_phase(progress, handle.as_str(), "stage", "completed")?;
-            emit_phase(progress, handle.as_str(), "activate", "started")?;
+            emit_phase(progress, &public_operation_id, "stage", "completed")?;
+            emit_phase(progress, &public_operation_id, "activate", "started")?;
             let report = prepared
                 .root_intent()
                 .map_err(|_| install_commit_failed())?
@@ -383,13 +383,17 @@ impl LocalStateOperations {
                 .finish()
                 .map_err(|_| install_commit_failed())?;
             local_committed = true;
-            emit_phase(progress, handle.as_str(), "activate", "completed")?;
-            progress(
-                PublicEvent::committed(handle.as_str(), &generation_id)
-                    .map_err(|_| install_commit_failed())?,
-            );
             let _ = broker.complete(handle.clone());
-            install_result(handle.as_str(), &generation_id, current.as_ref(), &evidence)
+            let _ = emit_phase(progress, &public_operation_id, "activate", "completed");
+            if let Ok(event) = PublicEvent::committed(&public_operation_id, &generation_id) {
+                let _ = progress(event);
+            }
+            install_result(
+                &public_operation_id,
+                &generation_id,
+                current.as_ref(),
+                &evidence,
+            )
         })();
         if result.is_err() && !local_committed {
             let _ = broker.cancel(handle);
@@ -926,12 +930,16 @@ fn acquire_install_evidence(
     broker: &mut BrokerLifecycleClient,
     selectors: Vec<PackageSelector>,
     policy: OperationPolicy,
-    progress: &mut dyn FnMut(PublicEvent),
-) -> Result<(OperationHandle, InstallEvidence, &'static str), CommandError> {
+    progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
+) -> Result<(OperationHandle, String, InstallEvidence, &'static str), CommandError> {
     let acquire_handle = broker
         .begin(BrokerOperationKind::Acquire)
         .map_err(broker_error)?;
-    emit_phase(progress, acquire_handle.as_str(), "acquire", "started")?;
+    let public_operation_id = acquire_handle.as_str().to_owned();
+    if let Err(error) = emit_phase(progress, &public_operation_id, "acquire", "started") {
+        let _ = broker.cancel(acquire_handle);
+        return Err(error);
+    }
     let outcome = match broker.acquire_install(acquire_handle.clone(), selectors.clone()) {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -942,8 +950,18 @@ fn acquire_install_evidence(
     if outcome == CacheInstallOutcome::Acquired {
         return match broker.install_evidence(acquire_handle.clone()) {
             Ok(evidence) => {
-                emit_phase(progress, acquire_handle.as_str(), "acquire", "completed")?;
-                Ok((acquire_handle, evidence, "not_required"))
+                if let Err(error) =
+                    emit_phase(progress, &public_operation_id, "acquire", "completed")
+                {
+                    let _ = broker.cancel(acquire_handle);
+                    return Err(error);
+                }
+                Ok((
+                    acquire_handle,
+                    public_operation_id,
+                    evidence,
+                    "not_required",
+                ))
             }
             Err(error) => {
                 let _ = broker.cancel(acquire_handle);
@@ -957,12 +975,18 @@ fn acquire_install_evidence(
             let _ = broker.cancel(acquire_handle.clone());
         })
         .map_err(install_broker_error)?;
-    emit_phase(progress, acquire_handle.as_str(), "acquire", "completed")?;
+    if let Err(error) = emit_phase(progress, &public_operation_id, "acquire", "completed") {
+        let _ = broker.cancel(acquire_handle);
+        return Err(error);
+    }
 
     let build_handle = broker
         .begin(BrokerOperationKind::Build)
         .map_err(broker_error)?;
-    emit_phase(progress, build_handle.as_str(), "build", "started")?;
+    if let Err(error) = emit_phase(progress, &public_operation_id, "build", "started") {
+        let _ = broker.cancel(build_handle);
+        return Err(error);
+    }
     let result = (|| {
         let preview = broker
             .prepare_build(build_handle.clone(), selectors)
@@ -986,8 +1010,13 @@ fn acquire_install_evidence(
         let evidence = broker
             .install_evidence(build_handle.clone())
             .map_err(install_broker_error)?;
-        emit_phase(progress, build_handle.as_str(), "build", "completed")?;
-        Ok((build_handle.clone(), evidence, source.as_str()))
+        emit_phase(progress, &public_operation_id, "build", "completed")?;
+        Ok((
+            build_handle.clone(),
+            public_operation_id.clone(),
+            evidence,
+            source.as_str(),
+        ))
     })();
     if result.is_err() {
         let _ = broker.cancel(build_handle);
@@ -1003,13 +1032,12 @@ fn parse_build_plan_digest(value: &str) -> Result<Digest, CommandError> {
 }
 
 fn emit_phase(
-    progress: &mut dyn FnMut(PublicEvent),
+    progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
     op_id: &str,
     phase: &str,
     status: &str,
 ) -> Result<(), CommandError> {
-    progress(PublicEvent::phase(op_id, phase, status).map_err(|_| install_commit_failed())?);
-    Ok(())
+    progress(PublicEvent::phase(op_id, phase, status).map_err(|_| install_commit_failed())?)
 }
 
 fn render_build_preview(preview: &pkg_nix::BuildPreview) -> Result<(), CommandError> {
@@ -1631,17 +1659,25 @@ mod tests {
 
         let mut broker = BrokerLifecycleClient::from_stream(client);
         let mut events = Vec::new();
-        let (handle, actual, approval) = acquire_install_evidence(
+        let (handle, public_operation_id, actual, approval) = acquire_install_evidence(
             &mut broker,
             hello_selectors(),
             OperationPolicy::for_test(true, false),
-            &mut |event| events.push(event),
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
         )
         .unwrap();
         assert!(!handle.as_str().is_empty());
         assert_eq!(actual, expected);
         assert_eq!(approval, "not_required");
         assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.op_id() == public_operation_id)
+        );
         drop(broker);
         worker.join().unwrap();
     }
@@ -1761,9 +1797,12 @@ mod tests {
             &mut broker,
             hello_selectors(),
             OperationPolicy::for_test(true, false),
-            &mut |event| events.push(event),
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
         );
-        let (handle, actual, approval) = match result {
+        let (handle, public_operation_id, actual, approval) = match result {
             Ok(result) => result,
             Err(error) => {
                 drop(broker);
@@ -1775,6 +1814,11 @@ mod tests {
         assert_eq!(actual, expected);
         assert_eq!(approval, "yes");
         assert_eq!(events.len(), 4);
+        assert!(
+            events
+                .iter()
+                .all(|event| event.op_id() == public_operation_id)
+        );
         drop(broker);
         worker.join().unwrap();
     }

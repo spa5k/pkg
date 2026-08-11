@@ -1475,10 +1475,22 @@ flowchart TD
   stable phase lines on stderr, `--jsonl` receives independently versioned event records followed by
   one terminal result, `--json` remains one final document, and `--quiet` suppresses only the human
   stream. Human and JSONL install progress plus the final JSON envelope are byte-locked to V1
-  goldens, and the terminal install result now carries its public operation id. The remaining
-  production install work is the live Real-Nix capture/replay half of parity, byte-identical
-  per-operation public-log mirroring and finer download/build counters, plus the still-closed
-  non-default channel/collision policy surfaces.
+  goldens, and the terminal install result now carries its public operation id. The same sanitized
+  stream is now journaled byte-for-byte in every output mode to one private append-only
+  `<user-state>/logs/<opId>.ndjson` file. The writer validates the opaque operation id, exact
+  `0700`/`0600` ownership boundary, regular-file/single-link identity, newline-complete records,
+  and a fixed size cap; no-follow opens refuse symlinks, hard links, permissive files, and torn
+  tails without modifying their targets. A journal failure propagates through the progress sink so
+  the engine cannot silently continue past the failed pre-mutation event. Once activation commits,
+  a later observability write failure cannot truthfully convert that committed install into a
+  package-operation failure; the terminal result remains authoritative and the incomplete public
+  log is a detectable support-data loss. New directory and file entries are parent-directory synced
+  before success relies on them. Cache-miss installs now
+  also retain one public operation id across their private Acquire→Build handle transition, terminal
+  result, and journal. Human, quiet, JSON, and JSONL byte-identity tests plus failure-terminal and
+  filesystem-attack tests are green. The remaining production install work is the live Real-Nix
+  capture/replay half of parity and finer download/build counters, plus the still-closed non-default
+  channel/collision policy surfaces.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

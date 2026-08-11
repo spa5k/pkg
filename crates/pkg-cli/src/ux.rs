@@ -140,6 +140,8 @@ struct ErrorDetail<'a> {
 #[serde(rename_all = "camelCase")]
 struct FinalError<'a> {
     schema_version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    op_id: Option<&'a str>,
     ok: bool,
     command: &'a str,
     error: ErrorDetail<'a>,
@@ -151,6 +153,8 @@ struct TerminalError<'a> {
     schema_version: u64,
     #[serde(rename = "type")]
     kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    op_id: Option<&'a str>,
     ok: bool,
     command: &'a str,
     error: ErrorDetail<'a>,
@@ -158,11 +162,23 @@ struct TerminalError<'a> {
 
 /// Render one error according to the selected public output contract.
 pub fn write_error(
+    stdout: impl Write,
+    stderr: impl Write,
+    mode: OutputMode,
+    command: &str,
+    error: &CommandError,
+) -> io::Result<()> {
+    write_error_with_operation(stdout, stderr, mode, command, error, None)
+}
+
+/// Render an error and bind machine output to a known public operation id.
+pub(crate) fn write_error_with_operation(
     mut stdout: impl Write,
     mut stderr: impl Write,
     mode: OutputMode,
     command: &str,
     error: &CommandError,
+    operation_id: Option<&str>,
 ) -> io::Result<()> {
     let detail = ErrorDetail {
         symbol: error.exit_code.symbol(),
@@ -179,6 +195,7 @@ pub fn write_error(
             &mut stdout,
             &FinalError {
                 schema_version: PUBLIC_SCHEMA_VERSION,
+                op_id: operation_id,
                 ok: false,
                 command,
                 error: detail,
@@ -189,6 +206,7 @@ pub fn write_error(
             &TerminalError {
                 schema_version: PUBLIC_SCHEMA_VERSION,
                 kind: "result",
+                op_id: operation_id,
                 ok: false,
                 command,
                 error: detail,
@@ -197,10 +215,36 @@ pub fn write_error(
     }
 }
 
+/// Serialize one terminal JSONL error for live output and durable mirroring.
+pub(crate) fn terminal_error_ndjson_line(
+    command: &str,
+    error: &CommandError,
+    operation_id: Option<&str>,
+) -> io::Result<Vec<u8>> {
+    json_line_bytes(&TerminalError {
+        schema_version: PUBLIC_SCHEMA_VERSION,
+        kind: "result",
+        op_id: operation_id,
+        ok: false,
+        command,
+        error: ErrorDetail {
+            symbol: error.exit_code.symbol(),
+            code: error.exit_code.as_u8(),
+            message: error.message(),
+            hint: error.hint(),
+        },
+    })
+}
+
 /// Write one compact JSON value followed by exactly one newline.
 pub fn write_json_line(mut writer: impl Write, value: &impl Serialize) -> io::Result<()> {
-    serde_json::to_writer(&mut writer, value).map_err(io::Error::other)?;
-    writer.write_all(b"\n")
+    writer.write_all(&json_line_bytes(value)?)
+}
+
+pub(crate) fn json_line_bytes(value: &impl Serialize) -> io::Result<Vec<u8>> {
+    let mut bytes = serde_json::to_vec(value).map_err(io::Error::other)?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 pub(crate) fn sanitize_public_text(value: &str) -> String {

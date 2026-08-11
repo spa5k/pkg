@@ -1,17 +1,19 @@
 //! Bounded structured local logs with an allowlisted schema and denylist redaction.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
 use crate::ux::PUBLIC_SCHEMA_VERSION;
+use pkg_nix::OperationId;
 
 const MAX_SECRET_COUNT: usize = 64;
 const MAX_SECRET_CHARS: usize = 4_096;
 const MAX_REDACTED_CHARS: usize = 2_048;
+const MAX_PUBLIC_OPERATION_LOG_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Log severity permitted by the product-owned schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -175,6 +177,58 @@ pub struct StructuredLog {
     config: LogConfig,
 }
 
+/// Append-only sanitized public stream rooted in the user's private log directory.
+#[derive(Debug)]
+pub struct PublicOperationLog {
+    directory: PathBuf,
+}
+
+impl PublicOperationLog {
+    /// Validate or create the private directory before an operation can start.
+    pub fn open(directory: impl Into<PathBuf>) -> io::Result<Self> {
+        let directory = directory.into();
+        ensure_private_owned_dir(&directory)?;
+        Ok(Self { directory })
+    }
+
+    /// Append one already-serialized, newline-terminated public stream record.
+    pub fn append(&self, operation_id: &str, record: &[u8]) -> io::Result<()> {
+        let operation_id = OperationId::new(operation_id)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid operation id"))?;
+        validate_public_record(record)?;
+        let path = self
+            .directory
+            .join(format!("{}.ndjson", operation_id.as_str()));
+        let (mut file, created) = open_existing_or_create_private(&path)?;
+        validate_private_regular_file(&file)?;
+        let length = file.metadata()?.len();
+        let record_len = u64::try_from(record.len()).unwrap_or(u64::MAX);
+        if length.saturating_add(record_len) > MAX_PUBLIC_OPERATION_LOG_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "public operation log exceeds size bound",
+            ));
+        }
+        if length != 0 {
+            file.seek(SeekFrom::End(-1))?;
+            let mut final_byte = [0_u8; 1];
+            file.read_exact(&mut final_byte)?;
+            if final_byte != [b'\n'] {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "public operation log has a torn final record",
+                ));
+            }
+        }
+        file.write_all(record)?;
+        file.sync_data()?;
+        if created {
+            sync_directory(&self.directory)?;
+        }
+        Ok(())
+    }
+}
+
 impl StructuredLog {
     /// Open a log directory after validating the retention bounds and private directory mode.
     pub fn open(directory: impl Into<PathBuf>, config: LogConfig) -> io::Result<Self> {
@@ -307,6 +361,143 @@ fn ensure_private_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn ensure_private_owned_dir(path: &Path) -> io::Result<()> {
+    let missing = missing_directories(path)?;
+    ensure_private_dir(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.uid() != nix::unistd::Uid::effective().as_raw() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private directory owner is incorrect",
+            ));
+        }
+        if metadata.permissions().mode() & 0o777 != 0o700 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "private directory permissions are not 0700",
+            ));
+        }
+    }
+    for created in missing.iter().rev() {
+        let parent = created
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing parent"))?;
+        sync_directory(parent)?;
+    }
+    Ok(())
+}
+
+fn missing_directories(path: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        match fs::symlink_metadata(current) {
+            Ok(_) => break,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing.push(current.to_owned());
+                current = current.parent().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "missing existing ancestor")
+                })?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(missing)
+}
+
+fn sync_directory(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+fn validate_public_record(record: &[u8]) -> io::Result<()> {
+    if record.is_empty()
+        || record.last() != Some(&b'\n')
+        || record[..record.len() - 1]
+            .iter()
+            .any(|byte| matches!(byte, b'\n' | b'\r'))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "public operation record is not one complete NDJSON line",
+        ));
+    }
+    Ok(())
+}
+
+fn open_existing_or_create_private(path: &Path) -> io::Result<(File, bool)> {
+    match open_private_operation_file(path, false) {
+        Ok(file) => Ok((file, false)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            match open_private_operation_file(path, true) {
+                Ok(file) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+                    }
+                    Ok((file, true))
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    open_private_operation_file(path, false).map(|file| (file, false))
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn open_private_operation_file(path: &Path, create_new: bool) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).append(true).create_new(create_new);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(nix::libc::O_CLOEXEC | nix::libc::O_NOFOLLOW);
+    }
+    options.open(path)
+}
+
+fn validate_private_regular_file(file: &File) -> io::Result<()> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "public operation log is not a regular file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if metadata.uid() != nix::unistd::Uid::effective().as_raw() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "public operation log owner is incorrect",
+            ));
+        }
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "public operation log permissions are not 0600",
+            ));
+        }
+        if metadata.nlink() != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "public operation log has multiple links",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn refuse_symlink(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::new(
@@ -425,6 +616,84 @@ mod tests {
         assert!(!text.contains("secret-value"));
         assert!(!text.contains("argv"));
         assert!(!text.contains("environment"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_operation_log_is_private_append_only_and_rejects_unsafe_records() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp("public-operation");
+        let log = PublicOperationLog::open(&root).unwrap();
+        log.append("op_fixture", b"{\"schemaVersion\":1}\n")
+            .unwrap();
+        log.append("op_fixture", b"{\"schemaVersion\":1,\"type\":\"result\"}\n")
+            .unwrap();
+        let path = root.join("op_fixture.ndjson");
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"{\"schemaVersion\":1}\n{\"schemaVersion\":1,\"type\":\"result\"}\n"
+        );
+        assert_eq!(
+            fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(log.append("../escape", b"{}\n").is_err());
+        assert!(log.append("op_fixture", b"{}\n{}\n").is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_operation_log_refuses_symlink_hardlink_and_permissive_file_without_mutation() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let root = temp("public-operation-attacks");
+        let log = PublicOperationLog::open(&root).unwrap();
+        let target = root.join("target");
+        fs::write(&target, b"unchanged").unwrap();
+        let symlink_path = root.join("op_symlink.ndjson");
+        symlink(&target, &symlink_path).unwrap();
+        assert!(log.append("op_symlink", b"{}\n").is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"unchanged");
+
+        let permissive = root.join("op_permissive.ndjson");
+        fs::write(&permissive, b"existing\n").unwrap();
+        fs::set_permissions(&permissive, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(log.append("op_permissive", b"{}\n").is_err());
+        assert_eq!(fs::read(&permissive).unwrap(), b"existing\n");
+        assert_eq!(
+            fs::metadata(&permissive).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+
+        let linked = root.join("op_linked.ndjson");
+        fs::write(&linked, b"existing\n").unwrap();
+        fs::set_permissions(&linked, fs::Permissions::from_mode(0o600)).unwrap();
+        let alias = root.join("linked-alias");
+        fs::hard_link(&linked, &alias).unwrap();
+        assert!(log.append("op_linked", b"{}\n").is_err());
+        assert_eq!(fs::read(&alias).unwrap(), b"existing\n");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn public_operation_log_refuses_torn_existing_tail() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp("public-operation-torn");
+        let log = PublicOperationLog::open(&root).unwrap();
+        let path = root.join("op_torn.ndjson");
+        fs::write(&path, b"{\"partial\":true}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(log.append("op_torn", b"{}\n").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"{\"partial\":true}");
         fs::remove_dir_all(root).unwrap();
     }
 }
