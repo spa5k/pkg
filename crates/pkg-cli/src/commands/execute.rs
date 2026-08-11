@@ -192,6 +192,11 @@ pub struct OperationPolicy {
 }
 
 impl OperationPolicy {
+    #[cfg(test)]
+    pub(crate) const fn for_test(yes: bool, dry_run: bool) -> Self {
+        Self { yes, dry_run }
+    }
+
     /// Whether ordinary confirmation is pre-approved.
     #[must_use]
     pub const fn yes(self) -> bool {
@@ -312,7 +317,7 @@ pub fn execute_command(
     }
 }
 
-fn write_success(
+pub(crate) fn write_success(
     mut writer: impl Write,
     mode: OutputMode,
     command: &str,

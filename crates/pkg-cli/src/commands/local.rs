@@ -950,8 +950,7 @@ fn acquire_install_evidence(
         } else {
             ApprovalSource::Interactive
         };
-        let digest =
-            Digest::from_str(preview.build_plan_digest()).map_err(|_| install_commit_failed())?;
+        let digest = parse_build_plan_digest(preview.build_plan_digest())?;
         broker
             .approve_build(build_handle.clone(), digest, source)
             .map_err(install_broker_error)?;
@@ -967,6 +966,13 @@ fn acquire_install_evidence(
         let _ = broker.cancel(build_handle);
     }
     result
+}
+
+fn parse_build_plan_digest(value: &str) -> Result<Digest, CommandError> {
+    let hex = value
+        .strip_prefix("sha256:")
+        .ok_or_else(install_commit_failed)?;
+    Digest::from_str(&format!("sha256-{hex}")).map_err(|_| install_commit_failed())
 }
 
 fn render_build_preview(preview: &pkg_nix::BuildPreview) -> Result<(), CommandError> {
@@ -1405,14 +1411,341 @@ fn mutation_unavailable() -> CommandError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::{Read, Write};
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::net::UnixStream;
+    use std::thread;
 
     use serde_json::Value;
     use tempfile::TempDir;
 
     use super::*;
+    use crate::broker::BrokerLifecycleClient;
     use crate::cli::Cli;
-    use crate::commands::execute::{CommandEngine, CommandRequest, CoreEngine};
+    use crate::commands::execute::{
+        CommandEngine, CommandRequest, CoreEngine, OperationPolicy, write_success,
+    };
+    use crate::ux::OutputMode;
+    use pkg_nix::{
+        BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
+        CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer,
+        ProductFrameCodec, StorePath,
+    };
+
+    const FRAME_HEADER_BYTES: usize = 20;
+    const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
+    const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn read_request(stream: &mut UnixStream) -> (u64, CliBrokerRequest) {
+        let mut header = [0_u8; FRAME_HEADER_BYTES];
+        stream.read_exact(&mut header).unwrap();
+        let length = u32::from_be_bytes(header[16..20].try_into().unwrap()) as usize;
+        let mut frame = Vec::with_capacity(FRAME_HEADER_BYTES + length);
+        frame.extend_from_slice(&header);
+        frame.resize(FRAME_HEADER_BYTES + length, 0);
+        stream.read_exact(&mut frame[FRAME_HEADER_BYTES..]).unwrap();
+        ProductFrameCodec::decode_cli_request(&frame).unwrap()
+    }
+
+    fn write_response(stream: &mut UnixStream, request_id: u64, response: CliBrokerResponse) {
+        let frame = ProductFrameCodec::encode_cli_response(request_id, &response).unwrap();
+        stream.write_all(&frame).unwrap();
+    }
+
+    fn install_evidence(provenance: &str) -> InstallEvidence {
+        let store_path = format!("/nix/store/{STORE_HASH}-hello-1.0");
+        let derivation = format!("{store_path}.drv");
+        InstallEvidence::from_json_bytes(
+            &serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "descriptorHash": format!("sha256-{}", "0".repeat(64)),
+                "channelSequence": 42,
+                "policyVersion": 7,
+                "revision": REVISION,
+                "sourceNarHash": NAR_HASH,
+                "system": "x86_64-linux",
+                "targets": [{
+                    "selectorId": "sel_hello",
+                    "selector": "hello",
+                    "attribute": "hello",
+                    "versionPreference": { "kind": "any" },
+                    "requestedOutputs": null,
+                    "sourceRevision": "channel:current",
+                    "rootDerivation": derivation,
+                    "rootOutputs": [{ "name": "out", "storePath": store_path }],
+                    "outputsToInstall": ["out"],
+                    "packageName": "hello",
+                    "packageVersion": "1.0",
+                    "acquired": [{
+                        "outputName": "out",
+                        "storePath": store_path,
+                        "narHash": NAR_HASH,
+                        "signatures": if provenance == "cacheSigned" {
+                            vec!["cache.nixos.org-1:AAAA"]
+                        } else {
+                            Vec::new()
+                        },
+                        "references": [],
+                        "deriver": derivation,
+                        "narSize": 20,
+                        "closureSize": 42,
+                        "provenance": provenance
+                    }]
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn build_preview() -> BuildPreview {
+        BuildPreview::from_json_bytes(
+            &serde_json::to_vec(&serde_json::json!({
+                "schemaVersion": 1,
+                "platform": { "os": "linux", "arch": "x86_64" },
+                "policyVersion": 7,
+                "buildPlanDigest": format!("sha256:{}", "1".repeat(64)),
+                "targets": [{
+                    "selector": "hello",
+                    "packageName": "hello",
+                    "version": "1.0",
+                    "outputsToInstall": ["out"]
+                }],
+                "build": { "count": 1, "names": ["hello"], "hasFixedOutput": false },
+                "cache": { "knownDownloadBytes": 0, "knownContentBytes": 0 },
+                "unknownLocalOutputs": 1,
+                "estimates": {
+                    "approxBuildMinutes": null,
+                    "approxNewDiskBytes": 1073741824,
+                    "approxTotalClosureBytes": null
+                },
+                "readiness": {
+                    "sandboxed": true,
+                    "buildIsolationReady": true,
+                    "nativeBuild": true,
+                    "resourceBoundary": {
+                        "isolation": "sandbox",
+                        "perBuildResourceCap": false,
+                        "notice": "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation."
+                    }
+                },
+                "approvalRequired": true
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn hello_selectors() -> Vec<PackageSelector> {
+        let cli = Cli::try_parse(["pkg", "install", "hello"]).unwrap();
+        let crate::cli::Command::Install(args) = cli.parsed_command() else {
+            panic!("expected install command");
+        };
+        install_selectors(args, "00112233445566778899aabbccddeeff").unwrap()
+    }
+
+    #[test]
+    fn cache_hit_uses_the_closed_acquire_protocol_and_returns_evidence() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let expected = install_evidence("cacheSigned");
+        let server_evidence = expected.clone();
+        let worker = thread::spawn(move || {
+            let broker = InProcessBroker::new().unwrap();
+            let caller = broker
+                .connect(InProcessCallerPeer::authenticated(501))
+                .unwrap();
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::Begin(BrokerOperationKind::Acquire) = request else {
+                panic!("expected acquire begin");
+            };
+            let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::AcquireInstall(actual, selectors) = request else {
+                panic!("expected cache acquisition");
+            };
+            assert_eq!(actual, handle);
+            assert_eq!(selectors.len(), 1);
+            assert_eq!(selectors[0].selector().as_str(), "hello");
+            write_response(&mut server, request_id, CliBrokerResponse::InstallAcquired);
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::GetInstallEvidence(actual) = request else {
+                panic!("expected private install evidence request");
+            };
+            assert_eq!(actual, handle);
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::InstallEvidence(server_evidence),
+            );
+            let mut eof = [0_u8; 1];
+            assert_eq!(server.read(&mut eof).unwrap(), 0);
+        });
+
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+        let (handle, actual, approval) = acquire_install_evidence(
+            &mut broker,
+            hello_selectors(),
+            OperationPolicy::for_test(true, false),
+        )
+        .unwrap();
+        assert!(!handle.as_str().is_empty());
+        assert_eq!(actual, expected);
+        assert_eq!(approval, "not_required");
+        drop(broker);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn cache_miss_uses_one_digest_bound_build_and_returns_local_evidence() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let preview = build_preview();
+        let digest = parse_build_plan_digest(preview.build_plan_digest()).unwrap();
+        let expected = install_evidence("localBuild");
+        let server_evidence = expected.clone();
+        let worker = thread::spawn(move || {
+            let broker = InProcessBroker::new().unwrap();
+            let caller = broker
+                .connect(InProcessCallerPeer::authenticated(501))
+                .unwrap();
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::Begin(BrokerOperationKind::Acquire) = request else {
+                panic!("expected acquire begin");
+            };
+            let acquire_handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(acquire_handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::AcquireInstall(actual, selectors) = request else {
+                panic!("expected cache acquisition");
+            };
+            assert_eq!(actual, acquire_handle);
+            assert_eq!(selectors[0].selector().as_str(), "hello");
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::InstallBuildRequired,
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::Complete(actual) = request else {
+                panic!("expected cache operation completion");
+            };
+            assert_eq!(actual, acquire_handle);
+            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::Begin(BrokerOperationKind::Build) = request else {
+                panic!("expected build begin");
+            };
+            let build_handle = caller.begin(BrokerOperationKind::Build).unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(build_handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::PrepareBuild(actual, selectors) = request else {
+                panic!("expected private build preparation");
+            };
+            assert_eq!(actual, build_handle);
+            assert_eq!(selectors[0].selector().as_str(), "hello");
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::BuildPrepared(preview),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::ApproveBuild(actual, approval) = request else {
+                panic!("expected exact build approval");
+            };
+            assert_eq!(actual, build_handle);
+            assert_eq!(approval.build_plan_digest(), digest);
+            assert_eq!(approval.source(), ApprovalSource::AssumeYes);
+            write_response(&mut server, request_id, CliBrokerResponse::BuildApproved);
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::ExecuteBuild(actual, actual_digest) = request else {
+                panic!("expected exact build execution");
+            };
+            assert_eq!(actual, build_handle);
+            assert_eq!(actual_digest, digest);
+            let report = BuildReport::new(
+                BuildStatus::Built,
+                vec![BuildOutput::new(
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+                    BuildOutputProvenance::LocalBuild,
+                )],
+            )
+            .unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::BuildExecuted(report),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::GetInstallEvidence(actual) = request else {
+                panic!("expected post-build install evidence");
+            };
+            assert_eq!(actual, build_handle);
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::InstallEvidence(server_evidence),
+            );
+            let mut eof = [0_u8; 1];
+            assert_eq!(server.read(&mut eof).unwrap(), 0);
+        });
+
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+        let result = acquire_install_evidence(
+            &mut broker,
+            hello_selectors(),
+            OperationPolicy::for_test(true, false),
+        );
+        let (handle, actual, approval) = match result {
+            Ok(result) => result,
+            Err(error) => {
+                drop(broker);
+                let server_result = worker.join();
+                panic!("client failed: {error:?}; server: {server_result:?}");
+            }
+        };
+        assert!(!handle.as_str().is_empty());
+        assert_eq!(actual, expected);
+        assert_eq!(approval, "yes");
+        drop(broker);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn install_success_output_matches_the_v1_golden() {
+        let result = install_result("gen-0001", None, &install_evidence("cacheSigned")).unwrap();
+        assert_eq!(result.summary(), "Installed 1 package(s) as gen-0001.");
+
+        let mut output = Vec::new();
+        write_success(&mut output, OutputMode::Json, "install", &result).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            include_str!("../../../../fixtures/cli-v1/install-success.json")
+        );
+    }
 
     #[test]
     fn missing_state_is_initialized_as_empty_history() {

@@ -1466,8 +1466,13 @@ flowchart TD
   CLI renders only its sanitized preview, interactive or `--yes` approval binds the displayed digest,
   and the broker executes the exact native sandboxed plan before returning the same private install
   evidence used by cache hits. Build preparation and execution use the bounded long-running response
-  window. The remaining production install work is end-to-end Fake/Real parity, richer progress and
-  output goldens, plus the still-closed non-default channel/collision policy surfaces.
+  window. The cache-hit and cache-miss branches now have exact framed-protocol replay tests through
+  the production CLI broker client. The miss test proves that cache admission closes before a new
+  build operation starts, and that approval plus execution use the same displayed digest before the
+  local-build evidence returns. It also caught and closed the public `sha256:<hex>` preview versus
+  internal `sha256-<hex>` digest boundary. The V1 install success JSON is byte-locked to a golden.
+  The remaining production install work is the live Real-Nix capture/replay half of parity, richer
+  interactive progress goldens, plus the still-closed non-default channel/collision policy surfaces.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

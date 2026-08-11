@@ -300,7 +300,7 @@ impl BrokerLifecycleClient {
         Ok(Self::from_stream(stream))
     }
 
-    const fn from_stream(stream: UnixStream) -> Self {
+    pub(crate) const fn from_stream(stream: UnixStream) -> Self {
         Self {
             stream,
             next_request_id: 1,
