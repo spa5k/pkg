@@ -8,7 +8,10 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SECURITY = (ROOT / ".github/workflows/security.yml").read_text(encoding="utf-8")
 NIGHTLY = (ROOT / ".github/workflows/nightly.yml").read_text(encoding="utf-8")
-PINNED_USE = re.compile(r"^\s*uses:\s*actions/checkout@[0-9a-f]{40}\s*$", re.MULTILINE)
+PINNED_USE = re.compile(
+    r"^\s*uses:\s*[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}\s*$",
+    re.MULTILINE,
+)
 
 
 class WorkflowContractTests(unittest.TestCase):
@@ -34,7 +37,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("cargo test --offline --locked -p pkg-testkit chaos::tests", NIGHTLY)
         self.assertIn("cargo test --offline --locked --workspace", NIGHTLY)
 
-    def test_external_actions_are_immutable_checkout_pins_only(self) -> None:
+    def test_external_actions_are_immutable_commit_pins(self) -> None:
         for workflow in (SECURITY, NIGHTLY):
             external_uses = [
                 line

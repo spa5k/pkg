@@ -657,6 +657,13 @@ deny/audit before rejecting all non-loopback IPv4/IPv6 egress. The nightly workf
 fault primitives on Linux and macOS. PR-36 still owns authenticated Real-Nix connector/platform
 execution, so PR-31 does not label this hermetic evidence as a complete Real-Nix nightly lane.
 
+**PR-36 adapter-parity slice (2026-08-11):** the Full nightly workflow runs the ignored
+normalized `RealNixAdapter` contract on native `x86_64-linux` and `aarch64-darwin` ephemeral
+GitHub-hosted runners with exact Nix 2.34.8. The setup action is commit-pinned and its explicit
+release URL is version-pinned. This lane proves the contained adapter's version/eval/substitute/
+path-info/verify/build/GC normalization against Real Nix; it intentionally does **not** count as
+clean-host product-installer, privileged-repair, full-CLI self-hosting, or release-signing evidence.
+
 ### 6.6 Security (layer 6) — `08` §13 AC-S1..S13 mapped 1:1; `08` §13 AC-S31..S33 (repair) covered by existing 09 tests; plus 09-internal AC-S14..S30
 Each AC-S*n* becomes one or more tests. AC-S1..S13 map 1:1 to `08` §13. AC-S14..S30 are
 09-internal acceptance criteria derived from plans `03`/`04`/`05`/`06`/`07`/`08` and tracked

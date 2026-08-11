@@ -1,6 +1,7 @@
-# PR-31 nightly hardening lane. PR-36 extends this workflow with the
-# authenticated Real-Nix connector/platform matrix; until then this workflow
-# deliberately names only the hermetic security and fault evidence it proves.
+# PR-31 hardening plus the PR-36 adapter-level Real-Nix parity matrix. The
+# clean-host product-installer and privileged repair/e2e lanes remain separate
+# release evidence; this workflow does not relabel the upstream installer used
+# below as product installation evidence.
 
 name: nightly-hardening
 
@@ -52,3 +53,56 @@ jobs:
 
       - name: Run nightly ignored fault cases
         run: cargo test --offline --locked --workspace --all-features -- --ignored
+
+  real-nix-adapter:
+    name: G-E2E-REAL adapter (${{ matrix.system }})
+    needs: security
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            system: x86_64-linux
+          - os: macos-15
+            system: aarch64-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install exact upstream Nix used by adapter parity
+        # cachix/install-nix-action v31.10.6
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.34.8/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            sandbox = true
+            sandbox-fallback = false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Prepare isolated adapter home and fixed config include
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(nix --version)" = "nix (Nix) 2.34.8"
+          test "$(nix eval --impure --raw --expr builtins.currentSystem)" = "${{ matrix.system }}"
+          real_home="$RUNNER_TEMP/pkg-real-nix-home"
+          install -d -m 0700 "$real_home" "$real_home/tmp"
+          sudo install -d -m 0755 /opt/pkg/etc/pkg
+          config="$RUNNER_TEMP/pkg-real-nix.conf"
+          printf '%s\n' 'include /etc/nix/nix.conf' > "$config"
+          sudo install -m 0644 "$config" /opt/pkg/etc/pkg/nix.conf
+          printf 'PKG_REAL_NIX_BIN=%s\n' "$(command -v nix)" >> "$GITHUB_ENV"
+          printf 'PKG_REAL_NIX_HOME=%s\n' "$real_home" >> "$GITHUB_ENV"
+          printf 'PKG_REAL_NIX_SYSTEM=%s\n' '${{ matrix.system }}' >> "$GITHUB_ENV"
+
+      - name: Run pinned Real-Nix normalized adapter contract
+        run: >-
+          cargo test --locked -p pkg-nix --test real_nix
+          real_nix_matches_the_normalized_adapter_contract -- --ignored --exact

@@ -1140,6 +1140,12 @@ flowchart TD
 
 #### PR-36 — Technical-preview hardening + Real-Nix nightly CI + e2e parity
 - **Status (2026-08-11):** in progress. The first production Real-Nix connector slice is landed:
+  the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
+  jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
+  verifies the native system, and runs the ignored normalized adapter contract against an
+  ephemeral runner/store. This is deliberately adapter parity evidence only: the upstream action
+  is not product-installer evidence, and the clean-host product install, privileged repair,
+  full CLI self-hosting, and golden capture/replay lanes remain open.
   the pinned Nix 2.34.8 adapter executes version/eval/substitute/path-info/verify/build/GC through
   the managed daemon with bounded process-group cancellation, strict JSON parsing, and provenance
   checks, and its isolated Linux daemon smoke covers both substitution and local build paths. The
