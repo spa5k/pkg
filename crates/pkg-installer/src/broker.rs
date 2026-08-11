@@ -3,6 +3,10 @@
 use crate::{
     BrokerApprovalAudit, BrokerCallerApprovalJournal, RootHelperClient, platform::peer_uid,
 };
+use nix::{
+    errno::Errno,
+    poll::{PollFd, PollFlags, PollTimeout, poll},
+};
 use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
@@ -15,6 +19,7 @@ use std::{
     error::Error,
     fmt,
     io::{self, Read, Write},
+    os::fd::AsFd,
     os::unix::net::UnixStream,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -249,6 +254,9 @@ fn serve_broker_connection_inner(
         .map(|audit| audit.for_caller(uid))
         .transpose()
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
+    stream
+        .set_nonblocking(true)
+        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
     let result = serve_frames(stream, |request| {
         dispatch_request(
             &caller,
@@ -507,16 +515,25 @@ fn serve_frames(
 }
 
 fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, BrokerTransportError> {
-    let deadline = deadline_after(FRAME_READ_TIMEOUT)?;
+    read_frame_with_timeout(stream, FRAME_READ_TIMEOUT)
+}
+
+fn read_frame_with_timeout(
+    stream: &mut UnixStream,
+    timeout: Duration,
+) -> Result<Option<Vec<u8>>, BrokerTransportError> {
+    let deadline = deadline_after(timeout)?;
     let mut header = [0_u8; FRAME_HEADER_BYTES];
     loop {
-        stream
-            .set_read_timeout(Some(remaining(deadline)?))
-            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+        wait_ready(stream, deadline, PollFlags::POLLIN)?;
         match stream.read(&mut header[..1]) {
             Ok(0) => return Ok(None),
             Ok(1) => break,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
             _ => {
                 return Err(BrokerTransportError::new(
                     BrokerTransportErrorCode::TransportFailure,
@@ -548,9 +565,7 @@ fn write_all_until(
     deadline: Instant,
 ) -> Result<(), BrokerTransportError> {
     while !bytes.is_empty() {
-        stream
-            .set_write_timeout(Some(remaining(deadline)?))
-            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+        wait_ready(stream, deadline, PollFlags::POLLOUT)?;
         match stream.write(bytes) {
             Ok(0) => {
                 return Err(BrokerTransportError::new(
@@ -558,7 +573,11 @@ fn write_all_until(
                 ));
             }
             Ok(written) => bytes = &bytes[written..],
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
             Err(_) => {
                 return Err(BrokerTransportError::new(
                     BrokerTransportErrorCode::TransportFailure,
@@ -575,9 +594,7 @@ fn read_exact_until(
     deadline: Instant,
 ) -> Result<(), BrokerTransportError> {
     while !bytes.is_empty() {
-        stream
-            .set_read_timeout(Some(remaining(deadline)?))
-            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+        wait_ready(stream, deadline, PollFlags::POLLIN)?;
         match stream.read(bytes) {
             Ok(0) => {
                 return Err(BrokerTransportError::new(
@@ -585,7 +602,11 @@ fn read_exact_until(
                 ));
             }
             Ok(read) => bytes = &mut bytes[read..],
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
             Err(_) => {
                 return Err(BrokerTransportError::new(
                     BrokerTransportErrorCode::TransportFailure,
@@ -596,6 +617,38 @@ fn read_exact_until(
     Ok(())
 }
 
+fn wait_ready(
+    stream: &UnixStream,
+    deadline: Instant,
+    required: PollFlags,
+) -> Result<(), BrokerTransportError> {
+    loop {
+        let timeout = PollTimeout::try_from(remaining(deadline)?)
+            .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+        let mut descriptor = [PollFd::new(stream.as_fd(), required)];
+        match poll(&mut descriptor, timeout) {
+            Ok(0) => {
+                return Err(BrokerTransportError::new(
+                    BrokerTransportErrorCode::TransportFailure,
+                ));
+            }
+            Ok(_)
+                if descriptor[0]
+                    .revents()
+                    .is_some_and(|events| events.contains(required)) =>
+            {
+                return Ok(());
+            }
+            Err(Errno::EINTR) => {}
+            Ok(_) | Err(_) => {
+                return Err(BrokerTransportError::new(
+                    BrokerTransportErrorCode::TransportFailure,
+                ));
+            }
+        }
+    }
+}
+
 fn deadline_after(timeout: Duration) -> Result<Instant, BrokerTransportError> {
     Instant::now()
         .checked_add(timeout)
@@ -603,10 +656,15 @@ fn deadline_after(timeout: Duration) -> Result<Instant, BrokerTransportError> {
 }
 
 fn remaining(deadline: Instant) -> Result<Duration, BrokerTransportError> {
-    deadline
+    let remaining = deadline
         .checked_duration_since(Instant::now())
         .filter(|remaining| !remaining.is_zero())
-        .ok_or_else(|| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))
+        .ok_or_else(|| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+    let milliseconds = u64::try_from(remaining.as_millis())
+        .ok()
+        .filter(|milliseconds| *milliseconds != 0)
+        .ok_or_else(|| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+    Ok(Duration::from_millis(milliseconds))
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
@@ -812,6 +870,38 @@ mod tests {
         assert!(!snapshot.build_held());
         assert!(!snapshot.gc_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_authenticated_frame_expires_without_dispatch() -> Result<(), Box<dyn Error>> {
+        let (mut server, mut client) = UnixStream::pair()?;
+        server.set_nonblocking(true)?;
+        client.write_all(b"P")?;
+        assert_eq!(
+            read_frame_with_timeout(&mut server, Duration::from_millis(50))
+                .map_err(BrokerTransportError::code),
+            Err(BrokerTransportErrorCode::TransportFailure)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn response_write_expires_when_authenticated_client_stops_reading() -> Result<(), Box<dyn Error>>
+    {
+        let (mut server, _client) = UnixStream::pair()?;
+        socket2::SockRef::from(&server).set_send_buffer_size(4096)?;
+        server.set_nonblocking(true)?;
+        let bytes = vec![0_u8; MAX_FRAME_PAYLOAD_BYTES];
+        assert_eq!(
+            write_all_until(
+                &mut server,
+                &bytes,
+                deadline_after(Duration::from_millis(50))?,
+            )
+            .map_err(BrokerTransportError::code),
+            Err(BrokerTransportErrorCode::TransportFailure)
+        );
         Ok(())
     }
 

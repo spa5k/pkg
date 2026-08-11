@@ -18,11 +18,10 @@ use std::{error::Error, fmt};
 #[cfg(target_os = "linux")]
 use std::{
     io,
-    os::unix::net::{UnixListener, UnixStream},
+    os::unix::net::UnixListener,
     path::Path,
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
 };
 
 #[cfg(target_os = "linux")]
@@ -41,10 +40,6 @@ const LINUX_BROKER_HOME: &str = "/var/lib/pkg/broker-home";
 const LINUX_BROKER_LOG: &str = "/var/lib/pkg/log/broker";
 #[cfg(target_os = "linux")]
 const MAX_BROKER_CONNECTIONS: usize = 32;
-#[cfg(target_os = "linux")]
-const BROKER_READ_TIMEOUT: Duration = Duration::from_mins(5);
-#[cfg(target_os = "linux")]
-const BROKER_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable production-service startup/runtime failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,10 +126,6 @@ pub fn run_linux_broker_from_activation() -> Result<(), ServiceError> {
                     drop(stream);
                     continue;
                 };
-                if configure_broker_stream(&stream).is_err() {
-                    drop(permit);
-                    continue;
-                }
                 let connection_broker = Arc::clone(&broker);
                 let connection_adapter = Arc::clone(&adapter);
                 let connection_approval_audit = approval_audit.clone();
@@ -258,12 +249,6 @@ fn validate_listener_path(listener: &UnixListener, expected: &Path) -> Result<()
     } else {
         Err(ServiceError::new(ServiceErrorCode::InvalidActivatedSocket))
     }
-}
-
-#[cfg(target_os = "linux")]
-fn configure_broker_stream(stream: &UnixStream) -> io::Result<()> {
-    stream.set_read_timeout(Some(BROKER_READ_TIMEOUT))?;
-    stream.set_write_timeout(Some(BROKER_WRITE_TIMEOUT))
 }
 
 #[cfg(target_os = "linux")]

@@ -1293,7 +1293,10 @@ flowchart TD
   listener still waits on the authenticated channel/build-authority bootstrap. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
-  fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
+  fails that connection. The CLI-facing broker server now likewise authenticates before switching
+  to nonblocking mode, applies one monotonic five-minute budget to each complete request and a fresh
+  30-second budget to the post-dispatch response, and treats clean between-frame EOF separately from
+  partial-frame failure. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
   six-method FakeNix dispatch, admission cleanup, and a redacted adapter failure followed by
   successful reuse of the same connection. Adapter errors cross only a closed stable code; malformed
   or method-mismatched error frames still poison the connection. A CLI-side `BrokerNixAdapter` now

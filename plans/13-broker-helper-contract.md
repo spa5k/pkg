@@ -331,6 +331,13 @@ code; transport and protocol failures remain generic operation failures. `build`
 `UnavailableEngine`: that happens only after the product-command dispatcher and authenticated build
 capability are connected.
 
+The CLI-facing broker server also changes the authenticated stream to nonblocking mode before its
+first frame read. Each complete request frame receives one five-minute monotonic poll budget and
+each response receives a fresh 30-second budget after dispatch. Interrupted and would-block syscalls
+re-enter readiness polling, partial frames cannot reset the deadline, clean EOF between frames is a
+normal disconnect, and client backpressure cannot retain a worker indefinitely. The service layer
+does not add platform-dependent socket timeouts around this protocol.
+
 The broker-side root client is narrower than `MaintenanceAdapter`. It opens only the compiled
 Linux/macOS helper endpoint, authenticates the connected helper as uid 0 from kernel peer
 credentials before transmitting, sends exactly one `PublishRootSet` frame with request id 1, and
