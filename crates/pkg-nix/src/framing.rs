@@ -666,6 +666,7 @@ impl ProductFrameCodec {
                 encode_json(&RootSetReportWire {
                     reference: report.reference().as_str(),
                     entry_count: report.entry_count(),
+                    mapping_digest: report.mapping_digest().to_string(),
                 })?,
             ),
             CliBrokerResponse::BuildRootPublicationRefused(code) => (
@@ -827,6 +828,7 @@ impl ProductFrameCodec {
                 CliBrokerResponse::BuildRootsPublished(RootSetReport::new(
                     reference,
                     wire.entry_count,
+                    parse_mapping_digest(&wire.mapping_digest)?,
                 ))
             }
             21 => CliBrokerResponse::GenerationRootsTransitioned(
@@ -934,6 +936,7 @@ impl ProductFrameCodec {
                 encode_json(&RootSetReportWire {
                     reference: report.reference().as_str(),
                     entry_count: report.entry_count(),
+                    mapping_digest: report.mapping_digest().to_string(),
                 })?,
             ),
             BrokerHelperResponse::RootSetRemoved => (2, encode_json(&EmptyWire {})?),
@@ -977,6 +980,7 @@ impl ProductFrameCodec {
                 BrokerHelperResponse::RootSetPublished(RootSetReport::new(
                     reference,
                     wire.entry_count,
+                    parse_mapping_digest(&wire.mapping_digest)?,
                 ))
             }
             2 => {
@@ -1959,6 +1963,7 @@ struct CapabilityOwnedWire {
 struct RootSetReportWire<'a> {
     reference: &'a str,
     entry_count: usize,
+    mapping_digest: String,
 }
 
 #[derive(Deserialize)]
@@ -1966,6 +1971,7 @@ struct RootSetReportWire<'a> {
 struct RootSetReportOwnedWire {
     reference: String,
     entry_count: usize,
+    mapping_digest: String,
 }
 
 #[derive(Serialize)]
@@ -2003,12 +2009,16 @@ impl RootSetTransitionReportOwnedWire {
         let mapping_digest = Digest::from_str(&self.mapping_digest)
             .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
         RootSetTransitionReport::new(
-            RootSetReport::new(reference, self.entry_count),
+            RootSetReport::new(reference, self.entry_count, mapping_digest),
             names,
             mapping_digest,
         )
         .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
     }
+}
+
+fn parse_mapping_digest(value: &str) -> Result<Digest, FrameError> {
+    Digest::from_str(value).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
 }
 
 #[derive(Serialize)]
@@ -2279,6 +2289,7 @@ mod tests {
         let published = CliBrokerResponse::BuildRootsPublished(RootSetReport::new(
             RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap(),
             1,
+            Digest::from_bytes([0x50; 32]),
         ));
         let encoded = ProductFrameCodec::encode_cli_response(12, &published).unwrap();
         assert_eq!(
@@ -2336,6 +2347,7 @@ mod tests {
                 RootSetReport::new(
                     RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
                     1,
+                    Digest::from_bytes([0x51; 32]),
                 ),
                 vec![RootName::new("hello-out").unwrap()],
                 Digest::from_bytes([0x51; 32]),
@@ -2476,6 +2488,7 @@ mod tests {
                 RootSetReport::new(
                     RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
                     1,
+                    Digest::from_bytes([0x52; 32]),
                 ),
                 vec![RootName::new("hello-out").unwrap()],
                 Digest::from_bytes([0x52; 32]),

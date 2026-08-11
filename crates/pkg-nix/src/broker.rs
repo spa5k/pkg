@@ -968,7 +968,20 @@ impl AuthenticatedCaller {
             record.build_executing = true;
         }
 
-        let publication = publish(root_set);
+        let publication = publish(root_set).and_then(|report| {
+            let expected = format!(
+                "/nix/var/nix/gcroots/pkg/users/{}/{}",
+                root_set.owner_uid(),
+                root_set.generation().as_str()
+            );
+            if report.reference().as_str() != expected
+                || report.entry_count() != root_set.entries().len()
+                || report.mapping_digest() != root_set.mapping_digest()
+            {
+                return Err(MaintenanceError::backend_failure());
+            }
+            Ok(report)
+        });
         self.finish_root_publication(handle, publication)
     }
 
@@ -2547,7 +2560,7 @@ mod tests {
     }
 
     #[test]
-    fn root_publication_failure_is_terminal_and_releases_admission() {
+    fn mismatched_root_receipt_is_terminal_and_releases_admission() {
         let broker = InProcessBroker::new().unwrap();
         let caller = broker
             .connect(InProcessCallerPeer::authenticated(1001))
@@ -2579,7 +2592,11 @@ mod tests {
         assert_eq!(
             caller
                 .publish_built_root_set(&handle, &built_root_set(1001), |_| {
-                    Err(MaintenanceError::backend_failure())
+                    Ok(RootSetReport::new(
+                        RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap(),
+                        1,
+                        Digest::from_bytes([0xff; 32]),
+                    ))
                 })
                 .unwrap_err()
                 .code(),
@@ -2615,6 +2632,7 @@ mod tests {
                     RootSetReport::new(
                         RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
                         1,
+                        Digest::from_bytes([0x31; 32]),
                     ),
                     request.retained_names().to_vec(),
                     Digest::from_bytes([0x31; 32]),
@@ -2651,6 +2669,7 @@ mod tests {
                     RootSetReport::new(
                         RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
                         1,
+                        Digest::from_bytes([0x41; 32]),
                     ),
                     request.retained_names().to_vec(),
                     Digest::from_bytes([0x41; 32]),
@@ -2739,6 +2758,7 @@ mod tests {
                         ))
                         .unwrap(),
                         request.retained_names().len(),
+                        Digest::from_bytes([0x32; 32]),
                     ),
                     request.retained_names().to_vec(),
                     Digest::from_bytes([0x32; 32]),

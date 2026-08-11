@@ -11,6 +11,7 @@ mod build_plan;
 mod build_preparation;
 mod commit;
 mod host_facts;
+mod install_generation;
 mod lifecycle;
 mod preflight;
 mod resolve;
@@ -45,7 +46,10 @@ pub use commit::{
     recover_transitioned_state_edit, resume_prepared_state_edit,
 };
 pub use host_facts::ProductionBuildHostFactsProbe;
-pub use lifecycle::{InstallStateError, assemble_install_state};
+pub use install_generation::{
+    InstallGenerationError, InstallGenerationMetadata, prepare_install_generation,
+};
+pub use lifecycle::{InstallStateError, assemble_install_evidence_state, assemble_install_state};
 pub use preflight::{PlannedOutput, PreflightError, PreflightInstall, preflight_cache_only};
 pub use resolve::{ResolveBatchError, ResolvedInstall, resolve_install};
 pub use rollback::{RollbackPrepareError, prepare_rollback};

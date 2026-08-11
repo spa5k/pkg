@@ -1428,7 +1428,15 @@ flowchart TD
   published; cancellation, completion, expiry, disconnect, restart, failed execution, and root
   publication all erase it. This supplies the next CLI activation slice with authoritative
   selector/channel/revision/derivation/output/integrity metadata without accepting any caller-made
-  store path, derivation, receipt, or lifecycle record as authority.
+  store path, derivation, receipt, or lifecycle record as authority. The pipeline now promotes that
+  private evidence into coherent manifest/lock state, preserves cache-versus-local-build truth,
+  stages and durably prepares a monotonic generation before root publication, and derives the exact
+  build-root intent from the prepared candidate. After the authenticated broker publishes those
+  roots, its typed receipt finishes local activation without a second privileged publication; a
+  receipt for another owner, generation, root count, or canonical name-to-store-path mapping fails
+  closed. The remaining production
+  install slice must add restart attestation for the publication-to-local-journal acknowledgement
+  gap and then connect this transaction to the CLI dispatcher.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

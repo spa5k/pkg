@@ -115,6 +115,7 @@ pub fn publish_root_set(
     );
     if report.reference().as_str() != expected
         || report.entry_count() != prepared.request().entries().len()
+        || report.mapping_digest() != prepared.request().mapping_digest()
     {
         return Err(RootError::PublicationRefused);
     }

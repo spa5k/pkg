@@ -429,6 +429,7 @@ impl RemoveRootSetRequest {
 pub struct RootSetReport {
     reference: RootRef,
     entry_count: usize,
+    mapping_digest: Digest,
 }
 
 /// Authenticated receipt binding a root transition to its exact retained names.
@@ -449,6 +450,7 @@ impl RootSetTransitionReport {
         if retained_names.is_empty()
             || retained_names.len() != root_set.entry_count()
             || retained_names.windows(2).any(|pair| pair[0] >= pair[1])
+            || mapping_digest != root_set.mapping_digest()
         {
             return Err(MaintenanceError::new(
                 MaintenanceErrorCode::ValidationFailure,
@@ -481,10 +483,11 @@ impl RootSetTransitionReport {
 }
 
 impl RootSetReport {
-    pub(crate) fn new(reference: RootRef, entry_count: usize) -> Self {
+    pub(crate) fn new(reference: RootRef, entry_count: usize, mapping_digest: Digest) -> Self {
         Self {
             reference,
             entry_count,
+            mapping_digest,
         }
     }
 
@@ -498,6 +501,12 @@ impl RootSetReport {
     #[must_use]
     pub const fn entry_count(&self) -> usize {
         self.entry_count
+    }
+
+    /// Returns a domain-separated digest of the exact published root mapping.
+    #[must_use]
+    pub const fn mapping_digest(&self) -> Digest {
+        self.mapping_digest
     }
 }
 
@@ -973,7 +982,11 @@ impl MaintenanceAdapter for CallerMaintenance {
             root_set.generation.as_str()
         ))
         .map_err(|_| MaintenanceError::new(MaintenanceErrorCode::BackendFailure))?;
-        Ok(RootSetReport::new(reference, root_set.entries.len()))
+        Ok(RootSetReport::new(
+            reference,
+            root_set.entries.len(),
+            root_set.mapping_digest(),
+        ))
     }
 
     fn remove_root_set(&self, request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {

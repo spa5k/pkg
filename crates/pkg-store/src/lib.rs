@@ -18,8 +18,8 @@ pub use activate::{
 };
 pub use current::{
     ActivationEvent, CurrentError, RecoveryAction, RecoveryEvidence, StateLayout,
-    activate_generation, activate_rooted_generation, activate_transitioned_generation,
-    classify_recovery,
+    activate_generation, activate_published_generation, activate_rooted_generation,
+    activate_transitioned_generation, classify_recovery,
 };
 pub use gc::{
     GcError, GcPlan, GcPolicy, GcRunReport, PruneCandidate, PruneOutcome,

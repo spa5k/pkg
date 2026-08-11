@@ -4,7 +4,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 
 use pkg_core::identity::StorePath;
-use pkg_nix::{GenerationId, MaintenanceAdapter, RootSetTransitionReport};
+use pkg_nix::{GenerationId, MaintenanceAdapter, RootSetReport, RootSetTransitionReport};
 
 use crate::activate::{ActivationPlan, verify_activation};
 use crate::roots::{PreparedRootSet, RootError, publish_root_set};
@@ -375,6 +375,44 @@ pub fn activate_transitioned_generation(
                     .entries()
                     .iter()
                     .map(|entry| entry.name()))
+                || report.mapping_digest() != prepared_roots.request().mapping_digest()
+            {
+                return Err(CurrentError::RootPublication);
+            }
+        }
+        (None, None) if plan.output_roots().is_empty() => {}
+        _ => return Err(CurrentError::RootPublication),
+    }
+    activate_generation_with(
+        layout,
+        generation,
+        plan,
+        prepared_roots,
+        nonce,
+        observe,
+        || Ok(()),
+    )
+}
+
+/// Activates after the authenticated broker has already published initial roots.
+pub fn activate_published_generation(
+    layout: &StateLayout,
+    generation: &GenerationId,
+    plan: &ActivationPlan,
+    prepared_roots: Option<&PreparedRootSet>,
+    report: Option<&RootSetReport>,
+    nonce: &str,
+    observe: impl FnMut(ActivationEvent) -> Result<(), CurrentError>,
+) -> Result<(), CurrentError> {
+    match (prepared_roots, report) {
+        (Some(prepared_roots), Some(report)) => {
+            let expected = format!(
+                "/nix/var/nix/gcroots/pkg/users/{}/{}",
+                layout.owner_uid(),
+                generation.as_str()
+            );
+            if report.reference().as_str() != expected
+                || report.entry_count() != prepared_roots.request().entries().len()
                 || report.mapping_digest() != prepared_roots.request().mapping_digest()
             {
                 return Err(CurrentError::RootPublication);
