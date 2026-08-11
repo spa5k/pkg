@@ -357,6 +357,15 @@ fails closed before dispatch, and a broker that stops reading cannot retain a he
 an unbounded response write. The root-publication client uses the same nonblocking discipline so a
 readiness notification can never be followed by an unbounded blocking read or write.
 
+On macOS the launchd jobs self-bind rather than inherit systemd-style socket activation. Their
+`--serve-macos` modes accept no additional arguments or paths, require the exact installed
+broker uid/gid roles (root uid plus broker gid for the helper), validate every managed socket-parent
+component against the compiled root ownership/mode contract while rejecting extended ACLs, and
+replace only an exact stale socket owned by the expected service identity. Socket modes are fixed at
+creation, with no pathname-based chmod race. The broker binds only the public `0666` endpoint;
+the helper binds only the broker-traversable `0660` endpoint. Both still authenticate each accepted
+peer in-kernel before framing.
+
 ## 9. Restart handshake
 
 1. Supervisor restarts broker and/or helper.

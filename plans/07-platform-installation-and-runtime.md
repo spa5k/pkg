@@ -476,6 +476,15 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    reaches only its private socket. The mount verb independently requires uid 0
    plus the root-only ownership receipt and accepts no UUID, path, keychain
    handle, or secret from argv.
+   The shipped service binaries accept the launchd `--serve-macos` verb exactly:
+   the broker requires the installed broker uid and primary gid, while the helper
+   requires uid 0 with that broker gid. They validate the exact root-owned managed
+   socket directory chain with no extended ACLs, replace only an exact stale socket
+   owned by the expected service identity, create only the compiled path/mode without
+   a pathname-based chmod window, and then use kernel peer
+   credentials plus bounded framing. Unknown verbs, extra arguments, custom paths,
+   and the still-unimplemented `--mount-store-volume` execution path fail closed;
+   the APFS/keychain mount verb remains a separate PR-36 completion slice.
 5. Write root-owned `nix.conf` (`trusted-users = root`, `allowed-users =
    pkg-nix-broker`, `sandbox=true`, `sandbox-fallback=false`,
    `build-users-group=nixbld`; substituters/keys from descriptor) — the complete

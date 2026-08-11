@@ -859,14 +859,18 @@ flowchart TD
 - **Milestone:** M5.
 
 #### PR-28 — macOS installer + Darwin build integration + launchd + signing/notarization (implements the PR-39 contract)
-- **Status:** **Implementation complete 2026-08-10; external evidence gate remains open.**
+- **Status:** **Core implementation substantially complete; runtime and external evidence gates remain open.**
   Rust/macOS tests cover `getpeereid`, strict framed transports, durable helper
   restart behavior, failure-atomic encrypted-APFS/store installation contracts,
   exact 32-user/readiness gates, valid launchd plists, and a closed product-only
-  signing/notarization plan. S5 already supplies native sandbox/build evidence;
+  signing/notarization plan. The launchd broker/helper `--serve-macos` modes now
+  enforce exact identities, safe fixed socket binding, and the real bounded
+  transports. The separate root-only `--mount-store-volume` runtime verb is not
+  yet implemented. S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
-  Therefore PR-28 is **not marked merge-complete** until a Complete broker-run
-  cache Preflight and real Developer-ID/notarization validation are recorded.
+  Therefore PR-28 is **not marked merge-complete** until the mount verb lands, a
+  Complete broker-run cache Preflight passes, and real Developer-ID/notarization
+  validation is recorded.
 - **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and the honest resource boundary (**no** per-build memory/CPU/IO cap in stock Nix 2.34.8) (`07`, DR-003 from S3). It implements the broker↔helper contract (PR-39) on macOS — the real framed-RPC **transport**, **peer-auth** (caller uid via `getpeereid` on launchd-managed Unix sockets), **capability transport**, and the **launchd** service definitions for broker and helper. The OS credential/transport APIs are implemented **here**, not in PR-39. Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
 - **Owns:** `crates/pkg-installer/src/platform/macos.rs` (including the macOS transport binding of PR-39's `MaintenanceAdapter` + peer-auth + capability transport and the generated launchd plists), `_nixbld` build-user provisioning, notarization tooling, packaging.
 - **Depends:** PR-12, PR-7 (S3), PR-26 (shared engine), **PR-39 (the contract/core/fake this transport implements)**.
@@ -1290,7 +1294,13 @@ flowchart TD
   the privileged helper gives the complete request and response frames separate 30-second poll
   budgets, starts the response budget only after dispatch, and fails stalled partial reads or writes
   closed. It intentionally exposes neither repair nor root removal. Injection into the production
-  listener still waits on the authenticated channel/build-authority bootstrap. The
+  listener still waits on the authenticated channel/build-authority bootstrap. The macOS launchd
+  `--serve-macos` modes now exist for both installed service binaries. They require the exact
+  installed uid/gid roles, validate the root-owned managed socket chain including absence of extended
+  ACLs, replace only an exact stale service-owned socket, and atomically create only the compiled
+  endpoint/mode without a pathname chmod; arbitrary verbs, extra arguments, and alternate paths are
+  refused. The root-only encrypted-store mount verb is still a separate
+  incomplete Darwin runtime slice. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. The CLI-facing broker server now likewise authenticates before switching

@@ -51,7 +51,7 @@ pub use repair::{
 pub use root_client::RootHelperClient;
 pub use service::{
     ServiceError, ServiceErrorCode, run_linux_broker_from_activation,
-    run_linux_root_helper_from_activation,
+    run_linux_root_helper_from_activation, run_macos_broker, run_macos_root_helper,
 };
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,
