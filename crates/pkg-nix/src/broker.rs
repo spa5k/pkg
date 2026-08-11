@@ -891,7 +891,7 @@ impl AuthenticatedCaller {
     /// Publishes a complete generation root set while retaining build/GC admission.
     ///
     /// The root set must belong to the transport-authenticated caller and
-    /// include every output returned by the successful build. The helper
+    /// match every output returned by the successful build exactly once. The helper
     /// callback runs outside the broker mutex, but cancellation and disconnect
     /// defer admission release until it returns, preventing GC from racing root
     /// publication.
@@ -924,7 +924,10 @@ impl AuthenticatedCaller {
                 .awaiting_root_outputs
                 .as_ref()
                 .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
-            if !required.is_subset(&root_targets) || record.build_executing {
+            if required != &root_targets
+                || root_set.entries().len() != required.len()
+                || record.build_executing
+            {
                 return Err(BrokerError::new(
                     BrokerErrorCode::InvalidAdmissionTransition,
                 ));
@@ -2167,6 +2170,54 @@ mod tests {
         assert_eq!(
             caller
                 .publish_built_root_set(&handle, &unrelated_roots, |_| {
+                    Err(MaintenanceError::backend_failure())
+                })
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        let roots_with_extra = RootSet::new(
+            1001,
+            GenerationId::new("gen-0002").unwrap(),
+            vec![
+                RootSetEntry::new(
+                    RootName::new("demo-out").unwrap(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+                ),
+                RootSetEntry::new(
+                    RootName::new("other-out").unwrap(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-other-1.0")).unwrap(),
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            caller
+                .publish_built_root_set(&handle, &roots_with_extra, |_| {
+                    Err(MaintenanceError::backend_failure())
+                })
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        let duplicate_aliases = RootSet::new(
+            1001,
+            GenerationId::new("gen-0002").unwrap(),
+            vec![
+                RootSetEntry::new(
+                    RootName::new("demo-a").unwrap(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+                ),
+                RootSetEntry::new(
+                    RootName::new("demo-b").unwrap(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            caller
+                .publish_built_root_set(&handle, &duplicate_aliases, |_| {
                     Err(MaintenanceError::backend_failure())
                 })
                 .unwrap_err()

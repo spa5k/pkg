@@ -1312,7 +1312,8 @@ flowchart TD
   path. Timing and total realized closure size stay explicitly unknown, overflow fails closed, and
   neither RPC callers nor the disposable index can supply the estimate. The
   post-build lifecycle now has a protected rooting phase: the broker privately retains every built
-  output, refuses completion until a same-uid root set includes them all, and marks helper root
+  output, refuses completion until a same-uid root set matches that exact target set one-to-one
+  (no unrelated path or duplicate alias may be added), and marks helper root
   publication in-flight so cancel/disconnect cannot release build/GC admission until the callback
   returns. Root publication failure and concurrent cancellation are terminal only after that safe
   handoff. Closed method 20 now carries only the live build handle, generation id, and validated
