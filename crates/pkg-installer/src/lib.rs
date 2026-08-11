@@ -14,6 +14,7 @@ mod root_client;
 mod service;
 mod store_mount;
 mod store_provision;
+mod synthetic_conf;
 mod uninstall;
 
 pub use approval_audit::{BrokerApprovalAudit, BrokerCallerApprovalJournal};
@@ -62,6 +63,10 @@ pub use store_mount::{
 pub use store_provision::{
     MacOsStoreProvisionBackend, MacOsStoreProvisionError, MacOsStoreProvisionErrorCode,
     MacOsStoreProvisionOutcome, provision_macos_store_volume,
+};
+pub use synthetic_conf::{
+    MacOsSyntheticConfError, MacOsSyntheticConfErrorCode, MacOsSyntheticConfPlan,
+    plan_macos_synthetic_entry,
 };
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,

@@ -468,6 +468,10 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        mount; publish the dynamic record; verify the complete state; then commit the
        journal. Every failure after journal creation replays all recorded cleanup in
        reverse, and incomplete rollback has priority over the original failure.
+       The synthetic-file planner is bounded and byte-preserving: it appends only the
+       exact `nix` line, treats that exact single line as idempotent, preserves unrelated
+       bytes, and refuses aliases, targets, trailing whitespace, CRLF, duplicates,
+       malformed UTF-8, controls, or oversized input before a writer is invoked.
        A fixed `org.pkg.store-volume` launchd job invokes only the root
    helper's closed `--mount-store-volume` verb; no secret or UUID is placed in
    plist argv or logs. Then create `/nix/store`, `/nix/var/nix/...` (stock Nix

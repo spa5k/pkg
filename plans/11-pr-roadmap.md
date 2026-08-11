@@ -872,8 +872,10 @@ flowchart TD
   field, and publishes root:wheel `0600` state durably without overwriting an
   existing record. A failure-atomic coordinator now fixes the journaled ordering and
   rollback contract for synthetic state, encrypted APFS/keychain creation, ownership,
-  mount, record publication, and final verification. The production system adapter
-  must still implement those closed operations and provide real-host evidence.
+  mount, record publication, and final verification. The bounded synthetic.conf
+  planner preserves unrelated bytes and refuses every noncanonical or duplicate `nix`
+  mapping. The production system adapter must still implement the journaled file
+  replacement and APFS/keychain operations and provide real-host evidence.
   S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
   Therefore PR-28 is **not marked merge-complete** until production APFS/keychain/
