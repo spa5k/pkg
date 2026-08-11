@@ -1455,8 +1455,14 @@ flowchart TD
   including the first-install state where no active generation exists. It validates immutable
   generation records below the user-visible history abstraction, and an attested exact root receipt
   can finish activation without republishing caller-supplied paths.
-  remaining production install slice must connect initial install plus attested recovery to this
-  closed acquisition/build/root/commit sequence.
+  The production CLI now connects the cache-hit half of that transaction: strict current-channel
+  selectors enter method 26, retained private evidence prepares a monotonic generation, exact roots
+  are published through the same handle, and the local activation/commit becomes the linearization
+  point. Dry-run uses private plan preparation and stops before recovery, download, or mutation.
+  Restart recovery either finishes a helper-attested prepared install or safely discards an
+  unattested candidate through the generation-removal boundary. Non-default channel and collision
+  policy options remain closed rather than being silently ignored. The remaining production install
+  slice must add the explicit preview/approval/local-build fallback and its end-to-end parity proof.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

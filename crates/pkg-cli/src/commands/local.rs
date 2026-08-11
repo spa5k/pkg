@@ -1,15 +1,16 @@
 //! Production command adapter over the invoking user's verified local state.
 
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::broker::BrokerLifecycleClient;
+use crate::broker::{BrokerClientError, BrokerClientErrorCode, BrokerLifecycleClient};
 use crate::cli::{
-    GcArgs, HistoryArgs, InfoArgs, InstallArgs, ListArgs, PackageArgs, RemoveArgs, RepairArgs,
-    RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
+    CollisionPolicy, GcArgs, HistoryArgs, InfoArgs, InstallArgs, ListArgs, PackageArgs, RemoveArgs,
+    RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
 use crate::commands::state::{
@@ -17,17 +18,23 @@ use crate::commands::state::{
 };
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
-use pkg_core::{History, PinAction};
+use pkg_core::{
+    History, OutputName, OutputSelection, PackageSelector, PinAction, SelectorId, SelectorInput,
+    SourceRevision, VersionPreference,
+};
 use pkg_nix::{
-    BrokerOperationKind, MaintenanceAdapter, MaintenanceError, OperationHandle,
+    BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome,
+    GenerationRootAttestationErrorCode, MaintenanceAdapter, MaintenanceError, OperationHandle,
     RemoveRootSetRequest, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
     RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
-    CommitError, StateEditKind, StateEditMetadata, discard_unprepared_state_edits,
-    load_active_snapshot, load_retained_history, pending_state_edit_generation,
-    pending_state_transition_source, prepare_rollback, prepare_state_edit,
-    recover_transitioned_state_edit, resume_prepared_state_edit,
+    CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
+    StateEditMetadata, discard_unprepared_installs, discard_unprepared_state_edits,
+    load_active_snapshot, load_retained_history, pending_install_generation,
+    pending_state_edit_generation, pending_state_transition_source, prepare_install_generation,
+    prepare_rollback, prepare_state_edit, recover_generation, recover_transitioned_state_edit,
+    resume_prepared_install, resume_prepared_state_edit,
 };
 use pkg_store::{
     GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
@@ -41,6 +48,34 @@ const DEFAULT_MAX_AGE_DAYS: u64 = 30;
 struct BrokerGcMaintenance<'a> {
     broker: Mutex<&'a mut BrokerLifecycleClient>,
     handle: OperationHandle,
+}
+
+struct AttestedRootMaintenance {
+    report: RootSetReport,
+}
+
+impl MaintenanceAdapter for AttestedRootMaintenance {
+    fn publish_root_set(&self, _root_set: &RootSet) -> Result<RootSetReport, MaintenanceError> {
+        Ok(self.report.clone())
+    }
+
+    fn attest_root_set(
+        &self,
+        _request: &RootSetAttestationRequest,
+    ) -> Result<RootSetReport, MaintenanceError> {
+        Ok(self.report.clone())
+    }
+
+    fn remove_root_set(&self, _request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {
+        Err(MaintenanceError::backend_failure())
+    }
+
+    fn repair_store_paths(
+        &self,
+        _request: &RepairStorePathsRequest,
+    ) -> Result<RepairStorePathsReport, MaintenanceError> {
+        Err(MaintenanceError::backend_failure())
+    }
 }
 
 impl MaintenanceAdapter for BrokerGcMaintenance<'_> {
@@ -73,10 +108,11 @@ impl MaintenanceAdapter for BrokerGcMaintenance<'_> {
 
 /// Shipped command operations backed by one ownership-validated user state.
 ///
-/// Read-only state, state-only generation edits, rollback, and GC are live.
-/// Install/upgrade/repair and authenticated-index commands remain explicit
-/// closed refusals until their transaction coordinators are connected; no
-/// command can fall through to raw Nix access.
+/// Read-only state, cache-backed install, state-only generation edits,
+/// rollback, and GC are live. Local-build fallback, upgrade/repair, and
+/// authenticated-index commands remain explicit closed refusals until their
+/// transaction coordinators are connected; no command can fall through to raw
+/// Nix access.
 #[derive(Debug)]
 pub struct LocalStateOperations {
     source: Result<StateLayout, CommandError>,
@@ -150,10 +186,10 @@ impl CoreOperations for LocalStateOperations {
 
     fn install(
         &mut self,
-        _args: &InstallArgs,
-        _policy: OperationPolicy,
+        args: &InstallArgs,
+        policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        Err(mutation_unavailable())
+        self.install_packages(args, policy)
     }
 
     fn remove(
@@ -268,6 +304,172 @@ impl CoreOperations for LocalStateOperations {
 }
 
 impl LocalStateOperations {
+    fn install_packages(
+        &self,
+        args: &InstallArgs,
+        policy: OperationPolicy,
+    ) -> Result<CommandResult, CommandError> {
+        self.require_broker_state()?;
+        require_supported_install_options(args)?;
+        let layout = self.layout()?.clone();
+        let nonce = secure_nonce()?;
+        let selectors = install_selectors(args, &nonce)?;
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+
+        if policy.dry_run() {
+            return preview_install(&mut broker, selectors);
+        }
+        self.recover_pending_install(&layout, &mut broker)?;
+
+        let handle = broker
+            .begin(BrokerOperationKind::Acquire)
+            .map_err(broker_error)?;
+        let mut local_committed = false;
+        let result = (|| {
+            match broker
+                .acquire_install(handle.clone(), selectors)
+                .map_err(install_broker_error)?
+            {
+                CacheInstallOutcome::Acquired => {}
+                CacheInstallOutcome::BuildRequired => {
+                    return Err(build_approval_required());
+                }
+            }
+            let evidence = broker
+                .install_evidence(handle.clone())
+                .map_err(install_broker_error)?;
+            let created_at = utc_now()?;
+            let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
+                .map_err(state_lease_error)?;
+            let lease = StateLease::try_exclusive(&layout, &identity).map_err(state_lease_error)?;
+            let current = load_active_snapshot(&layout, &lease).map_err(state_read_error)?;
+            let generation_id = match &current {
+                None => "gen-0001".to_owned(),
+                Some(_) => {
+                    let history =
+                        load_retained_history(&layout, &lease).map_err(state_read_error)?;
+                    let newest = history.snapshots().first().ok_or_else(mutation_failed)?;
+                    next_generation_id(newest.generation().id())?
+                }
+            };
+            let prepared = prepare_install_generation(
+                layout.clone(),
+                lease,
+                current.as_ref(),
+                &evidence,
+                layout.owner_uid(),
+                InstallGenerationMetadata::new(
+                    &generation_id,
+                    &created_at,
+                    handle.as_str(),
+                    "not_required",
+                ),
+            )
+            .map_err(map_install_generation_error)?;
+            let report = prepared
+                .root_intent()
+                .map_err(|_| install_commit_failed())?
+                .map(|intent| {
+                    broker
+                        .publish_build_roots(handle.clone(), intent)
+                        .map_err(install_broker_error)
+                })
+                .transpose()?;
+            prepared
+                .activate_published(report.as_ref(), &nonce)
+                .map_err(|_| install_commit_failed())?
+                .finish()
+                .map_err(|_| install_commit_failed())?;
+            local_committed = true;
+            let _ = broker.complete(handle.clone());
+            install_result(&generation_id, current.as_ref(), &evidence)
+        })();
+        if result.is_err() && !local_committed {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+
+    fn recover_pending_install(
+        &self,
+        layout: &StateLayout,
+        broker: &mut BrokerLifecycleClient,
+    ) -> Result<(), CommandError> {
+        let nonce = secure_nonce()?;
+        let created_at = utc_now()?;
+        let identity = LeaseIdentity::new("recover_install", &nonce, &created_at)
+            .map_err(state_lease_error)?;
+        let lease = StateLease::try_exclusive(layout, &identity).map_err(state_lease_error)?;
+        discard_unprepared_installs(layout, &lease).map_err(state_read_error)?;
+        let Some(pending) = pending_install_generation(layout, &lease).map_err(state_read_error)?
+        else {
+            return Ok(());
+        };
+        let current = layout.current_generation().map_err(|_| mutation_failed())?;
+        let handle = broker
+            .begin(BrokerOperationKind::Activate)
+            .map_err(broker_error)?;
+        if current.as_ref() == Some(&pending) {
+            let report = broker
+                .attest_generation_roots(handle.clone(), pending.clone())
+                .map_err(install_broker_error)?;
+            let maintenance = AttestedRootMaintenance { report };
+            recover_generation(layout, &lease, &pending, &maintenance)
+                .map_err(|_| install_commit_failed())?;
+            let _ = broker.complete(handle);
+            return Ok(());
+        }
+        let prepared = resume_prepared_install(layout.clone(), lease, &pending)
+            .map_err(|_| install_commit_failed())?;
+        let report = match broker.attest_generation_roots(handle.clone(), pending.clone()) {
+            Ok(report) => report,
+            Err(error)
+                if error.generation_root_attestation_code()
+                    == Some(GenerationRootAttestationErrorCode::AttestationFailed) =>
+            {
+                drop(prepared);
+                let _ = broker.cancel(handle);
+                self.discard_unrooted_install(layout, broker, &pending)?;
+                return Ok(());
+            }
+            Err(error) => return Err(install_broker_error(error)),
+        };
+        prepared
+            .activate_published(Some(&report), &nonce)
+            .map_err(|_| install_commit_failed())?
+            .finish()
+            .map_err(|_| install_commit_failed())?;
+        let _ = broker.complete(handle);
+        Ok(())
+    }
+
+    fn discard_unrooted_install(
+        &self,
+        layout: &StateLayout,
+        broker: &mut BrokerLifecycleClient,
+        generation: &pkg_nix::GenerationId,
+    ) -> Result<(), CommandError> {
+        let handle = broker
+            .begin(BrokerOperationKind::Gc)
+            .map_err(broker_error)?;
+        let result = (|| {
+            let lease = self.gc_lease(layout, &handle)?;
+            let maintenance = BrokerGcMaintenance {
+                broker: Mutex::new(&mut *broker),
+                handle: handle.clone(),
+            };
+            recover_generation(layout, &lease, generation, &maintenance)
+                .map_err(|_| install_commit_failed())?;
+            drop(maintenance);
+            let _ = broker.complete(handle.clone());
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+
     fn preview_history_delete(&self, args: &HistoryArgs) -> Result<CommandResult, CommandError> {
         let generation = args.delete().ok_or_else(mutation_failed)?;
         let layout = self.layout()?;
@@ -659,6 +861,182 @@ fn require_gc_confirmation(
     )
 }
 
+fn require_supported_install_options(args: &InstallArgs) -> Result<(), CommandError> {
+    if args.channel().is_some() {
+        return Err(CommandError::new(
+            ExitCode::Config,
+            "named channel selection is not available in this technical preview",
+            "remove `--channel` to use the signed current channel",
+        ));
+    }
+    if args.collision_policy() != CollisionPolicy::Abort {
+        return Err(CommandError::new(
+            ExitCode::Config,
+            "the selected collision policy is not available in this technical preview",
+            "use `--on-collision abort`",
+        ));
+    }
+    Ok(())
+}
+
+fn install_selectors(
+    args: &InstallArgs,
+    nonce: &str,
+) -> Result<Vec<PackageSelector>, CommandError> {
+    let outputs = if args.outputs().is_empty() {
+        OutputSelection::default_selection()
+    } else {
+        let outputs = args
+            .outputs()
+            .iter()
+            .map(|output| OutputName::new(output).map_err(|_| invalid_install_selector()))
+            .collect::<Result<Vec<_>, _>>()?;
+        OutputSelection::explicit(outputs).map_err(|_| invalid_install_selector())?
+    };
+    let mut seen = BTreeSet::new();
+    args.packages()
+        .iter()
+        .enumerate()
+        .map(|(index, package)| {
+            if !seen.insert(package.as_str()) {
+                return Err(invalid_install_selector());
+            }
+            let id = SelectorId::new(&format!("sel_{nonce}_{index}"))
+                .map_err(|_| invalid_install_selector())?;
+            let input = SelectorInput::new(package).map_err(|_| invalid_install_selector())?;
+            Ok(PackageSelector::new(
+                id,
+                input,
+                VersionPreference::Any,
+                outputs.clone(),
+                SourceRevision::CurrentChannel,
+            ))
+        })
+        .collect()
+}
+
+fn preview_install(
+    broker: &mut BrokerLifecycleClient,
+    selectors: Vec<PackageSelector>,
+) -> Result<CommandResult, CommandError> {
+    let handle = broker
+        .begin(BrokerOperationKind::Build)
+        .map_err(broker_error)?;
+    let result = broker
+        .prepare_build(handle.clone(), selectors)
+        .map_err(install_broker_error)
+        .and_then(|preview| {
+            let value = preview
+                .to_json_value()
+                .map_err(|_| install_commit_failed())?;
+            CommandResult::new(
+                "Install preview is ready. No package was downloaded or activated.",
+                Map::from_iter([("dryRun".into(), json!(true)), ("preflight".into(), value)]),
+                Vec::new(),
+            )
+            .map_err(|_| install_commit_failed())
+        });
+    let _ = broker.cancel(handle);
+    result
+}
+
+fn install_result(
+    generation_id: &str,
+    current: Option<&pkg_core::GenerationSnapshot>,
+    evidence: &pkg_nix::InstallEvidence,
+) -> Result<CommandResult, CommandError> {
+    let added = evidence
+        .targets()
+        .iter()
+        .map(|target| {
+            json!({
+                "selector": target.selector().as_str(),
+                "package": target.package_name(),
+                "version": target.package_version().as_str(),
+                "outputs": target.outputs_to_install().iter().map(OutputName::as_str).collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    CommandResult::new(
+        format!(
+            "Installed {} package(s) as {generation_id}.",
+            evidence.targets().len()
+        ),
+        Map::from_iter([
+            (
+                "generation".into(),
+                json!({
+                    "id": generation_id,
+                    "parent": current.map(|snapshot| snapshot.generation().id())
+                }),
+            ),
+            ("added".into(), json!(added)),
+        ]),
+        Vec::new(),
+    )
+    .map_err(|_| install_commit_failed())
+}
+
+fn invalid_install_selector() -> CommandError {
+    CommandError::new(
+        ExitCode::Usage,
+        "a package selector or output name is invalid",
+        "use package and output names made from letters, numbers, dots, dashes, and underscores",
+    )
+}
+
+fn build_approval_required() -> CommandError {
+    CommandError::new(
+        ExitCode::AcquireNeedsApproval,
+        "a trusted binary is not available and a local build is required",
+        "local-build approval wiring is the next technical-preview step",
+    )
+}
+
+fn install_broker_error(error: BrokerClientError) -> CommandError {
+    let exit = match error.code() {
+        BrokerClientErrorCode::InstallAcquisitionRefused => match error.cache_install_code() {
+            Some(CacheInstallErrorCode::InvalidIntent) => ExitCode::ResolveFailed,
+            Some(CacheInstallErrorCode::AcquisitionFailed) => ExitCode::AcquireNetwork,
+            Some(CacheInstallErrorCode::Cancelled) => ExitCode::Cancelled,
+            Some(CacheInstallErrorCode::AuthorityUnavailable) | None => ExitCode::EngineUnavailable,
+        },
+        BrokerClientErrorCode::BuildRefused => ExitCode::BuildFailed,
+        BrokerClientErrorCode::BuildRootRefused => ExitCode::Permission,
+        BrokerClientErrorCode::GenerationRootAttestationRefused => ExitCode::StateCorrupt,
+        _ => ExitCode::EngineUnavailable,
+    };
+    CommandError::new(
+        exit,
+        "the managed install transaction was refused",
+        "run `pkg doctor`, then retry the install",
+    )
+}
+
+fn map_install_generation_error(error: InstallGenerationError) -> CommandError {
+    match error {
+        InstallGenerationError::CurrentChanged => CommandError::new(
+            ExitCode::StateLocked,
+            "the active package generation changed during installation",
+            "retry the install after the other package operation finishes",
+        ),
+        InstallGenerationError::Stage => CommandError::new(
+            ExitCode::StageCollision,
+            "package commands collide under the abort policy",
+            "remove one conflicting package or select different outputs",
+        ),
+        _ => install_commit_failed(),
+    }
+}
+
+fn install_commit_failed() -> CommandError {
+    CommandError::new(
+        ExitCode::StateCorrupt,
+        "the install generation could not be committed safely",
+        "run `pkg doctor` before retrying the install",
+    )
+}
+
 fn ensure_generation_deletable(
     active: &pkg_core::GenerationSnapshot,
     history: &History,
@@ -1039,6 +1417,60 @@ mod tests {
             format_utc(1_787_528_645).as_deref(),
             Some("2026-08-23T23:44:05Z")
         );
+    }
+
+    #[test]
+    fn install_arguments_become_closed_current_channel_selectors() {
+        let cli = Cli::try_parse([
+            "pkg",
+            "install",
+            "ripgrep",
+            "fd",
+            "--with-outputs",
+            "out,man",
+        ])
+        .unwrap();
+        let crate::cli::Command::Install(args) = cli.parsed_command() else {
+            panic!("expected install command");
+        };
+        require_supported_install_options(args).unwrap();
+        let selectors = install_selectors(args, "00112233445566778899aabbccddeeff").unwrap();
+
+        assert_eq!(selectors.len(), 2);
+        assert_eq!(selectors[0].selector().as_str(), "ripgrep");
+        assert_eq!(
+            selectors[0]
+                .outputs()
+                .explicit_outputs()
+                .unwrap()
+                .iter()
+                .map(OutputName::as_str)
+                .collect::<Vec<_>>(),
+            ["out", "man"]
+        );
+        assert!(matches!(
+            selectors[0].source_revision(),
+            SourceRevision::CurrentChannel
+        ));
+        assert_ne!(selectors[0].id(), selectors[1].id());
+    }
+
+    #[test]
+    fn install_argument_widening_is_refused_before_broker_access() {
+        for argv in [
+            vec!["pkg", "install", "ripgrep", "ripgrep"],
+            vec!["pkg", "install", "ripgrep", "--channel", "other"],
+            vec!["pkg", "install", "ripgrep", "--on-collision", "keep-first"],
+        ] {
+            let cli = Cli::try_parse(argv).unwrap();
+            let crate::cli::Command::Install(args) = cli.parsed_command() else {
+                panic!("expected install command");
+            };
+            assert!(
+                require_supported_install_options(args).is_err()
+                    || install_selectors(args, "00112233445566778899aabbccddeeff").is_err()
+            );
+        }
     }
 
     #[test]
