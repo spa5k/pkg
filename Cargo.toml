@@ -16,6 +16,7 @@ members = [
     "crates/pkg-core",
     "crates/pkg-index",
     "crates/pkg-installer",
+    "crates/pkg-macos-security",
     "crates/pkg-nix",
     "crates/pkg-pipeline",
     "crates/pkg-resolver",

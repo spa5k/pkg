@@ -362,6 +362,14 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
     ),
     MacOsInstallAsset::path(
+        "managed-nix-state",
+        MacOsAssetKind::Directory,
+        "/Library/Application Support/pkg/managed-nix",
+        0o700,
+        MacOsAssetPrincipal::Root,
+        MacOsAssetPrincipal::Wheel,
+    ),
+    MacOsInstallAsset::path(
         "run-root",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/run",
@@ -1060,37 +1068,40 @@ pub fn install_macos(
     system: System,
     backend: &mut dyn MacOsInstallBackend,
 ) -> Result<MacOsInstallReport, MacOsError> {
-    if !matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
-        return Err(MacOsError::new(MacOsErrorCode::UnsupportedPlatform));
-    }
-    backend.preflight_privilege()?;
-    backend
-        .preflight_clean_host(system)
-        .map_err(|_| MacOsError::new(MacOsErrorCode::UnmanagedNix))?;
-    backend.verify_release_bundle()?;
-
+    preflight_macos(system, backend)?;
     let mut mutations = Vec::new();
     let mut created = 0_usize;
     let mut existing = 0_usize;
     let result = (|| {
+        for asset in MACOS_ASSETS
+            .iter()
+            .filter(|asset| store_volume_prerequisite(asset.id))
+        {
+            mutations.push(InstallMutation::Asset(*asset));
+            let was_created = backend.ensure_asset(*asset)?;
+            if was_created {
+                created = created.saturating_add(1);
+            } else {
+                let _ = mutations.pop();
+                existing = existing.saturating_add(1);
+            }
+        }
         mutations.push(InstallMutation::StoreVolume);
         if !backend.provision_store_volume()? {
             let _ = mutations.pop();
         }
-        for asset in MACOS_ASSETS
-            .iter()
-            .filter(|asset| asset.kind != MacOsAssetKind::File)
-        {
+        for asset in MACOS_ASSETS.iter().filter(|asset| {
+            asset.kind != MacOsAssetKind::File && !store_volume_prerequisite(asset.id)
+        }) {
             record_asset_result(backend, *asset, &mut mutations, &mut created, &mut existing)?;
         }
         mutations.push(InstallMutation::Runtime);
         if !backend.provision_managed_runtime()? {
             let _ = mutations.pop();
         }
-        for asset in MACOS_ASSETS
-            .iter()
-            .filter(|asset| asset.kind == MacOsAssetKind::File)
-        {
+        for asset in MACOS_ASSETS.iter().filter(|asset| {
+            asset.kind == MacOsAssetKind::File && !store_volume_prerequisite(asset.id)
+        }) {
             mutations.push(InstallMutation::Asset(*asset));
             let was_created = match asset.id {
                 "store-volume-plist" => {
@@ -1156,6 +1167,27 @@ pub fn install_macos(
         }
     }
     result
+}
+
+fn store_volume_prerequisite(id: &str) -> bool {
+    matches!(
+        id,
+        "product-root" | "product-bin" | "service-root" | "managed-nix-state" | "helper-binary"
+    )
+}
+
+fn preflight_macos(
+    system: System,
+    backend: &mut dyn MacOsInstallBackend,
+) -> Result<(), MacOsError> {
+    if !matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
+        return Err(MacOsError::new(MacOsErrorCode::UnsupportedPlatform));
+    }
+    backend.preflight_privilege()?;
+    backend
+        .preflight_clean_host(system)
+        .map_err(|_| MacOsError::new(MacOsErrorCode::UnmanagedNix))?;
+    backend.verify_release_bundle()
 }
 
 fn record_asset_result(
@@ -1595,7 +1627,24 @@ mod tests {
         backend.fail_on = Some("helper-plist");
         assert!(install_macos(System::Aarch64Darwin, &mut backend).is_err());
         assert_eq!(backend.rollback.first().copied(), Some("helper-plist"));
-        assert_eq!(backend.rollback.last().copied(), Some("store-volume"));
+        assert_eq!(backend.rollback.last().copied(), Some("product-root"));
+        let store = backend
+            .mutations
+            .iter()
+            .position(|mutation| *mutation == "store-volume");
+        let helper = backend
+            .mutations
+            .iter()
+            .position(|mutation| *mutation == "helper-binary");
+        let nix_root = backend
+            .mutations
+            .iter()
+            .position(|mutation| *mutation == "nix-root");
+        assert!(matches!(
+            (helper, store, nix_root),
+            (Some(helper), Some(store), Some(nix_root))
+                if helper < store && store < nix_root
+        ));
     }
 
     #[test]
@@ -1611,7 +1660,7 @@ mod tests {
             Err(MacOsErrorCode::RollbackIncomplete)
         );
         assert_eq!(backend.rollback.first().copied(), Some("services"));
-        assert_eq!(backend.rollback.last().copied(), Some("store-volume"));
+        assert_eq!(backend.rollback.last().copied(), Some("product-root"));
         assert!(!backend.store_volume);
         assert!(backend.existing.is_empty());
     }

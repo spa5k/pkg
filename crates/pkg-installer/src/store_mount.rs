@@ -230,7 +230,8 @@ fn validate_static_observation(
 ///
 /// This entry point accepts no dynamic input. It requires the launchd root
 /// identity, loads only the compiled root-owned receipt, never places the
-/// keychain secret in argv or Rust memory, and verifies the final volume state.
+/// keychain secret in argv or logs, retains it only in zeroizing memory while
+/// streaming it to `diskutil` stdin, and verifies the final volume state.
 ///
 /// # Errors
 ///
@@ -298,7 +299,7 @@ pub const fn run_macos_store_mount() -> Result<MacOsStoreMountOutcome, MacOsStor
 }
 
 #[cfg(target_os = "macos")]
-mod production {
+pub mod production {
     use super::{
         MacOsStoreMountError, MacOsStoreMountErrorCode, MacOsStoreVolumeContract, RECEIPT_PATH,
         StoreMountBackend, StoreVolumeObservation, StoreVolumeReceipt,
@@ -312,6 +313,7 @@ mod production {
         },
         unistd::Pid,
     };
+    use pkg_macos_security::SystemKeychainStore;
     use serde::Deserialize;
     use std::{
         fs::{self, File, OpenOptions, Permissions},
@@ -328,9 +330,7 @@ mod production {
 
     const RECEIPT_PARENT: &str = "/Library/Application Support/pkg/managed-nix";
     const PRODUCT_PARENT: &str = "/Library/Application Support/pkg";
-    const SYSTEM_KEYCHAIN: &str = "/Library/Keychains/System.keychain";
     const DISKUTIL: &str = "/usr/sbin/diskutil";
-    const SECURITY: &str = "/usr/bin/security";
     const MAX_RECEIPT_BYTES: u64 = 4096;
     const MAX_PLIST_BYTES: u64 = 262_144;
     const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -381,45 +381,39 @@ mod production {
             &mut self,
             receipt: &StoreVolumeReceipt,
         ) -> Result<(), MacOsStoreMountError> {
-            let mut security = base_command(SECURITY);
-            security.args(keychain_arguments(receipt));
-            security
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null());
-            let mut security_child = security
-                .spawn()
+            let secret = SystemKeychainStore::read()
                 .map_err(|_| MacOsStoreMountError::new(MacOsStoreMountErrorCode::KeychainFailed))?;
-            let secret_pipe = security_child.stdout.take().ok_or_else(|| {
-                MacOsStoreMountError::new(MacOsStoreMountErrorCode::KeychainFailed)
-            })?;
-
             let mut diskutil = base_command(DISKUTIL);
             diskutil.args(unlock_arguments(receipt));
             diskutil
-                .stdin(Stdio::from(secret_pipe))
+                .stdin(Stdio::piped())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
-            let Ok(mut diskutil_child) = diskutil.spawn() else {
-                terminate(&mut security_child);
+            let mut child = diskutil
+                .spawn()
+                .map_err(|_| MacOsStoreMountError::new(MacOsStoreMountErrorCode::MountFailed))?;
+            let Some(mut stdin) = child.stdin.take() else {
+                terminate(&mut child);
                 return Err(MacOsStoreMountError::new(
                     MacOsStoreMountErrorCode::MountFailed,
                 ));
             };
-            let deadline = Instant::now() + COMMAND_TIMEOUT;
-            let disk_status = wait_until(&mut diskutil_child, deadline);
-            let security_status = wait_until(&mut security_child, deadline);
-            if !security_status.is_ok_and(|status| status.success()) {
-                return Err(MacOsStoreMountError::new(
-                    MacOsStoreMountErrorCode::KeychainFailed,
-                ));
-            }
-            if !disk_status.is_ok_and(|status| status.success()) {
+            if stdin.write_all(secret.expose_for_stdin()).is_err() || stdin.flush().is_err() {
+                terminate(&mut child);
                 return Err(MacOsStoreMountError::new(
                     MacOsStoreMountErrorCode::MountFailed,
                 ));
             }
-            Ok(())
+            drop(stdin);
+            if wait_until(&mut child, Instant::now() + COMMAND_TIMEOUT)
+                .is_ok_and(|status| status.success())
+            {
+                Ok(())
+            } else {
+                Err(MacOsStoreMountError::new(
+                    MacOsStoreMountErrorCode::MountFailed,
+                ))
+            }
         }
     }
 
@@ -510,6 +504,41 @@ mod production {
         result
     }
 
+    pub fn receipt_matches(volume_uuid: &str) -> Result<bool, MacOsStoreMountError> {
+        match fs::symlink_metadata(RECEIPT_PATH) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(MacOsStoreMountError::new(
+                MacOsStoreMountErrorCode::InvalidReceipt,
+            )),
+            Ok(_) => Ok(load_receipt()?.volume_uuid == volume_uuid),
+        }
+    }
+
+    pub fn remove_receipt(volume_uuid: &str) -> Result<(), MacOsStoreMountError> {
+        if !super::canonical_uuid(volume_uuid) {
+            return Err(MacOsStoreMountError::new(
+                MacOsStoreMountErrorCode::InvalidReceipt,
+            ));
+        }
+        match fs::symlink_metadata(RECEIPT_PATH) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => {
+                return Err(MacOsStoreMountError::new(
+                    MacOsStoreMountErrorCode::InvalidReceipt,
+                ));
+            }
+            Ok(_) => {}
+        }
+        if load_receipt()?.volume_uuid != volume_uuid {
+            return Err(MacOsStoreMountError::new(
+                MacOsStoreMountErrorCode::InvalidReceipt,
+            ));
+        }
+        fs::remove_file(RECEIPT_PATH).map_err(|_| publication_failed())?;
+        let directory = File::open(RECEIPT_PARENT).map_err(|_| publication_failed())?;
+        crate::store_journal_file::full_sync(&directory).map_err(|_| publication_failed())
+    }
+
     fn receipt_temp_path() -> PathBuf {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -590,18 +619,6 @@ mod production {
             "-mountPoint",
             MacOsStoreVolumeContract::MOUNT_POINT,
             volume_uuid,
-        ]
-    }
-
-    const fn keychain_arguments(receipt: &StoreVolumeReceipt) -> [&str; 7] {
-        [
-            "find-generic-password",
-            "-a",
-            receipt.keychain_account.as_str(),
-            "-s",
-            receipt.keychain_service.as_str(),
-            "-w",
-            SYSTEM_KEYCHAIN,
         ]
     }
 
@@ -698,8 +715,7 @@ mod production {
     #[cfg(test)]
     mod tests {
         use super::{
-            DISKUTIL, DiskInfo, SECURITY, info_arguments, keychain_arguments, mount_arguments,
-            publish_new_file, unlock_arguments,
+            DISKUTIL, DiskInfo, info_arguments, mount_arguments, publish_new_file, unlock_arguments,
         };
         use crate::store_mount::{
             KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, MacOsStoreVolumeContract, RECEIPT_PRODUCT,
@@ -759,7 +775,6 @@ mod production {
                 keychain_account: KEYCHAIN_ACCOUNT.to_owned(),
             };
             assert_eq!(DISKUTIL, "/usr/sbin/diskutil");
-            assert_eq!(SECURITY, "/usr/bin/security");
             assert_eq!(
                 info_arguments(&receipt.volume_uuid),
                 ["info", "-plist", receipt.volume_uuid.as_str()]
@@ -767,18 +782,6 @@ mod production {
             assert_eq!(
                 mount_arguments(&receipt.volume_uuid),
                 ["mount", "-mountPoint", "/nix", receipt.volume_uuid.as_str(),]
-            );
-            assert_eq!(
-                keychain_arguments(&receipt),
-                [
-                    "find-generic-password",
-                    "-a",
-                    "pkg Nix Store",
-                    "-s",
-                    "org.pkg.store-volume",
-                    "-w",
-                    "/Library/Keychains/System.keychain",
-                ]
             );
             assert_eq!(
                 unlock_arguments(&receipt),

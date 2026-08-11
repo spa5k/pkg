@@ -99,7 +99,7 @@ pub trait MacOsStoreProvisionBackend {
     /// Returns a redacted error after recording every completed sub-mutation.
     fn create_encrypted_volume(&mut self) -> Result<String, MacOsStoreProvisionError>;
 
-    /// Enables ownership on the exact newly created volume.
+    /// Enables ownership on the exact newly mounted volume.
     ///
     /// # Errors
     ///
@@ -166,8 +166,8 @@ pub fn provision_macos_store_volume(
         backend.ensure_synthetic_entry()?;
         let volume_uuid = backend.create_encrypted_volume()?;
         validate_uuid(&volume_uuid)?;
-        backend.enable_ownership(&volume_uuid)?;
         backend.mount_volume(&volume_uuid)?;
+        backend.enable_ownership(&volume_uuid)?;
         backend.publish_record(&volume_uuid)?;
         backend.verify_final(&volume_uuid)?;
         backend.commit_journal()?;
@@ -303,8 +303,8 @@ mod tests {
                 "begin",
                 "synthetic",
                 "create",
-                "ownership",
                 "mount",
+                "ownership",
                 "record",
                 "verify",
                 "commit"
@@ -344,8 +344,8 @@ mod tests {
         for step in [
             "synthetic",
             "create",
-            "ownership",
             "mount",
+            "ownership",
             "record",
             "verify",
             "commit",

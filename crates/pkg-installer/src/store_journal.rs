@@ -68,14 +68,14 @@ pub enum MacOsStoreJournalPhase {
     KeychainIntended,
     /// Fixed System-keychain item creation completed.
     KeychainCompleted,
-    /// Ownership enablement is authorized.
-    OwnershipIntended,
-    /// Ownership enablement completed.
-    OwnershipCompleted,
     /// Mounting the recorded volume at `/nix` is authorized.
     MountIntended,
     /// Mounting completed.
     MountCompleted,
+    /// Ownership enablement is authorized on the mounted volume.
+    OwnershipIntended,
+    /// Ownership enablement completed.
+    OwnershipCompleted,
     /// Publishing the fixed volume record is authorized.
     PublicationIntended,
     /// Publishing completed.
@@ -136,6 +136,20 @@ impl MacOsStoreProvisionJournal {
     #[must_use]
     pub const fn phase(&self) -> MacOsStoreJournalPhase {
         self.phase
+    }
+
+    /// Returns the secret-free synthetic rollback evidence for committed cleanup.
+    #[must_use]
+    pub fn synthetic_rollback(&self) -> Option<(bool, Option<&str>)> {
+        self.synthetic
+            .as_ref()
+            .map(|state| (state.existed, state.backup_sha256.as_deref()))
+    }
+
+    /// Returns the recorded canonical volume UUID once creation completed.
+    #[must_use]
+    pub fn volume_uuid(&self) -> Option<&str> {
+        self.volume_uuid.as_deref()
     }
 
     /// Decodes and fully validates one bounded strict journal snapshot.
@@ -254,38 +268,14 @@ impl MacOsStoreProvisionJournal {
         )
     }
 
-    /// Persists ownership-enablement intent.
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidTransition` unless keychain creation completed.
-    pub fn intend_ownership(&mut self) -> Result<(), MacOsStoreJournalError> {
-        self.advance(
-            MacOsStoreJournalPhase::KeychainCompleted,
-            MacOsStoreJournalPhase::OwnershipIntended,
-        )
-    }
-
-    /// Records completed ownership enablement.
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidTransition` unless ownership intent is current.
-    pub fn complete_ownership(&mut self) -> Result<(), MacOsStoreJournalError> {
-        self.advance(
-            MacOsStoreJournalPhase::OwnershipIntended,
-            MacOsStoreJournalPhase::OwnershipCompleted,
-        )
-    }
-
     /// Persists mount intent.
     ///
     /// # Errors
     ///
-    /// Returns `InvalidTransition` unless ownership enablement completed.
+    /// Returns `InvalidTransition` unless keychain creation completed.
     pub fn intend_mount(&mut self) -> Result<(), MacOsStoreJournalError> {
         self.advance(
-            MacOsStoreJournalPhase::OwnershipCompleted,
+            MacOsStoreJournalPhase::KeychainCompleted,
             MacOsStoreJournalPhase::MountIntended,
         )
     }
@@ -302,14 +292,38 @@ impl MacOsStoreProvisionJournal {
         )
     }
 
-    /// Persists fixed-record publication intent.
+    /// Persists ownership-enablement intent.
     ///
     /// # Errors
     ///
     /// Returns `InvalidTransition` unless mounting completed.
-    pub fn intend_publication(&mut self) -> Result<(), MacOsStoreJournalError> {
+    pub fn intend_ownership(&mut self) -> Result<(), MacOsStoreJournalError> {
         self.advance(
             MacOsStoreJournalPhase::MountCompleted,
+            MacOsStoreJournalPhase::OwnershipIntended,
+        )
+    }
+
+    /// Records completed ownership enablement.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidTransition` unless ownership intent is current.
+    pub fn complete_ownership(&mut self) -> Result<(), MacOsStoreJournalError> {
+        self.advance(
+            MacOsStoreJournalPhase::OwnershipIntended,
+            MacOsStoreJournalPhase::OwnershipCompleted,
+        )
+    }
+
+    /// Persists fixed-record publication intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidTransition` unless ownership enablement completed.
+    pub fn intend_publication(&mut self) -> Result<(), MacOsStoreJournalError> {
+        self.advance(
+            MacOsStoreJournalPhase::OwnershipCompleted,
             MacOsStoreJournalPhase::PublicationIntended,
         )
     }
@@ -470,10 +484,10 @@ mod tests {
         journal.complete_volume(UUID.to_owned())?;
         journal.intend_keychain()?;
         journal.complete_keychain()?;
-        journal.intend_ownership()?;
-        journal.complete_ownership()?;
         journal.intend_mount()?;
         journal.complete_mount()?;
+        journal.intend_ownership()?;
+        journal.complete_ownership()?;
         journal.intend_publication()?;
         journal.complete_publication()?;
         journal.record_verified()?;

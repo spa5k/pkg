@@ -464,8 +464,9 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        a same-directory no-clobber hard link before syncing the parent directory.
        Provisioning follows one closed coordinator: inspect exact existing state;
        sync an empty rollback journal; merge the synthetic entry; create the encrypted
-       volume and fixed keychain item without returning the secret; enable ownership;
-       mount; publish the dynamic record; verify the complete state; then commit the
+       volume and fixed keychain item without returning the secret; mount the initially
+       unmounted volume at `/nix`; enable ownership on that mounted volume; publish the
+       dynamic record; verify the complete state; then commit the
        journal. Every failure after journal creation replays all recorded cleanup in
        reverse, and incomplete rollback has priority over the original failure. The
        bounded strict journal snapshot is secret-free, versioned, and monotonic: each
@@ -481,7 +482,7 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        hard links, reconciles the narrow complete-file hard-link crash window, and
        removes state durably only after successful commit or complete recovery.
        Synthetic replacement uses the canonical `/private/etc` path (avoiding the
-       `/etc` symlink), binds the expected private-backup digest into durable journal
+   `/etc` symlink), binds the expected private-backup digest into durable journal
        intent before backup creation, then creates/reuses the exact `0600` full-synced
        backup. Replacement first full-syncs a unique staging inode, atomically publishes
        that complete inode to a deterministic exchange path and full-syncs the directory,
@@ -491,6 +492,22 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        only the expected product-written bytes and treats completed backup cleanup as
        replay-idempotent.
        Foreign concurrent edits, unsafe metadata, and mismatched backups fail closed.
+       The APFS adapter derives the target container only from bounded
+       `diskutil info -plist /`, creates a role-free case-sensitive encrypted volume
+       with `-stdinpassphrase -nomount`, and discovers its canonical UUID only from a
+       fresh bounded `diskutil apfs list -plist` snapshot. It never parses human output,
+       accepts a container/UUID/name from the user, or places the secret in argv. Every
+       mount, unmount, ownership, and delete operation first re-discovers the exact
+       compiled name + root-container + encrypted + role-free identity; rollback deletion
+       is idempotent and refuses ambiguity.
+       The System-keychain boundary generates 256 random bits with `SecRandomCopyBytes`,
+       stores the lowercase-hex secret under the fixed selector without overwrite, and
+       installs a legacy Keychain ACL trusting only the protected
+       `/opt/pkg/bin/pkg-root-helper` binary—not the general `/usr/bin/security` tool.
+       Metadata-only item checks request no password bytes. The boot helper reads the
+       secret directly through Security.framework, copies it only into zeroizing memory,
+       explicitly zeroes the Keychain API's temporary buffer before releasing it, and
+       writes the secret only to the fixed `diskutil` stdin pipe.
        The synthetic-file planner is bounded and byte-preserving: it appends only the
        exact `nix` line, treats that exact single line as idempotent, preserves unrelated
        bytes, and refuses aliases, targets, trailing whitespace, CRLF, duplicates,
@@ -524,9 +541,9 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    a pathname-based chmod window, and then use kernel peer
    credentials plus bounded framing. Unknown verbs, extra arguments, and custom
    paths fail closed. The `--mount-store-volume` path separately requires
-   root:wheel, reads only the bounded root-only volume record, verifies UUID/name/
-   encryption/ownership, streams the System-keychain secret directly to `diskutil`
-   stdin, applies a 30-second process-group deadline, and verifies the final `/nix`
+       root:wheel, reads only the bounded root-only volume record, verifies UUID/name/
+       encryption/ownership, streams the System-keychain secret from a zeroizing direct
+       Security.framework read to `diskutil` stdin, applies a 30-second process-group deadline, and verifies the final `/nix`
    mount.
 5. Write root-owned `nix.conf` (`trusted-users = root`, `allowed-users =
    pkg-nix-broker`, `sandbox=true`, `sandbox-fallback=false`,

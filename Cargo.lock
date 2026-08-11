@@ -1438,6 +1438,7 @@ dependencies = [
  "nix",
  "pkg-channel",
  "pkg-core",
+ "pkg-macos-security",
  "pkg-nix",
  "pkg-pipeline",
  "pkg-testkit",
@@ -1448,6 +1449,16 @@ dependencies = [
  "sha2 0.10.9",
  "socket2",
  "tempfile",
+]
+
+[[package]]
+name = "pkg-macos-security"
+version = "0.0.0"
+dependencies = [
+ "core-foundation",
+ "security-framework",
+ "security-framework-sys",
+ "zeroize",
 ]
 
 [[package]]

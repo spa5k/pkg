@@ -158,6 +158,24 @@ impl MacOsSyntheticFileStorage {
             0,
         )
     }
+
+    /// Returns whether the exact canonical `nix` entry is already installed.
+    ///
+    /// Unlike `prepare`, this read-only check permits the transaction backup
+    /// that remains until the journal's committed success boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable failure for unsafe metadata, unreadable state, or a
+    /// malformed/conflicting synthetic configuration.
+    pub fn entry_present() -> Result<bool, MacOsSyntheticFileError> {
+        validate_directory(Path::new(CONFIG_PARENT), 0, 0, 0o755)?;
+        validate_directory(Path::new(BACKUP_PARENT), 0, 0, 0o700)?;
+        let bytes = read_optional_file(Path::new(CONFIG_PATH), 0, 0, 0o644, MAX_CONFIG_BYTES)?;
+        let plan = plan_macos_synthetic_entry(bytes.as_deref())
+            .map_err(|_| MacOsSyntheticFileError::InvalidState)?;
+        Ok(!plan.changed())
+    }
 }
 
 fn prepare_at(

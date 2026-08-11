@@ -885,12 +885,22 @@ flowchart TD
   publishes only a full-synced staging inode to a deterministic recovery path before using
   atomic exchange/no-replace, then validates and preserves the displaced inode there.
   Interrupted backup writes, staging, and exchanges are reconciled.
-  Recovery cleanup is replay-idempotent and refuses foreign rollback state. The production system adapter must still connect
-  these pieces and implement APFS/keychain operations and provide real-host evidence.
+  Recovery cleanup is replay-idempotent and refuses foreign rollback state. The production
+  system adapter now connects those pieces: it derives the root APFS container from bounded
+  plist output, creates an initially unmounted role-free case-sensitive encrypted volume with
+  the secret only on stdin, revalidates exact identity before every APFS mutation, and performs
+  idempotent pre-UUID discovery/deletion. A small macOS-only security crate generates and
+  zeroizes the secret, creates the fixed System-keychain item without overwrite, and assigns an
+  ACL trusting only the protected root-helper binary. Metadata checks do not decrypt the item;
+  the boot helper reads it directly through Security.framework, zeroes both Rust and Keychain
+  API buffers, and pipes it to `diskutil` without using the general `security` CLI. Installation
+  now creates the root-only managed-state directory and protected root-helper binary before
+  provisioning, then mounts before enabling ownership because macOS ownership enablement acts
+  on a mounted volume. Production provisioning and recovery bind APFS, keychain, synthetic,
+  record, and journal adapters end to end. Real-host mutation evidence is still required.
   S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
-  Therefore PR-28 is **not marked merge-complete** until production APFS/keychain/
-  synthetic provisioning invokes the record writer, a Complete broker-run cache Preflight passes, and real
+  Therefore PR-28 is **not marked merge-complete** until a Complete broker-run cache Preflight passes and real
   Developer-ID/notarization validation is recorded.
 - **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and the honest resource boundary (**no** per-build memory/CPU/IO cap in stock Nix 2.34.8) (`07`, DR-003 from S3). It implements the broker↔helper contract (PR-39) on macOS — the real framed-RPC **transport**, **peer-auth** (caller uid via `getpeereid` on launchd-managed Unix sockets), **capability transport**, and the **launchd** service definitions for broker and helper. The OS credential/transport APIs are implemented **here**, not in PR-39. Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
 - **Owns:** `crates/pkg-installer/src/platform/macos.rs` (including the macOS transport binding of PR-39's `MaintenanceAdapter` + peer-auth + capability transport and the generated launchd plists), `_nixbld` build-user provisioning, notarization tooling, packaging.

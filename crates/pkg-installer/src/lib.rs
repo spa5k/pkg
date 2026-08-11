@@ -12,11 +12,15 @@ pub mod platform;
 mod repair;
 mod root_client;
 mod service;
+#[cfg(target_os = "macos")]
+mod store_apfs;
 mod store_journal;
 #[cfg(target_os = "macos")]
 mod store_journal_file;
 mod store_mount;
 mod store_provision;
+#[cfg(target_os = "macos")]
+mod store_provision_macos;
 mod synthetic_conf;
 #[cfg(target_os = "macos")]
 mod synthetic_file;
@@ -75,6 +79,8 @@ pub use store_provision::{
     MacOsStoreProvisionBackend, MacOsStoreProvisionError, MacOsStoreProvisionErrorCode,
     MacOsStoreProvisionOutcome, provision_macos_store_volume,
 };
+#[cfg(target_os = "macos")]
+pub use store_provision_macos::provision_macos_store_volume_production;
 pub use synthetic_conf::{
     MacOsSyntheticConfError, MacOsSyntheticConfErrorCode, MacOsSyntheticConfPlan,
     plan_macos_synthetic_entry,
