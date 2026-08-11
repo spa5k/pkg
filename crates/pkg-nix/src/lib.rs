@@ -87,7 +87,7 @@ pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode,
-    GenerationRootTransitionErrorCode, ProductFrameCodec,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, ProductFrameCodec,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,

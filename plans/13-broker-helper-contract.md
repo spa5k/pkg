@@ -47,12 +47,27 @@ there is exactly one version discriminator, not two independently drifting ones.
 | 1 | `Begin { operation }` where operation is a closed V1 class | `Started { handle }` |
 | 2 | `Poll { handle }` | `Status { running|completed|cancelled }` |
 | 3 | `Cancel { handle }` | empty `Cancelled` acknowledgement |
+| 4 | `Complete { handle }` | empty `Completed` acknowledgement and admission release |
 | 10 | `Version { handle }` | validated `VersionInfo` from the pinned managed runtime |
 | 11 | `EvaluateDerivation { handle, request }` | validated `DerivationPlanReport` |
 | 12 | `PathInfo { handle, path }` | validated `PathInfoReport` |
 | 13 | `Substitute { handle, path }` | validated `SubstituteReport` |
+| 14 | `ApproveBuild { handle, buildPlanDigest, source }` | empty `BuildApproved` acknowledgement |
 | 15 | `Verify { handle, request }` | validated `VerifyReport` |
 | 16 | `Gc { handle }` | validated `GcReport` |
+| 17 | `GetBuildPreview { handle }` | sanitized `BuildPreview` |
+| 18 | `PrepareBuild { handle, selectors }` | sanitized `BuildPreview` |
+| 19 | `ExecuteBuild { handle, buildPlanDigest }` | validated `BuildReport` or a closed refusal |
+| 20 | `PublishBuildRoots { handle, generation, entries }` | validated `RootSetReport` or a closed refusal |
+| 21 | `TransitionGenerationRoots { handle, sourceGeneration, destinationGeneration, retainedNames }` | validated `RootSetTransitionReport` or a closed refusal |
+| 22 | `RemoveGenerationRoots { handle, generation }` | empty `GenerationRootsRemoved` acknowledgement or a closed refusal |
+| 23 | `AcquireGc { handle }` | empty `GcAdmissionAcquired` acknowledgement |
+
+Methods 22 and 23 may wait for existing realize-to-root inhibitors to drain, and method 16 may run
+a long store collection. Their client response budget is 31 minutes, slightly longer than the fixed
+30-minute operation lifetime; every other lifecycle exchange retains the ordinary 30-second budget.
+The broker rechecks cancellation, expiry, and ownership while waiting, so admission is finite and
+cannot outlive the caller-bound handle.
 
 Every exposed adapter method may return the same method id with the alternative strict body
 `{ "error": <closed NixAdapterErrorCode> }`. It carries no stdout, stderr, paths, argv, or free
@@ -71,6 +86,7 @@ flake, option, environment, substituter, trust-key, arbitrary path, or arbitrary
 | 2 | `{ ownerUid, generation }`, no filesystem path | empty removal acknowledgement |
 | 3 | validated server-side `VerifiedRepairScope` | opaque maintenance capability |
 | 4 | opaque maintenance capability only | sanitized typed per-path outcomes |
+| 5 | `{ ownerUid, sourceGeneration, destinationGeneration, retainedNames }`, no filesystem path | validated `RootSetTransitionReport` |
 
 Method 3 transports the broker's already verified scope to helper-private state. Method 4 never
 repeats caller-selected paths or knobs: execution authority is recovered only from the helper's
@@ -371,11 +387,17 @@ does not add platform-dependent socket timeouts around this protocol.
 
 The broker-side root client is narrower than `MaintenanceAdapter`. It opens only the compiled
 Linux/macOS helper endpoint, authenticates the connected helper as uid 0 from kernel peer
-credentials before transmitting, sends exactly one `PublishRootSet` frame with request id 1, and
-accepts only the matching `RootSetPublished` response. Connect is bounded to five seconds and the
+credentials before transmitting, and sends exactly one path-free publish, transition, or removal
+frame with request id 1. It accepts only the exact correlated response for that request. Connect is bounded to five seconds and the
 complete request/response uses one 30-second monotonic poll deadline with the one-MiB frame ceiling.
-The client has no API for root removal, repair-capability issue, or repair execution; those flows
-retain their independent lifecycle and timeout design. The build/root server seam accepts this
+The client has no API for repair-capability issue or repair execution; those flows retain their
+independent lifecycle and timeout design. Root removal accepts only authenticated owner uid plus a
+promoted generation id—never a root path—and is used only after the CLI obtains exclusive broker GC
+admission. The privileged helper independently opens the fixed production state root derived from
+the authenticated uid's system home, verifies its safe ownership chain, rejects `current` naming the
+target, and requires the target activation plus every generation snapshot/sidecar to be absent. This
+revalidates the root-last transaction stage at the authority boundary; direct method-22 access cannot
+remove a live or still-retained generation merely by presenting a GC handle. The build/root server seam accepts this
 concrete client rather than a generic maintenance implementation. Production listener injection
 still depends on bootstrapping the long-lived authenticated channel/build authority.
 

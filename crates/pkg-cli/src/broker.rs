@@ -14,10 +14,10 @@ use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CliBrokerRequest,
     CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
-    GenerationRootTransitionErrorCode, MethodKind, NixAdapter, NixAdapterError,
-    NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport, ProductFrameCodec,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, StorePath,
-    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    GenerationId, GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, MethodKind,
+    NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus,
+    PathInfoReport, ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -25,6 +25,7 @@ const FRAME_HEADER_BYTES: usize = 20;
 const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const LONG_RUNNING_RESPONSE_TIMEOUT: Duration = Duration::from_secs(31 * 60);
 
 #[cfg(target_os = "linux")]
 const DEFAULT_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
@@ -56,6 +57,8 @@ pub enum BrokerClientErrorCode {
     BuildRootRefused,
     /// Protected generation root transition returned a stable refusal code.
     GenerationRootTransitionRefused,
+    /// Protected generation root removal returned a stable refusal code.
+    GenerationRootRemovalRefused,
 }
 
 /// Redacted failure from the private broker connector.
@@ -66,6 +69,7 @@ pub struct BrokerClientError {
     build_execution_code: Option<BuildExecutionErrorCode>,
     build_root_code: Option<BuildRootPublicationErrorCode>,
     generation_root_transition_code: Option<GenerationRootTransitionErrorCode>,
+    generation_root_removal_code: Option<GenerationRootRemovalErrorCode>,
 }
 
 impl BrokerClientError {
@@ -76,6 +80,7 @@ impl BrokerClientError {
             build_execution_code: None,
             build_root_code: None,
             generation_root_transition_code: None,
+            generation_root_removal_code: None,
         }
     }
 
@@ -86,6 +91,7 @@ impl BrokerClientError {
             build_execution_code: None,
             build_root_code: None,
             generation_root_transition_code: None,
+            generation_root_removal_code: None,
         }
     }
 
@@ -96,6 +102,7 @@ impl BrokerClientError {
             build_execution_code: Some(build_execution_code),
             build_root_code: None,
             generation_root_transition_code: None,
+            generation_root_removal_code: None,
         }
     }
 
@@ -106,6 +113,7 @@ impl BrokerClientError {
             build_execution_code: None,
             build_root_code: Some(build_root_code),
             generation_root_transition_code: None,
+            generation_root_removal_code: None,
         }
     }
 
@@ -118,6 +126,20 @@ impl BrokerClientError {
             build_execution_code: None,
             build_root_code: None,
             generation_root_transition_code: Some(generation_root_transition_code),
+            generation_root_removal_code: None,
+        }
+    }
+
+    const fn generation_root_removal_refused(
+        generation_root_removal_code: GenerationRootRemovalErrorCode,
+    ) -> Self {
+        Self {
+            code: BrokerClientErrorCode::GenerationRootRemovalRefused,
+            adapter_code: None,
+            build_execution_code: None,
+            build_root_code: None,
+            generation_root_transition_code: None,
+            generation_root_removal_code: Some(generation_root_removal_code),
         }
     }
 
@@ -152,6 +174,12 @@ impl BrokerClientError {
         self,
     ) -> Option<GenerationRootTransitionErrorCode> {
         self.generation_root_transition_code
+    }
+
+    /// Returns the closed refusal code from protected generation root removal.
+    #[must_use]
+    pub const fn generation_root_removal_code(self) -> Option<GenerationRootRemovalErrorCode> {
+        self.generation_root_removal_code
     }
 }
 
@@ -414,6 +442,35 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Removes one caller-owned generation root set without accepting any raw path.
+    pub fn remove_generation_roots(
+        &mut self,
+        handle: OperationHandle,
+        generation: GenerationId,
+    ) -> Result<(), BrokerClientError> {
+        match self.transact_with_timeout(
+            &CliBrokerRequest::RemoveGenerationRoots(handle, generation),
+            LONG_RUNNING_RESPONSE_TIMEOUT,
+        )? {
+            CliBrokerResponse::GenerationRootsRemoved => Ok(()),
+            CliBrokerResponse::GenerationRootRemovalRefused(code) => {
+                Err(BrokerClientError::generation_root_removal_refused(code))
+            }
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Waits for and retains exclusive GC admission until completion or cancellation.
+    pub fn acquire_gc(&mut self, handle: OperationHandle) -> Result<(), BrokerClientError> {
+        match self.transact_with_timeout(
+            &CliBrokerRequest::AcquireGc(handle),
+            LONG_RUNNING_RESPONSE_TIMEOUT,
+        )? {
+            CliBrokerResponse::GcAdmissionAcquired => Ok(()),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     /// Verifies one validated closed request.
     pub fn verify(
         &mut self,
@@ -431,7 +488,9 @@ impl BrokerLifecycleClient {
 
     /// Collects unreachable paths using only the managed on-disk roots.
     pub fn gc(&mut self, handle: OperationHandle) -> Result<GcReport, BrokerClientError> {
-        match self.transact(&CliBrokerRequest::Gc(handle))? {
+        match self
+            .transact_with_timeout(&CliBrokerRequest::Gc(handle), LONG_RUNNING_RESPONSE_TIMEOUT)?
+        {
             CliBrokerResponse::Gc(report) => Ok(report),
             CliBrokerResponse::AdapterFailure(MethodKind::Gc, code) => {
                 Err(BrokerClientError::adapter_failure(code))
@@ -444,12 +503,20 @@ impl BrokerLifecycleClient {
         &mut self,
         request: &CliBrokerRequest,
     ) -> Result<CliBrokerResponse, BrokerClientError> {
+        self.transact_with_timeout(request, RESPONSE_TIMEOUT)
+    }
+
+    fn transact_with_timeout(
+        &mut self,
+        request: &CliBrokerRequest,
+        timeout: Duration,
+    ) -> Result<CliBrokerResponse, BrokerClientError> {
         if !self.healthy {
             return Err(BrokerClientError::new(
                 BrokerClientErrorCode::ConnectionFailed,
             ));
         }
-        let result = self.transact_healthy(request);
+        let result = self.transact_healthy(request, timeout);
         if result.is_err() {
             self.healthy = false;
         }
@@ -459,6 +526,7 @@ impl BrokerLifecycleClient {
     fn transact_healthy(
         &mut self,
         request: &CliBrokerRequest,
+        timeout: Duration,
     ) -> Result<CliBrokerResponse, BrokerClientError> {
         let request_id = self.next_request_id;
         self.next_request_id = request_id
@@ -468,7 +536,7 @@ impl BrokerLifecycleClient {
         let frame = ProductFrameCodec::encode_cli_request(request_id, request)
             .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::InvalidFrame))?;
         let deadline = Instant::now()
-            .checked_add(RESPONSE_TIMEOUT)
+            .checked_add(timeout)
             .ok_or_else(|| BrokerClientError::new(BrokerClientErrorCode::TransportFailure))?;
         write_all_until(&mut self.stream, &frame, deadline)?;
         let response = read_frame(&mut self.stream, deadline)?;
@@ -663,9 +731,8 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::AdapterFailure
         | BrokerClientErrorCode::BuildRefused
         | BrokerClientErrorCode::BuildRootRefused
-        | BrokerClientErrorCode::GenerationRootTransitionRefused => {
-            NixAdapterError::OperationFailed
-        }
+        | BrokerClientErrorCode::GenerationRootTransitionRefused
+        | BrokerClientErrorCode::GenerationRootRemovalRefused => NixAdapterError::OperationFailed,
     }
 }
 
@@ -1089,6 +1156,80 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
             (2, CliBrokerRequest::Poll(handle))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_removal_refusal_is_typed_and_keeps_the_connection_usable() -> Result<(), Box<dyn Error>>
+    {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Gc)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::GenerationRootRemovalRefused(
+                GenerationRootRemovalErrorCode::RemovalFailed,
+            ),
+        )?)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            2,
+            &CliBrokerResponse::Status(OperationStatus::Running),
+        )?)?;
+        let generation = GenerationId::new("gen-0007")?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client
+            .remove_generation_roots(handle.clone(), generation.clone())
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            BrokerClientErrorCode::GenerationRootRemovalRefused
+        );
+        assert_eq!(
+            error.generation_root_removal_code(),
+            Some(GenerationRootRemovalErrorCode::RemovalFailed)
+        );
+        assert!(client.healthy);
+        assert_eq!(client.poll(handle.clone())?, OperationStatus::Running);
+
+        let deadline = Instant::now()
+            .checked_add(RESPONSE_TIMEOUT)
+            .ok_or_else(|| io::Error::other("deadline overflow"))?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (
+                1,
+                CliBrokerRequest::RemoveGenerationRoots(handle.clone(), generation)
+            )
+        );
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (2, CliBrokerRequest::Poll(handle))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_gc_admission_round_trips() -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Gc)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::GcAdmissionAcquired,
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        client.acquire_gc(handle.clone())?;
+        let deadline = Instant::now()
+            .checked_add(RESPONSE_TIMEOUT)
+            .ok_or_else(|| io::Error::other("deadline overflow"))?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (1, CliBrokerRequest::AcquireGc(handle))
         );
         Ok(())
     }

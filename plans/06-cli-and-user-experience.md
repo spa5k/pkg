@@ -90,7 +90,7 @@ pkg [--json | --jsonl] [--quiet | --verbose] [--no-color] [--config <path>]
 | `--verbose` | Include phase details and **sanitized** product/build-log excerpts on errors. Never raw Nix identifiers (drv/store paths, attributes), Nix options, or subprocess argv. |
 | `--no-color` | Disable ANSI. Auto-off when not a TTY. |
 | `--config <path>` | Override `config.toml` location. |
-| `--state <dir>` | Override state root (plan 05). Mainly for tests. |
+| `--state <dir>` | Override state root (plan 05). Mainly for read-only tests; broker-backed mutations require the fixed per-platform production root so the privileged helper can revalidate it without accepting a path. |
 | `--profile <name>` | Select among the invoking user's own profiles (v1: only `default`; authoritative state is per-user keyed by uid per D-17 — `--profile` does not cross users). |
 | `--yes` | Assume "yes" for ordinary confirmations (`remove`/`gc`/`upgrade`): they skip. For local build approval it is **special**: it pre-approves the **single** local-build operation non-interactively against **one canonical `BuildPlan`** — the same preview is still emitted and journaled, approval is bound to the `BuildPlan` digest + policy version, and `--yes` **never** overrides a hard refusal (`ACQUIRE_NO_BINARY`, 67). Non-TTY build-required without `--yes` exits 68. |
 | `--dry-run` | Run preflight only and print the plan. **No** local build, desired-state mutation, staging, activation, or generation change. May refresh signed metadata, query the managed binary cache, evaluate pinned inputs, and populate the evaluation/source cache; IFD remains disabled. |

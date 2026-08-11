@@ -1095,6 +1095,9 @@ impl AuthenticatedCaller {
     pub fn acquire_gc(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
         self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Gc])?;
+        if state.gc_holder.as_ref() == Some(handle) {
+            return Ok(());
+        }
         if state.gc_holder.is_some()
             || !state.gc_inhibitors.is_empty()
             || self.broker.build_gate.blocks_gc()
@@ -1103,6 +1106,41 @@ impl AuthenticatedCaller {
         }
         state.gc_holder = Some(handle.clone());
         Ok(())
+    }
+
+    /// Waits until exclusive GC admission is available for this live handle.
+    ///
+    /// The short bounded polling interval releases the broker state mutex on
+    /// every retry, allowing other connections to finish or cancel their
+    /// realize-to-root inhibitors. Operation expiry and cancellation are
+    /// re-checked on every attempt.
+    pub fn acquire_gc_wait(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
+        loop {
+            match self.acquire_gc(handle) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.code() == BrokerErrorCode::AdmissionBusy => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// Removes one caller-owned generation root set while retaining exclusive
+    /// GC admission on the operation until completion or cancellation.
+    ///
+    /// The public request supplies only a typed generation id. Caller identity
+    /// is injected from the authenticated session and raw root paths never
+    /// cross the CLI boundary.
+    pub fn remove_generation_root_intent(
+        &self,
+        handle: &OperationHandle,
+        generation: crate::GenerationId,
+        remove: impl FnOnce(&crate::RemoveRootSetRequest) -> Result<(), MaintenanceError>,
+    ) -> Result<(), BrokerError> {
+        self.acquire_gc_wait(handle)?;
+        let request = crate::RemoveRootSetRequest::new(self.uid, generation);
+        remove(&request).map_err(|_| BrokerError::new(BrokerErrorCode::RootPublicationFailed))
     }
 
     /// Completes an operation and releases every admission gate it holds.
@@ -1892,6 +1930,32 @@ mod tests {
         assert!(!snapshot.build_held());
         assert!(!snapshot.gc_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn gc_admission_waits_for_realize_to_root_inhibitors() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let build = caller.begin(BrokerOperationKind::Build).unwrap();
+        caller.acquire_build(&build).unwrap();
+        caller.acquire_gc_inhibit(&build).unwrap();
+        let gc = caller.begin(BrokerOperationKind::Gc).unwrap();
+        let (tx, rx) = mpsc::channel();
+        let waiting_caller = caller.clone();
+        let waiting_gc = gc.clone();
+        let waiter = thread::spawn(move || {
+            tx.send(waiting_caller.acquire_gc_wait(&waiting_gc))
+                .unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(75)).is_err());
+        caller.cancel(&build).unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), Ok(()));
+        waiter.join().unwrap();
+        assert!(broker.admission_snapshot().gc_held());
+        caller.complete(&gc).unwrap();
     }
 
     #[test]

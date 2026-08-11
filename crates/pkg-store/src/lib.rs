@@ -22,7 +22,8 @@ pub use current::{
     classify_recovery,
 };
 pub use gc::{
-    GcError, GcPlan, GcPolicy, GcRunReport, PruneCandidate, PruneOutcome, execute_gc, plan_gc,
+    GcError, GcPlan, GcPolicy, GcRunReport, PruneCandidate, PruneOutcome,
+    authorize_generation_root_removal, execute_gc, plan_gc, plan_generation_prune,
     prune_generation, recover_prunes,
 };
 pub use journal::{StateJournal, StateJournalError};

@@ -1444,6 +1444,7 @@ dependencies = [
  "pkg-macos-security",
  "pkg-nix",
  "pkg-pipeline",
+ "pkg-store",
  "pkg-testkit",
  "plist",
  "rustix",

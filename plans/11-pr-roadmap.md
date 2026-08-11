@@ -727,7 +727,11 @@ flowchart TD
   pruning journals intent, durably deletes only validated user metadata,
   removes privileged roots last, and is restart-idempotent. FakeNix integration
   verifies the global collector runs once after pruning, while the broker's
-  already-landed PR-39 admission gate remains the runtime wrapper boundary.
+  already-landed PR-39 admission gate remains the runtime wrapper boundary. The
+  shipped CLI now drives this logic for confirmed `gc` and `history --delete`:
+  pending prune intents recover in a separate operation, approved cleanup waits
+  for host-global GC admission, path-free root removal crosses the authenticated
+  broker/helper boundary, and only then does the contained collector run.
 - **Purpose:** collect unreferenced store paths using product-owned roots + generation
   manifest; the per-user **state-mutation lease** (a filesystem `flock`, `05` §12) that serializes
   a user's state writes and `gc` for that user (`05`,`08` T-STATE-4, T-CONC-1).
@@ -1345,11 +1349,21 @@ flowchart TD
   domain-separated digest of the complete name-to-store-path mapping, then reuses the existing
   rooted/activated crash journal, retains and switches the staged forest without a second helper
   publication, and handles an empty destination without an empty root request. The end-user
-  remove/pin/unpin and rollback commands now construct and drive that transaction. Both ends now switch
-  to nonblocking I/O after kernel peer authentication:
-  the privileged helper gives the complete request and response frames separate 30-second poll
+  remove/pin/unpin and rollback commands now construct and drive that transaction. Confirmed `gc` and
+  `history --delete` are live as well: the complete recovery barrier finishes
+  pending prunes and then pending rollback/state-edit transitions before a fresh
+  deletion plan is selected; root
+  deletion uses ownerless/path-free CLI method 22 with broker-injected uid, and
+  method 23 waits for exclusive host-global GC admission without holding it
+  across the confirmation prompt. The helper's fixed method 2 remains the only
+  privileged removal surface, is idempotent for an already-absent generation,
+  and receives no caller-selected filesystem path. Before removal, the root helper independently
+  validates the authenticated user's fixed production state and requires both a nonmatching
+  `current` pointer and the root-last absence of all target generation metadata; a raw broker client
+  therefore cannot authorize deletion merely by naming a generation. Both ends use nonblocking I/O after kernel peer
+  authentication: the privileged helper gives the complete request and response frames separate 30-second poll
   budgets, starts the response budget only after dispatch, and fails stalled partial reads or writes
-  closed. It intentionally exposes neither repair nor root removal. The macOS launchd
+  closed. It intentionally exposes no repair operation through this root client. The macOS launchd
   `--serve-macos` modes now exist for both installed service binaries. They require the exact
   installed uid/gid roles, validate the root-owned managed socket chain including absence of extended
   ACLs, replace only an exact stale service-owned socket, and atomically create only the compiled

@@ -113,6 +113,10 @@ pub enum CliBrokerRequest {
     PublishBuildRoots(OperationHandle, RootSetIntent),
     /// Derive a fresh generation root set from an authenticated source generation.
     TransitionGenerationRoots(OperationHandle, RootSetTransitionIntent),
+    /// Remove one authenticated caller-owned generation root set under GC admission.
+    RemoveGenerationRoots(OperationHandle, GenerationId),
+    /// Wait for and retain exclusive broker GC admission on this operation.
+    AcquireGc(OperationHandle),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -156,6 +160,12 @@ pub enum CliBrokerResponse {
     GenerationRootsTransitioned(RootSetTransitionReport),
     /// Stable redacted refusal from protected generation root transition.
     GenerationRootTransitionRefused(GenerationRootTransitionErrorCode),
+    /// One authenticated generation root set was removed or already absent.
+    GenerationRootsRemoved,
+    /// Stable redacted refusal from protected generation root removal.
+    GenerationRootRemovalRefused(GenerationRootRemovalErrorCode),
+    /// Exclusive broker GC admission is retained until completion or cancellation.
+    GcAdmissionAcquired,
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -188,6 +198,32 @@ pub enum GenerationRootTransitionErrorCode {
     Cancelled,
     /// Other private authority state refused the request without more detail.
     AuthorityUnavailable,
+}
+
+/// Stable redacted generation-root removal refusal categories exposed to the CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationRootRemovalErrorCode {
+    /// The handle or typed generation did not authorize a GC mutation.
+    InvalidIntent,
+    /// The fixed privileged helper failed to remove the root set.
+    RemovalFailed,
+    /// Operation lifecycle cancellation stopped the removal.
+    Cancelled,
+    /// Admission or private authority was unavailable without more detail.
+    AuthorityUnavailable,
+}
+
+impl GenerationRootRemovalErrorCode {
+    /// Returns the stable wire code.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidIntent => "invalid_intent",
+            Self::RemovalFailed => "removal_failed",
+            Self::Cancelled => "cancelled",
+            Self::AuthorityUnavailable => "authority_unavailable",
+        }
+    }
 }
 
 impl GenerationRootTransitionErrorCode {
@@ -433,6 +469,19 @@ impl ProductFrameCodec {
                         .collect(),
                 })?,
             ),
+            CliBrokerRequest::RemoveGenerationRoots(handle, generation) => (
+                22,
+                encode_json(&GenerationRootRemovalWire {
+                    handle: handle.as_str(),
+                    generation: generation.as_str(),
+                })?,
+            ),
+            CliBrokerRequest::AcquireGc(handle) => (
+                23,
+                encode_json(&HandleWire {
+                    handle: handle.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -445,7 +494,7 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 | 4 | 10 | 16 | 17 => {
+            2 | 3 | 4 | 10 | 16 | 17 | 23 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
                 match frame.method {
@@ -455,6 +504,7 @@ impl ProductFrameCodec {
                     10 => CliBrokerRequest::Version(handle),
                     16 => CliBrokerRequest::Gc(handle),
                     17 => CliBrokerRequest::GetBuildPreview(handle),
+                    23 => CliBrokerRequest::AcquireGc(handle),
                     _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
                 }
             }
@@ -528,6 +578,14 @@ impl ProductFrameCodec {
                 CliBrokerRequest::TransitionGenerationRoots(
                     parse_handle(&wire.handle)?,
                     wire.promote()?,
+                )
+            }
+            22 => {
+                let wire: GenerationRootRemovalOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::RemoveGenerationRoots(
+                    parse_handle(&wire.handle)?,
+                    GenerationId::new(&wire.generation)
+                        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
                 )
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
@@ -624,6 +682,14 @@ impl ProductFrameCodec {
                     error: code.as_str(),
                 })?,
             ),
+            CliBrokerResponse::GenerationRootsRemoved => (22, encode_json(&EmptyWire {})?),
+            CliBrokerResponse::GenerationRootRemovalRefused(code) => (
+                22,
+                encode_json(&GenerationRootRemovalFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
+            CliBrokerResponse::GcAdmissionAcquired => (23, encode_json(&EmptyWire {})?),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -668,6 +734,14 @@ impl ProductFrameCodec {
             return Ok((
                 frame.request_id,
                 CliBrokerResponse::GenerationRootTransitionRefused(code),
+            ));
+        }
+        if frame.method == 22
+            && let Some(code) = decode_generation_root_removal_failure(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::GenerationRootRemovalRefused(code),
             ));
         }
         let response = match frame.method {
@@ -741,6 +815,14 @@ impl ProductFrameCodec {
             21 => CliBrokerResponse::GenerationRootsTransitioned(
                 decode_json::<RootSetTransitionReportOwnedWire>(frame.payload)?.promote()?,
             ),
+            22 => {
+                let _: EmptyWire = decode_json(frame.payload)?;
+                CliBrokerResponse::GenerationRootsRemoved
+            }
+            23 => {
+                let _: EmptyWire = decode_json(frame.payload)?;
+                CliBrokerResponse::GcAdmissionAcquired
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -1058,6 +1140,15 @@ fn decode_generation_root_transition_failure(
     parse_generation_root_transition_error_code(&wire.error).map(Some)
 }
 
+fn decode_generation_root_removal_failure(
+    bytes: &[u8],
+) -> Result<Option<GenerationRootRemovalErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<GenerationRootRemovalFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_generation_root_removal_error_code(&wire.error).map(Some)
+}
+
 fn parse_build_execution_error_code(value: &str) -> Result<BuildExecutionErrorCode, FrameError> {
     match value {
         "approval_unavailable" => Ok(BuildExecutionErrorCode::ApprovalUnavailable),
@@ -1090,6 +1181,18 @@ fn parse_generation_root_transition_error_code(
         "transition_failed" => Ok(GenerationRootTransitionErrorCode::TransitionFailed),
         "cancelled" => Ok(GenerationRootTransitionErrorCode::Cancelled),
         "authority_unavailable" => Ok(GenerationRootTransitionErrorCode::AuthorityUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+fn parse_generation_root_removal_error_code(
+    value: &str,
+) -> Result<GenerationRootRemovalErrorCode, FrameError> {
+    match value {
+        "invalid_intent" => Ok(GenerationRootRemovalErrorCode::InvalidIntent),
+        "removal_failed" => Ok(GenerationRootRemovalErrorCode::RemovalFailed),
+        "cancelled" => Ok(GenerationRootRemovalErrorCode::Cancelled),
+        "authority_unavailable" => Ok(GenerationRootRemovalErrorCode::AuthorityUnavailable),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
     }
 }
@@ -1280,6 +1383,18 @@ struct GenerationRootTransitionFailureOwnedWire {
 
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
+struct GenerationRootRemovalFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GenerationRootRemovalFailureOwnedWire {
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
 struct HandleBodyWire<'a> {
     handle: &'a str,
     request: &'a RawValue,
@@ -1421,6 +1536,20 @@ impl GenerationRootTransitionOwnedWire {
         RootSetTransitionIntent::new(source_generation, destination_generation, retained_names)
             .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GenerationRootRemovalWire<'a> {
+    handle: &'a str,
+    generation: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GenerationRootRemovalOwnedWire {
+    handle: String,
+    generation: String,
 }
 
 #[derive(Serialize)]
@@ -2210,18 +2339,73 @@ mod tests {
                 Ok((13, response))
             );
         }
-        let complete =
-            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
-        let encoded = ProductFrameCodec::encode_cli_request(14, &complete).unwrap();
+        let removal = CliBrokerRequest::RemoveGenerationRoots(
+            OperationHandle(format!("op_{}", "9".repeat(64))),
+            GenerationId::new("gen-0007").unwrap(),
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(14, &removal).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("generation"));
+        for forbidden in ["ownerUid", "/nix/", "path", "target"] {
+            assert!(!wire.contains(forbidden), "removal exposed {forbidden}");
+        }
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&encoded),
-            Ok((14, complete))
+            Ok((14, removal))
         );
         let encoded =
-            ProductFrameCodec::encode_cli_response(14, &CliBrokerResponse::Completed).unwrap();
+            ProductFrameCodec::encode_cli_response(14, &CliBrokerResponse::GenerationRootsRemoved)
+                .unwrap();
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
-            Ok((14, CliBrokerResponse::Completed))
+            Ok((14, CliBrokerResponse::GenerationRootsRemoved))
+        );
+        for code in [
+            GenerationRootRemovalErrorCode::InvalidIntent,
+            GenerationRootRemovalErrorCode::RemovalFailed,
+            GenerationRootRemovalErrorCode::Cancelled,
+            GenerationRootRemovalErrorCode::AuthorityUnavailable,
+        ] {
+            let response = CliBrokerResponse::GenerationRootRemovalRefused(code);
+            let encoded = ProductFrameCodec::encode_cli_response(14, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((14, response))
+            );
+        }
+        let acquire_gc =
+            CliBrokerRequest::AcquireGc(OperationHandle(format!("op_{}", "a".repeat(64))));
+        let encoded = ProductFrameCodec::encode_cli_request(15, &acquire_gc).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        for forbidden in ["ownerUid", "generation", "/nix/", "path", "target"] {
+            assert!(
+                !wire.contains(forbidden),
+                "GC admission exposed {forbidden}"
+            );
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((15, acquire_gc))
+        );
+        let encoded =
+            ProductFrameCodec::encode_cli_response(15, &CliBrokerResponse::GcAdmissionAcquired)
+                .unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((15, CliBrokerResponse::GcAdmissionAcquired))
+        );
+        let complete =
+            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
+        let encoded = ProductFrameCodec::encode_cli_request(16, &complete).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((16, complete))
+        );
+        let encoded =
+            ProductFrameCodec::encode_cli_response(16, &CliBrokerResponse::Completed).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((16, CliBrokerResponse::Completed))
         );
 
         let helper = BrokerHelperRequest::PublishRootSet(root_set());

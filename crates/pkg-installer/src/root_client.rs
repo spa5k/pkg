@@ -6,8 +6,8 @@ use nix::{
     poll::{PollFd, PollFlags, PollTimeout, poll},
 };
 use pkg_nix::{
-    BrokerHelperRequest, BrokerHelperResponse, ProductFrameCodec, RootSet, RootSetReport,
-    RootSetTransitionReport, RootSetTransitionRequest,
+    BrokerHelperRequest, BrokerHelperResponse, ProductFrameCodec, RemoveRootSetRequest, RootSet,
+    RootSetReport, RootSetTransitionReport, RootSetTransitionRequest,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
@@ -31,10 +31,10 @@ const DEFAULT_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
 #[cfg(target_os = "macos")]
 const DEFAULT_HELPER_SOCKET: &str = "/Library/Application Support/pkg/run/helper/root-helper.sock";
 
-/// Fixed-policy client for durable root publication and source-derived transitions.
+/// Fixed-policy client for durable root publication, removal, and transitions.
 ///
 /// It deliberately does not implement the wider maintenance contract: repair
-/// and root removal have separate lifecycle and timeout requirements.
+/// has separate lifecycle and timeout requirements.
 pub struct RootHelperClient {
     endpoint: Option<PathBuf>,
     expected_uid: u32,
@@ -138,6 +138,44 @@ impl RootHelperClient {
         }
         match response {
             BrokerHelperResponse::RootSetTransitioned(report) => Ok(report),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    /// Removes one path-free, authenticated generation root set over a fresh
+    /// helper connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport error unless the helper authenticates as
+    /// root and returns the exact correlated idempotent removal response.
+    pub fn remove_root_set(
+        &self,
+        request: &RemoveRootSetRequest,
+    ) -> Result<(), HelperTransportError> {
+        let mut stream = self.connect()?;
+        let frame = ProductFrameCodec::encode_helper_request(
+            REQUEST_ID,
+            &BrokerHelperRequest::RemoveRootSet(request.clone()),
+        )
+        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
+        write_all_until(&mut stream, &frame, deadline)?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        let response = read_frame(&mut stream, deadline)?;
+        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        if response_id != REQUEST_ID {
+            return Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            ));
+        }
+        match response {
+            BrokerHelperResponse::RootSetRemoved => Ok(()),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
             )),
@@ -347,6 +385,12 @@ mod tests {
                     )
                     .map(BrokerHelperResponse::RootSetTransitioned)
                 }
+                BrokerHelperRequest::RemoveRootSet(request) => {
+                    self.0
+                        .for_caller(request.owner_uid())
+                        .remove_root_set(&request)?;
+                    Ok(BrokerHelperResponse::RootSetRemoved)
+                }
                 _ => Err(MaintenanceError::backend_failure()),
             }
         }
@@ -429,6 +473,35 @@ mod tests {
                 .as_str()
                 .ends_with("/1001/gen-0008")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_client_round_trips_only_path_free_root_removal() -> Result<(), Box<dyn Error>> {
+        let temporary = TempDir::new()?;
+        let endpoint = temporary.path().join("root-helper.sock");
+        let listener = UnixListener::bind(&endpoint)?;
+        let broker_uid = Uid::effective().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        authenticated
+            .for_caller(1001)
+            .publish_root_set(&root_set())?;
+        let worker = thread::spawn(move || {
+            let (stream, _) = listener.accept().map_err(|_| {
+                HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
+            })?;
+            serve_helper_connection(stream, broker_uid, &RootDispatch(authenticated))
+        });
+        let client = RootHelperClient::at(endpoint, broker_uid);
+        let request = RemoveRootSetRequest::new(1001, GenerationId::new("gen-0007")?);
+
+        let removed = client.remove_root_set(&request);
+        let served = worker
+            .join()
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
+        assert_eq!(served.map_err(HelperTransportError::code), Ok(()));
+        assert_eq!(removed, Ok(()));
         Ok(())
     }
 

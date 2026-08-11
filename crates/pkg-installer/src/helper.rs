@@ -1,6 +1,7 @@
 //! Authenticated Unix broker-to-helper framed transport.
 
 use crate::platform::{authenticate_broker, linux::LinuxRootSetStore};
+use nix::unistd::{Uid, User};
 use nix::{
     errno::Errno,
     poll::{PollFd, PollFlags, PollTimeout, poll},
@@ -11,6 +12,7 @@ use pkg_nix::{
     ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest, RootSet,
     RootSetTransitionRequest, VerifiedRepairScope,
 };
+use pkg_store::{StateLayout, authorize_generation_root_removal};
 use std::{
     collections::BTreeMap,
     error::Error,
@@ -86,6 +88,7 @@ pub struct LinuxHelperSession {
     roots: LinuxRootSetStore,
     root_transactions: Mutex<()>,
     capability_owners: Mutex<BTreeMap<MaintenanceCapability, u32>>,
+    authorize_removal: fn(&RemoveRootSetRequest) -> Result<(), MaintenanceError>,
 }
 
 impl fmt::Debug for LinuxHelperSession {
@@ -103,6 +106,18 @@ impl LinuxHelperSession {
             roots,
             root_transactions: Mutex::new(()),
             capability_owners: Mutex::new(BTreeMap::new()),
+            authorize_removal: authorize_production_removal,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_for_test(authenticated: AuthenticatedHelper, roots: LinuxRootSetStore) -> Self {
+        Self {
+            authenticated,
+            roots,
+            root_transactions: Mutex::new(()),
+            capability_owners: Mutex::new(BTreeMap::new()),
+            authorize_removal: |_| Ok(()),
         }
     }
 
@@ -125,6 +140,7 @@ impl LinuxHelperSession {
 
     fn remove(&self, request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {
         let _transaction = lock_recover(&self.root_transactions);
+        (self.authorize_removal)(request)?;
         self.caller(request.owner_uid()).remove_root_set(request)?;
         self.roots.remove(request).map_err(|_| platform_failure())
     }
@@ -204,6 +220,24 @@ impl LinuxHelperSession {
             .ok_or_else(platform_failure)?;
         self.caller(owner_uid).repair_store_paths(request)
     }
+}
+
+fn authorize_production_removal(request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {
+    let user = User::from_uid(Uid::from_raw(request.owner_uid()))
+        .map_err(|_| platform_failure())?
+        .ok_or_else(platform_failure)?;
+    let home = user.dir;
+    if !home.is_absolute() {
+        return Err(platform_failure());
+    }
+    let state_root = match std::env::consts::OS {
+        "linux" => home.join(".local/share/pkg"),
+        "macos" => home.join("Library/Application Support/pkg"),
+        _ => return Err(platform_failure()),
+    };
+    let layout = StateLayout::open(&home, &state_root, request.owner_uid())
+        .map_err(|_| platform_failure())?;
+    authorize_generation_root_removal(&layout, request.generation()).map_err(|_| platform_failure())
 }
 
 impl BrokerHelperDispatch for LinuxHelperSession {
@@ -486,7 +520,7 @@ mod tests {
         let helper = InProcessHelper::new(broker_uid)?;
         let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
-        let dispatcher = Arc::new(LinuxHelperSession::new(authenticated, root_store));
+        let dispatcher = Arc::new(LinuxHelperSession::new_for_test(authenticated, root_store));
         let request_roots = roots()?;
         let encoded = ProductFrameCodec::encode_helper_request(
             7,
@@ -664,13 +698,13 @@ mod tests {
         let helper = InProcessHelper::new(broker_uid)?;
         let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
-        let first = LinuxHelperSession::new(authenticated, root_store.clone());
+        let first = LinuxHelperSession::new_for_test(authenticated, root_store.clone());
         let roots = roots()?;
         first.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
 
         let replacement = InProcessHelper::new(broker_uid)?;
         let authenticated = replacement.connect(InProcessPeer::authenticated_uid(broker_uid))?;
-        let restarted = LinuxHelperSession::new(authenticated, root_store);
+        let restarted = LinuxHelperSession::new_for_test(authenticated, root_store);
         let scope = VerifiedRepairScope::new(
             roots.owner_uid(),
             roots.generation().clone(),
@@ -693,7 +727,7 @@ mod tests {
         let helper = InProcessHelper::new(broker_uid)?;
         let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
-        let session = LinuxHelperSession::new(authenticated, root_store.clone());
+        let session = LinuxHelperSession::new_for_test(authenticated, root_store.clone());
         let source = transition_source()?;
         session.dispatch(BrokerHelperRequest::PublishRootSet(source.clone()))?;
 
@@ -779,7 +813,7 @@ mod tests {
         let helper = InProcessHelper::new(broker_uid)?;
         let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
-        let session = LinuxHelperSession::new(authenticated, root_store);
+        let session = LinuxHelperSession::new_for_test(authenticated, root_store);
         let roots = roots()?;
         session.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
         helper.restart()?;
@@ -809,7 +843,10 @@ mod tests {
         let helper = InProcessHelper::new(broker_uid)?;
         let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
-        let session = Arc::new(LinuxHelperSession::new(authenticated, root_store.clone()));
+        let session = Arc::new(LinuxHelperSession::new_for_test(
+            authenticated,
+            root_store.clone(),
+        ));
         let roots = roots()?;
         session.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
 

@@ -10,10 +10,11 @@ use nix::{
 use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
-    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest,
-    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
-    MaintenanceError, MethodKind, NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
+    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest, GenerationId,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
+    InProcessBroker, InProcessCallerPeer, MaintenanceError, MethodKind, NixAdapter,
+    NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
+    RootSetTransitionIntent, RootSetTransitionReport,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
 use std::{
@@ -203,6 +204,13 @@ trait RootAuthorityDispatch: Send + Sync {
         handle: &OperationHandle,
         intent: RootSetTransitionIntent,
     ) -> Result<RootSetTransitionReport, BrokerErrorCode>;
+
+    fn remove(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        generation: GenerationId,
+    ) -> Result<(), BrokerErrorCode>;
 }
 
 impl RootAuthorityDispatch for RootHelperClient {
@@ -229,6 +237,20 @@ impl RootAuthorityDispatch for RootHelperClient {
         caller
             .transition_root_intent(handle, intent, |request| {
                 self.transition_root_set(&request)
+                    .map_err(|_| MaintenanceError::backend_failure())
+            })
+            .map_err(pkg_nix::BrokerError::code)
+    }
+
+    fn remove(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        generation: GenerationId,
+    ) -> Result<(), BrokerErrorCode> {
+        caller
+            .remove_generation_root_intent(handle, generation, |request| {
+                self.remove_root_set(request)
                     .map_err(|_| MaintenanceError::backend_failure())
             })
             .map_err(pkg_nix::BrokerError::code)
@@ -388,10 +410,8 @@ fn dispatch_request(
             ))
         }
         CliBrokerRequest::Gc(handle) => dispatch_gc(caller, adapter, &handle),
-        CliBrokerRequest::GetBuildPreview(handle) => caller
-            .build_preview(&handle)
-            .map(CliBrokerResponse::BuildPreview)
-            .map_err(|_| ()),
+        CliBrokerRequest::AcquireGc(handle) => gc_admission_response(caller, &handle),
+        CliBrokerRequest::GetBuildPreview(handle) => build_preview_response(caller, &handle),
         CliBrokerRequest::PrepareBuild(handle, selectors) => authority
             .ok_or(())?
             .prepare(selectors, caller, &handle)
@@ -405,6 +425,75 @@ fn dispatch_request(
         CliBrokerRequest::TransitionGenerationRoots(handle, intent) => Ok(
             generation_root_transition_response(roots, caller, &handle, intent),
         ),
+        CliBrokerRequest::RemoveGenerationRoots(handle, generation) => Ok(
+            generation_root_removal_response(roots, caller, &handle, generation),
+        ),
+    }
+}
+
+fn gc_admission_response(
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .acquire_gc_wait(handle)
+        .map(|()| CliBrokerResponse::GcAdmissionAcquired)
+        .map_err(|_| ())
+}
+
+fn build_preview_response(
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .build_preview(handle)
+        .map(CliBrokerResponse::BuildPreview)
+        .map_err(|_| ())
+}
+
+fn generation_root_removal_response(
+    roots: Option<&dyn RootAuthorityDispatch>,
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    generation: GenerationId,
+) -> CliBrokerResponse {
+    roots.map_or(
+        CliBrokerResponse::GenerationRootRemovalRefused(
+            GenerationRootRemovalErrorCode::AuthorityUnavailable,
+        ),
+        |roots| match roots.remove(caller, handle, generation) {
+            Ok(()) => CliBrokerResponse::GenerationRootsRemoved,
+            Err(code) => CliBrokerResponse::GenerationRootRemovalRefused(
+                map_generation_root_removal_error(code),
+            ),
+        },
+    )
+}
+
+const fn map_generation_root_removal_error(
+    code: BrokerErrorCode,
+) -> GenerationRootRemovalErrorCode {
+    match code {
+        BrokerErrorCode::InvalidAdmissionTransition => {
+            GenerationRootRemovalErrorCode::InvalidIntent
+        }
+        BrokerErrorCode::RootPublicationFailed => GenerationRootRemovalErrorCode::RemovalFailed,
+        BrokerErrorCode::AdmissionCancelled => GenerationRootRemovalErrorCode::Cancelled,
+        BrokerErrorCode::UnauthenticatedCaller
+        | BrokerErrorCode::SessionRestarted
+        | BrokerErrorCode::InvalidOperationHandle
+        | BrokerErrorCode::OperationExpired
+        | BrokerErrorCode::AdmissionBusy
+        | BrokerErrorCode::InvalidBuildPlan
+        | BrokerErrorCode::BuildApprovalMismatch
+        | BrokerErrorCode::BuildApprovalUnavailable
+        | BrokerErrorCode::BuildApprovalInvalidated
+        | BrokerErrorCode::BuildResourcePreflightFailed
+        | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::InvalidChildPolicy
+        | BrokerErrorCode::EntropyUnavailable => {
+            GenerationRootRemovalErrorCode::AuthorityUnavailable
+        }
     }
 }
 
@@ -879,6 +968,52 @@ mod tests {
         ) -> Result<RootSetTransitionReport, BrokerErrorCode> {
             Err(self.0)
         }
+
+        fn remove(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _generation: GenerationId,
+        ) -> Result<(), BrokerErrorCode> {
+            Err(self.0)
+        }
+    }
+
+    struct AcceptingRootRemoval;
+
+    impl RootAuthorityDispatch for AcceptingRootRemoval {
+        fn publish(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _intent: RootSetIntent,
+        ) -> Result<RootSetReport, BrokerErrorCode> {
+            Err(BrokerErrorCode::InvalidAdmissionTransition)
+        }
+
+        fn transition(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _intent: RootSetTransitionIntent,
+        ) -> Result<RootSetTransitionReport, BrokerErrorCode> {
+            Err(BrokerErrorCode::InvalidAdmissionTransition)
+        }
+
+        fn remove(
+            &self,
+            caller: &AuthenticatedCaller,
+            handle: &OperationHandle,
+            generation: GenerationId,
+        ) -> Result<(), BrokerErrorCode> {
+            caller
+                .remove_generation_root_intent(handle, generation, |request| {
+                    assert_eq!(request.owner_uid(), 1001);
+                    assert_eq!(request.generation().as_str(), "gen-0007");
+                    Ok(())
+                })
+                .map_err(pkg_nix::BrokerError::code)
+        }
     }
 
     fn root_intent() -> RootSetIntent {
@@ -1235,5 +1370,86 @@ mod tests {
         );
         assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+    }
+
+    #[test]
+    fn generation_root_removal_injects_uid_and_retains_gc_admission() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Gc).unwrap();
+        let generation = || GenerationId::new("gen-0007").unwrap();
+
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::RemoveGenerationRoots(handle.clone(), generation()),
+                None,
+                None,
+                None,
+                Some(&AcceptingRootRemoval),
+            ),
+            Ok(CliBrokerResponse::GenerationRootsRemoved)
+        );
+        assert!(broker.admission_snapshot().gc_held());
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::RemoveGenerationRoots(handle.clone(), generation()),
+                None,
+                None,
+                None,
+                Some(&AcceptingRootRemoval),
+            ),
+            Ok(CliBrokerResponse::GenerationRootsRemoved)
+        );
+        assert!(broker.admission_snapshot().gc_held());
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Complete(handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Completed)
+        );
+        assert!(!broker.admission_snapshot().gc_held());
+    }
+
+    #[test]
+    fn explicit_gc_admission_is_retained_until_completion() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Gc).unwrap();
+
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::AcquireGc(handle.clone()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::GcAdmissionAcquired)
+        );
+        assert!(broker.admission_snapshot().gc_held());
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Complete(handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Completed)
+        );
+        assert!(!broker.admission_snapshot().gc_held());
     }
 }

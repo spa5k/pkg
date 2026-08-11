@@ -1,8 +1,9 @@
 //! Production command adapter over the invoking user's verified local state.
 
 use std::fs::File;
-use std::io::Read;
-use std::path::Path;
+use std::io::{self, IsTerminal, Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::broker::BrokerLifecycleClient;
@@ -17,29 +18,69 @@ use crate::commands::state::{
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
 use pkg_core::{History, PinAction};
-use pkg_nix::BrokerOperationKind;
+use pkg_nix::{
+    BrokerOperationKind, MaintenanceAdapter, MaintenanceError, OperationHandle,
+    RemoveRootSetRequest, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetReport,
+};
 use pkg_pipeline::{
     CommitError, StateEditKind, StateEditMetadata, discard_unprepared_state_edits,
     load_active_snapshot, load_retained_history, pending_state_edit_generation,
     pending_state_transition_source, prepare_rollback, prepare_state_edit,
     recover_transitioned_state_edit, resume_prepared_state_edit,
 };
-use pkg_store::{LeaseError, LeaseIdentity, StateLayout, StateLease};
+use pkg_store::{
+    GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
+    plan_generation_prune, prune_generation, recover_prunes,
+};
+use serde_json::{Map, json};
+
+const DEFAULT_KEEP_GENERATIONS: usize = 10;
+const DEFAULT_MAX_AGE_DAYS: u64 = 30;
+
+struct BrokerGcMaintenance<'a> {
+    broker: Mutex<&'a mut BrokerLifecycleClient>,
+    handle: OperationHandle,
+}
+
+impl MaintenanceAdapter for BrokerGcMaintenance<'_> {
+    fn publish_root_set(&self, _root_set: &RootSet) -> Result<RootSetReport, MaintenanceError> {
+        Err(MaintenanceError::backend_failure())
+    }
+
+    fn remove_root_set(&self, request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {
+        self.broker
+            .lock()
+            .map_err(|_| MaintenanceError::backend_failure())?
+            .remove_generation_roots(self.handle.clone(), request.generation().clone())
+            .map_err(|_| MaintenanceError::backend_failure())
+    }
+
+    fn repair_store_paths(
+        &self,
+        _request: &RepairStorePathsRequest,
+    ) -> Result<RepairStorePathsReport, MaintenanceError> {
+        Err(MaintenanceError::backend_failure())
+    }
+}
 
 /// Shipped command operations backed by one ownership-validated user state.
 ///
-/// Read-only lifecycle commands are live. Mutating and authenticated-index
-/// commands remain explicit closed refusals until their complete transaction
-/// coordinators are connected; they never fall through to raw Nix access.
+/// Read-only state, state-only generation edits, rollback, and GC are live.
+/// Install/upgrade/repair and authenticated-index commands remain explicit
+/// closed refusals until their transaction coordinators are connected; no
+/// command can fall through to raw Nix access.
 #[derive(Debug)]
 pub struct LocalStateOperations {
     source: Result<StateLayout, CommandError>,
+    broker_state_compatible: bool,
 }
 
 impl LocalStateOperations {
     /// Opens a state root beneath the caller's trusted home boundary.
     #[must_use]
     pub fn open(trusted_home: &Path, state_root: &Path, owner_uid: u32) -> Self {
+        let broker_state_compatible =
+            production_state_root(trusted_home).is_some_and(|production| production == state_root);
         let source = StateLayout::initialize(trusted_home, state_root, owner_uid).map_err(|_| {
             CommandError::new(
                 ExitCode::StateCorrupt,
@@ -47,7 +88,10 @@ impl LocalStateOperations {
                 "run `pkg doctor` before managing packages",
             )
         });
-        Self { source }
+        Self {
+            source,
+            broker_state_compatible,
+        }
     }
 
     fn layout(&self) -> Result<&StateLayout, CommandError> {
@@ -72,6 +116,18 @@ impl LocalStateOperations {
         let layout = self.layout()?;
         let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
         load_retained_history(layout, &lease).map_err(state_read_error)
+    }
+
+    fn require_broker_state(&self) -> Result<(), CommandError> {
+        if self.broker_state_compatible {
+            Ok(())
+        } else {
+            Err(CommandError::new(
+                ExitCode::Config,
+                "broker-backed mutations require the fixed production state root",
+                "remove `--state` and PKG_STATE_DIR, then retry the mutation",
+            ))
+        }
     }
 }
 
@@ -102,6 +158,10 @@ impl CoreOperations for LocalStateOperations {
                 .into_parts()
                 .1);
         }
+        require_confirmation(
+            policy,
+            &format!("Remove {} package(s)?", args.packages().len()),
+        )?;
         self.commit_state_edit(StateEditKind::Remove, |state| remove_state(state, args))
     }
 
@@ -149,8 +209,15 @@ impl CoreOperations for LocalStateOperations {
     fn history(
         &mut self,
         args: &HistoryArgs,
-        _policy: OperationPolicy,
+        policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
+        if args.delete().is_some() {
+            return if policy.dry_run() {
+                self.preview_history_delete(args)
+            } else {
+                self.commit_history_delete(args, policy)
+            };
+        }
         read_history(&self.history_view()?, args)
     }
 
@@ -173,10 +240,14 @@ impl CoreOperations for LocalStateOperations {
 
     fn gc(
         &mut self,
-        _args: &GcArgs,
-        _policy: OperationPolicy,
+        args: &GcArgs,
+        policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        Err(mutation_unavailable())
+        if policy.dry_run() {
+            self.preview_gc(args)
+        } else {
+            self.commit_gc(args, policy)
+        }
     }
 
     fn repair(
@@ -189,9 +260,142 @@ impl CoreOperations for LocalStateOperations {
 }
 
 impl LocalStateOperations {
-    fn commit_rollback(&self, args: &RollbackArgs) -> Result<CommandResult, CommandError> {
+    fn preview_history_delete(&self, args: &HistoryArgs) -> Result<CommandResult, CommandError> {
+        let generation = args.delete().ok_or_else(mutation_failed)?;
+        let layout = self.layout()?;
+        let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
+        let active = load_active_snapshot(layout, &lease)
+            .map_err(state_read_error)?
+            .ok_or_else(no_active_generation)?;
+        let history = load_retained_history(layout, &lease).map_err(state_read_error)?;
+        ensure_generation_deletable(&active, &history, generation)?;
+        let candidate =
+            plan_generation_prune(&active, history.snapshots(), generation, unix_now()?)
+                .map_err(|_| gc_failed())?;
+        generation_prune_result(candidate.generation_id(), true)
+    }
+
+    fn commit_history_delete(
+        &self,
+        args: &HistoryArgs,
+        policy: OperationPolicy,
+    ) -> Result<CommandResult, CommandError> {
+        self.require_broker_state()?;
+        let generation = args.delete().ok_or_else(mutation_failed)?;
         let layout = self.layout()?.clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
+        self.recover_pending_state_edit(&layout, &mut broker)?;
+        if recovered.iter().any(|id| id == generation) {
+            return generation_prune_result(generation, false);
+        }
+        let handle = broker
+            .begin(BrokerOperationKind::Gc)
+            .map_err(broker_error)?;
+        let result = (|| {
+            let lease = self.gc_lease(&layout, &handle)?;
+            let active = load_active_snapshot(&layout, &lease)
+                .map_err(state_read_error)?
+                .ok_or_else(no_active_generation)?;
+            let history = load_retained_history(&layout, &lease).map_err(state_read_error)?;
+            ensure_generation_deletable(&active, &history, generation)?;
+            let candidate =
+                plan_generation_prune(&active, history.snapshots(), generation, unix_now()?)
+                    .map_err(|_| gc_failed())?;
+            require_confirmation(policy, &format!("Prune generation {generation}?"))?;
+            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
+            let maintenance = BrokerGcMaintenance {
+                broker: Mutex::new(&mut broker),
+                handle: handle.clone(),
+            };
+            prune_generation(&layout, &lease, &candidate, &maintenance, handle.as_str())
+                .map_err(gc_error)?;
+            drop(maintenance);
+            let _ = broker.complete(handle.clone());
+            generation_prune_result(candidate.generation_id(), false)
+        })();
+        if result.is_err() {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+
+    fn preview_gc(&self, args: &GcArgs) -> Result<CommandResult, CommandError> {
+        let layout = self.layout()?;
+        let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
+        let active = load_active_snapshot(layout, &lease)
+            .map_err(state_read_error)?
+            .ok_or_else(no_active_generation)?;
+        let history = load_retained_history(layout, &lease).map_err(state_read_error)?;
+        let plan = plan_gc(&active, history.snapshots(), gc_policy(args)?, unix_now()?)
+            .map_err(|_| gc_failed())?;
+        gc_preview_result(&plan)
+    }
+
+    fn commit_gc(
+        &self,
+        args: &GcArgs,
+        policy: OperationPolicy,
+    ) -> Result<CommandResult, CommandError> {
+        self.require_broker_state()?;
+        let layout = self.layout()?.clone();
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
+        self.recover_pending_state_edit(&layout, &mut broker)?;
+        let handle = broker
+            .begin(BrokerOperationKind::Gc)
+            .map_err(broker_error)?;
+        let result = (|| {
+            let lease = self.gc_lease(&layout, &handle)?;
+            let active = load_active_snapshot(&layout, &lease)
+                .map_err(state_read_error)?
+                .ok_or_else(no_active_generation)?;
+            let history = load_retained_history(&layout, &lease).map_err(state_read_error)?;
+            let plan = plan_gc(&active, history.snapshots(), gc_policy(args)?, unix_now()?)
+                .map_err(|_| gc_failed())?;
+            require_gc_confirmation(policy, &plan)?;
+            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
+            let maintenance = BrokerGcMaintenance {
+                broker: Mutex::new(&mut broker),
+                handle: handle.clone(),
+            };
+            let mut pruned = Vec::new();
+            for candidate in plan.candidates() {
+                if prune_generation(&layout, &lease, candidate, &maintenance, handle.as_str())
+                    .map_err(gc_error)?
+                    == PruneOutcome::Pruned
+                {
+                    pruned.push(candidate.generation_id().to_owned());
+                }
+            }
+            drop(maintenance);
+            let report = broker.gc(handle.clone()).map_err(broker_error)?;
+            let _ = broker.complete(handle.clone());
+            gc_run_result(&pruned, &recovered, &report)
+        })();
+        if result.is_err() {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+
+    fn gc_lease(
+        &self,
+        layout: &StateLayout,
+        handle: &OperationHandle,
+    ) -> Result<StateLease, CommandError> {
+        let nonce = secure_nonce()?;
+        let created_at = utc_now()?;
+        let identity =
+            LeaseIdentity::new(handle.as_str(), &nonce, &created_at).map_err(state_lease_error)?;
+        StateLease::try_exclusive(layout, &identity).map_err(state_lease_error)
+    }
+
+    fn commit_rollback(&self, args: &RollbackArgs) -> Result<CommandResult, CommandError> {
+        self.require_broker_state()?;
+        let layout = self.layout()?.clone();
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        let _ = self.recover_pending_prunes(&layout, &mut broker)?;
         self.recover_pending_state_edit(&layout, &mut broker)?;
         let handle = broker
             .begin(BrokerOperationKind::Activate)
@@ -277,8 +481,10 @@ impl LocalStateOperations {
         kind: StateEditKind,
         edit: impl FnOnce(pkg_core::lifecycle::LifecycleState) -> Result<LifecycleEdit, CommandError>,
     ) -> Result<CommandResult, CommandError> {
+        self.require_broker_state()?;
         let layout = self.layout()?.clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        let _ = self.recover_pending_prunes(&layout, &mut broker)?;
         self.recover_pending_state_edit(&layout, &mut broker)?;
         let handle = broker
             .begin(BrokerOperationKind::Activate)
@@ -397,6 +603,202 @@ impl LocalStateOperations {
         }
         result
     }
+
+    fn recover_pending_prunes(
+        &self,
+        layout: &StateLayout,
+        broker: &mut BrokerLifecycleClient,
+    ) -> Result<Vec<String>, CommandError> {
+        let handle = broker
+            .begin(BrokerOperationKind::Gc)
+            .map_err(broker_error)?;
+        let result = (|| {
+            let lease = self.gc_lease(layout, &handle)?;
+            let maintenance = BrokerGcMaintenance {
+                broker: Mutex::new(&mut *broker),
+                handle: handle.clone(),
+            };
+            let recovered = recover_prunes(layout, &lease, &maintenance).map_err(gc_error)?;
+            drop(maintenance);
+            let _ = broker.complete(handle.clone());
+            Ok(recovered)
+        })();
+        if result.is_err() {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+}
+
+fn require_gc_confirmation(
+    policy: OperationPolicy,
+    plan: &pkg_store::GcPlan,
+) -> Result<(), CommandError> {
+    let generations = plan
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.generation_id())
+        .collect::<Vec<_>>()
+        .join(", ");
+    require_confirmation(
+        policy,
+        &format!(
+            "Prune {} generation(s) [{}] and run store GC (estimated reclaimable: {} bytes)?",
+            plan.candidates().len(),
+            generations,
+            plan.estimated_reclaimable_bytes()
+        ),
+    )
+}
+
+fn ensure_generation_deletable(
+    active: &pkg_core::GenerationSnapshot,
+    history: &History,
+    generation: &str,
+) -> Result<(), CommandError> {
+    if active.generation().id() == generation {
+        return Err(CommandError::new(
+            ExitCode::ResolveFailed,
+            "the active generation cannot be deleted",
+            "roll back or activate another generation first",
+        ));
+    }
+    if history
+        .snapshots()
+        .iter()
+        .all(|snapshot| snapshot.generation().id() != generation)
+    {
+        return Err(CommandError::new(
+            ExitCode::ResolveFailed,
+            "the requested generation does not exist",
+            "run `pkg history` to list retained generations",
+        ));
+    }
+    Ok(())
+}
+
+fn require_confirmation(policy: OperationPolicy, prompt: &str) -> Result<(), CommandError> {
+    if policy.yes() {
+        return Ok(());
+    }
+    let stdin = io::stdin();
+    let mut stderr = io::stderr();
+    if !stdin.is_terminal() || !stderr.is_terminal() {
+        return Err(confirmation_required());
+    }
+    write!(stderr, "{prompt} [y/N] ").map_err(|_| confirmation_required())?;
+    stderr.flush().map_err(|_| confirmation_required())?;
+    let mut answer = String::new();
+    stdin
+        .read_line(&mut answer)
+        .map_err(|_| confirmation_required())?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            ExitCode::Cancelled,
+            "the destructive operation was not approved",
+            "the newly requested mutation was not started",
+        ))
+    }
+}
+
+fn gc_policy(args: &GcArgs) -> Result<GcPolicy, CommandError> {
+    let keep_generations = args
+        .keep_generations()
+        .map_or(Ok(DEFAULT_KEEP_GENERATIONS), usize::try_from)
+        .map_err(|_| gc_failed())?;
+    let max_age_days = args.max_age_days().map_or(DEFAULT_MAX_AGE_DAYS, u64::from);
+    GcPolicy::new(keep_generations, max_age_days).map_err(|_| gc_failed())
+}
+
+fn gc_preview_result(plan: &pkg_store::GcPlan) -> Result<CommandResult, CommandError> {
+    let generations = plan
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.generation_id())
+        .collect::<Vec<_>>();
+    let records = generations
+        .iter()
+        .map(|generation| {
+            Map::from_iter([
+                ("type".into(), json!("generation_prune_preview")),
+                ("generation".into(), json!(generation)),
+            ])
+        })
+        .collect();
+    CommandResult::new(
+        format!("{} generation(s) would be pruned", generations.len()),
+        Map::from_iter([
+            ("dryRun".into(), json!(true)),
+            ("generations".into(), json!(generations)),
+            (
+                "estimatedReclaimableBytes".into(),
+                json!(plan.estimated_reclaimable_bytes()),
+            ),
+        ]),
+        records,
+    )
+    .map_err(|_| gc_failed())
+}
+
+fn gc_run_result(
+    pruned: &[String],
+    recovered: &[String],
+    report: &pkg_nix::GcReport,
+) -> Result<CommandResult, CommandError> {
+    let records = pruned
+        .iter()
+        .map(|generation| {
+            Map::from_iter([
+                ("type".into(), json!("generation_pruned")),
+                ("generation".into(), json!(generation)),
+            ])
+        })
+        .collect();
+    CommandResult::new(
+        format!(
+            "pruned {} generation(s); collected {} store path(s)",
+            pruned.len(),
+            report.collected().len()
+        ),
+        Map::from_iter([
+            ("prunedGenerations".into(), json!(pruned)),
+            ("recoveredGenerations".into(), json!(recovered)),
+            ("collectedPathCount".into(), json!(report.collected().len())),
+            ("freedBytes".into(), json!(report.freed_bytes())),
+        ]),
+        records,
+    )
+    .map_err(|_| gc_failed())
+}
+
+fn generation_prune_result(generation: &str, dry_run: bool) -> Result<CommandResult, CommandError> {
+    let action = if dry_run { "would be pruned" } else { "pruned" };
+    CommandResult::new(
+        format!("generation {generation} {action}"),
+        Map::from_iter([
+            ("generation".into(), json!(generation)),
+            ("dryRun".into(), json!(dry_run)),
+        ]),
+        vec![],
+    )
+    .map_err(|_| gc_failed())
+}
+
+fn unix_now() -> Result<u64, CommandError> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|_| mutation_failed())
+}
+
+fn production_state_root(home: &Path) -> Option<PathBuf> {
+    match std::env::consts::OS {
+        "linux" => Some(home.join(".local/share/pkg")),
+        "macos" => Some(home.join("Library/Application Support/pkg")),
+        _ => None,
+    }
 }
 
 fn secure_nonce() -> Result<String, CommandError> {
@@ -509,6 +911,38 @@ fn mutation_failed() -> CommandError {
     )
 }
 
+fn gc_failed() -> CommandError {
+    CommandError::new(
+        ExitCode::StateCorrupt,
+        "generation cleanup could not be completed safely",
+        "run `pkg doctor`, then retry the command",
+    )
+}
+
+fn gc_error(error: GcError) -> CommandError {
+    match error {
+        GcError::RootRemoval | GcError::Nix => CommandError::new(
+            ExitCode::EngineUnavailable,
+            "the managed package service could not complete cleanup",
+            "run `pkg doctor`, then retry the command",
+        ),
+        GcError::LeaseRequired => CommandError::new(
+            ExitCode::StateLocked,
+            "generation cleanup lost its exclusive state lease",
+            "wait for the active operation, then retry the command",
+        ),
+        _ => gc_failed(),
+    }
+}
+
+fn confirmation_required() -> CommandError {
+    CommandError::new(
+        ExitCode::AcquireNeedsApproval,
+        "the destructive operation requires confirmation",
+        "run interactively or pass `--yes` after reviewing a dry run",
+    )
+}
+
 fn index_unavailable() -> CommandError {
     CommandError::new(
         ExitCode::EngineUnavailable,
@@ -597,5 +1031,20 @@ mod tests {
             format_utc(1_787_528_645).as_deref(),
             Some("2026-08-23T23:44:05Z")
         );
+    }
+
+    #[test]
+    fn alternate_state_roots_are_read_only_for_broker_backed_mutations() {
+        let home = TempDir::new().unwrap();
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
+        let state = home.path().join("alternate");
+        let cli =
+            Cli::try_parse(["pkg", "gc", "--yes", "--state", state.to_str().unwrap()]).unwrap();
+        let mut engine = CoreEngine::new(LocalStateOperations::open(home.path(), &state, uid));
+
+        let error = engine.execute(&CommandRequest::from_cli(&cli)).unwrap_err();
+        assert_eq!(error.exit_code(), ExitCode::Config);
+        assert!(!state.join("journal/operations.jsonl").exists());
     }
 }

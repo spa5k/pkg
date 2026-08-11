@@ -185,6 +185,28 @@ pub fn plan_gc(
     })
 }
 
+/// Selects one explicit retired generation after validating the same archive
+/// invariants as retention GC.
+pub fn plan_generation_prune(
+    active: &GenerationSnapshot,
+    generations: &[GenerationSnapshot],
+    generation_id: &str,
+    now_unix_seconds: u64,
+) -> Result<PruneCandidate, GcError> {
+    GenerationId::new(generation_id).map_err(|_| GcError::InvalidArchive)?;
+    let validation_policy = GcPolicy::new(MAX_KEEP_GENERATIONS, MAX_AGE_DAYS)?;
+    let _ = plan_gc(active, generations, validation_policy, now_unix_seconds)?;
+    if active.generation().id() == generation_id {
+        return Err(GcError::CurrentChanged);
+    }
+    generations
+        .iter()
+        .find(|snapshot| snapshot.generation().id() == generation_id)
+        .cloned()
+        .map(|snapshot| PruneCandidate { snapshot })
+        .ok_or(GcError::InvalidArchive)
+}
+
 /// Result of one idempotent prune transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PruneOutcome {
@@ -242,7 +264,10 @@ pub fn prune_generation(
             .map_err(|_| GcError::Journal)?,
     }
     delete_user_generation(layout.state_root(), layout.owner_uid(), id)?;
-    refuse_active(layout, id)?;
+    authorize_generation_root_removal(
+        layout,
+        &GenerationId::new(id).map_err(|_| GcError::UnsafeState)?,
+    )?;
     remove_roots(layout, id, helper)?;
     journal
         .append(
@@ -301,7 +326,10 @@ pub fn recover_prunes(
     for (id, operation_id) in pending {
         refuse_active(layout, &id)?;
         delete_user_generation(layout.state_root(), layout.owner_uid(), &id)?;
-        refuse_active(layout, &id)?;
+        authorize_generation_root_removal(
+            layout,
+            &GenerationId::new(&id).map_err(|_| GcError::UnsafeState)?,
+        )?;
         remove_roots(layout, &id, helper)?;
         journal
             .append(
@@ -395,6 +423,8 @@ pub enum GcError {
     Journal,
     /// Privileged root removal was refused.
     RootRemoval,
+    /// User generation metadata still exists or `current` names the target.
+    PruneNotAuthorized,
     /// The broker-mediated Nix collector failed.
     Nix,
 }
@@ -450,6 +480,66 @@ fn refuse_active(layout: &StateLayout, generation_id: &str) -> Result<(), GcErro
         .is_some_and(|current| current.as_str() == generation_id)
     {
         return Err(GcError::CurrentChanged);
+    }
+    Ok(())
+}
+
+/// Revalidates the root-last authorization state immediately before a
+/// privileged helper removes one generation root set.
+///
+/// The active generation and every user-owned generation/activation artifact
+/// must already be absent. This lets the privileged helper independently
+/// reject a forged raw removal request without accepting a caller-selected
+/// path or trusting the CLI's earlier planning result.
+pub fn authorize_generation_root_removal(
+    layout: &StateLayout,
+    generation: &GenerationId,
+) -> Result<(), GcError> {
+    layout.validate().map_err(|_| GcError::UnsafeState)?;
+    if layout
+        .current_generation()
+        .map_err(|_| GcError::UnsafeState)?
+        .is_some_and(|current| current == *generation)
+    {
+        return Err(GcError::PruneNotAuthorized);
+    }
+    let id = generation.as_str();
+    for path in [
+        layout.state_root().join("activations").join(id),
+        layout
+            .state_root()
+            .join("activations")
+            .join(format!("{id}.staging")),
+        layout
+            .state_root()
+            .join("generations")
+            .join(format!("{id}.json")),
+        layout
+            .state_root()
+            .join("generations")
+            .join(format!("{id}.json.sha256")),
+        layout
+            .state_root()
+            .join("generations")
+            .join(format!("{id}.manifest.json")),
+        layout
+            .state_root()
+            .join("generations")
+            .join(format!("{id}.manifest.json.sha256")),
+        layout
+            .state_root()
+            .join("generations")
+            .join(format!("{id}.lock.json")),
+        layout
+            .state_root()
+            .join("generations")
+            .join(format!("{id}.lock.json.sha256")),
+    ] {
+        match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => return Err(GcError::PruneNotAuthorized),
+            Err(_) => return Err(GcError::UnsafeState),
+        }
     }
     Ok(())
 }
@@ -633,6 +723,45 @@ mod tests {
                 .iter()
                 .any(|candidate| candidate.generation_id() == "gen-0002")
         );
+    }
+
+    #[test]
+    fn manual_prune_selects_only_a_retired_retained_generation() {
+        let retired = snapshot("gen-0001", None, "2026-08-09T00:00:00Z");
+        let active = snapshot("gen-0002", Some("gen-0001"), "2026-08-10T00:00:00Z");
+        let archive = vec![retired.clone(), active.clone()];
+        let now = parse_utc_seconds("2026-08-10T00:00:00Z").unwrap();
+
+        let candidate = plan_generation_prune(&active, &archive, "gen-0001", now).unwrap();
+        assert_eq!(candidate.snapshot(), &retired);
+        assert_eq!(
+            plan_generation_prune(&active, &archive, "gen-0002", now),
+            Err(GcError::CurrentChanged)
+        );
+        assert_eq!(
+            plan_generation_prune(&active, &archive, "gen-9999", now),
+            Err(GcError::InvalidArchive)
+        );
+    }
+
+    #[test]
+    fn root_removal_authority_requires_root_last_state_and_refuses_active() {
+        let (_temp, layout) = layout_fixture();
+        let retired = GenerationId::new("gen-0001").unwrap();
+        let active = GenerationId::new("gen-0002").unwrap();
+        write_generation_assets(layout.state_root(), retired.as_str());
+
+        assert_eq!(
+            authorize_generation_root_removal(&layout, &retired),
+            Err(GcError::PruneNotAuthorized)
+        );
+        assert_eq!(
+            authorize_generation_root_removal(&layout, &active),
+            Err(GcError::PruneNotAuthorized)
+        );
+
+        delete_user_generation(layout.state_root(), layout.owner_uid(), retired.as_str()).unwrap();
+        assert_eq!(authorize_generation_root_removal(&layout, &retired), Ok(()));
     }
 
     #[test]
