@@ -139,7 +139,7 @@ fn acquire(
     options
         .read(true)
         .write(true)
-        .create(mode == LeaseMode::Exclusive)
+        .create(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
     let mut file = options.open(&path).map_err(|_| LeaseError::UnsafeState)?;
@@ -253,11 +253,12 @@ mod tests {
     #[test]
     fn shared_readers_coexist_and_block_a_writer() {
         let (_temp, layout) = fixture();
-        drop(StateLease::try_exclusive(&layout, &identity()).unwrap());
         let first = StateLease::try_shared(&layout).unwrap();
         let second = StateLease::try_shared(&layout).unwrap();
         assert_eq!(first.mode(), LeaseMode::Shared);
         assert_eq!(second.mode(), LeaseMode::Shared);
+        let metadata = fs::symlink_metadata(layout.state_root().join("run/lease")).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
         assert_eq!(
             StateLease::try_exclusive(&layout, &identity()).unwrap_err(),
             LeaseError::Locked

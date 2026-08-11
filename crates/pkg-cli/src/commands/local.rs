@@ -28,7 +28,7 @@ impl LocalStateOperations {
     /// Opens a state root beneath the caller's trusted home boundary.
     #[must_use]
     pub fn open(trusted_home: &Path, state_root: &Path, owner_uid: u32) -> Self {
-        let source = StateLayout::open(trusted_home, state_root, owner_uid).map_err(|_| {
+        let source = StateLayout::initialize(trusted_home, state_root, owner_uid).map_err(|_| {
             CommandError::new(
                 ExitCode::StateCorrupt,
                 "the per-user package state is missing or unsafe",
@@ -227,22 +227,29 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::cli::{Cli, Command};
+    use crate::cli::Cli;
     use crate::commands::execute::{CommandEngine, CommandRequest, CoreEngine};
 
     #[test]
-    fn missing_or_uninitialized_state_fails_closed() {
+    fn missing_state_is_initialized_as_empty_history() {
         let home = TempDir::new().unwrap();
         fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let uid = fs::symlink_metadata(home.path()).unwrap().uid();
-        let mut operations = LocalStateOperations::open(home.path(), &home.path().join("pkg"), uid);
-        let cli = Cli::try_parse(["pkg", "list"]).unwrap();
-        let Command::List(args) = cli.parsed_command() else {
-            unreachable!()
-        };
+        let cli = Cli::try_parse(["pkg", "history"]).unwrap();
+        let mut engine = CoreEngine::new(LocalStateOperations::open(
+            home.path(),
+            &home.path().join("pkg"),
+            uid,
+        ));
+        let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
+        assert_eq!(result.fields()["entries"], Value::Array(vec![]));
         assert_eq!(
-            operations.list(args).unwrap_err().exit_code(),
-            ExitCode::StateCorrupt
+            fs::symlink_metadata(home.path().join("pkg"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
         );
     }
 

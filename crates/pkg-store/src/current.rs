@@ -1,6 +1,6 @@
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 
 use pkg_core::identity::StorePath;
@@ -133,6 +133,46 @@ pub const fn classify_recovery(evidence: RecoveryEvidence) -> Result<RecoveryAct
 }
 
 impl StateLayout {
+    /// Idempotently creates the fixed private per-user state tree beneath an
+    /// existing trusted ownership boundary, then validates the complete path.
+    ///
+    /// Existing components are never chmodded or replaced. Missing components
+    /// are created at `0700`; any symlink, foreign owner, writable group/world
+    /// bit, non-directory, or path escape fails closed.
+    pub fn initialize(
+        trusted_root: &Path,
+        state_root: &Path,
+        owner_uid: u32,
+    ) -> Result<Self, CurrentError> {
+        if !trusted_root.is_absolute() || !state_root.starts_with(trusted_root) {
+            return Err(CurrentError::UnsafePath);
+        }
+        validate_component(trusted_root, owner_uid)?;
+        let relative = state_root
+            .strip_prefix(trusted_root)
+            .map_err(|_| CurrentError::UnsafePath)?;
+        let mut cursor = trusted_root.to_path_buf();
+        for component in relative.components() {
+            let Component::Normal(component) = component else {
+                return Err(CurrentError::UnsafePath);
+            };
+            cursor.push(component);
+            ensure_private_directory(&cursor, owner_uid)?;
+        }
+        for relative in [
+            "generations",
+            "journal",
+            "activations",
+            "run",
+            "cache",
+            "logs",
+        ] {
+            ensure_private_directory(&state_root.join(relative), owner_uid)?;
+        }
+        sync_dir(state_root)?;
+        Self::open(trusted_root, state_root, owner_uid)
+    }
+
     /// Validates every existing component from a trusted ownership boundary.
     pub fn open(
         trusted_root: &Path,
@@ -233,6 +273,26 @@ impl StateLayout {
 
     fn revalidate(&self) -> Result<(), CurrentError> {
         Self::open(&self.trusted_root, &self.state_root, self.owner_uid).map(|_| ())
+    }
+}
+
+fn ensure_private_directory(path: &Path, owner_uid: u32) -> Result<(), CurrentError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => validate_component(path, owner_uid),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            match builder.create(path) {
+                Ok(()) => {
+                    let parent = path.parent().ok_or(CurrentError::UnsafePath)?;
+                    sync_dir(parent)?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+            validate_component(path, owner_uid)
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -435,6 +495,36 @@ mod tests {
         symlink(&real, &link).unwrap();
         assert!(matches!(
             StateLayout::open(temp.path(), &link, uid),
+            Err(CurrentError::UnsafePath)
+        ));
+    }
+
+    #[test]
+    fn initializes_only_the_fixed_private_state_tree() {
+        let temp = Builder::new().prefix("pkg-store-").tempdir_in(".").unwrap();
+        let uid = fs::symlink_metadata(temp.path()).unwrap().uid();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let state = temp.path().join("nested/state");
+        let layout = StateLayout::initialize(temp.path(), &state, uid).unwrap();
+        assert_eq!(layout.state_root(), state);
+        for relative in [
+            "",
+            "generations",
+            "journal",
+            "activations",
+            "run",
+            "cache",
+            "logs",
+        ] {
+            let metadata = fs::symlink_metadata(state.join(relative)).unwrap();
+            assert!(metadata.file_type().is_dir());
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+        }
+        assert!(StateLayout::initialize(temp.path(), &state, uid).is_ok());
+
+        let escaped = temp.path().parent().unwrap().join("pkg-escaped-state");
+        assert!(matches!(
+            StateLayout::initialize(temp.path(), &escaped, uid),
             Err(CurrentError::UnsafePath)
         ));
     }
