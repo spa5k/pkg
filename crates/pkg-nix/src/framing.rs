@@ -14,7 +14,7 @@ use crate::broker::{BrokerOperationKind, OperationHandle, OperationStatus};
 use crate::maintenance::{
     GenerationId, MaintenanceCapability, RemoveRootSetRequest, RepairMode, RepairOutcomeKind,
     RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetEntry,
-    RootSetReport, VerifiedRepairScope,
+    RootSetIntent, RootSetReport, VerifiedRepairScope,
 };
 use crate::{
     ApprovalSource, BuildPreview, BuildReport, DerivationPlanReport, EvaluateDerivationRequest,
@@ -106,6 +106,8 @@ pub enum CliBrokerRequest {
     PrepareBuild(OperationHandle, Vec<PackageSelector>),
     /// Execute the exact approved private plan retained under one build handle.
     ExecuteBuild(OperationHandle, Digest),
+    /// Publish a complete generation root intent after successful build execution.
+    PublishBuildRoots(OperationHandle, RootSetIntent),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -139,6 +141,10 @@ pub enum CliBrokerResponse {
     BuildExecuted(BuildReport),
     /// Stable redacted refusal from broker-owned build execution.
     BuildExecutionRefused(BuildExecutionErrorCode),
+    /// Durable root publication completed for the authenticated generation.
+    BuildRootsPublished(RootSetReport),
+    /// Stable redacted refusal from protected root publication.
+    BuildRootPublicationRefused(BuildRootPublicationErrorCode),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -169,6 +175,32 @@ impl BuildExecutionErrorCode {
             Self::ApprovalInvalidated => "approval_invalidated",
             Self::ResourcePreflightFailed => "resource_preflight_failed",
             Self::ExecutionFailed => "execution_failed",
+            Self::Cancelled => "cancelled",
+            Self::AuthorityUnavailable => "authority_unavailable",
+        }
+    }
+}
+
+/// Closed protected-root-publication refusal categories exposed to the CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildRootPublicationErrorCode {
+    /// The handle, generation, or root entries did not match retained authority.
+    InvalidRootIntent,
+    /// The privileged helper failed to publish the complete durable root set.
+    PublicationFailed,
+    /// Operation lifecycle cancellation stopped or superseded publication.
+    Cancelled,
+    /// The broker has no authenticated root-publishing authority available.
+    AuthorityUnavailable,
+}
+
+impl BuildRootPublicationErrorCode {
+    /// Returns the stable wire code.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidRootIntent => "invalid_root_intent",
+            Self::PublicationFailed => "publication_failed",
             Self::Cancelled => "cancelled",
             Self::AuthorityUnavailable => "authority_unavailable",
         }
@@ -326,6 +358,21 @@ impl ProductFrameCodec {
                     build_plan_digest: digest.to_string(),
                 })?,
             ),
+            CliBrokerRequest::PublishBuildRoots(handle, intent) => (
+                20,
+                encode_json(&BuildRootIntentWire {
+                    handle: handle.as_str(),
+                    generation: intent.generation().as_str(),
+                    entries: intent
+                        .entries()
+                        .iter()
+                        .map(|entry| RootSetEntryWire {
+                            name: entry.name().as_str(),
+                            target: entry.target().as_str(),
+                        })
+                        .collect(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -411,6 +458,10 @@ impl ProductFrameCodec {
                         .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
                 )
             }
+            20 => {
+                let wire: BuildRootIntentOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::PublishBuildRoots(parse_handle(&wire.handle)?, wire.promote()?)
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, request))
@@ -472,6 +523,19 @@ impl ProductFrameCodec {
                     error: code.as_str(),
                 })?,
             ),
+            CliBrokerResponse::BuildRootsPublished(report) => (
+                20,
+                encode_json(&RootSetReportWire {
+                    reference: report.reference().as_str(),
+                    entry_count: report.entry_count(),
+                })?,
+            ),
+            CliBrokerResponse::BuildRootPublicationRefused(code) => (
+                20,
+                encode_json(&BuildRootPublicationFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -500,6 +564,14 @@ impl ProductFrameCodec {
             return Ok((
                 frame.request_id,
                 CliBrokerResponse::BuildExecutionRefused(code),
+            ));
+        }
+        if frame.method == 20
+            && let Some(code) = decode_build_root_publication_failure(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::BuildRootPublicationRefused(code),
             ));
         }
         let response = match frame.method {
@@ -554,6 +626,18 @@ impl ProductFrameCodec {
                 BuildReport::decode(&JsonCodec::default(), frame.payload)
                     .map_err(adapter_payload)?,
             ),
+            20 => {
+                let wire: RootSetReportOwnedWire = decode_json(frame.payload)?;
+                let reference = RootRef::new(&wire.reference)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+                if wire.entry_count == 0 || wire.entry_count > MAX_ROOT_SET_WIRE_ENTRIES {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
+                CliBrokerResponse::BuildRootsPublished(RootSetReport::new(
+                    reference,
+                    wire.entry_count,
+                ))
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -821,6 +905,15 @@ fn decode_build_execution_failure(
     parse_build_execution_error_code(&wire.error).map(Some)
 }
 
+fn decode_build_root_publication_failure(
+    bytes: &[u8],
+) -> Result<Option<BuildRootPublicationErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<BuildRootPublicationFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_build_root_publication_error_code(&wire.error).map(Some)
+}
+
 fn parse_build_execution_error_code(value: &str) -> Result<BuildExecutionErrorCode, FrameError> {
     match value {
         "approval_unavailable" => Ok(BuildExecutionErrorCode::ApprovalUnavailable),
@@ -829,6 +922,18 @@ fn parse_build_execution_error_code(value: &str) -> Result<BuildExecutionErrorCo
         "execution_failed" => Ok(BuildExecutionErrorCode::ExecutionFailed),
         "cancelled" => Ok(BuildExecutionErrorCode::Cancelled),
         "authority_unavailable" => Ok(BuildExecutionErrorCode::AuthorityUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+fn parse_build_root_publication_error_code(
+    value: &str,
+) -> Result<BuildRootPublicationErrorCode, FrameError> {
+    match value {
+        "invalid_root_intent" => Ok(BuildRootPublicationErrorCode::InvalidRootIntent),
+        "publication_failed" => Ok(BuildRootPublicationErrorCode::PublicationFailed),
+        "cancelled" => Ok(BuildRootPublicationErrorCode::Cancelled),
+        "authority_unavailable" => Ok(BuildRootPublicationErrorCode::AuthorityUnavailable),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
     }
 }
@@ -995,6 +1100,18 @@ struct BuildExecutionFailureOwnedWire {
 
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
+struct BuildRootPublicationFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuildRootPublicationFailureOwnedWire {
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
 struct HandleBodyWire<'a> {
     handle: &'a str,
     request: &'a RawValue,
@@ -1063,6 +1180,43 @@ struct BuildExecutionWire<'a> {
 struct BuildExecutionOwnedWire {
     handle: String,
     build_plan_digest: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildRootIntentWire<'a> {
+    handle: &'a str,
+    generation: &'a str,
+    entries: Vec<RootSetEntryWire<'a>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildRootIntentOwnedWire {
+    handle: String,
+    generation: String,
+    entries: Vec<RootSetEntryOwnedWire>,
+}
+
+impl BuildRootIntentOwnedWire {
+    fn promote(self) -> Result<RootSetIntent, FrameError> {
+        let generation = GenerationId::new(&self.generation)
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+        let entries = self
+            .entries
+            .into_iter()
+            .map(|entry| {
+                Ok(RootSetEntry::new(
+                    RootName::new(&entry.name)
+                        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                    StorePath::new(&entry.target)
+                        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                ))
+            })
+            .collect::<Result<Vec<_>, FrameError>>()?;
+        RootSetIntent::new(generation, entries)
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
 }
 
 #[derive(Serialize)]
@@ -1661,6 +1815,63 @@ mod tests {
             ProductFrameCodec::decode_cli_response(&encoded),
             Ok((11, response))
         );
+
+        let root_intent = RootSetIntent::new(
+            GenerationId::new("gen-0007").unwrap(),
+            vec![RootSetEntry::new(
+                RootName::new("hello-out").unwrap(),
+                path("built-1.0"),
+            )],
+        )
+        .unwrap();
+        let publish = CliBrokerRequest::PublishBuildRoots(
+            OperationHandle(format!("op_{}", "d".repeat(64))),
+            root_intent,
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(12, &publish).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("generation"));
+        assert!(wire.contains("entries"));
+        assert!(!wire.contains("ownerUid"));
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((12, publish))
+        );
+
+        let published = CliBrokerResponse::BuildRootsPublished(RootSetReport::new(
+            RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap(),
+            1,
+        ));
+        let encoded = ProductFrameCodec::encode_cli_response(12, &published).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((12, published))
+        );
+        for code in [
+            BuildRootPublicationErrorCode::InvalidRootIntent,
+            BuildRootPublicationErrorCode::PublicationFailed,
+            BuildRootPublicationErrorCode::Cancelled,
+            BuildRootPublicationErrorCode::AuthorityUnavailable,
+        ] {
+            let response = CliBrokerResponse::BuildRootPublicationRefused(code);
+            let encoded = ProductFrameCodec::encode_cli_response(12, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((12, response))
+            );
+        }
+        let extended = encode_frame(
+            CHANNEL_CLI_BROKER,
+            20,
+            12,
+            br#"{"error":"future_extension"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&extended),
+            Err(FrameError::new(FrameErrorCode::InvalidPayload))
+        );
+
         let helper = BrokerHelperRequest::PublishRootSet(root_set());
         let encoded = ProductFrameCodec::encode_helper_request(9, &helper).unwrap();
         assert_eq!(

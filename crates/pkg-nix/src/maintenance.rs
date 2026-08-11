@@ -141,6 +141,47 @@ pub struct RootSet {
     entries: Vec<RootSetEntry>,
 }
 
+/// Caller-owned generation root intent with no serialized owner identity.
+///
+/// The broker promotes this value into a [`RootSet`] only after injecting the
+/// uid authenticated from the CLI transport. This prevents payload identity
+/// from selecting another user's durable root namespace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootSetIntent {
+    generation: GenerationId,
+    entries: Vec<RootSetEntry>,
+}
+
+impl RootSetIntent {
+    /// Validates and canonicalizes a complete generation root intent.
+    pub fn new(
+        generation: GenerationId,
+        entries: Vec<RootSetEntry>,
+    ) -> Result<Self, MaintenanceError> {
+        let validated = RootSet::new(0, generation, entries)?;
+        Ok(Self {
+            generation: validated.generation,
+            entries: validated.entries,
+        })
+    }
+
+    /// Returns the validated generation identifier.
+    #[must_use]
+    pub const fn generation(&self) -> &GenerationId {
+        &self.generation
+    }
+
+    /// Returns entries in canonical safe-name order.
+    #[must_use]
+    pub fn entries(&self) -> &[RootSetEntry] {
+        &self.entries
+    }
+
+    pub(crate) fn into_root_set(self, owner_uid: u32) -> Result<RootSet, MaintenanceError> {
+        RootSet::new(owner_uid, self.generation, self.entries)
+    }
+}
+
 impl RootSet {
     /// Validates, sorts, and constructs a complete root set.
     pub fn new(

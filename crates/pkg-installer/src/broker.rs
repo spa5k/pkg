@@ -4,9 +4,9 @@ use crate::{BrokerApprovalAudit, BrokerCallerApprovalJournal, platform::peer_uid
 use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
-    CliBrokerRequest, CliBrokerResponse, Digest, HostResourceProbe, InProcessBroker,
-    InProcessCallerPeer, MethodKind, NixAdapter, NixAdapterError, OperationHandle,
-    ProductFrameCodec,
+    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest, HostResourceProbe,
+    InProcessBroker, InProcessCallerPeer, MaintenanceAdapter, MethodKind, NixAdapter,
+    NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
 use std::{
@@ -76,7 +76,7 @@ pub fn serve_broker_connection(
     mut stream: UnixStream,
     broker: &Arc<InProcessBroker>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, None, None, None)
+    serve_broker_connection_inner(&mut stream, broker, None, None, None, None)
 }
 
 /// Serves lifecycle plus typed managed-Nix calls for one authenticated peer.
@@ -90,7 +90,7 @@ pub fn serve_broker_connection_with_nix(
     broker: &Arc<InProcessBroker>,
     adapter: &Arc<dyn NixAdapter>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None, None)
+    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None, None, None)
 }
 
 /// Serves typed managed-Nix calls plus broker-private durable build approval.
@@ -114,6 +114,7 @@ pub fn serve_broker_connection_with_nix_and_approval(
         Some(adapter),
         Some(approval_audit),
         None,
+        None,
     )
 }
 
@@ -136,6 +137,32 @@ pub fn serve_broker_connection_with_build_authority(
         Some(&adapter),
         Some(approval_audit),
         Some(authority.as_ref()),
+        None,
+    )
+}
+
+/// Serves authenticated build execution through durable protected rooting.
+///
+/// # Errors
+///
+/// Refuses unauthenticated peers, invalid frames, unavailable authority,
+/// helper publication failures, or bounded transport failures.
+pub fn serve_broker_connection_with_build_and_root_authority(
+    mut stream: UnixStream,
+    broker: &Arc<InProcessBroker>,
+    approval_audit: &BrokerApprovalAudit,
+    authority: &Arc<AuthenticatedBuildAuthority>,
+    roots: &Arc<dyn MaintenanceAdapter>,
+) -> Result<(), BrokerTransportError> {
+    let adapter = authority.adapter();
+    let root_authority = MaintenanceRootAuthority(roots.as_ref());
+    serve_broker_connection_inner(
+        &mut stream,
+        broker,
+        Some(&adapter),
+        Some(approval_audit),
+        Some(authority.as_ref()),
+        Some(&root_authority),
     )
 }
 
@@ -153,6 +180,30 @@ trait BuildAuthorityDispatch: Send + Sync {
         handle: &OperationHandle,
         digest: Digest,
     ) -> Result<BuildReport, BrokerErrorCode>;
+}
+
+trait RootAuthorityDispatch: Send + Sync {
+    fn publish(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        intent: RootSetIntent,
+    ) -> Result<RootSetReport, BrokerErrorCode>;
+}
+
+struct MaintenanceRootAuthority<'a>(&'a dyn MaintenanceAdapter);
+
+impl RootAuthorityDispatch for MaintenanceRootAuthority<'_> {
+    fn publish(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        intent: RootSetIntent,
+    ) -> Result<RootSetReport, BrokerErrorCode> {
+        caller
+            .publish_built_root_intent(handle, intent, |roots| self.0.publish_root_set(roots))
+            .map_err(pkg_nix::BrokerError::code)
+    }
 }
 
 impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
@@ -185,6 +236,7 @@ fn serve_broker_connection_inner(
     adapter: Option<&Arc<dyn NixAdapter>>,
     approval_audit: Option<&BrokerApprovalAudit>,
     authority: Option<&dyn BuildAuthorityDispatch>,
+    roots: Option<&dyn RootAuthorityDispatch>,
 ) -> Result<(), BrokerTransportError> {
     let uid = peer_uid(stream)
         .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?;
@@ -202,6 +254,7 @@ fn serve_broker_connection_inner(
             adapter,
             approval_journal.as_ref(),
             authority,
+            roots,
         )
     });
     let disconnected = caller.disconnect();
@@ -220,6 +273,7 @@ fn dispatch_request(
     adapter: Option<&Arc<dyn NixAdapter>>,
     approval_journal: Option<&BrokerCallerApprovalJournal>,
     authority: Option<&dyn BuildAuthorityDispatch>,
+    roots: Option<&dyn RootAuthorityDispatch>,
 ) -> Result<CliBrokerResponse, ()> {
     match request {
         CliBrokerRequest::Begin(kind) => caller
@@ -297,17 +351,7 @@ fn dispatch_request(
                 CliBrokerResponse::Verify,
             ))
         }
-        CliBrokerRequest::Gc(handle) => {
-            caller
-                .authorize_adapter_call(&handle, MethodKind::Gc)
-                .map_err(|_| ())?;
-            caller.acquire_gc(&handle).map_err(|_| ())?;
-            Ok(adapter_response(
-                MethodKind::Gc,
-                adapter.ok_or(())?.gc(),
-                CliBrokerResponse::Gc,
-            ))
-        }
+        CliBrokerRequest::Gc(handle) => dispatch_gc(caller, adapter, &handle),
         CliBrokerRequest::GetBuildPreview(handle) => caller
             .build_preview(&handle)
             .map(CliBrokerResponse::BuildPreview)
@@ -318,6 +362,67 @@ fn dispatch_request(
             .map(CliBrokerResponse::BuildPrepared),
         CliBrokerRequest::ExecuteBuild(handle, digest) => {
             Ok(build_execution_response(authority, caller, &handle, digest))
+        }
+        CliBrokerRequest::PublishBuildRoots(handle, intent) => {
+            Ok(build_root_response(roots, caller, &handle, intent))
+        }
+    }
+}
+
+fn dispatch_gc(
+    caller: &AuthenticatedCaller,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .authorize_adapter_call(handle, MethodKind::Gc)
+        .map_err(|_| ())?;
+    caller.acquire_gc(handle).map_err(|_| ())?;
+    Ok(adapter_response(
+        MethodKind::Gc,
+        adapter.ok_or(())?.gc(),
+        CliBrokerResponse::Gc,
+    ))
+}
+
+fn build_root_response(
+    roots: Option<&dyn RootAuthorityDispatch>,
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    intent: RootSetIntent,
+) -> CliBrokerResponse {
+    roots.map_or(
+        CliBrokerResponse::BuildRootPublicationRefused(
+            BuildRootPublicationErrorCode::AuthorityUnavailable,
+        ),
+        |roots| match roots.publish(caller, handle, intent) {
+            Ok(report) => CliBrokerResponse::BuildRootsPublished(report),
+            Err(code) => CliBrokerResponse::BuildRootPublicationRefused(map_build_root_error(code)),
+        },
+    )
+}
+
+const fn map_build_root_error(code: BrokerErrorCode) -> BuildRootPublicationErrorCode {
+    match code {
+        BrokerErrorCode::InvalidAdmissionTransition => {
+            BuildRootPublicationErrorCode::InvalidRootIntent
+        }
+        BrokerErrorCode::RootPublicationFailed => BuildRootPublicationErrorCode::PublicationFailed,
+        BrokerErrorCode::AdmissionCancelled => BuildRootPublicationErrorCode::Cancelled,
+        BrokerErrorCode::UnauthenticatedCaller
+        | BrokerErrorCode::SessionRestarted
+        | BrokerErrorCode::InvalidOperationHandle
+        | BrokerErrorCode::OperationExpired
+        | BrokerErrorCode::AdmissionBusy
+        | BrokerErrorCode::InvalidBuildPlan
+        | BrokerErrorCode::BuildApprovalMismatch
+        | BrokerErrorCode::BuildApprovalUnavailable
+        | BrokerErrorCode::BuildApprovalInvalidated
+        | BrokerErrorCode::BuildResourcePreflightFailed
+        | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::InvalidChildPolicy
+        | BrokerErrorCode::EntropyUnavailable => {
+            BuildRootPublicationErrorCode::AuthorityUnavailable
         }
     }
 }
@@ -516,9 +621,9 @@ mod tests {
     use pkg_nix::{
         ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPlan, BuildPlanTarget,
         BuildReadiness, CacheClassification, DerivationPath, DerivationPlanReport, Digest,
-        EvaluatedDerivation, NarHash, NixVersion, NixpkgsRevision, OperationStatus, OutputName,
-        PackageVersion, PolicyVersion, StorePath, System, TrustedBuildReplanner,
-        TrustedReplanError,
+        EvaluatedDerivation, GenerationId, NarHash, NixVersion, NixpkgsRevision, OperationStatus,
+        OutputName, PackageVersion, PolicyVersion, RootName, RootSetEntry, StorePath, System,
+        TrustedBuildReplanner, TrustedReplanError,
     };
     use std::{
         collections::BTreeMap, io, net::Shutdown, os::unix::fs::PermissionsExt, str::FromStr,
@@ -617,6 +722,30 @@ mod tests {
         }
     }
 
+    struct RefusingRootAuthority(BrokerErrorCode);
+
+    impl RootAuthorityDispatch for RefusingRootAuthority {
+        fn publish(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _intent: RootSetIntent,
+        ) -> Result<RootSetReport, BrokerErrorCode> {
+            Err(self.0)
+        }
+    }
+
+    fn root_intent() -> RootSetIntent {
+        RootSetIntent::new(
+            GenerationId::new("gen-0007").unwrap(),
+            vec![RootSetEntry::new(
+                RootName::new("hello-out").unwrap(),
+                StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+            )],
+        )
+        .unwrap()
+    }
+
     fn read_response(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
         let mut header = [0_u8; FRAME_HEADER_BYTES];
         stream.read_exact(&mut header)?;
@@ -630,6 +759,18 @@ mod tests {
         frame.resize(FRAME_HEADER_BYTES + length, 0);
         stream.read_exact(&mut frame[FRAME_HEADER_BYTES..])?;
         Ok(frame)
+    }
+
+    fn assert_preview_round_trip(preview: BuildPreview) {
+        let encoded = ProductFrameCodec::encode_cli_response(
+            17,
+            &CliBrokerResponse::BuildPreview(preview.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((17, CliBrokerResponse::BuildPreview(preview)))
+        );
     }
 
     #[test]
@@ -702,6 +843,7 @@ mod tests {
             None,
             Some(&journal),
             Some(&authority),
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -714,6 +856,7 @@ mod tests {
             None,
             Some(&journal),
             None,
+            None,
         )
         .unwrap();
         assert!(matches!(
@@ -723,24 +866,16 @@ mod tests {
         let CliBrokerResponse::BuildPreview(preview) = preview_response else {
             return;
         };
-        let encoded = ProductFrameCodec::encode_cli_response(
-            17,
-            &CliBrokerResponse::BuildPreview(preview.clone()),
-        )
-        .unwrap();
-        assert_eq!(
-            ProductFrameCodec::decode_cli_response(&encoded),
-            Ok((17, CliBrokerResponse::BuildPreview(preview)))
-        );
+        assert_preview_round_trip(preview);
         let request = CliBrokerRequest::ApproveBuild(
             handle.clone(),
             BuildApprovalRequest::new(digest, ApprovalSource::Interactive),
         );
         assert_eq!(
-            dispatch_request(&caller, request.clone(), None, Some(&journal), None),
+            dispatch_request(&caller, request.clone(), None, Some(&journal), None, None,),
             Ok(CliBrokerResponse::BuildApproved)
         );
-        assert!(dispatch_request(&caller, request, None, Some(&journal), None).is_err());
+        assert!(dispatch_request(&caller, request, None, Some(&journal), None, None).is_err());
         assert_eq!(
             dispatch_request(
                 &caller,
@@ -748,6 +883,7 @@ mod tests {
                 None,
                 Some(&journal),
                 Some(&authority),
+                None,
             ),
             Ok(CliBrokerResponse::BuildExecutionRefused(
                 BuildExecutionErrorCode::ResourcePreflightFailed,
@@ -759,6 +895,7 @@ mod tests {
                 CliBrokerRequest::Poll(handle),
                 None,
                 Some(&journal),
+                None,
                 None,
             ),
             Ok(CliBrokerResponse::Status(OperationStatus::Running))
@@ -774,6 +911,71 @@ mod tests {
                 .fields()
                 .get("authenticatedUid"),
             Some(&serde_json::json!(1001))
+        );
+    }
+
+    #[test]
+    fn root_publication_dispatch_returns_only_closed_failures_and_remains_usable() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::PublishBuildRoots(handle.clone(), root_intent()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::BuildRootPublicationRefused(
+                BuildRootPublicationErrorCode::AuthorityUnavailable,
+            ))
+        );
+        for (broker_code, wire_code) in [
+            (
+                BrokerErrorCode::InvalidAdmissionTransition,
+                BuildRootPublicationErrorCode::InvalidRootIntent,
+            ),
+            (
+                BrokerErrorCode::RootPublicationFailed,
+                BuildRootPublicationErrorCode::PublicationFailed,
+            ),
+            (
+                BrokerErrorCode::AdmissionCancelled,
+                BuildRootPublicationErrorCode::Cancelled,
+            ),
+            (
+                BrokerErrorCode::SessionRestarted,
+                BuildRootPublicationErrorCode::AuthorityUnavailable,
+            ),
+        ] {
+            let authority = RefusingRootAuthority(broker_code);
+            assert_eq!(
+                dispatch_request(
+                    &caller,
+                    CliBrokerRequest::PublishBuildRoots(handle.clone(), root_intent()),
+                    None,
+                    None,
+                    None,
+                    Some(&authority),
+                ),
+                Ok(CliBrokerResponse::BuildRootPublicationRefused(wire_code))
+            );
+        }
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Poll(handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Status(OperationStatus::Running))
         );
     }
 }

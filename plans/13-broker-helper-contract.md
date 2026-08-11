@@ -271,7 +271,13 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   estimate, fixed host resource probe, and contained managed adapter. Success returns the validated
   typed `BuildReport`; failure returns one of six stable redacted refusal codes without killing an
   otherwise healthy connection. No receipt, estimate, resource measurement, target, path, or Nix
-  control crosses the execution request. The production service entry point still must bootstrap
+  control crosses the execution request. Closed method 20 performs the protected handoff after a
+  successful build. Its request contains the live handle plus a validated generation and complete
+  root entries, but no caller uid; the broker injects the kernel-authenticated uid and rejects an
+  intent that omits any privately retained built output. It marks root publication in flight before
+  calling the injected maintenance authority, returns only a typed root report or one of four stable
+  redacted refusal codes, and keeps the connection reusable for an ordinary refusal. The production
+  service entry point still must bootstrap
   and inject the long-lived refresh owner before enabling this method on its public listener. The broker-owned
   in-memory authority now supplies a consistent verified-channel/authenticated-index snapshot,
   rejects rollback, policy downgrade and same-sequence descriptor reuse, drops a stale index on
@@ -316,7 +322,8 @@ connection establishment to five seconds, uses monotonic nonzero request ids, en
 one-MiB frame ceiling before allocation, and applies one monotonic deadline across the complete
 request-write/response-read transaction. It rejects a response-id or response-kind mismatch and permanently
 refuses reuse of that connection after any framing, transport, or correlation failure. Caller uid
-still never appears in the request. `BrokerNixAdapter` wraps this lifecycle transport for the six
+still never appears in the request, including the method-20 root intent; ordinary protected-root
+refusals preserve connection health and expose only the closed refusal code. `BrokerNixAdapter` wraps this lifecycle transport for the six
 exposed typed methods, using a fresh connection and operation handle per call. It converts an
 authenticated adapter-failure envelope back into a redacted `NixAdapterError` with the same closed
 code; transport and protocol failures remain generic operation failures. `build` returns

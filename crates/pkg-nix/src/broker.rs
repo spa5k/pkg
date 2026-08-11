@@ -11,7 +11,7 @@ use sha2::{Digest as _, Sha256};
 use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
     BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, LocalBuildEngine, NixAdapter,
-    OperationId, ResourceProbe, RootSet, RootSetReport, VolatileBuildEstimate,
+    OperationId, ResourceProbe, RootSet, RootSetIntent, RootSetReport, VolatileBuildEstimate,
     maintenance::{MaintenanceError, random_secret},
 };
 
@@ -934,6 +934,23 @@ impl AuthenticatedCaller {
 
         let publication = publish(root_set);
         self.finish_root_publication(handle, publication)
+    }
+
+    /// Injects the authenticated caller uid before protected root publication.
+    ///
+    /// # Errors
+    ///
+    /// Refuses invalid promoted intent or any protected publication failure.
+    pub fn publish_built_root_intent(
+        &self,
+        handle: &OperationHandle,
+        intent: RootSetIntent,
+        publish: impl FnOnce(&RootSet) -> Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        let root_set = intent
+            .into_root_set(self.uid)
+            .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
+        self.publish_built_root_set(handle, &root_set, publish)
     }
 
     /// Acquires the machine-wide local-build lease for this operation.

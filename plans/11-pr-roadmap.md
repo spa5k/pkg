@@ -1278,7 +1278,12 @@ flowchart TD
   output, refuses completion until a same-uid root set includes them all, and marks helper root
   publication in-flight so cancel/disconnect cannot release build/GC admission until the callback
   returns. Root publication failure and concurrent cancellation are terminal only after that safe
-  handoff. The CLI and production helper transport method for this phase remain to be wired. The
+  handoff. Closed method 20 now carries only the live build handle, generation id, and validated
+  complete root entries. Caller uid is absent from the frame and is injected only from the
+  transport-authenticated broker session; the broker requires the intent to include every privately
+  retained built output before invoking root authority. Success returns only a typed root report,
+  while four stable redacted refusal codes leave an otherwise healthy connection reusable. The
+  production broker-to-helper transport for this phase remains to be wired. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

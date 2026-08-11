@@ -86,14 +86,15 @@ pub use contract::{
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
-    CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode, ProductFrameCodec,
+    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode,
+    ProductFrameCodec,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
     RemoveRootSetRequest, RepairMode, RepairOutcomeKind, RepairPathOutcome, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetEntry, RootSetReport, VerifiedRepairExecutor,
-    VerifiedRepairScope,
+    RepairStorePathsRequest, RootSet, RootSetEntry, RootSetIntent, RootSetReport,
+    VerifiedRepairExecutor, VerifiedRepairScope,
 };
 pub use managed::accounts::{
     BuildAccount, BuildAccountDirectory, BuildAccountError, observe_build_accounts,

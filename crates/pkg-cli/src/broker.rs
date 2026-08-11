@@ -12,10 +12,11 @@ use std::{
 use pkg_core::PackageSelector;
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildPreview, BuildReport, BuildRequest, CliBrokerRequest, CliBrokerResponse,
-    DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport, MethodKind, NixAdapter,
-    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
-    ProductFrameCodec, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CliBrokerRequest,
+    CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
+    MethodKind, NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus,
+    PathInfoReport, ProductFrameCodec, RootSetIntent, RootSetReport, StorePath, SubstituteReport,
+    VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -50,6 +51,8 @@ pub enum BrokerClientErrorCode {
     AdapterFailure,
     /// Broker-owned build execution returned a stable refusal code.
     BuildRefused,
+    /// Protected post-build root publication returned a stable refusal code.
+    BuildRootRefused,
 }
 
 /// Redacted failure from the private broker connector.
@@ -58,6 +61,7 @@ pub struct BrokerClientError {
     code: BrokerClientErrorCode,
     adapter_code: Option<NixAdapterErrorCode>,
     build_execution_code: Option<BuildExecutionErrorCode>,
+    build_root_code: Option<BuildRootPublicationErrorCode>,
 }
 
 impl BrokerClientError {
@@ -66,6 +70,7 @@ impl BrokerClientError {
             code,
             adapter_code: None,
             build_execution_code: None,
+            build_root_code: None,
         }
     }
 
@@ -74,6 +79,7 @@ impl BrokerClientError {
             code: BrokerClientErrorCode::AdapterFailure,
             adapter_code: Some(adapter_code),
             build_execution_code: None,
+            build_root_code: None,
         }
     }
 
@@ -82,6 +88,16 @@ impl BrokerClientError {
             code: BrokerClientErrorCode::BuildRefused,
             adapter_code: None,
             build_execution_code: Some(build_execution_code),
+            build_root_code: None,
+        }
+    }
+
+    const fn build_root_refused(build_root_code: BuildRootPublicationErrorCode) -> Self {
+        Self {
+            code: BrokerClientErrorCode::BuildRootRefused,
+            adapter_code: None,
+            build_execution_code: None,
+            build_root_code: Some(build_root_code),
         }
     }
 
@@ -102,6 +118,12 @@ impl BrokerClientError {
     #[must_use]
     pub const fn build_execution_code(self) -> Option<BuildExecutionErrorCode> {
         self.build_execution_code
+    }
+
+    /// Returns the closed refusal code from protected root publication.
+    #[must_use]
+    pub const fn build_root_code(self) -> Option<BuildRootPublicationErrorCode> {
+        self.build_root_code
     }
 }
 
@@ -319,6 +341,21 @@ impl BrokerLifecycleClient {
             CliBrokerResponse::BuildExecuted(report) => Ok(report),
             CliBrokerResponse::BuildExecutionRefused(code) => {
                 Err(BrokerClientError::build_refused(code))
+            }
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Publishes a complete generation root intent after successful build execution.
+    pub fn publish_build_roots(
+        &mut self,
+        handle: OperationHandle,
+        intent: RootSetIntent,
+    ) -> Result<RootSetReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::PublishBuildRoots(handle, intent))? {
+            CliBrokerResponse::BuildRootsPublished(report) => Ok(report),
+            CliBrokerResponse::BuildRootPublicationRefused(code) => {
+                Err(BrokerClientError::build_root_refused(code))
             }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
@@ -571,7 +608,8 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::UnexpectedResponse
         | BrokerClientErrorCode::RequestIdExhausted
         | BrokerClientErrorCode::AdapterFailure
-        | BrokerClientErrorCode::BuildRefused => NixAdapterError::OperationFailed,
+        | BrokerClientErrorCode::BuildRefused
+        | BrokerClientErrorCode::BuildRootRefused => NixAdapterError::OperationFailed,
     }
 }
 
@@ -581,10 +619,11 @@ mod tests {
     use pkg_installer::serve_broker_connection_with_nix;
     use pkg_nix::{
         AcceptedFormats, AttributePath, BuildApprovalReceipt, DerivationPath, DerivedOutputTarget,
-        Digest, EvaluatedDerivation, FormatVersion, GcStatus, InProcessBroker, InProcessCallerPeer,
-        NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion, NixpkgsRevision,
-        OperationId, OutputName, OutputSelection, PackageVersion, PathVerifyResult, PolicyVersion,
-        Signature, SubstituteReceipt, System, TrustStatus, VerifyMode, VersionInfo,
+        Digest, EvaluatedDerivation, FormatVersion, GcStatus, GenerationId, InProcessBroker,
+        InProcessCallerPeer, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion,
+        NixpkgsRevision, OperationId, OutputName, OutputSelection, PackageVersion,
+        PathVerifyResult, PolicyVersion, RootName, RootSetEntry, Signature, SubstituteReceipt,
+        System, TrustStatus, VerifyMode, VersionInfo,
     };
     use pkg_testkit::FakeNix;
     use std::{
@@ -921,6 +960,60 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&request)?,
             (1, CliBrokerRequest::ExecuteBuild(handle, digest))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_publication_refusal_is_typed_and_keeps_the_connection_usable()
+    -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Build)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::BuildRootPublicationRefused(
+                BuildRootPublicationErrorCode::Cancelled,
+            ),
+        )?)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            2,
+            &CliBrokerResponse::Status(OperationStatus::Running),
+        )?)?;
+        let intent = RootSetIntent::new(
+            GenerationId::new("gen-0007")?,
+            vec![RootSetEntry::new(
+                RootName::new("hello-out")?,
+                store_path("hello-1.0"),
+            )],
+        )?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client
+            .publish_build_roots(handle.clone(), intent.clone())
+            .unwrap_err();
+        assert_eq!(error.code(), BrokerClientErrorCode::BuildRootRefused);
+        assert_eq!(
+            error.build_root_code(),
+            Some(BuildRootPublicationErrorCode::Cancelled)
+        );
+        assert!(client.healthy);
+        assert_eq!(client.poll(handle.clone())?, OperationStatus::Running);
+
+        let deadline = Instant::now()
+            .checked_add(RESPONSE_TIMEOUT)
+            .ok_or_else(|| io::Error::other("deadline overflow"))?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (
+                1,
+                CliBrokerRequest::PublishBuildRoots(handle.clone(), intent)
+            )
+        );
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (2, CliBrokerRequest::Poll(handle))
         );
         Ok(())
     }
