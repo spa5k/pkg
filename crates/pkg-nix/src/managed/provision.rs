@@ -9,12 +9,13 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use lzma_rust2::XzReader;
-use pkg_channel::VerifiedChannel;
+use pkg_channel::{TrustedRoot, VerifiedChannel};
 use sha2::{Digest as _, Sha256};
 use tar::{Archive, EntryType};
 
 use super::daemon::{DaemonErrorCode, ManagedDaemon};
 use super::detect::{DetectionDisposition, detect_unmanaged_nix};
+use super::installer_bundle::{VerifiedRuntimeBundle, load_installer_bundle};
 use super::ownership::{
     ManagedArtifact, ManagedArtifactKind, ManagedGroupBindings, OwnershipExpectation,
     decode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
@@ -31,6 +32,7 @@ static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 /// An authenticated pair of TUF target identities needed for provisioning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvisionSpec {
+    descriptor_sha256: [u8; 32],
     system: System,
     nix_version: NixVersion,
     runtime_target: String,
@@ -57,6 +59,7 @@ impl ProvisionSpec {
             ));
         }
         Ok(Self {
+            descriptor_sha256: channel.descriptor_sha256(),
             system,
             nix_version: NixVersion::new(descriptor.nix_version())
                 .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?,
@@ -84,9 +87,49 @@ impl ProvisionSpec {
 ///
 /// The source receives only exact target names promoted by [`ProvisionSpec`].
 /// It cannot supply URLs, hashes, or other policy knobs to the provisioner.
-pub trait RuntimeSource: Send + Sync {
+trait RuntimeSource: Send + Sync {
+    /// Returns the verified descriptor identity that authorized this source.
+    fn descriptor_sha256(&self) -> [u8; 32];
+
     /// Opens one exact authenticated target as a bounded streaming reader.
     fn open_target(&self, target: &str) -> Result<Box<dyn Read + Send>, ProvisionError>;
+
+    /// Commits the descriptor rollback floor after the installed runtime and
+    /// ownership receipt have both verified.
+    fn commit_accepted_channel(&self) -> Result<(), ProvisionError>;
+}
+
+impl RuntimeSource for VerifiedRuntimeBundle {
+    fn descriptor_sha256(&self) -> [u8; 32] {
+        VerifiedRuntimeBundle::descriptor_sha256(self)
+    }
+
+    fn open_target(&self, target: &str) -> Result<Box<dyn Read + Send>, ProvisionError> {
+        VerifiedRuntimeBundle::open_target(self, target)
+            .map(|file| Box::new(file) as Box<dyn Read + Send>)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))
+    }
+
+    fn commit_accepted_channel(&self) -> Result<(), ProvisionError> {
+        VerifiedRuntimeBundle::commit_accepted_channel(self)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
+    }
+}
+
+/// Public inputs that do not contain authenticated target handles or Nix controls.
+pub struct InstallerProvisionRequest<'a> {
+    /// Fixed offline release bundle root containing `metadata/` and `targets/`.
+    pub bundle_root: &'a Path,
+    /// Existing private state directory for TUF metadata and rollback memory.
+    pub datastore: &'a Path,
+    /// Filesystem root to install beneath. Production callers pass `/`.
+    pub installation_root: &'a Path,
+    /// Existing private scratch parent used before the privileged commit.
+    pub scratch_parent: &'a Path,
+    /// Native host system established by the platform installer.
+    pub system: System,
+    /// Host-local gids for the two stable signed group roles.
+    pub groups: ManagedGroupBindings,
 }
 
 /// Inputs for one fail-closed provisioning attempt.
@@ -107,6 +150,33 @@ pub struct ProvisionedRuntime {
     system: System,
     nix_version: NixVersion,
     artifact_count: usize,
+}
+
+/// Successful installer bootstrap result with the authenticated host index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisionedBootstrap {
+    runtime: ProvisionedRuntime,
+    index: Vec<u8>,
+}
+
+impl ProvisionedBootstrap {
+    /// Returns the verified managed-runtime result.
+    #[must_use]
+    pub const fn runtime(&self) -> &ProvisionedRuntime {
+        &self.runtime
+    }
+
+    /// Returns the exact authenticated compressed index bytes for this host.
+    #[must_use]
+    pub fn index(&self) -> &[u8] {
+        &self.index
+    }
+
+    /// Consumes the result into its runtime report and authenticated index.
+    #[must_use]
+    pub fn into_parts(self) -> (ProvisionedRuntime, Vec<u8>) {
+        (self.runtime, self.index)
+    }
 }
 
 impl ProvisionedRuntime {
@@ -154,6 +224,8 @@ pub enum ProvisionErrorCode {
     DaemonFailed,
     /// The signed manifest or ownership receipt could not be installed atomically.
     ReceiptFailed,
+    /// The authenticated descriptor rollback floor could not be committed.
+    ChannelStateFailed,
     /// Best-effort rollback could not remove every artifact created by this attempt.
     RollbackFailed,
 }
@@ -205,17 +277,47 @@ impl fmt::Display for ProvisionError {
 
 impl std::error::Error for ProvisionError {}
 
-/// Provisions a managed runtime as root and writes the ownership receipt last.
-pub fn provision_managed_nix(
-    request: &ProvisionRequest<'_>,
-    source: &dyn RuntimeSource,
+/// Authenticates an offline installer bundle and provisions its managed runtime.
+///
+/// Runtime readers and rollback-state mutation stay private to this one-shot
+/// transaction. The accepted descriptor floor is committed only after the
+/// installed ownership receipt verifies.
+pub async fn provision_managed_nix_from_bundle(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
     daemon: &dyn ManagedDaemon,
-) -> Result<ProvisionedRuntime, ProvisionError> {
+) -> Result<ProvisionedBootstrap, ProvisionError> {
+    let mut source = load_installer_bundle(
+        trusted_root,
+        request.bundle_root,
+        request.datastore,
+        request.system,
+    )
+    .await
+    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
+    let index = source
+        .take_index()
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+    let provision_request = ProvisionRequest {
+        installation_root: request.installation_root,
+        scratch_parent: request.scratch_parent,
+        spec: &spec,
+        groups: request.groups,
+    };
     let path_entries = std::env::var_os("PATH")
         .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
         .unwrap_or_default();
     let environment_keys = std::env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
-    provision_with_owner(request, source, daemon, 0, &path_entries, &environment_keys)
+    let runtime = provision_with_owner(
+        &provision_request,
+        &source,
+        daemon,
+        0,
+        &path_entries,
+        &environment_keys,
+    )?;
+    Ok(ProvisionedBootstrap { runtime, index })
 }
 
 fn provision_with_owner(
@@ -226,6 +328,11 @@ fn provision_with_owner(
     path_entries: &[PathBuf],
     environment_keys: &[std::ffi::OsString],
 ) -> Result<ProvisionedRuntime, ProvisionError> {
+    if source.descriptor_sha256() != request.spec.descriptor_sha256 {
+        return Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ));
+    }
     require_clean_host(request, path_entries, environment_keys)?;
     validate_private_directory(request.scratch_parent, required_owner_uid)?;
     validate_private_directory(request.installation_root, required_owner_uid)?;
@@ -284,6 +391,7 @@ fn provision_with_owner(
         transaction.install_receipt(&expectation, required_owner_uid)?;
         verify_with_owner_uid(request.installation_root, &expectation, required_owner_uid)
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
+        source.commit_accepted_channel()?;
         transaction.committed = true;
         Ok(ProvisionedRuntime {
             system: request.spec.system,
@@ -843,11 +951,18 @@ mod tests {
     const RUNTIME_BYTES: &[u8] = b"fixture managed nix\n";
 
     struct FakeSource {
+        descriptor_sha256: [u8; 32],
         targets: BTreeMap<String, Vec<u8>>,
         opens: AtomicUsize,
+        commits: AtomicUsize,
+        fail_commit: bool,
     }
 
     impl RuntimeSource for FakeSource {
+        fn descriptor_sha256(&self) -> [u8; 32] {
+            self.descriptor_sha256
+        }
+
         fn open_target(&self, target: &str) -> Result<Box<dyn Read + Send>, ProvisionError> {
             self.opens.fetch_add(1, Ordering::Relaxed);
             self.targets
@@ -855,6 +970,15 @@ mod tests {
                 .cloned()
                 .map(|bytes| Box::new(Cursor::new(bytes)) as Box<dyn Read + Send>)
                 .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::FetchFailed))
+        }
+
+        fn commit_accepted_channel(&self) -> Result<(), ProvisionError> {
+            self.commits.fetch_add(1, Ordering::Relaxed);
+            if self.fail_commit {
+                Err(ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -948,6 +1072,7 @@ mod tests {
             let runtime_target = "nix/2.24.10/x86_64-linux.tar.xz".to_string();
             let manifest_target = "nix/2.24.10/x86_64-linux.assets.json".to_string();
             let spec = ProvisionSpec {
+                descriptor_sha256: [0x42; 32],
                 system: System::X8664Linux,
                 nix_version: version,
                 runtime_target: runtime_target.clone(),
@@ -956,8 +1081,11 @@ mod tests {
                 asset_manifest_sha256: body_digest(&manifest),
             };
             let source = FakeSource {
+                descriptor_sha256: spec.descriptor_sha256,
                 targets: BTreeMap::from([(runtime_target, archive), (manifest_target, manifest)]),
                 opens: AtomicUsize::new(0),
+                commits: AtomicUsize::new(0),
+                fail_commit: false,
             };
             Self {
                 _temp: temp,
@@ -1015,6 +1143,7 @@ mod tests {
         assert!(rooted(&fixture.root, ownership_receipt_path(System::X8664Linux)).is_file());
         assert!(daemon.started.load(Ordering::Relaxed));
         assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 2);
+        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -1031,7 +1160,48 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.code(), ProvisionErrorCode::TargetHashMismatch);
+        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 0);
         assert!(!fixture.root.join("nix").exists());
+    }
+
+    #[test]
+    fn descriptor_mismatch_refuses_before_fetch_or_installation() {
+        let mut fixture = Fixture::new();
+        fixture.source.descriptor_sha256 = [0x24; 32];
+        let error = provision_with_owner(
+            &fixture.request(),
+            &fixture.source,
+            &FakeDaemon::healthy(),
+            fixture.owner_uid,
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ProvisionErrorCode::InvalidAuthenticatedInput);
+        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 0);
+        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 0);
+        assert!(!fixture.root.join("nix").exists());
+    }
+
+    #[test]
+    fn channel_state_failure_rolls_back_verified_runtime_and_receipt() {
+        let mut fixture = Fixture::new();
+        fixture.source.fail_commit = true;
+        let daemon = FakeDaemon::healthy();
+        let error = provision_with_owner(
+            &fixture.request(),
+            &fixture.source,
+            &daemon,
+            fixture.owner_uid,
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), ProvisionErrorCode::ChannelStateFailed);
+        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
+        assert!(daemon.stopped.load(Ordering::Relaxed));
+        assert!(!fixture.root.join("nix").exists());
+        assert!(!rooted(&fixture.root, ownership_receipt_path(System::X8664Linux)).exists());
     }
 
     #[test]

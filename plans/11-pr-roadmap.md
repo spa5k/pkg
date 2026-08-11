@@ -1516,6 +1516,19 @@ flowchart TD
   request and public operation ids. The client rejects foreign selectors, duplicate starts,
   changed totals, regressions, unfinished success, malformed frames, and progress-sink failure;
   no store path, derivation, cache URL, signature, or raw Nix event crosses the public boundary.
+  The installer bootstrap trust boundary is now implemented as a fixed offline TUF bundle:
+  the executable-supplied root authenticates `metadata/` and `targets/`, descriptor promotion binds
+  the native system, and only the selected managed-Nix archive plus asset manifest can stream into
+      private unlinked files read by the runtime provisioner. No output pathname is accepted. The
+      repository view, runtime readers, and rollback-state writer are crate-private; the only public
+      operation is the one-shot authenticate-and-provision transaction. Bundle
+  paths remain untrusted read-only input, symlinked fixed directories fail closed, and descriptor identity is rechecked
+  before fetching, and each source is size-bounded and rehashed into a private unlinked snapshot.
+  Repository failures expose no local path text. The bundle holds the datastore's sole writer lease, validates
+      against its durable accepted descriptor, and commits the new rollback floor receipt-last; no
+      caller can advance that floor without completing the managed provisioner, and a
+  channel-state failure rolls the runtime installation back. This resolves plan 07 Q7.7 without
+  claiming the still-missing product installer executable or privileged production backend.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

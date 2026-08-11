@@ -1,0 +1,592 @@
+//! Private offline installer-bundle authentication and runtime snapshots.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read as _, Seek as _, Write as _};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::path::{Path, PathBuf};
+
+use futures_util::StreamExt as _;
+use jiff::Timestamp;
+use pkg_channel::{
+    AcceptedChannel, ChannelError, RefreshOutcome, TrustedRoot, VerifiedChannel,
+    validate_private_datastore, verify_authenticated_descriptor,
+};
+use pkg_core::{ChannelSequence, PolicyVersion, System};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
+use tough::{
+    ExpirationEnforcement, FilesystemTransport, IntoVec, Limits, RepositoryLoader, TargetName,
+};
+use url::Url;
+
+const DESCRIPTOR_TARGET: &str = "descriptor.json";
+const MAX_DESCRIPTOR_BYTES: u64 = 256 * 1024;
+const MAX_INDEX_TARGET_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_RUNTIME_TARGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_RUNTIME_MANIFEST_TARGET_BYTES: u64 = 1024 * 1024;
+const LIMITS: Limits = Limits {
+    max_root_size: 64 * 1024,
+    max_targets_size: 256 * 1024,
+    max_timestamp_size: 32 * 1024,
+    max_snapshot_size: 32 * 1024,
+    max_root_updates: 256,
+};
+
+const STATE_FILE: &str = "accepted-channel.json";
+const TEMP_FILE: &str = ".accepted-channel.json.tmp";
+const INITIALIZING_FILE: &str = "accepted-channel.initializing";
+const LOCK_FILE: &str = "pkg-channel.lock";
+const MAX_STATE_BYTES: u64 = 1024;
+
+/// One completely authenticated installer view retained in private files.
+pub(super) struct VerifiedRuntimeBundle {
+    channel: VerifiedChannel,
+    system: System,
+    index: Option<Vec<u8>>,
+    archive: File,
+    asset_manifest: File,
+    runtime_target: String,
+    asset_manifest_target: String,
+    accepted_state: AcceptedChannel,
+    accepted: AcceptedChannelStore,
+    _datastore_lease: File,
+}
+
+impl std::fmt::Debug for VerifiedRuntimeBundle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VerifiedRuntimeBundle")
+            .field("channel_sequence", &self.channel.sequence())
+            .field("system", &self.system)
+            .finish_non_exhaustive()
+    }
+}
+
+impl VerifiedRuntimeBundle {
+    pub(super) const fn channel(&self) -> &VerifiedChannel {
+        &self.channel
+    }
+
+    pub(super) const fn system(&self) -> System {
+        self.system
+    }
+
+    pub(super) const fn descriptor_sha256(&self) -> [u8; 32] {
+        self.channel.descriptor_sha256()
+    }
+
+    pub(super) fn take_index(&mut self) -> Result<Vec<u8>, ChannelError> {
+        self.index
+            .take()
+            .ok_or(ChannelError::InstallerBundleUnavailable)
+    }
+
+    pub(super) fn open_target(&self, target: &str) -> Result<File, ChannelError> {
+        let source = if target == self.runtime_target {
+            &self.archive
+        } else if target == self.asset_manifest_target {
+            &self.asset_manifest
+        } else {
+            return Err(ChannelError::InstallerBundleUnavailable);
+        };
+        let mut file = source
+            .try_clone()
+            .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+        file.seek(std::io::SeekFrom::Start(0))
+            .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+        Ok(file)
+    }
+
+    pub(super) fn commit_accepted_channel(&self) -> Result<(), ChannelError> {
+        self.accepted.persist(&self.accepted_state)
+    }
+}
+
+/// Authenticates one fixed-layout offline installer repository without
+/// publishing any target reader or rollback-state capability outside this
+/// crate.
+pub(super) async fn load_installer_bundle(
+    trusted_root: TrustedRoot,
+    bundle_root: &Path,
+    datastore: &Path,
+    host: System,
+) -> Result<VerifiedRuntimeBundle, ChannelError> {
+    let root = canonical_directory(bundle_root)?;
+    let metadata = canonical_directory(&root.join("metadata"))?;
+    let targets = canonical_directory(&root.join("targets"))?;
+    if !metadata.starts_with(&root) || !targets.starts_with(&root) {
+        return Err(ChannelError::InstallerBundleUnavailable);
+    }
+    validate_private_datastore(datastore)?;
+    let datastore_lease = open_datastore_lease(datastore)?;
+    let accepted = AcceptedChannelStore::new(datastore);
+    accepted.initialize()?;
+
+    let metadata_url = Url::from_directory_path(metadata)
+        .map_err(|()| ChannelError::InstallerBundleUnavailable)?;
+    let targets_url =
+        Url::from_directory_path(targets).map_err(|()| ChannelError::InstallerBundleUnavailable)?;
+    let repository = RepositoryLoader::new(&trusted_root.as_bytes(), metadata_url, targets_url)
+        .transport(FilesystemTransport)
+        .limits(LIMITS)
+        .expiration_enforcement(ExpirationEnforcement::Safe)
+        .datastore(datastore)
+        .load()
+        .await
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    load_verified_repository(
+        repository,
+        accepted,
+        datastore_lease,
+        host,
+        Timestamp::now(),
+    )
+    .await
+}
+
+async fn load_verified_repository(
+    repository: tough::Repository,
+    accepted: AcceptedChannelStore,
+    datastore_lease: File,
+    host: System,
+    now: Timestamp,
+) -> Result<VerifiedRuntimeBundle, ChannelError> {
+    let descriptor = read_descriptor_target(&repository)
+        .await
+        .map_err(redact_repository_error)?;
+    let previous = accepted.load()?;
+    let outcome =
+        verify_authenticated_descriptor(&descriptor, &repository, host, previous.as_ref(), now)?;
+    let channel = match outcome {
+        RefreshOutcome::Updated(channel) | RefreshOutcome::Unchanged(channel) => channel,
+    };
+    let runtime = channel.descriptor().runtime();
+    let runtime_sha256 = parse_authenticated_sha256(runtime.sha256())?;
+    let asset_manifest_sha256 = parse_authenticated_sha256(runtime.asset_manifest_sha256())?;
+    let index = read_required_index_target(&repository, channel.descriptor().index().target())
+        .await
+        .map_err(redact_repository_error)?;
+    let archive = snapshot_exact_target(
+        &repository,
+        runtime.target(),
+        MAX_RUNTIME_TARGET_BYTES,
+        runtime_sha256,
+    )
+    .await?;
+    let asset_manifest = snapshot_exact_target(
+        &repository,
+        runtime.asset_manifest_target(),
+        MAX_RUNTIME_MANIFEST_TARGET_BYTES,
+        asset_manifest_sha256,
+    )
+    .await?;
+    Ok(VerifiedRuntimeBundle {
+        accepted_state: channel.accepted_state(),
+        runtime_target: runtime.target().to_owned(),
+        asset_manifest_target: runtime.asset_manifest_target().to_owned(),
+        channel,
+        system: host,
+        index: Some(index),
+        archive,
+        asset_manifest,
+        accepted,
+        _datastore_lease: datastore_lease,
+    })
+}
+
+async fn read_descriptor_target(repository: &tough::Repository) -> Result<Vec<u8>, ChannelError> {
+    let name = TargetName::new(DESCRIPTOR_TARGET).map_err(|_| ChannelError::MissingDescriptor)?;
+    let metadata = repository
+        .all_targets()
+        .find_map(|(candidate, metadata)| (candidate == &name).then_some(metadata))
+        .ok_or(ChannelError::MissingDescriptor)?;
+    if metadata.length > MAX_DESCRIPTOR_BYTES {
+        return Err(ChannelError::DescriptorTooLarge);
+    }
+    let stream = repository
+        .read_target(&name)
+        .await
+        .map_err(|error| ChannelError::TufVerification(error.to_string()))?
+        .ok_or(ChannelError::MissingDescriptor)?;
+    IntoVec::into_vec(stream)
+        .await
+        .map_err(|error| ChannelError::TufVerification(error.to_string()))
+}
+
+async fn read_required_index_target(
+    repository: &tough::Repository,
+    target: &str,
+) -> Result<Vec<u8>, ChannelError> {
+    let name = TargetName::new(target).map_err(|_| ChannelError::MissingIndexTarget)?;
+    let metadata = repository
+        .all_targets()
+        .find_map(|(candidate, metadata)| (candidate == &name).then_some(metadata))
+        .ok_or(ChannelError::MissingIndexTarget)?;
+    if metadata.length > MAX_INDEX_TARGET_BYTES {
+        return Err(ChannelError::IndexTargetTooLarge);
+    }
+    let stream = repository
+        .read_target(&name)
+        .await
+        .map_err(|error| ChannelError::TufVerification(error.to_string()))?
+        .ok_or(ChannelError::MissingIndexTarget)?;
+    IntoVec::into_vec(stream)
+        .await
+        .map_err(|error| ChannelError::TufVerification(error.to_string()))
+}
+
+async fn snapshot_exact_target(
+    repository: &tough::Repository,
+    target: &str,
+    max_bytes: u64,
+    expected_sha256: [u8; 32],
+) -> Result<File, ChannelError> {
+    let name =
+        TargetName::new(target).map_err(|_| ChannelError::MissingTufTarget(target.into()))?;
+    let metadata = repository
+        .all_targets()
+        .find_map(|(candidate, metadata)| (candidate == &name).then_some(metadata))
+        .ok_or_else(|| ChannelError::MissingTufTarget(target.into()))?;
+    if metadata.length > max_bytes {
+        return Err(ChannelError::InstallerBundleUnavailable);
+    }
+    let mut stream = repository
+        .read_target(&name)
+        .await
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)?
+        .ok_or_else(|| ChannelError::MissingTufTarget(target.into()))?;
+    let mut snapshot =
+        tempfile::tempfile().map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    let mut digest = Sha256::new();
+    let mut copied = 0_u64;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+        copied = copied
+            .checked_add(chunk.len() as u64)
+            .ok_or(ChannelError::InstallerBundleUnavailable)?;
+        if copied > max_bytes {
+            return Err(ChannelError::InstallerBundleUnavailable);
+        }
+        digest.update(chunk.as_ref());
+        snapshot
+            .write_all(chunk.as_ref())
+            .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    }
+    if copied != metadata.length || <[u8; 32]>::from(digest.finalize()) != expected_sha256 {
+        return Err(ChannelError::InstallerBundleUnavailable);
+    }
+    snapshot
+        .sync_all()
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    snapshot
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    Ok(snapshot)
+}
+
+fn parse_authenticated_sha256(value: &str) -> Result<[u8; 32], ChannelError> {
+    let mut digest = [0_u8; 32];
+    hex::decode_to_slice(value, &mut digest)
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    Ok(digest)
+}
+
+fn canonical_directory(path: &Path) -> Result<PathBuf, ChannelError> {
+    let metadata = path
+        .symlink_metadata()
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(ChannelError::InstallerBundleUnavailable);
+    }
+    path.canonicalize()
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)
+}
+
+fn redact_repository_error(error: ChannelError) -> ChannelError {
+    match error {
+        ChannelError::TufVerification(_) => ChannelError::InstallerBundleUnavailable,
+        error => error,
+    }
+}
+
+fn open_datastore_lease(datastore: &Path) -> Result<File, ChannelError> {
+    let lock_path = datastore.join(LOCK_FILE);
+    if matches!(
+        fs::symlink_metadata(&lock_path),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file()
+    ) {
+        return Err(ChannelError::DatastoreUnavailable);
+    }
+    let mut options = File::options();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    let lease = options
+        .open(lock_path)
+        .map_err(|_| ChannelError::DatastoreUnavailable)?;
+    #[cfg(unix)]
+    {
+        let metadata = lease
+            .metadata()
+            .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        if metadata.permissions().mode() & 0o177 != 0 {
+            lease
+                .set_permissions(fs::Permissions::from_mode(0o600))
+                .map_err(|_| ChannelError::DatastoreUnavailable)?;
+            lease
+                .sync_all()
+                .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        }
+    }
+    lease.try_lock().map_err(|error| match error {
+        fs::TryLockError::WouldBlock => ChannelError::DatastoreBusy,
+        fs::TryLockError::Error(_) => ChannelError::DatastoreUnavailable,
+    })?;
+    Ok(lease)
+}
+
+#[derive(Debug, Clone)]
+struct AcceptedChannelStore {
+    directory: PathBuf,
+}
+
+impl AcceptedChannelStore {
+    fn new(directory: &Path) -> Self {
+        Self {
+            directory: directory.to_path_buf(),
+        }
+    }
+
+    fn load(&self) -> Result<Option<AcceptedChannel>, ChannelError> {
+        let path = self.directory.join(STATE_FILE);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(ChannelError::AcceptedStateUnavailable),
+        };
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() > MAX_STATE_BYTES
+        {
+            return Err(ChannelError::AcceptedStateUnavailable);
+        }
+        #[cfg(unix)]
+        if metadata.permissions().mode() & 0o177 != 0 {
+            return Err(ChannelError::AcceptedStateUnavailable);
+        }
+        let file = open_read_nofollow(&path)?;
+        let mut bytes = Vec::new();
+        file.take(MAX_STATE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        if bytes.len() as u64 > MAX_STATE_BYTES {
+            return Err(ChannelError::AcceptedStateUnavailable);
+        }
+        let wire: AcceptedChannelWire =
+            serde_json::from_slice(&bytes).map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        wire.promote().map(Some)
+    }
+
+    fn initialize(&self) -> Result<(), ChannelError> {
+        if self.load()?.is_some() {
+            return Ok(());
+        }
+        let marker = self.directory.join(INITIALIZING_FILE);
+        match fs::symlink_metadata(&marker) {
+            Ok(metadata)
+                if metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.len() == 0 =>
+            {
+                #[cfg(unix)]
+                if metadata.permissions().mode() & 0o177 != 0 {
+                    return Err(ChannelError::AcceptedStateUnavailable);
+                }
+                return Ok(());
+            }
+            Ok(_) => return Err(ChannelError::AcceptedStateUnavailable),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ChannelError::AcceptedStateUnavailable),
+        }
+        let entries =
+            fs::read_dir(&self.directory).map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        for entry in entries {
+            let entry = entry.map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+            if entry.file_name() != LOCK_FILE {
+                return Err(ChannelError::AcceptedStateUnavailable);
+            }
+        }
+        let marker_file = open_create_new_nofollow(&marker)?;
+        marker_file
+            .sync_all()
+            .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        sync_directory(&self.directory)
+    }
+
+    fn persist(&self, state: &AcceptedChannel) -> Result<(), ChannelError> {
+        let wire = AcceptedChannelWire::from_state(state);
+        let mut bytes =
+            serde_json::to_vec(&wire).map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        bytes.push(b'\n');
+        if bytes.len() as u64 > MAX_STATE_BYTES {
+            return Err(ChannelError::AcceptedStateUnavailable);
+        }
+        let temporary = self.directory.join(TEMP_FILE);
+        remove_stale_regular_temp(&temporary)?;
+        let mut file = open_create_new_nofollow(&temporary)?;
+        let result = (|| {
+            file.write_all(&bytes)
+                .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+            file.sync_all()
+                .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+            fs::rename(&temporary, self.directory.join(STATE_FILE))
+                .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+            sync_directory(&self.directory)?;
+            remove_initializing_marker(&self.directory.join(INITIALIZING_FILE))?;
+            sync_directory(&self.directory)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AcceptedChannelWire {
+    schema_version: u64,
+    sequence: u64,
+    policy_version: u64,
+    descriptor_sha256: String,
+}
+
+impl AcceptedChannelWire {
+    fn from_state(state: &AcceptedChannel) -> Self {
+        Self {
+            schema_version: 1,
+            sequence: state.sequence().get().get(),
+            policy_version: state.policy_version().get().get(),
+            descriptor_sha256: hex::encode(state.descriptor_sha256()),
+        }
+    }
+
+    fn promote(self) -> Result<AcceptedChannel, ChannelError> {
+        if self.schema_version != 1
+            || self.descriptor_sha256.len() != 64
+            || !self
+                .descriptor_sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(ChannelError::AcceptedStateUnavailable);
+        }
+        let sequence = ChannelSequence::from_u64(self.sequence)
+            .ok_or(ChannelError::AcceptedStateUnavailable)?;
+        let policy_version = PolicyVersion::from_u64(self.policy_version)
+            .ok_or(ChannelError::AcceptedStateUnavailable)?;
+        let digest = hex::decode(self.descriptor_sha256)
+            .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        let descriptor_sha256 = digest
+            .try_into()
+            .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        Ok(AcceptedChannel::new(
+            sequence,
+            policy_version,
+            descriptor_sha256,
+        ))
+    }
+}
+
+fn remove_initializing_marker(path: &Path) -> Result<(), ChannelError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            fs::remove_file(path).map_err(|_| ChannelError::AcceptedStateUnavailable)
+        }
+        Ok(_) => Err(ChannelError::AcceptedStateUnavailable),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ChannelError::AcceptedStateUnavailable),
+    }
+}
+
+fn sync_directory(path: &Path) -> Result<(), ChannelError> {
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| ChannelError::AcceptedStateUnavailable)
+}
+
+fn remove_stale_regular_temp(path: &Path) -> Result<(), ChannelError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            fs::remove_file(path).map_err(|_| ChannelError::AcceptedStateUnavailable)
+        }
+        Ok(_) => Err(ChannelError::AcceptedStateUnavailable),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(ChannelError::AcceptedStateUnavailable),
+    }
+}
+
+fn open_read_nofollow(path: &Path) -> Result<File, ChannelError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    options
+        .open(path)
+        .map_err(|_| ChannelError::AcceptedStateUnavailable)
+}
+
+fn open_create_new_nofollow(path: &Path) -> Result<File, ChannelError> {
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    options
+        .open(path)
+        .map_err(|_| ChannelError::AcceptedStateUnavailable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
+
+    #[tokio::test]
+    async fn bundle_targets_are_private_and_floor_is_explicit() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/channel-v1")
+            .canonicalize()
+            .unwrap();
+        let temporary = TempDir::new().unwrap();
+        let datastore = temporary.path().join("datastore");
+        fs::create_dir(&datastore).unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&datastore, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut bundle = load_installer_bundle(
+            TrustedRoot::from_embedded(ROOT).unwrap(),
+            &fixture,
+            &datastore,
+            System::Aarch64Darwin,
+        )
+        .await
+        .unwrap();
+        assert_eq!(bundle.channel().sequence().get().get(), 42);
+        assert!(!bundle.take_index().unwrap().is_empty());
+        assert!(!datastore.join(STATE_FILE).exists());
+        let runtime_target = bundle.channel().descriptor().runtime().target();
+        assert!(
+            bundle
+                .open_target(runtime_target)
+                .unwrap()
+                .metadata()
+                .unwrap()
+                .is_file()
+        );
+        bundle.commit_accepted_channel().unwrap();
+        assert!(datastore.join(STATE_FILE).is_file());
+    }
+}

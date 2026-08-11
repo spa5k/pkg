@@ -24,7 +24,9 @@ impl TrustedRoot {
         Ok(Self(Arc::from(bytes)))
     }
 
-    pub(crate) fn bytes(&self) -> &[u8] {
+    /// Borrows the validated embedded root bytes for a fixed TUF loader.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }

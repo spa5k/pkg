@@ -26,6 +26,12 @@ publish.workspace = true
 # performs all (de)serialization through private wire DTOs itself.
 pkg-core = { path = "../pkg-core" }
 pkg-channel = { path = "../pkg-channel" }
+futures-util = "=0.3.33"
+hex = "=0.4.3"
+jiff = { version = "=0.2.35", features = ["serde"] }
+tempfile = "=3.27.0"
+tough = { version = "=0.24.0", default-features = false, features = ["http"] }
+url = "=2.5.8"
 
 # Exact-pinned serde + serde_json for the size-capped JSON codec. The `derive`
 # feature is used only by crate-private wire DTOs (never by public types or by
@@ -50,4 +56,4 @@ lzma-rust2 = { version = "=0.18.1", default-features = false, features = ["std",
 
 [dev-dependencies]
 lzma-rust2 = { version = "=0.18.1", default-features = false, features = ["std", "xz", "encoder"] }
-tempfile = "=3.27.0"
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }

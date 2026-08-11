@@ -1471,6 +1471,9 @@ dependencies = [
 name = "pkg-nix"
 version = "0.0.0"
 dependencies = [
+ "futures-util",
+ "hex",
+ "jiff",
  "libc",
  "lzma-rust2",
  "pkg-channel",
@@ -1481,6 +1484,9 @@ dependencies = [
  "sha2 0.10.9",
  "tar",
  "tempfile",
+ "tokio",
+ "tough",
+ "url",
 ]
 
 [[package]]

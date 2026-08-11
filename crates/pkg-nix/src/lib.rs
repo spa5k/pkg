@@ -113,8 +113,8 @@ pub use managed::ownership::{
     verify_ownership_receipt,
 };
 pub use managed::provision::{
-    ProvisionError, ProvisionErrorCode, ProvisionRequest, ProvisionSpec, ProvisionedRuntime,
-    RuntimeSource, provision_managed_nix,
+    InstallerProvisionRequest, ProvisionError, ProvisionErrorCode, ProvisionRequest, ProvisionSpec,
+    ProvisionedBootstrap, ProvisionedRuntime, provision_managed_nix_from_bundle,
 };
 pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,

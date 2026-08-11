@@ -3,5 +3,6 @@
 pub mod accounts;
 pub mod daemon;
 pub mod detect;
+mod installer_bundle;
 pub mod ownership;
 pub mod provision;

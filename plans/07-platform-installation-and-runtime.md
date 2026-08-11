@@ -1242,10 +1242,29 @@ snippets, or any foreign `/nix`.
   the per-user PATH snippet (§10).
 - **Q7.6 Container/WSL specifics.** systemd-in-WSL, rootless daemon socket
   paths. *(Default: detect and adapt; document matrix.)*
-- **Q7.7 Bootstrap descriptor distribution.** How the installer obtains the
-  initial signed descriptor + bundled Nix out-of-band (chicken/egg) — likely a
-  pinned copy shipped in the installer image, verified against a long-term
-  root key. *(Tie to plan 02/10.)*
+  - **Q7.7 Bootstrap descriptor distribution — RESOLVED (PR-36).** The platform
+    installer is a self-contained release image. It embeds the long-term TUF root
+    in the executable and carries a fixed offline repository under `metadata/`
+    and `targets/`. Before the first privileged mutation, it verifies that
+    repository with normal TUF expiry/resource limits, promotes `descriptor.json`
+    for the native system, and streams only the descriptor-selected managed-Nix
+    archive plus asset manifest into private unlinked files. It accepts no output
+    pathname and writes nothing through the untrusted release-bundle directory.
+    Paths, trust roots, systems, targets, URLs, and policy are not installer CLI
+    inputs. The runtime source is constructible only when its descriptor
+    digest and target hashes match the verified channel. Each source is copied
+    and rehashed into a private unlinked snapshot before privileged provisioning,
+    so writable staging ancestry, concurrent writes, or post-verification
+    replacement cannot change the file descriptor consumed by the provisioner.
+    The same single-writer datastore carries the application-level accepted
+    sequence/policy/digest. Provisioning commits that rollback floor only after
+    daemon and ownership-receipt verification; failure rolls the attempt back.
+    The release image itself still receives the normal CLI release
+    checksum/attestation from plan 10; the inner bootstrap bytes derive authority
+    only from TUF. The public one-shot entry point is
+    `pkg_nix::provision_managed_nix_from_bundle`; its repository view, runtime
+    readers, and rollback-state writer are crate-private and cannot be used as
+    separate downstream capabilities.
 
 ## 18. Sources (current Nix behavior)
 

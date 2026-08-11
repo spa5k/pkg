@@ -40,6 +40,7 @@ and decommissioned** — across four operational surfaces:
 | Artifact | Producer | Signed by | Published to | Verified by client via |
 |----------|----------|-----------|--------------|------------------------|
 | CLI binaries (Linux x86_64/aarch64, macOS arm64) | CI build | release key (Sigstore attestation) + checksum pinned in signed release notes & installer (`07`) | GitHub Releases + product CDN | Sigstore attestation + pinned checksum (the CLI is released alongside the channel, **not** a TUF channel target — see note below) |
+| Platform installer image | CI assembly from the platform CLI plus a fixed offline TUF `metadata/` + `targets/` repository | release key for the outer image; existing TUF roles for every inner bootstrap byte | GitHub Releases + product CDN | outer Sigstore attestation/checksum, then embedded-root TUF verification before first privileged mutation (`02`,`07`) |
 | Managed Nix runtime tarball (pinned) | upstream Nix release (we do **not** build Nix) | TUF `targets` | product CDN | TUF `targets.json` hash |
 | Channel metadata (root/targets/snapshot/timestamp) | release service | TUF role keys (offline root; online others) | product CDN | TUF chain (`02`,`08`) |
 | Disposable search index | indexer job (from pinned Nixpkgs narHash) | hash recorded in `targets` | product CDN | hash in `targets.json` |

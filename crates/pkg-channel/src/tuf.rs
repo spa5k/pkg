@@ -1,5 +1,7 @@
 use std::fs::File;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -12,8 +14,8 @@ use url::Url;
 
 use crate::keys::TrustedRoot;
 use crate::policy::{
-    AcceptedChannel, ChannelError, DESCRIPTOR_TARGET, RefreshOutcome, VerifiedChannel,
-    validate_datastore, validate_descriptor, validate_repository_url,
+    AcceptedChannel, ChannelError, DESCRIPTOR_TARGET, MAX_DESCRIPTOR_BYTES, RefreshOutcome,
+    VerifiedChannel, validate_datastore, validate_descriptor, validate_repository_url,
 };
 use crate::state::{AcceptedChannelStore, LOCK_FILE};
 
@@ -68,6 +70,46 @@ impl AuthenticatedIndexTarget {
 pub struct ChannelRefresh<T> {
     outcome: RefreshOutcome,
     index: T,
+}
+
+fn open_datastore_lease(datastore: &Path) -> Result<File, ChannelError> {
+    let lock_path = datastore.join(LOCK_FILE);
+    if matches!(
+        std::fs::symlink_metadata(&lock_path),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file()
+    ) {
+        return Err(ChannelError::DatastoreUnavailable);
+    }
+    let mut lock_options = File::options();
+    lock_options
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false);
+    #[cfg(unix)]
+    lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    let datastore_lease = lock_options
+        .open(&lock_path)
+        .map_err(|_| ChannelError::DatastoreUnavailable)?;
+    #[cfg(unix)]
+    {
+        let metadata = datastore_lease
+            .metadata()
+            .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        if metadata.permissions().mode() & 0o177 != 0 {
+            datastore_lease
+                .set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|_| ChannelError::DatastoreUnavailable)?;
+            datastore_lease
+                .sync_all()
+                .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        }
+    }
+    datastore_lease.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => ChannelError::DatastoreBusy,
+        std::fs::TryLockError::Error(_) => ChannelError::DatastoreUnavailable,
+    })?;
+    Ok(datastore_lease)
 }
 
 impl<T> ChannelRefresh<T> {
@@ -152,46 +194,7 @@ impl ChannelClient {
         validate_repository_url(&metadata_url)?;
         validate_repository_url(&targets_url)?;
         validate_datastore(&datastore)?;
-        let lock_path = datastore.join(LOCK_FILE);
-        if matches!(
-            std::fs::symlink_metadata(&lock_path),
-            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file()
-        ) {
-            return Err(ChannelError::DatastoreUnavailable);
-        }
-        let mut lock_options = File::options();
-        lock_options
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-        }
-        let datastore_lease = lock_options
-            .open(&lock_path)
-            .map_err(|_| ChannelError::DatastoreUnavailable)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let metadata = datastore_lease
-                .metadata()
-                .map_err(|_| ChannelError::DatastoreUnavailable)?;
-            if metadata.permissions().mode() & 0o177 != 0 {
-                datastore_lease
-                    .set_permissions(std::fs::Permissions::from_mode(0o600))
-                    .map_err(|_| ChannelError::DatastoreUnavailable)?;
-                datastore_lease
-                    .sync_all()
-                    .map_err(|_| ChannelError::DatastoreUnavailable)?;
-            }
-        }
-        datastore_lease.try_lock().map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => ChannelError::DatastoreBusy,
-            std::fs::TryLockError::Error(_) => ChannelError::DatastoreUnavailable,
-        })?;
+        let datastore_lease = open_datastore_lease(&datastore)?;
         let accepted = AcceptedChannelStore::new(&datastore);
         accepted.initialize(legacy)?;
         Ok(Self {
@@ -253,7 +256,7 @@ impl ChannelClient {
     ) -> Result<RefreshOutcome, ChannelError> {
         let _refresh = self.refresh_lease.lock().await;
         let repository = RepositoryLoader::new(
-            &self.trusted_root.bytes(),
+            &self.trusted_root.as_bytes(),
             self.metadata_url.clone(),
             self.targets_url.clone(),
         )
@@ -265,16 +268,7 @@ impl ChannelClient {
         .await
         .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
 
-        let name =
-            TargetName::new(DESCRIPTOR_TARGET).map_err(|_| ChannelError::MissingDescriptor)?;
-        let stream = repository
-            .read_target(&name)
-            .await
-            .map_err(|error| ChannelError::TufVerification(error.to_string()))?
-            .ok_or(ChannelError::MissingDescriptor)?;
-        let bytes = IntoVec::into_vec(stream)
-            .await
-            .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
+        let bytes = read_descriptor_target(&repository).await?;
         let previous = self.accepted.load()?;
         let outcome = validate_descriptor(&bytes, &repository, host, previous.as_ref(), now)?;
         self.persist_outcome(&outcome)?;
@@ -290,7 +284,7 @@ impl ChannelClient {
     ) -> Result<ChannelRefresh<T>, ChannelError> {
         let _refresh = self.refresh_lease.lock().await;
         let repository = RepositoryLoader::new(
-            &self.trusted_root.bytes(),
+            &self.trusted_root.as_bytes(),
             self.metadata_url.clone(),
             self.targets_url.clone(),
         )
@@ -302,16 +296,7 @@ impl ChannelClient {
         .await
         .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
 
-        let descriptor_name =
-            TargetName::new(DESCRIPTOR_TARGET).map_err(|_| ChannelError::MissingDescriptor)?;
-        let descriptor_stream = repository
-            .read_target(&descriptor_name)
-            .await
-            .map_err(|error| ChannelError::TufVerification(error.to_string()))?
-            .ok_or(ChannelError::MissingDescriptor)?;
-        let bytes = IntoVec::into_vec(descriptor_stream)
-            .await
-            .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
+        let bytes = read_descriptor_target(&repository).await?;
         let previous = self.accepted.load()?;
         let outcome = validate_descriptor(&bytes, &repository, host, previous.as_ref(), now)?;
         let channel = match &outcome {
@@ -335,6 +320,25 @@ impl ChannelClient {
         };
         self.accepted.persist(&channel.accepted_state())
     }
+}
+
+async fn read_descriptor_target(repository: &tough::Repository) -> Result<Vec<u8>, ChannelError> {
+    let name = TargetName::new(DESCRIPTOR_TARGET).map_err(|_| ChannelError::MissingDescriptor)?;
+    let metadata = repository
+        .all_targets()
+        .find_map(|(candidate, metadata)| (candidate == &name).then_some(metadata))
+        .ok_or(ChannelError::MissingDescriptor)?;
+    if metadata.length > MAX_DESCRIPTOR_BYTES as u64 {
+        return Err(ChannelError::DescriptorTooLarge);
+    }
+    let stream = repository
+        .read_target(&name)
+        .await
+        .map_err(|error| ChannelError::TufVerification(error.to_string()))?
+        .ok_or(ChannelError::MissingDescriptor)?;
+    IntoVec::into_vec(stream)
+        .await
+        .map_err(|error| ChannelError::TufVerification(error.to_string()))
 }
 
 async fn read_required_index_target(
@@ -364,8 +368,6 @@ mod tests {
     use super::*;
     use crate::policy::{AcceptedChannel, ChannelError, validate_descriptor};
     use pkg_core::{ChannelSequence, PolicyVersion};
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt as _;
     use tempfile::TempDir;
     use tough::Repository;
 

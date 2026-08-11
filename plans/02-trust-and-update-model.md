@@ -161,6 +161,25 @@ Field semantics:
 ## 8. Trust bootstrap
 
 - 🛠 **Embedded root:** a `root.json` (TUF root role, v1) is shipped **inside the `pkg` binary** (embedded resource / `include_bytes!`) and is the only a-priori trust anchor. It is NOT read from disk at first run; disk-stored copies must match or be re-derived.
+- 🛠 **Installer bootstrap:** each platform installer image carries one offline TUF repository in
+  fixed `metadata/` and `targets/` directories next to the installer executable. The executable
+  authenticates that repository from its embedded root, with normal expiry and resource limits,
+  before it streams the descriptor-selected managed-Nix archive and asset manifest directly into
+  private unlinked files. No caller-supplied output pathname is opened or written. The bundle path
+  supplies untrusted read-only bytes only. It cannot select a
+  different target, system, trust root, repository URL, or policy.
+- 🛠 **Bootstrap handoff:** the verified installer capability binds one native system, descriptor
+  digest, runtime target, and asset-manifest target. The runtime provisioner can read only those two
+  unlinked snapshots. Provisioning rejects a source whose descriptor digest differs from
+  its `ProvisionSpec`. Each source file is length-bounded and SHA-256 verified while it is copied
+  into a private unlinked snapshot; only that stable snapshot crosses the privileged handoff.
+  Directory mode bits or ownership of the caller-supplied staging tree are not treated as
+  authentication.
+  The installer holds the datastore's sole writer lease, validates against any existing accepted
+  descriptor, and commits the accepted sequence/policy/digest only after the runtime, daemon, and
+  ownership receipt verify. Failure to commit that rollback floor rolls the runtime installation
+  back. This offline bootstrap does not create a second trust format and does not weaken the normal
+  online channel rollback state.
 - 🛠 **First run:** `pkg update` fetches `timestamp.json` → `snapshot.json` → `targets.json`, verifies the chain to the embedded root, then downloads `descriptor.json` and its target hashes. Nothing is used before verification (TRU-INV-01).
 - 🛠 **Root rotation:** future roots are signed by the threshold root role per TUF. `pkg` follows the TUF root-chain rule (a new root must be signed by both the old threshold and the new threshold) so the embedded anchor stays valid across rotations. — *TUF spec §5.1 "Root role".*
 

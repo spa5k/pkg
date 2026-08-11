@@ -117,6 +117,8 @@ pub enum ChannelError {
     InvalidTrustedRoot,
     /// A repository URL is not canonical HTTPS.
     InvalidRepositoryUrl,
+    /// The offline installer bundle has an unsafe or incomplete directory layout.
+    InstallerBundleUnavailable,
     /// The persistent TUF datastore is absent, unsafe, or inaccessible.
     DatastoreUnavailable,
     /// Durable product channel identity is missing, unsafe, or corrupt.
@@ -184,6 +186,9 @@ impl fmt::Display for ChannelError {
             Self::InvalidRepositoryUrl => {
                 f.write_str("repository URLs must be canonical HTTPS URLs")
             }
+            Self::InstallerBundleUnavailable => {
+                f.write_str("offline installer bundle is unavailable")
+            }
             Self::DatastoreUnavailable => f.write_str("persistent TUF datastore is unavailable"),
             Self::AcceptedStateUnavailable => {
                 f.write_str("durable accepted channel state is unavailable")
@@ -229,7 +234,8 @@ impl fmt::Display for ChannelError {
 
 impl std::error::Error for ChannelError {}
 
-pub(crate) fn validate_datastore(path: &Path) -> Result<(), ChannelError> {
+/// Verifies that a TUF datastore is an existing private real directory.
+pub fn validate_datastore(path: &Path) -> Result<(), ChannelError> {
     let metadata =
         std::fs::symlink_metadata(path).map_err(|_| ChannelError::DatastoreUnavailable)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -258,7 +264,12 @@ pub(crate) fn validate_repository_url(url: &Url) -> Result<(), ChannelError> {
     Ok(())
 }
 
-pub(crate) fn validate_descriptor(
+/// Promotes descriptor bytes from an authenticated TUF repository view.
+///
+/// The repository must be the same `tough` view that supplied `bytes`. The
+/// function validates every referenced target identity before it returns
+/// product policy.
+pub fn validate_descriptor(
     bytes: &[u8],
     repository: &Repository,
     host: System,
