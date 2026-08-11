@@ -785,6 +785,67 @@ impl InstallEvidence {
         Self::try_from(wire)
     }
 
+    /// Builds install evidence from outputs accepted by the cache-only
+    /// substitution boundary.
+    ///
+    /// Each substitute is an opaque capability produced only after signature,
+    /// integrity, trust, and metadata verification. Fresh path metadata must
+    /// still match that capability exactly. The selected output set must also
+    /// equal the resolver-owned target set, with no missing or extra path.
+    ///
+    /// # Errors
+    ///
+    /// Refuses inconsistent source identity, targets, substitute metadata, or
+    /// adapter results.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_cache_substitutes(
+        descriptor_hash: Digest,
+        channel_sequence: ChannelSequence,
+        policy_version: PolicyVersion,
+        revision: NixpkgsRevision,
+        source_nar_hash: NarHash,
+        system: System,
+        targets: Vec<BuildPlanTarget>,
+        substitutes: Vec<crate::VerifiedSubstitute>,
+        adapter: &dyn NixAdapter,
+    ) -> Result<Self, BuildEngineError> {
+        let mut metadata = BTreeMap::new();
+        for substitute in substitutes {
+            let path = substitute.store_path().clone();
+            let info = adapter
+                .path_info(&path)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            if info.store_path() != &path
+                || info.nar_hash() != substitute.nar_hash()
+                || info.signatures() != substitute.signatures()
+                || info.references() != substitute.references()
+                || info.nar_size() != substitute.nar_size()
+                || info.closure_size() != substitute.closure_size()
+                || info.signatures().is_empty()
+            {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+            }
+            let value = (info, BuildOutputProvenance::CacheSigned);
+            if let Some(existing) = metadata.get(path.as_str()) {
+                if existing != &value {
+                    return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+                }
+            } else {
+                metadata.insert(path.as_str().to_owned(), value);
+            }
+        }
+        Self::from_output_metadata(
+            descriptor_hash,
+            channel_sequence,
+            policy_version,
+            revision,
+            source_nar_hash,
+            system,
+            &targets,
+            metadata,
+        )
+    }
+
     fn from_executed_plan(
         plan: &BuildPlan,
         report: &BuildReport,
@@ -828,15 +889,45 @@ impl InstallEvidence {
             let info = adapter
                 .path_info(&path)
                 .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
-            if info.store_path() != &path
-                || metadata.insert(path.as_str().to_owned(), info).is_some()
-            {
+            let provenance = report_outputs
+                .get(path.as_str())
+                .map(|(_, provenance)| *provenance)
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            if info.store_path() != &path {
                 return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
             }
+            metadata.insert(path.as_str().to_owned(), (info, provenance));
         }
 
-        let mut targets = Vec::with_capacity(plan.install_targets.len());
-        for target in &plan.install_targets {
+        Self::from_output_metadata(
+            parse_canonical_digest(&plan.descriptor_hash)?,
+            ChannelSequence::from_u64(plan.channel_seq)
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            plan.policy_identity,
+            NixpkgsRevision::new(&plan.nixpkgs.rev)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            NarHash::new(&plan.nixpkgs.nar_hash)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            plan.system_identity,
+            &plan.install_targets,
+            metadata,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_output_metadata(
+        descriptor_hash: Digest,
+        channel_sequence: ChannelSequence,
+        policy_version: PolicyVersion,
+        revision: NixpkgsRevision,
+        source_nar_hash: NarHash,
+        system: System,
+        plan_targets: &[BuildPlanTarget],
+        metadata: BTreeMap<String, (PathInfoReport, BuildOutputProvenance)>,
+    ) -> Result<Self, BuildEngineError> {
+        let mut targets = Vec::with_capacity(plan_targets.len());
+        let mut used_paths = BTreeSet::new();
+        for target in plan_targets {
             let root = target
                 .plan
                 .derivations()
@@ -849,14 +940,11 @@ impl InstallEvidence {
                     .outputs()
                     .get(output_name)
                     .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
-                let provenance = report_outputs
-                    .get(store_path.as_str())
-                    .map(|(_, provenance)| *provenance)
-                    .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
-                let info = metadata
+                let (info, provenance) = metadata
                     .get(store_path.as_str())
                     .cloned()
                     .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+                used_paths.insert(store_path.as_str().to_owned());
                 if provenance == BuildOutputProvenance::CacheSigned && info.signatures().is_empty()
                 {
                     return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
@@ -882,16 +970,18 @@ impl InstallEvidence {
                 acquired,
             });
         }
+        if used_paths.len() != metadata.len()
+            || metadata.keys().any(|path| !used_paths.contains(path))
+        {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+        }
         Self::new(
-            parse_canonical_digest(&plan.descriptor_hash)?,
-            ChannelSequence::from_u64(plan.channel_seq)
-                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
-            plan.policy_identity,
-            NixpkgsRevision::new(&plan.nixpkgs.rev)
-                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
-            NarHash::new(&plan.nixpkgs.nar_hash)
-                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
-            plan.system_identity,
+            descriptor_hash,
+            channel_sequence,
+            policy_version,
+            revision,
+            source_nar_hash,
+            system,
             targets,
         )
     }

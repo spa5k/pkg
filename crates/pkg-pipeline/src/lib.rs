@@ -20,7 +20,10 @@ mod stage;
 mod state_edit;
 mod verify;
 
-pub use acquire::{AcquireError, AcquiredInstall, AcquiredOutput, acquire_cache_only};
+pub use acquire::{
+    AcquireError, AcquiredInstall, AcquiredOutput, CacheEvidenceError, acquire_cache_only,
+    assemble_cache_install_evidence,
+};
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
 pub use build_authority::{
     AuthenticatedBuildAuthority, BuildAuthorityError, BuildAuthorityErrorCode, BuildAuthorityUpdate,

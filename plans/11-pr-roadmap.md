@@ -1440,8 +1440,14 @@ flowchart TD
   and the returned receipt binds its canonical root reference, entry count, and exact mapping
   digest. The broker keeps a GC inhibitor until the recovered local commit completes. Old handles
   remain restart-invalid, and neither CLI nor broker recovery payloads can supply root names or
-  store paths. The remaining production install slice must connect initial install and this
-  attested recovery transaction to the CLI dispatcher.
+  store paths. Cache-hit acquisition now also has the same strict evidence destination: only opaque
+  `VerifiedSubstitute` capabilities may be bound to resolver-owned build targets, every selected
+  output must be covered with no foreign output, and a fresh path-info read must exactly match the
+  verified hash, signatures, references, and sizes. The result records `CacheSigned` provenance in
+  the same `InstallEvidence` schema used after local builds. The remaining production install slice
+  must run that cache-first path under broker GC inhibition, expose its acquired-versus-build-required
+  outcome through the closed dispatcher, and connect initial install plus attested recovery to the
+  CLI.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

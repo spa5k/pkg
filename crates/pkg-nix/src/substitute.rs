@@ -268,10 +268,15 @@ fn validate_metadata(
 mod tests {
     use super::*;
     use crate::{
-        BuildReport, BuildRequest, DerivationPlanReport, EvaluateDerivationRequest, GcReport,
-        MethodKind, PathVerifyResult, SubstituteReceipt, SubstituteReport, VerifyReport,
-        VersionInfo,
+        BuildPlanTarget, BuildReport, BuildRequest, DerivationPlanReport, Digest,
+        EvaluateDerivationRequest, EvaluatedDerivation, GcReport, InstallEvidence, MethodKind,
+        PathVerifyResult, SubstituteReceipt, SubstituteReport, VerifyReport, VersionInfo,
     };
+    use pkg_core::{
+        AttributePath, ChannelSequence, OutputName, OutputSelection, PackageVersion, PolicyVersion,
+        SelectorId, SelectorInput, SourceRevision, System, VersionPreference,
+    };
+    use std::collections::BTreeMap;
     use std::str::FromStr;
     use std::sync::Mutex;
 
@@ -321,6 +326,42 @@ mod tests {
             100,
         )
         .unwrap()
+    }
+
+    fn target() -> BuildPlanTarget {
+        let root = crate::DerivationPath::from_str(&format!("/nix/store/{HASH}-hello-2.12.2.drv"))
+            .unwrap();
+        let output_name = OutputName::new("out").unwrap();
+        let mut outputs = BTreeMap::new();
+        outputs.insert(output_name.clone(), path());
+        let evaluated = EvaluatedDerivation::new(
+            root.clone(),
+            "hello-2.12.2".to_owned(),
+            System::X8664Linux,
+            outputs,
+            Digest::from_bytes([8; 32]),
+            false,
+        )
+        .unwrap();
+        let plan = DerivationPlanReport::new(
+            4,
+            root,
+            vec![output_name],
+            vec![evaluated],
+            Digest::from_bytes([9; 32]),
+            "hello".to_owned(),
+            PackageVersion::new("2.12.2"),
+        )
+        .unwrap();
+        BuildPlanTarget::new(
+            SelectorId::new("sel_hello").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            AttributePath::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+            plan,
+        )
     }
 
     struct Adapter {
@@ -456,6 +497,89 @@ mod tests {
         let debug = format!("{result:?}");
         assert!(!debug.contains("/nix/store"));
         assert!(!debug.contains(HASH));
+    }
+
+    #[test]
+    fn verified_substitute_creates_cache_signed_install_evidence() {
+        let acquire_adapter = Adapter::new(
+            Ok(fetched()),
+            Some(Ok(verified(NarIntegrity::Intact, TrustStatus::Trusted))),
+            Some(Ok(info(nar(NAR)))),
+        );
+        let SubstituteResult::Fetched(substitute) = acquire_with_trust(
+            &path(),
+            &acquire_adapter,
+            "https://cache.nixos.org",
+            |name| name == "cache.nixos.org-1",
+        )
+        .unwrap() else {
+            panic!("expected verified substitute");
+        };
+        let evidence_adapter = Adapter::new(
+            Err(NixAdapterError::unexpected_extra_call(
+                MethodKind::Substitute,
+            )),
+            None,
+            Some(Ok(info(nar(NAR)))),
+        );
+        let evidence = InstallEvidence::from_cache_substitutes(
+            Digest::from_bytes([3; 32]),
+            ChannelSequence::from_u64(42).unwrap(),
+            PolicyVersion::from_u64(7).unwrap(),
+            crate::NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567").unwrap(),
+            nar(NAR),
+            System::X8664Linux,
+            vec![target()],
+            vec![substitute],
+            &evidence_adapter,
+        )
+        .unwrap();
+        assert_eq!(evidence.targets().len(), 1);
+        assert_eq!(evidence.targets()[0].acquired().len(), 1);
+        assert_eq!(
+            evidence.targets()[0].acquired()[0].provenance(),
+            crate::BuildOutputProvenance::CacheSigned
+        );
+        assert_eq!(evidence_adapter.calls(), [MethodKind::PathInfo]);
+    }
+
+    #[test]
+    fn cache_evidence_refuses_fresh_metadata_drift() {
+        let acquire_adapter = Adapter::new(
+            Ok(fetched()),
+            Some(Ok(verified(NarIntegrity::Intact, TrustStatus::Trusted))),
+            Some(Ok(info(nar(NAR)))),
+        );
+        let SubstituteResult::Fetched(substitute) = acquire_with_trust(
+            &path(),
+            &acquire_adapter,
+            "https://cache.nixos.org",
+            |name| name == "cache.nixos.org-1",
+        )
+        .unwrap() else {
+            panic!("expected verified substitute");
+        };
+        let evidence_adapter = Adapter::new(
+            Err(NixAdapterError::unexpected_extra_call(
+                MethodKind::Substitute,
+            )),
+            None,
+            Some(Ok(info(nar(OTHER_NAR)))),
+        );
+        assert!(
+            InstallEvidence::from_cache_substitutes(
+                Digest::from_bytes([3; 32]),
+                ChannelSequence::from_u64(42).unwrap(),
+                PolicyVersion::from_u64(7).unwrap(),
+                crate::NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567",).unwrap(),
+                nar(NAR),
+                System::X8664Linux,
+                vec![target()],
+                vec![substitute],
+                &evidence_adapter,
+            )
+            .is_err()
+        );
     }
 
     #[test]
