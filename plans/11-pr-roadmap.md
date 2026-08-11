@@ -1375,7 +1375,10 @@ flowchart TD
   placeholder engine: `list` and non-pruning `history` read verified state, while remove/pin/unpin
   can render deterministic `--dry-run` lifecycle edits. Every unconnected mutation, authenticated
   index query, and broker transaction still returns a specific fail-closed product error; none can
-  fall through to raw Nix. Fresh users now get the fixed per-user state tree lazily and
+  fall through to raw Nix. The pipeline now also has one generic fresh-generation preparer for
+  remove/pin/unpin: it revalidates current under the exclusive lease, stages the edited lifecycle
+  state, rebuilds immutable hashes and provenance, and refuses unrepresentable collision metadata.
+  CLI broker orchestration remains the next wiring step. Fresh users now get the fixed per-user state tree lazily and
   idempotently at `0700`: existing components are never chmodded or replaced, symlink/owner/write
   violations refuse, directory creation is parent-synced, and the shared lease atomically creates
   its missing `0600` lock file. Empty history is therefore a valid first-run result rather than an

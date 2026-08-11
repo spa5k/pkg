@@ -16,6 +16,7 @@ mod preflight;
 mod resolve;
 mod rollback;
 mod stage;
+mod state_edit;
 mod verify;
 
 pub use acquire::{AcquireError, AcquiredInstall, AcquiredOutput, acquire_cache_only};
@@ -47,6 +48,7 @@ pub use preflight::{PlannedOutput, PreflightError, PreflightInstall, preflight_c
 pub use resolve::{ResolveBatchError, ResolvedInstall, resolve_install};
 pub use rollback::{RollbackPrepareError, prepare_rollback};
 pub use stage::{StagedInstall, stage_verified};
+pub use state_edit::{StateEditKind, StateEditMetadata, StateEditPrepareError, prepare_state_edit};
 pub use verify::{VerifiedInstall, verify_acquired};
 
 use std::fmt;
