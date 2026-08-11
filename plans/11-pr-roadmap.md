@@ -1350,7 +1350,12 @@ flowchart TD
   fixed-endpoint lifecycle connection per call, maps only the broker's closed adapter-error code back
   into the domain error, and best-effort cancels before disconnect. Its `build` implementation fails
   locally with `PermissionDenied` and never contacts the broker, so the caller still cannot turn the
-  public receipt carrier into authority. The shipped command engine remains fail-closed until
+  public receipt carrier into authority. The lifecycle layer now also exposes one shared-lease
+  reader for active and retained immutable generations. It bounds directory and file reads, opens
+  state files without following final symlinks, verifies record/snapshot sidecars plus all embedded
+  hashes and cross-file lifecycle bindings, and refuses unknown generation-directory entries. This
+  is the common trusted input for CLI list/history and future mutation planning; commands do not
+  parse mutable views independently. The shipped command engine remains fail-closed until
   authenticated build execution and product-command wiring land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.

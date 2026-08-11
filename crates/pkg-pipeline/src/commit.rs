@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use pkg_core::state::{Digest, Generation, LockedState, Manifest, body_digest, canonical_digest};
-use pkg_core::{GenerationSnapshot, lifecycle::LifecycleState};
+use pkg_core::{GenerationSnapshot, History, lifecycle::LifecycleState};
 use pkg_nix::{GenerationId, MaintenanceAdapter, RemoveRootSetRequest};
 use pkg_store::{
     ActivationEvent, ActivationPlan, LeaseMode, PreparedRootSet, RootCandidate, StateJournal,
@@ -14,6 +14,10 @@ use pkg_store::{
     publish_root_set, verify_recorded_activation,
 };
 use serde_json::{Value, json};
+
+const MAX_STATE_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_SIDECAR_BYTES: u64 = 256;
+const MAX_GENERATION_DIRECTORY_ENTRIES: usize = 16_384;
 
 /// A fully validated set of exact bytes for the next immutable generation.
 #[derive(Debug, Clone)]
@@ -136,6 +140,139 @@ pub enum RecoveryResult {
     FinishedActivated,
     /// The generation was already committed; views were re-restored idempotently.
     AlreadyCommitted,
+}
+
+/// Loads the active immutable generation under a caller-held shared or
+/// exclusive state lease.
+///
+/// Every record, snapshot, and sidecar is opened without following the final
+/// symlink, bounded before allocation, and cross-validated through the normal
+/// candidate and lifecycle constructors.
+pub fn load_active_snapshot(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<Option<GenerationSnapshot>, CommitError> {
+    require_read_lease(layout, lease)?;
+    let Some(generation) = layout
+        .current_generation()
+        .map_err(|_| CommitError::StateIo)?
+    else {
+        return Ok(None);
+    };
+    load_generation_snapshot(layout, &generation).map(Some)
+}
+
+/// Loads all retained immutable generations as one validated history view.
+///
+/// Unknown files in the protected generations directory are refused rather
+/// than silently omitted from the history presented to lifecycle commands.
+pub fn load_retained_history(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<History, CommitError> {
+    require_read_lease(layout, lease)?;
+    let active = layout
+        .current_generation()
+        .map_err(|_| CommitError::StateIo)?;
+    let generations = layout.state_root().join("generations");
+    let mut ids = Vec::new();
+    let mut companion_ids = Vec::new();
+    for (index, entry) in fs::read_dir(&generations)
+        .map_err(|_| CommitError::StateIo)?
+        .enumerate()
+    {
+        if index >= MAX_GENERATION_DIRECTORY_ENTRIES {
+            return Err(CommitError::StateIo);
+        }
+        let entry = entry.map_err(|_| CommitError::StateIo)?;
+        let file_type = entry.file_type().map_err(|_| CommitError::StateIo)?;
+        if !file_type.is_file() {
+            return Err(CommitError::StateIo);
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| CommitError::StateIo)?;
+        if let Some(id) = generation_record_id(&name) {
+            ids.push(id);
+        } else if let Some(id) = generation_companion_id(&name) {
+            companion_ids.push(id);
+        } else {
+            return Err(CommitError::StateIo);
+        }
+    }
+    ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    if ids
+        .windows(2)
+        .any(|pair| pair[0].as_str() == pair[1].as_str())
+    {
+        return Err(CommitError::InvalidCandidate);
+    }
+    if companion_ids.iter().any(|companion| {
+        ids.binary_search_by(|id| id.as_str().cmp(companion.as_str()))
+            .is_err()
+    }) {
+        return Err(CommitError::InvalidCandidate);
+    }
+    let snapshots = ids
+        .iter()
+        .map(|id| load_generation_snapshot(layout, id))
+        .collect::<Result<Vec<_>, _>>()?;
+    History::new(snapshots, active.as_ref().map(GenerationId::as_str))
+        .map_err(|_| CommitError::InvalidCandidate)
+}
+
+fn require_read_lease(layout: &StateLayout, lease: &StateLease) -> Result<(), CommitError> {
+    if !lease.authorizes(layout, LeaseMode::Shared) {
+        return Err(CommitError::LeaseRequired);
+    }
+    layout.validate().map_err(|_| CommitError::StateIo)
+}
+
+fn load_generation_snapshot(
+    layout: &StateLayout,
+    generation_id: &GenerationId,
+) -> Result<GenerationSnapshot, CommitError> {
+    let root = layout.state_root();
+    let record_relative = format!("generations/{}.json", generation_id.as_str());
+    let record = read_verified_body(root, &record_relative)?;
+    let generation = Generation::from_json(&record).map_err(|_| CommitError::InvalidCandidate)?;
+    if generation.id() != generation_id.as_str() {
+        return Err(CommitError::InvalidCandidate);
+    }
+    let manifest = read_verified_snapshot(
+        root,
+        generation.manifest_snapshot(),
+        generation.manifest_hash(),
+    )?;
+    let lock = read_verified_snapshot(root, generation.lock_snapshot(), generation.lock_hash())?;
+    let candidate = CandidateGeneration::new(manifest, lock, record)?;
+    let manifest = Manifest::from_json(&candidate.manifest_bytes)
+        .map_err(|_| CommitError::InvalidCandidate)?;
+    let lock =
+        LockedState::from_json(&candidate.lock_bytes).map_err(|_| CommitError::InvalidCandidate)?;
+    let state = LifecycleState::new(manifest, lock).map_err(|_| CommitError::InvalidCandidate)?;
+    GenerationSnapshot::new(candidate.generation, state).map_err(|_| CommitError::InvalidCandidate)
+}
+
+fn generation_record_id(name: &str) -> Option<GenerationId> {
+    let stem = name.strip_suffix(".json")?;
+    GenerationId::new(stem).ok()
+}
+
+fn generation_companion_id(name: &str) -> Option<GenerationId> {
+    [
+        ".json.sha256",
+        ".manifest.json",
+        ".manifest.json.sha256",
+        ".lock.json",
+        ".lock.json.sha256",
+    ]
+    .iter()
+    .find_map(|suffix| {
+        name.strip_suffix(suffix)
+            .and_then(|stem| GenerationId::new(stem).ok())
+    })
 }
 
 impl PreparedGeneration {
@@ -560,16 +697,36 @@ fn read_verified_snapshot(
     relative: &str,
     expected: &str,
 ) -> Result<Vec<u8>, CommitError> {
-    let bytes =
-        read_regular(&joined_relative(root, relative)?).map_err(|_| CommitError::StateIo)?;
-    let sidecar = read_regular(&joined_relative(root, &format!("{relative}.sha256"))?)
+    let bytes = read_regular_bounded(&joined_relative(root, relative)?, MAX_STATE_FILE_BYTES)
         .map_err(|_| CommitError::StateIo)?;
+    let sidecar = read_regular_bounded(
+        &joined_relative(root, &format!("{relative}.sha256"))?,
+        MAX_SIDECAR_BYTES,
+    )
+    .map_err(|_| CommitError::StateIo)?;
     if std::str::from_utf8(&sidecar)
         .map_err(|_| CommitError::InvalidCandidate)?
         .trim_end()
         != expected
         || body_digest(&bytes).to_string() != expected
     {
+        return Err(CommitError::InvalidCandidate);
+    }
+    Ok(bytes)
+}
+
+fn read_verified_body(root: &Path, relative: &str) -> Result<Vec<u8>, CommitError> {
+    let bytes = read_regular_bounded(&joined_relative(root, relative)?, MAX_STATE_FILE_BYTES)
+        .map_err(|_| CommitError::StateIo)?;
+    let sidecar = read_regular_bounded(
+        &joined_relative(root, &format!("{relative}.sha256"))?,
+        MAX_SIDECAR_BYTES,
+    )
+    .map_err(|_| CommitError::StateIo)?;
+    let expected = std::str::from_utf8(&sidecar)
+        .map_err(|_| CommitError::InvalidCandidate)?
+        .trim_end();
+    if body_digest(&bytes).to_string() != expected {
         return Err(CommitError::InvalidCandidate);
     }
     Ok(bytes)
@@ -719,17 +876,32 @@ fn sync_dir(path: &Path) -> Result<(), CommitError> {
 }
 
 fn read_regular(path: &Path) -> std::io::Result<Vec<u8>> {
+    read_regular_bounded(path, MAX_STATE_FILE_BYTES)
+}
+
+fn read_regular_bounded(path: &Path, max_bytes: u64) -> std::io::Result<Vec<u8>> {
     let mut options = OpenOptions::new();
     options.read(true).custom_flags(libc::O_NOFOLLOW);
-    let mut file = options.open(path)?;
-    if !file.metadata()?.file_type().is_file() {
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.file_type().is_file() || metadata.len() > max_bytes {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "state path is not a regular file",
+            "state path is not a bounded regular file",
         ));
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+    let capacity = usize::try_from(metadata.len()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "state file is too large")
+    })?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "state file grew beyond its limit",
+        ));
+    }
     Ok(bytes)
 }
 
@@ -1082,6 +1254,84 @@ mod tests {
         assert_eq!(
             fixture.layout.current_generation().unwrap(),
             Some(fixture.generation_id)
+        );
+    }
+
+    #[test]
+    fn committed_generation_loads_as_active_verified_history() {
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap()
+        .activate(&fixture.maintenance, "read1")
+        .unwrap()
+        .finish()
+        .unwrap();
+
+        let lease = StateLease::try_shared(&fixture.layout).unwrap();
+        let active = load_active_snapshot(&fixture.layout, &lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.generation().id(), "gen-0001");
+        assert_eq!(active.state().manifest().entries().len(), 1);
+        let history = load_retained_history(&fixture.layout, &lease).unwrap();
+        assert_eq!(history.snapshots().len(), 1);
+        assert!(history.summaries()[0].is_active());
+    }
+
+    #[test]
+    fn retained_history_refuses_unknown_or_oversized_files() {
+        let fixture = empty_fixture();
+        drop(mutation_lease(&fixture.layout));
+        fs::write(
+            fixture.layout.state_root().join("generations/unmanaged"),
+            b"foreign",
+        )
+        .unwrap();
+        let lease = StateLease::try_shared(&fixture.layout).unwrap();
+        assert_eq!(
+            load_retained_history(&fixture.layout, &lease).unwrap_err(),
+            CommitError::StateIo
+        );
+        drop(lease);
+
+        fs::remove_file(fixture.layout.state_root().join("generations/unmanaged")).unwrap();
+        let orphan = fixture
+            .layout
+            .state_root()
+            .join("generations/gen-9998.lock.json.sha256");
+        fs::write(&orphan, b"sha256:orphan\n").unwrap();
+        let lease = StateLease::try_shared(&fixture.layout).unwrap();
+        assert_eq!(
+            load_retained_history(&fixture.layout, &lease).unwrap_err(),
+            CommitError::InvalidCandidate
+        );
+        drop(lease);
+        fs::remove_file(orphan).unwrap();
+
+        let oversized = fixture
+            .layout
+            .state_root()
+            .join("generations/gen-9999.json");
+        let file = fs::File::create(&oversized).unwrap();
+        file.set_len(MAX_STATE_FILE_BYTES + 1).unwrap();
+        fs::write(
+            fixture
+                .layout
+                .state_root()
+                .join("generations/gen-9999.json.sha256"),
+            b"sha256:0000000000000000000000000000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
+        let lease = StateLease::try_shared(&fixture.layout).unwrap();
+        assert_eq!(
+            load_retained_history(&fixture.layout, &lease).unwrap_err(),
+            CommitError::StateIo
         );
     }
 
