@@ -20,6 +20,7 @@ use crate::commands::state::{
 use crate::exit::ExitCode;
 use crate::progress::PublicEvent;
 use crate::ux::CommandError;
+use pkg_core::state::CollisionPolicy as StateCollisionPolicy;
 use pkg_core::{
     History, OutputName, OutputSelection, PackageSelector, PinAction, SelectorId, SelectorInput,
     SourceRevision, VersionPreference,
@@ -358,6 +359,7 @@ impl LocalStateOperations {
                 current.as_ref(),
                 &evidence,
                 layout.owner_uid(),
+                state_collision_policy(args.collision_policy()),
                 InstallGenerationMetadata::new(
                     &generation_id,
                     &created_at,
@@ -880,14 +882,15 @@ fn require_supported_install_options(args: &InstallArgs) -> Result<(), CommandEr
             "remove `--channel` to use the signed current channel",
         ));
     }
-    if args.collision_policy() != CollisionPolicy::Abort {
-        return Err(CommandError::new(
-            ExitCode::Config,
-            "the selected collision policy is not available in this technical preview",
-            "use `--on-collision abort`",
-        ));
-    }
     Ok(())
+}
+
+const fn state_collision_policy(policy: CollisionPolicy) -> StateCollisionPolicy {
+    match policy {
+        CollisionPolicy::Abort => StateCollisionPolicy::Abort,
+        CollisionPolicy::KeepFirst => StateCollisionPolicy::KeepFirst,
+        CollisionPolicy::KeepLast => StateCollisionPolicy::KeepLast,
+    }
 }
 
 fn install_selectors(
@@ -2052,7 +2055,6 @@ mod tests {
         for argv in [
             vec!["pkg", "install", "ripgrep", "ripgrep"],
             vec!["pkg", "install", "ripgrep", "--channel", "other"],
-            vec!["pkg", "install", "ripgrep", "--on-collision", "keep-first"],
         ] {
             let cli = Cli::try_parse(argv).unwrap();
             let crate::cli::Command::Install(args) = cli.parsed_command() else {
@@ -2062,6 +2064,23 @@ mod tests {
                 require_supported_install_options(args).is_err()
                     || install_selectors(args, "00112233445566778899aabbccddeeff").is_err()
             );
+        }
+    }
+
+    #[test]
+    fn install_collision_policy_reaches_the_state_boundary() {
+        for (value, expected) in [
+            ("abort", StateCollisionPolicy::Abort),
+            ("keep-first", StateCollisionPolicy::KeepFirst),
+            ("keep-last", StateCollisionPolicy::KeepLast),
+        ] {
+            let cli =
+                Cli::try_parse(["pkg", "install", "ripgrep", "--on-collision", value]).unwrap();
+            let crate::cli::Command::Install(args) = cli.parsed_command() else {
+                panic!("expected install command");
+            };
+            require_supported_install_options(args).unwrap();
+            assert_eq!(state_collision_policy(args.collision_policy()), expected);
         }
     }
 

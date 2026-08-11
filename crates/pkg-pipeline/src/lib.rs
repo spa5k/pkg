@@ -4,6 +4,7 @@
 
 mod acquire;
 mod activate;
+mod activation_metadata;
 mod build_authority;
 mod build_authority_refresh;
 mod build_intent;

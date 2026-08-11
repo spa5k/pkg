@@ -2357,11 +2357,17 @@ mod tests {
             "gen-0003",
             "2026-08-11T00:00:01Z",
             "op_rollback",
-            |staging, outputs, _| {
+            |staging, inputs, _| {
                 fs::create_dir(staging).unwrap();
                 fs::set_permissions(staging, fs::Permissions::from_mode(0o700)).unwrap();
                 symlink(format!("{STORE}/bin/demo"), staging.join("demo")).unwrap();
-                inspect_staged_activation(staging, outputs.to_vec())
+                inspect_staged_activation(
+                    staging,
+                    inputs
+                        .iter()
+                        .map(|input| input.store_path().clone())
+                        .collect(),
+                )
             },
         )
         .unwrap();

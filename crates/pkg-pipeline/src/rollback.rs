@@ -9,6 +9,7 @@ use pkg_store::StateLease;
 use pkg_store::{ActivationInput, ActivationPlan, StateLayout, stage_activation};
 use serde_json::{Value, json};
 
+use crate::activation_metadata::{activation_inputs, collision_policy_name, collision_resolutions};
 use crate::{CandidateGeneration, CommitError, PreparedGeneration};
 
 /// Stable failures while turning a verified rollback target into a fresh generation.
@@ -55,14 +56,7 @@ pub fn prepare_rollback(
         generation_id,
         created_at,
         operation_id,
-        |staging, outputs, policy| {
-            let inputs = outputs
-                .iter()
-                .cloned()
-                .map(ActivationInput::new)
-                .collect::<Vec<_>>();
-            stage_activation(staging, &inputs, policy)
-        },
+        stage_activation,
     )
 }
 
@@ -73,7 +67,7 @@ pub(crate) fn prepare_rollback_with<E>(
     generation_id: &str,
     created_at: &str,
     operation_id: &str,
-    stage: impl FnOnce(&Path, &[StorePath], CollisionPolicy) -> Result<ActivationPlan, E>,
+    stage: impl FnOnce(&Path, &[ActivationInput], CollisionPolicy) -> Result<ActivationPlan, E>,
 ) -> Result<PreparedGeneration, RollbackPrepareError> {
     let generation =
         GenerationId::new(generation_id).map_err(|_| RollbackPrepareError::InvalidGeneration)?;
@@ -113,15 +107,12 @@ pub(crate) fn prepare_rollback_with<E>(
 
     let target = rollback.target();
     let activation = target.generation().activation();
-    let activation_plan = stage(
-        &staging,
-        &target.selected_output_paths(),
-        activation.collision_policy(),
-    )
-    .map_err(|_| {
-        discard_staging(&staging);
-        RollbackPrepareError::Stage
-    })?;
+    let inputs = activation_inputs(target.state());
+    let activation_plan =
+        stage(&staging, &inputs, activation.collision_policy()).map_err(|_| {
+            discard_staging(&staging);
+            RollbackPrepareError::Stage
+        })?;
     let candidate = build_candidate(
         rollback,
         generation.as_str(),
@@ -207,6 +198,19 @@ fn build_candidate(
                 .iter()
                 .map(StorePath::as_str)
                 .collect::<Vec<_>>()
+        ),
+    );
+    activation.insert(
+        "collisionPolicy".into(),
+        json!(collision_policy_name(
+            target.generation().activation().collision_policy()
+        )),
+    );
+    activation.insert(
+        "collisionResolutions".into(),
+        Value::Array(
+            collision_resolutions(plan)
+                .ok_or(RollbackPrepareError::Commit(CommitError::InvalidCandidate))?,
         ),
     );
     object.remove("generationHash");
@@ -299,11 +303,17 @@ mod tests {
             "gen-0003",
             "2026-08-09T00:00:03Z",
             "op_rollback",
-            |staging, outputs, policy| {
+            |staging, inputs, policy| {
                 assert_eq!(policy, CollisionPolicy::Abort);
                 fs::create_dir(staging)?;
                 symlink(format!("{STORE}/bin/demo"), staging.join("demo"))?;
-                inspect_staged_activation(staging, outputs.to_vec())
+                inspect_staged_activation(
+                    staging,
+                    inputs
+                        .iter()
+                        .map(|input| input.store_path().clone())
+                        .collect(),
+                )
             },
         )
         .unwrap();

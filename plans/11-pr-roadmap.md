@@ -1505,8 +1505,11 @@ flowchart TD
   best-effort aggregate estimate to each affected product selector; a validated build report is
   still the sole terminal 100% source. Unknown, malformed, path-bearing, regressing, and oversized
   activity cannot become public progress, while a failed progress sink cancels the build and
-  poisons the connection. Remaining production install work is the still-closed non-default
-  channel/collision policy surfaces. Authenticated download counters are connected through the
+  poisons the connection. The full V1 collision surface is now live: abort/keep-first/keep-last
+  reaches deterministic selector/output-ordered Rust staging, generation metadata records every
+  winner and loser, and later remove/pin/unpin/rollback staging preserves that identity instead of
+  reverting to store-path order. The non-default signed-channel surface remains closed.
+  Authenticated download counters are connected through the
   complete cache closure: the managed probe verifies signed recursive cache metadata, excludes
   already-local objects, assigns shared closure objects once, and refuses any cache miss before a
   copy begins. Method 26 streams only selector-bound monotonic byte counters under the original

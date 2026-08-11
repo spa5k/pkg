@@ -7,9 +7,10 @@ use std::path::Path;
 use pkg_core::state::{body_digest, canonical_digest};
 use pkg_core::{GenerationSnapshot, lifecycle::LifecycleState};
 use pkg_nix::GenerationId;
-use pkg_store::{ActivationInput, StateLayout, StateLease, stage_activation};
+use pkg_store::{StateLayout, StateLease, stage_activation};
 use serde_json::{Value, json};
 
+use crate::activation_metadata::{activation_inputs, collision_resolutions};
 use crate::{CandidateGeneration, CommitError, PreparedGeneration};
 
 /// Product provenance recorded for a state-only generation.
@@ -71,8 +72,6 @@ pub enum StateEditPrepareError {
     GenerationExists,
     /// The activation forest could not be staged.
     Stage,
-    /// Collision provenance cannot be represented safely for this edit.
-    CollisionMetadata,
     /// The resulting immutable generation failed its closed invariants.
     Commit(CommitError),
 }
@@ -124,11 +123,7 @@ pub fn prepare_state_edit(
         return Err(StateEditPrepareError::GenerationExists);
     }
 
-    let inputs = next
-        .selected_output_paths()
-        .into_iter()
-        .map(ActivationInput::new)
-        .collect::<Vec<_>>();
+    let inputs = activation_inputs(&next);
     let plan = stage_activation(
         &staging,
         &inputs,
@@ -136,10 +131,6 @@ pub fn prepare_state_edit(
     )
     .inspect_err(|_| discard_staging(&staging))
     .map_err(|_| StateEditPrepareError::Stage)?;
-    if !plan.collisions().is_empty() {
-        discard_staging(&staging);
-        return Err(StateEditPrepareError::CollisionMetadata);
-    }
     let candidate = build_candidate(
         source,
         next,
@@ -237,7 +228,10 @@ fn build_candidate(
                 .collect::<Vec<_>>()
         ),
     );
-    activation.insert("collisionResolutions".into(), json!([]));
+    activation.insert(
+        "collisionResolutions".into(),
+        Value::Array(collision_resolutions(plan).ok_or_else(invalid_candidate_unit)?),
+    );
     object.remove("generationHash");
     let hash = canonical_digest(&generation).map_err(invalid_candidate)?;
     generation

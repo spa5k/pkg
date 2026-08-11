@@ -6,9 +6,10 @@ use std::os::unix::fs::PermissionsExt;
 use pkg_core::state::{CollisionPolicy, body_digest, canonical_digest};
 use pkg_core::{GenerationSnapshot, StorePath, lifecycle::LifecycleState};
 use pkg_nix::InstallEvidence;
-use pkg_store::{ActivationInput, LeaseMode, StateLayout, StateLease, stage_activation};
+use pkg_store::{LeaseMode, StateLayout, StateLease, stage_activation};
 use serde_json::json;
 
+use crate::activation_metadata::{activation_inputs, collision_policy_name, collision_resolutions};
 use crate::{
     CandidateGeneration, CommitError, PreparedGeneration, assemble_install_evidence_state,
 };
@@ -76,6 +77,7 @@ pub fn prepare_install_generation(
     current: Option<&GenerationSnapshot>,
     evidence: &InstallEvidence,
     uid: u32,
+    collision_policy: CollisionPolicy,
     metadata: InstallGenerationMetadata<'_>,
 ) -> Result<PreparedGeneration, InstallGenerationError> {
     if !lease.authorizes(&layout, LeaseMode::Exclusive) || layout.owner_uid() != uid {
@@ -133,15 +135,11 @@ pub fn prepare_install_generation(
         return Err(InstallGenerationError::GenerationExists);
     }
 
-    let inputs = next
-        .selected_output_paths()
-        .into_iter()
-        .map(ActivationInput::new)
-        .collect::<Vec<_>>();
-    let plan = stage_activation(&staging, &inputs, CollisionPolicy::Abort)
+    let inputs = activation_inputs(&next);
+    let plan = stage_activation(&staging, &inputs, collision_policy)
         .inspect_err(|_| discard_staging(&staging))
         .map_err(|_| InstallGenerationError::Stage)?;
-    let candidate = build_candidate(current, next, metadata, &plan)
+    let candidate = build_candidate(current, next, collision_policy, metadata, &plan)
         .inspect_err(|_| discard_staging(&staging))?;
     PreparedGeneration::prepare(layout, candidate, plan, lease)
         .inspect_err(|_| discard_staging(&staging))
@@ -151,6 +149,7 @@ pub fn prepare_install_generation(
 fn build_candidate(
     current: Option<&GenerationSnapshot>,
     next: LifecycleState,
+    collision_policy: CollisionPolicy,
     metadata: InstallGenerationMetadata<'_>,
     plan: &pkg_store::ActivationPlan,
 ) -> Result<CandidateGeneration, InstallGenerationError> {
@@ -177,6 +176,8 @@ fn build_candidate(
             })
         })
         .collect::<Vec<_>>();
+    let collision_resolutions = collision_resolutions(plan).ok_or_else(invalid_candidate)?;
+    let collision_policy = collision_policy_name(collision_policy);
     let mut generation = json!({
         "schemaVersion": 1,
         "uid": next.manifest().uid(),
@@ -193,9 +194,9 @@ fn build_candidate(
             "treePath": format!("activations/{}", metadata.generation_id),
             "treeDigest": plan.tree_digest().to_string(),
             "entryCount": plan.entry_count(),
-            "collisionPolicy": "abort",
+            "collisionPolicy": collision_policy,
             "outputRoots": plan.output_roots().iter().map(StorePath::as_str).collect::<Vec<_>>(),
-            "collisionResolutions": []
+            "collisionResolutions": collision_resolutions
         },
         "outputs": outputs,
         "operation": {
@@ -316,6 +317,7 @@ mod tests {
         let candidate = build_candidate(
             None,
             next,
+            pkg_core::state::CollisionPolicy::Abort,
             InstallGenerationMetadata::new(
                 "gen-0001",
                 "2026-08-11T00:00:00Z",

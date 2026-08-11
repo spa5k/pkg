@@ -5,27 +5,51 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::symlink;
 use std::path::{Component, Path, PathBuf};
 
-use pkg_core::identity::StorePath;
 use pkg_core::state::{CollisionPolicy, Digest};
+use pkg_core::{OutputName, SelectorId, StorePath};
 use sha2::{Digest as _, Sha256};
 
 /// One verified store output to expose in the activation forest.
 #[derive(Debug, Clone)]
 pub struct ActivationInput {
     store_path: StorePath,
+    selector_id: Option<SelectorId>,
+    output: Option<OutputName>,
 }
 
 impl ActivationInput {
     /// Uses the validated store path as both identity and read-only source.
     #[must_use]
     pub const fn new(store_path: StorePath) -> Self {
-        Self { store_path }
+        Self {
+            store_path,
+            selector_id: None,
+            output: None,
+        }
+    }
+
+    /// Binds this source to its desired-state selector and output.
+    #[must_use]
+    pub const fn bound(selector_id: SelectorId, output: OutputName, store_path: StorePath) -> Self {
+        Self {
+            store_path,
+            selector_id: Some(selector_id),
+            output: Some(output),
+        }
+    }
+
+    /// Returns the validated store source.
+    #[must_use]
+    pub const fn store_path(&self) -> &StorePath {
+        &self.store_path
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Provider {
     output: StorePath,
+    selector_id: Option<SelectorId>,
+    output_name: Option<OutputName>,
     target: PathBuf,
 }
 
@@ -55,7 +79,10 @@ impl ForestEntry {
 pub struct Collision {
     relative_path: PathBuf,
     winner: StorePath,
+    winner_selector: Option<SelectorId>,
+    winner_output: Option<OutputName>,
     losers: Vec<StorePath>,
+    loser_choices: Vec<(Option<SelectorId>, Option<OutputName>)>,
 }
 
 impl Collision {
@@ -71,10 +98,27 @@ impl Collision {
         &self.winner
     }
 
+    /// Returns the winner's selector/output identity when supplied.
+    #[must_use]
+    pub fn winner_choice(&self) -> Option<(&SelectorId, &OutputName)> {
+        self.winner_selector
+            .as_ref()
+            .zip(self.winner_output.as_ref())
+    }
+
     /// Returns the other output providers in deterministic order.
     #[must_use]
     pub fn losers(&self) -> &[StorePath] {
         &self.losers
+    }
+
+    /// Returns all loser selector/output identities when supplied.
+    #[must_use]
+    pub fn loser_choices(&self) -> Option<Vec<(&SelectorId, &OutputName)>> {
+        self.loser_choices
+            .iter()
+            .map(|(selector, output)| selector.as_ref().zip(output.as_ref()))
+            .collect()
     }
 }
 
@@ -160,21 +204,56 @@ pub fn stage_activation(
     inputs: &[ActivationInput],
     collision_policy: CollisionPolicy,
 ) -> Result<ActivationPlan, ActivationError> {
-    let sources = inputs
+    let mut sources = inputs
         .iter()
         .map(|input| {
             (
                 input.store_path.clone(),
                 PathBuf::from(input.store_path.as_str()),
+                input.selector_id.clone(),
+                input.output.clone(),
             )
         })
         .collect::<Vec<_>>();
-    stage_from_sources(staging, &sources, collision_policy)
+    sort_bound_sources(&mut sources);
+    stage_ordered_sources(staging, &sources, collision_policy)
 }
 
+fn sort_bound_sources(
+    sources: &mut [(StorePath, PathBuf, Option<SelectorId>, Option<OutputName>)],
+) {
+    sources.sort_by(|left, right| {
+        left.2
+            .as_ref()
+            .map(SelectorId::as_str)
+            .cmp(&right.2.as_ref().map(SelectorId::as_str))
+            .then_with(|| {
+                left.3
+                    .as_ref()
+                    .map(OutputName::as_str)
+                    .cmp(&right.3.as_ref().map(OutputName::as_str))
+            })
+            .then_with(|| left.0.as_str().cmp(right.0.as_str()))
+    });
+}
+
+#[cfg(test)]
 pub(crate) fn stage_from_sources(
     staging: &Path,
     sources: &[(StorePath, PathBuf)],
+    collision_policy: CollisionPolicy,
+) -> Result<ActivationPlan, ActivationError> {
+    let mut ordered = sources
+        .iter()
+        .map(|(output, source)| (output.clone(), source.clone(), None, None))
+        .collect::<Vec<_>>();
+    ordered.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
+    stage_ordered_sources(staging, &ordered, collision_policy)
+}
+
+fn stage_ordered_sources(
+    staging: &Path,
+    ordered: &[(StorePath, PathBuf, Option<SelectorId>, Option<OutputName>)],
     collision_policy: CollisionPolicy,
 ) -> Result<ActivationPlan, ActivationError> {
     if fs::symlink_metadata(staging).is_ok() {
@@ -182,22 +261,23 @@ pub(crate) fn stage_from_sources(
     }
     let mut providers: BTreeMap<PathBuf, Vec<Provider>> = BTreeMap::new();
     let mut directories = BTreeMap::<PathBuf, StorePath>::new();
-    let mut ordered = sources.to_vec();
-    ordered.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
     let mut output_roots = ordered
         .iter()
-        .map(|(output, _)| output.clone())
+        .map(|(output, _, _, _)| output.clone())
         .collect::<Vec<_>>();
+    output_roots.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     output_roots.dedup();
-    for (output, source) in ordered {
-        let metadata = fs::symlink_metadata(&source)?;
+    for (output, source, selector_id, output_name) in ordered {
+        let metadata = fs::symlink_metadata(source)?;
         if !metadata.file_type().is_dir() {
             return Err(ActivationError::UnsafePath);
         }
         walk_output(
-            &source,
+            source,
             Path::new(""),
-            &output,
+            output,
+            selector_id.as_ref(),
+            output_name.as_ref(),
             &mut providers,
             &mut directories,
         )?;
@@ -227,11 +307,21 @@ pub(crate) fn stage_from_sources(
             collisions.push(Collision {
                 relative_path: relative_path.clone(),
                 winner: winner.output.clone(),
+                winner_selector: winner.selector_id.clone(),
+                winner_output: winner.output_name.clone(),
                 losers: choices
                     .iter()
                     .enumerate()
                     .filter(|(index, _)| *index != winner_index)
                     .map(|(_, provider)| provider.output.clone())
+                    .collect(),
+                loser_choices: choices
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != winner_index)
+                    .map(|(_, provider)| {
+                        (provider.selector_id.clone(), provider.output_name.clone())
+                    })
                     .collect(),
             });
         }
@@ -267,6 +357,8 @@ fn walk_output(
     source_root: &Path,
     relative: &Path,
     output: &StorePath,
+    selector_id: Option<&SelectorId>,
+    output_name: Option<&OutputName>,
     providers: &mut BTreeMap<PathBuf, Vec<Provider>>,
     directories: &mut BTreeMap<PathBuf, StorePath>,
 ) -> Result<(), ActivationError> {
@@ -282,13 +374,23 @@ fn walk_output(
             directories
                 .entry(child_relative.clone())
                 .or_insert_with(|| output.clone());
-            walk_output(source_root, &child_relative, output, providers, directories)?;
+            walk_output(
+                source_root,
+                &child_relative,
+                output,
+                selector_id,
+                output_name,
+                providers,
+                directories,
+            )?;
         } else if kind.is_file() || kind.is_symlink() {
             providers
                 .entry(child_relative.clone())
                 .or_default()
                 .push(Provider {
                     output: output.clone(),
+                    selector_id: selector_id.cloned(),
+                    output_name: output_name.cloned(),
                     target: PathBuf::from(output.as_str()).join(child_relative),
                 });
         } else {
@@ -481,6 +583,54 @@ mod tests {
             plan.entries()
                 .iter()
                 .any(|entry| entry.relative_path() == Path::new("bin/only-b"))
+        );
+    }
+
+    #[test]
+    fn bound_sources_record_selector_and_output_choices() {
+        let temp = TempDir::new().unwrap();
+        let first = temp.path().join("first");
+        let last = temp.path().join("last");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&last).unwrap();
+        fs::write(first.join("tool"), b"first").unwrap();
+        fs::write(last.join("tool"), b"last").unwrap();
+        let mut sources = vec![
+            (
+                store("last"),
+                last,
+                Some(SelectorId::new("sel_b").unwrap()),
+                Some(OutputName::new("out").unwrap()),
+            ),
+            (
+                store("first"),
+                first,
+                Some(SelectorId::new("sel_a").unwrap()),
+                Some(OutputName::new("out").unwrap()),
+            ),
+        ];
+        sort_bound_sources(&mut sources);
+        let plan = stage_ordered_sources(
+            &temp.path().join("stage"),
+            &sources,
+            CollisionPolicy::KeepLast,
+        )
+        .unwrap();
+        let collision = &plan.collisions()[0];
+        assert_eq!(
+            collision
+                .winner_choice()
+                .map(|(selector, output)| (selector.as_str(), output.as_str())),
+            Some(("sel_b", "out"))
+        );
+        assert_eq!(
+            collision
+                .loser_choices()
+                .unwrap()
+                .into_iter()
+                .map(|(selector, output)| (selector.as_str(), output.as_str()))
+                .collect::<Vec<_>>(),
+            [("sel_a", "out")]
         );
     }
 
