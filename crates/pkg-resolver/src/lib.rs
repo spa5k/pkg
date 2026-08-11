@@ -54,6 +54,8 @@ impl ResolvedPackagePlan {
             self.selector.selector().clone(),
             attribute.clone(),
             self.selector.version_preference().clone(),
+            self.selector.outputs().clone(),
+            self.selector.source_revision().clone(),
             self.plan.clone(),
         ))
     }

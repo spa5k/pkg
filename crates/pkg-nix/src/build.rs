@@ -5,6 +5,7 @@ use std::fmt;
 use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -12,14 +13,16 @@ use std::time::Duration;
 use pkg_channel::{BuildMode, CachePolicy};
 use pkg_core::state::{Digest, canonical_digest};
 use pkg_core::{
-    AttributePath, ChannelSequence, NarHash, NixpkgsRevision, OutputName, PolicyVersion,
-    SelectorId, SelectorInput, System, VersionPreference,
+    AttributePath, ChannelSequence, DerivationPath, NarHash, NixpkgsRevision, OutputName,
+    OutputSelection, PackageVersion, PolicyVersion, SelectorId, SelectorInput, SourceRevision,
+    StorePath, System, VersionBound, VersionPreference, VersionRange,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BuildApprovalReceipt, BuildReport, BuildRequest, BuildStatus, DerivationPlanReport,
-    DerivedOutputTarget, NixAdapter, NixVersion, OperationId,
+    BuildApprovalReceipt, BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus,
+    DerivationPlanReport, DerivedOutputTarget, NarIntegrity, NixAdapter, NixVersion, OperationId,
+    PathInfoReport, Signature, TrustStatus, VerifyMode, VerifyRequest,
 };
 
 const MAX_TEXT: usize = 256;
@@ -99,6 +102,8 @@ pub struct BuildPlanTarget {
     selector: SelectorInput,
     attribute: AttributePath,
     version_preference: VersionPreference,
+    output_selection: OutputSelection,
+    source_revision: SourceRevision,
     plan: DerivationPlanReport,
 }
 
@@ -110,6 +115,8 @@ impl BuildPlanTarget {
         selector: SelectorInput,
         attribute: AttributePath,
         version_preference: VersionPreference,
+        output_selection: OutputSelection,
+        source_revision: SourceRevision,
         plan: DerivationPlanReport,
     ) -> Self {
         Self {
@@ -117,6 +124,8 @@ impl BuildPlanTarget {
             selector,
             attribute,
             version_preference,
+            output_selection,
+            source_revision,
             plan,
         }
     }
@@ -279,12 +288,14 @@ struct CanonicalTarget {
     package_name: String,
     package_version: String,
     version_preference: CanonicalVersionPreference,
+    requested_outputs: Option<Vec<String>>,
+    source_revision: String,
     outputs_to_install: Vec<String>,
     root_derivation: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 enum CanonicalVersionPreference {
     Any,
     Exact {
@@ -299,8 +310,8 @@ enum CanonicalVersionPreference {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CanonicalVersionBound {
     version: String,
     inclusive: bool,
@@ -360,6 +371,7 @@ pub struct BuildPlan {
     system_identity: System,
     policy_identity: PolicyVersion,
     execution: BuildExecution,
+    install_targets: Vec<BuildPlanTarget>,
 }
 
 impl fmt::Debug for BuildPlan {
@@ -443,6 +455,21 @@ impl BuildPlan {
         let mut execution_targets = Vec::with_capacity(targets.len());
         let mut expected_outputs = BTreeSet::new();
         for target in &targets {
+            let source_matches = match &target.source_revision {
+                SourceRevision::CurrentChannel => true,
+                SourceRevision::PinnedChannel(sequence) => *sequence == channel_seq,
+                SourceRevision::ExactRevision(target_revision) => target_revision == revision,
+            };
+            if !source_matches
+                || target
+                    .output_selection
+                    .explicit_outputs()
+                    .is_some_and(|requested| {
+                        !same_output_selection(requested, target.plan.outputs_to_install())
+                    })
+            {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+            }
             for derivation in target.plan.derivations() {
                 if !derivation.system().is_compatible_with(system) {
                     return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
@@ -488,6 +515,14 @@ impl BuildPlan {
                 package_name: checked_text(target.plan.pname())?,
                 package_version: checked_text(target.plan.version().as_str())?,
                 version_preference: canonical_version_preference(&target.version_preference),
+                requested_outputs: target.output_selection.explicit_outputs().map(|outputs| {
+                    outputs
+                        .iter()
+                        .map(OutputName::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                }),
+                source_revision: target.source_revision.to_canonical_string(),
                 outputs_to_install: target
                     .plan
                     .outputs_to_install()
@@ -551,6 +586,7 @@ impl BuildPlan {
                 targets: execution_targets,
                 expected_outputs,
             },
+            install_targets: targets,
         })
     }
 
@@ -660,12 +696,743 @@ impl BuildPlan {
     }
 }
 
+/// Broker-produced, post-execution evidence used to assemble install state.
+///
+/// The value is derived only from the admission-time revalidated private plan,
+/// the actual build report, and fresh integrity/path metadata from the managed
+/// adapter. It is intentionally private-data-bearing and may cross only the
+/// authenticated CLI↔broker channel; public rendering must continue to reject
+/// store and derivation identities.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InstallEvidence {
+    descriptor_hash: Digest,
+    channel_sequence: ChannelSequence,
+    policy_version: PolicyVersion,
+    revision: NixpkgsRevision,
+    source_nar_hash: NarHash,
+    system: System,
+    targets: Vec<InstallTargetEvidence>,
+}
+
+impl fmt::Debug for InstallEvidence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InstallEvidence")
+            .field("channel_sequence", &self.channel_sequence)
+            .field("policy_version", &self.policy_version)
+            .field("target_count", &self.targets.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl InstallEvidence {
+    /// Returns the authenticated channel descriptor digest.
+    #[must_use]
+    pub const fn descriptor_hash(&self) -> Digest {
+        self.descriptor_hash
+    }
+
+    /// Returns the authenticated channel sequence.
+    #[must_use]
+    pub const fn channel_sequence(&self) -> ChannelSequence {
+        self.channel_sequence
+    }
+
+    /// Returns the authenticated policy version.
+    #[must_use]
+    pub const fn policy_version(&self) -> PolicyVersion {
+        self.policy_version
+    }
+
+    /// Returns the exact Nixpkgs revision used for evaluation.
+    #[must_use]
+    pub const fn revision(&self) -> &NixpkgsRevision {
+        &self.revision
+    }
+
+    /// Returns the authenticated normalized Nixpkgs source identity.
+    #[must_use]
+    pub const fn source_nar_hash(&self) -> &NarHash {
+        &self.source_nar_hash
+    }
+
+    /// Returns the native target system used for evaluation and execution.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.system
+    }
+
+    /// Returns targets in stable selector-id order.
+    #[must_use]
+    pub fn targets(&self) -> &[InstallTargetEvidence] {
+        &self.targets
+    }
+
+    /// Encodes this private evidence using the closed schema consumed by the
+    /// authenticated product frame.
+    pub fn to_json_bytes(&self) -> Result<Vec<u8>, BuildEngineError> {
+        serde_json::to_vec(&InstallEvidenceWire::from(self))
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+    }
+
+    /// Strictly decodes and revalidates broker-produced install evidence.
+    pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, BuildEngineError> {
+        if bytes.len() > crate::JsonCodec::PRODUCTION_LIMIT {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        let wire: InstallEvidenceWire = serde_json::from_slice(bytes)
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+        Self::try_from(wire)
+    }
+
+    fn from_executed_plan(
+        plan: &BuildPlan,
+        report: &BuildReport,
+        adapter: &dyn NixAdapter,
+    ) -> Result<Self, BuildEngineError> {
+        let report_outputs = report
+            .outputs()
+            .iter()
+            .map(|output| {
+                (
+                    output.store_path().as_str().to_owned(),
+                    (output.store_path().clone(), output.provenance()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        if report_outputs.len() != report.outputs().len() {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+        }
+        let paths = report_outputs
+            .values()
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        let verify_request = VerifyRequest::new(paths.clone(), VerifyMode::Recursive)
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+        let verification = adapter
+            .verify(&verify_request)
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+        if paths.iter().any(|path| {
+            !verification
+                .results()
+                .iter()
+                .any(|result| result.path() == path)
+        }) || verification.results().iter().any(|result| {
+            result.nar_integrity() != NarIntegrity::Intact || result.trust() != TrustStatus::Trusted
+        }) {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+        }
+
+        let mut metadata = BTreeMap::new();
+        for path in paths {
+            let info = adapter
+                .path_info(&path)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            if info.store_path() != &path
+                || metadata.insert(path.as_str().to_owned(), info).is_some()
+            {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+            }
+        }
+
+        let mut targets = Vec::with_capacity(plan.install_targets.len());
+        for target in &plan.install_targets {
+            let root = target
+                .plan
+                .derivations()
+                .iter()
+                .find(|item| item.derivation() == target.plan.root())
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+            let mut acquired = Vec::with_capacity(target.plan.outputs_to_install().len());
+            for output_name in target.plan.outputs_to_install() {
+                let store_path = root
+                    .outputs()
+                    .get(output_name)
+                    .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+                let provenance = report_outputs
+                    .get(store_path.as_str())
+                    .map(|(_, provenance)| *provenance)
+                    .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+                let info = metadata
+                    .get(store_path.as_str())
+                    .cloned()
+                    .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+                if provenance == BuildOutputProvenance::CacheSigned && info.signatures().is_empty()
+                {
+                    return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+                }
+                acquired.push(InstallOutputEvidence {
+                    output_name: output_name.clone(),
+                    info,
+                    provenance,
+                });
+            }
+            targets.push(InstallTargetEvidence {
+                selector_id: target.selector_id.clone(),
+                selector: target.selector.clone(),
+                attribute: target.attribute.clone(),
+                version_preference: target.version_preference.clone(),
+                output_selection: target.output_selection.clone(),
+                source_revision: target.source_revision.clone(),
+                root_derivation: target.plan.root().clone(),
+                root_outputs: root.outputs().clone(),
+                outputs_to_install: target.plan.outputs_to_install().to_vec(),
+                package_name: target.plan.pname().to_owned(),
+                package_version: target.plan.version().clone(),
+                acquired,
+            });
+        }
+        Self::new(
+            parse_canonical_digest(&plan.descriptor_hash)?,
+            ChannelSequence::from_u64(plan.channel_seq)
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            plan.policy_identity,
+            NixpkgsRevision::new(&plan.nixpkgs.rev)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            NarHash::new(&plan.nixpkgs.nar_hash)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            plan.system_identity,
+            targets,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        descriptor_hash: Digest,
+        channel_sequence: ChannelSequence,
+        policy_version: PolicyVersion,
+        revision: NixpkgsRevision,
+        source_nar_hash: NarHash,
+        system: System,
+        mut targets: Vec<InstallTargetEvidence>,
+    ) -> Result<Self, BuildEngineError> {
+        if targets.is_empty() || targets.len() > MAX_PREVIEW_ITEMS {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        targets.sort_by(|left, right| left.selector_id.as_str().cmp(right.selector_id.as_str()));
+        if targets
+            .windows(2)
+            .any(|pair| pair[0].selector_id == pair[1].selector_id)
+            || targets.iter().any(|target| {
+                target.validate().is_err()
+                    || match target.source_revision() {
+                        SourceRevision::CurrentChannel => false,
+                        SourceRevision::PinnedChannel(sequence) => *sequence != channel_sequence,
+                        SourceRevision::ExactRevision(target_revision) => {
+                            target_revision != &revision
+                        }
+                    }
+            })
+        {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        Ok(Self {
+            descriptor_hash,
+            channel_sequence,
+            policy_version,
+            revision,
+            source_nar_hash,
+            system,
+            targets,
+        })
+    }
+}
+
+/// One selector and its fully verified realized outputs.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InstallTargetEvidence {
+    selector_id: SelectorId,
+    selector: SelectorInput,
+    attribute: AttributePath,
+    version_preference: VersionPreference,
+    output_selection: OutputSelection,
+    source_revision: SourceRevision,
+    root_derivation: DerivationPath,
+    root_outputs: BTreeMap<OutputName, StorePath>,
+    outputs_to_install: Vec<OutputName>,
+    package_name: String,
+    package_version: PackageVersion,
+    acquired: Vec<InstallOutputEvidence>,
+}
+
+impl InstallTargetEvidence {
+    /// Returns the stable desired-state selector id.
+    #[must_use]
+    pub const fn selector_id(&self) -> &SelectorId {
+        &self.selector_id
+    }
+
+    /// Returns the original validated selector spelling.
+    #[must_use]
+    pub const fn selector(&self) -> &SelectorInput {
+        &self.selector
+    }
+
+    /// Returns the resolver-owned Nixpkgs attribute.
+    #[must_use]
+    pub const fn attribute(&self) -> &AttributePath {
+        &self.attribute
+    }
+
+    /// Returns the desired-state version preference.
+    #[must_use]
+    pub const fn version_preference(&self) -> &VersionPreference {
+        &self.version_preference
+    }
+
+    /// Returns the user's default or explicit output selection.
+    #[must_use]
+    pub const fn output_selection(&self) -> &OutputSelection {
+        &self.output_selection
+    }
+
+    /// Returns the desired-state source selection.
+    #[must_use]
+    pub const fn source_revision(&self) -> &SourceRevision {
+        &self.source_revision
+    }
+
+    /// Returns the evaluated root derivation identity.
+    #[must_use]
+    pub const fn root_derivation(&self) -> &DerivationPath {
+        &self.root_derivation
+    }
+
+    /// Returns every named output of the root derivation.
+    #[must_use]
+    pub const fn root_outputs(&self) -> &BTreeMap<OutputName, StorePath> {
+        &self.root_outputs
+    }
+
+    /// Returns the selected outputs in canonical order.
+    #[must_use]
+    pub fn outputs_to_install(&self) -> &[OutputName] {
+        &self.outputs_to_install
+    }
+
+    /// Returns Nix's authoritative package name.
+    #[must_use]
+    pub fn package_name(&self) -> &str {
+        &self.package_name
+    }
+
+    /// Returns Nix's authoritative package version.
+    #[must_use]
+    pub const fn package_version(&self) -> &PackageVersion {
+        &self.package_version
+    }
+
+    /// Returns fresh post-execution metadata for every selected output.
+    #[must_use]
+    pub fn acquired(&self) -> &[InstallOutputEvidence] {
+        &self.acquired
+    }
+
+    fn validate(&self) -> Result<(), BuildEngineError> {
+        if self.package_name.is_empty()
+            || self.package_name.len() > MAX_TEXT
+            || self.package_name.chars().any(char::is_control)
+            || self.root_outputs.is_empty()
+            || self.root_outputs.len() > 1024
+            || self.outputs_to_install.is_empty()
+            || self.outputs_to_install.len() > 1024
+            || self.acquired.len() != self.outputs_to_install.len()
+            || self
+                .outputs_to_install
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        for (index, output_name) in self.outputs_to_install.iter().enumerate() {
+            let expected = self
+                .root_outputs
+                .get(output_name)
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+            let acquired = &self.acquired[index];
+            if acquired.output_name != *output_name || acquired.info.store_path() != expected {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+            }
+            if acquired.provenance == BuildOutputProvenance::CacheSigned
+                && acquired.info.signatures().is_empty()
+            {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+            }
+        }
+        if let Some(requested) = self.output_selection.explicit_outputs()
+            && !same_output_selection(requested, &self.outputs_to_install)
+        {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        Ok(())
+    }
+}
+
+/// Fresh integrity and provenance evidence for one selected output.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InstallOutputEvidence {
+    output_name: OutputName,
+    info: PathInfoReport,
+    provenance: BuildOutputProvenance,
+}
+
+impl InstallOutputEvidence {
+    /// Returns the selected output name.
+    #[must_use]
+    pub const fn output_name(&self) -> &OutputName {
+        &self.output_name
+    }
+
+    /// Returns freshly queried, validated store metadata.
+    #[must_use]
+    pub const fn path_info(&self) -> &PathInfoReport {
+        &self.info
+    }
+
+    /// Returns whether Nix substituted or built this output.
+    #[must_use]
+    pub const fn provenance(&self) -> BuildOutputProvenance {
+        self.provenance
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallEvidenceWire {
+    schema_version: u32,
+    descriptor_hash: String,
+    channel_sequence: u64,
+    policy_version: u64,
+    revision: String,
+    source_nar_hash: String,
+    system: String,
+    targets: Vec<InstallTargetEvidenceWire>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallTargetEvidenceWire {
+    selector_id: String,
+    selector: String,
+    attribute: String,
+    version_preference: CanonicalVersionPreference,
+    requested_outputs: Option<Vec<String>>,
+    source_revision: String,
+    root_derivation: String,
+    root_outputs: Vec<InstallRootOutputWire>,
+    outputs_to_install: Vec<String>,
+    package_name: String,
+    package_version: String,
+    acquired: Vec<InstallOutputEvidenceWire>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallRootOutputWire {
+    name: String,
+    store_path: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallOutputEvidenceWire {
+    output_name: String,
+    store_path: String,
+    nar_hash: String,
+    signatures: Vec<String>,
+    references: Vec<String>,
+    deriver: Option<String>,
+    nar_size: u64,
+    closure_size: u64,
+    provenance: InstallOutputProvenanceWire,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum InstallOutputProvenanceWire {
+    CacheSigned,
+    LocalBuild,
+}
+
+impl From<&InstallEvidence> for InstallEvidenceWire {
+    fn from(value: &InstallEvidence) -> Self {
+        Self {
+            schema_version: 1,
+            descriptor_hash: value.descriptor_hash.to_string(),
+            channel_sequence: value.channel_sequence.get().get(),
+            policy_version: value.policy_version.get().get(),
+            revision: value.revision.as_str().to_owned(),
+            source_nar_hash: value.source_nar_hash.as_str().to_owned(),
+            system: value.system.as_str().to_owned(),
+            targets: value
+                .targets
+                .iter()
+                .map(InstallTargetEvidenceWire::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&InstallTargetEvidence> for InstallTargetEvidenceWire {
+    fn from(value: &InstallTargetEvidence) -> Self {
+        Self {
+            selector_id: value.selector_id.as_str().to_owned(),
+            selector: value.selector.as_str().to_owned(),
+            attribute: value.attribute.as_str().to_owned(),
+            version_preference: canonical_version_preference(&value.version_preference),
+            requested_outputs: value.output_selection.explicit_outputs().map(|outputs| {
+                outputs
+                    .iter()
+                    .map(OutputName::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            }),
+            source_revision: value.source_revision.to_canonical_string(),
+            root_derivation: value.root_derivation.as_str().to_owned(),
+            root_outputs: value
+                .root_outputs
+                .iter()
+                .map(|(name, store_path)| InstallRootOutputWire {
+                    name: name.as_str().to_owned(),
+                    store_path: store_path.as_str().to_owned(),
+                })
+                .collect(),
+            outputs_to_install: value
+                .outputs_to_install
+                .iter()
+                .map(OutputName::as_str)
+                .map(str::to_owned)
+                .collect(),
+            package_name: value.package_name.clone(),
+            package_version: value.package_version.as_str().to_owned(),
+            acquired: value
+                .acquired
+                .iter()
+                .map(InstallOutputEvidenceWire::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&InstallOutputEvidence> for InstallOutputEvidenceWire {
+    fn from(value: &InstallOutputEvidence) -> Self {
+        Self {
+            output_name: value.output_name.as_str().to_owned(),
+            store_path: value.info.store_path().as_str().to_owned(),
+            nar_hash: value.info.nar_hash().as_str().to_owned(),
+            signatures: value
+                .info
+                .signatures()
+                .iter()
+                .map(Signature::as_str)
+                .map(str::to_owned)
+                .collect(),
+            references: value
+                .info
+                .references()
+                .iter()
+                .map(StorePath::as_str)
+                .map(str::to_owned)
+                .collect(),
+            deriver: value
+                .info
+                .deriver()
+                .map(DerivationPath::as_str)
+                .map(str::to_owned),
+            nar_size: value.info.nar_size(),
+            closure_size: value.info.closure_size(),
+            provenance: match value.provenance {
+                BuildOutputProvenance::CacheSigned => InstallOutputProvenanceWire::CacheSigned,
+                BuildOutputProvenance::LocalBuild => InstallOutputProvenanceWire::LocalBuild,
+            },
+        }
+    }
+}
+
+impl TryFrom<InstallEvidenceWire> for InstallEvidence {
+    type Error = BuildEngineError;
+
+    fn try_from(value: InstallEvidenceWire) -> Result<Self, Self::Error> {
+        if value.schema_version != 1 {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        Self::new(
+            Digest::from_str(&value.descriptor_hash)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            ChannelSequence::from_u64(value.channel_sequence)
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            PolicyVersion::from_u64(value.policy_version)
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            NixpkgsRevision::new(&value.revision)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            NarHash::new(&value.source_nar_hash)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            System::from_str(&value.system)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            value
+                .targets
+                .into_iter()
+                .map(InstallTargetEvidence::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    }
+}
+
+impl TryFrom<InstallTargetEvidenceWire> for InstallTargetEvidence {
+    type Error = BuildEngineError;
+
+    fn try_from(value: InstallTargetEvidenceWire) -> Result<Self, Self::Error> {
+        let mut root_outputs = BTreeMap::new();
+        for output in value.root_outputs {
+            let name = OutputName::new(&output.name)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+            let path = StorePath::new(&output.store_path)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+            if root_outputs.insert(name, path).is_some() {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+            }
+        }
+        let target = Self {
+            selector_id: SelectorId::new(&value.selector_id)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            selector: SelectorInput::new(&value.selector)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            attribute: AttributePath::new(&value.attribute)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            version_preference: version_preference_from_canonical(value.version_preference)?,
+            output_selection: match value.requested_outputs {
+                None => OutputSelection::default_selection(),
+                Some(outputs) => OutputSelection::explicit(
+                    outputs
+                        .into_iter()
+                        .map(|name| {
+                            OutputName::new(&name).map_err(|_| {
+                                BuildEngineError::new(BuildEngineErrorCode::InvalidPlan)
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            },
+            source_revision: SourceRevision::from_str(&value.source_revision)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            root_derivation: DerivationPath::from_str(&value.root_derivation)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            root_outputs,
+            outputs_to_install: value
+                .outputs_to_install
+                .into_iter()
+                .map(|name| {
+                    OutputName::new(&name)
+                        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            package_name: value.package_name,
+            package_version: PackageVersion::new(value.package_version),
+            acquired: value
+                .acquired
+                .into_iter()
+                .map(InstallOutputEvidence::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        target.validate()?;
+        Ok(target)
+    }
+}
+
+impl TryFrom<InstallOutputEvidenceWire> for InstallOutputEvidence {
+    type Error = BuildEngineError;
+
+    fn try_from(value: InstallOutputEvidenceWire) -> Result<Self, Self::Error> {
+        let info = PathInfoReport::new(
+            StorePath::new(&value.store_path)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            NarHash::new(&value.nar_hash)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            value
+                .signatures
+                .into_iter()
+                .map(|signature| {
+                    Signature::new(&signature)
+                        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            value
+                .references
+                .into_iter()
+                .map(|reference| {
+                    StorePath::new(&reference)
+                        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            value
+                .deriver
+                .map(|deriver| {
+                    DerivationPath::from_str(&deriver)
+                        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+                })
+                .transpose()?,
+            value.nar_size,
+            value.closure_size,
+        )
+        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+        Ok(Self {
+            output_name: OutputName::new(&value.output_name)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+            info,
+            provenance: match value.provenance {
+                InstallOutputProvenanceWire::CacheSigned => BuildOutputProvenance::CacheSigned,
+                InstallOutputProvenanceWire::LocalBuild => BuildOutputProvenance::LocalBuild,
+            },
+        })
+    }
+}
+
+fn parse_canonical_digest(value: &str) -> Result<Digest, BuildEngineError> {
+    let hex = value
+        .strip_prefix("sha256:")
+        .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+    Digest::from_str(&format!("sha256-{hex}"))
+        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+}
+
+fn version_preference_from_canonical(
+    value: CanonicalVersionPreference,
+) -> Result<VersionPreference, BuildEngineError> {
+    let bound = |value: CanonicalVersionBound| {
+        let version = PackageVersion::new(value.version);
+        if value.inclusive {
+            VersionBound::inclusive(version)
+        } else {
+            VersionBound::exclusive(version)
+        }
+    };
+    match value {
+        CanonicalVersionPreference::Any => Ok(VersionPreference::Any),
+        CanonicalVersionPreference::Exact { version } => {
+            Ok(VersionPreference::Exact(PackageVersion::new(version)))
+        }
+        CanonicalVersionPreference::Minimum { version } => {
+            Ok(VersionPreference::Minimum(PackageVersion::new(version)))
+        }
+        CanonicalVersionPreference::Range { lower, upper } => {
+            VersionRange::new(lower.map(&bound), upper.map(bound))
+                .map(VersionPreference::Range)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+        }
+    }
+}
+
 fn checked_text(value: &str) -> Result<String, BuildEngineError> {
     if value.is_empty() || value.len() > MAX_TEXT || value.chars().any(char::is_control) {
         Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
     } else {
         Ok(value.to_owned())
     }
+}
+
+fn same_output_selection(left: &[OutputName], right: &[OutputName]) -> bool {
+    left.len() == right.len() && left.iter().all(|name| right.contains(name))
 }
 
 fn digest_string(digest: Digest) -> String {
@@ -1339,6 +2106,34 @@ impl LocalBuildEngine {
         cancellation: &CancellationToken,
         adapter: &dyn NixAdapter,
     ) -> Result<BuildReport, BuildEngineError> {
+        self.execute_revalidated(receipt, replan, estimate, resources, cancellation, adapter)
+            .map(|(report, _)| report)
+    }
+
+    pub(crate) fn execute_with_evidence(
+        &self,
+        receipt: BuildApprovalReceipt,
+        replan: impl FnOnce() -> Result<BuildPlan, BuildEngineError>,
+        estimate: VolatileBuildEstimate,
+        resources: &dyn ResourceProbe,
+        cancellation: &CancellationToken,
+        adapter: &dyn NixAdapter,
+    ) -> Result<(BuildReport, InstallEvidence), BuildEngineError> {
+        let (report, plan) =
+            self.execute_revalidated(receipt, replan, estimate, resources, cancellation, adapter)?;
+        let evidence = InstallEvidence::from_executed_plan(&plan, &report, adapter)?;
+        Ok((report, evidence))
+    }
+
+    fn execute_revalidated(
+        &self,
+        receipt: BuildApprovalReceipt,
+        replan: impl FnOnce() -> Result<BuildPlan, BuildEngineError>,
+        estimate: VolatileBuildEstimate,
+        resources: &dyn ResourceProbe,
+        cancellation: &CancellationToken,
+        adapter: &dyn NixAdapter,
+    ) -> Result<(BuildReport, BuildPlan), BuildEngineError> {
         let _permit = match self.admission.acquire(cancellation) {
             Ok(permit) => permit,
             Err(error) => {
@@ -1426,7 +2221,7 @@ impl LocalBuildEngine {
         if actual != current.execution.expected_outputs {
             return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
         }
-        Ok(report)
+        Ok((report, current))
     }
 
     fn revoke(&self, operation_id: &OperationId) {
@@ -1581,6 +2376,8 @@ mod tests {
                 SelectorInput::new("hello").unwrap(),
                 AttributePath::new("hello").unwrap(),
                 VersionPreference::Any,
+                OutputSelection::default_selection(),
+                SourceRevision::CurrentChannel,
                 report,
             )],
             vec![derivation],

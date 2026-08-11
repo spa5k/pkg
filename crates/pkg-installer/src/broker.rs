@@ -342,10 +342,7 @@ fn dispatch_request(
             caller.cancel(&handle).map_err(|_| ())?;
             Ok(CliBrokerResponse::Cancelled)
         }
-        CliBrokerRequest::Complete(handle) => {
-            caller.complete(&handle).map_err(|_| ())?;
-            Ok(CliBrokerResponse::Completed)
-        }
+        CliBrokerRequest::Complete(handle) => complete_response(caller, &handle),
         CliBrokerRequest::Version(handle) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::Version)
@@ -411,6 +408,7 @@ fn dispatch_request(
         }
         CliBrokerRequest::Gc(handle) => dispatch_gc(caller, adapter, &handle),
         CliBrokerRequest::AcquireGc(handle) => gc_admission_response(caller, &handle),
+        CliBrokerRequest::GetInstallEvidence(handle) => install_evidence_response(caller, &handle),
         CliBrokerRequest::GetBuildPreview(handle) => build_preview_response(caller, &handle),
         CliBrokerRequest::PrepareBuild(handle, selectors) => authority
             .ok_or(())?
@@ -429,6 +427,24 @@ fn dispatch_request(
             generation_root_removal_response(roots, caller, &handle, generation),
         ),
     }
+}
+
+fn install_evidence_response(
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .install_evidence(handle)
+        .map(CliBrokerResponse::InstallEvidence)
+        .map_err(|_| ())
+}
+
+fn complete_response(
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller.complete(handle).map_err(|_| ())?;
+    Ok(CliBrokerResponse::Completed)
 }
 
 fn gc_admission_response(
@@ -900,6 +916,8 @@ mod tests {
                 SelectorInput::new("hello").unwrap(),
                 pkg_nix::AttributePath::new("hello").unwrap(),
                 VersionPreference::Any,
+                OutputSelection::default_selection(),
+                SourceRevision::CurrentChannel,
                 report,
             )],
             vec![derivation],

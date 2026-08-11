@@ -1419,6 +1419,16 @@ flowchart TD
   destination generation root set from a durable source using only distinct generation ids and
   bounded retained safe names. It rejects empty, duplicate, unknown, cross-owner, or source-mismatched
   requests and never accepts a target path; the fixed root client exposes only that typed transition.
+  The build/install bridge now retains the full resolver-owned selector intent inside the private
+  approval subject, including source and default-versus-explicit output selection. After the
+  admission-time replan and actual Nix execution, the broker recursively verifies every realized
+  output, rereads bounded path metadata, cross-checks report identity/provenance, and retains one
+  strict private `InstallEvidence` capability. Closed method 24 returns that evidence only to the
+  authenticated owner while the successful build remains GC-inhibited and before roots are
+  published; cancellation, completion, expiry, disconnect, restart, failed execution, and root
+  publication all erase it. This supplies the next CLI activation slice with authoritative
+  selector/channel/revision/derivation/output/integrity metadata without accepting any caller-made
+  store path, derivation, receipt, or lifecycle record as authority.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

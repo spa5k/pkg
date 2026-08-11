@@ -412,6 +412,17 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Fetches authoritative post-build lifecycle evidence before rooting.
+    pub fn install_evidence(
+        &mut self,
+        handle: OperationHandle,
+    ) -> Result<pkg_nix::InstallEvidence, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::GetInstallEvidence(handle))? {
+            CliBrokerResponse::InstallEvidence(evidence) => Ok(evidence),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     /// Publishes a complete generation root intent after successful build execution.
     pub fn publish_build_roots(
         &mut self,

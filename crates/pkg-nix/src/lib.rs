@@ -68,8 +68,8 @@ pub use build::{
     ApprovalJournal, ApprovalJournalError, ApprovalJournalRecord, ApprovalSource, BuildEngineError,
     BuildEngineErrorCode, BuildPlan, BuildPlanTarget, BuildPreview, BuildPreviewEstimates,
     BuildReadiness, BuildResources, CacheClassification, CancellationToken, HostResourceProbe,
-    LocalBuildEngine, ResourceProbe, ResourceSnapshot, VolatileBuildEstimate,
-    render_managed_build_nix_conf,
+    InstallEvidence, InstallOutputEvidence, InstallTargetEvidence, LocalBuildEngine, ResourceProbe,
+    ResourceSnapshot, VolatileBuildEstimate, render_managed_build_nix_conf,
 };
 pub use build_cache::{
     BuildCacheError, BuildCacheErrorCode, BuildCacheEvidence, BuildCacheProbe, BuildCacheSubject,

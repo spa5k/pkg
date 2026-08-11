@@ -19,8 +19,8 @@ use crate::maintenance::{
 };
 use crate::{
     ApprovalSource, BuildPreview, BuildReport, DerivationPlanReport, EvaluateDerivationRequest,
-    GcReport, JsonCodec, PathInfoReport, RootName, RootRef, SubstituteReport, VerifyReport,
-    VerifyRequest, VersionInfo,
+    GcReport, InstallEvidence, JsonCodec, PathInfoReport, RootName, RootRef, SubstituteReport,
+    VerifyReport, VerifyRequest, VersionInfo,
 };
 use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
@@ -117,6 +117,8 @@ pub enum CliBrokerRequest {
     RemoveGenerationRoots(OperationHandle, GenerationId),
     /// Wait for and retain exclusive broker GC admission on this operation.
     AcquireGc(OperationHandle),
+    /// Fetch broker-produced post-build evidence before root publication.
+    GetInstallEvidence(OperationHandle),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -166,6 +168,8 @@ pub enum CliBrokerResponse {
     GenerationRootRemovalRefused(GenerationRootRemovalErrorCode),
     /// Exclusive broker GC admission is retained until completion or cancellation.
     GcAdmissionAcquired,
+    /// Private post-build evidence for crash-safe lifecycle assembly.
+    InstallEvidence(InstallEvidence),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -482,6 +486,12 @@ impl ProductFrameCodec {
                     handle: handle.as_str(),
                 })?,
             ),
+            CliBrokerRequest::GetInstallEvidence(handle) => (
+                24,
+                encode_json(&HandleWire {
+                    handle: handle.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -494,7 +504,7 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 | 4 | 10 | 16 | 17 | 23 => {
+            2 | 3 | 4 | 10 | 16 | 17 | 23 | 24 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
                 match frame.method {
@@ -505,6 +515,7 @@ impl ProductFrameCodec {
                     16 => CliBrokerRequest::Gc(handle),
                     17 => CliBrokerRequest::GetBuildPreview(handle),
                     23 => CliBrokerRequest::AcquireGc(handle),
+                    24 => CliBrokerRequest::GetInstallEvidence(handle),
                     _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
                 }
             }
@@ -690,6 +701,12 @@ impl ProductFrameCodec {
                 })?,
             ),
             CliBrokerResponse::GcAdmissionAcquired => (23, encode_json(&EmptyWire {})?),
+            CliBrokerResponse::InstallEvidence(evidence) => (
+                24,
+                evidence
+                    .to_json_bytes()
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -823,6 +840,10 @@ impl ProductFrameCodec {
                 let _: EmptyWire = decode_json(frame.payload)?;
                 CliBrokerResponse::GcAdmissionAcquired
             }
+            24 => CliBrokerResponse::InstallEvidence(
+                InstallEvidence::from_json_bytes(frame.payload)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -2394,18 +2415,32 @@ mod tests {
             ProductFrameCodec::decode_cli_response(&encoded),
             Ok((15, CliBrokerResponse::GcAdmissionAcquired))
         );
-        let complete =
-            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
-        let encoded = ProductFrameCodec::encode_cli_request(16, &complete).unwrap();
+        let install_evidence =
+            CliBrokerRequest::GetInstallEvidence(OperationHandle(format!("op_{}", "c".repeat(64))));
+        let encoded = ProductFrameCodec::encode_cli_request(16, &install_evidence).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        for forbidden in ["selector", "revision", "derivation", "path", "target"] {
+            assert!(
+                !wire.contains(forbidden),
+                "evidence request exposed {forbidden}"
+            );
+        }
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&encoded),
-            Ok((16, complete))
+            Ok((16, install_evidence))
+        );
+        let complete =
+            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
+        let encoded = ProductFrameCodec::encode_cli_request(17, &complete).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((17, complete))
         );
         let encoded =
-            ProductFrameCodec::encode_cli_response(16, &CliBrokerResponse::Completed).unwrap();
+            ProductFrameCodec::encode_cli_response(17, &CliBrokerResponse::Completed).unwrap();
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
-            Ok((16, CliBrokerResponse::Completed))
+            Ok((17, CliBrokerResponse::Completed))
         );
 
         let helper = BrokerHelperRequest::PublishRootSet(root_set());

@@ -10,9 +10,10 @@ use sha2::{Digest as _, Sha256};
 
 use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
-    BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, LocalBuildEngine, NixAdapter,
-    OperationId, ResourceProbe, RootSet, RootSetIntent, RootSetReport, RootSetTransitionIntent,
-    RootSetTransitionReport, RootSetTransitionRequest, VolatileBuildEstimate,
+    BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, InstallEvidence,
+    LocalBuildEngine, NixAdapter, OperationId, ResourceProbe, RootSet, RootSetIntent,
+    RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, RootSetTransitionRequest,
+    VolatileBuildEstimate,
     maintenance::{MaintenanceError, random_secret},
 };
 
@@ -158,6 +159,7 @@ struct OperationRecord {
     build_executing: bool,
     root_transition_executing: bool,
     awaiting_root_outputs: Option<BTreeSet<String>>,
+    install_evidence: Option<InstallEvidence>,
 }
 
 impl OperationRecord {
@@ -531,6 +533,7 @@ impl AuthenticatedCaller {
             record.status = OperationStatus::Cancelled;
             record.prepared_build = None;
             record.awaiting_root_outputs = None;
+            record.install_evidence = None;
             let executing = record.authority_executing();
             if !executing {
                 release_admission(&mut state, &self.broker.build_gate, handle);
@@ -833,7 +836,7 @@ impl AuthenticatedCaller {
             }
         };
 
-        let result = self.broker.build_engine.execute(
+        let result = self.broker.build_engine.execute_with_evidence(
             receipt,
             replan,
             estimate,
@@ -842,12 +845,34 @@ impl AuthenticatedCaller {
             adapter,
         );
         match result {
-            Ok(report) => self.finish_build_execution(handle, report),
+            Ok((report, evidence)) => self.finish_build_execution(handle, report, evidence),
             Err(error) => {
                 self.fail_build_execution(handle);
                 Err(map_build_engine_error(error.code()))
             }
         }
+    }
+
+    /// Returns the immutable post-execution evidence retained for this build.
+    ///
+    /// Evidence exists only after successful execution and before root
+    /// publication completes the operation.
+    pub fn install_evidence(
+        &self,
+        handle: &OperationHandle,
+    ) -> Result<InstallEvidence, BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+        let record = self.record_mut(&mut state, handle)?;
+        if record.build_executing || record.awaiting_root_outputs.is_none() {
+            return Err(BrokerError::new(
+                BrokerErrorCode::InvalidAdmissionTransition,
+            ));
+        }
+        record
+            .install_evidence
+            .clone()
+            .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))
     }
 
     /// Executes using only the replanner retained with the approved plan.
@@ -1175,6 +1200,7 @@ impl AuthenticatedCaller {
                 record.status = OperationStatus::Cancelled;
                 record.prepared_build = None;
                 record.awaiting_root_outputs = None;
+                record.install_evidence = None;
                 record.authority_executing()
             } else {
                 false
@@ -1220,6 +1246,7 @@ impl AuthenticatedCaller {
                 build_executing: false,
                 root_transition_executing: false,
                 awaiting_root_outputs: None,
+                install_evidence: None,
             },
         );
         Ok(handle)
@@ -1246,6 +1273,7 @@ impl AuthenticatedCaller {
         record.status = status;
         record.prepared_build = None;
         record.awaiting_root_outputs = None;
+        record.install_evidence = None;
         let executing = record.authority_executing();
         if !executing {
             release_admission(&mut state, &self.broker.build_gate, handle);
@@ -1257,6 +1285,7 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         report: BuildReport,
+        evidence: InstallEvidence,
     ) -> Result<BuildReport, BrokerError> {
         let output_paths = report
             .outputs()
@@ -1279,6 +1308,7 @@ impl AuthenticatedCaller {
                 record.build_executing = false;
                 record.prepared_build = None;
                 record.awaiting_root_outputs = None;
+                record.install_evidence = None;
             }
             release_admission(&mut state, &self.broker.build_gate, handle);
             return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
@@ -1295,6 +1325,7 @@ impl AuthenticatedCaller {
             release_admission(&mut state, &self.broker.build_gate, handle);
         } else {
             record.awaiting_root_outputs = Some(output_paths);
+            record.install_evidence = Some(evidence);
         }
         Ok(report)
     }
@@ -1328,6 +1359,7 @@ impl AuthenticatedCaller {
             record.prepared_build = None;
             record.build_executing = false;
             record.awaiting_root_outputs = None;
+            record.install_evidence = None;
         }
         release_admission(&mut state, &self.broker.build_gate, handle);
         if !completed {
@@ -1365,6 +1397,7 @@ impl AuthenticatedCaller {
                 record.status = OperationStatus::Cancelled;
                 record.prepared_build = None;
                 record.awaiting_root_outputs = None;
+                record.install_evidence = None;
             }
         }
         if !succeeded {
@@ -1395,6 +1428,7 @@ impl AuthenticatedCaller {
             record.prepared_build = None;
             record.build_executing = false;
             record.awaiting_root_outputs = None;
+            record.install_evidence = None;
         }
         release_admission(&mut state, &self.broker.build_gate, handle);
     }
@@ -1499,6 +1533,7 @@ fn purge_expired(
                 record.status = OperationStatus::Cancelled;
                 record.prepared_build = None;
                 record.awaiting_root_outputs = None;
+                record.install_evidence = None;
             }
             continue;
         }
@@ -1683,9 +1718,10 @@ mod tests {
         ApprovalJournalError, ApprovalJournalRecord, BuildOutput, BuildOutputProvenance,
         BuildPlanTarget, BuildReadiness, BuildRequest, BuildStatus, CacheClassification,
         DerivationPath, DerivationPlanReport, EvaluateDerivationRequest, EvaluatedDerivation,
-        GcReport, GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter,
-        NixAdapterError, NixVersion, PathInfoReport, ResourceSnapshot, RootName, RootRef,
-        RootSetEntry, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+        GcReport, GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter, NarIntegrity,
+        NixAdapterError, NixVersion, PathInfoReport, PathVerifyResult, ResourceSnapshot, RootName,
+        RootRef, RootSetEntry, SubstituteReport, TrustStatus, VerifyReport, VerifyRequest,
+        VersionInfo,
     };
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
@@ -1789,8 +1825,19 @@ mod tests {
             Err(NixAdapterError::Unavailable)
         }
 
-        fn path_info(&self, _: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
-            Err(NixAdapterError::Unavailable)
+        fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
+            PathInfoReport::new(
+                path.clone(),
+                NarHash::new(NAR_HASH).unwrap(),
+                Vec::new(),
+                Vec::new(),
+                Some(
+                    DerivationPath::from_str(&format!("/nix/store/{STORE_HASH}-hello-1.0.drv"))
+                        .unwrap(),
+                ),
+                0,
+                0,
+            )
         }
 
         fn substitute(&self, _: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
@@ -1819,8 +1866,19 @@ mod tests {
             )
         }
 
-        fn verify(&self, _: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
-            Err(NixAdapterError::Unavailable)
+        fn verify(&self, request: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
+            let mut results = request
+                .paths()
+                .iter()
+                .cloned()
+                .map(|path| PathVerifyResult::new(path, NarIntegrity::Intact, TrustStatus::Trusted))
+                .collect::<Vec<_>>();
+            results.push(PathVerifyResult::new(
+                StorePath::new(&format!("/nix/store/{STORE_HASH}-dependency-1.0")).unwrap(),
+                NarIntegrity::Intact,
+                TrustStatus::Trusted,
+            ));
+            VerifyReport::new(results)
         }
 
         fn gc(&self) -> Result<GcReport, NixAdapterError> {
@@ -1870,6 +1928,8 @@ mod tests {
                 SelectorInput::new("hello").unwrap(),
                 AttributePath::new("hello").unwrap(),
                 VersionPreference::Any,
+                pkg_core::OutputSelection::default_selection(),
+                pkg_core::SourceRevision::CurrentChannel,
                 report,
             )],
             vec![derivation],
@@ -2263,6 +2323,10 @@ mod tests {
             )
             .unwrap();
         let adapter = ExecutionAdapter::immediate();
+        assert_eq!(
+            caller.install_evidence(&handle).unwrap_err().code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
 
         let report = caller
             .execute_build(
@@ -2275,6 +2339,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(report.status(), BuildStatus::Built);
+        let evidence = caller.install_evidence(&handle).unwrap();
+        assert_eq!(evidence.channel_sequence().get().get(), 42);
+        assert_eq!(evidence.policy_version().get().get(), 7);
+        assert_eq!(evidence.targets().len(), 1);
+        assert_eq!(evidence.targets()[0].selector().as_str(), "hello");
+        assert_eq!(evidence.targets()[0].acquired().len(), 1);
+        let debug = format!("{evidence:?}");
+        assert!(!debug.contains("/nix/") && !debug.contains("hello"));
+        assert_eq!(
+            evidence.targets()[0].acquired()[0].provenance(),
+            BuildOutputProvenance::LocalBuild
+        );
+        assert_eq!(
+            InstallEvidence::from_json_bytes(&evidence.to_json_bytes().unwrap()).unwrap(),
+            evidence
+        );
+        let encoded_evidence = String::from_utf8(evidence.to_json_bytes().unwrap()).unwrap();
+        let wrong_schema =
+            encoded_evidence.replacen("\"schemaVersion\":1", "\"schemaVersion\":2", 1);
+        assert!(InstallEvidence::from_json_bytes(wrong_schema.as_bytes()).is_err());
+        let extended = encoded_evidence.replacen("{", "{\"futureField\":true,", 1);
+        assert!(InstallEvidence::from_json_bytes(extended.as_bytes()).is_err());
         assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
         assert_eq!(broker.build_engine.approval_count(), 0);
         let admitted = broker.admission_snapshot();
@@ -2385,6 +2471,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(
+            caller.install_evidence(&handle).unwrap_err().code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
         let released = broker.admission_snapshot();
         assert!(!released.build_held());
         assert_eq!(released.gc_inhibitor_count(), 0);
