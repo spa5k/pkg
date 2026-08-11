@@ -6,7 +6,7 @@ use pkg_core::state::{CollisionPolicy, canonical_digest};
 use pkg_core::{RollbackPlan, StorePath};
 use pkg_nix::GenerationId;
 use pkg_store::StateLease;
-use pkg_store::{ActivationError, ActivationInput, ActivationPlan, StateLayout, stage_activation};
+use pkg_store::{ActivationInput, ActivationPlan, StateLayout, stage_activation};
 use serde_json::{Value, json};
 
 use crate::{CandidateGeneration, CommitError, PreparedGeneration};
@@ -66,14 +66,14 @@ pub fn prepare_rollback(
     )
 }
 
-fn prepare_rollback_with(
+pub(crate) fn prepare_rollback_with<E>(
     layout: StateLayout,
     lease: StateLease,
     rollback: &RollbackPlan,
     generation_id: &str,
     created_at: &str,
     operation_id: &str,
-    stage: impl FnOnce(&Path, &[StorePath], CollisionPolicy) -> Result<ActivationPlan, ActivationError>,
+    stage: impl FnOnce(&Path, &[StorePath], CollisionPolicy) -> Result<ActivationPlan, E>,
 ) -> Result<PreparedGeneration, RollbackPrepareError> {
     let generation =
         GenerationId::new(generation_id).map_err(|_| RollbackPrepareError::InvalidGeneration)?;
@@ -384,7 +384,7 @@ mod tests {
             "gen-0002",
             "2026-08-09T00:00:03Z",
             "op_rollback",
-            |_, _, _| panic!("staging must not run"),
+            |_, _, _| -> Result<ActivationPlan, ()> { panic!("staging must not run") },
         );
         assert_eq!(result.unwrap_err(), RollbackPrepareError::InvalidGeneration);
         assert!(!is_strictly_newer("gen-00002", "gen-0002"));

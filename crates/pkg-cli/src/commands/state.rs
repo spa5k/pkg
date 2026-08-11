@@ -5,10 +5,11 @@ use serde_json::{Map, Value, json};
 use pkg_core::lifecycle::LifecycleState;
 use pkg_core::remove::remove_selectors;
 use pkg_core::{
-    ChangeKind, GenerationSnapshot, History, NixpkgsRevision, PinAction, SelectorId, edit_pins,
+    ChangeKind, GenerationSnapshot, History, NixpkgsRevision, PinAction, RollbackPlan,
+    RollbackTarget, SelectorId, edit_pins, plan_rollback,
 };
 
-use crate::cli::{HistoryArgs, ListArgs, PackageArgs, RemoveArgs};
+use crate::cli::{HistoryArgs, ListArgs, PackageArgs, RemoveArgs, RollbackArgs};
 use crate::commands::execute::CommandResult;
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
@@ -18,6 +19,21 @@ use crate::ux::CommandError;
 pub struct LifecycleEdit {
     state: LifecycleState,
     result: CommandResult,
+}
+
+/// Verified rollback plan paired with its sanitized public preview/result.
+#[derive(Debug)]
+pub struct RollbackEdit {
+    plan: RollbackPlan,
+    result: CommandResult,
+}
+
+impl RollbackEdit {
+    /// Consumes the rollback edit into its private plan and public result.
+    #[must_use]
+    pub fn into_parts(self) -> (RollbackPlan, CommandResult) {
+        (self.plan, self.result)
+    }
 }
 
 impl LifecycleEdit {
@@ -221,6 +237,48 @@ pub fn read_history(history: &History, args: &HistoryArgs) -> Result<CommandResu
         Map::from_iter([("entries".into(), Value::Array(entries))]),
         records,
     )
+}
+
+/// Plans a rollback from one verified active snapshot and complete retained history.
+pub fn rollback_state(
+    active: &GenerationSnapshot,
+    history: &History,
+    args: &RollbackArgs,
+) -> Result<RollbackEdit, CommandError> {
+    let target = args
+        .generation()
+        .map(|id| RollbackTarget::Named(id.to_owned()))
+        .unwrap_or(RollbackTarget::Parent);
+    let retained = history
+        .snapshots()
+        .iter()
+        .filter(|snapshot| snapshot.generation().id() != active.generation().id())
+        .cloned()
+        .collect::<Vec<_>>();
+    // V1 pins one managed Nix runtime for every accepted channel sequence. A
+    // future runtime migration must replace this with an authenticated
+    // compatibility capability before it can publish such a channel.
+    let plan = plan_rollback(active, &retained, target, |_| true).map_err(|_| {
+        CommandError::new(
+            ExitCode::ResolveFailed,
+            "the requested rollback generation is unavailable or incompatible",
+            "run `pkg history` and choose a retained generation",
+        )
+    })?;
+    let target_id = plan.target().generation().id();
+    let result = result(
+        format!("rollback to {target_id} ready"),
+        Map::from_iter([
+            ("sourceGeneration".into(), json!(active.generation().id())),
+            ("targetGeneration".into(), json!(target_id)),
+            (
+                "packageCount".into(),
+                json!(plan.target().state().manifest().entries().len()),
+            ),
+        ]),
+        vec![],
+    )?;
+    Ok(RollbackEdit { plan, result })
 }
 
 fn resolve_targets(

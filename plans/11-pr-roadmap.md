@@ -1344,8 +1344,8 @@ flowchart TD
   commit now validates the exact broker root reference, entry count, sorted retained-name set, and a
   domain-separated digest of the complete name-to-store-path mapping, then reuses the existing
   rooted/activated crash journal, retains and switches the staged forest without a second helper
-  publication, and handles an empty destination without an empty root request. End-user command
-  orchestration still needs to construct and drive that transaction. Both ends now switch
+  publication, and handles an empty destination without an empty root request. The end-user
+  remove/pin/unpin and rollback commands now construct and drive that transaction. Both ends now switch
   to nonblocking I/O after kernel peer authentication:
   the privileged helper gives the complete request and response frames separate 30-second poll
   budgets, starts the response budget only after dispatch, and fails stalled partial reads or writes
@@ -1379,15 +1379,18 @@ flowchart TD
   is the common trusted input for CLI list/history and future mutation planning; commands do not
   parse mutable views independently. The shipped CLI now uses that adapter rather than the blanket
   placeholder engine: `list` and non-pruning `history` read verified state, while remove/pin/unpin
-  render deterministic `--dry-run` edits and execute real state-only transactions through the fixed
-  broker. Each mutation begins Activate authority, takes the exclusive user lease, reloads active and
+  and rollback render deterministic `--dry-run` plans and execute real state-only transactions through
+  the fixed broker. Each mutation begins Activate authority, takes the exclusive user lease, reloads active and
   complete retained history, allocates above the retained high-water mark, prepares a fresh immutable
   generation, transitions roots, commits locally, and then acknowledges completion. The successful
   helper transition adds destination roots while retaining the source generation for rollback; only
   generation-pruning GC removes old roots. Empty destinations add no root and still retain the source.
   A lost completion acknowledgement releases only broker admission and cannot remove committed or
   active roots. Interrupted prepared edits are detected from the durable journal, replay method 21
-  idempotently, and finish forward; pre-`prepared` immutable debris is discarded separately. Every
+  idempotently, and finish forward; rollback recovery selects a committed retained generation with
+  the exact destination root mapping instead of assuming the active parent can derive it, which also
+  restores nonempty history from an active empty generation. Pre-`prepared` immutable debris is
+  discarded separately. Every
   unconnected mutation, authenticated
   index query, and broker transaction still returns a specific fail-closed product error; none can
   fall through to raw Nix. The pipeline now also has one generic fresh-generation preparer for

@@ -12,7 +12,7 @@ use crate::cli::{
 };
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
 use crate::commands::state::{
-    LifecycleEdit, edit_pin_state, list_state, read_history, remove_state,
+    LifecycleEdit, edit_pin_state, list_state, read_history, remove_state, rollback_state,
 };
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
@@ -20,7 +20,8 @@ use pkg_core::{History, PinAction};
 use pkg_nix::BrokerOperationKind;
 use pkg_pipeline::{
     CommitError, StateEditKind, StateEditMetadata, discard_unprepared_state_edits,
-    load_active_snapshot, load_retained_history, pending_state_edit_generation, prepare_state_edit,
+    load_active_snapshot, load_retained_history, pending_state_edit_generation,
+    pending_state_transition_source, prepare_rollback, prepare_state_edit,
     recover_transitioned_state_edit, resume_prepared_state_edit,
 };
 use pkg_store::{LeaseError, LeaseIdentity, StateLayout, StateLease};
@@ -155,10 +156,19 @@ impl CoreOperations for LocalStateOperations {
 
     fn rollback(
         &mut self,
-        _args: &RollbackArgs,
-        _policy: OperationPolicy,
+        args: &RollbackArgs,
+        policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        Err(mutation_unavailable())
+        if policy.dry_run() {
+            let layout = self.layout()?;
+            let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
+            let active = load_active_snapshot(layout, &lease)
+                .map_err(state_read_error)?
+                .ok_or_else(no_active_generation)?;
+            let history = load_retained_history(layout, &lease).map_err(state_read_error)?;
+            return Ok(rollback_state(&active, &history, args)?.into_parts().1);
+        }
+        self.commit_rollback(args)
     }
 
     fn gc(
@@ -179,6 +189,69 @@ impl CoreOperations for LocalStateOperations {
 }
 
 impl LocalStateOperations {
+    fn commit_rollback(&self, args: &RollbackArgs) -> Result<CommandResult, CommandError> {
+        let layout = self.layout()?.clone();
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        self.recover_pending_state_edit(&layout, &mut broker)?;
+        let handle = broker
+            .begin(BrokerOperationKind::Activate)
+            .map_err(broker_error)?;
+        let mut local_committed = false;
+        let result = (|| {
+            let nonce = secure_nonce()?;
+            let created_at = utc_now()?;
+            let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
+                .map_err(state_lease_error)?;
+            let lease = StateLease::try_exclusive(&layout, &identity).map_err(state_lease_error)?;
+            let source = load_active_snapshot(&layout, &lease)
+                .map_err(state_read_error)?
+                .ok_or_else(no_active_generation)?;
+            let history = load_retained_history(&layout, &lease).map_err(state_read_error)?;
+            let newest = history
+                .snapshots()
+                .first()
+                .ok_or_else(no_active_generation)?;
+            let generation_id = next_generation_id(newest.generation().id())?;
+            let (plan, command_result) = rollback_state(&source, &history, args)?.into_parts();
+            // Rollback derives its destination from the retained target's
+            // durable roots, not necessarily from the active generation. In
+            // particular, an active empty generation has no helper root set.
+            let transition_source = pkg_nix::GenerationId::new(plan.target().generation().id())
+                .map_err(|_| mutation_failed())?;
+            let prepared = prepare_rollback(
+                layout.clone(),
+                lease,
+                &plan,
+                &generation_id,
+                &created_at,
+                handle.as_str(),
+            )
+            .map_err(|_| mutation_failed())?;
+            let intent = prepared
+                .root_transition_intent(transition_source)
+                .map_err(|_| mutation_failed())?;
+            let report = intent
+                .map(|intent| {
+                    broker
+                        .transition_generation_roots(handle.clone(), intent)
+                        .map_err(broker_error)
+                })
+                .transpose()?;
+            prepared
+                .activate_transitioned(report.as_ref(), &nonce)
+                .map_err(|_| mutation_failed())?
+                .finish()
+                .map_err(|_| mutation_failed())?;
+            local_committed = true;
+            let _ = broker.complete(handle.clone());
+            Ok(command_result)
+        })();
+        if result.is_err() && !local_committed {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+
     fn edit_pin(
         &self,
         args: &PackageArgs,
@@ -291,10 +364,8 @@ impl LocalStateOperations {
                 .map_err(|_| mutation_failed())?;
             return Ok(());
         }
-        let source = layout
-            .current_generation()
-            .map_err(|_| mutation_failed())?
-            .ok_or_else(no_active_generation)?;
+        let source = pending_state_transition_source(layout, &lease, &pending)
+            .map_err(|_| mutation_failed())?;
         let prepared = resume_prepared_state_edit(layout.clone(), lease, &pending)
             .map_err(|_| mutation_failed())?;
         let handle = broker

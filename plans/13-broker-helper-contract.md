@@ -297,6 +297,11 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   only owner of eventual root removal. An empty destination adds no root but deliberately retains the
   source for history/rollback. Therefore a lost method-4 acknowledgement or pre-switch crash cannot
   unroot the active generation.
+  Rollback may name the retained rollback target—not the active generation—as the transition source:
+  the destination is an exact re-materialization of that target, and an active empty generation has
+  no root set from which a nonempty destination could be derived. Crash recovery therefore finds a
+  committed retained generation with the exact destination output-root mapping and replays the same
+  path-free transition idempotently.
   Responses are either the typed root report or one of four stable redacted transition refusals,
   and neither store paths nor uid cross method 21. The local commit coordinator accepts that report
   only when its canonical uid/generation reference, entry count, sorted retained-name set, and

@@ -234,10 +234,7 @@ pub fn pending_state_edit_generation(
     let history = load_retained_history(layout, lease)?;
     let mut pending = Vec::new();
     for snapshot in history.snapshots() {
-        if matches!(
-            snapshot.generation().operation().kind(),
-            "remove" | "pin" | "unpin"
-        ) {
+        if is_resumable_state_operation(snapshot.generation().operation().kind()) {
             let prepared = journal_has_status(
                 layout,
                 lease,
@@ -270,6 +267,54 @@ pub fn pending_state_edit_generation(
     Ok(pending.pop())
 }
 
+/// Selects the durable generation whose roots can derive a resumed destination.
+///
+/// Ordinary state edits derive from their active parent. A rollback instead
+/// clones an older retained snapshot, so recovery must use a committed retained
+/// generation with the exact destination root mapping—especially when the
+/// active parent is empty and has no helper root set.
+pub fn pending_state_transition_source(
+    layout: &StateLayout,
+    lease: &StateLease,
+    generation_id: &GenerationId,
+) -> Result<GenerationId, CommitError> {
+    if !lease.authorizes(layout, LeaseMode::Exclusive) {
+        return Err(CommitError::LeaseRequired);
+    }
+    let pending = load_generation_snapshot(layout, generation_id)?;
+    let generation = pending.generation();
+    if !is_resumable_state_operation(generation.operation().kind()) {
+        return Err(CommitError::InvalidCandidate);
+    }
+    let current = layout
+        .current_generation()
+        .map_err(|_| CommitError::StateIo)?
+        .ok_or(CommitError::InvalidCandidate)?;
+    if generation.operation().kind() != "rollback"
+        || generation.activation().output_roots().is_empty()
+    {
+        return Ok(current);
+    }
+    let history = load_retained_history(layout, lease)?;
+    for snapshot in history.snapshots() {
+        let candidate = snapshot.generation();
+        if candidate.id() == generation.id()
+            || candidate.activation().output_roots() != generation.activation().output_roots()
+            || !journal_has_status(
+                layout,
+                lease,
+                candidate.operation().op_id(),
+                "commit",
+                "committed",
+            )?
+        {
+            continue;
+        }
+        return GenerationId::new(candidate.id()).map_err(|_| CommitError::InvalidCandidate);
+    }
+    Err(CommitError::InvalidCandidate)
+}
+
 /// Discards state-edit snapshots visible before their `prepared` journal row became durable.
 pub fn discard_unprepared_state_edits(
     layout: &StateLayout,
@@ -285,7 +330,7 @@ pub fn discard_unprepared_state_edits(
     let mut discarded = 0;
     for snapshot in history.snapshots() {
         let generation = snapshot.generation();
-        if !matches!(generation.operation().kind(), "remove" | "pin" | "unpin") {
+        if !is_resumable_state_operation(generation.operation().kind()) {
             continue;
         }
         let prepared = journal_has_status(
@@ -339,15 +384,13 @@ pub fn resume_prepared_state_edit(
         return Err(CommitError::LeaseRequired);
     }
     let snapshot = load_generation_snapshot(&layout, generation_id)?;
-    if !matches!(
-        snapshot.generation().operation().kind(),
-        "remove" | "pin" | "unpin"
-    ) || layout
-        .current_generation()
-        .map_err(|_| CommitError::StateIo)?
-        .as_ref()
-        .map(GenerationId::as_str)
-        != snapshot.generation().parent()
+    if !is_resumable_state_operation(snapshot.generation().operation().kind())
+        || layout
+            .current_generation()
+            .map_err(|_| CommitError::StateIo)?
+            .as_ref()
+            .map(GenerationId::as_str)
+            != snapshot.generation().parent()
         || !journal_has_status(
             &layout,
             &lease,
@@ -419,7 +462,7 @@ pub fn recover_transitioned_state_edit(
     clean_current_temps(layout.state_root())?;
     let snapshot = load_generation_snapshot(layout, generation_id)?;
     let generation = snapshot.generation();
-    if !matches!(generation.operation().kind(), "remove" | "pin" | "unpin")
+    if !is_resumable_state_operation(generation.operation().kind())
         || layout
             .current_generation()
             .map_err(|_| CommitError::StateIo)?
@@ -472,6 +515,10 @@ pub fn recover_transitioned_state_edit(
         [("nextStateHash", json!(generation.generation_hash()))],
     )?;
     Ok(RecoveryResult::FinishedActivated)
+}
+
+fn is_resumable_state_operation(kind: &str) -> bool {
+    matches!(kind, "remove" | "pin" | "unpin" | "rollback")
 }
 
 fn require_read_lease(layout: &StateLayout, lease: &StateLease) -> Result<(), CommitError> {
@@ -1992,6 +2039,126 @@ mod tests {
                 .entries()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn interrupted_rollback_resumes_from_the_retained_target() {
+        let fixture = fixture();
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            mutation_lease(&fixture.layout),
+        )
+        .unwrap()
+        .activate(&fixture.maintenance, "rbsrc1")
+        .unwrap()
+        .finish()
+        .unwrap();
+
+        let edit_lease = mutation_lease(&fixture.layout);
+        let source = load_active_snapshot(&fixture.layout, &edit_lease)
+            .unwrap()
+            .unwrap();
+        let empty = pkg_core::remove::remove_selectors(
+            source.state().clone(),
+            &[pkg_core::SelectorId::new("sel_demo").unwrap()],
+        )
+        .unwrap()
+        .into_state();
+        crate::prepare_state_edit(
+            fixture.layout.clone(),
+            edit_lease,
+            &source,
+            empty,
+            crate::StateEditMetadata::new(
+                "gen-0002",
+                "2026-08-11T00:00:00Z",
+                "op_remove_before_rollback",
+                crate::StateEditKind::Remove,
+            ),
+        )
+        .unwrap()
+        .activate_transitioned(None, "rbempty1")
+        .unwrap()
+        .finish()
+        .unwrap();
+
+        let rollback_lease = mutation_lease(&fixture.layout);
+        let active = load_active_snapshot(&fixture.layout, &rollback_lease)
+            .unwrap()
+            .unwrap();
+        let history = load_retained_history(&fixture.layout, &rollback_lease).unwrap();
+        let retained = history
+            .snapshots()
+            .iter()
+            .filter(|snapshot| snapshot.generation().id() != active.generation().id())
+            .cloned()
+            .collect::<Vec<_>>();
+        let rollback = pkg_core::plan_rollback(
+            &active,
+            &retained,
+            pkg_core::RollbackTarget::Named("gen-0001".to_owned()),
+            |_| true,
+        )
+        .unwrap();
+        crate::rollback::prepare_rollback_with(
+            fixture.layout.clone(),
+            rollback_lease,
+            &rollback,
+            "gen-0003",
+            "2026-08-11T00:00:01Z",
+            "op_rollback",
+            |staging, outputs, _| {
+                fs::create_dir(staging).unwrap();
+                fs::set_permissions(staging, fs::Permissions::from_mode(0o700)).unwrap();
+                symlink(format!("{STORE}/bin/demo"), staging.join("demo")).unwrap();
+                inspect_staged_activation(staging, outputs.to_vec())
+            },
+        )
+        .unwrap();
+
+        let resume_lease = mutation_lease(&fixture.layout);
+        let pending = pending_state_edit_generation(&fixture.layout, &resume_lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.as_str(), "gen-0003");
+        assert_eq!(
+            pending_state_transition_source(&fixture.layout, &resume_lease, &pending)
+                .unwrap()
+                .as_str(),
+            "gen-0001"
+        );
+        let resumed =
+            resume_prepared_state_edit(fixture.layout.clone(), resume_lease, &pending).unwrap();
+        let roots = resumed.roots.as_ref().unwrap();
+        let published = publish_root_set(roots, &fixture.maintenance).unwrap();
+        let report = RootSetTransitionReport::new(
+            published,
+            roots
+                .request()
+                .entries()
+                .iter()
+                .map(|entry| entry.name().clone())
+                .collect(),
+            roots.request().mapping_digest(),
+        )
+        .unwrap();
+        let activated = resumed
+            .activate_transitioned(Some(&report), "rbresume1")
+            .unwrap();
+        drop(activated);
+
+        let finish_lease = mutation_lease(&fixture.layout);
+        assert_eq!(
+            recover_transitioned_state_edit(&fixture.layout, &finish_lease, &pending).unwrap(),
+            RecoveryResult::FinishedActivated
+        );
+        let recovered = load_active_snapshot(&fixture.layout, &finish_lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.generation().operation().kind(), "rollback");
+        assert_eq!(recovered.state().manifest().entries().len(), 1);
     }
 
     #[test]
