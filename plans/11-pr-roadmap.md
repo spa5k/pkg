@@ -1329,7 +1329,12 @@ flowchart TD
   verifies the helper peer is root before sending bytes, uses one method-1 helper request per
   connection, and requires the exact correlated root-publication response under one finite
   monotonic I/O budget. The production listener now injects this fixed root client together with
-  authenticated build authority into the complete method-18/19/20 dispatcher. Both ends now switch
+  authenticated build authority into the complete method-18/19/20/21 dispatcher. State-only
+  lifecycle mutation uses ownerless, path-free method 21: the authenticated broker promotes source
+  and destination generation ids plus retained root names into a uid-bound helper transition and
+  holds the GC inhibitor across the subsequent local state commit. Closed method 4 is the only
+  successful completion acknowledgement and releases that protection after the commit; cancelling,
+  disconnecting, expiring, or failing the helper transition remains fail-closed. Both ends now switch
   to nonblocking I/O after kernel peer authentication:
   the privileged helper gives the complete request and response frames separate 30-second poll
   budgets, starts the response budget only after dispatch, and fails stalled partial reads or writes

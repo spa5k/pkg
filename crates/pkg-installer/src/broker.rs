@@ -10,9 +10,10 @@ use nix::{
 use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
-    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest, HostResourceProbe,
-    InProcessBroker, InProcessCallerPeer, MaintenanceError, MethodKind, NixAdapter,
-    NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
+    BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest,
+    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
+    MaintenanceError, MethodKind, NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
 use std::{
@@ -195,6 +196,13 @@ trait RootAuthorityDispatch: Send + Sync {
         handle: &OperationHandle,
         intent: RootSetIntent,
     ) -> Result<RootSetReport, BrokerErrorCode>;
+
+    fn transition(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        intent: RootSetTransitionIntent,
+    ) -> Result<RootSetReport, BrokerErrorCode>;
 }
 
 impl RootAuthorityDispatch for RootHelperClient {
@@ -207,6 +215,20 @@ impl RootAuthorityDispatch for RootHelperClient {
         caller
             .publish_built_root_intent(handle, intent, |roots| {
                 self.publish_root_set(roots)
+                    .map_err(|_| MaintenanceError::backend_failure())
+            })
+            .map_err(pkg_nix::BrokerError::code)
+    }
+
+    fn transition(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        intent: RootSetTransitionIntent,
+    ) -> Result<RootSetReport, BrokerErrorCode> {
+        caller
+            .transition_root_intent(handle, intent, |request| {
+                self.transition_root_set(&request)
                     .map_err(|_| MaintenanceError::backend_failure())
             })
             .map_err(pkg_nix::BrokerError::code)
@@ -298,6 +320,10 @@ fn dispatch_request(
             caller.cancel(&handle).map_err(|_| ())?;
             Ok(CliBrokerResponse::Cancelled)
         }
+        CliBrokerRequest::Complete(handle) => {
+            caller.complete(&handle).map_err(|_| ())?;
+            Ok(CliBrokerResponse::Completed)
+        }
         CliBrokerRequest::Version(handle) => {
             caller
                 .authorize_adapter_call(&handle, MethodKind::Version)
@@ -375,6 +401,57 @@ fn dispatch_request(
         }
         CliBrokerRequest::PublishBuildRoots(handle, intent) => {
             Ok(build_root_response(roots, caller, &handle, intent))
+        }
+        CliBrokerRequest::TransitionGenerationRoots(handle, intent) => Ok(
+            generation_root_transition_response(roots, caller, &handle, intent),
+        ),
+    }
+}
+
+fn generation_root_transition_response(
+    roots: Option<&dyn RootAuthorityDispatch>,
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    intent: RootSetTransitionIntent,
+) -> CliBrokerResponse {
+    roots.map_or(
+        CliBrokerResponse::GenerationRootTransitionRefused(
+            GenerationRootTransitionErrorCode::AuthorityUnavailable,
+        ),
+        |roots| match roots.transition(caller, handle, intent) {
+            Ok(report) => CliBrokerResponse::GenerationRootsTransitioned(report),
+            Err(code) => CliBrokerResponse::GenerationRootTransitionRefused(
+                map_generation_root_transition_error(code),
+            ),
+        },
+    )
+}
+
+const fn map_generation_root_transition_error(
+    code: BrokerErrorCode,
+) -> GenerationRootTransitionErrorCode {
+    match code {
+        BrokerErrorCode::InvalidAdmissionTransition => {
+            GenerationRootTransitionErrorCode::InvalidIntent
+        }
+        BrokerErrorCode::RootPublicationFailed => {
+            GenerationRootTransitionErrorCode::TransitionFailed
+        }
+        BrokerErrorCode::AdmissionCancelled => GenerationRootTransitionErrorCode::Cancelled,
+        BrokerErrorCode::UnauthenticatedCaller
+        | BrokerErrorCode::SessionRestarted
+        | BrokerErrorCode::InvalidOperationHandle
+        | BrokerErrorCode::OperationExpired
+        | BrokerErrorCode::AdmissionBusy
+        | BrokerErrorCode::InvalidBuildPlan
+        | BrokerErrorCode::BuildApprovalMismatch
+        | BrokerErrorCode::BuildApprovalUnavailable
+        | BrokerErrorCode::BuildApprovalInvalidated
+        | BrokerErrorCode::BuildResourcePreflightFailed
+        | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::InvalidChildPolicy
+        | BrokerErrorCode::EntropyUnavailable => {
+            GenerationRootTransitionErrorCode::AuthorityUnavailable
         }
     }
 }
@@ -793,6 +870,15 @@ mod tests {
         ) -> Result<RootSetReport, BrokerErrorCode> {
             Err(self.0)
         }
+
+        fn transition(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _intent: RootSetTransitionIntent,
+        ) -> Result<RootSetReport, BrokerErrorCode> {
+            Err(self.0)
+        }
     }
 
     fn root_intent() -> RootSetIntent {
@@ -1069,5 +1155,85 @@ mod tests {
             ),
             Ok(CliBrokerResponse::Status(OperationStatus::Running))
         );
+    }
+
+    #[test]
+    fn generation_root_transition_dispatch_is_closed_and_complete_releases_admission() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+        let intent = || {
+            RootSetTransitionIntent::new(
+                pkg_nix::GenerationId::new("gen-0007").unwrap(),
+                pkg_nix::GenerationId::new("gen-0008").unwrap(),
+                vec![pkg_nix::RootName::new("hello-out").unwrap()],
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::TransitionGenerationRoots(handle.clone(), intent()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::GenerationRootTransitionRefused(
+                GenerationRootTransitionErrorCode::AuthorityUnavailable,
+            ))
+        );
+        for (broker_code, wire_code) in [
+            (
+                BrokerErrorCode::InvalidAdmissionTransition,
+                GenerationRootTransitionErrorCode::InvalidIntent,
+            ),
+            (
+                BrokerErrorCode::RootPublicationFailed,
+                GenerationRootTransitionErrorCode::TransitionFailed,
+            ),
+            (
+                BrokerErrorCode::AdmissionCancelled,
+                GenerationRootTransitionErrorCode::Cancelled,
+            ),
+            (
+                BrokerErrorCode::SessionRestarted,
+                GenerationRootTransitionErrorCode::AuthorityUnavailable,
+            ),
+        ] {
+            let authority = RefusingRootAuthority(broker_code);
+            assert_eq!(
+                dispatch_request(
+                    &caller,
+                    CliBrokerRequest::TransitionGenerationRoots(handle.clone(), intent()),
+                    None,
+                    None,
+                    None,
+                    Some(&authority),
+                ),
+                Ok(CliBrokerResponse::GenerationRootTransitionRefused(
+                    wire_code
+                ))
+            );
+        }
+
+        caller.acquire_gc_inhibit(&handle).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Complete(handle.clone()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Completed)
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
     }
 }

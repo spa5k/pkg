@@ -285,8 +285,15 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   intent that omits any privately retained built output. It marks root publication in flight before
   calling the injected maintenance authority, returns only a typed root report or one of four stable
   redacted refusal codes, and keeps the connection reusable for an ordinary refusal. The production
-  service entry point still must bootstrap
-  and inject the long-lived refresh owner before enabling this method on its public listener. The broker-owned
+  listener injects the fixed root helper client for this method. Closed method 21 performs the
+  state-only generation-root transition: its ownerless request carries only the live `Activate`
+  handle, source generation, fresh destination generation, and bounded retained root names. The
+  broker injects the kernel-authenticated uid, invokes the helper's fixed method-5 transition, and
+  keeps its GC inhibitor after helper success while the client commits local state. Only a
+  successful closed method-4 completion releases that protection; cancellation, disconnect,
+  expiry, or helper failure cannot release it while privileged transition code is executing.
+  Responses are either the typed root report or one of four stable redacted transition refusals,
+  and neither store paths nor uid cross method 21. The broker-owned
   in-memory authority now supplies a consistent verified-channel/authenticated-index snapshot,
   rejects rollback, policy downgrade and same-sequence descriptor reuse, drops a stale index on
   channel advance, and accepts a replacement index only when bound to the exact current descriptor.

@@ -14,8 +14,9 @@ use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CliBrokerRequest,
     CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
-    MethodKind, NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus,
-    PathInfoReport, ProductFrameCodec, RootSetIntent, RootSetReport, StorePath, SubstituteReport,
+    GenerationRootTransitionErrorCode, MethodKind, NixAdapter, NixAdapterError,
+    NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport, ProductFrameCodec,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, StorePath, SubstituteReport,
     VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
@@ -53,6 +54,8 @@ pub enum BrokerClientErrorCode {
     BuildRefused,
     /// Protected post-build root publication returned a stable refusal code.
     BuildRootRefused,
+    /// Protected generation root transition returned a stable refusal code.
+    GenerationRootTransitionRefused,
 }
 
 /// Redacted failure from the private broker connector.
@@ -62,6 +65,7 @@ pub struct BrokerClientError {
     adapter_code: Option<NixAdapterErrorCode>,
     build_execution_code: Option<BuildExecutionErrorCode>,
     build_root_code: Option<BuildRootPublicationErrorCode>,
+    generation_root_transition_code: Option<GenerationRootTransitionErrorCode>,
 }
 
 impl BrokerClientError {
@@ -71,6 +75,7 @@ impl BrokerClientError {
             adapter_code: None,
             build_execution_code: None,
             build_root_code: None,
+            generation_root_transition_code: None,
         }
     }
 
@@ -80,6 +85,7 @@ impl BrokerClientError {
             adapter_code: Some(adapter_code),
             build_execution_code: None,
             build_root_code: None,
+            generation_root_transition_code: None,
         }
     }
 
@@ -89,6 +95,7 @@ impl BrokerClientError {
             adapter_code: None,
             build_execution_code: Some(build_execution_code),
             build_root_code: None,
+            generation_root_transition_code: None,
         }
     }
 
@@ -98,6 +105,19 @@ impl BrokerClientError {
             adapter_code: None,
             build_execution_code: None,
             build_root_code: Some(build_root_code),
+            generation_root_transition_code: None,
+        }
+    }
+
+    const fn generation_root_transition_refused(
+        generation_root_transition_code: GenerationRootTransitionErrorCode,
+    ) -> Self {
+        Self {
+            code: BrokerClientErrorCode::GenerationRootTransitionRefused,
+            adapter_code: None,
+            build_execution_code: None,
+            build_root_code: None,
+            generation_root_transition_code: Some(generation_root_transition_code),
         }
     }
 
@@ -124,6 +144,14 @@ impl BrokerClientError {
     #[must_use]
     pub const fn build_root_code(self) -> Option<BuildRootPublicationErrorCode> {
         self.build_root_code
+    }
+
+    /// Returns the closed refusal code from a protected generation root transition.
+    #[must_use]
+    pub const fn generation_root_transition_code(
+        self,
+    ) -> Option<GenerationRootTransitionErrorCode> {
+        self.generation_root_transition_code
     }
 }
 
@@ -229,6 +257,14 @@ impl BrokerLifecycleClient {
     pub fn cancel(&mut self, handle: OperationHandle) -> Result<(), BrokerClientError> {
         match self.transact(&CliBrokerRequest::Cancel(handle))? {
             CliBrokerResponse::Cancelled => Ok(()),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Completes one operation after its local state commit succeeds.
+    pub fn complete(&mut self, handle: OperationHandle) -> Result<(), BrokerClientError> {
+        match self.transact(&CliBrokerRequest::Complete(handle))? {
+            CliBrokerResponse::Completed => Ok(()),
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -356,6 +392,21 @@ impl BrokerLifecycleClient {
             CliBrokerResponse::BuildRootsPublished(report) => Ok(report),
             CliBrokerResponse::BuildRootPublicationRefused(code) => {
                 Err(BrokerClientError::build_root_refused(code))
+            }
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Transitions generation roots using only ownerless, path-free intent.
+    pub fn transition_generation_roots(
+        &mut self,
+        handle: OperationHandle,
+        intent: RootSetTransitionIntent,
+    ) -> Result<RootSetReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::TransitionGenerationRoots(handle, intent))? {
+            CliBrokerResponse::GenerationRootsTransitioned(report) => Ok(report),
+            CliBrokerResponse::GenerationRootTransitionRefused(code) => {
+                Err(BrokerClientError::generation_root_transition_refused(code))
             }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
@@ -609,7 +660,10 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::RequestIdExhausted
         | BrokerClientErrorCode::AdapterFailure
         | BrokerClientErrorCode::BuildRefused
-        | BrokerClientErrorCode::BuildRootRefused => NixAdapterError::OperationFailed,
+        | BrokerClientErrorCode::BuildRootRefused
+        | BrokerClientErrorCode::GenerationRootTransitionRefused => {
+            NixAdapterError::OperationFailed
+        }
     }
 }
 
@@ -854,6 +908,25 @@ mod tests {
         );
         assert_eq!(client.version(doctor_handle.clone())?, expected_version);
         client.cancel(doctor_handle)?;
+
+        let activate_handle = client.begin(BrokerOperationKind::Activate)?;
+        let transition = RootSetTransitionIntent::new(
+            pkg_nix::GenerationId::new("gen-0007")?,
+            pkg_nix::GenerationId::new("gen-0008")?,
+            vec![pkg_nix::RootName::new("hello-out")?],
+        )?;
+        let failure = client
+            .transition_generation_roots(activate_handle.clone(), transition)
+            .unwrap_err();
+        assert_eq!(
+            failure.code(),
+            BrokerClientErrorCode::GenerationRootTransitionRefused
+        );
+        assert_eq!(
+            failure.generation_root_transition_code(),
+            Some(GenerationRootTransitionErrorCode::AuthorityUnavailable)
+        );
+        client.complete(activate_handle)?;
         client.stream.shutdown(Shutdown::Write)?;
         worker
             .join()
