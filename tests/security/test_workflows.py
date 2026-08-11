@@ -37,6 +37,14 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("cargo test --offline --locked -p pkg-testkit chaos::tests", NIGHTLY)
         self.assertIn("cargo test --offline --locked --workspace", NIGHTLY)
 
+    def test_real_nix_matrix_diffs_platform_goldens_and_replays_fake(self) -> None:
+        self.assertIn("system: x86_64-linux", NIGHTLY)
+        self.assertIn("system: aarch64-darwin", NIGHTLY)
+        self.assertIn("PKG_REAL_NIX_CAPTURE", NIGHTLY)
+        self.assertIn("PKG_REAL_NIX_GOLDEN", NIGHTLY)
+        self.assertIn("fixtures/real-nix-parity/${{ matrix.system }}.json", NIGHTLY)
+        self.assertIn("real_nix_capture_matches_golden_and_replays_in_fake", NIGHTLY)
+
     def test_external_actions_are_immutable_commit_pins(self) -> None:
         for workflow in (SECURITY, NIGHTLY):
             external_uses = [

@@ -102,7 +102,16 @@ jobs:
           printf 'PKG_REAL_NIX_HOME=%s\n' "$real_home" >> "$GITHUB_ENV"
           printf 'PKG_REAL_NIX_SYSTEM=%s\n' '${{ matrix.system }}' >> "$GITHUB_ENV"
 
-      - name: Run pinned Real-Nix normalized adapter contract
+      - name: Capture Real Nix, diff the platform golden, and replay in FakeNix
+        shell: bash
+        env:
+          PKG_REAL_NIX_CAPTURE: ${{ runner.temp }}/pkg-real-nix-${{ matrix.system }}.json
+          PKG_REAL_NIX_GOLDEN: fixtures/real-nix-parity/${{ matrix.system }}.json
+        run: >-
+          cargo test --locked -p pkg-testkit --test real_parity
+          real_nix_capture_matches_golden_and_replays_in_fake -- --ignored --exact
+
+      - name: Run pinned Real-Nix normalized adapter contract including GC
         run: >-
           cargo test --locked -p pkg-nix --test real_nix
           real_nix_matches_the_normalized_adapter_contract -- --ignored --exact

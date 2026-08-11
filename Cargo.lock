@@ -1546,6 +1546,8 @@ name = "pkg-testkit"
 version = "0.0.0"
 dependencies = [
  "pkg-nix",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

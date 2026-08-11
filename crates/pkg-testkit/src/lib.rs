@@ -54,6 +54,7 @@ pub mod chaos;
 pub mod fake_nix;
 pub mod fake_nixpkgs;
 pub mod http;
+pub mod parity;
 pub mod transcript;
 
 pub use chaos::{
@@ -65,6 +66,7 @@ pub use fake_nixpkgs::{FakeNixpkgsError, FakeNixpkgsRunner};
 pub use http::{
     ExpectedRequest, FixtureHttpServer, FixtureResponse, HttpExchange, HttpFault, HttpFixtureError,
 };
+pub use parity::{CapturingNix, ParityError, ParityTranscript};
 pub use transcript::TranscriptError;
 
 // Focused re-export of the `pkg-nix` contract types that appear in `FakeNix`'s

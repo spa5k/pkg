@@ -664,6 +664,17 @@ release URL is version-pinned. This lane proves the contained adapter's version/
 path-info/verify/build/GC normalization against Real Nix; it intentionally does **not** count as
 clean-host product-installer, privileged-repair, full-CLI self-hosting, or release-signing evidence.
 
+**PR-36 golden capture/replay slice (2026-08-11):** `pkg-testkit::CapturingNix` records only
+validated `NixAdapter` request/report values into a bounded, closed, versioned JSON artifact; raw
+argv, environment, subprocess output, and private runtime paths never enter the capture. Strict
+nested contract decoders load the checked `x86_64-linux` and `aarch64-darwin` goldens into the
+exact-FIFO `FakeNix`, replay the same six explicitly scripted request methods, compare typed success
+values or stable error codes, and require exhaustion. Nightly captures Real Nix 2.34.8 before the
+adjacent adapter smoke and fails on any byte diff. `gc()` stays in that adjacent Real-Nix smoke but
+is deliberately absent from the portable golden: it has no explicit request value and its typed
+report observes unrelated machine-global store roots, so exact replay requires an externally fixed
+store snapshot rather than the same scripted adapter input.
+
 ### 6.6 Security (layer 6) — `08` §13 AC-S1..S13 mapped 1:1; `08` §13 AC-S31..S33 (repair) covered by existing 09 tests; plus 09-internal AC-S14..S30
 Each AC-S*n* becomes one or more tests. AC-S1..S13 map 1:1 to `08` §13. AC-S14..S30 are
 09-internal acceptance criteria derived from plans `03`/`04`/`05`/`06`/`07`/`08` and tracked

@@ -8,7 +8,8 @@
 # (`plans/09` §4.5).
 #
 # `pkg-testkit` depends on `pkg-nix` one way and NEVER the reverse
-# (`plans/09` §4.4). std-only: no extra dependencies.
+# (`plans/09` §4.4). The PR-36 parity harness uses pinned serde only for its
+# closed, versioned golden envelope.
 #
 # License: intentionally ABSENT (DR-015, plans/12-open-decisions-and-risks.md).
 
@@ -29,3 +30,5 @@ publish.workspace = true
 # `[dev-dependencies]` entry is needed and no reverse dependency is
 # introduced.
 pkg-nix = { path = "../pkg-nix" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
