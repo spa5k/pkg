@@ -896,8 +896,10 @@ flowchart TD
   API buffers, and pipes it to `diskutil` without using the general `security` CLI. Installation
   now creates the root-only managed-state directory and protected root-helper binary before
   provisioning, then mounts before enabling ownership because macOS ownership enablement acts
-  on a mounted volume. Production provisioning and recovery bind APFS, keychain, synthetic,
-  record, and journal adapters end to end. Real-host mutation evidence is still required.
+  on a mounted volume. The helper exposes the coordinator only through a root:wheel
+  `--provision-store-volume` verb with no dynamic arguments. Production provisioning and recovery
+  bind APFS, keychain, synthetic, record, and journal adapters end to end. Real-host mutation
+  evidence is still required.
   S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
   Therefore PR-28 is **not marked merge-complete** until a Complete broker-run cache Preflight passes and real

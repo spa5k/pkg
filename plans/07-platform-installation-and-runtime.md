@@ -508,6 +508,11 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        secret directly through Security.framework, copies it only into zeroizing memory,
        explicitly zeroes the Keychain API's temporary buffer before releasing it, and
        writes the secret only to the fixed `diskutil` stdin pipe.
+       The installed helper exposes this coordinator only through the exact root:wheel
+       `--provision-store-volume` verb with no additional arguments; the installer cannot
+       supply a disk, container, UUID, path, selector, or secret. The protected helper binary
+       and its private managed-state directory are installed before that verb is invoked,
+       while `/nix` directories are created only after the volume is mounted.
        The synthetic-file planner is bounded and byte-preserving: it appends only the
        exact `nix` line, treats that exact single line as idempotent, preserves unrelated
        bytes, and refuses aliases, targets, trailing whitespace, CRLF, duplicates,

@@ -549,6 +549,8 @@ impl MacOsStoreVolumeContract {
     pub const SYNTHETIC_ENTRY: &'static str = "nix";
     /// Fixed root-helper verb used by the boot-time mount job.
     pub const MOUNT_HELPER_VERB: &'static str = "--mount-store-volume";
+    /// Fixed root-helper verb used by the privileged installer.
+    pub const PROVISION_HELPER_VERB: &'static str = "--provision-store-volume";
 }
 
 /// Exact product socket paths and post-bind modes.
