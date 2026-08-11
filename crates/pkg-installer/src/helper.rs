@@ -1,6 +1,10 @@
 //! Authenticated Unix broker-to-helper framed transport.
 
 use crate::platform::{authenticate_broker, linux::LinuxRootSetStore};
+use nix::{
+    errno::Errno,
+    poll::{PollFd, PollFlags, PollTimeout, poll},
+};
 use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
@@ -10,13 +14,17 @@ use std::{
     collections::BTreeMap,
     error::Error,
     fmt,
-    io::{Read, Write},
+    io::{self, Read, Write},
+    os::fd::AsFd,
     os::unix::net::UnixStream,
     sync::{Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 const FRAME_HEADER_BYTES: usize = 20;
 const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
+const FRAME_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const FRAME_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stable transport/dispatch failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,17 +191,35 @@ impl BrokerHelperDispatch for LinuxHelperSession {
 /// Returns a redacted error when peer authentication, bounded transport I/O,
 /// strict frame decoding, closed dispatch, or response encoding fails.
 pub fn serve_helper_connection(
-    mut stream: UnixStream,
+    stream: UnixStream,
     broker_uid: u32,
     dispatcher: &dyn BrokerHelperDispatch,
 ) -> Result<(), HelperTransportError> {
+    serve_helper_connection_with_timeouts(
+        stream,
+        broker_uid,
+        dispatcher,
+        FRAME_READ_TIMEOUT,
+        FRAME_WRITE_TIMEOUT,
+    )
+}
+
+fn serve_helper_connection_with_timeouts(
+    mut stream: UnixStream,
+    broker_uid: u32,
+    dispatcher: &dyn BrokerHelperDispatch,
+    read_timeout: Duration,
+    write_timeout: Duration,
+) -> Result<(), HelperTransportError> {
     authenticate_broker(&stream, broker_uid)
         .map_err(|()| HelperTransportError::new(HelperTransportErrorCode::UnauthenticatedPeer))?;
-
-    let mut header = [0_u8; FRAME_HEADER_BYTES];
     stream
-        .read_exact(&mut header)
+        .set_nonblocking(true)
         .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+
+    let read_deadline = deadline_after(read_timeout)?;
+    let mut header = [0_u8; FRAME_HEADER_BYTES];
+    read_exact_until(&mut stream, &mut header, read_deadline)?;
     let payload_length = u32::from_be_bytes(
         header[16..20]
             .try_into()
@@ -207,9 +233,7 @@ pub fn serve_helper_connection(
     let mut frame = Vec::with_capacity(FRAME_HEADER_BYTES + payload_length);
     frame.extend_from_slice(&header);
     frame.resize(FRAME_HEADER_BYTES + payload_length, 0);
-    stream
-        .read_exact(&mut frame[FRAME_HEADER_BYTES..])
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+    read_exact_until(&mut stream, &mut frame[FRAME_HEADER_BYTES..], read_deadline)?;
     let (request_id, request) = ProductFrameCodec::decode_helper_request(&frame)
         .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
     let response = dispatcher
@@ -217,10 +241,96 @@ pub fn serve_helper_connection(
         .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
     let encoded = ProductFrameCodec::encode_helper_response(request_id, &response)
         .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-    stream
-        .write_all(&encoded)
-        .and_then(|()| stream.flush())
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))
+    let write_deadline = deadline_after(write_timeout)?;
+    write_all_until(&mut stream, &encoded, write_deadline)
+}
+
+fn write_all_until(
+    stream: &mut UnixStream,
+    mut bytes: &[u8],
+    deadline: Instant,
+) -> Result<(), HelperTransportError> {
+    while !bytes.is_empty() {
+        wait_ready(stream, deadline, PollFlags::POLLOUT)?;
+        match stream.write(bytes) {
+            Ok(0) => return Err(transport_failure()),
+            Ok(written) => bytes = &bytes[written..],
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(_) => return Err(transport_failure()),
+        }
+    }
+    Ok(())
+}
+
+fn read_exact_until(
+    stream: &mut UnixStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+) -> Result<(), HelperTransportError> {
+    while !bytes.is_empty() {
+        wait_ready(stream, deadline, PollFlags::POLLIN)?;
+        match stream.read(bytes) {
+            Ok(0) => return Err(transport_failure()),
+            Ok(read) => bytes = &mut bytes[read..],
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(_) => return Err(transport_failure()),
+        }
+    }
+    Ok(())
+}
+
+fn wait_ready(
+    stream: &UnixStream,
+    deadline: Instant,
+    required: PollFlags,
+) -> Result<(), HelperTransportError> {
+    loop {
+        let timeout =
+            PollTimeout::try_from(remaining(deadline)?).map_err(|_| transport_failure())?;
+        let mut descriptor = [PollFd::new(stream.as_fd(), required)];
+        match poll(&mut descriptor, timeout) {
+            Ok(0) => return Err(transport_failure()),
+            Ok(_)
+                if descriptor[0]
+                    .revents()
+                    .is_some_and(|events| events.contains(required)) =>
+            {
+                return Ok(());
+            }
+            Err(Errno::EINTR) => {}
+            Ok(_) | Err(_) => return Err(transport_failure()),
+        }
+    }
+}
+
+fn deadline_after(timeout: Duration) -> Result<Instant, HelperTransportError> {
+    Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(transport_failure)
+}
+
+fn remaining(deadline: Instant) -> Result<Duration, HelperTransportError> {
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(transport_failure)?;
+    let milliseconds = u64::try_from(remaining.as_millis())
+        .ok()
+        .filter(|milliseconds| *milliseconds != 0)
+        .ok_or_else(transport_failure)?;
+    Ok(Duration::from_millis(milliseconds))
+}
+
+const fn transport_failure() -> HelperTransportError {
+    HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
 }
 
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -392,6 +502,93 @@ mod tests {
             Err(HelperTransportErrorCode::InvalidFrame)
         );
         assert_eq!(dispatcher.0.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn stalled_authenticated_peer_expires_before_dispatch() -> Result<(), Box<dyn Error>> {
+        let broker_uid = Uid::current().as_raw();
+        let dispatcher = Arc::new(CountingDispatch(AtomicUsize::new(0)));
+        let (server, _client) = UnixStream::pair()?;
+        let server_dispatcher = Arc::clone(&dispatcher);
+        let worker = thread::spawn(move || {
+            serve_helper_connection_with_timeouts(
+                server,
+                broker_uid,
+                server_dispatcher.as_ref(),
+                Duration::from_millis(50),
+                Duration::from_secs(1),
+            )
+        });
+
+        let result = worker
+            .join()
+            .map_err(|_| io::Error::other("helper thread panicked"))?;
+        assert_eq!(
+            result.map_err(HelperTransportError::code),
+            Err(HelperTransportErrorCode::TransportFailure)
+        );
+        assert_eq!(dispatcher.0.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    struct DelayedDispatch(Duration);
+
+    impl BrokerHelperDispatch for DelayedDispatch {
+        fn dispatch(
+            &self,
+            _request: BrokerHelperRequest,
+        ) -> Result<BrokerHelperResponse, MaintenanceError> {
+            thread::sleep(self.0);
+            Ok(BrokerHelperResponse::RootSetRemoved)
+        }
+    }
+
+    #[test]
+    fn dispatch_time_is_excluded_from_response_write_budget() -> Result<(), Box<dyn Error>> {
+        let broker_uid = Uid::current().as_raw();
+        let encoded = ProductFrameCodec::encode_helper_request(
+            11,
+            &BrokerHelperRequest::PublishRootSet(roots()?),
+        )?;
+        let (server, mut client) = UnixStream::pair()?;
+        let worker = thread::spawn(move || {
+            serve_helper_connection_with_timeouts(
+                server,
+                broker_uid,
+                &DelayedDispatch(Duration::from_millis(150)),
+                Duration::from_secs(1),
+                Duration::from_millis(75),
+            )
+        });
+
+        client.write_all(&encoded)?;
+        let response = read_frame(&mut client)?;
+        assert_eq!(
+            ProductFrameCodec::decode_helper_response(&response),
+            Ok((11, BrokerHelperResponse::RootSetRemoved))
+        );
+        worker
+            .join()
+            .map_err(|_| io::Error::other("helper thread panicked"))??;
+        Ok(())
+    }
+
+    #[test]
+    fn response_write_expires_when_peer_stops_reading() -> Result<(), Box<dyn Error>> {
+        let (mut server, _client) = UnixStream::pair()?;
+        socket2::SockRef::from(&server).set_send_buffer_size(4096)?;
+        server.set_nonblocking(true)?;
+        let bytes = vec![0_u8; MAX_FRAME_PAYLOAD_BYTES];
+        assert_eq!(
+            write_all_until(
+                &mut server,
+                &bytes,
+                deadline_after(Duration::from_millis(50))?,
+            )
+            .map_err(HelperTransportError::code),
+            Err(HelperTransportErrorCode::TransportFailure)
+        );
         Ok(())
     }
 

@@ -127,6 +127,9 @@ impl RootHelperClient {
                 HelperTransportErrorCode::UnauthenticatedPeer,
             ));
         }
+        stream
+            .set_nonblocking(true)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
         Ok(stream)
     }
 }
@@ -170,7 +173,11 @@ fn write_all_until(
                 ));
             }
             Ok(written) => bytes = &bytes[written..],
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
             Err(_) => {
                 return Err(HelperTransportError::new(
                     HelperTransportErrorCode::TransportFailure,
@@ -195,7 +202,11 @@ fn read_exact_until(
                 ));
             }
             Ok(read) => bytes = &mut bytes[read..],
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) => {}
             Err(_) => {
                 return Err(HelperTransportError::new(
                     HelperTransportErrorCode::TransportFailure,

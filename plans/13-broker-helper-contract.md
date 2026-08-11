@@ -341,6 +341,15 @@ retain their independent lifecycle and timeout design. The build/root server sea
 concrete client rather than a generic maintenance implementation. Production listener injection
 still depends on bootstrapping the long-lived authenticated channel/build authority.
 
+The privileged helper server authenticates the broker before changing socket mode or reading any
+bytes, then performs frame I/O on a nonblocking socket with monotonic poll deadlines. A complete
+request frame has a 30-second budget and a complete response frame receives a fresh 30-second
+budget only after closed dispatch returns; maintenance execution time therefore cannot silently
+consume the response-write allowance. Partial, stalled, interrupted, hung-up, or oversized input
+fails closed before dispatch, and a broker that stops reading cannot retain a helper worker through
+an unbounded response write. The root-publication client uses the same nonblocking discipline so a
+readiness notification can never be followed by an unbounded blocking read or write.
+
 ## 9. Restart handshake
 
 1. Supervisor restarts broker and/or helper.

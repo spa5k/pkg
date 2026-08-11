@@ -1286,8 +1286,11 @@ flowchart TD
   production root-publication client now connects only to the compiled Linux/macOS helper endpoint,
   verifies the helper peer is root before sending bytes, uses one method-1 helper request per
   connection, and requires the exact correlated root-publication response under one finite
-  monotonic I/O budget. It intentionally exposes neither repair nor root removal. Injection into the
-  production listener still waits on the authenticated channel/build-authority bootstrap. The
+  monotonic I/O budget. Both ends now switch to nonblocking I/O after kernel peer authentication:
+  the privileged helper gives the complete request and response frames separate 30-second poll
+  budgets, starts the response budget only after dispatch, and fails stalled partial reads or writes
+  closed. It intentionally exposes neither repair nor root removal. Injection into the production
+  listener still waits on the authenticated channel/build-authority bootstrap. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
