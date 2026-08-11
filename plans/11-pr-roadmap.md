@@ -1355,8 +1355,12 @@ flowchart TD
   state files without following final symlinks, verifies record/snapshot sidecars plus all embedded
   hashes and cross-file lifecycle bindings, and refuses unknown generation-directory entries. This
   is the common trusted input for CLI list/history and future mutation planning; commands do not
-  parse mutable views independently. The shipped command engine remains fail-closed until
-  authenticated build execution and product-command wiring land. This does
+  parse mutable views independently. The shipped CLI now uses that adapter rather than the blanket
+  placeholder engine: `list` and non-pruning `history` read verified state, while remove/pin/unpin
+  can render deterministic `--dry-run` lifecycle edits. Every unconnected mutation, authenticated
+  index query, and broker transaction still returns a specific fail-closed product error; none can
+  fall through to raw Nix. Authenticated build execution and the remaining product-command wiring
+  still need to land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

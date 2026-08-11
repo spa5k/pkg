@@ -1387,15 +1387,18 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "nix",
  "pkg-core",
  "pkg-index",
  "pkg-installer",
  "pkg-nix",
  "pkg-pipeline",
+ "pkg-store",
  "pkg-testkit",
  "serde",
  "serde_json",
  "socket2",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,9 +1,11 @@
 use std::process::ExitCode as ProcessExitCode;
 
 use clap::Parser;
+use nix::unistd::Uid;
 use pkg_cli::cli::{Cli, Command, DoctorArgs};
 use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport};
-use pkg_cli::commands::execute::{UnavailableEngine, execute_command};
+use pkg_cli::commands::execute::{CoreEngine, execute_command};
+use pkg_cli::commands::local::LocalStateOperations;
 use pkg_cli::completion::write_completion;
 use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
 use pkg_cli::exit::ExitCode;
@@ -45,12 +47,17 @@ fn main() -> ProcessExitCode {
 
     install_crash_reporter(&cli);
 
-    let exit = match execute_command(
-        &cli,
-        &mut UnavailableEngine,
-        std::io::stdout(),
-        std::io::stderr(),
-    ) {
+    let trusted_home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    let state_root = observability_root(&cli).unwrap_or_default();
+    let mut engine = CoreEngine::new(LocalStateOperations::open(
+        &trusted_home,
+        &state_root,
+        Uid::effective().as_raw(),
+    ));
+
+    let exit = match execute_command(&cli, &mut engine, std::io::stdout(), std::io::stderr()) {
         Ok(exit) => exit,
         Err(_) => return ProcessExitCode::FAILURE,
     };
