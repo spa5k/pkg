@@ -1257,14 +1257,24 @@ snippets, or any foreign `/nix`.
     so writable staging ancestry, concurrent writes, or post-verification
     replacement cannot change the file descriptor consumed by the provisioner.
     The same single-writer datastore carries the application-level accepted
-    sequence/policy/digest. Provisioning commits that rollback floor only after
-    daemon and ownership-receipt verification; failure rolls the attempt back.
+    sequence/policy/digest. Authentication returns an opaque, single-use bundle
+    capability that retains the private target snapshots and writer lease across
+    the platform preparation phase. It is bound to the original system, root,
+    scratch directory, and group identities. It exposes no target reader.
+    Provisioning returns an opaque rollback-owned transaction. The Linux and
+    macOS product entry points keep that transaction pending while platform
+    assets and services are installed. They commit the channel floor during the
+    final receipt phase, while the platform rollback journal is still active.
+    A later failure removes the runtime through the component that created it.
     The release image itself still receives the normal CLI release
     checksum/attestation from plan 10; the inner bootstrap bytes derive authority
-    only from TUF. The public one-shot entry point is
-    `pkg_nix::provision_managed_nix_from_bundle`; its repository view, runtime
-    readers, and rollback-state writer are crate-private and cannot be used as
-    separate downstream capabilities.
+    only from TUF. `pkg_nix::provision_managed_nix_from_bundle` remains the
+    one-shot API. The split installer API exposes only opaque authenticate and
+    transaction capabilities so `pkg-installer` can preserve cross-platform
+    rollback. Repository views, target readers, Nix controls, and the rollback
+    state writer remain private. The product entry points are
+    `pkg_installer::install_linux_from_bundle` and
+    `pkg_installer::install_macos_from_bundle`.
 
 ## 18. Sources (current Nix behavior)
 

@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use tar::{Archive, EntryType};
 
 use super::daemon::{DaemonErrorCode, ManagedDaemon};
-use super::detect::{DetectionDisposition, detect_unmanaged_nix};
+use super::detect::{DetectionDisposition, DetectionReport, detect_unmanaged_nix};
 use super::installer_bundle::{VerifiedRuntimeBundle, load_installer_bundle};
 use super::ownership::{
     ManagedArtifact, ManagedArtifactKind, ManagedGroupBindings, OwnershipExpectation,
@@ -96,6 +96,7 @@ trait RuntimeSource: Send + Sync {
 
     /// Commits the descriptor rollback floor after the installed runtime and
     /// ownership receipt have both verified.
+    #[cfg(test)]
     fn commit_accepted_channel(&self) -> Result<(), ProvisionError>;
 }
 
@@ -110,6 +111,7 @@ impl RuntimeSource for VerifiedRuntimeBundle {
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))
     }
 
+    #[cfg(test)]
     fn commit_accepted_channel(&self) -> Result<(), ProvisionError> {
         VerifiedRuntimeBundle::commit_accepted_channel(self)
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
@@ -130,6 +132,28 @@ pub struct InstallerProvisionRequest<'a> {
     pub system: System,
     /// Host-local gids for the two stable signed group roles.
     pub groups: ManagedGroupBindings,
+}
+
+/// Opaque authenticated installer bundle retained in private snapshots.
+///
+/// This value exposes no target reader, repository handle, datastore writer,
+/// Nix option, or arbitrary path. Consuming it is the only way to provision
+/// the exact bundle identity authenticated before platform mutation.
+pub struct AuthenticatedInstallerBundle {
+    source: VerifiedRuntimeBundle,
+    spec: ProvisionSpec,
+    installation_root: PathBuf,
+    scratch_parent: PathBuf,
+    groups: ManagedGroupBindings,
+}
+
+impl std::fmt::Debug for AuthenticatedInstallerBundle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedInstallerBundle")
+            .field("system", &self.spec.system)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Inputs for one fail-closed provisioning attempt.
@@ -157,6 +181,97 @@ pub struct ProvisionedRuntime {
 pub struct ProvisionedBootstrap {
     runtime: ProvisionedRuntime,
     index: Vec<u8>,
+}
+
+/// Pending authenticated runtime installation owned by its provisioning transaction.
+///
+/// Dropping this value rolls back the daemon and every path created by this
+/// attempt. A successful platform installer must explicitly call [`Self::commit`].
+pub struct ProvisionedBootstrapTransaction<'a> {
+    bootstrap: Option<ProvisionedBootstrap>,
+    rollback: Option<RuntimeRollback>,
+    source: Option<VerifiedRuntimeBundle>,
+    channel_committed: bool,
+    daemon: &'a dyn ManagedDaemon,
+}
+
+impl std::fmt::Debug for ProvisionedBootstrapTransaction<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProvisionedBootstrapTransaction")
+            .field("pending", &self.rollback.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProvisionedBootstrapTransaction<'_> {
+    /// Commits platform ownership of the installed runtime and returns its report.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed failure if the transaction was already consumed.
+    pub fn commit(mut self) -> Result<ProvisionedBootstrap, ProvisionError> {
+        self.commit_channel()?;
+        self.finalize()
+    }
+
+    /// Persists the authenticated channel floor while retaining rollback ownership.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ChannelStateFailed` without consuming rollback ownership when
+    /// the durable floor cannot be committed.
+    pub fn commit_channel(&mut self) -> Result<(), ProvisionError> {
+        if self.channel_committed {
+            return Ok(());
+        }
+        self.source
+            .as_ref()
+            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))?
+            .commit_accepted_channel()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))?;
+        self.source = None;
+        self.channel_committed = true;
+        Ok(())
+    }
+
+    /// Finalizes a channel-committed transaction after platform receipt publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed failure if the channel floor was not committed or the
+    /// transaction was already consumed. Rollback remains automatic on error.
+    pub fn finalize(mut self) -> Result<ProvisionedBootstrap, ProvisionError> {
+        if !self.channel_committed {
+            return Err(ProvisionError::new(ProvisionErrorCode::ChannelStateFailed));
+        }
+        let bootstrap = self
+            .bootstrap
+            .take()
+            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
+        self.rollback = None;
+        Ok(bootstrap)
+    }
+
+    /// Rolls back the daemon and every path created by this exact attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RollbackFailed` if any exact reverse operation fails.
+    pub fn rollback(mut self) -> Result<(), ProvisionError> {
+        self.bootstrap = None;
+        self.rollback
+            .take()
+            .map_or(Ok(()), |rollback| rollback.execute(self.daemon))
+    }
+}
+
+impl Drop for ProvisionedBootstrapTransaction<'_> {
+    fn drop(&mut self) {
+        if let Some(rollback) = self.rollback.take() {
+            let _ = rollback.execute(self.daemon);
+        }
+    }
 }
 
 impl ProvisionedBootstrap {
@@ -287,7 +402,19 @@ pub async fn provision_managed_nix_from_bundle(
     request: &InstallerProvisionRequest<'_>,
     daemon: &dyn ManagedDaemon,
 ) -> Result<ProvisionedBootstrap, ProvisionError> {
-    let mut source = load_installer_bundle(
+    let bundle = authenticate_installer_bundle(trusted_root, request).await?;
+    provision_authenticated_installer_bundle(bundle, request, daemon)
+}
+
+/// Authenticates and snapshots one fixed installer bundle before host mutation.
+///
+/// The returned capability is opaque and single-use. It retains the datastore
+/// writer lease and the private unlinked target snapshots until provisioning.
+pub async fn authenticate_installer_bundle(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    let source = load_installer_bundle(
         trusted_root,
         request.bundle_root,
         request.datastore,
@@ -296,30 +423,137 @@ pub async fn provision_managed_nix_from_bundle(
     .await
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
     let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
-    let index = source
-        .take_index()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
     let provision_request = ProvisionRequest {
         installation_root: request.installation_root,
         scratch_parent: request.scratch_parent,
         spec: &spec,
         groups: request.groups,
     };
-    let path_entries = std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let environment_keys = std::env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
-    let runtime = provision_with_owner(
+    let (path_entries, environment_keys) = current_host_inputs();
+    require_host_state(
         &provision_request,
-        &source,
+        &path_entries,
+        &environment_keys,
+        HostStatePolicy::Strict,
+    )?;
+    Ok(AuthenticatedInstallerBundle {
+        source,
+        spec,
+        installation_root: request.installation_root.to_path_buf(),
+        scratch_parent: request.scratch_parent.to_path_buf(),
+        groups: request.groups,
+    })
+}
+
+/// Authenticates an installer bundle from a synchronous privileged entry point.
+///
+/// This function refuses to nest a Tokio runtime. Async callers must use
+/// [`authenticate_installer_bundle`] directly.
+pub fn authenticate_installer_bundle_blocking(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    refuse_nested_runtime()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    runtime.block_on(authenticate_installer_bundle(trusted_root, request))
+}
+
+/// Consumes a previously authenticated private bundle and provisions it.
+///
+/// # Errors
+///
+/// Returns a closed provisioning error if the request no longer matches the
+/// authenticated host identity or any install, readiness, receipt, or rollback
+/// operation fails.
+pub fn provision_authenticated_installer_bundle(
+    bundle: AuthenticatedInstallerBundle,
+    request: &InstallerProvisionRequest<'_>,
+    daemon: &dyn ManagedDaemon,
+) -> Result<ProvisionedBootstrap, ProvisionError> {
+    provision_authenticated_installer_bundle_transaction(bundle, request, daemon)?.commit()
+}
+
+/// Provisions an authenticated bundle as an explicit rollback-owned transaction.
+///
+/// The transaction must remain pending until the platform installation has
+/// completed. Dropping it or calling `rollback` removes only this attempt.
+pub fn provision_authenticated_installer_bundle_transaction<'a>(
+    mut bundle: AuthenticatedInstallerBundle,
+    request: &InstallerProvisionRequest<'_>,
+    daemon: &'a dyn ManagedDaemon,
+) -> Result<ProvisionedBootstrapTransaction<'a>, ProvisionError> {
+    if request.system != bundle.spec.system
+        || bundle.source.system() != bundle.spec.system
+        || request.installation_root != bundle.installation_root
+        || request.scratch_parent != bundle.scratch_parent
+        || request.groups != bundle.groups
+    {
+        return Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ));
+    }
+    let index = bundle
+        .source
+        .take_index()
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+    let provision_request = ProvisionRequest {
+        installation_root: request.installation_root,
+        scratch_parent: request.scratch_parent,
+        spec: &bundle.spec,
+        groups: request.groups,
+    };
+    let (path_entries, environment_keys) = current_host_inputs();
+    let (runtime, rollback) = provision_with_owner_policy(
+        &provision_request,
+        &bundle.source,
         daemon,
         0,
         &path_entries,
         &environment_keys,
+        HostStatePolicy::FixedPlatformPrerequisites,
     )?;
-    Ok(ProvisionedBootstrap { runtime, index })
+    Ok(ProvisionedBootstrapTransaction {
+        bootstrap: Some(ProvisionedBootstrap { runtime, index }),
+        rollback: Some(rollback),
+        source: Some(bundle.source),
+        channel_committed: false,
+        daemon,
+    })
 }
 
+/// Runs the one-shot installer transaction from a synchronous privileged entry point.
+///
+/// This function refuses to nest a Tokio runtime. Async callers must use
+/// [`provision_managed_nix_from_bundle`] directly.
+pub fn provision_managed_nix_from_bundle_blocking(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+    daemon: &dyn ManagedDaemon,
+) -> Result<ProvisionedBootstrap, ProvisionError> {
+    refuse_nested_runtime()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    runtime.block_on(provision_managed_nix_from_bundle(
+        trusted_root,
+        request,
+        daemon,
+    ))
+}
+
+fn refuse_nested_runtime() -> Result<(), ProvisionError> {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 fn provision_with_owner(
     request: &ProvisionRequest<'_>,
     source: &dyn RuntimeSource,
@@ -328,12 +562,45 @@ fn provision_with_owner(
     path_entries: &[PathBuf],
     environment_keys: &[std::ffi::OsString],
 ) -> Result<ProvisionedRuntime, ProvisionError> {
+    let (runtime, rollback) = provision_with_owner_policy(
+        request,
+        source,
+        daemon,
+        required_owner_uid,
+        path_entries,
+        environment_keys,
+        HostStatePolicy::Strict,
+    )?;
+    if let Err(error) = source.commit_accepted_channel() {
+        return match rollback.execute(daemon) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(rollback_error),
+        };
+    }
+    Ok(runtime)
+}
+
+#[derive(Clone, Copy)]
+enum HostStatePolicy {
+    Strict,
+    FixedPlatformPrerequisites,
+}
+
+fn provision_with_owner_policy(
+    request: &ProvisionRequest<'_>,
+    source: &dyn RuntimeSource,
+    daemon: &dyn ManagedDaemon,
+    required_owner_uid: u32,
+    path_entries: &[PathBuf],
+    environment_keys: &[std::ffi::OsString],
+    host_state_policy: HostStatePolicy,
+) -> Result<(ProvisionedRuntime, RuntimeRollback), ProvisionError> {
     if source.descriptor_sha256() != request.spec.descriptor_sha256 {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
         ));
     }
-    require_clean_host(request, path_entries, environment_keys)?;
+    require_host_state(request, path_entries, environment_keys, host_state_policy)?;
     validate_private_directory(request.scratch_parent, required_owner_uid)?;
     validate_private_directory(request.installation_root, required_owner_uid)?;
 
@@ -372,7 +639,7 @@ fn provision_with_owner(
     // The privileged scan is deliberately repeated immediately before the
     // first installation mutation. Downloads and archive parsing cannot make
     // a previously dirty host become trusted.
-    require_clean_host(request, path_entries, environment_keys)?;
+    require_host_state(request, path_entries, environment_keys, host_state_policy)?;
     let mut transaction = InstallTransaction::new(request.installation_root, daemon);
     let result = (|| {
         transaction.install_artifacts(&staging, &expectation, required_owner_uid)?;
@@ -391,13 +658,13 @@ fn provision_with_owner(
         transaction.install_receipt(&expectation, required_owner_uid)?;
         verify_with_owner_uid(request.installation_root, &expectation, required_owner_uid)
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        source.commit_accepted_channel()?;
-        transaction.committed = true;
-        Ok(ProvisionedRuntime {
+        let report = ProvisionedRuntime {
             system: request.spec.system,
             nix_version: request.spec.nix_version.clone(),
             artifact_count: expectation.artifacts().len(),
-        })
+        };
+        let rollback = transaction.detach_rollback();
+        Ok((report, rollback))
     })();
     match result {
         Ok(report) => Ok(report),
@@ -411,10 +678,11 @@ fn provision_with_owner(
     }
 }
 
-fn require_clean_host(
+fn require_host_state(
     request: &ProvisionRequest<'_>,
     path_entries: &[PathBuf],
     environment_keys: &[std::ffi::OsString],
+    policy: HostStatePolicy,
 ) -> Result<(), ProvisionError> {
     let report = detect_unmanaged_nix(
         request.installation_root,
@@ -422,11 +690,40 @@ fn require_clean_host(
         path_entries,
         environment_keys,
     );
-    if report.disposition() == DetectionDisposition::Clean {
+    if report.disposition() == DetectionDisposition::Clean
+        || matches!(policy, HostStatePolicy::FixedPlatformPrerequisites)
+            && has_only_fixed_platform_prerequisites(&report, request.spec.system)
+    {
         Ok(())
     } else {
         Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused))
     }
+}
+
+fn has_only_fixed_platform_prerequisites(report: &DetectionReport, system: System) -> bool {
+    report.findings().iter().all(|finding| {
+        matches!(
+            finding.id(),
+            "NIX_ROOT" | "NIX_VAR" | "NIXBLD_USERS" | "NIXBLD_GROUP"
+        ) || matches!(
+            (system, finding.id()),
+            (
+                System::X8664Linux | System::Aarch64Linux,
+                "GETENT_NIXBLD_USER" | "GETENT_NIXBLD_GROUP"
+            ) | (
+                System::X8664Darwin | System::Aarch64Darwin,
+                "DSCL_NIXBLD_USER" | "DSCL_NIXBLD_GROUP" | "SYNTHETIC_CONF_NIX"
+            )
+        )
+    })
+}
+
+fn current_host_inputs() -> (Vec<PathBuf>, Vec<std::ffi::OsString>) {
+    let path_entries = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let environment_keys = std::env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
+    (path_entries, environment_keys)
 }
 
 fn parse_raw_sha256(value: &str) -> Result<Digest, ProvisionError> {
@@ -687,6 +984,31 @@ struct InstallTransaction<'a> {
     committed: bool,
 }
 
+struct RuntimeRollback {
+    created: Vec<PathBuf>,
+    daemon_started: bool,
+}
+
+impl RuntimeRollback {
+    fn execute(mut self, daemon: &dyn ManagedDaemon) -> Result<(), ProvisionError> {
+        let mut failed = self.daemon_started && daemon.stop().is_err();
+        for path in self.created.drain(..).rev() {
+            let result = match fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.file_type().is_dir() => fs::remove_dir(&path),
+                Ok(_) => fs::remove_file(&path),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            };
+            failed |= result.is_err();
+        }
+        if failed {
+            Err(ProvisionError::new(ProvisionErrorCode::RollbackFailed))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl<'a> InstallTransaction<'a> {
     fn new(root: &'a Path, daemon: &'a dyn ManagedDaemon) -> Self {
         Self {
@@ -709,12 +1031,20 @@ impl<'a> InstallTransaction<'a> {
         for artifact in artifacts {
             let destination = rooted(self.root, artifact.path());
             ensure_safe_parent(self.root, &destination, owner_uid)?;
-            if fs::symlink_metadata(&destination).is_ok() {
-                return Err(ProvisionError::new(ProvisionErrorCode::InstallFailed));
-            }
             let gid = expectation.groups().gid_for(artifact.group());
             match artifact.kind() {
                 ManagedArtifactKind::Directory => {
+                    if let Ok(metadata) = fs::symlink_metadata(&destination) {
+                        let expected_mode = artifact.mode().unwrap_or(0o700);
+                        if !metadata.file_type().is_dir()
+                            || metadata.uid() != owner_uid
+                            || metadata.gid() != gid
+                            || metadata.mode() & 0o7777 != expected_mode
+                        {
+                            return Err(ProvisionError::new(ProvisionErrorCode::InstallFailed));
+                        }
+                        continue;
+                    }
                     fs::create_dir(&destination)
                         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
                     self.created.push(destination.clone());
@@ -861,6 +1191,14 @@ impl<'a> InstallTransaction<'a> {
         self.created.clear();
         if failed { Err(()) } else { Ok(()) }
     }
+
+    fn detach_rollback(&mut self) -> RuntimeRollback {
+        self.committed = true;
+        RuntimeRollback {
+            created: std::mem::take(&mut self.created),
+            daemon_started: self.daemon_started,
+        }
+    }
 }
 
 impl Drop for InstallTransaction<'_> {
@@ -950,6 +1288,14 @@ mod tests {
     const RUNTIME_PATH: &str = "/opt/pkg/nix/2.24.10/bin/nix";
     const RUNTIME_BYTES: &[u8] = b"fixture managed nix\n";
 
+    #[tokio::test]
+    async fn blocking_entry_point_refuses_a_nested_runtime() {
+        assert_eq!(
+            refuse_nested_runtime().map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::InvalidAuthenticatedInput)
+        );
+    }
+
     struct FakeSource {
         descriptor_sha256: [u8; 32],
         targets: BTreeMap<String, Vec<u8>>,
@@ -972,6 +1318,7 @@ mod tests {
                 .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::FetchFailed))
         }
 
+        #[cfg(test)]
         fn commit_accepted_channel(&self) -> Result<(), ProvisionError> {
             self.commits.fetch_add(1, Ordering::Relaxed);
             if self.fail_commit {
@@ -1144,6 +1491,74 @@ mod tests {
         assert!(daemon.started.load(Ordering::Relaxed));
         assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 2);
         assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn prepared_platform_directory_is_reused_only_when_signed_metadata_matches() {
+        let fixture = Fixture::new();
+        let nix_root = fixture.root.join("nix");
+        fs::create_dir(&nix_root).unwrap();
+        fs::set_permissions(&nix_root, fs::Permissions::from_mode(0o755)).unwrap();
+        let daemon = FakeDaemon::healthy();
+        let (report, rollback) = provision_with_owner_policy(
+            &fixture.request(),
+            &fixture.source,
+            &daemon,
+            fixture.owner_uid,
+            &[],
+            &[],
+            HostStatePolicy::FixedPlatformPrerequisites,
+        )
+        .unwrap();
+
+        assert_eq!(report.system(), System::X8664Linux);
+        assert!(nix_root.is_dir());
+        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 0);
+        rollback.execute(&daemon).unwrap();
+        assert!(nix_root.is_dir());
+        assert!(!rooted(&fixture.root, Path::new(RUNTIME_PATH)).exists());
+        assert!(daemon.stopped.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn prepared_platform_directory_with_wrong_mode_is_refused() {
+        let fixture = Fixture::new();
+        let nix_root = fixture.root.join("nix");
+        fs::create_dir(&nix_root).unwrap();
+        fs::set_permissions(&nix_root, fs::Permissions::from_mode(0o777)).unwrap();
+        let result = provision_with_owner_policy(
+            &fixture.request(),
+            &fixture.source,
+            &FakeDaemon::healthy(),
+            fixture.owner_uid,
+            &[],
+            &[],
+            HostStatePolicy::FixedPlatformPrerequisites,
+        );
+
+        assert_eq!(
+            result.map(|_| ()).map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::InstallFailed)
+        );
+        assert!(!rooted(&fixture.root, Path::new(RUNTIME_PATH)).exists());
+    }
+
+    #[test]
+    fn prepared_platform_policy_rejects_unexpected_nix_evidence() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.root.join("nix")).unwrap();
+        fs::create_dir(fixture.root.join("etc")).unwrap();
+        fs::create_dir(fixture.root.join("etc/nix")).unwrap();
+
+        let error = require_host_state(
+            &fixture.request(),
+            &[],
+            &[],
+            HostStatePolicy::FixedPlatformPrerequisites,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.code(), ProvisionErrorCode::ExistingNixRefused);
     }
 
     #[test]

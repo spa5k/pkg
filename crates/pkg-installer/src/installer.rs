@@ -32,6 +32,12 @@ impl InstallError {
         Self { code }
     }
 
+    /// Constructs a closed backend failure for platform implementations.
+    #[must_use]
+    pub const fn backend_failure() -> Self {
+        Self::new(InstallErrorCode::BackendFailure)
+    }
+
     /// Returns the stable failure class.
     #[must_use]
     pub const fn code(self) -> InstallErrorCode {

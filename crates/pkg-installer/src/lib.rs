@@ -5,6 +5,7 @@
 
 mod approval_audit;
 mod assets;
+mod bootstrap;
 mod broker;
 mod helper;
 mod installer;
@@ -30,6 +31,10 @@ pub use approval_audit::{BrokerApprovalAudit, BrokerCallerApprovalJournal};
 pub use assets::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets,
     linux_install_assets,
+};
+pub use bootstrap::{
+    LinuxBundleInstallReport, MacOsBundleInstallReport, install_linux_from_bundle,
+    install_macos_from_bundle,
 };
 pub use broker::{
     BrokerTransportError, BrokerTransportErrorCode, serve_broker_connection,

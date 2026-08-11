@@ -31,6 +31,7 @@ hex = "=0.4.3"
 jiff = { version = "=0.2.35", features = ["serde"] }
 tempfile = "=3.27.0"
 tough = { version = "=0.24.0", default-features = false, features = ["http"] }
+tokio = { version = "=1.53.1", features = ["rt"] }
 url = "=2.5.8"
 
 # Exact-pinned serde + serde_json for the size-capped JSON codec. The `derive`
