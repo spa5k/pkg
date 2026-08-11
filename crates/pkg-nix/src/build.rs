@@ -32,6 +32,7 @@ const MAX_SILENT_SECONDS: u64 = 3_600;
 const TIMEOUT_SECONDS: u64 = 86_400;
 const MAX_LOG_BYTES: u64 = 268_435_456;
 const DISK_HEADROOM_PERCENT: u64 = 120;
+const BOOTSTRAP_MISS_ALLOWANCE_BYTES: u64 = 1_073_741_824;
 const ADMISSION_WAIT_POLL: Duration = Duration::from_millis(25);
 
 /// Stable local-build refusal category exposed to the broker/CLI mapper.
@@ -577,6 +578,28 @@ impl BuildPlan {
     /// Produces the only public, sanitized view of this private plan.
     pub fn preview(&self) -> Result<BuildPreview, BuildEngineError> {
         self.preview_with_estimates(BuildPreviewEstimates::unavailable())
+    }
+
+    /// Produces the fixed V1 bootstrap estimate used for disk admission.
+    ///
+    /// Nix cannot report the realized size of an uncached output before it is
+    /// built. Until authenticated historical observations exist, V1 therefore
+    /// reserves one GiB for every cache-miss path and adds the exact NarInfo
+    /// content bytes for cache-present paths. The result is explicitly a
+    /// heuristic: build time and total realized closure size remain unknown.
+    pub fn bootstrap_estimates(&self) -> Result<BuildPreviewEstimates, BuildEngineError> {
+        let miss_allowance = self
+            .cache_classification
+            .misses
+            .checked_mul(BOOTSTRAP_MISS_ALLOWANCE_BYTES)
+            .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+        let approx_new_disk_bytes = self
+            .cache_classification
+            .known_cache_bytes
+            .nar_bytes
+            .checked_add(miss_allowance)
+            .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
+        BuildPreviewEstimates::new(None, Some(approx_new_disk_bytes), None)
     }
 
     /// Produces a sanitized preview with volatile, non-digest-bound estimates.
@@ -1766,6 +1789,36 @@ mod tests {
             .unwrap()
             .insert("privatePlan".to_owned(), serde_json::json!("forbidden"));
         assert!(BuildPreview::from_json_bytes(&serde_json::to_vec(&extended).unwrap()).is_err());
+    }
+
+    #[test]
+    fn bootstrap_estimate_is_fixed_and_keeps_unknowns_honest() {
+        let mut plan = plan(1, System::X8664Linux, linux_readiness());
+        let estimate = plan.bootstrap_estimates().unwrap();
+        assert_eq!(
+            estimate.execution_disk_estimate(),
+            Some(VolatileBuildEstimate::new(
+                BOOTSTRAP_MISS_ALLOWANCE_BYTES + 200
+            ))
+        );
+        let preview = plan
+            .preview_with_estimates(estimate)
+            .unwrap()
+            .to_json_value()
+            .unwrap();
+        assert_eq!(
+            preview["estimates"]["approxNewDiskBytes"],
+            BOOTSTRAP_MISS_ALLOWANCE_BYTES + 200
+        );
+        assert!(preview["estimates"]["approxBuildMinutes"].is_null());
+        assert!(preview["estimates"]["approxTotalClosureBytes"].is_null());
+        assert_eq!(preview["unknownLocalOutputs"], 1);
+
+        plan.cache_classification.misses = u64::MAX;
+        assert_eq!(
+            plan.bootstrap_estimates().unwrap_err().code(),
+            BuildEngineErrorCode::InvalidPlan
+        );
     }
 
     #[test]

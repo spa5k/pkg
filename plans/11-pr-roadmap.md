@@ -1270,6 +1270,10 @@ flowchart TD
   displayed digest; broker authority supplies the retained replanner, estimate, fixed host probe,
   and exact contained adapter. It returns either a validated typed build report or one of six stable
   redacted refusal codes, and an ordinary refusal leaves the connection usable. The
+  authenticated preparation path now supplies a product-owned V1 bootstrap disk estimate from the
+  private plan: exact cache-present NAR bytes plus a fixed 1 GiB allowance per cache-miss
+  path. Timing and total realized closure size stay explicitly unknown, overflow fails closed, and
+  neither RPC callers nor the disposable index can supply the estimate. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

@@ -330,7 +330,7 @@ Resolving 3 packages... ok
   + ripgrep  14.1.0     cache ✓   download 1.2 MB   size 4.8 MB (exact, cache)
   + fd       10.1.0     cache ✓   download 0.6 MB   size 2.1 MB (exact, cache)
   + ffmpeg   6.1        BUILD required   size unknown (1 local output)   est. 8–14 min
-Known downloads 1.8 MB (cache-present, exact) · new disk ≈327 MB (estimate; 1 unbuilt local output) · free 9.0 GB
+Known downloads 1.8 MB (cache-present, exact) · new disk ≈1.1 GB (V1 estimate; 1 unbuilt local output) · free 9.0 GB
 ffmpeg has no signed binary for your platform (Linux x86-64). Build locally (sandboxed)? [y/N]
 ```
 

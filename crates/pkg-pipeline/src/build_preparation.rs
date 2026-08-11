@@ -5,7 +5,7 @@ use std::{error::Error, fmt, sync::Arc};
 use pkg_channel::VerifiedChannel;
 use pkg_core::PackageSelector;
 use pkg_index::VerifiedIndex;
-use pkg_nix::{AuthenticatedCaller, BuildPreview, OperationHandle};
+use pkg_nix::{AuthenticatedCaller, BuildPreview, BuildPreviewEstimates, OperationHandle};
 
 use crate::{
     AuthenticatedBuildIntent, AuthenticatedBuildReplanner, BuildPlanningAdapter,
@@ -19,6 +19,7 @@ use crate::{
 pub struct AuthenticatedBuildPreparation {
     replanner: Arc<AuthenticatedBuildReplanner>,
     initial_plan: pkg_nix::BuildPlan,
+    estimates: BuildPreviewEstimates,
 }
 
 impl fmt::Debug for AuthenticatedBuildPreparation {
@@ -55,9 +56,13 @@ impl AuthenticatedBuildPreparation {
         let initial_plan = replanner
             .initial_plan()
             .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused))?;
+        let estimates = initial_plan
+            .bootstrap_estimates()
+            .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused))?;
         Ok(Self {
             replanner,
             initial_plan,
+            estimates,
         })
     }
 
@@ -73,7 +78,12 @@ impl AuthenticatedBuildPreparation {
         handle: &OperationHandle,
     ) -> Result<BuildPreview, BuildPreparationError> {
         caller
-            .prepare_build_with_replanner(handle, self.initial_plan, self.replanner)
+            .prepare_build_with_replanner_and_estimates(
+                handle,
+                self.initial_plan,
+                self.estimates,
+                self.replanner,
+            )
             .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::BrokerRefused))
     }
 }

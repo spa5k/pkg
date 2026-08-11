@@ -278,14 +278,19 @@ neither of which realizes any uncached output:
   download/content bytes, the **unknown-local-output count**, **heuristic**
   size/time estimates (explicitly outside the digest), and a product `readiness`
   summary (sandboxed/build-isolation/native-build + honest resource boundary) —
-  never the Nix system triple, builder-user group, or cgroup internals. Estimated build time is a wide-error-bar
-  heuristic (historical mean per `platform` × input size) — never a deterministic
-  or digest-bound field.
+  never the Nix system triple, builder-user group, or cgroup internals. V1
+  reports build time as unavailable until authenticated historical observations
+  exist; a future time estimate may use a wide-error-bar historical mean per
+  `platform` × input size, but is never deterministic or digest-bound.
 - **Disk budget:** sum of **known** new cache-download bytes (exact, NarInfo-
   recorded) plus a **heuristic** allowance for unbuilt cache-miss outputs vs free
   space at `/nix/store` (`statvfs`), using the deterministic
   `admission.diskHeadroomRatio` (`new_bytes × ratio`). The same deterministic
-  ratio is re-applied at build time (§5.3.1).
+  ratio is re-applied at build time (§5.3.1). The V1 bootstrap allowance is
+  deliberately simple and product-owned: **1 GiB per cache-miss path**, plus
+  exact cache-present NAR content bytes. It is labeled approximate, remains
+  outside the approval digest, and is not represented as a hard build-output
+  cap. Overflow or an unavailable allowance fails closed before Nix runs.
 - **Policy checks**: deny if `meta.license` is in the denylist, if
   `meta.unfree` and the product policy forbids unfree (configurable, default
   allow with notice), if `meta.broken`/`meta.insecure`.
@@ -443,8 +448,8 @@ inline rendering, not a full-screen TUI — plan 06.)
     "knownContentBytes": 4821034 },       //   EXACT cache-reported UNCOMPRESSED content bytes (cache-present paths only); NOT filesystem disk usage
   "unknownLocalOutputs": 3,              // count of cache-miss paths whose eventual size is unknowable pre-build
   "estimates": {                          // HEURISTIC ONLY — explicitly OUTSIDE the digest (§5.2.1.a)
-    "approxBuildMinutes": "8–14",         //   from historical mean per platform × input size, wide error bars
-    "approxNewDiskBytes": 332000000,      //   heuristic; not exact, not digest-bound
+    "approxBuildMinutes": null,           //   V1 bootstrap has no authenticated historical timing observations
+    "approxNewDiskBytes": 3226046506,     //   V1: 3 × 1 GiB misses + exact 4,821,034 cache-present NAR bytes
     "approxTotalClosureBytes": null },    //   null when any closure path is unbuilt (unknowable)
   "readiness": {                          // PRODUCT readiness SUMMARY — no Nix system triple, no builder-user/cgroup internals (private BuildPlan keeps those, §5.2.1.a)
     "sandboxed": true,                    // build runs under the Nix sandbox (maps to private sandbox.enabled)
