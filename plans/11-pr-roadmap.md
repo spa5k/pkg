@@ -1461,8 +1461,13 @@ flowchart TD
   point. Dry-run uses private plan preparation and stops before recovery, download, or mutation.
   Restart recovery either finishes a helper-attested prepared install or safely discards an
   unattested candidate through the generation-removal boundary. Non-default channel and collision
-  policy options remain closed rather than being silently ignored. The remaining production install
-  slice must add the explicit preview/approval/local-build fallback and its end-to-end parity proof.
+  policy options remain closed rather than being silently ignored. Cache misses now close the local-
+  build loop as a separate authenticated `Build` operation: the broker prepares a private plan, the
+  CLI renders only its sanitized preview, interactive or `--yes` approval binds the displayed digest,
+  and the broker executes the exact native sandboxed plan before returning the same private install
+  evidence used by cache hits. Build preparation and execution use the bounded long-running response
+  window. The remaining production install work is end-to-end Fake/Real parity, richer progress and
+  output goldens, plus the still-closed non-default channel/collision policy surfaces.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

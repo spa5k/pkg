@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,10 +24,10 @@ use pkg_core::{
     SourceRevision, VersionPreference,
 };
 use pkg_nix::{
-    BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome,
-    GenerationRootAttestationErrorCode, MaintenanceAdapter, MaintenanceError, OperationHandle,
-    RemoveRootSetRequest, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
-    RootSetAttestationRequest, RootSetReport,
+    ApprovalSource, BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome, Digest,
+    GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter, MaintenanceError,
+    OperationHandle, RemoveRootSetRequest, RepairStorePathsReport, RepairStorePathsRequest,
+    RootSet, RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
@@ -321,23 +322,10 @@ impl LocalStateOperations {
         }
         self.recover_pending_install(&layout, &mut broker)?;
 
-        let handle = broker
-            .begin(BrokerOperationKind::Acquire)
-            .map_err(broker_error)?;
+        let (handle, evidence, build_approval) =
+            acquire_install_evidence(&mut broker, selectors, policy)?;
         let mut local_committed = false;
         let result = (|| {
-            match broker
-                .acquire_install(handle.clone(), selectors)
-                .map_err(install_broker_error)?
-            {
-                CacheInstallOutcome::Acquired => {}
-                CacheInstallOutcome::BuildRequired => {
-                    return Err(build_approval_required());
-                }
-            }
-            let evidence = broker
-                .install_evidence(handle.clone())
-                .map_err(install_broker_error)?;
             let created_at = utc_now()?;
             let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
                 .map_err(state_lease_error)?;
@@ -362,7 +350,7 @@ impl LocalStateOperations {
                     &generation_id,
                     &created_at,
                     handle.as_str(),
-                    "not_required",
+                    build_approval,
                 ),
             )
             .map_err(map_install_generation_error)?;
@@ -915,6 +903,83 @@ fn install_selectors(
         .collect()
 }
 
+fn acquire_install_evidence(
+    broker: &mut BrokerLifecycleClient,
+    selectors: Vec<PackageSelector>,
+    policy: OperationPolicy,
+) -> Result<(OperationHandle, InstallEvidence, &'static str), CommandError> {
+    let acquire_handle = broker
+        .begin(BrokerOperationKind::Acquire)
+        .map_err(broker_error)?;
+    let outcome = match broker.acquire_install(acquire_handle.clone(), selectors.clone()) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let _ = broker.cancel(acquire_handle);
+            return Err(install_broker_error(error));
+        }
+    };
+    if outcome == CacheInstallOutcome::Acquired {
+        return match broker.install_evidence(acquire_handle.clone()) {
+            Ok(evidence) => Ok((acquire_handle, evidence, "not_required")),
+            Err(error) => {
+                let _ = broker.cancel(acquire_handle);
+                Err(install_broker_error(error))
+            }
+        };
+    }
+    broker
+        .complete(acquire_handle.clone())
+        .inspect_err(|_| {
+            let _ = broker.cancel(acquire_handle);
+        })
+        .map_err(install_broker_error)?;
+
+    let build_handle = broker
+        .begin(BrokerOperationKind::Build)
+        .map_err(broker_error)?;
+    let result = (|| {
+        let preview = broker
+            .prepare_build(build_handle.clone(), selectors)
+            .map_err(install_broker_error)?;
+        if !policy.yes() {
+            render_build_preview(&preview)?;
+        }
+        require_confirmation(policy, "Build the missing packages locally?")?;
+        let source = if policy.yes() {
+            ApprovalSource::AssumeYes
+        } else {
+            ApprovalSource::Interactive
+        };
+        let digest =
+            Digest::from_str(preview.build_plan_digest()).map_err(|_| install_commit_failed())?;
+        broker
+            .approve_build(build_handle.clone(), digest, source)
+            .map_err(install_broker_error)?;
+        broker
+            .execute_build(build_handle.clone(), digest)
+            .map_err(install_broker_error)?;
+        let evidence = broker
+            .install_evidence(build_handle.clone())
+            .map_err(install_broker_error)?;
+        Ok((build_handle.clone(), evidence, source.as_str()))
+    })();
+    if result.is_err() {
+        let _ = broker.cancel(build_handle);
+    }
+    result
+}
+
+fn render_build_preview(preview: &pkg_nix::BuildPreview) -> Result<(), CommandError> {
+    let value = preview
+        .to_json_value()
+        .map_err(|_| install_commit_failed())?;
+    let rendered = serde_json::to_string_pretty(&value).map_err(|_| install_commit_failed())?;
+    let mut stderr = io::stderr();
+    writeln!(stderr, "Local build required:\n{rendered}")
+        .and_then(|()| stderr.flush())
+        .map_err(|_| confirmation_required())
+}
+
 fn preview_install(
     broker: &mut BrokerLifecycleClient,
     selectors: Vec<PackageSelector>,
@@ -982,14 +1047,6 @@ fn invalid_install_selector() -> CommandError {
         ExitCode::Usage,
         "a package selector or output name is invalid",
         "use package and output names made from letters, numbers, dots, dashes, and underscores",
-    )
-}
-
-fn build_approval_required() -> CommandError {
-    CommandError::new(
-        ExitCode::AcquireNeedsApproval,
-        "a trusted binary is not available and a local build is required",
-        "local-build approval wiring is the next technical-preview step",
     )
 }
 

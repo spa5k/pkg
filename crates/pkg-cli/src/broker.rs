@@ -452,7 +452,10 @@ impl BrokerLifecycleClient {
         handle: OperationHandle,
         selectors: Vec<PackageSelector>,
     ) -> Result<BuildPreview, BrokerClientError> {
-        match self.transact(&CliBrokerRequest::PrepareBuild(handle, selectors))? {
+        match self.transact_with_timeout(
+            &CliBrokerRequest::PrepareBuild(handle, selectors),
+            LONG_RUNNING_RESPONSE_TIMEOUT,
+        )? {
             CliBrokerResponse::BuildPrepared(preview) => Ok(preview),
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
@@ -483,7 +486,10 @@ impl BrokerLifecycleClient {
         handle: OperationHandle,
         digest: Digest,
     ) -> Result<BuildReport, BrokerClientError> {
-        match self.transact(&CliBrokerRequest::ExecuteBuild(handle, digest))? {
+        match self.transact_with_timeout(
+            &CliBrokerRequest::ExecuteBuild(handle, digest),
+            LONG_RUNNING_RESPONSE_TIMEOUT,
+        )? {
             CliBrokerResponse::BuildExecuted(report) => Ok(report),
             CliBrokerResponse::BuildExecutionRefused(code) => {
                 Err(BrokerClientError::build_refused(code))
