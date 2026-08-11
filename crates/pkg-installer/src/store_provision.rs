@@ -183,15 +183,7 @@ pub fn provision_macos_store_volume(
 }
 
 fn validate_uuid(value: &str) -> Result<(), MacOsStoreProvisionError> {
-    let canonical = value.len() == 36
-        && value.bytes().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte)
-            }
-        });
-    if canonical {
+    if crate::store_mount::canonical_uuid(value) {
         Ok(())
     } else {
         Err(MacOsStoreProvisionError::new(

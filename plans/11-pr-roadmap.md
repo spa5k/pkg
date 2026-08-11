@@ -874,7 +874,11 @@ flowchart TD
   rollback contract for synthetic state, encrypted APFS/keychain creation, ownership,
   mount, record publication, and final verification. The bounded synthetic.conf
   planner preserves unrelated bytes and refuses every noncanonical or duplicate `nix`
-  mapping. The production system adapter must still implement the journaled file
+  mapping. A strict bounded secret-free write-ahead journal now brackets every mutation
+  with monotonic intent/completion phases, closes the pre-UUID APFS crash window, records
+  a durable committed terminal phase, and derives the fixed reverse rollback sequence
+  without ever serializing the unlock secret. The production system adapter must still
+  implement the durable journal file
   replacement and APFS/keychain operations and provide real-host evidence.
   S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.

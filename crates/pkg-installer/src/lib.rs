@@ -12,6 +12,7 @@ pub mod platform;
 mod repair;
 mod root_client;
 mod service;
+mod store_journal;
 mod store_mount;
 mod store_provision;
 mod synthetic_conf;
@@ -55,6 +56,10 @@ pub use root_client::RootHelperClient;
 pub use service::{
     ServiceError, ServiceErrorCode, run_linux_broker_from_activation,
     run_linux_root_helper_from_activation, run_macos_broker, run_macos_root_helper,
+};
+pub use store_journal::{
+    MacOsStoreJournalError, MacOsStoreJournalErrorCode, MacOsStoreJournalPhase,
+    MacOsStoreProvisionJournal, MacOsStoreRollbackAction,
 };
 pub use store_mount::{
     MacOsStoreMountError, MacOsStoreMountErrorCode, MacOsStoreMountOutcome,

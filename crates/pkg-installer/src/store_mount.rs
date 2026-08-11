@@ -141,8 +141,7 @@ impl StoreVolumeReceipt {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
-fn canonical_uuid(value: &str) -> bool {
+pub fn canonical_uuid(value: &str) -> bool {
     value.len() == 36
         && value.bytes().enumerate().all(|(index, byte)| {
             if matches!(index, 8 | 13 | 18 | 23) {

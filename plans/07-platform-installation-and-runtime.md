@@ -467,7 +467,16 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        volume and fixed keychain item without returning the secret; enable ownership;
        mount; publish the dynamic record; verify the complete state; then commit the
        journal. Every failure after journal creation replays all recorded cleanup in
-       reverse, and incomplete rollback has priority over the original failure.
+       reverse, and incomplete rollback has priority over the original failure. The
+       bounded strict journal snapshot is secret-free, versioned, and monotonic: each
+       mutation is bracketed by a durably synced intent/completion phase containing
+       only rollback evidence (synthetic backup digest and canonical volume UUID),
+       rejects skipped/repeated transitions and unknown fields, and derives a closed
+       reverse cleanup sequence. Volume-creation intent permits recovery to discover
+       the sole exact fixed-identity volume if a crash precedes UUID publication, and
+       a durable committed terminal phase distinguishes success from rollback.
+       The durable root-only journal file adapter still must fsync each snapshot and
+       remove it only after successful commit or complete recovery.
        The synthetic-file planner is bounded and byte-preserving: it appends only the
        exact `nix` line, treats that exact single line as idempotent, preserves unrelated
        bytes, and refuses aliases, targets, trailing whitespace, CRLF, duplicates,
