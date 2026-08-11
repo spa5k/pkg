@@ -174,6 +174,15 @@ pub fn load_retained_history(
     layout: &StateLayout,
     lease: &StateLease,
 ) -> Result<History, CommitError> {
+    let (snapshots, active) = load_retained_snapshots(layout, lease)?;
+    History::new(snapshots, active.as_ref().map(GenerationId::as_str))
+        .map_err(|_| CommitError::InvalidCandidate)
+}
+
+fn load_retained_snapshots(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<(Vec<GenerationSnapshot>, Option<GenerationId>), CommitError> {
     require_read_lease(layout, lease)?;
     let active = layout
         .current_generation()
@@ -222,8 +231,7 @@ pub fn load_retained_history(
         .iter()
         .map(|id| load_generation_snapshot(layout, id))
         .collect::<Result<Vec<_>, _>>()?;
-    History::new(snapshots, active.as_ref().map(GenerationId::as_str))
-        .map_err(|_| CommitError::InvalidCandidate)
+    Ok((snapshots, active))
 }
 
 /// Returns the sole fully prepared but uncommitted state-edit generation, if one exists.
@@ -231,10 +239,26 @@ pub fn pending_state_edit_generation(
     layout: &StateLayout,
     lease: &StateLease,
 ) -> Result<Option<GenerationId>, CommitError> {
-    let history = load_retained_history(layout, lease)?;
+    pending_generation(layout, lease, is_resumable_state_operation)
+}
+
+/// Returns the sole fully prepared but uncommitted install generation, if one exists.
+pub fn pending_install_generation(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<Option<GenerationId>, CommitError> {
+    pending_generation(layout, lease, is_install_operation)
+}
+
+fn pending_generation(
+    layout: &StateLayout,
+    lease: &StateLease,
+    accepts: impl Fn(&str) -> bool,
+) -> Result<Option<GenerationId>, CommitError> {
+    let (snapshots, _) = load_retained_snapshots(layout, lease)?;
     let mut pending = Vec::new();
-    for snapshot in history.snapshots() {
-        if is_resumable_state_operation(snapshot.generation().operation().kind()) {
+    for snapshot in &snapshots {
+        if accepts(snapshot.generation().operation().kind()) {
             let prepared = journal_has_status(
                 layout,
                 lease,
@@ -320,17 +344,30 @@ pub fn discard_unprepared_state_edits(
     layout: &StateLayout,
     lease: &StateLease,
 ) -> Result<usize, CommitError> {
+    discard_unprepared_generations(layout, lease, is_resumable_state_operation)
+}
+
+/// Discards install snapshots visible before their `prepared` journal row became durable.
+pub fn discard_unprepared_installs(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<usize, CommitError> {
+    discard_unprepared_generations(layout, lease, is_install_operation)
+}
+
+fn discard_unprepared_generations(
+    layout: &StateLayout,
+    lease: &StateLease,
+    accepts: impl Fn(&str) -> bool,
+) -> Result<usize, CommitError> {
     if !lease.authorizes(layout, LeaseMode::Exclusive) {
         return Err(CommitError::LeaseRequired);
     }
-    let history = load_retained_history(layout, lease)?;
-    let current = layout
-        .current_generation()
-        .map_err(|_| CommitError::StateIo)?;
+    let (snapshots, current) = load_retained_snapshots(layout, lease)?;
     let mut discarded = 0;
-    for snapshot in history.snapshots() {
+    for snapshot in &snapshots {
         let generation = snapshot.generation();
-        if !is_resumable_state_operation(generation.operation().kind()) {
+        if !accepts(generation.operation().kind()) {
             continue;
         }
         let prepared = journal_has_status(
@@ -380,11 +417,29 @@ pub fn resume_prepared_state_edit(
     lease: StateLease,
     generation_id: &GenerationId,
 ) -> Result<PreparedGeneration, CommitError> {
+    resume_prepared_generation(layout, lease, generation_id, is_resumable_state_operation)
+}
+
+/// Reopens an exact journaled install candidate for attested root recovery.
+pub fn resume_prepared_install(
+    layout: StateLayout,
+    lease: StateLease,
+    generation_id: &GenerationId,
+) -> Result<PreparedGeneration, CommitError> {
+    resume_prepared_generation(layout, lease, generation_id, is_install_operation)
+}
+
+fn resume_prepared_generation(
+    layout: StateLayout,
+    lease: StateLease,
+    generation_id: &GenerationId,
+    accepts: impl Fn(&str) -> bool,
+) -> Result<PreparedGeneration, CommitError> {
     if !lease.authorizes(&layout, LeaseMode::Exclusive) {
         return Err(CommitError::LeaseRequired);
     }
     let snapshot = load_generation_snapshot(&layout, generation_id)?;
-    if !is_resumable_state_operation(snapshot.generation().operation().kind())
+    if !accepts(snapshot.generation().operation().kind())
         || layout
             .current_generation()
             .map_err(|_| CommitError::StateIo)?
@@ -519,6 +574,10 @@ pub fn recover_transitioned_state_edit(
 
 fn is_resumable_state_operation(kind: &str) -> bool {
     matches!(kind, "remove" | "pin" | "unpin" | "rollback")
+}
+
+fn is_install_operation(kind: &str) -> bool {
+    kind == "install"
 }
 
 fn require_read_lease(layout: &StateLayout, lease: &StateLease) -> Result<(), CommitError> {
@@ -1828,6 +1887,50 @@ mod tests {
             .unwrap()
             .finish()
             .unwrap();
+        assert_eq!(
+            fixture.layout.current_generation().unwrap(),
+            Some(fixture.generation_id)
+        );
+    }
+
+    #[test]
+    fn journaled_install_is_discovered_and_resumed_after_restart() {
+        let fixture = fixture();
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            mutation_lease(&fixture.layout),
+        )
+        .unwrap();
+        publish_root_set(prepared.roots.as_ref().unwrap(), &fixture.maintenance).unwrap();
+        drop(prepared);
+
+        let resume_lease = mutation_lease(&fixture.layout);
+        let pending = pending_install_generation(&fixture.layout, &resume_lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending, fixture.generation_id);
+        let resumed =
+            resume_prepared_install(fixture.layout.clone(), resume_lease, &pending).unwrap();
+        let attested = fixture
+            .maintenance
+            .attest_root_set(&pkg_nix::RootSetAttestationRequest::new(
+                fixture.layout.owner_uid(),
+                pending,
+            ))
+            .unwrap();
+        resumed
+            .activate_published(Some(&attested), "resumeinstall1")
+            .unwrap()
+            .finish()
+            .unwrap();
+
+        let finished_lease = mutation_lease(&fixture.layout);
+        assert_eq!(
+            pending_install_generation(&fixture.layout, &finished_lease).unwrap(),
+            None
+        );
         assert_eq!(
             fixture.layout.current_generation().unwrap(),
             Some(fixture.generation_id)

@@ -44,9 +44,10 @@ pub use build_preparation::{
 };
 pub use commit::{
     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,
-    discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
-    pending_state_edit_generation, pending_state_transition_source, recover_generation,
-    recover_transitioned_state_edit, resume_prepared_state_edit,
+    discard_unprepared_installs, discard_unprepared_state_edits, load_active_snapshot,
+    load_retained_history, pending_install_generation, pending_state_edit_generation,
+    pending_state_transition_source, recover_generation, recover_transitioned_state_edit,
+    resume_prepared_install, resume_prepared_state_edit,
 };
 pub use host_facts::ProductionBuildHostFactsProbe;
 pub use install_generation::{

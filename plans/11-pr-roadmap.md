@@ -1451,6 +1451,10 @@ flowchart TD
   protection until exact roots are published. A miss creates no approval/evidence and releases the
   inhibitor. Cancellation during substitution defers release until the authority call returns. The
   fixed-endpoint CLI client preserves ordinary refusal codes without poisoning its connection. The
+  commit pipeline can now discover and reopen the sole prepared, uncommitted install after restart,
+  including the first-install state where no active generation exists. It validates immutable
+  generation records below the user-visible history abstraction, and an attested exact root receipt
+  can finish activation without republishing caller-supplied paths.
   remaining production install slice must connect initial install plus attested recovery to this
   closed acquisition/build/root/commit sequence.
   This does **not** yet claim the full PR: production installer completion, the authenticated
