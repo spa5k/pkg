@@ -119,6 +119,14 @@ repair_store_paths(&RepairStorePathsRequest) -> RepairStorePathsReport
 
 - `RootSet` is nonempty, capped at 4096 entries, sorted by traversal-safe `RootName`, rejects
   duplicate names, and maps only to typed `StorePath` values.
+- The private broker-to-helper wire additionally permits a path-free root transition containing
+  only authenticated owner uid, distinct source/destination generation ids, and a nonempty bounded
+  unique set of retained `RootName` values. Under one root transaction the helper reloads the
+  durable source set, requires every requested name to exist there, copies only those already-rooted
+  targets into the destination, and publishes it atomically. An occupied destination is accepted
+  only when it is the exact derived set (an idempotent retry); a conflict is refused before mutation.
+  The request cannot add or rewrite a
+  `StorePath`; an empty destination uses the existing no-root-set lifecycle path instead.
 - Removal carries only authenticated owner uid plus canonical `gen-<digits>` id. The helper
   derives the filesystem location.
 - The repair execution request contains only an opaque helper-issued capability.

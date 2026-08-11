@@ -14,7 +14,7 @@ use crate::broker::{BrokerOperationKind, OperationHandle, OperationStatus};
 use crate::maintenance::{
     GenerationId, MaintenanceCapability, RemoveRootSetRequest, RepairMode, RepairOutcomeKind,
     RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetEntry,
-    RootSetIntent, RootSetReport, VerifiedRepairScope,
+    RootSetIntent, RootSetReport, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use crate::{
     ApprovalSource, BuildPreview, BuildReport, DerivationPlanReport, EvaluateDerivationRequest,
@@ -249,6 +249,8 @@ pub enum BrokerHelperRequest {
     IssueRepairCapability(VerifiedRepairScope),
     /// Redeem one opaque capability for fixed repair execution.
     RepairStorePaths(RepairStorePathsRequest),
+    /// Derive a new root set only from names in a durable source generation.
+    TransitionRootSet(RootSetTransitionRequest),
 }
 
 /// Closed privileged responses on the helper-to-broker channel.
@@ -262,6 +264,8 @@ pub enum BrokerHelperResponse {
     RepairCapabilityIssued(MaintenanceCapability),
     /// Fixed repair execution completed with sanitized outcomes.
     RepairCompleted(RepairStorePathsReport),
+    /// A path-free generation transition was durably published.
+    RootSetTransitioned(RootSetReport),
 }
 
 /// Exact V1 product frame codec.
@@ -668,6 +672,19 @@ impl ProductFrameCodec {
                     capability: request.capability().as_str(),
                 })?,
             ),
+            BrokerHelperRequest::TransitionRootSet(request) => (
+                5,
+                encode_json(&RootSetTransitionWire {
+                    owner_uid: request.owner_uid(),
+                    source_generation: request.source_generation().as_str(),
+                    destination_generation: request.destination_generation().as_str(),
+                    retained_names: request
+                        .retained_names()
+                        .iter()
+                        .map(RootName::as_str)
+                        .collect(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -696,6 +713,9 @@ impl ProductFrameCodec {
                     parse_capability(&wire.capability)?,
                 ))
             }
+            5 => BrokerHelperRequest::TransitionRootSet(
+                decode_json::<RootSetTransitionOwnedWire>(frame.payload)?.promote()?,
+            ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, request))
@@ -724,6 +744,13 @@ impl ProductFrameCodec {
             BrokerHelperResponse::RepairCompleted(report) => {
                 (4, encode_json(&RepairReportWire::from_report(report))?)
             }
+            BrokerHelperResponse::RootSetTransitioned(report) => (
+                5,
+                encode_json(&RootSetReportWire {
+                    reference: report.reference().as_str(),
+                    entry_count: report.entry_count(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -755,6 +782,18 @@ impl ProductFrameCodec {
             4 => BrokerHelperResponse::RepairCompleted(
                 decode_json::<RepairReportOwnedWire>(frame.payload)?.promote()?,
             ),
+            5 => {
+                let wire: RootSetReportOwnedWire = decode_json(frame.payload)?;
+                let reference = RootRef::new(&wire.reference)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+                if wire.entry_count == 0 || wire.entry_count > MAX_ROOT_SET_WIRE_ENTRIES {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
+                BrokerHelperResponse::RootSetTransitioned(RootSetReport::new(
+                    reference,
+                    wire.entry_count,
+                ))
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -1474,6 +1513,47 @@ struct RemoveRootSetOwnedWire {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootSetTransitionWire<'a> {
+    owner_uid: u32,
+    source_generation: &'a str,
+    destination_generation: &'a str,
+    retained_names: Vec<&'a str>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootSetTransitionOwnedWire {
+    owner_uid: u32,
+    source_generation: String,
+    destination_generation: String,
+    retained_names: Vec<String>,
+}
+
+impl RootSetTransitionOwnedWire {
+    fn promote(self) -> Result<RootSetTransitionRequest, FrameError> {
+        let source_generation = GenerationId::new(&self.source_generation)
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+        let destination_generation = GenerationId::new(&self.destination_generation)
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+        let retained_names = self
+            .retained_names
+            .into_iter()
+            .map(|name| {
+                RootName::new(&name).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        RootSetTransitionRequest::new(
+            self.owner_uid,
+            source_generation,
+            destination_generation,
+            retained_names,
+        )
+        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RepairScopeWire<'a> {
     owner_uid: u32,
     generation: &'a str,
@@ -1877,6 +1957,37 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_helper_request(&encoded),
             Ok((9, helper))
+        );
+
+        let transition = BrokerHelperRequest::TransitionRootSet(
+            RootSetTransitionRequest::new(
+                1001,
+                GenerationId::new("gen-0007").unwrap(),
+                GenerationId::new("gen-0008").unwrap(),
+                vec![RootName::new("hello-out").unwrap()],
+            )
+            .unwrap(),
+        );
+        let encoded = ProductFrameCodec::encode_helper_request(10, &transition).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("sourceGeneration"));
+        assert!(wire.contains("destinationGeneration"));
+        assert!(wire.contains("retainedNames"));
+        assert!(!wire.contains("/nix/store"));
+        assert!(!wire.contains("target"));
+        assert_eq!(
+            ProductFrameCodec::decode_helper_request(&encoded),
+            Ok((10, transition))
+        );
+
+        let transitioned = BrokerHelperResponse::RootSetTransitioned(RootSetReport::new(
+            RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
+            1,
+        ));
+        let encoded = ProductFrameCodec::encode_helper_response(10, &transitioned).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_helper_response(&encoded),
+            Ok((10, transitioned))
         );
 
         let started = CliBrokerResponse::Started(OperationHandle(format!("op_{}", "0".repeat(64))));

@@ -1370,7 +1370,11 @@ flowchart TD
   violations refuse, directory creation is parent-synced, and the shared lease atomically creates
   its missing `0600` lock file. Empty history is therefore a valid first-run result rather than an
   unsafe-state error. Linux and macOS installer manifests now also create the broker-owned `0700`
-  channel datastore used by that bootstrap. End-user mutation and broker-client command wiring
+  channel datastore used by that bootstrap. A new private helper method can also derive a
+  destination generation root set from a durable source using only distinct generation ids and
+  bounded retained safe names. It rejects empty, duplicate, unknown, cross-owner, or source-mismatched
+  requests and never accepts a target path; the fixed root client exposes only that typed transition.
+  End-user mutation and broker-client command wiring
   still need to land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.

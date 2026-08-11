@@ -141,6 +141,92 @@ pub struct RootSet {
     entries: Vec<RootSetEntry>,
 }
 
+/// Path-free request to derive one generation root set from a durable source.
+///
+/// Only existing root names may be retained. Store targets are recovered by
+/// the privileged helper from its trusted source generation, so neither the
+/// CLI nor broker request can introduce or rewrite a store path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootSetTransitionRequest {
+    owner_uid: u32,
+    source_generation: GenerationId,
+    destination_generation: GenerationId,
+    retained_names: Vec<RootName>,
+}
+
+impl RootSetTransitionRequest {
+    /// Validates and canonicalizes one non-empty, path-free transition.
+    pub fn new(
+        owner_uid: u32,
+        source_generation: GenerationId,
+        destination_generation: GenerationId,
+        mut retained_names: Vec<RootName>,
+    ) -> Result<Self, MaintenanceError> {
+        retained_names.sort();
+        if source_generation == destination_generation
+            || retained_names.is_empty()
+            || retained_names.len() > MAX_ROOT_SET_ENTRIES
+            || retained_names.windows(2).any(|pair| pair[0] == pair[1])
+        {
+            return Err(MaintenanceError::new(
+                MaintenanceErrorCode::ValidationFailure,
+            ));
+        }
+        Ok(Self {
+            owner_uid,
+            source_generation,
+            destination_generation,
+            retained_names,
+        })
+    }
+
+    /// Returns the authenticated user identity owning both generations.
+    #[must_use]
+    pub const fn owner_uid(&self) -> u32 {
+        self.owner_uid
+    }
+
+    /// Returns the trusted durable generation from which targets are loaded.
+    #[must_use]
+    pub const fn source_generation(&self) -> &GenerationId {
+        &self.source_generation
+    }
+
+    /// Returns the new generation receiving the derived root set.
+    #[must_use]
+    pub const fn destination_generation(&self) -> &GenerationId {
+        &self.destination_generation
+    }
+
+    /// Returns retained root names in canonical order.
+    #[must_use]
+    pub fn retained_names(&self) -> &[RootName] {
+        &self.retained_names
+    }
+
+    /// Derives the destination without accepting any target outside `source`.
+    pub fn derive_from(&self, source: &RootSet) -> Result<RootSet, MaintenanceError> {
+        if source.owner_uid != self.owner_uid || source.generation != self.source_generation {
+            return Err(MaintenanceError::new(
+                MaintenanceErrorCode::ValidationFailure,
+            ));
+        }
+        let retained = self.retained_names.iter().collect::<BTreeSet<_>>();
+        let entries = source
+            .entries
+            .iter()
+            .filter(|entry| retained.contains(entry.name()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if entries.len() != self.retained_names.len() {
+            return Err(MaintenanceError::new(
+                MaintenanceErrorCode::ValidationFailure,
+            ));
+        }
+        RootSet::new(self.owner_uid, self.destination_generation.clone(), entries)
+    }
+}
+
 /// Caller-owned generation root intent with no serialized owner identity.
 ///
 /// The broker promotes this value into a [`RootSet`] only after injecting the
@@ -965,6 +1051,95 @@ mod tests {
         assert_eq!(
             caller.publish_root_set(&changed).unwrap_err().code(),
             MaintenanceErrorCode::BackendFailure
+        );
+    }
+
+    #[test]
+    fn root_transition_can_only_retain_exact_source_names_and_targets() {
+        let source = RootSet::new(
+            1001,
+            GenerationId::new("gen-0007").unwrap(),
+            vec![
+                RootSetEntry::new(RootName::new("hello-out").unwrap(), path("hello-1.0")),
+                RootSetEntry::new(RootName::new("ripgrep-out").unwrap(), path("ripgrep-14.1")),
+            ],
+        )
+        .unwrap();
+        let request = RootSetTransitionRequest::new(
+            1001,
+            GenerationId::new("gen-0007").unwrap(),
+            GenerationId::new("gen-0008").unwrap(),
+            vec![RootName::new("ripgrep-out").unwrap()],
+        )
+        .unwrap();
+        let derived = request.derive_from(&source).unwrap();
+        assert_eq!(derived.owner_uid(), 1001);
+        assert_eq!(derived.generation().as_str(), "gen-0008");
+        assert_eq!(derived.entries().len(), 1);
+        assert_eq!(derived.entries()[0].name().as_str(), "ripgrep-out");
+        assert_eq!(derived.entries()[0].target(), &path("ripgrep-14.1"));
+
+        let foreign = RootSetTransitionRequest::new(
+            1001,
+            GenerationId::new("gen-0007").unwrap(),
+            GenerationId::new("gen-0009").unwrap(),
+            vec![RootName::new("foreign-out").unwrap()],
+        )
+        .unwrap();
+        assert_eq!(
+            foreign.derive_from(&source).unwrap_err().code(),
+            MaintenanceErrorCode::ValidationFailure
+        );
+    }
+
+    #[test]
+    fn root_transition_rejects_alias_reuse_empty_and_identity_drift() {
+        let source = root_set(1001);
+        let same = GenerationId::new("gen-0007").unwrap();
+        assert_eq!(
+            RootSetTransitionRequest::new(
+                1001,
+                same.clone(),
+                same,
+                vec![RootName::new("hello-out").unwrap()],
+            )
+            .unwrap_err()
+            .code(),
+            MaintenanceErrorCode::ValidationFailure
+        );
+        assert_eq!(
+            RootSetTransitionRequest::new(
+                1001,
+                GenerationId::new("gen-0007").unwrap(),
+                GenerationId::new("gen-0008").unwrap(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .code(),
+            MaintenanceErrorCode::ValidationFailure
+        );
+        let duplicate = RootName::new("hello-out").unwrap();
+        assert_eq!(
+            RootSetTransitionRequest::new(
+                1001,
+                GenerationId::new("gen-0007").unwrap(),
+                GenerationId::new("gen-0008").unwrap(),
+                vec![duplicate.clone(), duplicate],
+            )
+            .unwrap_err()
+            .code(),
+            MaintenanceErrorCode::ValidationFailure
+        );
+        let wrong_owner = RootSetTransitionRequest::new(
+            1002,
+            GenerationId::new("gen-0007").unwrap(),
+            GenerationId::new("gen-0008").unwrap(),
+            vec![RootName::new("hello-out").unwrap()],
+        )
+        .unwrap();
+        assert_eq!(
+            wrong_owner.derive_from(&source).unwrap_err().code(),
+            MaintenanceErrorCode::ValidationFailure
         );
     }
 

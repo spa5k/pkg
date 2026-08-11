@@ -1,4 +1,4 @@
-//! Root-publication-only client for the private broker-to-helper channel.
+//! Root-publication and path-free-transition client for the private helper channel.
 
 use crate::{HelperTransportError, HelperTransportErrorCode, platform::peer_uid};
 use nix::{
@@ -7,6 +7,7 @@ use nix::{
 };
 use pkg_nix::{
     BrokerHelperRequest, BrokerHelperResponse, ProductFrameCodec, RootSet, RootSetReport,
+    RootSetTransitionRequest,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
@@ -30,7 +31,7 @@ const DEFAULT_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
 #[cfg(target_os = "macos")]
 const DEFAULT_HELPER_SOCKET: &str = "/Library/Application Support/pkg/run/helper/root-helper.sock";
 
-/// Fixed-policy client for durable root publication only.
+/// Fixed-policy client for durable root publication and source-derived transitions.
 ///
 /// It deliberately does not implement the wider maintenance contract: repair
 /// and root removal have separate lifecycle and timeout requirements.
@@ -100,6 +101,43 @@ impl RootHelperClient {
         }
         match response {
             BrokerHelperResponse::RootSetPublished(report) => Ok(report),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    /// Requests one path-free root transition over a fresh authenticated connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport error unless the helper authenticates as
+    /// root and returns the exact correlated transition response.
+    pub fn transition_root_set(
+        &self,
+        request: &RootSetTransitionRequest,
+    ) -> Result<RootSetReport, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let frame = ProductFrameCodec::encode_helper_request(
+            REQUEST_ID,
+            &BrokerHelperRequest::TransitionRootSet(request.clone()),
+        )
+        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
+        write_all_until(&mut stream, &frame, deadline)?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        let response = read_frame(&mut stream, deadline)?;
+        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        if response_id != REQUEST_ID {
+            return Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            ));
+        }
+        match response {
+            BrokerHelperResponse::RootSetTransitioned(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
             )),
@@ -275,7 +313,7 @@ mod tests {
     use nix::unistd::Uid;
     use pkg_nix::{
         AuthenticatedHelper, GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter,
-        MaintenanceError, RootName, RootSetEntry, StorePath,
+        MaintenanceError, RootName, RootSetEntry, RootSetTransitionRequest, StorePath,
     };
     use std::{error::Error, os::unix::net::UnixListener, thread};
     use tempfile::TempDir;
@@ -295,6 +333,13 @@ mod tests {
                     .for_caller(root_set.owner_uid())
                     .publish_root_set(&root_set)
                     .map(BrokerHelperResponse::RootSetPublished),
+                BrokerHelperRequest::TransitionRootSet(request) => {
+                    let derived = request.derive_from(&root_set())?;
+                    self.0
+                        .for_caller(derived.owner_uid())
+                        .publish_root_set(&derived)
+                        .map(BrokerHelperResponse::RootSetTransitioned)
+                }
                 _ => Err(MaintenanceError::backend_failure()),
             }
         }
@@ -337,6 +382,39 @@ mod tests {
         let report = report?;
         assert_eq!(report.entry_count(), 1);
         assert!(report.reference().as_str().ends_with("/1001/gen-0007"));
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_client_round_trips_only_path_free_root_transition() -> Result<(), Box<dyn Error>> {
+        let temporary = TempDir::new()?;
+        let endpoint = temporary.path().join("root-helper.sock");
+        let listener = UnixListener::bind(&endpoint)?;
+        let broker_uid = Uid::effective().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let worker = thread::spawn(move || {
+            let (stream, _) = listener.accept().map_err(|_| {
+                HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
+            })?;
+            serve_helper_connection(stream, broker_uid, &RootDispatch(authenticated))
+        });
+        let client = RootHelperClient::at(endpoint, broker_uid);
+        let request = RootSetTransitionRequest::new(
+            1001,
+            GenerationId::new("gen-0007")?,
+            GenerationId::new("gen-0008")?,
+            vec![RootName::new("hello-out")?],
+        )?;
+
+        let report = client.transition_root_set(&request);
+        let served = worker
+            .join()
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
+        assert_eq!(served.map_err(HelperTransportError::code), Ok(()));
+        let report = report?;
+        assert_eq!(report.entry_count(), 1);
+        assert!(report.reference().as_str().ends_with("/1001/gen-0008"));
         Ok(())
     }
 

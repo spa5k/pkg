@@ -268,10 +268,30 @@ impl LinuxRootSetStore {
         owner_uid: u32,
         generation: &GenerationId,
     ) -> Result<RootSet, LinuxPlatformError> {
+        self.load_optional(owner_uid, generation)?
+            .ok_or_else(|| LinuxPlatformError::new(LinuxPlatformErrorCode::UnsafeFilesystemState))
+    }
+
+    /// Loads a generation when present while distinguishing a clean absence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for every unsafe, malformed, or unavailable
+    /// destination; only an exact missing final generation is `Ok(None)`.
+    pub(crate) fn load_optional(
+        &self,
+        owner_uid: u32,
+        generation: &GenerationId,
+    ) -> Result<Option<RootSet>, LinuxPlatformError> {
         ensure_trusted_directory(&self.root, self.required_owner_uid)?;
         let owner = self.root.join(owner_uid.to_string());
         ensure_trusted_directory(&owner, self.required_owner_uid)?;
         let path = owner.join(generation.as_str());
+        match path.symlink_metadata() {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(fs_error(error)),
+        }
         ensure_trusted_directory(&path, self.required_owner_uid)?;
         let actual = bounded_entries(&path)?;
         let mut entries = Vec::with_capacity(actual.len());
@@ -295,6 +315,7 @@ impl LinuxRootSetStore {
             ));
         }
         RootSet::new(owner_uid, generation.clone(), entries)
+            .map(Some)
             .map_err(|_| LinuxPlatformError::new(LinuxPlatformErrorCode::UnsafeFilesystemState))
     }
 }

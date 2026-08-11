@@ -8,7 +8,8 @@ use nix::{
 use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
-    ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest, RootSet, VerifiedRepairScope,
+    ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest, RootSet,
+    RootSetTransitionRequest, VerifiedRepairScope,
 };
 use std::{
     collections::BTreeMap,
@@ -128,6 +129,40 @@ impl LinuxHelperSession {
         self.roots.remove(request).map_err(|_| platform_failure())
     }
 
+    fn transition(
+        &self,
+        request: &RootSetTransitionRequest,
+    ) -> Result<pkg_nix::RootSetReport, MaintenanceError> {
+        let _transaction = lock_recover(&self.root_transactions);
+        let source = self
+            .roots
+            .load(request.owner_uid(), request.source_generation())
+            .map_err(|_| platform_failure())?;
+        let destination = request.derive_from(&source)?;
+        let caller = self.caller(request.owner_uid());
+        match self
+            .roots
+            .load_optional(request.owner_uid(), request.destination_generation())
+            .map_err(|_| platform_failure())?
+        {
+            Some(existing) if existing == destination => {
+                return caller.publish_root_set(&destination);
+            }
+            Some(_) => return Err(platform_failure()),
+            None => {}
+        }
+        let report = caller.publish_root_set(&destination)?;
+        if self.roots.publish(&destination).is_err() {
+            let removal = RemoveRootSetRequest::new(
+                request.owner_uid(),
+                request.destination_generation().clone(),
+            );
+            let _ = caller.remove_root_set(&removal);
+            return Err(platform_failure());
+        }
+        Ok(report)
+    }
+
     fn issue(
         &self,
         scope: &VerifiedRepairScope,
@@ -180,6 +215,9 @@ impl BrokerHelperDispatch for LinuxHelperSession {
             BrokerHelperRequest::RepairStorePaths(request) => self
                 .repair(&request)
                 .map(BrokerHelperResponse::RepairCompleted),
+            BrokerHelperRequest::TransitionRootSet(request) => self
+                .transition(&request)
+                .map(BrokerHelperResponse::RootSetTransitioned),
         }
     }
 }
@@ -396,6 +434,23 @@ mod tests {
                 RootName::new("out")?,
                 StorePath::new(&format!("/nix/store/{STORE_HASH}-hello"))?,
             )],
+        )?)
+    }
+
+    fn transition_source() -> Result<RootSet, Box<dyn Error>> {
+        Ok(RootSet::new(
+            501,
+            GenerationId::new("gen-0003")?,
+            vec![
+                RootSetEntry::new(
+                    RootName::new("hello-out")?,
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-hello"))?,
+                ),
+                RootSetEntry::new(
+                    RootName::new("ripgrep-out")?,
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-ripgrep"))?,
+                ),
+            ],
         )?)
     }
 
@@ -618,6 +673,87 @@ mod tests {
             restarted.dispatch(BrokerHelperRequest::IssueRepairCapability(scope))?,
             BrokerHelperResponse::RepairCapabilityIssued(_)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn root_transition_derives_targets_only_from_durable_source() -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new()?;
+        let broker_uid = Uid::current().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
+        let session = LinuxHelperSession::new(authenticated, root_store.clone());
+        let source = transition_source()?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(source.clone()))?;
+
+        let request = RootSetTransitionRequest::new(
+            source.owner_uid(),
+            source.generation().clone(),
+            GenerationId::new("gen-0004")?,
+            vec![RootName::new("ripgrep-out")?],
+        )?;
+        let response = session.dispatch(BrokerHelperRequest::TransitionRootSet(request.clone()))?;
+        let BrokerHelperResponse::RootSetTransitioned(report) = response else {
+            return Err(io::Error::other("unexpected helper response").into());
+        };
+        assert_eq!(report.entry_count(), 1);
+        let destination = root_store.load(source.owner_uid(), &GenerationId::new("gen-0004")?)?;
+        assert_eq!(destination.entries().len(), 1);
+        assert_eq!(destination.entries()[0].name().as_str(), "ripgrep-out");
+        assert_eq!(
+            destination.entries()[0].target().as_str(),
+            format!("/nix/store/{STORE_HASH}-ripgrep")
+        );
+        assert!(matches!(
+            session.dispatch(BrokerHelperRequest::TransitionRootSet(request))?,
+            BrokerHelperResponse::RootSetTransitioned(_)
+        ));
+
+        let occupied_generation = GenerationId::new("gen-0006")?;
+        let occupied = RootSet::new(
+            source.owner_uid(),
+            occupied_generation.clone(),
+            vec![RootSetEntry::new(
+                RootName::new("existing-out")?,
+                StorePath::new(&format!("/nix/store/{STORE_HASH}-existing"))?,
+            )],
+        )?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(occupied.clone()))?;
+        let collision = RootSetTransitionRequest::new(
+            source.owner_uid(),
+            source.generation().clone(),
+            occupied_generation.clone(),
+            vec![RootName::new("ripgrep-out")?],
+        )?;
+        assert_eq!(
+            session
+                .dispatch(BrokerHelperRequest::TransitionRootSet(collision))
+                .map_err(MaintenanceError::code),
+            Err(MaintenanceErrorCode::BackendFailure)
+        );
+        assert_eq!(
+            root_store.load(source.owner_uid(), &occupied_generation)?,
+            occupied
+        );
+
+        let unknown = RootSetTransitionRequest::new(
+            source.owner_uid(),
+            source.generation().clone(),
+            GenerationId::new("gen-0005")?,
+            vec![RootName::new("foreign-out")?],
+        )?;
+        assert_eq!(
+            session
+                .dispatch(BrokerHelperRequest::TransitionRootSet(unknown))
+                .map_err(MaintenanceError::code),
+            Err(MaintenanceErrorCode::ValidationFailure)
+        );
+        assert!(
+            root_store
+                .load(source.owner_uid(), &GenerationId::new("gen-0005")?)
+                .is_err()
+        );
         Ok(())
     }
 
