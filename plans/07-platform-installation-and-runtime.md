@@ -480,6 +480,17 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        replaces and `F_FULLFSYNC`s every phase plus the parent directory, refuses symlinks and
        hard links, reconciles the narrow complete-file hard-link crash window, and
        removes state durably only after successful commit or complete recovery.
+       Synthetic replacement uses the canonical `/private/etc` path (avoiding the
+       `/etc` symlink), binds the expected private-backup digest into durable journal
+       intent before backup creation, then creates/reuses the exact `0600` full-synced
+       backup. Replacement first full-syncs a unique staging inode, atomically publishes
+       that complete inode to a deterministic exchange path and full-syncs the directory,
+       then uses macOS atomic exchange/no-replace operations. It validates the displaced inode at that recovery path until validation,
+       and swaps it back on mismatch; rollback reconciles interrupted backup creation or
+       exchange before it restores or removes
+       only the expected product-written bytes and treats completed backup cleanup as
+       replay-idempotent.
+       Foreign concurrent edits, unsafe metadata, and mismatched backups fail closed.
        The synthetic-file planner is bounded and byte-preserving: it appends only the
        exact `nix` line, treats that exact single line as idempotent, preserves unrelated
        bytes, and refuses aliases, targets, trailing whitespace, CRLF, duplicates,

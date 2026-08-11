@@ -18,6 +18,8 @@ mod store_journal_file;
 mod store_mount;
 mod store_provision;
 mod synthetic_conf;
+#[cfg(target_os = "macos")]
+mod synthetic_file;
 mod uninstall;
 
 pub use approval_audit::{BrokerApprovalAudit, BrokerCallerApprovalJournal};
@@ -76,6 +78,10 @@ pub use store_provision::{
 pub use synthetic_conf::{
     MacOsSyntheticConfError, MacOsSyntheticConfErrorCode, MacOsSyntheticConfPlan,
     plan_macos_synthetic_entry,
+};
+#[cfg(target_os = "macos")]
+pub use synthetic_file::{
+    MacOsSyntheticFileError, MacOsSyntheticFileStorage, MacOsSyntheticFileTransaction,
 };
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,

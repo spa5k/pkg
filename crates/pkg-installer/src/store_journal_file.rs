@@ -257,7 +257,7 @@ fn sync_directory(path: &Path) -> Result<(), MacOsStoreJournalFileError> {
     full_sync(&directory)
 }
 
-fn full_sync(file: &File) -> Result<(), MacOsStoreJournalFileError> {
+pub fn full_sync(file: &File) -> Result<(), MacOsStoreJournalFileError> {
     fcntl(file, FcntlArg::F_FULLFSYNC)
         .map(|_| ())
         .map_err(|_| MacOsStoreJournalFileError::PersistenceFailed)

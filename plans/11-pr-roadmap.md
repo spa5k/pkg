@@ -880,8 +880,13 @@ flowchart TD
   without ever serializing the unlock secret. Its closed root-only storage now validates
   the exact private parent/file contract, durably creates and atomically replaces every
   snapshot using macOS `F_FULLFSYNC`, recovers the initial no-clobber publication crash window, and durably removes
-  completed state. The production system adapter must still implement APFS/keychain and
-  synthetic-file operations and provide real-host evidence.
+  completed state. The production synthetic-file transaction now uses `/private/etc`,
+  journals backup intent before creation, full-syncs a private digest-bound backup, and
+  publishes only a full-synced staging inode to a deterministic recovery path before using
+  atomic exchange/no-replace, then validates and preserves the displaced inode there.
+  Interrupted backup writes, staging, and exchanges are reconciled.
+  Recovery cleanup is replay-idempotent and refuses foreign rollback state. The production system adapter must still connect
+  these pieces and implement APFS/keychain operations and provide real-host evidence.
   S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
   Therefore PR-28 is **not marked merge-complete** until production APFS/keychain/
