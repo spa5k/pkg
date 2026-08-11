@@ -462,6 +462,12 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        only a canonical uppercase UUID, renders every other field from compiled
        policy, creates a root:wheel `0600` no-ACL file durably, and publishes it with
        a same-directory no-clobber hard link before syncing the parent directory.
+       Provisioning follows one closed coordinator: inspect exact existing state;
+       sync an empty rollback journal; merge the synthetic entry; create the encrypted
+       volume and fixed keychain item without returning the secret; enable ownership;
+       mount; publish the dynamic record; verify the complete state; then commit the
+       journal. Every failure after journal creation replays all recorded cleanup in
+       reverse, and incomplete rollback has priority over the original failure.
        A fixed `org.pkg.store-volume` launchd job invokes only the root
    helper's closed `--mount-store-volume` verb; no secret or UUID is placed in
    plist argv or logs. Then create `/nix/store`, `/nix/var/nix/...` (stock Nix

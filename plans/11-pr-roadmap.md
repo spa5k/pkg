@@ -870,8 +870,10 @@ flowchart TD
   System-keychain-to-diskutil secret pipe, and final `/nix` state. The production
   root-only record writer now validates the canonical UUID, compiles every other
   field, and publishes root:wheel `0600` state durably without overwriting an
-  existing record. The installer backend must still create the encrypted APFS
-  volume/keychain/synthetic state, invoke that writer, and provide real-host evidence.
+  existing record. A failure-atomic coordinator now fixes the journaled ordering and
+  rollback contract for synthetic state, encrypted APFS/keychain creation, ownership,
+  mount, record publication, and final verification. The production system adapter
+  must still implement those closed operations and provide real-host evidence.
   S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
   Therefore PR-28 is **not marked merge-complete** until production APFS/keychain/
