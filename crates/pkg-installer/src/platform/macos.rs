@@ -426,6 +426,14 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
     ),
     MacOsInstallAsset::path(
+        "broker-channel-state",
+        MacOsAssetKind::Directory,
+        "/Library/Application Support/pkg/broker-home/channel",
+        0o700,
+        MacOsAssetPrincipal::Broker,
+        MacOsAssetPrincipal::Broker,
+    ),
+    MacOsInstallAsset::path(
         "broker-tmp",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/broker-home/tmp",
@@ -1271,6 +1279,11 @@ mod tests {
             (
                 "broker-home",
                 "/Library/Application Support/pkg/broker-home",
+                MacOsAssetPrincipal::Broker,
+            ),
+            (
+                "broker-channel-state",
+                "/Library/Application Support/pkg/broker-home/channel",
                 MacOsAssetPrincipal::Broker,
             ),
             (

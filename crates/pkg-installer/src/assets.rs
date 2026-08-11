@@ -212,6 +212,13 @@ const ASSETS: &[LinuxInstallAsset] = &[
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
     LinuxInstallAsset::new(
+        "broker-channel-state",
+        LinuxAssetKind::Directory,
+        "/var/lib/pkg/broker-home/channel",
+        Some(0o700),
+    )
+    .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
+    LinuxInstallAsset::new(
         "helper-home",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/helper-home",
@@ -404,6 +411,12 @@ mod tests {
         }));
         assert!(linux_install_assets().iter().any(|asset| {
             asset.path_or_name() == "/opt/pkg/bin/pkg-nix-broker" && asset.mode() == Some(0o750)
+        }));
+        assert!(linux_install_assets().iter().any(|asset| {
+            asset.path_or_name() == "/var/lib/pkg/broker-home/channel"
+                && asset.mode() == Some(0o700)
+                && asset.owner() == Some(LinuxAssetPrincipal::Broker)
+                && asset.group() == Some(LinuxAssetPrincipal::Broker)
         }));
         assert!(
             LinuxSystemdAssets::DAEMON_SERVICE

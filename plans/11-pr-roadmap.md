@@ -1139,7 +1139,7 @@ flowchart TD
 ### Milestone M7 — Technical Preview
 
 #### PR-36 — Technical-preview hardening + Real-Nix nightly CI + e2e parity
-- **Status (2026-08-10):** in progress. The first production Real-Nix connector slice is landed:
+- **Status (2026-08-11):** in progress. The first production Real-Nix connector slice is landed:
   the pinned Nix 2.34.8 adapter executes version/eval/substitute/path-info/verify/build/GC through
   the managed daemon with bounded process-group cancellation, strict JSON parsing, and provenance
   checks, and its isolated Linux daemon smoke covers both substitution and local build paths. The
@@ -1299,7 +1299,11 @@ flowchart TD
   accepts only a live build handle and bounded unresolved/unpinned `CurrentChannel` selectors,
   invokes the injected authenticated build authority, and returns only a sanitized preview; no
   channel, index, system, derivation, path, or Nix option is caller supplied. The production
-  listener remains fail-closed until it bootstraps and injects the long-lived refresh service. Build
+  listener now bootstraps and retains that long-lived refresh service plus its continuously driven
+  single-worker async runtime before accepting command work. Its TUF root plus metadata/targets
+  HTTPS origins are release-build inputs embedded into the
+  binary; missing, empty, malformed, insecure, or datastore-invalid configuration refuses daemon
+  startup, and no CLI/environment/runtime setting can replace it. Build
   execution can no longer receive a volatile disk estimate: trusted preparation fixes the estimate,
   stores it with the private plan, and returns that same value in the sanitized preview. Missing
   estimates fail execution before Nix runs and zero-byte estimates are invalid, closing the former
@@ -1324,11 +1328,12 @@ flowchart TD
   production root-publication client now connects only to the compiled Linux/macOS helper endpoint,
   verifies the helper peer is root before sending bytes, uses one method-1 helper request per
   connection, and requires the exact correlated root-publication response under one finite
-  monotonic I/O budget. Both ends now switch to nonblocking I/O after kernel peer authentication:
+  monotonic I/O budget. The production listener now injects this fixed root client together with
+  authenticated build authority into the complete method-18/19/20 dispatcher. Both ends now switch
+  to nonblocking I/O after kernel peer authentication:
   the privileged helper gives the complete request and response frames separate 30-second poll
   budgets, starts the response budget only after dispatch, and fails stalled partial reads or writes
-  closed. It intentionally exposes neither repair nor root removal. Injection into the production
-  listener still waits on the authenticated channel/build-authority bootstrap. The macOS launchd
+  closed. It intentionally exposes neither repair nor root removal. The macOS launchd
   `--serve-macos` modes now exist for both installed service binaries. They require the exact
   installed uid/gid roles, validate the root-owned managed socket chain including absence of extended
   ACLs, replace only an exact stale service-owned socket, and atomically create only the compiled
@@ -1364,7 +1369,8 @@ flowchart TD
   idempotently at `0700`: existing components are never chmodded or replaced, symlink/owner/write
   violations refuse, directory creation is parent-synced, and the shared lease atomically creates
   its missing `0600` lock file. Empty history is therefore a valid first-run result rather than an
-  unsafe-state error. Authenticated build execution and the remaining product-command wiring
+  unsafe-state error. Linux and macOS installer manifests now also create the broker-owned `0700`
+  channel datastore used by that bootstrap. End-user mutation and broker-client command wiring
   still need to land. This does
   **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.

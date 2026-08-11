@@ -2,7 +2,8 @@
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::{
-    BrokerApprovalAudit, serve_broker_connection_with_nix_and_approval, serve_helper_connection,
+    BrokerApprovalAudit, RootHelperClient, serve_broker_connection_with_build_and_root_authority,
+    serve_helper_connection,
 };
 #[cfg(target_os = "linux")]
 use crate::{LinuxHelperSession, LinuxRootSetStore};
@@ -17,10 +18,14 @@ use nix::sys::stat::{Mode, umask};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nix::unistd::{Gid, Uid, User};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+use pkg_channel::{ChannelClient, TrustedRoot};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pkg_nix::{
-    InProcessBroker, InProcessHelper, InProcessPeer, NixAdapter, RealNixAdapter,
-    RootNixRepairExecutor, VerifiedRepairExecutor,
+    InProcessBroker, InProcessHelper, InProcessPeer, RealNixAdapter, RootNixRepairExecutor,
+    VerifiedRepairExecutor,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use pkg_pipeline::{AuthenticatedBuildAuthorityService, BuildPlanningAdapter};
 use std::{error::Error, fmt};
 #[cfg(target_os = "macos")]
 use std::{
@@ -35,6 +40,10 @@ use std::{
     sync::{Arc, Mutex},
     thread,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use tokio::runtime::Builder;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use url::Url;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const BROKER_ACCOUNT: &str = "pkg-nix-broker";
@@ -58,6 +67,12 @@ const MACOS_BROKER_HOME: &str = "/Library/Application Support/pkg/broker-home";
 const MACOS_BROKER_LOG: &str = "/Library/Application Support/pkg/log/broker";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_BROKER_CONNECTIONS: usize = 32;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_TUF_ROOT_JSON: Option<&str> = option_env!("PKG_RELEASE_TUF_ROOT_JSON");
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_CHANNEL_METADATA_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_METADATA_URL");
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const RELEASE_CHANNEL_TARGETS_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_TARGETS_URL");
 
 /// Stable production-service startup/runtime failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,9 +129,10 @@ impl Error for ServiceError {}
 /// readers and blocked writers have finite deadlines. Invalid clients are
 /// connection-local failures and do not terminate the broker.
 ///
-/// This entry point currently serves the authenticated operation-lifecycle
-/// protocol. Product-command dispatch to the managed Nix adapter is a separate
-/// wiring step and is not synthesized here.
+/// Before serving, it requires release-embedded TUF root/origin inputs,
+/// authenticates the native channel and index into a long-lived build
+/// authority, and installs the fixed privileged root-publication client. No
+/// command caller or runtime environment can select those trust inputs.
 ///
 /// # Errors
 ///
@@ -148,10 +164,26 @@ fn run_broker_listener(
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
     let approval_audit = BrokerApprovalAudit::open(log, expected_uid)
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let adapter: Arc<dyn NixAdapter> = Arc::new(
+    let adapter = Arc::new(
         RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), home)
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
+    let planning_adapter: Arc<dyn BuildPlanningAdapter> = adapter;
+    let runtime = Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("pkg-trust-runtime")
+        .enable_all()
+        .build()
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let channel = production_channel(&home.join("channel"))?;
+    let authority_service = runtime
+        .block_on(AuthenticatedBuildAuthorityService::bootstrap(
+            channel,
+            planning_adapter,
+        ))
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let authority = authority_service.authority();
+    let roots = Arc::new(RootHelperClient::production());
     let limiter = ConnectionLimiter::new(MAX_BROKER_CONNECTIONS);
 
     loop {
@@ -162,17 +194,19 @@ fn run_broker_listener(
                     continue;
                 };
                 let connection_broker = Arc::clone(&broker);
-                let connection_adapter = Arc::clone(&adapter);
+                let connection_authority = Arc::clone(&authority);
+                let connection_roots = Arc::clone(&roots);
                 let connection_approval_audit = approval_audit.clone();
                 thread::Builder::new()
                     .name(String::from("pkg-broker-client"))
                     .spawn(move || {
                         let _permit = permit;
-                        let _ = serve_broker_connection_with_nix_and_approval(
+                        let _ = serve_broker_connection_with_build_and_root_authority(
                             stream,
                             &connection_broker,
-                            &connection_adapter,
                             &connection_approval_audit,
+                            &connection_authority,
+                            &connection_roots,
                         );
                     })
                     .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;
@@ -181,6 +215,43 @@ fn run_broker_listener(
             Err(_) => return Err(ServiceError::new(ServiceErrorCode::ListenerFailed)),
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn production_channel(datastore: &Path) -> Result<ChannelClient, ServiceError> {
+    channel_from_compiled_release(
+        datastore,
+        RELEASE_TUF_ROOT_JSON,
+        RELEASE_CHANNEL_METADATA_URL,
+        RELEASE_CHANNEL_TARGETS_URL,
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn channel_from_compiled_release(
+    datastore: &Path,
+    root_json: Option<&'static str>,
+    metadata_url: Option<&str>,
+    targets_url: Option<&str>,
+) -> Result<ChannelClient, ServiceError> {
+    let root_json = required_release_value(root_json)?;
+    let metadata_url = required_release_value(metadata_url)?;
+    let targets_url = required_release_value(targets_url)?;
+    let trusted_root = TrustedRoot::from_embedded(root_json.as_bytes())
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let metadata_url = Url::parse(metadata_url)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let targets_url =
+        Url::parse(targets_url).map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    ChannelClient::new(trusted_root, metadata_url, targets_url, datastore)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn required_release_value(value: Option<&str>) -> Result<&str, ServiceError> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidRuntime))
 }
 
 /// Reports the Linux broker entry point as unavailable on other hosts.
@@ -578,13 +649,24 @@ impl Drop for ConnectionPermit {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
-    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
 
     struct Scratch(PathBuf);
 
     impl Scratch {
         fn new() -> io::Result<Self> {
-            let path = std::env::temp_dir().join(format!("phs-{}", std::process::id()));
+            let sequence = NEXT_TEST.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "pkg-linux-service-{}-{sequence}",
+                std::process::id()
+            ));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir(&path)?;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
@@ -622,6 +704,72 @@ mod tests {
         assert!(limiter.try_acquire().is_none());
         drop(first);
         assert!(limiter.try_acquire().is_some());
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod release_channel_tests {
+    use super::*;
+    use std::{error::Error, fs, os::unix::fs::PermissionsExt};
+
+    fn private_datastore() -> Result<tempfile::TempDir, Box<dyn Error>> {
+        let datastore = tempfile::tempdir()?;
+        fs::set_permissions(datastore.path(), fs::Permissions::from_mode(0o700))?;
+        Ok(datastore)
+    }
+
+    #[test]
+    fn configuration_is_compile_time_complete_or_refused() -> Result<(), Box<dyn Error>> {
+        let datastore = private_datastore()?;
+        for configuration in [
+            (
+                None,
+                Some("https://metadata.example/"),
+                Some("https://targets.example/"),
+            ),
+            (Some("{}"), None, Some("https://targets.example/")),
+            (Some("{}"), Some("https://metadata.example/"), None),
+            (Some("{}"), Some("   "), Some("https://targets.example/")),
+        ] {
+            assert_eq!(
+                channel_from_compiled_release(
+                    datastore.path(),
+                    configuration.0,
+                    configuration.1,
+                    configuration.2,
+                )
+                .err()
+                .map(ServiceError::code),
+                Some(ServiceErrorCode::InvalidRuntime)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn configuration_accepts_only_channel_validated_origins() -> Result<(), Box<dyn Error>> {
+        let insecure = private_datastore()?;
+        assert_eq!(
+            channel_from_compiled_release(
+                insecure.path(),
+                Some("{}"),
+                Some("http://metadata.example/"),
+                Some("https://targets.example/"),
+            )
+            .err()
+            .map(ServiceError::code),
+            Some(ServiceErrorCode::InvalidRuntime)
+        );
+
+        let secure = private_datastore()?;
+        let channel = channel_from_compiled_release(
+            secure.path(),
+            Some("{}"),
+            Some("https://metadata.example/"),
+            Some("https://targets.example/"),
+        )?;
+        drop(channel);
+        Ok(())
     }
 }
 
