@@ -20,7 +20,8 @@ use crate::ux::CommandError;
 use pkg_core::{History, PinAction};
 use pkg_nix::{
     BrokerOperationKind, MaintenanceAdapter, MaintenanceError, OperationHandle,
-    RemoveRootSetRequest, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetReport,
+    RemoveRootSetRequest, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
+    RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, StateEditKind, StateEditMetadata, discard_unprepared_state_edits,
@@ -44,6 +45,13 @@ struct BrokerGcMaintenance<'a> {
 
 impl MaintenanceAdapter for BrokerGcMaintenance<'_> {
     fn publish_root_set(&self, _root_set: &RootSet) -> Result<RootSetReport, MaintenanceError> {
+        Err(MaintenanceError::backend_failure())
+    }
+
+    fn attest_root_set(
+        &self,
+        _request: &RootSetAttestationRequest,
+    ) -> Result<RootSetReport, MaintenanceError> {
         Err(MaintenanceError::backend_failure())
     }
 

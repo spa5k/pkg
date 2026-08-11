@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::broker::{BrokerOperationKind, OperationHandle, OperationStatus};
 use crate::maintenance::{
     GenerationId, MaintenanceCapability, RemoveRootSetRequest, RepairMode, RepairOutcomeKind,
-    RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetEntry,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
-    RootSetTransitionRequest, VerifiedRepairScope,
+    RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
+    RootSetAttestationRequest, RootSetEntry, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use crate::{
     ApprovalSource, BuildPreview, BuildReport, DerivationPlanReport, EvaluateDerivationRequest,
@@ -119,6 +119,8 @@ pub enum CliBrokerRequest {
     AcquireGc(OperationHandle),
     /// Fetch broker-produced post-build evidence before root publication.
     GetInstallEvidence(OperationHandle),
+    /// Attest an already durable generation after restart or lost acknowledgement.
+    AttestGenerationRoots(OperationHandle, GenerationId),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -170,6 +172,10 @@ pub enum CliBrokerResponse {
     GcAdmissionAcquired,
     /// Private post-build evidence for crash-safe lifecycle assembly.
     InstallEvidence(InstallEvidence),
+    /// Exact helper-attested receipt for an already durable generation.
+    GenerationRootsAttested(RootSetReport),
+    /// Stable redacted refusal from protected root attestation.
+    GenerationRootAttestationRefused(GenerationRootAttestationErrorCode),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -215,6 +221,32 @@ pub enum GenerationRootRemovalErrorCode {
     Cancelled,
     /// Admission or private authority was unavailable without more detail.
     AuthorityUnavailable,
+}
+
+/// Stable redacted generation-root attestation refusal categories exposed to the CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationRootAttestationErrorCode {
+    /// The handle or typed generation did not authorize attestation.
+    InvalidIntent,
+    /// The helper could not attest the exact durable root set.
+    AttestationFailed,
+    /// Operation lifecycle cancellation stopped attestation.
+    Cancelled,
+    /// Admission or private authority was unavailable without more detail.
+    AuthorityUnavailable,
+}
+
+impl GenerationRootAttestationErrorCode {
+    /// Returns the stable wire code.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidIntent => "invalid_intent",
+            Self::AttestationFailed => "attestation_failed",
+            Self::Cancelled => "cancelled",
+            Self::AuthorityUnavailable => "authority_unavailable",
+        }
+    }
 }
 
 impl GenerationRootRemovalErrorCode {
@@ -328,6 +360,8 @@ pub enum BrokerHelperRequest {
     RepairStorePaths(RepairStorePathsRequest),
     /// Derive a new root set only from names in a durable source generation.
     TransitionRootSet(RootSetTransitionRequest),
+    /// Attest one durable generation without accepting names or store paths.
+    AttestRootSet(RootSetAttestationRequest),
 }
 
 /// Closed privileged responses on the helper-to-broker channel.
@@ -343,6 +377,8 @@ pub enum BrokerHelperResponse {
     RepairCompleted(RepairStorePathsReport),
     /// A path-free generation transition was durably published.
     RootSetTransitioned(RootSetTransitionReport),
+    /// One durable generation was reconstructed and exactly attested.
+    RootSetAttested(RootSetReport),
 }
 
 /// Exact V1 product frame codec.
@@ -492,6 +528,13 @@ impl ProductFrameCodec {
                     handle: handle.as_str(),
                 })?,
             ),
+            CliBrokerRequest::AttestGenerationRoots(handle, generation) => (
+                25,
+                encode_json(&GenerationRootRemovalWire {
+                    handle: handle.as_str(),
+                    generation: generation.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -594,6 +637,14 @@ impl ProductFrameCodec {
             22 => {
                 let wire: GenerationRootRemovalOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::RemoveGenerationRoots(
+                    parse_handle(&wire.handle)?,
+                    GenerationId::new(&wire.generation)
+                        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                )
+            }
+            25 => {
+                let wire: GenerationRootRemovalOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::AttestGenerationRoots(
                     parse_handle(&wire.handle)?,
                     GenerationId::new(&wire.generation)
                         .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
@@ -708,6 +759,20 @@ impl ProductFrameCodec {
                     .to_json_bytes()
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
             ),
+            CliBrokerResponse::GenerationRootsAttested(report) => (
+                25,
+                encode_json(&RootSetReportWire {
+                    reference: report.reference().as_str(),
+                    entry_count: report.entry_count(),
+                    mapping_digest: report.mapping_digest().to_string(),
+                })?,
+            ),
+            CliBrokerResponse::GenerationRootAttestationRefused(code) => (
+                25,
+                encode_json(&GenerationRootAttestationFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -760,6 +825,14 @@ impl ProductFrameCodec {
             return Ok((
                 frame.request_id,
                 CliBrokerResponse::GenerationRootRemovalRefused(code),
+            ));
+        }
+        if frame.method == 25
+            && let Some(code) = decode_generation_root_attestation_failure(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::GenerationRootAttestationRefused(code),
             ));
         }
         let response = match frame.method {
@@ -846,6 +919,19 @@ impl ProductFrameCodec {
                 InstallEvidence::from_json_bytes(frame.payload)
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
             ),
+            25 => {
+                let wire: RootSetReportOwnedWire = decode_json(frame.payload)?;
+                let reference = RootRef::new(&wire.reference)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+                if wire.entry_count == 0 || wire.entry_count > MAX_ROOT_SET_WIRE_ENTRIES {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
+                CliBrokerResponse::GenerationRootsAttested(RootSetReport::new(
+                    reference,
+                    wire.entry_count,
+                    parse_mapping_digest(&wire.mapping_digest)?,
+                ))
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -889,6 +975,13 @@ impl ProductFrameCodec {
                         .collect(),
                 })?,
             ),
+            BrokerHelperRequest::AttestRootSet(request) => (
+                6,
+                encode_json(&RemoveRootSetWire {
+                    owner_uid: request.owner_uid(),
+                    generation: request.generation().as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -920,6 +1013,14 @@ impl ProductFrameCodec {
             5 => BrokerHelperRequest::TransitionRootSet(
                 decode_json::<RootSetTransitionOwnedWire>(frame.payload)?.promote()?,
             ),
+            6 => {
+                let wire: RemoveRootSetOwnedWire = decode_json(frame.payload)?;
+                BrokerHelperRequest::AttestRootSet(RootSetAttestationRequest::new(
+                    wire.owner_uid,
+                    GenerationId::new(&wire.generation)
+                        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                ))
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, request))
@@ -962,6 +1063,14 @@ impl ProductFrameCodec {
                     mapping_digest: report.mapping_digest().to_string(),
                 })?,
             ),
+            BrokerHelperResponse::RootSetAttested(report) => (
+                6,
+                encode_json(&RootSetReportWire {
+                    reference: report.reference().as_str(),
+                    entry_count: report.entry_count(),
+                    mapping_digest: report.mapping_digest().to_string(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -997,6 +1106,19 @@ impl ProductFrameCodec {
             5 => BrokerHelperResponse::RootSetTransitioned(
                 decode_json::<RootSetTransitionReportOwnedWire>(frame.payload)?.promote()?,
             ),
+            6 => {
+                let wire: RootSetReportOwnedWire = decode_json(frame.payload)?;
+                let reference = RootRef::new(&wire.reference)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+                if wire.entry_count == 0 || wire.entry_count > MAX_ROOT_SET_WIRE_ENTRIES {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
+                BrokerHelperResponse::RootSetAttested(RootSetReport::new(
+                    reference,
+                    wire.entry_count,
+                    parse_mapping_digest(&wire.mapping_digest)?,
+                ))
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -1174,6 +1296,16 @@ fn decode_generation_root_removal_failure(
     parse_generation_root_removal_error_code(&wire.error).map(Some)
 }
 
+fn decode_generation_root_attestation_failure(
+    bytes: &[u8],
+) -> Result<Option<GenerationRootAttestationErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<GenerationRootAttestationFailureOwnedWire>(bytes)
+    else {
+        return Ok(None);
+    };
+    parse_generation_root_attestation_error_code(&wire.error).map(Some)
+}
+
 fn parse_build_execution_error_code(value: &str) -> Result<BuildExecutionErrorCode, FrameError> {
     match value {
         "approval_unavailable" => Ok(BuildExecutionErrorCode::ApprovalUnavailable),
@@ -1218,6 +1350,18 @@ fn parse_generation_root_removal_error_code(
         "removal_failed" => Ok(GenerationRootRemovalErrorCode::RemovalFailed),
         "cancelled" => Ok(GenerationRootRemovalErrorCode::Cancelled),
         "authority_unavailable" => Ok(GenerationRootRemovalErrorCode::AuthorityUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+fn parse_generation_root_attestation_error_code(
+    value: &str,
+) -> Result<GenerationRootAttestationErrorCode, FrameError> {
+    match value {
+        "invalid_intent" => Ok(GenerationRootAttestationErrorCode::InvalidIntent),
+        "attestation_failed" => Ok(GenerationRootAttestationErrorCode::AttestationFailed),
+        "cancelled" => Ok(GenerationRootAttestationErrorCode::Cancelled),
+        "authority_unavailable" => Ok(GenerationRootAttestationErrorCode::AuthorityUnavailable),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
     }
 }
@@ -1415,6 +1559,18 @@ struct GenerationRootRemovalFailureWire<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GenerationRootRemovalFailureOwnedWire {
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct GenerationRootAttestationFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GenerationRootAttestationFailureOwnedWire {
     error: String,
 }
 
@@ -2441,18 +2597,55 @@ mod tests {
             ProductFrameCodec::decode_cli_request(&encoded),
             Ok((16, install_evidence))
         );
-        let complete =
-            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
-        let encoded = ProductFrameCodec::encode_cli_request(17, &complete).unwrap();
+        let attestation = CliBrokerRequest::AttestGenerationRoots(
+            OperationHandle(format!("op_{}", "d".repeat(64))),
+            GenerationId::new("gen-0007").unwrap(),
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(17, &attestation).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("generation"));
+        for forbidden in ["ownerUid", "/nix/", "path", "target", "entries"] {
+            assert!(!wire.contains(forbidden), "attestation exposed {forbidden}");
+        }
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&encoded),
-            Ok((17, complete))
+            Ok((17, attestation))
         );
-        let encoded =
-            ProductFrameCodec::encode_cli_response(17, &CliBrokerResponse::Completed).unwrap();
+        let attested = CliBrokerResponse::GenerationRootsAttested(RootSetReport::new(
+            RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap(),
+            1,
+            Digest::from_bytes([0x53; 32]),
+        ));
+        let encoded = ProductFrameCodec::encode_cli_response(17, &attested).unwrap();
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
-            Ok((17, CliBrokerResponse::Completed))
+            Ok((17, attested))
+        );
+        for code in [
+            GenerationRootAttestationErrorCode::InvalidIntent,
+            GenerationRootAttestationErrorCode::AttestationFailed,
+            GenerationRootAttestationErrorCode::Cancelled,
+            GenerationRootAttestationErrorCode::AuthorityUnavailable,
+        ] {
+            let response = CliBrokerResponse::GenerationRootAttestationRefused(code);
+            let encoded = ProductFrameCodec::encode_cli_response(17, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((17, response))
+            );
+        }
+        let complete =
+            CliBrokerRequest::Complete(OperationHandle(format!("op_{}", "f".repeat(64))));
+        let encoded = ProductFrameCodec::encode_cli_request(18, &complete).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((18, complete))
+        );
+        let encoded =
+            ProductFrameCodec::encode_cli_response(18, &CliBrokerResponse::Completed).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((18, CliBrokerResponse::Completed))
         );
 
         let helper = BrokerHelperRequest::PublishRootSet(root_set());
@@ -2499,6 +2692,34 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_helper_response(&encoded),
             Ok((10, transitioned))
+        );
+        let attestation = BrokerHelperRequest::AttestRootSet(RootSetAttestationRequest::new(
+            1001,
+            GenerationId::new("gen-0007").unwrap(),
+        ));
+        let encoded = ProductFrameCodec::encode_helper_request(11, &attestation).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("ownerUid"));
+        assert!(wire.contains("generation"));
+        for forbidden in ["/nix/", "path", "target", "entries"] {
+            assert!(
+                !wire.contains(forbidden),
+                "helper attestation exposed {forbidden}"
+            );
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_helper_request(&encoded),
+            Ok((11, attestation))
+        );
+        let attested = BrokerHelperResponse::RootSetAttested(RootSetReport::new(
+            RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap(),
+            1,
+            Digest::from_bytes([0x54; 32]),
+        ));
+        let encoded = ProductFrameCodec::encode_helper_response(11, &attested).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_helper_response(&encoded),
+            Ok((11, attested))
         );
 
         let started = CliBrokerResponse::Started(OperationHandle(format!("op_{}", "0".repeat(64))));

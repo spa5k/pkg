@@ -87,14 +87,15 @@ pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode,
-    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, ProductFrameCodec,
+    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    GenerationRootTransitionErrorCode, ProductFrameCodec,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
     RemoveRootSetRequest, RepairMode, RepairOutcomeKind, RepairPathOutcome, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetEntry, RootSetIntent, RootSetReport,
-    RootSetTransitionIntent, RootSetTransitionReport, RootSetTransitionRequest,
+    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetEntry, RootSetIntent,
+    RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, RootSetTransitionRequest,
     VerifiedRepairExecutor, VerifiedRepairScope,
 };
 pub use managed::accounts::{

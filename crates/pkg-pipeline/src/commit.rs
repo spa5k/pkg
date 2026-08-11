@@ -1798,6 +1798,43 @@ mod tests {
     }
 
     #[test]
+    fn broker_attestation_receipt_recovers_prepared_generation_without_republication() {
+        let fixture = fixture();
+        let roots = prepare_root_set(
+            fixture.layout.owner_uid(),
+            fixture.generation_id.clone(),
+            [RootCandidate::from_output_root(
+                pkg_core::StorePath::new(STORE).unwrap(),
+            )],
+        )
+        .unwrap();
+        publish_root_set(&roots, &fixture.maintenance).unwrap();
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            mutation_lease(&fixture.layout),
+        )
+        .unwrap();
+        let report = fixture
+            .maintenance
+            .attest_root_set(&pkg_nix::RootSetAttestationRequest::new(
+                fixture.layout.owner_uid(),
+                fixture.generation_id.clone(),
+            ))
+            .unwrap();
+        prepared
+            .activate_published(Some(&report), "attested1")
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(
+            fixture.layout.current_generation().unwrap(),
+            Some(fixture.generation_id)
+        );
+    }
+
+    #[test]
     fn published_activation_refuses_a_same_size_wrong_root_mapping() {
         let fixture = fixture();
         let wrong_roots = prepare_root_set(

@@ -401,6 +401,39 @@ pub struct RemoveRootSetRequest {
     generation: GenerationId,
 }
 
+/// Closed request to attest one service-resolved durable generation root set.
+///
+/// The request contains no root names or store paths. The privileged helper
+/// reconstructs the complete mapping from its trusted durable namespace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootSetAttestationRequest {
+    owner_uid: u32,
+    generation: GenerationId,
+}
+
+impl RootSetAttestationRequest {
+    /// Constructs a path-free root-set attestation request.
+    #[must_use]
+    pub const fn new(owner_uid: u32, generation: GenerationId) -> Self {
+        Self {
+            owner_uid,
+            generation,
+        }
+    }
+
+    /// Returns the authenticated owner uid.
+    #[must_use]
+    pub const fn owner_uid(&self) -> u32 {
+        self.owner_uid
+    }
+
+    /// Returns the service-resolved generation id.
+    #[must_use]
+    pub const fn generation(&self) -> &GenerationId {
+        &self.generation
+    }
+}
+
 impl RemoveRootSetRequest {
     /// Constructs a path-free root-set removal request.
     #[must_use]
@@ -723,10 +756,16 @@ impl RepairStorePathsReport {
     }
 }
 
-/// Privileged object-safe helper boundary with exactly three operations.
+/// Privileged object-safe helper boundary with four closed operations.
 pub trait MaintenanceAdapter: Send + Sync {
     /// Atomically publishes one complete generation root set.
     fn publish_root_set(&self, root_set: &RootSet) -> Result<RootSetReport, MaintenanceError>;
+
+    /// Attests one durable root set without accepting names or store paths.
+    fn attest_root_set(
+        &self,
+        request: &RootSetAttestationRequest,
+    ) -> Result<RootSetReport, MaintenanceError>;
 
     /// Removes exactly one service-resolved generation root set.
     fn remove_root_set(&self, request: &RemoveRootSetRequest) -> Result<(), MaintenanceError>;
@@ -989,6 +1028,30 @@ impl MaintenanceAdapter for CallerMaintenance {
         ))
     }
 
+    fn attest_root_set(
+        &self,
+        request: &RootSetAttestationRequest,
+    ) -> Result<RootSetReport, MaintenanceError> {
+        self.check_caller(request.owner_uid)?;
+        let state = self.session.helper.lock();
+        self.session.check_epoch(&state)?;
+        let root_set = state
+            .root_sets
+            .get(&(request.owner_uid, request.generation.clone()))
+            .ok_or_else(|| MaintenanceError::new(MaintenanceErrorCode::GenerationNotRooted))?;
+        let reference = RootRef::new(&format!(
+            "/nix/var/nix/gcroots/pkg/users/{}/{}",
+            request.owner_uid,
+            request.generation.as_str()
+        ))
+        .map_err(|_| MaintenanceError::new(MaintenanceErrorCode::BackendFailure))?;
+        Ok(RootSetReport::new(
+            reference,
+            root_set.entries.len(),
+            root_set.mapping_digest(),
+        ))
+    }
+
     fn remove_root_set(&self, request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {
         self.check_caller(request.owner_uid)?;
         let mut state = self.session.helper.lock();
@@ -1172,6 +1235,36 @@ mod tests {
         let (_, other) = client(1002);
         assert_eq!(
             other.publish_root_set(&set).unwrap_err().code(),
+            MaintenanceErrorCode::CapabilityMismatch
+        );
+    }
+
+    #[test]
+    fn root_attestation_is_path_free_restart_safe_and_caller_bound() {
+        let (helper, caller) = client(1001);
+        let set = root_set(1001);
+        let published = caller.publish_root_set(&set).unwrap();
+        let request = RootSetAttestationRequest::new(1001, GenerationId::new("gen-0007").unwrap());
+        assert_eq!(caller.attest_root_set(&request).unwrap(), published);
+
+        helper.restart().unwrap();
+        assert_eq!(
+            caller.attest_root_set(&request).unwrap_err().code(),
+            MaintenanceErrorCode::SessionRestarted
+        );
+        let restarted = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(1001);
+        assert_eq!(restarted.attest_root_set(&request).unwrap(), published);
+        assert_eq!(
+            helper
+                .connect(InProcessPeer::authenticated_uid(991))
+                .unwrap()
+                .for_caller(1002)
+                .attest_root_set(&request)
+                .unwrap_err()
+                .code(),
             MaintenanceErrorCode::CapabilityMismatch
         );
     }

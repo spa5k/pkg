@@ -7,7 +7,7 @@ use nix::{
 };
 use pkg_nix::{
     BrokerHelperRequest, BrokerHelperResponse, ProductFrameCodec, RemoveRootSetRequest, RootSet,
-    RootSetReport, RootSetTransitionReport, RootSetTransitionRequest,
+    RootSetAttestationRequest, RootSetReport, RootSetTransitionReport, RootSetTransitionRequest,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
@@ -138,6 +138,43 @@ impl RootHelperClient {
         }
         match response {
             BrokerHelperResponse::RootSetTransitioned(report) => Ok(report),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    /// Attests one durable root set over a fresh authenticated connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport error unless the helper authenticates as
+    /// root and returns the exact correlated attestation response.
+    pub fn attest_root_set(
+        &self,
+        request: &RootSetAttestationRequest,
+    ) -> Result<RootSetReport, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let frame = ProductFrameCodec::encode_helper_request(
+            REQUEST_ID,
+            &BrokerHelperRequest::AttestRootSet(request.clone()),
+        )
+        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
+        write_all_until(&mut stream, &frame, deadline)?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        let response = read_frame(&mut stream, deadline)?;
+        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        if response_id != REQUEST_ID {
+            return Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            ));
+        }
+        match response {
+            BrokerHelperResponse::RootSetAttested(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
             )),
@@ -351,7 +388,8 @@ mod tests {
     use nix::unistd::Uid;
     use pkg_nix::{
         AuthenticatedHelper, GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter,
-        MaintenanceError, RootName, RootSetEntry, RootSetTransitionRequest, StorePath,
+        MaintenanceError, RootName, RootSetAttestationRequest, RootSetEntry,
+        RootSetTransitionRequest, StorePath,
     };
     use std::{error::Error, os::unix::net::UnixListener, thread};
     use tempfile::TempDir;
@@ -391,6 +429,11 @@ mod tests {
                         .remove_root_set(&request)?;
                     Ok(BrokerHelperResponse::RootSetRemoved)
                 }
+                BrokerHelperRequest::AttestRootSet(request) => self
+                    .0
+                    .for_caller(request.owner_uid())
+                    .attest_root_set(&request)
+                    .map(BrokerHelperResponse::RootSetAttested),
                 _ => Err(MaintenanceError::backend_failure()),
             }
         }
@@ -473,6 +516,35 @@ mod tests {
                 .as_str()
                 .ends_with("/1001/gen-0008")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_client_round_trips_only_path_free_root_attestation() -> Result<(), Box<dyn Error>> {
+        let temporary = TempDir::new()?;
+        let endpoint = temporary.path().join("root-helper.sock");
+        let listener = UnixListener::bind(&endpoint)?;
+        let broker_uid = Uid::effective().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let expected = authenticated
+            .for_caller(1001)
+            .publish_root_set(&root_set())?;
+        let worker = thread::spawn(move || {
+            let (stream, _) = listener.accept().map_err(|_| {
+                HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
+            })?;
+            serve_helper_connection(stream, broker_uid, &RootDispatch(authenticated))
+        });
+        let client = RootHelperClient::at(endpoint, broker_uid);
+        let request = RootSetAttestationRequest::new(1001, GenerationId::new("gen-0007")?);
+
+        let report = client.attest_root_set(&request);
+        let served = worker
+            .join()
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
+        assert_eq!(served.map_err(HelperTransportError::code), Ok(()));
+        assert_eq!(report?, expected);
         Ok(())
     }
 

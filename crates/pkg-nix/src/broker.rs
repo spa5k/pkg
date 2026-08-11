@@ -11,9 +11,9 @@ use sha2::{Digest as _, Sha256};
 use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
     BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, InstallEvidence,
-    LocalBuildEngine, NixAdapter, OperationId, ResourceProbe, RootSet, RootSetIntent,
-    RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, RootSetTransitionRequest,
-    VolatileBuildEstimate,
+    LocalBuildEngine, NixAdapter, OperationId, ResourceProbe, RootSet, RootSetAttestationRequest,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
+    RootSetTransitionRequest, VolatileBuildEstimate,
     maintenance::{MaintenanceError, random_secret},
 };
 
@@ -1041,6 +1041,48 @@ impl AuthenticatedCaller {
         self.finish_root_transition(handle, result)
     }
 
+    /// Attests an already durable generation under fresh Activate authority.
+    ///
+    /// The request contains only the authenticated uid and typed generation.
+    /// A shared GC inhibitor remains held after success until local state is
+    /// committed and [`Self::complete`] releases admission.
+    pub fn attest_generation_root_intent(
+        &self,
+        handle: &OperationHandle,
+        generation: crate::GenerationId,
+        attest: impl FnOnce(&RootSetAttestationRequest) -> Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        let request = RootSetAttestationRequest::new(self.uid, generation);
+        {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Activate])?;
+            if state.gc_holder.is_some() || state.gc_inhibitors.contains(handle) {
+                return Err(BrokerError::new(BrokerErrorCode::AdmissionBusy));
+            }
+            let record = self.record_mut(&mut state, handle)?;
+            if record.authority_executing() {
+                return Err(BrokerError::new(
+                    BrokerErrorCode::InvalidAdmissionTransition,
+                ));
+            }
+            record.root_transition_executing = true;
+            state.gc_inhibitors.insert(handle.clone());
+        }
+
+        let result = attest(&request).and_then(|report| {
+            let expected = format!(
+                "/nix/var/nix/gcroots/pkg/users/{}/{}",
+                request.owner_uid(),
+                request.generation().as_str()
+            );
+            if report.reference().as_str() != expected || report.entry_count() == 0 {
+                return Err(MaintenanceError::backend_failure());
+            }
+            Ok(report)
+        });
+        self.finish_root_attestation(handle, result)
+    }
+
     /// Acquires the machine-wide local-build lease for this operation.
     pub fn acquire_build(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
@@ -1422,6 +1464,45 @@ impl AuthenticatedCaller {
             }));
         }
         transition.map_err(|_| BrokerError::new(BrokerErrorCode::RootPublicationFailed))
+    }
+
+    fn finish_root_attestation(
+        &self,
+        handle: &OperationHandle,
+        attestation: Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        let mut state = self.broker.lock();
+        if self.check_epoch(&state).is_err() {
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        let succeeded = state.operations.get(handle).is_some_and(|record| {
+            record.owner_uid == self.uid
+                && record.status == OperationStatus::Running
+                && record.root_transition_executing
+                && !record.cancellation.is_cancelled()
+                && attestation.is_ok()
+        });
+        if let Some(record) = state.operations.get_mut(handle)
+            && record.owner_uid == self.uid
+        {
+            record.root_transition_executing = false;
+            if !succeeded {
+                record.cancellation.cancel();
+                record.status = OperationStatus::Cancelled;
+                record.prepared_build = None;
+                record.awaiting_root_outputs = None;
+                record.install_evidence = None;
+            }
+        }
+        if !succeeded {
+            release_admission(&mut state, &self.broker.build_gate, handle);
+            return Err(BrokerError::new(if attestation.is_err() {
+                BrokerErrorCode::RootPublicationFailed
+            } else {
+                BrokerErrorCode::AdmissionCancelled
+            }));
+        }
+        attestation.map_err(|_| BrokerError::new(BrokerErrorCode::RootPublicationFailed))
     }
 
     fn fail_build_execution(&self, handle: &OperationHandle) {
@@ -2640,6 +2721,37 @@ mod tests {
             })
             .unwrap();
         assert_eq!(report.root_set().entry_count(), 1);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        caller.complete(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn root_attestation_injects_uid_and_holds_inhibit_until_recovery_commit() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+        let report = caller
+            .attest_generation_root_intent(
+                &handle,
+                GenerationId::new("gen-0007").unwrap(),
+                |request| {
+                    assert_eq!(request.owner_uid(), 1001);
+                    assert_eq!(request.generation().as_str(), "gen-0007");
+                    Ok(RootSetReport::new(
+                        RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0007").unwrap(),
+                        1,
+                        Digest::from_bytes([0x35; 32]),
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(report.mapping_digest(), Digest::from_bytes([0x35; 32]));
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
         assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
 

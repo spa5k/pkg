@@ -14,10 +14,11 @@ use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CliBrokerRequest,
     CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
-    GenerationId, GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, MethodKind,
-    NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus,
-    PathInfoReport, ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
-    RootSetTransitionReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    GenerationId, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    GenerationRootTransitionErrorCode, MethodKind, NixAdapter, NixAdapterError,
+    NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport, ProductFrameCodec,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, StorePath,
+    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -59,6 +60,8 @@ pub enum BrokerClientErrorCode {
     GenerationRootTransitionRefused,
     /// Protected generation root removal returned a stable refusal code.
     GenerationRootRemovalRefused,
+    /// Protected generation root attestation returned a stable refusal code.
+    GenerationRootAttestationRefused,
 }
 
 /// Redacted failure from the private broker connector.
@@ -70,6 +73,7 @@ pub struct BrokerClientError {
     build_root_code: Option<BuildRootPublicationErrorCode>,
     generation_root_transition_code: Option<GenerationRootTransitionErrorCode>,
     generation_root_removal_code: Option<GenerationRootRemovalErrorCode>,
+    generation_root_attestation_code: Option<GenerationRootAttestationErrorCode>,
 }
 
 impl BrokerClientError {
@@ -81,6 +85,7 @@ impl BrokerClientError {
             build_root_code: None,
             generation_root_transition_code: None,
             generation_root_removal_code: None,
+            generation_root_attestation_code: None,
         }
     }
 
@@ -92,6 +97,7 @@ impl BrokerClientError {
             build_root_code: None,
             generation_root_transition_code: None,
             generation_root_removal_code: None,
+            generation_root_attestation_code: None,
         }
     }
 
@@ -103,6 +109,7 @@ impl BrokerClientError {
             build_root_code: None,
             generation_root_transition_code: None,
             generation_root_removal_code: None,
+            generation_root_attestation_code: None,
         }
     }
 
@@ -114,6 +121,7 @@ impl BrokerClientError {
             build_root_code: Some(build_root_code),
             generation_root_transition_code: None,
             generation_root_removal_code: None,
+            generation_root_attestation_code: None,
         }
     }
 
@@ -127,6 +135,7 @@ impl BrokerClientError {
             build_root_code: None,
             generation_root_transition_code: Some(generation_root_transition_code),
             generation_root_removal_code: None,
+            generation_root_attestation_code: None,
         }
     }
 
@@ -140,6 +149,21 @@ impl BrokerClientError {
             build_root_code: None,
             generation_root_transition_code: None,
             generation_root_removal_code: Some(generation_root_removal_code),
+            generation_root_attestation_code: None,
+        }
+    }
+
+    const fn generation_root_attestation_refused(
+        generation_root_attestation_code: GenerationRootAttestationErrorCode,
+    ) -> Self {
+        Self {
+            code: BrokerClientErrorCode::GenerationRootAttestationRefused,
+            adapter_code: None,
+            build_execution_code: None,
+            build_root_code: None,
+            generation_root_transition_code: None,
+            generation_root_removal_code: None,
+            generation_root_attestation_code: Some(generation_root_attestation_code),
         }
     }
 
@@ -180,6 +204,14 @@ impl BrokerClientError {
     #[must_use]
     pub const fn generation_root_removal_code(self) -> Option<GenerationRootRemovalErrorCode> {
         self.generation_root_removal_code
+    }
+
+    /// Returns the closed refusal code from protected generation root attestation.
+    #[must_use]
+    pub const fn generation_root_attestation_code(
+        self,
+    ) -> Option<GenerationRootAttestationErrorCode> {
+        self.generation_root_attestation_code
     }
 }
 
@@ -419,6 +451,21 @@ impl BrokerLifecycleClient {
     ) -> Result<pkg_nix::InstallEvidence, BrokerClientError> {
         match self.transact(&CliBrokerRequest::GetInstallEvidence(handle))? {
             CliBrokerResponse::InstallEvidence(evidence) => Ok(evidence),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Attests one already durable caller-owned generation under Activate authority.
+    pub fn attest_generation_roots(
+        &mut self,
+        handle: OperationHandle,
+        generation: GenerationId,
+    ) -> Result<RootSetReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::AttestGenerationRoots(handle, generation))? {
+            CliBrokerResponse::GenerationRootsAttested(report) => Ok(report),
+            CliBrokerResponse::GenerationRootAttestationRefused(code) => {
+                Err(BrokerClientError::generation_root_attestation_refused(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -743,7 +790,10 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::BuildRefused
         | BrokerClientErrorCode::BuildRootRefused
         | BrokerClientErrorCode::GenerationRootTransitionRefused
-        | BrokerClientErrorCode::GenerationRootRemovalRefused => NixAdapterError::OperationFailed,
+        | BrokerClientErrorCode::GenerationRootRemovalRefused
+        | BrokerClientErrorCode::GenerationRootAttestationRefused => {
+            NixAdapterError::OperationFailed
+        }
     }
 }
 
@@ -1213,6 +1263,57 @@ mod tests {
             (
                 1,
                 CliBrokerRequest::RemoveGenerationRoots(handle.clone(), generation)
+            )
+        );
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (2, CliBrokerRequest::Poll(handle))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_attestation_refusal_is_typed_and_keeps_the_connection_usable()
+    -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Activate)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::GenerationRootAttestationRefused(
+                GenerationRootAttestationErrorCode::AttestationFailed,
+            ),
+        )?)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            2,
+            &CliBrokerResponse::Status(OperationStatus::Running),
+        )?)?;
+        let generation = GenerationId::new("gen-0007")?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client
+            .attest_generation_roots(handle.clone(), generation.clone())
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            BrokerClientErrorCode::GenerationRootAttestationRefused
+        );
+        assert_eq!(
+            error.generation_root_attestation_code(),
+            Some(GenerationRootAttestationErrorCode::AttestationFailed)
+        );
+        assert!(client.healthy);
+        assert_eq!(client.poll(handle.clone())?, OperationStatus::Running);
+
+        let deadline = Instant::now()
+            .checked_add(RESPONSE_TIMEOUT)
+            .ok_or_else(|| io::Error::other("deadline overflow"))?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (
+                1,
+                CliBrokerRequest::AttestGenerationRoots(handle.clone(), generation)
             )
         );
         assert_eq!(

@@ -1434,9 +1434,14 @@ flowchart TD
   build-root intent from the prepared candidate. After the authenticated broker publishes those
   roots, its typed receipt finishes local activation without a second privileged publication; a
   receipt for another owner, generation, root count, or canonical name-to-store-path mapping fails
-  closed. The remaining production
-  install slice must add restart attestation for the publication-to-local-journal acknowledgement
-  gap and then connect this transaction to the CLI dispatcher.
+  closed. The restart boundary now has a separate path-free attestation operation. After a lost
+  publication acknowledgement, a fresh Activate handle supplies only the typed generation id; the
+  broker injects the authenticated uid, the helper reloads the complete durable root directory,
+  and the returned receipt binds its canonical root reference, entry count, and exact mapping
+  digest. The broker keeps a GC inhibitor until the recovered local commit completes. Old handles
+  remain restart-invalid, and neither CLI nor broker recovery payloads can supply root names or
+  store paths. The remaining production install slice must connect initial install and this
+  attested recovery transaction to the CLI dispatcher.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

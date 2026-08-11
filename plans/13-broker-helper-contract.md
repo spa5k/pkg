@@ -123,10 +123,11 @@ The raw handle is authorization-sensitive and has redacted `Debug` output.
 ## 5. Privileged maintenance grammar
 
 `MaintenanceAdapter` is object-safe, `Send + Sync`, separate from `NixAdapter`, and exposes
-exactly three borrowed-input methods:
+exactly four borrowed-input methods:
 
 ```rust
 publish_root_set(&RootSet) -> RootSetReport
+attest_root_set(&RootSetAttestationRequest) -> RootSetReport
 remove_root_set(&RemoveRootSetRequest) -> ()
 repair_store_paths(&RepairStorePathsRequest) -> RepairStorePathsReport
 ```
@@ -145,6 +146,10 @@ repair_store_paths(&RepairStorePathsRequest) -> RepairStorePathsReport
   `StorePath`; an empty destination uses the existing no-root-set lifecycle path instead.
 - Removal carries only authenticated owner uid plus canonical `gen-<digits>` id. The helper
   derives the filesystem location.
+- Attestation also carries only authenticated owner uid plus canonical `gen-<digits>` id. The
+  helper reloads the complete durable directory and returns its canonical root reference, entry
+  count, and domain-separated exact name-to-store-path mapping digest. It accepts no expected
+  names, count, digest, or paths from the requester.
 - The repair execution request contains only an opaque helper-issued capability.
 - There is no public helper input for raw filesystem paths, installables, derivations,
   expressions, flakes, argv, options, environment overrides, substituters/keys, output
@@ -325,7 +330,15 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   root set. It then records the normal rooted/activated journal phases,
   retains the staged forest, switches `current`, and finishes the immutable snapshots under the
   same exclusive state lease without publishing roots a second time. Empty generations require
-  neither method 21 nor a fabricated empty receipt. The broker-owned
+  neither method 21 nor a fabricated empty receipt. Closed method 25 handles the distinct crash
+  window where root publication completed but its acknowledgement was lost before the local
+  `rooted` journal phase. A fresh `Activate` handle carries only the prepared generation id. The
+  broker injects the transport-authenticated uid and invokes helper method 6, which reloads the
+  durable root set and returns the same exact root receipt shape. The broker validates the
+  canonical uid/generation root reference and holds a shared GC inhibitor until method 4 completes.
+  The local coordinator accepts the receipt only when its count and full mapping digest match the
+  already prepared generation. No old handle resumes, and no caller supplies root names, expected
+  paths, or an expected digest to the helper. The broker-owned
   in-memory authority now supplies a consistent verified-channel/authenticated-index snapshot,
   rejects rollback, policy downgrade and same-sequence descriptor reuse, drops a stale index on
   channel advance, and accepts a replacement index only when bound to the exact current descriptor.
@@ -437,7 +450,9 @@ verification.
 4. Broker re-authenticates to helper using transport peer identity.
 5. CLI re-authenticates to broker using transport uid and opens a new operation.
 6. Recovery re-reads durable journal/state. Cache-only repair may resume only after a fresh
-   Phase-0 verify; build repair requires fresh preview, approval, plan digest, and capability.
+   Phase-0 verify; build repair requires fresh preview, approval, plan digest, and capability. A
+   prepared generation may finish after a fresh path-free root attestation proves the exact durable
+   mapping and the broker holds a new GC inhibitor through local commit.
 
 There is no resume-by-token path.
 

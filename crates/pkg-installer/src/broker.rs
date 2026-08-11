@@ -11,10 +11,10 @@ use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
     BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest, GenerationId,
-    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
-    InProcessBroker, InProcessCallerPeer, MaintenanceError, MethodKind, NixAdapter,
-    NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
-    RootSetTransitionIntent, RootSetTransitionReport,
+    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
+    MaintenanceError, MethodKind, NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
 use std::{
@@ -211,6 +211,13 @@ trait RootAuthorityDispatch: Send + Sync {
         handle: &OperationHandle,
         generation: GenerationId,
     ) -> Result<(), BrokerErrorCode>;
+
+    fn attest(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        generation: GenerationId,
+    ) -> Result<RootSetReport, BrokerErrorCode>;
 }
 
 impl RootAuthorityDispatch for RootHelperClient {
@@ -251,6 +258,20 @@ impl RootAuthorityDispatch for RootHelperClient {
         caller
             .remove_generation_root_intent(handle, generation, |request| {
                 self.remove_root_set(request)
+                    .map_err(|_| MaintenanceError::backend_failure())
+            })
+            .map_err(pkg_nix::BrokerError::code)
+    }
+
+    fn attest(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        generation: GenerationId,
+    ) -> Result<RootSetReport, BrokerErrorCode> {
+        caller
+            .attest_generation_root_intent(handle, generation, |request| {
+                self.attest_root_set(request)
                     .map_err(|_| MaintenanceError::backend_failure())
             })
             .map_err(pkg_nix::BrokerError::code)
@@ -338,10 +359,7 @@ fn dispatch_request(
             .poll(&handle)
             .map(CliBrokerResponse::Status)
             .map_err(|_| ()),
-        CliBrokerRequest::Cancel(handle) => {
-            caller.cancel(&handle).map_err(|_| ())?;
-            Ok(CliBrokerResponse::Cancelled)
-        }
+        CliBrokerRequest::Cancel(handle) => cancel_response(caller, &handle),
         CliBrokerRequest::Complete(handle) => complete_response(caller, &handle),
         CliBrokerRequest::Version(handle) => {
             caller
@@ -426,6 +444,65 @@ fn dispatch_request(
         CliBrokerRequest::RemoveGenerationRoots(handle, generation) => Ok(
             generation_root_removal_response(roots, caller, &handle, generation),
         ),
+        CliBrokerRequest::AttestGenerationRoots(handle, generation) => Ok(
+            generation_root_attestation_response(roots, caller, &handle, generation),
+        ),
+    }
+}
+
+fn cancel_response(
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller.cancel(handle).map_err(|_| ())?;
+    Ok(CliBrokerResponse::Cancelled)
+}
+
+fn generation_root_attestation_response(
+    roots: Option<&dyn RootAuthorityDispatch>,
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    generation: GenerationId,
+) -> CliBrokerResponse {
+    roots.map_or(
+        CliBrokerResponse::GenerationRootAttestationRefused(
+            GenerationRootAttestationErrorCode::AuthorityUnavailable,
+        ),
+        |roots| match roots.attest(caller, handle, generation) {
+            Ok(report) => CliBrokerResponse::GenerationRootsAttested(report),
+            Err(code) => CliBrokerResponse::GenerationRootAttestationRefused(
+                map_generation_root_attestation_error(code),
+            ),
+        },
+    )
+}
+
+const fn map_generation_root_attestation_error(
+    code: BrokerErrorCode,
+) -> GenerationRootAttestationErrorCode {
+    match code {
+        BrokerErrorCode::InvalidAdmissionTransition => {
+            GenerationRootAttestationErrorCode::InvalidIntent
+        }
+        BrokerErrorCode::RootPublicationFailed => {
+            GenerationRootAttestationErrorCode::AttestationFailed
+        }
+        BrokerErrorCode::AdmissionCancelled => GenerationRootAttestationErrorCode::Cancelled,
+        BrokerErrorCode::UnauthenticatedCaller
+        | BrokerErrorCode::SessionRestarted
+        | BrokerErrorCode::InvalidOperationHandle
+        | BrokerErrorCode::OperationExpired
+        | BrokerErrorCode::AdmissionBusy
+        | BrokerErrorCode::InvalidBuildPlan
+        | BrokerErrorCode::BuildApprovalMismatch
+        | BrokerErrorCode::BuildApprovalUnavailable
+        | BrokerErrorCode::BuildApprovalInvalidated
+        | BrokerErrorCode::BuildResourcePreflightFailed
+        | BrokerErrorCode::BuildExecutionFailed
+        | BrokerErrorCode::InvalidChildPolicy
+        | BrokerErrorCode::EntropyUnavailable => {
+            GenerationRootAttestationErrorCode::AuthorityUnavailable
+        }
     }
 }
 
@@ -995,6 +1072,15 @@ mod tests {
         ) -> Result<(), BrokerErrorCode> {
             Err(self.0)
         }
+
+        fn attest(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _generation: GenerationId,
+        ) -> Result<RootSetReport, BrokerErrorCode> {
+            Err(self.0)
+        }
     }
 
     struct AcceptingRootRemoval;
@@ -1031,6 +1117,15 @@ mod tests {
                     Ok(())
                 })
                 .map_err(pkg_nix::BrokerError::code)
+        }
+
+        fn attest(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _generation: GenerationId,
+        ) -> Result<RootSetReport, BrokerErrorCode> {
+            Err(BrokerErrorCode::InvalidAdmissionTransition)
         }
     }
 
@@ -1388,6 +1483,63 @@ mod tests {
         );
         assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+    }
+
+    #[test]
+    fn generation_root_attestation_dispatch_has_closed_failures() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+        let generation = || GenerationId::new("gen-0007").unwrap();
+
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::AttestGenerationRoots(handle.clone(), generation()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::GenerationRootAttestationRefused(
+                GenerationRootAttestationErrorCode::AuthorityUnavailable,
+            ))
+        );
+        for (broker_code, wire_code) in [
+            (
+                BrokerErrorCode::InvalidAdmissionTransition,
+                GenerationRootAttestationErrorCode::InvalidIntent,
+            ),
+            (
+                BrokerErrorCode::RootPublicationFailed,
+                GenerationRootAttestationErrorCode::AttestationFailed,
+            ),
+            (
+                BrokerErrorCode::AdmissionCancelled,
+                GenerationRootAttestationErrorCode::Cancelled,
+            ),
+            (
+                BrokerErrorCode::SessionRestarted,
+                GenerationRootAttestationErrorCode::AuthorityUnavailable,
+            ),
+        ] {
+            let authority = RefusingRootAuthority(broker_code);
+            assert_eq!(
+                dispatch_request(
+                    &caller,
+                    CliBrokerRequest::AttestGenerationRoots(handle.clone(), generation()),
+                    None,
+                    None,
+                    None,
+                    Some(&authority),
+                ),
+                Ok(CliBrokerResponse::GenerationRootAttestationRefused(
+                    wire_code
+                ))
+            );
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
     ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest, RootSet,
-    RootSetTransitionRequest, VerifiedRepairScope,
+    RootSetAttestationRequest, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use pkg_store::{StateLayout, authorize_generation_root_removal};
 use std::{
@@ -189,6 +189,18 @@ impl LinuxHelperSession {
         )
     }
 
+    fn attest(
+        &self,
+        request: &RootSetAttestationRequest,
+    ) -> Result<pkg_nix::RootSetReport, MaintenanceError> {
+        let _transaction = lock_recover(&self.root_transactions);
+        let durable = self
+            .roots
+            .load(request.owner_uid(), request.generation())
+            .map_err(|_| platform_failure())?;
+        self.caller(request.owner_uid()).publish_root_set(&durable)
+    }
+
     fn issue(
         &self,
         scope: &VerifiedRepairScope,
@@ -262,6 +274,9 @@ impl BrokerHelperDispatch for LinuxHelperSession {
             BrokerHelperRequest::TransitionRootSet(request) => self
                 .transition(&request)
                 .map(BrokerHelperResponse::RootSetTransitioned),
+            BrokerHelperRequest::AttestRootSet(request) => self
+                .attest(&request)
+                .map(BrokerHelperResponse::RootSetAttested),
         }
     }
 }
@@ -717,6 +732,33 @@ mod tests {
             restarted.dispatch(BrokerHelperRequest::IssueRepairCapability(scope))?,
             BrokerHelperResponse::RepairCapabilityIssued(_)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn helper_restart_attests_exact_durable_root_without_path_input() -> Result<(), Box<dyn Error>>
+    {
+        let scratch = Scratch::new()?;
+        let broker_uid = Uid::current().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
+        let first = LinuxHelperSession::new_for_test(authenticated, root_store.clone());
+        let roots = roots()?;
+        let published = first.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
+        let BrokerHelperResponse::RootSetPublished(published) = published else {
+            return Err(io::Error::other("unexpected helper response").into());
+        };
+
+        let replacement = InProcessHelper::new(broker_uid)?;
+        let authenticated = replacement.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let restarted = LinuxHelperSession::new_for_test(authenticated, root_store);
+        let request = RootSetAttestationRequest::new(roots.owner_uid(), roots.generation().clone());
+        let attested = restarted.dispatch(BrokerHelperRequest::AttestRootSet(request))?;
+        let BrokerHelperResponse::RootSetAttested(attested) = attested else {
+            return Err(io::Error::other("unexpected helper response").into());
+        };
+        assert_eq!(attested, published);
         Ok(())
     }
 
