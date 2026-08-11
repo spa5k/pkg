@@ -475,8 +475,11 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
        reverse cleanup sequence. Volume-creation intent permits recovery to discover
        the sole exact fixed-identity volume if a crash precedes UUID publication, and
        a durable committed terminal phase distinguishes success from rollback.
-       The durable root-only journal file adapter still must fsync each snapshot and
-       remove it only after successful commit or complete recovery.
+       The closed journal storage validates an existing root:wheel `0700` no-ACL
+       parent, creates root:wheel `0600` no-ACL snapshots without clobbering, atomically
+       replaces and `F_FULLFSYNC`s every phase plus the parent directory, refuses symlinks and
+       hard links, reconciles the narrow complete-file hard-link crash window, and
+       removes state durably only after successful commit or complete recovery.
        The synthetic-file planner is bounded and byte-preserving: it appends only the
        exact `nix` line, treats that exact single line as idempotent, preserves unrelated
        bytes, and refuses aliases, targets, trailing whitespace, CRLF, duplicates,

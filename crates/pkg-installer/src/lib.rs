@@ -13,6 +13,8 @@ mod repair;
 mod root_client;
 mod service;
 mod store_journal;
+#[cfg(target_os = "macos")]
+mod store_journal_file;
 mod store_mount;
 mod store_provision;
 mod synthetic_conf;
@@ -61,6 +63,8 @@ pub use store_journal::{
     MacOsStoreJournalError, MacOsStoreJournalErrorCode, MacOsStoreJournalPhase,
     MacOsStoreProvisionJournal, MacOsStoreRollbackAction,
 };
+#[cfg(target_os = "macos")]
+pub use store_journal_file::{MacOsStoreJournalFileError, MacOsStoreJournalStorage};
 pub use store_mount::{
     MacOsStoreMountError, MacOsStoreMountErrorCode, MacOsStoreMountOutcome,
     MacOsStoreRecordOutcome, publish_macos_store_volume_record, run_macos_store_mount,

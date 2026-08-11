@@ -877,9 +877,11 @@ flowchart TD
   mapping. A strict bounded secret-free write-ahead journal now brackets every mutation
   with monotonic intent/completion phases, closes the pre-UUID APFS crash window, records
   a durable committed terminal phase, and derives the fixed reverse rollback sequence
-  without ever serializing the unlock secret. The production system adapter must still
-  implement the durable journal file
-  replacement and APFS/keychain operations and provide real-host evidence.
+  without ever serializing the unlock secret. Its closed root-only storage now validates
+  the exact private parent/file contract, durably creates and atomically replaces every
+  snapshot using macOS `F_FULLFSYNC`, recovers the initial no-clobber publication crash window, and durably removes
+  completed state. The production system adapter must still implement APFS/keychain and
+  synthetic-file operations and provide real-host evidence.
   S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
   Therefore PR-28 is **not marked merge-complete** until production APFS/keychain/
