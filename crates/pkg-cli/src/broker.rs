@@ -16,8 +16,8 @@ use pkg_nix::{
     CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
     GenerationRootTransitionErrorCode, MethodKind, NixAdapter, NixAdapterError,
     NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport, ProductFrameCodec,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, StorePath, SubstituteReport,
-    VerifyReport, VerifyRequest, VersionInfo,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, StorePath,
+    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -402,7 +402,7 @@ impl BrokerLifecycleClient {
         &mut self,
         handle: OperationHandle,
         intent: RootSetTransitionIntent,
-    ) -> Result<RootSetReport, BrokerClientError> {
+    ) -> Result<RootSetTransitionReport, BrokerClientError> {
         match self.transact(&CliBrokerRequest::TransitionGenerationRoots(handle, intent))? {
             CliBrokerResponse::GenerationRootsTransitioned(report) => Ok(report),
             CliBrokerResponse::GenerationRootTransitionRefused(code) => {

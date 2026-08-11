@@ -375,6 +375,23 @@ impl RootSet {
     pub fn entries(&self) -> &[RootSetEntry] {
         &self.entries
     }
+
+    /// Digests the complete canonical name-to-store-path mapping without exposing its paths.
+    #[must_use]
+    pub fn mapping_digest(&self) -> Digest {
+        let mut hasher = Sha256::new();
+        hasher.update(b"pkg-root-set-mapping-v1\0");
+        hasher.update((self.entries.len() as u64).to_be_bytes());
+        for entry in &self.entries {
+            let name = entry.name().as_str().as_bytes();
+            let target = entry.target().as_str().as_bytes();
+            hasher.update((name.len() as u64).to_be_bytes());
+            hasher.update(name);
+            hasher.update((target.len() as u64).to_be_bytes());
+            hasher.update(target);
+        }
+        Digest::from_bytes(hasher.finalize().into())
+    }
 }
 
 /// Closed request to remove one service-resolved generation root set.
@@ -412,6 +429,55 @@ impl RemoveRootSetRequest {
 pub struct RootSetReport {
     reference: RootRef,
     entry_count: usize,
+}
+
+/// Authenticated receipt binding a root transition to its exact retained names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootSetTransitionReport {
+    root_set: RootSetReport,
+    retained_names: Vec<RootName>,
+    mapping_digest: Digest,
+}
+
+impl RootSetTransitionReport {
+    /// Validates a destination receipt against its exact canonical retained names.
+    pub fn new(
+        root_set: RootSetReport,
+        retained_names: Vec<RootName>,
+        mapping_digest: Digest,
+    ) -> Result<Self, MaintenanceError> {
+        if retained_names.is_empty()
+            || retained_names.len() != root_set.entry_count()
+            || retained_names.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(MaintenanceError::new(
+                MaintenanceErrorCode::ValidationFailure,
+            ));
+        }
+        Ok(Self {
+            root_set,
+            retained_names,
+            mapping_digest,
+        })
+    }
+
+    /// Returns the canonical destination root report.
+    #[must_use]
+    pub const fn root_set(&self) -> &RootSetReport {
+        &self.root_set
+    }
+
+    /// Returns the exact canonical retained names authenticated by the helper response.
+    #[must_use]
+    pub fn retained_names(&self) -> &[RootName] {
+        &self.retained_names
+    }
+
+    /// Returns a domain-separated digest of the complete canonical name-to-store-path mapping.
+    #[must_use]
+    pub const fn mapping_digest(&self) -> Digest {
+        self.mapping_digest
+    }
 }
 
 impl RootSetReport {

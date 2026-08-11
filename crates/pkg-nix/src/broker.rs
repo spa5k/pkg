@@ -12,7 +12,7 @@ use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
     BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, LocalBuildEngine, NixAdapter,
     OperationId, ResourceProbe, RootSet, RootSetIntent, RootSetReport, RootSetTransitionIntent,
-    RootSetTransitionRequest, VolatileBuildEstimate,
+    RootSetTransitionReport, RootSetTransitionRequest, VolatileBuildEstimate,
     maintenance::{MaintenanceError, random_secret},
 };
 
@@ -972,8 +972,10 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         intent: RootSetTransitionIntent,
-        transition: impl FnOnce(RootSetTransitionRequest) -> Result<RootSetReport, MaintenanceError>,
-    ) -> Result<RootSetReport, BrokerError> {
+        transition: impl FnOnce(
+            RootSetTransitionRequest,
+        ) -> Result<RootSetTransitionReport, MaintenanceError>,
+    ) -> Result<RootSetTransitionReport, BrokerError> {
         let request = intent
             .into_request(self.uid)
             .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
@@ -1299,8 +1301,8 @@ impl AuthenticatedCaller {
     fn finish_root_transition(
         &self,
         handle: &OperationHandle,
-        transition: Result<RootSetReport, MaintenanceError>,
-    ) -> Result<RootSetReport, BrokerError> {
+        transition: Result<RootSetTransitionReport, MaintenanceError>,
+    ) -> Result<RootSetTransitionReport, BrokerError> {
         let mut state = self.broker.lock();
         if self.check_epoch(&state).is_err() {
             return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
@@ -2451,13 +2453,17 @@ mod tests {
                 assert_eq!(request.source_generation().as_str(), "gen-0007");
                 assert_eq!(request.destination_generation().as_str(), "gen-0008");
                 assert_eq!(request.retained_names()[0].as_str(), "ripgrep-out");
-                Ok(RootSetReport::new(
-                    RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
-                    1,
-                ))
+                RootSetTransitionReport::new(
+                    RootSetReport::new(
+                        RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
+                        1,
+                    ),
+                    request.retained_names().to_vec(),
+                    Digest::from_bytes([0x31; 32]),
+                )
             })
             .unwrap();
-        assert_eq!(report.entry_count(), 1);
+        assert_eq!(report.root_set().entry_count(), 1);
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
         assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
 
@@ -2533,15 +2539,19 @@ mod tests {
                 release_rx
                     .recv()
                     .map_err(|_| MaintenanceError::backend_failure())?;
-                Ok(RootSetReport::new(
-                    RootRef::new(&format!(
-                        "/nix/var/nix/gcroots/pkg/users/{}/{}",
-                        request.owner_uid(),
-                        request.destination_generation().as_str()
-                    ))
-                    .unwrap(),
-                    request.retained_names().len(),
-                ))
+                RootSetTransitionReport::new(
+                    RootSetReport::new(
+                        RootRef::new(&format!(
+                            "/nix/var/nix/gcroots/pkg/users/{}/{}",
+                            request.owner_uid(),
+                            request.destination_generation().as_str()
+                        ))
+                        .unwrap(),
+                        request.retained_names().len(),
+                    ),
+                    request.retained_names().to_vec(),
+                    Digest::from_bytes([0x32; 32]),
+                )
             })
         });
         entered_rx.recv().unwrap();

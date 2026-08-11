@@ -14,8 +14,8 @@ use crate::broker::{BrokerOperationKind, OperationHandle, OperationStatus};
 use crate::maintenance::{
     GenerationId, MaintenanceCapability, RemoveRootSetRequest, RepairMode, RepairOutcomeKind,
     RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetEntry,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionRequest,
-    VerifiedRepairScope,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
+    RootSetTransitionRequest, VerifiedRepairScope,
 };
 use crate::{
     ApprovalSource, BuildPreview, BuildReport, DerivationPlanReport, EvaluateDerivationRequest,
@@ -153,7 +153,7 @@ pub enum CliBrokerResponse {
     /// Stable redacted refusal from protected root publication.
     BuildRootPublicationRefused(BuildRootPublicationErrorCode),
     /// Authenticated generation root transition completed.
-    GenerationRootsTransitioned(RootSetReport),
+    GenerationRootsTransitioned(RootSetTransitionReport),
     /// Stable redacted refusal from protected generation root transition.
     GenerationRootTransitionRefused(GenerationRootTransitionErrorCode),
     /// Redacted adapter failure for one exposed typed method.
@@ -302,7 +302,7 @@ pub enum BrokerHelperResponse {
     /// Fixed repair execution completed with sanitized outcomes.
     RepairCompleted(RepairStorePathsReport),
     /// A path-free generation transition was durably published.
-    RootSetTransitioned(RootSetReport),
+    RootSetTransitioned(RootSetTransitionReport),
 }
 
 /// Exact V1 product frame codec.
@@ -607,9 +607,15 @@ impl ProductFrameCodec {
             ),
             CliBrokerResponse::GenerationRootsTransitioned(report) => (
                 21,
-                encode_json(&RootSetReportWire {
-                    reference: report.reference().as_str(),
-                    entry_count: report.entry_count(),
+                encode_json(&RootSetTransitionReportWire {
+                    reference: report.root_set().reference().as_str(),
+                    entry_count: report.root_set().entry_count(),
+                    retained_names: report
+                        .retained_names()
+                        .iter()
+                        .map(RootName::as_str)
+                        .collect(),
+                    mapping_digest: report.mapping_digest().to_string(),
                 })?,
             ),
             CliBrokerResponse::GenerationRootTransitionRefused(code) => (
@@ -732,18 +738,9 @@ impl ProductFrameCodec {
                     wire.entry_count,
                 ))
             }
-            21 => {
-                let wire: RootSetReportOwnedWire = decode_json(frame.payload)?;
-                let reference = RootRef::new(&wire.reference)
-                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
-                if wire.entry_count == 0 || wire.entry_count > MAX_ROOT_SET_WIRE_ENTRIES {
-                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
-                }
-                CliBrokerResponse::GenerationRootsTransitioned(RootSetReport::new(
-                    reference,
-                    wire.entry_count,
-                ))
-            }
+            21 => CliBrokerResponse::GenerationRootsTransitioned(
+                decode_json::<RootSetTransitionReportOwnedWire>(frame.payload)?.promote()?,
+            ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -848,9 +845,15 @@ impl ProductFrameCodec {
             }
             BrokerHelperResponse::RootSetTransitioned(report) => (
                 5,
-                encode_json(&RootSetReportWire {
-                    reference: report.reference().as_str(),
-                    entry_count: report.entry_count(),
+                encode_json(&RootSetTransitionReportWire {
+                    reference: report.root_set().reference().as_str(),
+                    entry_count: report.root_set().entry_count(),
+                    retained_names: report
+                        .retained_names()
+                        .iter()
+                        .map(RootName::as_str)
+                        .collect(),
+                    mapping_digest: report.mapping_digest().to_string(),
                 })?,
             ),
         };
@@ -884,18 +887,9 @@ impl ProductFrameCodec {
             4 => BrokerHelperResponse::RepairCompleted(
                 decode_json::<RepairReportOwnedWire>(frame.payload)?.promote()?,
             ),
-            5 => {
-                let wire: RootSetReportOwnedWire = decode_json(frame.payload)?;
-                let reference = RootRef::new(&wire.reference)
-                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
-                if wire.entry_count == 0 || wire.entry_count > MAX_ROOT_SET_WIRE_ENTRIES {
-                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
-                }
-                BrokerHelperResponse::RootSetTransitioned(RootSetReport::new(
-                    reference,
-                    wire.entry_count,
-                ))
-            }
+            5 => BrokerHelperResponse::RootSetTransitioned(
+                decode_json::<RootSetTransitionReportOwnedWire>(frame.payload)?.promote()?,
+            ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -1826,6 +1820,49 @@ struct RootSetReportOwnedWire {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootSetTransitionReportWire<'a> {
+    reference: &'a str,
+    entry_count: usize,
+    retained_names: Vec<&'a str>,
+    mapping_digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootSetTransitionReportOwnedWire {
+    reference: String,
+    entry_count: usize,
+    retained_names: Vec<String>,
+    mapping_digest: String,
+}
+
+impl RootSetTransitionReportOwnedWire {
+    fn promote(self) -> Result<RootSetTransitionReport, FrameError> {
+        if self.entry_count == 0 || self.entry_count > MAX_ROOT_SET_WIRE_ENTRIES {
+            return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+        }
+        let reference = RootRef::new(&self.reference)
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+        let names = self
+            .retained_names
+            .into_iter()
+            .map(|name| {
+                RootName::new(&name).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mapping_digest = Digest::from_str(&self.mapping_digest)
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+        RootSetTransitionReport::new(
+            RootSetReport::new(reference, self.entry_count),
+            names,
+            mapping_digest,
+        )
+        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RepairReportWire<'a> {
     mode: &'a str,
     outcomes: Vec<RepairOutcomeWire<'a>>,
@@ -2144,10 +2181,17 @@ mod tests {
             ProductFrameCodec::decode_cli_request(&encoded),
             Ok((13, transition))
         );
-        let transitioned = CliBrokerResponse::GenerationRootsTransitioned(RootSetReport::new(
-            RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
-            1,
-        ));
+        let transitioned = CliBrokerResponse::GenerationRootsTransitioned(
+            RootSetTransitionReport::new(
+                RootSetReport::new(
+                    RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
+                    1,
+                ),
+                vec![RootName::new("hello-out").unwrap()],
+                Digest::from_bytes([0x51; 32]),
+            )
+            .unwrap(),
+        );
         let encoded = ProductFrameCodec::encode_cli_response(13, &transitioned).unwrap();
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
@@ -2208,10 +2252,17 @@ mod tests {
             Ok((10, transition))
         );
 
-        let transitioned = BrokerHelperResponse::RootSetTransitioned(RootSetReport::new(
-            RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
-            1,
-        ));
+        let transitioned = BrokerHelperResponse::RootSetTransitioned(
+            RootSetTransitionReport::new(
+                RootSetReport::new(
+                    RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
+                    1,
+                ),
+                vec![RootName::new("hello-out").unwrap()],
+                Digest::from_bytes([0x52; 32]),
+            )
+            .unwrap(),
+        );
         let encoded = ProductFrameCodec::encode_helper_response(10, &transitioned).unwrap();
         assert_eq!(
             ProductFrameCodec::decode_helper_response(&encoded),

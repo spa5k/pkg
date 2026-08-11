@@ -132,13 +132,14 @@ impl LinuxHelperSession {
     fn transition(
         &self,
         request: &RootSetTransitionRequest,
-    ) -> Result<pkg_nix::RootSetReport, MaintenanceError> {
+    ) -> Result<pkg_nix::RootSetTransitionReport, MaintenanceError> {
         let _transaction = lock_recover(&self.root_transactions);
         let source = self
             .roots
             .load(request.owner_uid(), request.source_generation())
             .map_err(|_| platform_failure())?;
         let destination = request.derive_from(&source)?;
+        let mapping_digest = destination.mapping_digest();
         let caller = self.caller(request.owner_uid());
         match self
             .roots
@@ -146,7 +147,12 @@ impl LinuxHelperSession {
             .map_err(|_| platform_failure())?
         {
             Some(existing) if existing == destination => {
-                return caller.publish_root_set(&destination);
+                let report = caller.publish_root_set(&destination)?;
+                return pkg_nix::RootSetTransitionReport::new(
+                    report,
+                    request.retained_names().to_vec(),
+                    mapping_digest,
+                );
             }
             Some(_) => return Err(platform_failure()),
             None => {}
@@ -160,7 +166,11 @@ impl LinuxHelperSession {
             let _ = caller.remove_root_set(&removal);
             return Err(platform_failure());
         }
-        Ok(report)
+        pkg_nix::RootSetTransitionReport::new(
+            report,
+            request.retained_names().to_vec(),
+            mapping_digest,
+        )
     }
 
     fn issue(
@@ -697,7 +707,8 @@ mod tests {
         let BrokerHelperResponse::RootSetTransitioned(report) = response else {
             return Err(io::Error::other("unexpected helper response").into());
         };
-        assert_eq!(report.entry_count(), 1);
+        assert_eq!(report.root_set().entry_count(), 1);
+        assert_eq!(report.retained_names()[0].as_str(), "ripgrep-out");
         let destination = root_store.load(source.owner_uid(), &GenerationId::new("gen-0004")?)?;
         assert_eq!(destination.entries().len(), 1);
         assert_eq!(destination.entries()[0].name().as_str(), "ripgrep-out");

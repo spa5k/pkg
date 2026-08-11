@@ -4,7 +4,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 
 use pkg_core::identity::StorePath;
-use pkg_nix::{GenerationId, MaintenanceAdapter};
+use pkg_nix::{GenerationId, MaintenanceAdapter, RootSetTransitionReport};
 
 use crate::activate::{ActivationPlan, verify_activation};
 use crate::roots::{PreparedRootSet, RootError, publish_root_set};
@@ -333,7 +333,75 @@ pub fn activate_generation(
     prepared_roots: Option<&PreparedRootSet>,
     helper: &dyn MaintenanceAdapter,
     nonce: &str,
+    observe: impl FnMut(ActivationEvent) -> Result<(), CurrentError>,
+) -> Result<(), CurrentError> {
+    activate_generation_with(
+        layout,
+        generation,
+        plan,
+        prepared_roots,
+        nonce,
+        observe,
+        || {
+            if let Some(prepared_roots) = prepared_roots {
+                publish_root_set(prepared_roots, helper)?;
+            }
+            Ok(())
+        },
+    )
+}
+
+/// Activates after the authenticated broker has already transitioned destination roots.
+pub fn activate_transitioned_generation(
+    layout: &StateLayout,
+    generation: &GenerationId,
+    plan: &ActivationPlan,
+    prepared_roots: Option<&PreparedRootSet>,
+    report: Option<&RootSetTransitionReport>,
+    nonce: &str,
+    observe: impl FnMut(ActivationEvent) -> Result<(), CurrentError>,
+) -> Result<(), CurrentError> {
+    match (prepared_roots, report) {
+        (Some(prepared_roots), Some(report)) => {
+            let expected = format!(
+                "/nix/var/nix/gcroots/pkg/users/{}/{}",
+                layout.owner_uid(),
+                generation.as_str()
+            );
+            if report.root_set().reference().as_str() != expected
+                || report.root_set().entry_count() != prepared_roots.request().entries().len()
+                || !report.retained_names().iter().eq(prepared_roots
+                    .request()
+                    .entries()
+                    .iter()
+                    .map(|entry| entry.name()))
+                || report.mapping_digest() != prepared_roots.request().mapping_digest()
+            {
+                return Err(CurrentError::RootPublication);
+            }
+        }
+        (None, None) if plan.output_roots().is_empty() => {}
+        _ => return Err(CurrentError::RootPublication),
+    }
+    activate_generation_with(
+        layout,
+        generation,
+        plan,
+        prepared_roots,
+        nonce,
+        observe,
+        || Ok(()),
+    )
+}
+
+fn activate_generation_with(
+    layout: &StateLayout,
+    generation: &GenerationId,
+    plan: &ActivationPlan,
+    prepared_roots: Option<&PreparedRootSet>,
+    nonce: &str,
     mut observe: impl FnMut(ActivationEvent) -> Result<(), CurrentError>,
+    publish: impl FnOnce() -> Result<(), RootError>,
 ) -> Result<(), CurrentError> {
     layout.revalidate()?;
     let activations = layout.state_root.join("activations");
@@ -359,9 +427,7 @@ pub fn activate_generation(
     }
     verify_activation(&staging, plan).map_err(|_| CurrentError::UnsafePath)?;
 
-    if let Some(prepared_roots) = prepared_roots {
-        publish_root_set(prepared_roots, helper)?;
-    }
+    publish()?;
     observe(ActivationEvent::Rooted)?;
     fs::rename(&staging, &retained)?;
     sync_dir(&activations)?;

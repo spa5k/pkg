@@ -7,11 +7,15 @@ use std::str::FromStr;
 
 use pkg_core::state::{Digest, Generation, LockedState, Manifest, body_digest, canonical_digest};
 use pkg_core::{GenerationSnapshot, History, lifecycle::LifecycleState};
-use pkg_nix::{GenerationId, MaintenanceAdapter, RemoveRootSetRequest};
+use pkg_nix::{
+    GenerationId, MaintenanceAdapter, RemoveRootSetRequest, RootSetTransitionIntent,
+    RootSetTransitionReport,
+};
 use pkg_store::{
     ActivationEvent, ActivationPlan, LeaseMode, PreparedRootSet, RootCandidate, StateJournal,
-    StateJournalError, StateLayout, StateLease, activate_generation, prepare_root_set,
-    publish_root_set, verify_recorded_activation,
+    StateJournalError, StateLayout, StateLease, activate_generation,
+    activate_transitioned_generation, prepare_root_set, publish_root_set,
+    verify_recorded_activation,
 };
 use serde_json::{Value, json};
 
@@ -357,6 +361,78 @@ impl PreparedGeneration {
             &self.plan,
             self.roots.as_ref(),
             helper,
+            nonce,
+            |event| {
+                let row = match event {
+                    ActivationEvent::Rooted => Some(("commit", "rooted")),
+                    ActivationEvent::ForestRetained => None,
+                    ActivationEvent::Activated => Some(("activate", "activated")),
+                };
+                if let Some((phase, status)) = row {
+                    append_phase(&journal_layout, &self.lease, &op_id, phase, status, []).map_err(
+                        |_| match event {
+                            ActivationEvent::Activated => pkg_store::CurrentError::PostActivation,
+                            _ => pkg_store::CurrentError::Filesystem(std::io::Error::other(
+                                "journal append failed",
+                            )),
+                        },
+                    )?;
+                }
+                Ok(())
+            },
+        )
+        .map_err(|error| {
+            if matches!(error, pkg_store::CurrentError::PostActivation) {
+                CommitError::ActivatedNeedsRecovery
+            } else {
+                CommitError::ActivationFailed
+            }
+        })?;
+        Ok(ActivatedGeneration {
+            layout: self.layout,
+            candidate: self.candidate,
+            _lease: self.lease,
+        })
+    }
+
+    /// Builds the path-free broker intent for a state-only transition.
+    pub fn root_transition_intent(
+        &self,
+        source_generation: GenerationId,
+    ) -> Result<Option<RootSetTransitionIntent>, CommitError> {
+        let Some(roots) = self.roots.as_ref() else {
+            return Ok(None);
+        };
+        RootSetTransitionIntent::new(
+            source_generation,
+            GenerationId::new(self.candidate.generation().id())
+                .map_err(|_| CommitError::InvalidCandidate)?,
+            roots
+                .request()
+                .entries()
+                .iter()
+                .map(|entry| entry.name().clone())
+                .collect(),
+        )
+        .map(Some)
+        .map_err(|_| CommitError::InvalidCandidate)
+    }
+
+    /// Finishes local activation after an authenticated broker root transition.
+    pub fn activate_transitioned(
+        self,
+        report: Option<&RootSetTransitionReport>,
+        nonce: &str,
+    ) -> Result<ActivatedGeneration, CommitError> {
+        let journal_layout = self.layout.clone();
+        let op_id = self.candidate.generation().operation().op_id().to_owned();
+        activate_transitioned_generation(
+            &self.layout,
+            &GenerationId::new(self.candidate.generation().id())
+                .map_err(|_| CommitError::InvalidCandidate)?,
+            &self.plan,
+            self.roots.as_ref(),
+            report,
             nonce,
             |event| {
                 let row = match event {
@@ -1282,6 +1358,129 @@ mod tests {
         let history = load_retained_history(&fixture.layout, &lease).unwrap();
         assert_eq!(history.snapshots().len(), 1);
         assert!(history.summaries()[0].is_active());
+    }
+
+    #[test]
+    fn broker_transition_receipt_finishes_prepared_generation_without_republication() {
+        let fixture = fixture();
+        let roots = prepare_root_set(
+            fixture.layout.owner_uid(),
+            fixture.generation_id.clone(),
+            [RootCandidate::from_output_root(
+                pkg_core::StorePath::new(STORE).unwrap(),
+            )],
+        )
+        .unwrap();
+        let report = RootSetTransitionReport::new(
+            publish_root_set(&roots, &fixture.maintenance).unwrap(),
+            roots
+                .request()
+                .entries()
+                .iter()
+                .map(|entry| entry.name().clone())
+                .collect(),
+            roots.request().mapping_digest(),
+        )
+        .unwrap();
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            mutation_lease(&fixture.layout),
+        )
+        .unwrap();
+        let intent = prepared
+            .root_transition_intent(GenerationId::new("gen-0000").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(intent.destination_generation(), &fixture.generation_id);
+        assert_eq!(intent.retained_names().len(), 1);
+        prepared
+            .activate_transitioned(Some(&report), "transitioned1")
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(
+            fixture.layout.current_generation().unwrap(),
+            Some(fixture.generation_id)
+        );
+    }
+
+    #[test]
+    fn empty_prepared_generation_needs_neither_transition_nor_receipt() {
+        let fixture = empty_fixture();
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            mutation_lease(&fixture.layout),
+        )
+        .unwrap();
+        assert!(
+            prepared
+                .root_transition_intent(GenerationId::new("gen-0000").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        prepared
+            .activate_transitioned(None, "empty1")
+            .unwrap()
+            .finish()
+            .unwrap();
+        assert_eq!(
+            fixture.layout.current_generation().unwrap(),
+            Some(fixture.generation_id)
+        );
+    }
+
+    #[test]
+    fn transitioned_activation_refuses_a_mismatched_broker_receipt() {
+        let fixture = fixture();
+        let roots = prepare_root_set(
+            fixture.layout.owner_uid(),
+            fixture.generation_id.clone(),
+            [RootCandidate::from_output_root(
+                pkg_core::StorePath::new(STORE).unwrap(),
+            )],
+        )
+        .unwrap();
+        let wrong_mapping = pkg_nix::RootSet::new(
+            fixture.layout.owner_uid(),
+            fixture.generation_id.clone(),
+            vec![pkg_nix::RootSetEntry::new(
+                roots.request().entries()[0].name().clone(),
+                pkg_core::StorePath::new(
+                    "/nix/store/11111111111111111111111111111111-wrong-output",
+                )
+                .unwrap(),
+            )],
+        )
+        .unwrap();
+        let report = RootSetTransitionReport::new(
+            publish_root_set(&roots, &fixture.maintenance).unwrap(),
+            roots
+                .request()
+                .entries()
+                .iter()
+                .map(|entry| entry.name().clone())
+                .collect(),
+            wrong_mapping.mapping_digest(),
+        )
+        .unwrap();
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            mutation_lease(&fixture.layout),
+        )
+        .unwrap();
+        assert_eq!(
+            prepared
+                .activate_transitioned(Some(&report), "wrong1")
+                .unwrap_err(),
+            CommitError::ActivationFailed
+        );
+        assert_eq!(fixture.layout.current_generation().unwrap(), None);
     }
 
     #[test]

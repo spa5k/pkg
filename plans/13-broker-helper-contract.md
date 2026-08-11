@@ -293,7 +293,13 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   successful closed method-4 completion releases that protection; cancellation, disconnect,
   expiry, or helper failure cannot release it while privileged transition code is executing.
   Responses are either the typed root report or one of four stable redacted transition refusals,
-  and neither store paths nor uid cross method 21. The broker-owned
+  and neither store paths nor uid cross method 21. The local commit coordinator accepts that report
+  only when its canonical uid/generation reference, entry count, sorted retained-name set, and
+  domain-separated complete name-to-store-path digest exactly match the already prepared destination
+  root set. It then records the normal rooted/activated journal phases,
+  retains the staged forest, switches `current`, and finishes the immutable snapshots under the
+  same exclusive state lease without publishing roots a second time. Empty generations require
+  neither method 21 nor a fabricated empty receipt. The broker-owned
   in-memory authority now supplies a consistent verified-channel/authenticated-index snapshot,
   rejects rollback, policy downgrade and same-sequence descriptor reuse, drops a stale index on
   channel advance, and accepts a replacement index only when bound to the exact current descriptor.

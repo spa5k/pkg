@@ -13,7 +13,7 @@ use pkg_nix::{
     BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest,
     GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
     MaintenanceError, MethodKind, NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
 use std::{
@@ -202,7 +202,7 @@ trait RootAuthorityDispatch: Send + Sync {
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
         intent: RootSetTransitionIntent,
-    ) -> Result<RootSetReport, BrokerErrorCode>;
+    ) -> Result<RootSetTransitionReport, BrokerErrorCode>;
 }
 
 impl RootAuthorityDispatch for RootHelperClient {
@@ -225,7 +225,7 @@ impl RootAuthorityDispatch for RootHelperClient {
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
         intent: RootSetTransitionIntent,
-    ) -> Result<RootSetReport, BrokerErrorCode> {
+    ) -> Result<RootSetTransitionReport, BrokerErrorCode> {
         caller
             .transition_root_intent(handle, intent, |request| {
                 self.transition_root_set(&request)
@@ -876,7 +876,7 @@ mod tests {
             _caller: &AuthenticatedCaller,
             _handle: &OperationHandle,
             _intent: RootSetTransitionIntent,
-        ) -> Result<RootSetReport, BrokerErrorCode> {
+        ) -> Result<RootSetTransitionReport, BrokerErrorCode> {
             Err(self.0)
         }
     }

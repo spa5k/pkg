@@ -7,7 +7,7 @@ use nix::{
 };
 use pkg_nix::{
     BrokerHelperRequest, BrokerHelperResponse, ProductFrameCodec, RootSet, RootSetReport,
-    RootSetTransitionRequest,
+    RootSetTransitionReport, RootSetTransitionRequest,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
@@ -116,7 +116,7 @@ impl RootHelperClient {
     pub fn transition_root_set(
         &self,
         request: &RootSetTransitionRequest,
-    ) -> Result<RootSetReport, HelperTransportError> {
+    ) -> Result<RootSetTransitionReport, HelperTransportError> {
         let mut stream = self.connect()?;
         let frame = ProductFrameCodec::encode_helper_request(
             REQUEST_ID,
@@ -335,10 +335,17 @@ mod tests {
                     .map(BrokerHelperResponse::RootSetPublished),
                 BrokerHelperRequest::TransitionRootSet(request) => {
                     let derived = request.derive_from(&root_set())?;
-                    self.0
+                    let report = self
+                        .0
                         .for_caller(derived.owner_uid())
-                        .publish_root_set(&derived)
-                        .map(BrokerHelperResponse::RootSetTransitioned)
+                        .publish_root_set(&derived)?;
+                    let mapping_digest = derived.mapping_digest();
+                    RootSetTransitionReport::new(
+                        report,
+                        request.retained_names().to_vec(),
+                        mapping_digest,
+                    )
+                    .map(BrokerHelperResponse::RootSetTransitioned)
                 }
                 _ => Err(MaintenanceError::backend_failure()),
             }
@@ -413,8 +420,15 @@ mod tests {
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
         assert_eq!(served.map_err(HelperTransportError::code), Ok(()));
         let report = report?;
-        assert_eq!(report.entry_count(), 1);
-        assert!(report.reference().as_str().ends_with("/1001/gen-0008"));
+        assert_eq!(report.root_set().entry_count(), 1);
+        assert_eq!(report.retained_names()[0].as_str(), "hello-out");
+        assert!(
+            report
+                .root_set()
+                .reference()
+                .as_str()
+                .ends_with("/1001/gen-0008")
+        );
         Ok(())
     }
 

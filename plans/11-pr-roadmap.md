@@ -1334,7 +1334,12 @@ flowchart TD
   and destination generation ids plus retained root names into a uid-bound helper transition and
   holds the GC inhibitor across the subsequent local state commit. Closed method 4 is the only
   successful completion acknowledgement and releases that protection after the commit; cancelling,
-  disconnecting, expiring, or failing the helper transition remains fail-closed. Both ends now switch
+  disconnecting, expiring, or failing the helper transition remains fail-closed. The prepared local
+  commit now validates the exact broker root reference, entry count, sorted retained-name set, and a
+  domain-separated digest of the complete name-to-store-path mapping, then reuses the existing
+  rooted/activated crash journal, retains and switches the staged forest without a second helper
+  publication, and handles an empty destination without an empty root request. End-user command
+  orchestration still needs to construct and drive that transaction. Both ends now switch
   to nonblocking I/O after kernel peer authentication:
   the privileged helper gives the complete request and response frames separate 30-second poll
   budgets, starts the response budget only after dispatch, and fails stalled partial reads or writes
