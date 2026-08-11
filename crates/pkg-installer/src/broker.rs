@@ -13,8 +13,8 @@ use pkg_nix::{
     BuildRootPublicationErrorCode, CacheInstallErrorCode, CacheInstallOutcome, CliBrokerRequest,
     CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
     GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
-    InProcessBroker, InProcessCallerPeer, MaintenanceError, MethodKind, NixAdapter,
-    NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
+    InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
+    NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
     RootSetTransitionIntent, RootSetTransitionReport,
 };
 use pkg_pipeline::{AuthenticatedBuildAuthority, BuildAuthorityErrorCode};
@@ -181,6 +181,7 @@ trait BuildAuthorityDispatch: Send + Sync {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
+        progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
     ) -> Result<CacheInstallOutcome, CacheInstallErrorCode>;
 
     fn prepare(
@@ -292,8 +293,9 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
+        progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
     ) -> Result<CacheInstallOutcome, CacheInstallErrorCode> {
-        self.acquire_install(selectors, caller, handle)
+        self.acquire_install_with_progress(selectors, caller, handle, progress)
             .map_err(|error| match error.code() {
                 BuildAuthorityErrorCode::AcquisitionCancelled => CacheInstallErrorCode::Cancelled,
                 BuildAuthorityErrorCode::AcquisitionIntentRefused => {
@@ -349,14 +351,15 @@ fn serve_broker_connection_inner(
     stream
         .set_nonblocking(true)
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
-    let result = serve_frames(stream, |request| {
-        dispatch_request(
+    let result = serve_frames(stream, |request, progress| {
+        dispatch_request_with_progress(
             &caller,
             request,
             adapter,
             approval_journal.as_ref(),
             authority,
             roots,
+            progress,
         )
     });
     let disconnected = caller.disconnect();
@@ -369,6 +372,7 @@ fn serve_broker_connection_inner(
     }
 }
 
+#[cfg(test)]
 fn dispatch_request(
     caller: &AuthenticatedCaller,
     request: CliBrokerRequest,
@@ -376,6 +380,26 @@ fn dispatch_request(
     approval_journal: Option<&BrokerCallerApprovalJournal>,
     authority: Option<&dyn BuildAuthorityDispatch>,
     roots: Option<&dyn RootAuthorityDispatch>,
+) -> Result<CliBrokerResponse, ()> {
+    dispatch_request_with_progress(
+        caller,
+        request,
+        adapter,
+        approval_journal,
+        authority,
+        roots,
+        &mut |_| Ok(()),
+    )
+}
+
+fn dispatch_request_with_progress(
+    caller: &AuthenticatedCaller,
+    request: CliBrokerRequest,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+    approval_journal: Option<&BrokerCallerApprovalJournal>,
+    authority: Option<&dyn BuildAuthorityDispatch>,
+    roots: Option<&dyn RootAuthorityDispatch>,
+    progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
 ) -> Result<CliBrokerResponse, ()> {
     match request {
         CliBrokerRequest::Begin(kind) => caller
@@ -466,7 +490,7 @@ fn dispatch_request(
             generation_root_attestation_response(roots, caller, &handle, generation),
         ),
         CliBrokerRequest::AcquireInstall(handle, selectors) => Ok(install_acquisition_response(
-            authority, caller, &handle, selectors,
+            authority, caller, &handle, selectors, progress,
         )),
     }
 }
@@ -491,13 +515,14 @@ fn install_acquisition_response(
     caller: &AuthenticatedCaller,
     handle: &OperationHandle,
     selectors: Vec<PackageSelector>,
+    progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
 ) -> CliBrokerResponse {
     let Some(authority) = authority else {
         return CliBrokerResponse::InstallAcquisitionRefused(
             CacheInstallErrorCode::AuthorityUnavailable,
         );
     };
-    match authority.acquire(selectors, caller, handle) {
+    match authority.acquire(selectors, caller, handle, progress) {
         Ok(CacheInstallOutcome::Acquired) => CliBrokerResponse::InstallAcquired,
         Ok(CacheInstallOutcome::BuildRequired) => CliBrokerResponse::InstallBuildRequired,
         Err(code) => CliBrokerResponse::InstallAcquisitionRefused(code),
@@ -815,7 +840,10 @@ fn adapter_response<T>(
 
 fn serve_frames(
     stream: &mut UnixStream,
-    mut dispatch: impl FnMut(CliBrokerRequest) -> Result<CliBrokerResponse, ()>,
+    mut dispatch: impl FnMut(
+        CliBrokerRequest,
+        &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
+    ) -> Result<CliBrokerResponse, ()>,
 ) -> Result<(), BrokerTransportError> {
     loop {
         let Some(frame) = read_frame(stream)? else {
@@ -823,7 +851,29 @@ fn serve_frames(
         };
         let (request_id, request) = ProductFrameCodec::decode_cli_request(&frame)
             .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
-        let response = dispatch(request)
+        let mut progress_error = None;
+        let response = {
+            let mut progress = |progress| {
+                let response = CliBrokerResponse::InstallDownloadProgress(progress);
+                let encoded = ProductFrameCodec::encode_cli_response(request_id, &response)
+                    .map_err(|_| {
+                        progress_error = Some(BrokerTransportError::new(
+                            BrokerTransportErrorCode::InvalidFrame,
+                        ));
+                    })?;
+                let deadline = deadline_after(FRAME_WRITE_TIMEOUT).map_err(|error| {
+                    progress_error = Some(error);
+                })?;
+                write_all_until(stream, &encoded, deadline).map_err(|error| {
+                    progress_error = Some(error);
+                })
+            };
+            dispatch(request, &mut progress)
+        };
+        if let Some(error) = progress_error {
+            return Err(error);
+        }
+        let response = response
             .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
         let encoded = ProductFrameCodec::encode_cli_response(request_id, &response)
             .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
@@ -1080,6 +1130,7 @@ mod tests {
             selectors: Vec<PackageSelector>,
             _caller: &AuthenticatedCaller,
             _handle: &OperationHandle,
+            _progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
         ) -> Result<CacheInstallOutcome, CacheInstallErrorCode> {
             if selectors.len() != 1 || selectors[0].selector().as_str() != "hello" {
                 return Err(CacheInstallErrorCode::InvalidIntent);
@@ -1112,6 +1163,67 @@ mod tests {
         ) -> Result<BuildReport, BrokerErrorCode> {
             Err(BrokerErrorCode::BuildResourcePreflightFailed)
         }
+    }
+
+    #[test]
+    fn frame_server_streams_progress_before_the_correlated_terminal_response() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        let handle = InProcessBroker::new()
+            .unwrap()
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap()
+            .begin(BrokerOperationKind::Acquire)
+            .unwrap();
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        let request = CliBrokerRequest::AcquireInstall(handle, vec![selector]);
+        client
+            .write_all(&ProductFrameCodec::encode_cli_request(7, &request).unwrap())
+            .unwrap();
+        let worker = thread::spawn(move || {
+            server.set_nonblocking(true).unwrap();
+            serve_frames(&mut server, |actual, progress| {
+                assert_eq!(actual, request);
+                progress(
+                    InstallDownloadProgress::new(SelectorInput::new("hello").unwrap(), 0, 42)
+                        .unwrap(),
+                )?;
+                progress(
+                    InstallDownloadProgress::new(SelectorInput::new("hello").unwrap(), 42, 42)
+                        .unwrap(),
+                )?;
+                Ok(CliBrokerResponse::InstallAcquired)
+            })
+        });
+        client.set_nonblocking(true).unwrap();
+        let responses = (0..3)
+            .map(|_| {
+                let frame = read_frame_with_timeout(&mut client, Duration::from_secs(2))?
+                    .ok_or_else(|| {
+                        BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure)
+                    })?;
+                ProductFrameCodec::decode_cli_response(&frame)
+                    .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(responses.iter().all(|(request_id, _)| *request_id == 7));
+        assert!(matches!(
+            responses[0].1,
+            CliBrokerResponse::InstallDownloadProgress(_)
+        ));
+        assert!(matches!(
+            responses[1].1,
+            CliBrokerResponse::InstallDownloadProgress(_)
+        ));
+        assert_eq!(responses[2].1, CliBrokerResponse::InstallAcquired);
+        client.shutdown(Shutdown::Both).unwrap();
+        worker.join().unwrap().unwrap();
     }
 
     struct RefusingRootAuthority(BrokerErrorCode);

@@ -44,6 +44,45 @@ pub struct CachePathObservation {
     status: CachePathStatus,
 }
 
+/// Trusted cache observations for one selected root and its complete closure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheDownloadClosure {
+    root: StorePath,
+    paths: Vec<CachePathObservation>,
+}
+
+impl CacheDownloadClosure {
+    /// Constructs one bounded closure with exact, unique path observations.
+    pub fn new(
+        root: StorePath,
+        mut paths: Vec<CachePathObservation>,
+    ) -> Result<Self, BuildCacheError> {
+        paths.sort_by(|left, right| left.path().as_str().cmp(right.path().as_str()));
+        if paths.is_empty()
+            || paths.len() > MAX_CACHE_PATHS
+            || paths
+                .windows(2)
+                .any(|pair| pair[0].path() == pair[1].path())
+            || !paths.iter().any(|path| path.path() == &root)
+        {
+            return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidEvidence));
+        }
+        Ok(Self { root, paths })
+    }
+
+    /// Returns the selected root whose closure was inspected.
+    #[must_use]
+    pub const fn root(&self) -> &StorePath {
+        &self.root
+    }
+
+    /// Returns the complete sorted closure observations.
+    #[must_use]
+    pub fn paths(&self) -> &[CachePathObservation] {
+        &self.paths
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CachePathStatus {
     Hit { download_bytes: u64, nar_bytes: u64 },
@@ -71,12 +110,45 @@ impl CachePathObservation {
             status: CachePathStatus::Miss,
         }
     }
+
+    /// Returns the exact store path inspected by the trusted probe.
+    #[must_use]
+    pub const fn path(&self) -> &StorePath {
+        &self.path
+    }
+
+    /// Returns authenticated cache download bytes, or `None` for a miss.
+    ///
+    /// An already-local path is a hit with zero download bytes.
+    #[must_use]
+    pub const fn download_bytes(&self) -> Option<u64> {
+        match self.status {
+            CachePathStatus::Hit { download_bytes, .. } => Some(download_bytes),
+            CachePathStatus::Miss => None,
+        }
+    }
 }
 
 /// Private cache-inspection seam implemented by the managed Real-Nix adapter.
 pub trait BuildCacheProbe: Send + Sync {
     /// Returns exactly one observation for every requested canonical path.
     fn inspect(&self, paths: &[StorePath]) -> Result<Vec<CachePathObservation>, BuildCacheError>;
+
+    /// Returns one complete cache-download closure for every selected root.
+    ///
+    /// Test adapters may use the conservative singleton default. The managed
+    /// Real-Nix adapter overrides this with recursive cache metadata.
+    fn inspect_download_closures(
+        &self,
+        roots: &[StorePath],
+    ) -> Result<Vec<CacheDownloadClosure>, BuildCacheError> {
+        self.inspect(roots)?
+            .into_iter()
+            .map(|observation| {
+                CacheDownloadClosure::new(observation.path().clone(), vec![observation])
+            })
+            .collect()
+    }
 }
 
 /// Deterministic evidence consumed by private BuildPlan construction.

@@ -1,9 +1,11 @@
 //! Fail-closed client for the private broker lifecycle protocol.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
     io::{self, Read, Write},
+    net::Shutdown,
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -15,9 +17,9 @@ use pkg_nix::{
     BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CacheInstallErrorCode,
     CacheInstallOutcome, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest,
     EvaluateDerivationRequest, GcReport, GenerationId, GenerationRootAttestationErrorCode,
-    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, MethodKind, NixAdapter,
-    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
-    ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, InstallDownloadProgress,
+    MethodKind, NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus,
+    PathInfoReport, ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
     RootSetTransitionReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
@@ -467,16 +469,131 @@ impl BrokerLifecycleClient {
         handle: OperationHandle,
         selectors: Vec<PackageSelector>,
     ) -> Result<CacheInstallOutcome, BrokerClientError> {
-        match self.transact_with_timeout(
+        self.acquire_install_with_progress(handle, selectors, &mut |_| Ok(()))
+    }
+
+    /// Runs cache-first acquisition and consumes validated intermediate bytes.
+    pub fn acquire_install_with_progress(
+        &mut self,
+        handle: OperationHandle,
+        selectors: Vec<PackageSelector>,
+        progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
+    ) -> Result<CacheInstallOutcome, BrokerClientError> {
+        let response = self.transact_acquire_with_progress(
             &CliBrokerRequest::AcquireInstall(handle, selectors),
-            LONG_RUNNING_RESPONSE_TIMEOUT,
-        )? {
+            progress,
+        )?;
+        match response {
             CliBrokerResponse::InstallAcquired => Ok(CacheInstallOutcome::Acquired),
             CliBrokerResponse::InstallBuildRequired => Ok(CacheInstallOutcome::BuildRequired),
             CliBrokerResponse::InstallAcquisitionRefused(code) => {
                 Err(BrokerClientError::install_acquisition_refused(code))
             }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    fn transact_acquire_with_progress(
+        &mut self,
+        request: &CliBrokerRequest,
+        progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
+    ) -> Result<CliBrokerResponse, BrokerClientError> {
+        if !self.healthy {
+            return Err(BrokerClientError::new(
+                BrokerClientErrorCode::ConnectionFailed,
+            ));
+        }
+        let result = self.transact_acquire_healthy(request, progress);
+        if result.is_err() {
+            self.healthy = false;
+        }
+        result
+    }
+
+    fn transact_acquire_healthy(
+        &mut self,
+        request: &CliBrokerRequest,
+        progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
+    ) -> Result<CliBrokerResponse, BrokerClientError> {
+        let CliBrokerRequest::AcquireInstall(_, selectors) = request else {
+            return Err(BrokerClientError::new(
+                BrokerClientErrorCode::UnexpectedResponse,
+            ));
+        };
+        let allowed_selectors = selectors
+            .iter()
+            .map(|selector| selector.selector().as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        let request_id = self.next_request_id;
+        self.next_request_id = request_id
+            .checked_add(1)
+            .filter(|next| *next != 0)
+            .ok_or_else(|| BrokerClientError::new(BrokerClientErrorCode::RequestIdExhausted))?;
+        let frame = ProductFrameCodec::encode_cli_request(request_id, request)
+            .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::InvalidFrame))?;
+        let deadline = Instant::now()
+            .checked_add(LONG_RUNNING_RESPONSE_TIMEOUT)
+            .ok_or_else(|| BrokerClientError::new(BrokerClientErrorCode::TransportFailure))?;
+        write_all_until(&mut self.stream, &frame, deadline)?;
+        let mut counters = BTreeMap::<String, (u64, u64)>::new();
+        loop {
+            let response = read_frame(&mut self.stream, deadline)?;
+            let (response_id, response) = ProductFrameCodec::decode_cli_response(&response)
+                .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::InvalidFrame))?;
+            if response_id != request_id {
+                return Err(BrokerClientError::new(
+                    BrokerClientErrorCode::UnexpectedResponse,
+                ));
+            }
+            if let CliBrokerResponse::InstallDownloadProgress(update) = response {
+                let key = update.selector().as_str().to_owned();
+                if !allowed_selectors.contains(&key) {
+                    return Err(BrokerClientError::new(
+                        BrokerClientErrorCode::UnexpectedResponse,
+                    ));
+                }
+                match counters.get_mut(&key) {
+                    None if update.done() == 0 => {
+                        counters.insert(key, (update.total(), 0));
+                    }
+                    Some((total, done)) if *total == update.total() && update.done() > *done => {
+                        *done = update.done();
+                    }
+                    _ => {
+                        return Err(BrokerClientError::new(
+                            BrokerClientErrorCode::UnexpectedResponse,
+                        ));
+                    }
+                }
+                if progress(update).is_err() {
+                    let _ = self.stream.shutdown(Shutdown::Both);
+                    return Err(BrokerClientError::new(
+                        BrokerClientErrorCode::UnexpectedResponse,
+                    ));
+                }
+                continue;
+            }
+            match response {
+                CliBrokerResponse::InstallAcquired => {
+                    if counters.values().any(|(total, done)| total != done) {
+                        return Err(BrokerClientError::new(
+                            BrokerClientErrorCode::UnexpectedResponse,
+                        ));
+                    }
+                    return Ok(CliBrokerResponse::InstallAcquired);
+                }
+                CliBrokerResponse::InstallBuildRequired if counters.is_empty() => {
+                    return Ok(CliBrokerResponse::InstallBuildRequired);
+                }
+                CliBrokerResponse::InstallAcquisitionRefused(code) => {
+                    return Ok(CliBrokerResponse::InstallAcquisitionRefused(code));
+                }
+                _ => {
+                    return Err(BrokerClientError::new(
+                        BrokerClientErrorCode::UnexpectedResponse,
+                    ));
+                }
+            }
         }
     }
 
@@ -867,7 +984,6 @@ mod tests {
     use std::{
         collections::BTreeMap,
         fs,
-        net::Shutdown,
         path::PathBuf,
         str::FromStr,
         sync::{Arc, mpsc},
@@ -1255,6 +1371,53 @@ mod tests {
             Some(CacheInstallErrorCode::AuthorityUnavailable)
         );
         assert!(client.healthy);
+        let request = read_frame(
+            &mut server,
+            Instant::now()
+                .checked_add(RESPONSE_TIMEOUT)
+                .ok_or_else(|| io::Error::other("deadline overflow"))?,
+        )?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&request)?,
+            (1, CliBrokerRequest::AcquireInstall(handle, vec![selector]))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn contradictory_download_progress_poisons_the_connection() -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Acquire)?;
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello")?,
+            SelectorInput::new("hello")?,
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        let started = CliBrokerResponse::InstallDownloadProgress(InstallDownloadProgress::new(
+            SelectorInput::new("hello")?,
+            0,
+            42,
+        )?);
+        server.write_all(&ProductFrameCodec::encode_cli_response(1, &started)?)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(1, &started)?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client
+            .acquire_install(handle.clone(), vec![selector.clone()])
+            .unwrap_err();
+        assert_eq!(error.code(), BrokerClientErrorCode::UnexpectedResponse);
+        assert!(!client.healthy);
+        assert_eq!(
+            client
+                .acquire_install(handle.clone(), vec![selector.clone()])
+                .unwrap_err()
+                .code(),
+            BrokerClientErrorCode::ConnectionFailed
+        );
         let request = read_frame(
             &mut server,
             Instant::now()

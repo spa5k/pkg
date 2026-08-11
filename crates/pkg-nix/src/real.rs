@@ -27,14 +27,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AcceptedFormats, BuildCacheError, BuildCacheErrorCode, BuildCacheProbe, BuildOutput,
-    BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus, CachePathObservation,
-    DerivationPath, DerivationPlanReport, DerivationSystem, EvaluateDerivationRequest,
-    EvaluatedDerivation, FormatVersion, GcReport, GcStatus, MaintenanceError, MethodKind, NarHash,
-    NarIntegrity, NixAdapter, NixAdapterError, NixVersion, NixpkgsMetadataCommand,
-    NixpkgsMetadataRunner, NixpkgsSourceError, OutputName, PathInfoReport, PathVerifyResult,
-    RepairMode, RepairOutcomeKind, Signature, StorePath, SubstituteOutcome, SubstituteReceipt,
-    SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope, VerifyMode,
-    VerifyReport, VerifyRequest, VersionInfo,
+    BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus, CacheDownloadClosure,
+    CachePathObservation, DerivationPath, DerivationPlanReport, DerivationSystem,
+    EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport, GcStatus,
+    MaintenanceError, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion,
+    NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError, OutputName, PathInfoReport,
+    PathVerifyResult, RepairMode, RepairOutcomeKind, Signature, StorePath, SubstituteOutcome,
+    SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope,
+    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
 const PINNED_NIX_VERSION: &str = "2.34.8";
@@ -316,6 +316,123 @@ impl BuildCacheProbe for RealNixAdapter {
             }
         }
         Ok(observations)
+    }
+
+    fn inspect_download_closures(
+        &self,
+        roots: &[StorePath],
+    ) -> Result<Vec<CacheDownloadClosure>, BuildCacheError> {
+        if roots.is_empty() {
+            return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+        }
+        let mut local_ping = base_args();
+        local_ping.extend(os_args(["store", "ping"]));
+        self.require_success(MethodKind::PathInfo, local_ping, SHORT_TIMEOUT)
+            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+
+        let mut closures = Vec::with_capacity(roots.len());
+        let mut remote_ready = false;
+        for root in roots {
+            match self.raw_path_info(root, false, false) {
+                Ok(local) => {
+                    let entry = root_path_info_optional(&local, root)
+                        .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                    if let Some(entry) = entry {
+                        closures.push(CacheDownloadClosure::new(
+                            root.clone(),
+                            vec![CachePathObservation::hit(root.clone(), 0, entry.nar_size)],
+                        )?);
+                        continue;
+                    }
+                }
+                Err(NixAdapterError::OperationFailed) => {}
+                Err(_) => {
+                    return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+                }
+            }
+            if !remote_ready {
+                let mut remote_ping = base_args();
+                remote_ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
+                self.require_success(MethodKind::PathInfo, remote_ping, SHORT_TIMEOUT)
+                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                remote_ready = true;
+            }
+            // Nix expands a recursive closure before it writes path-info JSON.
+            // A missing root can therefore make the recursive command fail with
+            // no typed payload. Probe the root first so that an ordinary cache
+            // miss remains distinct from a failure while expanding a known hit.
+            let remote_root = match self.raw_path_info(root, false, true) {
+                Ok(remote_root) => remote_root,
+                Err(NixAdapterError::OperationFailed) => {
+                    closures.push(CacheDownloadClosure::new(
+                        root.clone(),
+                        vec![CachePathObservation::miss(root.clone())],
+                    )?);
+                    continue;
+                }
+                Err(_) => return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)),
+            };
+            if root_path_info_optional(&remote_root, root)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
+                .is_none()
+            {
+                closures.push(CacheDownloadClosure::new(
+                    root.clone(),
+                    vec![CachePathObservation::miss(root.clone())],
+                )?);
+                continue;
+            }
+            let remote = self
+                .raw_path_info(root, true, true)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+            validate_path_info_envelope(&remote)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+            if root_path_info_optional(&remote, root)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
+                .is_none()
+            {
+                return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+            }
+            let mut paths = Vec::with_capacity(remote.info.len());
+            for (name, remote_entry) in &remote.info {
+                let path = store_path(name)
+                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                let Some(remote_entry) = remote_entry else {
+                    paths.push(CachePathObservation::miss(path));
+                    continue;
+                };
+                match self.raw_path_info(&path, false, false) {
+                    Ok(local) => {
+                        if let Some(local_entry) = root_path_info_optional(&local, &path)
+                            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
+                        {
+                            paths.push(CachePathObservation::hit(path, 0, local_entry.nar_size));
+                            continue;
+                        }
+                    }
+                    Err(NixAdapterError::OperationFailed) => {}
+                    Err(_) => {
+                        return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+                    }
+                }
+                self.verify_remote_cache_trust(&path)?;
+                let signatures = signatures(&remote_entry.signatures)
+                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                let download_bytes = remote_entry
+                    .download_size
+                    .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                if !has_approved_cache_signature(&signatures) {
+                    return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+                }
+                paths.push(CachePathObservation::hit(
+                    path,
+                    download_bytes,
+                    remote_entry.nar_size,
+                ));
+            }
+            closures.push(CacheDownloadClosure::new(root.clone(), paths)?);
+        }
+        Ok(closures)
     }
 }
 
@@ -1627,6 +1744,88 @@ mod tests {
                 argument == "--substituters" || argument == "--trusted-public-keys"
             }));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn download_probe_accounts_for_the_complete_missing_closure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = StorePath::new("/nix/store/22222222222222222222222222222222-root")?;
+        let dep = StorePath::new("/nix/store/33333333333333333333333333333333-dep")?;
+        let remote_root_json = br#"{"info":{"22222222222222222222222222222222-root":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":["33333333333333333333333333333333-dep"],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/root.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        let remote_json = br#"{"info":{"22222222222222222222222222222222-root":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":["33333333333333333333333333333333-dep"],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/root.nar.xz","version":2},"33333333333333333333333333333333-dep":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":5,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/dep.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        let adapter = RealNixAdapter::scripted(Scripted::new(vec![
+            success(Vec::new()),
+            failure(1),
+            success(Vec::new()),
+            success(remote_root_json.as_slice()),
+            success(remote_json.as_slice()),
+            failure(1),
+            success(Vec::new()),
+            failure(1),
+            success(Vec::new()),
+        ]));
+
+        let closures = adapter.inspect_download_closures(std::slice::from_ref(&root))?;
+        assert_eq!(
+            closures,
+            vec![CacheDownloadClosure::new(
+                root.clone(),
+                vec![
+                    CachePathObservation::hit(root, 7, 13),
+                    CachePathObservation::hit(dep, 5, 11),
+                ],
+            )?]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn download_probe_preserves_remote_root_miss_before_recursive_expansion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = StorePath::new("/nix/store/44444444444444444444444444444444-missing")?;
+        let executor = Scripted::new(vec![
+            success(Vec::new()),
+            failure(1),
+            success(Vec::new()),
+            failure(1),
+        ]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+
+        assert_eq!(
+            adapter.inspect_download_closures(std::slice::from_ref(&root))?,
+            vec![CacheDownloadClosure::new(
+                root.clone(),
+                vec![CachePathObservation::miss(root)],
+            )?]
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 4);
+        assert!(!calls[3].iter().any(|argument| argument == "--recursive"));
+        Ok(())
+    }
+
+    #[test]
+    fn download_probe_refuses_recursive_failure_after_confirmed_root_hit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = StorePath::new("/nix/store/22222222222222222222222222222222-root")?;
+        let remote_root_json = br#"{"info":{"22222222222222222222222222222222-root":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/root.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        let adapter = RealNixAdapter::scripted(Scripted::new(vec![
+            success(Vec::new()),
+            failure(1),
+            success(Vec::new()),
+            success(remote_root_json.as_slice()),
+            failure(1),
+        ]));
+
+        assert_eq!(
+            adapter
+                .inspect_download_closures(std::slice::from_ref(&root))
+                .unwrap_err()
+                .code(),
+            BuildCacheErrorCode::ProbeFailed
+        );
         Ok(())
     }
 

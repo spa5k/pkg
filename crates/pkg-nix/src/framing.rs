@@ -125,6 +125,48 @@ pub enum CliBrokerRequest {
     AcquireInstall(OperationHandle, Vec<PackageSelector>),
 }
 
+/// One sanitized, authority-produced cache download counter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallDownloadProgress {
+    selector: SelectorInput,
+    done: u64,
+    total: u64,
+}
+
+impl InstallDownloadProgress {
+    /// Constructs a bounded counter for one product selector.
+    ///
+    /// The total must be nonzero and completed bytes cannot exceed it.
+    pub fn new(selector: SelectorInput, done: u64, total: u64) -> Result<Self, FrameError> {
+        if total == 0 || done > total {
+            return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+        }
+        Ok(Self {
+            selector,
+            done,
+            total,
+        })
+    }
+
+    /// Returns the product selector. No Nix path crosses this boundary.
+    #[must_use]
+    pub const fn selector(&self) -> &SelectorInput {
+        &self.selector
+    }
+
+    /// Returns the authenticated completed-byte count.
+    #[must_use]
+    pub const fn done(&self) -> u64 {
+        self.done
+    }
+
+    /// Returns the authenticated total-byte count for this counter.
+    #[must_use]
+    pub const fn total(&self) -> u64 {
+        self.total
+    }
+}
+
 /// Closed responses on the broker-to-CLI channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliBrokerResponse {
@@ -184,6 +226,8 @@ pub enum CliBrokerResponse {
     InstallBuildRequired,
     /// Stable redacted refusal from cache-first acquisition.
     InstallAcquisitionRefused(CacheInstallErrorCode),
+    /// Intermediate authenticated download progress for method 26.
+    InstallDownloadProgress(InstallDownloadProgress),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -839,6 +883,14 @@ impl ProductFrameCodec {
                     error: code.as_str(),
                 })?,
             ),
+            CliBrokerResponse::InstallDownloadProgress(progress) => (
+                26,
+                encode_json(&InstallDownloadProgressWire {
+                    selector: progress.selector().as_str(),
+                    done: progress.done(),
+                    total: progress.total(),
+                })?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -1001,6 +1053,8 @@ impl ProductFrameCodec {
             26 => {
                 if let Some(code) = decode_install_acquisition_failure(frame.payload)? {
                     CliBrokerResponse::InstallAcquisitionRefused(code)
+                } else if let Some(progress) = decode_install_download_progress(frame.payload)? {
+                    CliBrokerResponse::InstallDownloadProgress(progress)
                 } else {
                     let wire: InstallAcquisitionOwnedWire = decode_json(frame.payload)?;
                     match wire.outcome.as_str() {
@@ -1393,6 +1447,21 @@ fn decode_install_acquisition_failure(
     parse_cache_install_error_code(&wire.error).map(Some)
 }
 
+fn decode_install_download_progress(
+    bytes: &[u8],
+) -> Result<Option<InstallDownloadProgress>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<InstallDownloadProgressOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    InstallDownloadProgress::new(
+        SelectorInput::new(&wire.selector)
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+        wire.done,
+        wire.total,
+    )
+    .map(Some)
+}
+
 fn parse_cache_install_error_code(value: &str) -> Result<CacheInstallErrorCode, FrameError> {
     match value {
         "invalid-intent" => Ok(CacheInstallErrorCode::InvalidIntent),
@@ -1693,6 +1762,22 @@ struct InstallAcquisitionFailureWire<'a> {
 #[serde(deny_unknown_fields)]
 struct InstallAcquisitionFailureOwnedWire {
     error: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallDownloadProgressWire<'a> {
+    selector: &'a str,
+    done: u64,
+    total: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallDownloadProgressOwnedWire {
+    selector: String,
+    done: u64,
+    total: u64,
 }
 
 #[derive(Serialize)]
@@ -2784,6 +2869,25 @@ mod tests {
                 ProductFrameCodec::decode_cli_response(&encoded),
                 Ok((18, response))
             );
+        }
+        let progress = CliBrokerResponse::InstallDownloadProgress(
+            InstallDownloadProgress::new(SelectorInput::new("hello").unwrap(), 7, 11).unwrap(),
+        );
+        let encoded = ProductFrameCodec::encode_cli_response(18, &progress).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains(r#""selector":"hello""#));
+        assert!(!wire.contains("/nix/"));
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((18, progress))
+        );
+        for payload in [
+            br#"{"selector":"hello","done":12,"total":11}"#.as_slice(),
+            br#"{"selector":"hello","done":0,"total":0}"#.as_slice(),
+            br#"{"selector":"hello","done":1,"total":2,"path":"/nix/store/x"}"#.as_slice(),
+        ] {
+            let encoded = encode_frame(CHANNEL_CLI_BROKER, 26, 18, payload).unwrap();
+            assert!(ProductFrameCodec::decode_cli_response(&encoded).is_err());
         }
         for code in [
             CacheInstallErrorCode::InvalidIntent,

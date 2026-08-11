@@ -11,13 +11,13 @@ use pkg_core::{ChannelSequence, PackageSelector, PolicyVersion};
 use pkg_index::VerifiedIndex;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildPreview, CacheInstallAttempt, CacheInstallOutcome,
-    NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
+    InstallDownloadProgress, NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
 };
 
 use crate::{
-    AcquireError, AuthenticatedBuildPreparation, BuildPlanningAdapter, acquire_cache_only,
-    assemble_cache_install_evidence, host_facts::production_native_system, preflight_cache_only,
-    resolve_install, verify_acquired,
+    AcquireError, AuthenticatedBuildPreparation, BuildPlanningAdapter,
+    acquire_cache_only_with_progress, assemble_cache_install_evidence,
+    host_facts::production_native_system, preflight_cache_only, resolve_install, verify_acquired,
 };
 
 /// Result of publishing authenticated service state.
@@ -208,6 +208,17 @@ impl AuthenticatedBuildAuthority {
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
     ) -> Result<CacheInstallOutcome, BuildAuthorityError> {
+        self.acquire_install_with_progress(selectors, caller, handle, &mut |_| Ok(()))
+    }
+
+    /// Acquires one cache-first install and streams sanitized trusted bytes.
+    pub fn acquire_install_with_progress(
+        &self,
+        selectors: Vec<PackageSelector>,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
+    ) -> Result<CacheInstallOutcome, BuildAuthorityError> {
         let (channel, index) = {
             let state = self.lock_state()?;
             (state.channel.clone(), state.index.clone())
@@ -229,14 +240,20 @@ impl AuthenticatedBuildAuthority {
                 )
                 .map_err(|_| ())?;
                 let preflight = preflight_cache_only(&resolved).map_err(|_| ())?;
-                let acquired =
-                    match acquire_cache_only(&resolved, &preflight, &channel, adapter.as_ref()) {
-                        Ok(acquired) => acquired,
-                        Err(AcquireError::BuildRequired) => {
-                            return Ok(CacheInstallAttempt::BuildRequired);
-                        }
-                        Err(AcquireError::Refused) => return Err(()),
-                    };
+                let acquired = match acquire_cache_only_with_progress(
+                    &resolved,
+                    &preflight,
+                    &channel,
+                    adapter.as_ref(),
+                    adapter.as_ref(),
+                    progress,
+                ) {
+                    Ok(acquired) => acquired,
+                    Err(AcquireError::BuildRequired) => {
+                        return Ok(CacheInstallAttempt::BuildRequired);
+                    }
+                    Err(AcquireError::Refused) => return Err(()),
+                };
                 let verified = verify_acquired(acquired).map_err(|_| ())?;
                 let evidence =
                     assemble_cache_install_evidence(&resolved, &verified, adapter.as_ref())

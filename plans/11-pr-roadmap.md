@@ -1499,8 +1499,14 @@ flowchart TD
   emits sanitized `build_started` plus 0%/100% events around the authenticated broker execution.
   The exact sequence stays on the original public operation id and is locked by the cache-miss
   protocol test; preview decoding refuses a forged all-cache target set. Remaining production
-  install work is authenticated download counters, live intermediate build heuristics, and the
-  still-closed non-default channel/collision policy surfaces.
+  install work is live intermediate build heuristics and the still-closed non-default
+  channel/collision policy surfaces. Authenticated download counters are now connected through the
+  complete cache closure: the managed probe verifies signed recursive cache metadata, excludes
+  already-local objects, assigns shared closure objects once, and refuses any cache miss before a
+  copy begins. Method 26 streams only selector-bound monotonic byte counters under the original
+  request and public operation ids. The client rejects foreign selectors, duplicate starts,
+  changed totals, regressions, unfinished success, malformed frames, and progress-sink failure;
+  no store path, derivation, cache URL, signature, or raw Nix event crosses the public boundary.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

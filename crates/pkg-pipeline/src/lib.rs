@@ -22,7 +22,7 @@ mod verify;
 
 pub use acquire::{
     AcquireError, AcquiredInstall, AcquiredOutput, CacheEvidenceError, acquire_cache_only,
-    assemble_cache_install_evidence,
+    acquire_cache_only_with_progress, assemble_cache_install_evidence,
 };
 pub use activate::{activate_prepared, finish_activated, prepare_activation};
 pub use build_authority::{

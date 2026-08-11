@@ -74,7 +74,7 @@ pub use build::{
 };
 pub use build_cache::{
     BuildCacheError, BuildCacheErrorCode, BuildCacheEvidence, BuildCacheProbe, BuildCacheSubject,
-    CachePathObservation, classify_build_cache,
+    CacheDownloadClosure, CachePathObservation, classify_build_cache,
 };
 pub use contract::{
     AcceptedFormats, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance, BuildReport,
@@ -89,7 +89,7 @@ pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildRootPublicationErrorCode, CacheInstallErrorCode, CliBrokerRequest, CliBrokerResponse,
     FrameError, FrameErrorCode, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, ProductFrameCodec,
+    GenerationRootTransitionErrorCode, InstallDownloadProgress, ProductFrameCodec,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,

@@ -940,10 +940,39 @@ fn acquire_install_evidence(
         let _ = broker.cancel(acquire_handle);
         return Err(error);
     }
-    let outcome = match broker.acquire_install(acquire_handle.clone(), selectors.clone()) {
+    let mut progress_error = None;
+    let outcome = match broker.acquire_install_with_progress(
+        acquire_handle.clone(),
+        selectors.clone(),
+        &mut |update| {
+            let event = if update.done() == 0 {
+                PublicEvent::download_started(
+                    &public_operation_id,
+                    update.selector().as_str(),
+                    update.total(),
+                )
+            } else {
+                PublicEvent::download_progress(
+                    &public_operation_id,
+                    update.selector().as_str(),
+                    update.done(),
+                    update.total(),
+                )
+            }
+            .map_err(|_| ())?;
+            if let Err(error) = progress(event) {
+                progress_error = Some(error);
+                return Err(());
+            }
+            Ok(())
+        },
+    ) {
         Ok(outcome) => outcome,
         Err(error) => {
             let _ = broker.cancel(acquire_handle);
+            if let Some(error) = progress_error {
+                return Err(error);
+            }
             return Err(install_broker_error(error));
         }
     };
@@ -1668,6 +1697,30 @@ mod tests {
             assert_eq!(actual, handle);
             assert_eq!(selectors.len(), 1);
             assert_eq!(selectors[0].selector().as_str(), "hello");
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::InstallDownloadProgress(
+                    pkg_nix::InstallDownloadProgress::new(
+                        SelectorInput::new("hello").unwrap(),
+                        0,
+                        42,
+                    )
+                    .unwrap(),
+                ),
+            );
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::InstallDownloadProgress(
+                    pkg_nix::InstallDownloadProgress::new(
+                        SelectorInput::new("hello").unwrap(),
+                        42,
+                        42,
+                    )
+                    .unwrap(),
+                ),
+            );
             write_response(&mut server, request_id, CliBrokerResponse::InstallAcquired);
 
             let (request_id, request) = read_request(&mut server);
@@ -1699,7 +1752,14 @@ mod tests {
         assert!(!handle.as_str().is_empty());
         assert_eq!(actual, expected);
         assert_eq!(approval, "not_required");
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 4);
+        let rendered = events
+            .iter()
+            .map(|event| String::from_utf8(event.to_ndjson_line().unwrap()).unwrap())
+            .collect::<String>();
+        assert!(rendered.contains(r#""type":"download_started""#));
+        assert!(rendered.contains(r#""type":"download_progress""#));
+        assert!(rendered.contains(r#""done":42,"total":42"#));
         assert!(
             events
                 .iter()
