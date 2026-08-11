@@ -37,15 +37,15 @@ use crate::{
     VerifiedRepairScope, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
-const PINNED_NIX_VERSION: &str = "2.34.8";
+pub(crate) const PINNED_NIX_VERSION: &str = "2.34.8";
 const PATH_INFO_FORMAT: u32 = 2;
 const STORE_DIRECTORY: &str = "/nix/store";
 const CACHE_URL: &str = "https://cache.nixos.org";
 const CACHE_SIGNING_KEY_NAME: &str = "cache.nixos.org-1";
-const MANAGED_NIX_CONFIG: &str = "include /opt/pkg/etc/pkg/nix.conf";
-const MANAGED_NIX_STATE: &str = "/nix/var/nix";
-const MANAGED_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socket";
-const MANAGED_PATH: &str = "/usr/bin:/bin";
+pub(crate) const MANAGED_NIX_CONFIG: &str = "include /opt/pkg/etc/pkg/nix.conf";
+pub(crate) const MANAGED_NIX_STATE: &str = "/nix/var/nix";
+pub(crate) const MANAGED_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socket";
+pub(crate) const MANAGED_PATH: &str = "/usr/bin:/bin";
 const MAX_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
 const MAX_INTERNAL_JSON_LINE_BYTES: usize = 256 * 1024;
@@ -87,7 +87,11 @@ impl RootNixRepairExecutor {
     /// absolute binary and private-home paths.
     pub fn new(nix_binary: &Path, private_home: &Path) -> Result<Self, NixAdapterError> {
         Ok(Self {
-            executor: Arc::new(validated_process_executor(nix_binary, private_home)?),
+            executor: Arc::new(validated_process_executor(
+                nix_binary,
+                private_home,
+                Path::new(MANAGED_DAEMON_SOCKET),
+            )?),
         })
     }
 
@@ -172,8 +176,40 @@ impl RealNixAdapter {
     /// their provenance and permissions.
     pub fn new(nix_binary: &Path, private_home: &Path) -> Result<Self, NixAdapterError> {
         Ok(Self {
-            executor: Arc::new(validated_process_executor(nix_binary, private_home)?),
+            executor: Arc::new(validated_process_executor(
+                nix_binary,
+                private_home,
+                Path::new(MANAGED_DAEMON_SOCKET),
+            )?),
         })
+    }
+
+    pub(crate) fn new_with_daemon_socket(
+        nix_binary: &Path,
+        private_home: &Path,
+        daemon_socket: &Path,
+    ) -> Result<Self, NixAdapterError> {
+        Ok(Self {
+            executor: Arc::new(validated_process_executor(
+                nix_binary,
+                private_home,
+                daemon_socket,
+            )?),
+        })
+    }
+
+    pub(crate) fn ping_managed_store(&self) -> Result<(), NixAdapterError> {
+        self.require_success(
+            MethodKind::Version,
+            vec![
+                OsString::from("store"),
+                OsString::from("ping"),
+                OsString::from("--store"),
+                OsString::from("daemon"),
+            ],
+            Duration::from_secs(2),
+        )
+        .map(|_| ())
     }
 
     #[cfg(test)]
@@ -729,8 +765,9 @@ trait CommandExecutor: Send + Sync {
 fn validated_process_executor(
     nix_binary: &Path,
     private_home: &Path,
+    daemon_socket: &Path,
 ) -> Result<ProcessExecutor, NixAdapterError> {
-    if !nix_binary.is_absolute() || !private_home.is_absolute() {
+    if !nix_binary.is_absolute() || !private_home.is_absolute() || !daemon_socket.is_absolute() {
         return Err(NixAdapterError::ValidationFailure {
             summary: crate::error::BoundedSummary::new("adapter path is not absolute"),
         });
@@ -758,6 +795,7 @@ fn validated_process_executor(
         nix_binary: nix_binary.to_path_buf(),
         nix_store_binary,
         private_home: private_home.to_path_buf(),
+        daemon_socket: daemon_socket.to_path_buf(),
     })
 }
 
@@ -828,6 +866,7 @@ struct ProcessExecutor {
     nix_binary: PathBuf,
     nix_store_binary: PathBuf,
     private_home: PathBuf,
+    daemon_socket: PathBuf,
 }
 
 impl CommandExecutor for ProcessExecutor {
@@ -861,7 +900,7 @@ impl ProcessExecutor {
             .env("HOME", &self.private_home)
             .env("TMPDIR", self.private_home.join("tmp"))
             .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
-            .env("NIX_DAEMON_SOCKET_PATH", MANAGED_DAEMON_SOCKET)
+            .env("NIX_DAEMON_SOCKET_PATH", &self.daemon_socket)
             .env("NIX_REMOTE", "daemon")
             .env("NIX_STATE_DIR", MANAGED_NIX_STATE)
             .env("NIX_USER_CONF_FILES", "")
@@ -969,7 +1008,7 @@ struct CommandOutcome {
 }
 
 #[cfg(unix)]
-fn terminate_and_reap(
+pub(crate) fn terminate_and_reap(
     child: &mut std::process::Child,
     observed_status: Option<std::process::ExitStatus>,
 ) -> Result<std::process::ExitStatus, NixAdapterError> {
@@ -989,7 +1028,7 @@ fn terminate_and_reap(
 }
 
 #[cfg(not(unix))]
-fn terminate_and_reap(
+pub(crate) fn terminate_and_reap(
     child: &mut std::process::Child,
     observed_status: Option<std::process::ExitStatus>,
 ) -> Result<std::process::ExitStatus, NixAdapterError> {
@@ -1904,6 +1943,29 @@ mod tests {
     }
 
     #[test]
+    fn managed_store_ping_uses_only_the_fixed_daemon_store()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let executor = Scripted::new(vec![success(Vec::new())]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+
+        adapter.ping_managed_store()?;
+
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0],
+            [
+                OsString::from("store"),
+                OsString::from("ping"),
+                OsString::from("--store"),
+                OsString::from("daemon"),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn nixpkgs_metadata_runner_failure_is_closed() {
         let command = NixpkgsMetadataCommand::for_test(&["flake", "metadata"]);
         let adapter = RealNixAdapter::scripted(Scripted::new(vec![failure(1)]));
@@ -2178,6 +2240,7 @@ mod tests {
             nix_binary: PathBuf::from("/bin/sh"),
             nix_store_binary: PathBuf::from("/bin/sh"),
             private_home: home.path().to_path_buf(),
+            daemon_socket: PathBuf::from(MANAGED_DAEMON_SOCKET),
         };
         let noisy = || CommandSpec {
             program: NixProgram::Modern,
@@ -2372,6 +2435,7 @@ mod tests {
             nix_binary: PathBuf::from("/bin/sh"),
             nix_store_binary: PathBuf::from("/bin/sh"),
             private_home: home.path().to_path_buf(),
+            daemon_socket: PathBuf::from(MANAGED_DAEMON_SOCKET),
         };
         for script in ["sleep 30 & wait", "sleep 30 &"] {
             let started = Instant::now();

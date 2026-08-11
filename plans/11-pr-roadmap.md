@@ -1531,6 +1531,15 @@ flowchart TD
   The channel floor is committed only in the final receipt phase while platform rollback remains
   active. Runtime rollback is performed by the provisioner that created it, on both platforms.
   Repository views, target readers, Nix controls, and rollback-state writers stay private.
+  The next production slice now supplies the shared pinned-Nix bootstrap daemon used by
+  that transaction on both Unix platforms. It launches only `nix daemon` from the
+  authenticated 2.34.8 runtime, uses a fixed cleared environment and a distinct private
+  bootstrap socket, and performs a bounded fixed store ping. Readiness failures and
+  rollback reap the process group and clean the attempt socket. A prior crash can remove
+  only a root-owned socket that refuses connections inside the validated private helper
+  directory; live or untrusted endpoints refuse installation. The fixed authenticated
+  `nix.conf` is installed before bootstrap on Linux and macOS. Strict Clippy, focused
+  rollback/contract tests, and independent P1 review pass.
   This resolves plan 07 Q7.7 without claiming the still-missing privileged production backend.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.

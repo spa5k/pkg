@@ -215,13 +215,25 @@ pub fn install_linux(
                 existing = existing.saturating_add(1);
             }
         }
+        for asset in linux_install_assets()
+            .iter()
+            .filter(|asset| asset.id() == "nix-config")
+        {
+            mutations.push(InstallMutation::Asset(*asset));
+            if backend.ensure_asset(*asset)? {
+                created_artifacts = created_artifacts.saturating_add(1);
+            } else {
+                let _ = mutations.pop();
+                existing = existing.saturating_add(1);
+            }
+        }
         mutations.push(InstallMutation::ManagedRuntime);
         if !backend.provision_managed_runtime()? {
             let _ = mutations.pop();
         }
         for asset in linux_install_assets()
             .iter()
-            .filter(|asset| asset.kind() == LinuxAssetKind::File)
+            .filter(|asset| asset.kind() == LinuxAssetKind::File && asset.id() != "nix-config")
         {
             mutations.push(InstallMutation::Asset(*asset));
             let was_created = {
@@ -471,12 +483,11 @@ mod tests {
             .iter()
             .position(|event| *event == "runtime")
             .ok_or_else(|| io::Error::other("runtime rollback missing"))?;
-        let first_file = linux_install_assets()
+        let post_runtime_file_count = linux_install_assets()
             .iter()
-            .position(|asset| asset.kind() == LinuxAssetKind::File)
-            .ok_or_else(|| io::Error::other("file asset missing"))?;
-        let file_count = linux_install_assets().len().saturating_sub(first_file);
-        assert_eq!(runtime, file_count.saturating_add(1));
+            .filter(|asset| asset.kind() == LinuxAssetKind::File && asset.id() != "nix-config")
+            .count();
+        assert_eq!(runtime, post_runtime_file_count.saturating_add(1));
         assert!(!backend.states.contains("runtime"));
         assert!(!backend.states.contains("services"));
         assert!(backend.existing.is_empty());

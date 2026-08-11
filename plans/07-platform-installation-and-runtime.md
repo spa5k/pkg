@@ -1219,6 +1219,19 @@ snippets, or any foreign `/nix`.
     connection reusable, while authorization/protocol failures remain connection-fatal. The
     authenticated build execution and product-command dispatch remain PR-36 wiring
     slices; there is still no generic argv or Nix-expression surface.
+21. The privileged runtime provisioner now has a production bootstrap-daemon
+    lifecycle for pinned Nix 2.34.8 on Linux and macOS. It starts only the exact
+    authenticated `/opt/pkg/nix/2.34.8/bin/nix daemon` binary with a cleared,
+    fixed environment and a private bootstrap socket below the root-only helper
+    temporary directory. This socket is separate from the normal systemd/launchd
+    socket, so an existing managed service cannot collide with verification.
+    Readiness uses a two-second fixed `nix store ping --store daemon` probe inside
+    a ten-second bound. Failure, rollback, and drop stop and reap the whole process
+    group. Retry cleanup removes only a root-owned Unix socket in the validated
+    private directory after a connection proves that it is stale; live or
+    untrusted endpoints fail closed. The installer writes the authenticated fixed
+    `nix.conf` before runtime verification on both platforms. Production
+    Linux/macOS asset, account, and service backends remain the next PR-36 slices.
 
 ## 17. Unresolved questions / spikes
 

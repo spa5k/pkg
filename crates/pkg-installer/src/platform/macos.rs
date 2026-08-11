@@ -1068,6 +1068,26 @@ enum InstallMutation {
     Services,
 }
 
+fn install_nix_config_phase(
+    backend: &mut dyn MacOsInstallBackend,
+    mutations: &mut Vec<InstallMutation>,
+    created: &mut usize,
+    existing: &mut usize,
+) -> Result<(), MacOsError> {
+    let asset = MACOS_ASSETS
+        .iter()
+        .find(|asset| asset.id == "nix-config")
+        .ok_or_else(MacOsError::backend_failure)?;
+    mutations.push(InstallMutation::Asset(*asset));
+    if backend.install_nix_config(*asset)? {
+        *created = created.saturating_add(1);
+    } else {
+        let _ = mutations.pop();
+        *existing = existing.saturating_add(1);
+    }
+    Ok(())
+}
+
 /// Executes authenticated, failure-atomic, receipt-last macOS installation.
 ///
 /// # Errors
@@ -1105,12 +1125,15 @@ pub fn install_macos(
         }) {
             record_asset_result(backend, *asset, &mut mutations, &mut created, &mut existing)?;
         }
+        install_nix_config_phase(backend, &mut mutations, &mut created, &mut existing)?;
         mutations.push(InstallMutation::Runtime);
         if !backend.provision_managed_runtime()? {
             let _ = mutations.pop();
         }
         for asset in MACOS_ASSETS.iter().filter(|asset| {
-            asset.kind == MacOsAssetKind::File && !store_volume_prerequisite(asset.id)
+            asset.kind == MacOsAssetKind::File
+                && asset.id != "nix-config"
+                && !store_volume_prerequisite(asset.id)
         }) {
             mutations.push(InstallMutation::Asset(*asset));
             let was_created = match asset.id {
@@ -1126,7 +1149,6 @@ pub fn install_macos(
                 "broker-plist" => {
                     backend.install_launchd_plist(*asset, MacOsLaunchdAssets::BROKER)?
                 }
-                "nix-config" => backend.install_nix_config(*asset)?,
                 _ => backend.ensure_asset(*asset)?,
             };
             if was_created {

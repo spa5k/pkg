@@ -102,7 +102,7 @@ pub use maintenance::{
 pub use managed::accounts::{
     BuildAccount, BuildAccountDirectory, BuildAccountError, observe_build_accounts,
 };
-pub use managed::daemon::{DaemonError, DaemonErrorCode, ManagedDaemon};
+pub use managed::daemon::{DaemonError, DaemonErrorCode, ManagedDaemon, ProductionManagedDaemon};
 pub use managed::detect::{
     DetectionDisposition, DetectionFinding, DetectionReport, FindingKind, detect_unmanaged_nix,
 };
