@@ -11,7 +11,8 @@ use sha2::{Digest as _, Sha256};
 use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
     BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, LocalBuildEngine, NixAdapter,
-    OperationId, ResourceProbe, RootSet, RootSetIntent, RootSetReport, VolatileBuildEstimate,
+    OperationId, ResourceProbe, RootSet, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionRequest, VolatileBuildEstimate,
     maintenance::{MaintenanceError, random_secret},
 };
 
@@ -155,7 +156,14 @@ struct OperationRecord {
     prepared_build: Option<PreparedBuild>,
     cancellation: Arc<CancellationToken>,
     build_executing: bool,
+    root_transition_executing: bool,
     awaiting_root_outputs: Option<BTreeSet<String>>,
+}
+
+impl OperationRecord {
+    const fn authority_executing(&self) -> bool {
+        self.build_executing || self.root_transition_executing
+    }
 }
 
 #[derive(Clone)]
@@ -523,7 +531,7 @@ impl AuthenticatedCaller {
             record.status = OperationStatus::Cancelled;
             record.prepared_build = None;
             record.awaiting_root_outputs = None;
-            let executing = record.build_executing;
+            let executing = record.authority_executing();
             if !executing {
                 release_admission(&mut state, &self.broker.build_gate, handle);
                 state.operations.remove(handle);
@@ -956,6 +964,39 @@ impl AuthenticatedCaller {
         self.publish_built_root_set(handle, &root_set, publish)
     }
 
+    /// Promotes an ownerless generation transition and executes it under Activate authority.
+    ///
+    /// The shared GC inhibitor remains held after a successful helper transition. The caller
+    /// must commit its local generation state and then call [`Self::complete`] to release it.
+    pub fn transition_root_intent(
+        &self,
+        handle: &OperationHandle,
+        intent: RootSetTransitionIntent,
+        transition: impl FnOnce(RootSetTransitionRequest) -> Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        let request = intent
+            .into_request(self.uid)
+            .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
+        {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Activate])?;
+            if state.gc_holder.is_some() || state.gc_inhibitors.contains(handle) {
+                return Err(BrokerError::new(BrokerErrorCode::AdmissionBusy));
+            }
+            let record = self.record_mut(&mut state, handle)?;
+            if record.authority_executing() {
+                return Err(BrokerError::new(
+                    BrokerErrorCode::InvalidAdmissionTransition,
+                ));
+            }
+            record.root_transition_executing = true;
+            state.gc_inhibitors.insert(handle.clone());
+        }
+
+        let result = transition(request);
+        self.finish_root_transition(handle, result)
+    }
+
     /// Acquires the machine-wide local-build lease for this operation.
     pub fn acquire_build(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
@@ -1090,7 +1131,7 @@ impl AuthenticatedCaller {
                 record.status = OperationStatus::Cancelled;
                 record.prepared_build = None;
                 record.awaiting_root_outputs = None;
-                record.build_executing
+                record.authority_executing()
             } else {
                 false
             };
@@ -1133,6 +1174,7 @@ impl AuthenticatedCaller {
                 prepared_build: None,
                 cancellation: Arc::new(CancellationToken::default()),
                 build_executing: false,
+                root_transition_executing: false,
                 awaiting_root_outputs: None,
             },
         );
@@ -1147,7 +1189,7 @@ impl AuthenticatedCaller {
             .get_mut(handle)
             .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
         if status == OperationStatus::Completed
-            && (record.build_executing || record.awaiting_root_outputs.is_some())
+            && (record.authority_executing() || record.awaiting_root_outputs.is_some())
         {
             return Err(BrokerError::new(
                 BrokerErrorCode::InvalidAdmissionTransition,
@@ -1160,7 +1202,7 @@ impl AuthenticatedCaller {
         record.status = status;
         record.prepared_build = None;
         record.awaiting_root_outputs = None;
-        let executing = record.build_executing;
+        let executing = record.authority_executing();
         if !executing {
             release_admission(&mut state, &self.broker.build_gate, handle);
         }
@@ -1252,6 +1294,44 @@ impl AuthenticatedCaller {
             }));
         }
         publication.map_err(|_| BrokerError::new(BrokerErrorCode::RootPublicationFailed))
+    }
+
+    fn finish_root_transition(
+        &self,
+        handle: &OperationHandle,
+        transition: Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        let mut state = self.broker.lock();
+        if self.check_epoch(&state).is_err() {
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        let succeeded = state.operations.get(handle).is_some_and(|record| {
+            record.owner_uid == self.uid
+                && record.status == OperationStatus::Running
+                && record.root_transition_executing
+                && !record.cancellation.is_cancelled()
+                && transition.is_ok()
+        });
+        if let Some(record) = state.operations.get_mut(handle)
+            && record.owner_uid == self.uid
+        {
+            record.root_transition_executing = false;
+            if !succeeded {
+                record.cancellation.cancel();
+                record.status = OperationStatus::Cancelled;
+                record.prepared_build = None;
+                record.awaiting_root_outputs = None;
+            }
+        }
+        if !succeeded {
+            release_admission(&mut state, &self.broker.build_gate, handle);
+            return Err(BrokerError::new(if transition.is_err() {
+                BrokerErrorCode::RootPublicationFailed
+            } else {
+                BrokerErrorCode::AdmissionCancelled
+            }));
+        }
+        transition.map_err(|_| BrokerError::new(BrokerErrorCode::RootPublicationFailed))
     }
 
     fn fail_build_execution(&self, handle: &OperationHandle) {
@@ -1365,7 +1445,7 @@ fn purge_expired(
         let executing = state
             .operations
             .get(&handle)
-            .is_some_and(|record| record.build_executing);
+            .is_some_and(OperationRecord::authority_executing);
         if executing {
             if let Some(record) = state.operations.get_mut(&handle) {
                 record.cancellation.cancel();
@@ -1560,8 +1640,8 @@ mod tests {
         BuildPlanTarget, BuildReadiness, BuildRequest, BuildStatus, CacheClassification,
         DerivationPath, DerivationPlanReport, EvaluateDerivationRequest, EvaluatedDerivation,
         GcReport, GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter,
-        NixAdapterError, NixVersion, PathInfoReport, ResourceSnapshot, RootName, RootSetEntry,
-        SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+        NixAdapterError, NixVersion, PathInfoReport, ResourceSnapshot, RootName, RootRef,
+        RootSetEntry, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
     };
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
@@ -2349,6 +2429,131 @@ mod tests {
         let released = broker.admission_snapshot();
         assert!(!released.build_held());
         assert_eq!(released.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn root_transition_injects_uid_and_holds_inhibit_until_state_commit() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+        let intent = RootSetTransitionIntent::new(
+            GenerationId::new("gen-0007").unwrap(),
+            GenerationId::new("gen-0008").unwrap(),
+            vec![RootName::new("ripgrep-out").unwrap()],
+        )
+        .unwrap();
+
+        let report = caller
+            .transition_root_intent(&handle, intent, |request| {
+                assert_eq!(request.owner_uid(), 1001);
+                assert_eq!(request.source_generation().as_str(), "gen-0007");
+                assert_eq!(request.destination_generation().as_str(), "gen-0008");
+                assert_eq!(request.retained_names()[0].as_str(), "ripgrep-out");
+                Ok(RootSetReport::new(
+                    RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
+                    1,
+                ))
+            })
+            .unwrap();
+        assert_eq!(report.entry_count(), 1);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        caller.complete(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn root_transition_requires_activate_and_helper_failure_is_terminal() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let intent = || {
+            RootSetTransitionIntent::new(
+                GenerationId::new("gen-0007").unwrap(),
+                GenerationId::new("gen-0008").unwrap(),
+                vec![RootName::new("ripgrep-out").unwrap()],
+            )
+            .unwrap()
+        };
+        let wrong_handle = caller.begin(BrokerOperationKind::Resolve).unwrap();
+        let calls = AtomicUsize::new(0);
+        assert_eq!(
+            caller
+                .transition_root_intent(&wrong_handle, intent(), |_| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Err(MaintenanceError::backend_failure())
+                })
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+        assert_eq!(
+            caller
+                .transition_root_intent(&handle, intent(), |_| {
+                    Err(MaintenanceError::backend_failure())
+                })
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::RootPublicationFailed
+        );
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn cancellation_during_root_transition_defers_inhibit_release() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+        let intent = RootSetTransitionIntent::new(
+            GenerationId::new("gen-0007").unwrap(),
+            GenerationId::new("gen-0008").unwrap(),
+            vec![RootName::new("ripgrep-out").unwrap()],
+        )
+        .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker_caller = caller.clone();
+        let worker_handle = handle.clone();
+        let worker = thread::spawn(move || {
+            worker_caller.transition_root_intent(&worker_handle, intent, |request| {
+                entered_tx
+                    .send(())
+                    .map_err(|_| MaintenanceError::backend_failure())?;
+                release_rx
+                    .recv()
+                    .map_err(|_| MaintenanceError::backend_failure())?;
+                Ok(RootSetReport::new(
+                    RootRef::new(&format!(
+                        "/nix/var/nix/gcroots/pkg/users/{}/{}",
+                        request.owner_uid(),
+                        request.destination_generation().as_str()
+                    ))
+                    .unwrap(),
+                    request.retained_names().len(),
+                ))
+            })
+        });
+        entered_rx.recv().unwrap();
+        caller.cancel(&handle).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().code(),
+            BrokerErrorCode::AdmissionCancelled
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
     }
 
     #[test]

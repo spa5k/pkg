@@ -154,6 +154,68 @@ pub struct RootSetTransitionRequest {
     retained_names: Vec<RootName>,
 }
 
+/// Ownerless transition intent accepted from the authenticated CLI channel.
+///
+/// The broker injects the peer uid when promoting this value to a privileged
+/// [`RootSetTransitionRequest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootSetTransitionIntent {
+    source_generation: GenerationId,
+    destination_generation: GenerationId,
+    retained_names: Vec<RootName>,
+}
+
+impl RootSetTransitionIntent {
+    /// Validates and canonicalizes one ownerless, path-free transition intent.
+    pub fn new(
+        source_generation: GenerationId,
+        destination_generation: GenerationId,
+        retained_names: Vec<RootName>,
+    ) -> Result<Self, MaintenanceError> {
+        let request = RootSetTransitionRequest::new(
+            0,
+            source_generation,
+            destination_generation,
+            retained_names,
+        )?;
+        Ok(Self {
+            source_generation: request.source_generation,
+            destination_generation: request.destination_generation,
+            retained_names: request.retained_names,
+        })
+    }
+
+    /// Returns the trusted source generation selected by verified local state.
+    #[must_use]
+    pub const fn source_generation(&self) -> &GenerationId {
+        &self.source_generation
+    }
+
+    /// Returns the fresh destination generation selected by the state transaction.
+    #[must_use]
+    pub const fn destination_generation(&self) -> &GenerationId {
+        &self.destination_generation
+    }
+
+    /// Returns retained root names in canonical order.
+    #[must_use]
+    pub fn retained_names(&self) -> &[RootName] {
+        &self.retained_names
+    }
+
+    pub(crate) fn into_request(
+        self,
+        owner_uid: u32,
+    ) -> Result<RootSetTransitionRequest, MaintenanceError> {
+        RootSetTransitionRequest::new(
+            owner_uid,
+            self.source_generation,
+            self.destination_generation,
+            self.retained_names,
+        )
+    }
+}
+
 impl RootSetTransitionRequest {
     /// Validates and canonicalizes one non-empty, path-free transition.
     pub fn new(
