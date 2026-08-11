@@ -11,11 +11,11 @@ use std::{
 
 use pkg_core::PackageSelector;
 use pkg_nix::{
-    ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPreview, BuildReport,
-    BuildRequest, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest,
-    EvaluateDerivationRequest, GcReport, MethodKind, NixAdapter, NixAdapterError,
-    NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport, ProductFrameCodec,
-    StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
+    BuildPreview, BuildReport, BuildRequest, CliBrokerRequest, CliBrokerResponse,
+    DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport, MethodKind, NixAdapter,
+    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
+    ProductFrameCodec, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -48,6 +48,8 @@ pub enum BrokerClientErrorCode {
     ConnectionFailed,
     /// The authenticated broker returned a closed adapter failure code.
     AdapterFailure,
+    /// Broker-owned build execution returned a stable refusal code.
+    BuildRefused,
 }
 
 /// Redacted failure from the private broker connector.
@@ -55,6 +57,7 @@ pub enum BrokerClientErrorCode {
 pub struct BrokerClientError {
     code: BrokerClientErrorCode,
     adapter_code: Option<NixAdapterErrorCode>,
+    build_execution_code: Option<BuildExecutionErrorCode>,
 }
 
 impl BrokerClientError {
@@ -62,6 +65,7 @@ impl BrokerClientError {
         Self {
             code,
             adapter_code: None,
+            build_execution_code: None,
         }
     }
 
@@ -69,6 +73,15 @@ impl BrokerClientError {
         Self {
             code: BrokerClientErrorCode::AdapterFailure,
             adapter_code: Some(adapter_code),
+            build_execution_code: None,
+        }
+    }
+
+    const fn build_refused(build_execution_code: BuildExecutionErrorCode) -> Self {
+        Self {
+            code: BrokerClientErrorCode::BuildRefused,
+            adapter_code: None,
+            build_execution_code: Some(build_execution_code),
         }
     }
 
@@ -83,6 +96,12 @@ impl BrokerClientError {
     #[must_use]
     pub const fn adapter_code(self) -> Option<NixAdapterErrorCode> {
         self.adapter_code
+    }
+
+    /// Returns the closed build refusal code after a completed execution RPC.
+    #[must_use]
+    pub const fn build_execution_code(self) -> Option<BuildExecutionErrorCode> {
+        self.build_execution_code
     }
 }
 
@@ -286,6 +305,21 @@ impl BrokerLifecycleClient {
     ) -> Result<BuildPreview, BrokerClientError> {
         match self.transact(&CliBrokerRequest::PrepareBuild(handle, selectors))? {
             CliBrokerResponse::BuildPrepared(preview) => Ok(preview),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Executes the exact approved private plan identified by its displayed digest.
+    pub fn execute_build(
+        &mut self,
+        handle: OperationHandle,
+        digest: Digest,
+    ) -> Result<BuildReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::ExecuteBuild(handle, digest))? {
+            CliBrokerResponse::BuildExecuted(report) => Ok(report),
+            CliBrokerResponse::BuildExecutionRefused(code) => {
+                Err(BrokerClientError::build_refused(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -536,7 +570,8 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::InvalidFrame
         | BrokerClientErrorCode::UnexpectedResponse
         | BrokerClientErrorCode::RequestIdExhausted
-        | BrokerClientErrorCode::AdapterFailure => NixAdapterError::OperationFailed,
+        | BrokerClientErrorCode::AdapterFailure
+        | BrokerClientErrorCode::BuildRefused => NixAdapterError::OperationFailed,
     }
 }
 
@@ -546,10 +581,10 @@ mod tests {
     use pkg_installer::serve_broker_connection_with_nix;
     use pkg_nix::{
         AcceptedFormats, AttributePath, BuildApprovalReceipt, DerivationPath, DerivedOutputTarget,
-        Digest, EvaluatedDerivation, FormatVersion, GcStatus, InProcessBroker, NarHash,
-        NarIntegrity, NixAdapter, NixAdapterError, NixVersion, NixpkgsRevision, OperationId,
-        OutputName, OutputSelection, PackageVersion, PathVerifyResult, PolicyVersion, Signature,
-        SubstituteReceipt, System, TrustStatus, VerifyMode, VersionInfo,
+        Digest, EvaluatedDerivation, FormatVersion, GcStatus, InProcessBroker, InProcessCallerPeer,
+        NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion, NixpkgsRevision,
+        OperationId, OutputName, OutputSelection, PackageVersion, PathVerifyResult, PolicyVersion,
+        Signature, SubstituteReceipt, System, TrustStatus, VerifyMode, VersionInfo,
     };
     use pkg_testkit::FakeNix;
     use std::{
@@ -852,6 +887,41 @@ mod tests {
         assert!(!snapshot.build_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
         fake.assert_exhausted()?;
+        Ok(())
+    }
+
+    #[test]
+    fn build_refusal_is_typed_and_keeps_the_connection_usable() -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Build)?;
+        let digest = Digest::from_bytes([0x33; 32]);
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::BuildExecutionRefused(
+                BuildExecutionErrorCode::ResourcePreflightFailed,
+            ),
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client.execute_build(handle.clone(), digest).unwrap_err();
+        assert_eq!(error.code(), BrokerClientErrorCode::BuildRefused);
+        assert_eq!(
+            error.build_execution_code(),
+            Some(BuildExecutionErrorCode::ResourcePreflightFailed)
+        );
+        assert!(client.healthy);
+        let request = read_frame(
+            &mut server,
+            Instant::now()
+                .checked_add(RESPONSE_TIMEOUT)
+                .ok_or_else(|| io::Error::other("deadline overflow"))?,
+        )?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&request)?,
+            (1, CliBrokerRequest::ExecuteBuild(handle, digest))
+        );
         Ok(())
     }
 

@@ -1266,7 +1266,10 @@ flowchart TD
   execution can no longer receive a volatile disk estimate: trusted preparation fixes the estimate,
   stores it with the private plan, and returns that same value in the sanitized preview. Missing
   estimates fail execution before Nix runs and zero-byte estimates are invalid, closing the former
-  in-process admission-bypass seam before method 19 is assigned. The
+  in-process admission-bypass seam. Closed method 19 now carries only a live build handle and the
+  displayed digest; broker authority supplies the retained replanner, estimate, fixed host probe,
+  and exact contained adapter. It returns either a validated typed build report or one of six stable
+  redacted refusal codes, and an ordinary refusal leaves the connection usable. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix

@@ -85,8 +85,8 @@ pub use contract::{
 };
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
-    BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, CliBrokerRequest,
-    CliBrokerResponse, FrameError, FrameErrorCode, ProductFrameCodec,
+    BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
+    CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode, ProductFrameCodec,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,

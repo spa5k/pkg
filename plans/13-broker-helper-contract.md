@@ -260,7 +260,12 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   is now closed method 18: it carries only the live build handle plus bounded, unresolved,
   unpinned `CurrentChannel` package selectors, invokes the injected authenticated authority, and
   returns only the sanitized preview. Channel, index, target system, derivations, store paths, and
-  Nix controls are absent from the wire. The production service entry point still must bootstrap
+  Nix controls are absent from the wire. Closed method 19 carries only the same live handle plus the
+  displayed plan digest. The authority supplies the exact retained replanner, preparation-time disk
+  estimate, fixed host resource probe, and contained managed adapter. Success returns the validated
+  typed `BuildReport`; failure returns one of six stable redacted refusal codes without killing an
+  otherwise healthy connection. No receipt, estimate, resource measurement, target, path, or Nix
+  control crosses the execution request. The production service entry point still must bootstrap
   and inject the long-lived refresh owner before enabling this method on its public listener. The broker-owned
   in-memory authority now supplies a consistent verified-channel/authenticated-index snapshot,
   rejects rollback, policy downgrade and same-sequence descriptor reuse, drops a stale index on

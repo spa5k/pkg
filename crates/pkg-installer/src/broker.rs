@@ -3,7 +3,8 @@
 use crate::{BrokerApprovalAudit, BrokerCallerApprovalJournal, platform::peer_uid};
 use pkg_core::PackageSelector;
 use pkg_nix::{
-    AuthenticatedCaller, BuildPreview, CliBrokerRequest, CliBrokerResponse, InProcessBroker,
+    AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
+    CliBrokerRequest, CliBrokerResponse, Digest, HostResourceProbe, InProcessBroker,
     InProcessCallerPeer, MethodKind, NixAdapter, NixAdapterError, OperationHandle,
     ProductFrameCodec,
 };
@@ -145,6 +146,13 @@ trait BuildAuthorityDispatch: Send + Sync {
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
     ) -> Result<BuildPreview, ()>;
+
+    fn execute(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        digest: Digest,
+    ) -> Result<BuildReport, BrokerErrorCode>;
 }
 
 impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
@@ -156,6 +164,18 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
     ) -> Result<BuildPreview, ()> {
         self.prepare_and_install(selectors, caller, handle)
             .map_err(|_| ())
+    }
+
+    fn execute(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        digest: Digest,
+    ) -> Result<BuildReport, BrokerErrorCode> {
+        let adapter = self.adapter();
+        caller
+            .execute_prepared_build(handle, digest, &HostResourceProbe::new(), adapter.as_ref())
+            .map_err(pkg_nix::BrokerError::code)
     }
 }
 
@@ -296,6 +316,47 @@ fn dispatch_request(
             .ok_or(())?
             .prepare(selectors, caller, &handle)
             .map(CliBrokerResponse::BuildPrepared),
+        CliBrokerRequest::ExecuteBuild(handle, digest) => {
+            Ok(build_execution_response(authority, caller, &handle, digest))
+        }
+    }
+}
+
+fn build_execution_response(
+    authority: Option<&dyn BuildAuthorityDispatch>,
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    digest: Digest,
+) -> CliBrokerResponse {
+    authority.map_or(
+        CliBrokerResponse::BuildExecutionRefused(BuildExecutionErrorCode::AuthorityUnavailable),
+        |authority| match authority.execute(caller, handle, digest) {
+            Ok(report) => CliBrokerResponse::BuildExecuted(report),
+            Err(code) => CliBrokerResponse::BuildExecutionRefused(map_build_execution_error(code)),
+        },
+    )
+}
+
+const fn map_build_execution_error(code: BrokerErrorCode) -> BuildExecutionErrorCode {
+    match code {
+        BrokerErrorCode::BuildApprovalMismatch | BrokerErrorCode::BuildApprovalUnavailable => {
+            BuildExecutionErrorCode::ApprovalUnavailable
+        }
+        BrokerErrorCode::BuildApprovalInvalidated => BuildExecutionErrorCode::ApprovalInvalidated,
+        BrokerErrorCode::BuildResourcePreflightFailed => {
+            BuildExecutionErrorCode::ResourcePreflightFailed
+        }
+        BrokerErrorCode::BuildExecutionFailed => BuildExecutionErrorCode::ExecutionFailed,
+        BrokerErrorCode::AdmissionCancelled => BuildExecutionErrorCode::Cancelled,
+        BrokerErrorCode::UnauthenticatedCaller
+        | BrokerErrorCode::SessionRestarted
+        | BrokerErrorCode::InvalidOperationHandle
+        | BrokerErrorCode::OperationExpired
+        | BrokerErrorCode::AdmissionBusy
+        | BrokerErrorCode::InvalidAdmissionTransition
+        | BrokerErrorCode::InvalidBuildPlan
+        | BrokerErrorCode::InvalidChildPolicy
+        | BrokerErrorCode::EntropyUnavailable => BuildExecutionErrorCode::AuthorityUnavailable,
     }
 }
 
@@ -543,6 +604,15 @@ mod tests {
                 .map_err(|_| ())?;
             Ok(preview)
         }
+
+        fn execute(
+            &self,
+            _caller: &AuthenticatedCaller,
+            _handle: &OperationHandle,
+            _digest: Digest,
+        ) -> Result<BuildReport, BrokerErrorCode> {
+            Err(BrokerErrorCode::BuildResourcePreflightFailed)
+        }
     }
 
     fn read_response(stream: &mut UnixStream) -> io::Result<Vec<u8>> {
@@ -661,7 +731,7 @@ mod tests {
             Ok((17, CliBrokerResponse::BuildPreview(preview)))
         );
         let request = CliBrokerRequest::ApproveBuild(
-            handle,
+            handle.clone(),
             BuildApprovalRequest::new(digest, ApprovalSource::Interactive),
         );
         assert_eq!(
@@ -669,6 +739,28 @@ mod tests {
             Ok(CliBrokerResponse::BuildApproved)
         );
         assert!(dispatch_request(&caller, request, None, Some(&journal), None).is_err());
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::ExecuteBuild(handle.clone(), digest),
+                None,
+                Some(&journal),
+                Some(&authority),
+            ),
+            Ok(CliBrokerResponse::BuildExecutionRefused(
+                BuildExecutionErrorCode::ResourcePreflightFailed,
+            ))
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Poll(handle),
+                None,
+                Some(&journal),
+                None,
+            ),
+            Ok(CliBrokerResponse::Status(OperationStatus::Running))
+        );
 
         let recovery =
             recover_journal(&std::fs::read(directory.join("approvals.ndjson")).unwrap()).unwrap();

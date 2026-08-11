@@ -17,9 +17,9 @@ use crate::maintenance::{
     RootSetReport, VerifiedRepairScope,
 };
 use crate::{
-    ApprovalSource, BuildPreview, DerivationPlanReport, EvaluateDerivationRequest, GcReport,
-    JsonCodec, PathInfoReport, RootName, RootRef, SubstituteReport, VerifyReport, VerifyRequest,
-    VersionInfo,
+    ApprovalSource, BuildPreview, BuildReport, DerivationPlanReport, EvaluateDerivationRequest,
+    GcReport, JsonCodec, PathInfoReport, RootName, RootRef, SubstituteReport, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
@@ -104,6 +104,8 @@ pub enum CliBrokerRequest {
     GetBuildPreview(OperationHandle),
     /// Prepare a private build plan from typed selector intent and broker authority.
     PrepareBuild(OperationHandle, Vec<PackageSelector>),
+    /// Execute the exact approved private plan retained under one build handle.
+    ExecuteBuild(OperationHandle, Digest),
 }
 
 /// Closed responses on the broker-to-CLI channel.
@@ -133,8 +135,44 @@ pub enum CliBrokerResponse {
     BuildPreview(BuildPreview),
     /// Sanitized view returned after authenticated preparation succeeds.
     BuildPrepared(BuildPreview),
+    /// Validated report from broker-owned build execution.
+    BuildExecuted(BuildReport),
+    /// Stable redacted refusal from broker-owned build execution.
+    BuildExecutionRefused(BuildExecutionErrorCode),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
+}
+
+/// Stable redacted build-execution refusal categories exposed to the CLI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildExecutionErrorCode {
+    /// The exact private approval was absent, stale, consumed, or mismatched.
+    ApprovalUnavailable,
+    /// Admission-time replanning no longer matched the approved plan.
+    ApprovalInvalidated,
+    /// The broker-owned disk/load preflight refused execution.
+    ResourcePreflightFailed,
+    /// Managed build execution failed or returned inconsistent outputs.
+    ExecutionFailed,
+    /// Operation lifecycle cancellation stopped admission or execution.
+    Cancelled,
+    /// Other private authority state refused the request without more detail.
+    AuthorityUnavailable,
+}
+
+impl BuildExecutionErrorCode {
+    /// Returns the stable wire code.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ApprovalUnavailable => "approval_unavailable",
+            Self::ApprovalInvalidated => "approval_invalidated",
+            Self::ResourcePreflightFailed => "resource_preflight_failed",
+            Self::ExecutionFailed => "execution_failed",
+            Self::Cancelled => "cancelled",
+            Self::AuthorityUnavailable => "authority_unavailable",
+        }
+    }
 }
 
 /// Closed user-approval pointer. It carries no receipt, target, derivation, or
@@ -281,6 +319,13 @@ impl ProductFrameCodec {
                     })?,
                 )
             }
+            CliBrokerRequest::ExecuteBuild(handle, digest) => (
+                19,
+                encode_json(&BuildExecutionWire {
+                    handle: handle.as_str(),
+                    build_plan_digest: digest.to_string(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -358,6 +403,14 @@ impl ProductFrameCodec {
                         .collect::<Result<Vec<_>, _>>()?,
                 )
             }
+            19 => {
+                let wire: BuildExecutionOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::ExecuteBuild(
+                    parse_handle(&wire.handle)?,
+                    Digest::from_str(&wire.build_plan_digest)
+                        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                )
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, request))
@@ -410,6 +463,15 @@ impl ProductFrameCodec {
                     .to_json_bytes()
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
             ),
+            CliBrokerResponse::BuildExecuted(report) => {
+                (19, report.encode().map_err(adapter_payload)?)
+            }
+            CliBrokerResponse::BuildExecutionRefused(code) => (
+                19,
+                encode_json(&BuildExecutionFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -430,6 +492,14 @@ impl ProductFrameCodec {
             return Ok((
                 frame.request_id,
                 CliBrokerResponse::AdapterFailure(method, code),
+            ));
+        }
+        if frame.method == 19
+            && let Some(code) = decode_build_execution_failure(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::BuildExecutionRefused(code),
             ));
         }
         let response = match frame.method {
@@ -479,6 +549,10 @@ impl ProductFrameCodec {
             18 => CliBrokerResponse::BuildPrepared(
                 BuildPreview::from_json_bytes(frame.payload)
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
+            19 => CliBrokerResponse::BuildExecuted(
+                BuildReport::decode(&JsonCodec::default(), frame.payload)
+                    .map_err(adapter_payload)?,
             ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
@@ -738,6 +812,27 @@ fn decode_adapter_failure(bytes: &[u8]) -> Result<Option<NixAdapterErrorCode>, F
     parse_adapter_error_code(&wire.error).map(Some)
 }
 
+fn decode_build_execution_failure(
+    bytes: &[u8],
+) -> Result<Option<BuildExecutionErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<BuildExecutionFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_build_execution_error_code(&wire.error).map(Some)
+}
+
+fn parse_build_execution_error_code(value: &str) -> Result<BuildExecutionErrorCode, FrameError> {
+    match value {
+        "approval_unavailable" => Ok(BuildExecutionErrorCode::ApprovalUnavailable),
+        "approval_invalidated" => Ok(BuildExecutionErrorCode::ApprovalInvalidated),
+        "resource_preflight_failed" => Ok(BuildExecutionErrorCode::ResourcePreflightFailed),
+        "execution_failed" => Ok(BuildExecutionErrorCode::ExecutionFailed),
+        "cancelled" => Ok(BuildExecutionErrorCode::Cancelled),
+        "authority_unavailable" => Ok(BuildExecutionErrorCode::AuthorityUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
 fn parse_adapter_error_code(value: &str) -> Result<NixAdapterErrorCode, FrameError> {
     match value {
         "unexpected_call" => Ok(NixAdapterErrorCode::UnexpectedCall),
@@ -888,6 +983,18 @@ struct AdapterFailureOwnedWire {
 
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
+struct BuildExecutionFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuildExecutionFailureOwnedWire {
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
 struct HandleBodyWire<'a> {
     handle: &'a str,
     request: &'a RawValue,
@@ -942,6 +1049,20 @@ struct PrepareBuildWire<'a> {
 struct PrepareBuildOwnedWire {
     handle: String,
     selectors: Vec<SelectorOwnedWire>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildExecutionWire<'a> {
+    handle: &'a str,
+    build_plan_digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildExecutionOwnedWire {
+    handle: String,
+    build_plan_digest: String,
 }
 
 #[derive(Serialize)]
@@ -1392,7 +1513,9 @@ mod tests {
     use pkg_core::state::body_digest;
 
     use super::*;
-    use crate::{AcceptedFormats, FormatVersion, NixVersion};
+    use crate::{
+        AcceptedFormats, BuildOutput, BuildOutputProvenance, BuildStatus, FormatVersion, NixVersion,
+    };
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
 
@@ -1493,6 +1616,50 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&empty),
             Err(FrameError::new(FrameErrorCode::InvalidPayload))
+        );
+
+        let execute = CliBrokerRequest::ExecuteBuild(
+            OperationHandle(format!("op_{}", "c".repeat(64))),
+            Digest::from_bytes([0x24; 32]),
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(11, &execute).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("buildPlanDigest"));
+        for forbidden in ["estimate", "resource", "receipt", "target", "derivation"] {
+            assert!(!wire.contains(forbidden), "execute exposed {forbidden}");
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((11, execute))
+        );
+        for code in [
+            BuildExecutionErrorCode::ApprovalUnavailable,
+            BuildExecutionErrorCode::ApprovalInvalidated,
+            BuildExecutionErrorCode::ResourcePreflightFailed,
+            BuildExecutionErrorCode::ExecutionFailed,
+            BuildExecutionErrorCode::Cancelled,
+            BuildExecutionErrorCode::AuthorityUnavailable,
+        ] {
+            let response = CliBrokerResponse::BuildExecutionRefused(code);
+            let encoded = ProductFrameCodec::encode_cli_response(11, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((11, response))
+            );
+        }
+        let report = BuildReport::new(
+            BuildStatus::Built,
+            vec![BuildOutput::new(
+                path("built-1.0"),
+                BuildOutputProvenance::LocalBuild,
+            )],
+        )
+        .unwrap();
+        let response = CliBrokerResponse::BuildExecuted(report);
+        let encoded = ProductFrameCodec::encode_cli_response(11, &response).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((11, response))
         );
         let helper = BrokerHelperRequest::PublishRootSet(root_set());
         let encoded = ProductFrameCodec::encode_helper_request(9, &helper).unwrap();
