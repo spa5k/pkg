@@ -10,6 +10,7 @@ use crate::cli::{
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
 use crate::exit::ExitCode;
+use crate::progress::PublicEvent;
 use crate::ux::{CommandError, OutputMode, PUBLIC_SCHEMA_VERSION, write_error, write_json_line};
 
 const MAX_RESULT_BYTES: usize = 4 * 1024 * 1024;
@@ -109,6 +110,15 @@ impl CommandResult {
 pub trait CommandEngine {
     /// Execute one command or return a sanitized stable failure.
     fn execute(&mut self, request: &CommandRequest) -> Result<CommandResult, CommandError>;
+
+    /// Execute one command while reporting sanitized progress events.
+    fn execute_with_progress(
+        &mut self,
+        request: &CommandRequest,
+        _progress: &mut dyn FnMut(PublicEvent),
+    ) -> Result<CommandResult, CommandError> {
+        self.execute(request)
+    }
 }
 
 /// Typed product operations implemented by the private broker connector.
@@ -127,6 +137,15 @@ pub trait CoreOperations {
         args: &InstallArgs,
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError>;
+    /// Install while reporting sanitized phase progress.
+    fn install_with_progress(
+        &mut self,
+        args: &InstallArgs,
+        policy: OperationPolicy,
+        _progress: &mut dyn FnMut(PublicEvent),
+    ) -> Result<CommandResult, CommandError> {
+        self.install(args, policy)
+    }
     /// Remove selectors through a fresh generation.
     fn remove(
         &mut self,
@@ -235,6 +254,14 @@ impl<C> CoreEngine<C> {
 
 impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
     fn execute(&mut self, request: &CommandRequest) -> Result<CommandResult, CommandError> {
+        self.execute_with_progress(request, &mut |_| {})
+    }
+
+    fn execute_with_progress(
+        &mut self,
+        request: &CommandRequest,
+        progress: &mut dyn FnMut(PublicEvent),
+    ) -> Result<CommandResult, CommandError> {
         let policy = OperationPolicy {
             yes: request.yes(),
             dry_run: request.dry_run(),
@@ -242,7 +269,9 @@ impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
         match request.command() {
             Command::Search(args) => self.operations.search(args),
             Command::Info(args) => self.operations.info(args),
-            Command::Install(args) => self.operations.install(args, policy),
+            Command::Install(args) => self
+                .operations
+                .install_with_progress(args, policy, progress),
             Command::Remove(args) => self.operations.remove(args, policy),
             Command::List(args) => self.operations.list(args),
             Command::Outdated => self.operations.outdated(),
@@ -305,7 +334,27 @@ pub fn execute_command(
     mut stderr: impl Write,
 ) -> io::Result<ExitCode> {
     let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
-    match engine.execute(&CommandRequest::from_cli(cli)) {
+    let mut progress_error = None;
+    let result = {
+        let mut progress = |event: PublicEvent| {
+            if progress_error.is_some() {
+                return;
+            }
+            let result = match mode {
+                OutputMode::Human if !cli.quiet() => event.write_human(&mut stderr),
+                OutputMode::JsonLines => event.write_ndjson(&mut stdout),
+                OutputMode::Human | OutputMode::Json => Ok(()),
+            };
+            if let Err(error) = result {
+                progress_error = Some(error);
+            }
+        };
+        engine.execute_with_progress(&CommandRequest::from_cli(cli), &mut progress)
+    };
+    if let Some(error) = progress_error {
+        return Err(error);
+    }
+    match result {
         Ok(result) => {
             write_success(&mut stdout, mode, cli.command_name(), &result)?;
             Ok(ExitCode::Ok)
@@ -444,6 +493,43 @@ mod tests {
                 format!("{} completed", request.command().name()),
                 Map::from_iter([("dryRun".into(), json!(request.dry_run()))]),
                 vec![Map::from_iter([("type".into(), json!("phase"))])],
+            )
+            .map_err(|_| CommandError::new(ExitCode::Config, "invalid result", "report a bug"))
+        }
+    }
+
+    struct ProgressEngine;
+    impl CommandEngine for ProgressEngine {
+        fn execute(&mut self, request: &CommandRequest) -> Result<CommandResult, CommandError> {
+            self.execute_with_progress(request, &mut |_| {})
+        }
+
+        fn execute_with_progress(
+            &mut self,
+            _request: &CommandRequest,
+            progress: &mut dyn FnMut(PublicEvent),
+        ) -> Result<CommandResult, CommandError> {
+            for event in [
+                PublicEvent::phase("op_fixture", "acquire", "started").unwrap(),
+                PublicEvent::phase("op_fixture", "acquire", "completed").unwrap(),
+                PublicEvent::phase("op_fixture", "stage", "started").unwrap(),
+                PublicEvent::phase("op_fixture", "stage", "completed").unwrap(),
+                PublicEvent::phase("op_fixture", "activate", "started").unwrap(),
+                PublicEvent::phase("op_fixture", "activate", "completed").unwrap(),
+                PublicEvent::committed("op_fixture", "gen-0001").unwrap(),
+            ] {
+                progress(event);
+            }
+            CommandResult::new(
+                "Installed 1 package(s) as gen-0001.",
+                Map::from_iter([
+                    ("opId".into(), json!("op_fixture")),
+                    (
+                        "generation".into(),
+                        json!({ "id": "gen-0001", "parent": null }),
+                    ),
+                ]),
+                vec![],
             )
             .map_err(|_| CommandError::new(ExitCode::Config, "invalid result", "report a bug"))
         }
@@ -610,6 +696,49 @@ mod tests {
         assert!(rows.iter().all(|row| row["schemaVersion"] == 1));
         assert_eq!(rows.last().unwrap()["type"], "result");
         assert_eq!(rows.last().unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn install_progress_stream_and_human_lines_match_v1_goldens() {
+        let jsonl = Cli::try_parse(["pkg", "install", "hello", "--yes", "--jsonl"]).unwrap();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        execute_command(&jsonl, &mut ProgressEngine, &mut stdout, &mut stderr).unwrap();
+        assert!(stderr.is_empty());
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            include_str!("../../../../fixtures/cli-v1/install-progress.jsonl")
+        );
+
+        let human = Cli::try_parse(["pkg", "install", "hello", "--yes"]).unwrap();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        execute_command(&human, &mut ProgressEngine, &mut stdout, &mut stderr).unwrap();
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            "Installed 1 package(s) as gen-0001.\n"
+        );
+        assert_eq!(
+            String::from_utf8(stderr).unwrap(),
+            include_str!("../../../../fixtures/cli-v1/install-progress.txt")
+        );
+
+        let quiet = Cli::try_parse(["pkg", "install", "hello", "--yes", "--quiet"]).unwrap();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        execute_command(&quiet, &mut ProgressEngine, &mut stdout, &mut stderr).unwrap();
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            "Installed 1 package(s) as gen-0001.\n"
+        );
+        assert!(stderr.is_empty());
+
+        let json = Cli::try_parse(["pkg", "install", "hello", "--yes", "--json"]).unwrap();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        execute_command(&json, &mut ProgressEngine, &mut stdout, &mut stderr).unwrap();
+        assert_eq!(stdout.iter().filter(|byte| **byte == b'\n').count(), 1);
+        assert!(stderr.is_empty());
     }
 
     #[test]

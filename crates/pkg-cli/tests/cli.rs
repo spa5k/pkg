@@ -144,7 +144,9 @@ fn command_logging_records_only_the_command_not_package_arguments() {
         ])
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(79));
+    // A caller-selected state root is read-only for broker-backed mutations.
+    // The command must fail at that CONFIG boundary before broker access.
+    assert_eq!(output.status.code(), Some(78));
     let text = std::fs::read_to_string(state.join("logs/pkg.log")).unwrap();
     assert!(text.contains("command_finished"));
     assert!(text.contains("install"));

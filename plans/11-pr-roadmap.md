@@ -1471,8 +1471,14 @@ flowchart TD
   build operation starts, and that approval plus execution use the same displayed digest before the
   local-build evidence returns. It also caught and closed the public `sha256:<hex>` preview versus
   internal `sha256-<hex>` digest boundary. The V1 install success JSON is byte-locked to a golden.
-  The remaining production install work is the live Real-Nix capture/replay half of parity, richer
-  interactive progress goldens, plus the still-closed non-default channel/collision policy surfaces.
+  Install now emits the validated public progress schema during execution: human mode receives
+  stable phase lines on stderr, `--jsonl` receives independently versioned event records followed by
+  one terminal result, `--json` remains one final document, and `--quiet` suppresses only the human
+  stream. Human and JSONL install progress plus the final JSON envelope are byte-locked to V1
+  goldens, and the terminal install result now carries its public operation id. The remaining
+  production install work is the live Real-Nix capture/replay half of parity, byte-identical
+  per-operation public-log mirroring and finer download/build counters, plus the still-closed
+  non-default channel/collision policy surfaces.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

@@ -1,0 +1,8 @@
+{"type":"phase","schemaVersion":1,"opId":"op_fixture","phase":"acquire","status":"started"}
+{"type":"phase","schemaVersion":1,"opId":"op_fixture","phase":"acquire","status":"completed"}
+{"type":"phase","schemaVersion":1,"opId":"op_fixture","phase":"stage","status":"started"}
+{"type":"phase","schemaVersion":1,"opId":"op_fixture","phase":"stage","status":"completed"}
+{"type":"phase","schemaVersion":1,"opId":"op_fixture","phase":"activate","status":"started"}
+{"type":"phase","schemaVersion":1,"opId":"op_fixture","phase":"activate","status":"completed"}
+{"type":"committed","schemaVersion":1,"opId":"op_fixture","generationId":"gen-0001"}
+{"command":"install","generation":{"id":"gen-0001","parent":null},"ok":true,"opId":"op_fixture","schemaVersion":1,"type":"result"}

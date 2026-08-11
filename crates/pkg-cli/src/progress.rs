@@ -248,6 +248,45 @@ impl PublicEvent {
     pub fn write_ndjson(&self, writer: impl Write) -> io::Result<()> {
         write_json_line(writer, self)
     }
+
+    /// Render one stable line for the human progress stream.
+    pub fn write_human(&self, mut writer: impl Write) -> io::Result<()> {
+        match &self.0 {
+            EventKind::Phase(event) => writeln!(writer, "{}: {}", event.phase, event.status),
+            EventKind::DownloadStarted(event) => writeln!(
+                writer,
+                "Downloading {} ({} bytes)",
+                event.selector, event.bytes
+            ),
+            EventKind::DownloadProgress(event) => writeln!(
+                writer,
+                "Downloading {}: {}/{} bytes",
+                event.selector, event.done, event.total
+            ),
+            EventKind::BuildStarted(event) => writeln!(
+                writer,
+                "Building {} {} ({})",
+                event.package_name, event.version, event.selector
+            ),
+            EventKind::BuildProgress(event) => {
+                writeln!(
+                    writer,
+                    "Building {}: {:.0}%",
+                    event.selector,
+                    event.pct * 100.0
+                )
+            }
+            EventKind::Collision(event) => writeln!(
+                writer,
+                "Collision at {}: {}",
+                event.file,
+                event.selectors.join(", ")
+            ),
+            EventKind::Committed(event) => {
+                writeln!(writer, "Committed {}", event.generation_id)
+            }
+        }
+    }
 }
 
 fn product_text(field: &'static str, value: &str) -> Result<String, ProgressError> {
