@@ -8,18 +8,19 @@ fn main() {
 }
 
 fn run() -> bool {
-    let arguments = std::env::args_os().collect::<Vec<_>>();
     #[cfg(target_os = "linux")]
     {
-        arguments.len() == 1 && pkg_installer::run_linux_broker_from_activation().is_ok()
+        std::env::args_os().count() == 1
+            && pkg_installer::run_linux_broker_from_activation().is_ok()
     }
     #[cfg(target_os = "macos")]
     {
+        let arguments = std::env::args_os().collect::<Vec<_>>();
         requested_macos_mode(&arguments) && pkg_installer::run_macos_broker().is_ok()
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = arguments;
+        let _ = std::env::args_os();
         false
     }
 }

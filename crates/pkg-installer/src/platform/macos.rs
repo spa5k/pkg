@@ -525,9 +525,10 @@ pub const fn macos_install_assets() -> &'static [MacOsInstallAsset] {
 ///
 /// The privileged backend creates an encrypted, ownership-enabled APFS volume,
 /// adds only the `nix` entry to `/etc/synthetic.conf`, places the generated
-/// unlock secret in the System keychain with root-only access, and records the
-/// volume UUID/keychain item/synthetic-line ownership in the final receipt.
-/// No secret or dynamic UUID crosses this public Rust API.
+/// unlock secret in the System keychain with root-only access, and records its
+/// dynamic UUID plus fixed keychain selector in root-only mount state. The final
+/// ownership receipt remains the authenticated static artifact claim. No secret
+/// or dynamic UUID crosses this public Rust API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MacOsStoreVolumeContract;
 
@@ -544,10 +545,10 @@ impl MacOsStoreVolumeContract {
 
 /// Exact product socket paths and post-bind modes.
 ///
-/// The broker must chmod its public socket to `0666` after binding despite its
-/// launchd `077` umask; the root helper's socket remains `0660` inside a
-/// traversal-restricted `root:pkg-nix-broker` directory. Both servers still
-/// authenticate every accepted peer before reading a frame.
+/// The broker creates its public socket as `0666`; the root helper creates its
+/// socket as `0660` inside a traversal-restricted `root:pkg-nix-broker`
+/// directory. Creation uses a scoped umask, with no pathname chmod race. Both
+/// servers still authenticate every accepted peer before reading a frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MacOsSocketContract;
 

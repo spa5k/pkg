@@ -366,6 +366,15 @@ creation, with no pathname-based chmod race. The broker binds only the public `0
 the helper binds only the broker-traversable `0660` endpoint. Both still authenticate each accepted
 peer in-kernel before framing.
 
+The same helper binary's distinct `--mount-store-volume` mode is not a framed broker authority.
+It accepts no further arguments, requires the launchd root:wheel identity, and reads the dynamic
+volume UUID only from the root:wheel `0600` fixed-path mount record. It verifies the receipt-owned
+volume name, UUID, encryption, and ownership before mutation; an already-correct `/nix` mount is a
+no-op, while a locked volume receives the fixed System-keychain item's stdout directly as
+`diskutil ... -stdinpassphrase` input. Neither the secret nor a caller-supplied UUID enters argv or
+logs. Every child process group has a 30-second deadline, and success requires a fresh exact `/nix`
+verification.
+
 ## 9. Restart handshake
 
 1. Supervisor restarts broker and/or helper.

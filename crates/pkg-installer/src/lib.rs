@@ -12,6 +12,7 @@ pub mod platform;
 mod repair;
 mod root_client;
 mod service;
+mod store_mount;
 mod uninstall;
 
 pub use approval_audit::{BrokerApprovalAudit, BrokerCallerApprovalJournal};
@@ -52,6 +53,9 @@ pub use root_client::RootHelperClient;
 pub use service::{
     ServiceError, ServiceErrorCode, run_linux_broker_from_activation,
     run_linux_root_helper_from_activation, run_macos_broker, run_macos_root_helper,
+};
+pub use store_mount::{
+    MacOsStoreMountError, MacOsStoreMountErrorCode, MacOsStoreMountOutcome, run_macos_store_mount,
 };
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,
