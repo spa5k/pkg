@@ -292,6 +292,7 @@ struct CanonicalTarget {
     source_revision: String,
     outputs_to_install: Vec<String>,
     root_derivation: String,
+    local_build_required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -450,6 +451,10 @@ impl BuildPlan {
             return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
         }
 
+        let missing_derivation_names = missing_derivations
+            .iter()
+            .map(|path| path.as_str())
+            .collect::<BTreeSet<_>>();
         let mut closure = BTreeMap::new();
         let mut canonical_targets = Vec::with_capacity(targets.len());
         let mut execution_targets = Vec::with_capacity(targets.len());
@@ -531,6 +536,9 @@ impl BuildPlan {
                     .map(str::to_owned)
                     .collect(),
                 root_derivation: target.plan.root().as_str().to_owned(),
+                local_build_required: target.plan.derivations().iter().any(|derivation| {
+                    missing_derivation_names.contains(derivation.derivation().as_str())
+                }),
             });
         }
 
@@ -668,6 +676,7 @@ impl BuildPlan {
                     package_name: target.package_name.clone(),
                     version: target.package_version.clone(),
                     outputs_to_install: target.outputs_to_install.clone(),
+                    local_build_required: target.local_build_required,
                 })
                 .collect(),
             build: PreviewBuild {
@@ -1630,6 +1639,7 @@ struct PreviewTarget {
     package_name: String,
     version: String,
     outputs_to_install: Vec<String>,
+    local_build_required: bool,
 }
 
 impl BuildPreview {
@@ -1637,6 +1647,24 @@ impl BuildPreview {
     #[must_use]
     pub fn build_plan_digest(&self) -> &str {
         &self.build_plan_digest
+    }
+
+    /// Returns product-owned identities for targets that need local building.
+    ///
+    /// The iterator cannot expose derivation paths, store paths, or Nix
+    /// implementation details. Its values are part of the approval-bound,
+    /// sanitized preview.
+    pub fn local_build_targets(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.targets
+            .iter()
+            .filter(|target| target.local_build_required)
+            .map(|target| {
+                (
+                    target.selector.as_str(),
+                    target.package_name.as_str(),
+                    target.version.as_str(),
+                )
+            })
     }
 
     /// Serializes this allowlisted public object for CLI/RPC rendering.
@@ -1669,6 +1697,10 @@ impl BuildPreview {
             || self.build.count != self.build.names.len()
             || self.build.count > MAX_PREVIEW_ITEMS
             || self.unknown_local_outputs == 0
+            || !self
+                .targets
+                .iter()
+                .any(|target| target.local_build_required)
             || !self.approval_required
             || !matches!(
                 (self.platform.os.as_str(), self.platform.arch.as_str()),
@@ -2641,8 +2673,13 @@ mod tests {
         assert!(preview.contains("\"approvalRequired\":true"));
         assert!(preview.contains("\"buildPlanDigest\":\"sha256:"));
         assert!(preview.contains("\"selector\":\"hello\""));
+        assert!(preview.contains("\"localBuildRequired\":true"));
         assert!(preview.contains("\"perBuildResourceCap\":false"));
         assert!(preview.contains("\"approxBuildMinutes\":null"));
+        assert_eq!(
+            preview_object.local_build_targets().collect::<Vec<_>>(),
+            vec![("hello", "hello", "1.0")]
+        );
         for private in ["/nix/", ".drv", "x86_64-linux", "nixbld", "cgroup"] {
             assert!(
                 !preview.contains(private),
@@ -2668,6 +2705,12 @@ mod tests {
         zero_estimate["estimates"]["approxNewDiskBytes"] = serde_json::json!(0);
         assert!(
             BuildPreview::from_json_bytes(&serde_json::to_vec(&zero_estimate).unwrap()).is_err()
+        );
+
+        let mut no_local_target = serde_json::to_value(&preview_object).unwrap();
+        no_local_target["targets"][0]["localBuildRequired"] = serde_json::json!(false);
+        assert!(
+            BuildPreview::from_json_bytes(&serde_json::to_vec(&no_local_target).unwrap()).is_err()
         );
 
         let mut extended = serde_json::to_value(&preview_object).unwrap();

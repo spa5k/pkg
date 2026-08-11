@@ -1494,8 +1494,13 @@ flowchart TD
   requests, and nightly fails on any byte diff before running the adjacent seven-method Real-Nix
   smoke. GC remains in that smoke instead of the portable golden because its report observes
   unrelated machine-global store roots and therefore has no complete scripted request input. The
-  remaining production install work is finer download/build counters plus the still-closed
-  non-default channel/collision policy surfaces.
+  build-target boundary counters are now connected too: the approval-bound preview marks only
+  product selectors whose evaluated closure intersects the trusted cache-miss set, and the CLI
+  emits sanitized `build_started` plus 0%/100% events around the authenticated broker execution.
+  The exact sequence stays on the original public operation id and is locked by the cache-miss
+  protocol test; preview decoding refuses a forged all-cache target set. Remaining production
+  install work is authenticated download counters, live intermediate build heuristics, and the
+  still-closed non-default channel/collision policy surfaces.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

@@ -1004,9 +1004,35 @@ fn acquire_install_evidence(
         broker
             .approve_build(build_handle.clone(), digest, source)
             .map_err(install_broker_error)?;
+        let build_targets = preview
+            .local_build_targets()
+            .map(|(selector, package_name, version)| {
+                (
+                    selector.to_owned(),
+                    package_name.to_owned(),
+                    version.to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (selector, package_name, version) in &build_targets {
+            progress(
+                PublicEvent::build_started(&public_operation_id, selector, package_name, version)
+                    .map_err(|_| install_commit_failed())?,
+            )?;
+            progress(
+                PublicEvent::build_progress(&public_operation_id, selector, 0.0)
+                    .map_err(|_| install_commit_failed())?,
+            )?;
+        }
         broker
             .execute_build(build_handle.clone(), digest)
             .map_err(install_broker_error)?;
+        for (selector, _, _) in &build_targets {
+            progress(
+                PublicEvent::build_progress(&public_operation_id, selector, 1.0)
+                    .map_err(|_| install_commit_failed())?,
+            )?;
+        }
         let evidence = broker
             .install_evidence(build_handle.clone())
             .map_err(install_broker_error)?;
@@ -1577,7 +1603,8 @@ mod tests {
                     "selector": "hello",
                     "packageName": "hello",
                     "version": "1.0",
-                    "outputsToInstall": ["out"]
+                    "outputsToInstall": ["out"],
+                    "localBuildRequired": true
                 }],
                 "build": { "count": 1, "names": ["hello"], "hasFixedOutput": false },
                 "cache": { "knownDownloadBytes": 0, "knownContentBytes": 0 },
@@ -1813,7 +1840,18 @@ mod tests {
         assert!(!handle.as_str().is_empty());
         assert_eq!(actual, expected);
         assert_eq!(approval, "yes");
-        assert_eq!(events.len(), 4);
+        assert_eq!(
+            events,
+            vec![
+                PublicEvent::phase(&public_operation_id, "acquire", "started").unwrap(),
+                PublicEvent::phase(&public_operation_id, "acquire", "completed").unwrap(),
+                PublicEvent::phase(&public_operation_id, "build", "started").unwrap(),
+                PublicEvent::build_started(&public_operation_id, "hello", "hello", "1.0",).unwrap(),
+                PublicEvent::build_progress(&public_operation_id, "hello", 0.0).unwrap(),
+                PublicEvent::build_progress(&public_operation_id, "hello", 1.0).unwrap(),
+                PublicEvent::phase(&public_operation_id, "build", "completed").unwrap(),
+            ]
+        );
         assert!(
             events
                 .iter()
