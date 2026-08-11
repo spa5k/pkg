@@ -11,7 +11,8 @@ use sha2::{Digest as _, Sha256};
 use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
     BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, LocalBuildEngine, NixAdapter,
-    OperationId, ResourceProbe, VolatileBuildEstimate, maintenance::random_secret,
+    OperationId, ResourceProbe, RootSet, RootSetReport, VolatileBuildEstimate,
+    maintenance::{MaintenanceError, random_secret},
 };
 
 const OPERATION_TTL: Duration = Duration::from_secs(30 * 60);
@@ -46,6 +47,8 @@ pub enum BrokerErrorCode {
     BuildResourcePreflightFailed,
     /// The managed Nix adapter failed or returned inconsistent build outputs.
     BuildExecutionFailed,
+    /// Durable root publication failed after successful build execution.
+    RootPublicationFailed,
     /// A managed child policy contained a non-canonical runtime path.
     InvalidChildPolicy,
     /// Fresh session entropy could not be obtained from the operating system.
@@ -152,6 +155,7 @@ struct OperationRecord {
     prepared_build: Option<PreparedBuild>,
     cancellation: Arc<CancellationToken>,
     build_executing: bool,
+    awaiting_root_outputs: Option<BTreeSet<String>>,
 }
 
 #[derive(Clone)]
@@ -518,6 +522,7 @@ impl AuthenticatedCaller {
             }
             record.status = OperationStatus::Cancelled;
             record.prepared_build = None;
+            record.awaiting_root_outputs = None;
             let executing = record.build_executing;
             if !executing {
                 release_admission(&mut state, &self.broker.build_gate, handle);
@@ -883,6 +888,54 @@ impl AuthenticatedCaller {
         )
     }
 
+    /// Publishes a complete generation root set while retaining build/GC admission.
+    ///
+    /// The root set must belong to the transport-authenticated caller and
+    /// include every output returned by the successful build. The helper
+    /// callback runs outside the broker mutex, but cancellation and disconnect
+    /// defer admission release until it returns, preventing GC from racing root
+    /// publication.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a non-build handle, a build that has not successfully executed,
+    /// caller/output mismatch, lifecycle cancellation, or helper failure.
+    pub fn publish_built_root_set(
+        &self,
+        handle: &OperationHandle,
+        root_set: &RootSet,
+        publish: impl FnOnce(&RootSet) -> Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
+            if root_set.owner_uid() != self.uid {
+                return Err(BrokerError::new(
+                    BrokerErrorCode::InvalidAdmissionTransition,
+                ));
+            }
+            let root_targets = root_set
+                .entries()
+                .iter()
+                .map(|entry| entry.target().as_str().to_owned())
+                .collect::<BTreeSet<_>>();
+            let record = self.record_mut(&mut state, handle)?;
+            let required = record
+                .awaiting_root_outputs
+                .as_ref()
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
+            if !required.is_subset(&root_targets) || record.build_executing {
+                return Err(BrokerError::new(
+                    BrokerErrorCode::InvalidAdmissionTransition,
+                ));
+            }
+            record.build_executing = true;
+        }
+
+        let publication = publish(root_set);
+        self.finish_root_publication(handle, publication)
+    }
+
     /// Acquires the machine-wide local-build lease for this operation.
     pub fn acquire_build(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
@@ -1016,6 +1069,7 @@ impl AuthenticatedCaller {
                 }
                 record.status = OperationStatus::Cancelled;
                 record.prepared_build = None;
+                record.awaiting_root_outputs = None;
                 record.build_executing
             } else {
                 false
@@ -1059,6 +1113,7 @@ impl AuthenticatedCaller {
                 prepared_build: None,
                 cancellation: Arc::new(CancellationToken::default()),
                 build_executing: false,
+                awaiting_root_outputs: None,
             },
         );
         Ok(handle)
@@ -1071,7 +1126,9 @@ impl AuthenticatedCaller {
             .operations
             .get_mut(handle)
             .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
-        if status == OperationStatus::Completed && record.build_executing {
+        if status == OperationStatus::Completed
+            && (record.build_executing || record.awaiting_root_outputs.is_some())
+        {
             return Err(BrokerError::new(
                 BrokerErrorCode::InvalidAdmissionTransition,
             ));
@@ -1082,6 +1139,7 @@ impl AuthenticatedCaller {
         }
         record.status = status;
         record.prepared_build = None;
+        record.awaiting_root_outputs = None;
         let executing = record.build_executing;
         if !executing {
             release_admission(&mut state, &self.broker.build_gate, handle);
@@ -1094,6 +1152,11 @@ impl AuthenticatedCaller {
         handle: &OperationHandle,
         report: BuildReport,
     ) -> Result<BuildReport, BrokerError> {
+        let output_paths = report
+            .outputs()
+            .iter()
+            .map(|output| output.store_path().as_str().to_owned())
+            .collect::<BTreeSet<_>>();
         let mut state = self.broker.lock();
         if self.check_epoch(&state).is_err() {
             self.broker.build_gate.release(handle);
@@ -1109,6 +1172,7 @@ impl AuthenticatedCaller {
             if let Some(record) = state.operations.get_mut(handle) {
                 record.build_executing = false;
                 record.prepared_build = None;
+                record.awaiting_root_outputs = None;
             }
             release_admission(&mut state, &self.broker.build_gate, handle);
             return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
@@ -1119,7 +1183,55 @@ impl AuthenticatedCaller {
             .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
         record.build_executing = false;
         record.prepared_build = None;
+        if output_paths.is_empty() {
+            record.cancellation.cancel();
+            record.status = OperationStatus::Completed;
+            release_admission(&mut state, &self.broker.build_gate, handle);
+        } else {
+            record.awaiting_root_outputs = Some(output_paths);
+        }
         Ok(report)
+    }
+
+    fn finish_root_publication(
+        &self,
+        handle: &OperationHandle,
+        publication: Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        let mut state = self.broker.lock();
+        if self.check_epoch(&state).is_err() {
+            self.broker.build_gate.release(handle);
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        let completed = state.operations.get(handle).is_some_and(|record| {
+            record.owner_uid == self.uid
+                && record.status == OperationStatus::Running
+                && record.build_executing
+                && !record.cancellation.is_cancelled()
+                && publication.is_ok()
+        });
+        if let Some(record) = state.operations.get_mut(handle)
+            && record.owner_uid == self.uid
+        {
+            record.cancellation.cancel();
+            record.status = if completed {
+                OperationStatus::Completed
+            } else {
+                OperationStatus::Cancelled
+            };
+            record.prepared_build = None;
+            record.build_executing = false;
+            record.awaiting_root_outputs = None;
+        }
+        release_admission(&mut state, &self.broker.build_gate, handle);
+        if !completed {
+            return Err(BrokerError::new(if publication.is_err() {
+                BrokerErrorCode::RootPublicationFailed
+            } else {
+                BrokerErrorCode::AdmissionCancelled
+            }));
+        }
+        publication.map_err(|_| BrokerError::new(BrokerErrorCode::RootPublicationFailed))
     }
 
     fn fail_build_execution(&self, handle: &OperationHandle) {
@@ -1138,6 +1250,7 @@ impl AuthenticatedCaller {
             record.status = OperationStatus::Cancelled;
             record.prepared_build = None;
             record.build_executing = false;
+            record.awaiting_root_outputs = None;
         }
         release_admission(&mut state, &self.broker.build_gate, handle);
     }
@@ -1241,6 +1354,7 @@ fn purge_expired(
                 }
                 record.status = OperationStatus::Cancelled;
                 record.prepared_build = None;
+                record.awaiting_root_outputs = None;
             }
             continue;
         }
@@ -1425,8 +1539,9 @@ mod tests {
         ApprovalJournalError, ApprovalJournalRecord, BuildOutput, BuildOutputProvenance,
         BuildPlanTarget, BuildReadiness, BuildRequest, BuildStatus, CacheClassification,
         DerivationPath, DerivationPlanReport, EvaluateDerivationRequest, EvaluatedDerivation,
-        GcReport, NixAdapterError, NixVersion, PathInfoReport, ResourceSnapshot, SubstituteReport,
-        VerifyReport, VerifyRequest, VersionInfo,
+        GcReport, GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter,
+        NixAdapterError, NixVersion, PathInfoReport, ResourceSnapshot, RootName, RootSetEntry,
+        SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
     };
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
@@ -1617,6 +1732,18 @@ mod tests {
             CacheClassification::new(Digest::from_bytes([4; 32]), 2, 1, 100, 200).unwrap(),
             BuildReadiness::new(true, false, true, true, true),
             4,
+        )
+        .unwrap()
+    }
+
+    fn built_root_set(uid: u32) -> RootSet {
+        RootSet::new(
+            uid,
+            GenerationId::new("gen-0001").unwrap(),
+            vec![RootSetEntry::new(
+                RootName::new("hello").unwrap(),
+                StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+            )],
         )
         .unwrap()
     }
@@ -1998,7 +2125,159 @@ mod tests {
             BrokerErrorCode::BuildApprovalUnavailable
         );
 
-        caller.complete(&handle).unwrap();
+        assert_eq!(
+            caller.complete(&handle).unwrap_err().code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        assert_eq!(
+            caller
+                .publish_built_root_set(&handle, &built_root_set(1002), |_| {
+                    Err(MaintenanceError::backend_failure())
+                })
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        let unrelated_roots = RootSet::new(
+            1001,
+            GenerationId::new("gen-0002").unwrap(),
+            vec![RootSetEntry::new(
+                RootName::new("other").unwrap(),
+                StorePath::new(&format!("/nix/store/{STORE_HASH}-other-1.0")).unwrap(),
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            caller
+                .publish_built_root_set(&handle, &unrelated_roots, |_| {
+                    Err(MaintenanceError::backend_failure())
+                })
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        let helper = InProcessHelper::new(991).unwrap();
+        let maintenance = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(1001);
+        caller
+            .publish_built_root_set(&handle, &built_root_set(1001), |roots| {
+                maintenance.publish_root_set(roots)
+            })
+            .unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        let released = broker.admission_snapshot();
+        assert!(!released.build_held());
+        assert_eq!(released.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn cancellation_during_root_publication_defers_admission_release() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let plan = build_plan(1);
+        let digest = plan.digest().unwrap();
+        caller.prepare_build(&handle, plan.clone()).unwrap();
+        caller
+            .approve_build(
+                &handle,
+                digest,
+                ApprovalSource::AssumeYes,
+                "2026-08-11T00:00:00Z",
+                &Journal::default(),
+            )
+            .unwrap();
+        caller
+            .execute_build(
+                &handle,
+                digest,
+                || Ok(plan),
+                VolatileBuildEstimate::new(100),
+                &ExecutionProbe,
+                &ExecutionAdapter::immediate(),
+            )
+            .unwrap();
+
+        let helper = InProcessHelper::new(991).unwrap();
+        let maintenance = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(1001);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let rooting_caller = caller.clone();
+        let rooting_handle = handle.clone();
+        let worker = thread::spawn(move || {
+            rooting_caller.publish_built_root_set(&rooting_handle, &built_root_set(1001), |roots| {
+                entered_tx
+                    .send(())
+                    .map_err(|_| MaintenanceError::backend_failure())?;
+                release_rx
+                    .recv()
+                    .map_err(|_| MaintenanceError::backend_failure())?;
+                maintenance.publish_root_set(roots)
+            })
+        });
+        entered_rx.recv().unwrap();
+        caller.cancel(&handle).unwrap();
+        let protected = broker.admission_snapshot();
+        assert!(protected.build_held());
+        assert_eq!(protected.gc_inhibitor_count(), 1);
+
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().code(),
+            BrokerErrorCode::AdmissionCancelled
+        );
+        let released = broker.admission_snapshot();
+        assert!(!released.build_held());
+        assert_eq!(released.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn root_publication_failure_is_terminal_and_releases_admission() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let plan = build_plan(1);
+        let digest = plan.digest().unwrap();
+        caller.prepare_build(&handle, plan.clone()).unwrap();
+        caller
+            .approve_build(
+                &handle,
+                digest,
+                ApprovalSource::AssumeYes,
+                "2026-08-11T00:00:00Z",
+                &Journal::default(),
+            )
+            .unwrap();
+        caller
+            .execute_build(
+                &handle,
+                digest,
+                || Ok(plan),
+                VolatileBuildEstimate::new(100),
+                &ExecutionProbe,
+                &ExecutionAdapter::immediate(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            caller
+                .publish_built_root_set(&handle, &built_root_set(1001), |_| {
+                    Err(MaintenanceError::backend_failure())
+                })
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::RootPublicationFailed
+        );
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
         let released = broker.admission_snapshot();
         assert!(!released.build_held());
         assert_eq!(released.gc_inhibitor_count(), 0);

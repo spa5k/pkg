@@ -238,6 +238,12 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   permits until authoritative rooting and operation completion; a refusal consumes the approval and
   releases both. Lifecycle cancellation during the synchronous adapter call is signalled immediately
   but defers permit release until that call returns, preventing GC from racing in-flight outputs.
+  After adapter success, the broker retains the exact validated output-path set in private operation
+  state and refuses ordinary completion. Root publication must be bound to the transport-authenticated
+  uid and include every built output. The broker marks the helper call in-flight before releasing its
+  mutex; cancellation/disconnect then records cancellation but defers admission release until the
+  helper returns. Successful publication completes the operation; helper failure or concurrent
+  cancellation releases admission only after the call is no longer mutating durable roots.
   The production resource seam is fixed to the managed `/nix` filesystem and the host one-minute
   load average. It uses safe filesystem statistics plus bounded, fixed OS load sources and rejects
   unavailable, malformed, non-finite, negative, zero-capacity, or overflowing measurements.

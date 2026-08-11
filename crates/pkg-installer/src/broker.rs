@@ -346,7 +346,9 @@ const fn map_build_execution_error(code: BrokerErrorCode) -> BuildExecutionError
         BrokerErrorCode::BuildResourcePreflightFailed => {
             BuildExecutionErrorCode::ResourcePreflightFailed
         }
-        BrokerErrorCode::BuildExecutionFailed => BuildExecutionErrorCode::ExecutionFailed,
+        BrokerErrorCode::BuildExecutionFailed | BrokerErrorCode::RootPublicationFailed => {
+            BuildExecutionErrorCode::ExecutionFailed
+        }
         BrokerErrorCode::AdmissionCancelled => BuildExecutionErrorCode::Cancelled,
         BrokerErrorCode::UnauthenticatedCaller
         | BrokerErrorCode::SessionRestarted

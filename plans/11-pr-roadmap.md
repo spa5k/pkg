@@ -1274,6 +1274,11 @@ flowchart TD
   private plan: exact cache-present NAR bytes plus a fixed 1 GiB allowance per cache-miss
   path. Timing and total realized closure size stay explicitly unknown, overflow fails closed, and
   neither RPC callers nor the disposable index can supply the estimate. The
+  post-build lifecycle now has a protected rooting phase: the broker privately retains every built
+  output, refuses completion until a same-uid root set includes them all, and marks helper root
+  publication in-flight so cancel/disconnect cannot release build/GC admission until the callback
+  returns. Root publication failure and concurrent cancellation are terminal only after that safe
+  handoff. The CLI and production helper transport method for this phase remain to be wired. The
   CLI crate now has the matching fixed-endpoint client: connect and I/O waits have finite
   deadlines, request ids are correlated, frames and allocations are bounded, and any mismatch permanently
   fails that connection. An end-to-end Unix-pair test exercises the actual broker server, FakeNix
