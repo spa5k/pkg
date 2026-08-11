@@ -1373,12 +1373,21 @@ flowchart TD
   is the common trusted input for CLI list/history and future mutation planning; commands do not
   parse mutable views independently. The shipped CLI now uses that adapter rather than the blanket
   placeholder engine: `list` and non-pruning `history` read verified state, while remove/pin/unpin
-  can render deterministic `--dry-run` lifecycle edits. Every unconnected mutation, authenticated
+  render deterministic `--dry-run` edits and execute real state-only transactions through the fixed
+  broker. Each mutation begins Activate authority, takes the exclusive user lease, reloads active and
+  complete retained history, allocates above the retained high-water mark, prepares a fresh immutable
+  generation, transitions roots, commits locally, and then acknowledges completion. The successful
+  helper transition adds destination roots while retaining the source generation for rollback; only
+  generation-pruning GC removes old roots. Empty destinations add no root and still retain the source.
+  A lost completion acknowledgement releases only broker admission and cannot remove committed or
+  active roots. Interrupted prepared edits are detected from the durable journal, replay method 21
+  idempotently, and finish forward; pre-`prepared` immutable debris is discarded separately. Every
+  unconnected mutation, authenticated
   index query, and broker transaction still returns a specific fail-closed product error; none can
   fall through to raw Nix. The pipeline now also has one generic fresh-generation preparer for
   remove/pin/unpin: it revalidates current under the exclusive lease, stages the edited lifecycle
   state, rebuilds immutable hashes and provenance, and refuses unrepresentable collision metadata.
-  CLI broker orchestration remains the next wiring step. Fresh users now get the fixed per-user state tree lazily and
+  Fresh users now get the fixed per-user state tree lazily and
   idempotently at `0700`: existing components are never chmodded or replaced, symlink/owner/write
   violations refuse, directory creation is parent-synced, and the shared lease atomically creates
   its missing `0600` lock file. Empty history is therefore a valid first-run result rather than an
@@ -1387,9 +1396,7 @@ flowchart TD
   destination generation root set from a durable source using only distinct generation ids and
   bounded retained safe names. It rejects empty, duplicate, unknown, cross-owner, or source-mismatched
   requests and never accepts a target path; the fixed root client exposes only that typed transition.
-  End-user mutation and broker-client command wiring
-  still need to land. This does
-  **not** yet claim the full PR: production installer completion, CLI command wiring, the authenticated
+  This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real
   parity, and self-host the product on Real Nix end-to-end (`09` §7).

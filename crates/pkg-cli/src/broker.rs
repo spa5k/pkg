@@ -261,7 +261,9 @@ impl BrokerLifecycleClient {
         }
     }
 
-    /// Completes one operation after its local state commit succeeds.
+    /// Acknowledges local state commit and releases admission after an already
+    /// irreversible privileged root transition. This call does not persist or
+    /// remove roots; disconnect is an equivalent admission cleanup fallback.
     pub fn complete(&mut self, handle: OperationHandle) -> Result<(), BrokerClientError> {
         match self.transact(&CliBrokerRequest::Complete(handle))? {
             CliBrokerResponse::Completed => Ok(()),

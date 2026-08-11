@@ -40,7 +40,9 @@ pub use build_preparation::{
 };
 pub use commit::{
     ActivatedGeneration, CandidateGeneration, CommitError, PreparedGeneration, RecoveryResult,
-    load_active_snapshot, load_retained_history, recover_generation,
+    discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
+    pending_state_edit_generation, recover_generation, recover_transitioned_state_edit,
+    resume_prepared_state_edit,
 };
 pub use host_facts::ProductionBuildHostFactsProbe;
 pub use lifecycle::{InstallStateError, assemble_install_state};

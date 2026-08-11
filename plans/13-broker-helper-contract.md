@@ -289,9 +289,14 @@ malformed, unauthenticated, and timed-out clients are connection-local failures.
   state-only generation-root transition: its ownerless request carries only the live `Activate`
   handle, source generation, fresh destination generation, and bounded retained root names. The
   broker injects the kernel-authenticated uid, invokes the helper's fixed method-5 transition, and
-  keeps its GC inhibitor after helper success while the client commits local state. Only a
-  successful closed method-4 completion releases that protection; cancellation, disconnect,
-  expiry, or helper failure cannot release it while privileged transition code is executing.
+  keeps its GC inhibitor after helper success while the client commits local state. Closed method 4
+  normally releases that protection; cancellation, disconnect, or expiry may release admission only
+  after privileged transition code returns. A successful helper transition is irreversible and no
+  later broker lifecycle path invokes compensating root removal. The source generation remains rooted
+  for rollback, the destination is added before the local switch, and generation-pruning GC is the
+  only owner of eventual root removal. An empty destination adds no root but deliberately retains the
+  source for history/rollback. Therefore a lost method-4 acknowledgement or pre-switch crash cannot
+  unroot the active generation.
   Responses are either the typed root report or one of four stable redacted transition refusals,
   and neither store paths nor uid cross method 21. The local commit coordinator accepts that report
   only when its canonical uid/generation reference, entry count, sorted retained-name set, and

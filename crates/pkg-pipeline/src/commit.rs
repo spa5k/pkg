@@ -14,8 +14,8 @@ use pkg_nix::{
 use pkg_store::{
     ActivationEvent, ActivationPlan, LeaseMode, PreparedRootSet, RootCandidate, StateJournal,
     StateJournalError, StateLayout, StateLease, activate_generation,
-    activate_transitioned_generation, prepare_root_set, publish_root_set,
-    verify_recorded_activation,
+    activate_transitioned_generation, inspect_staged_activation, prepare_root_set,
+    publish_root_set, verify_recorded_activation,
 };
 use serde_json::{Value, json};
 
@@ -224,6 +224,254 @@ pub fn load_retained_history(
         .collect::<Result<Vec<_>, _>>()?;
     History::new(snapshots, active.as_ref().map(GenerationId::as_str))
         .map_err(|_| CommitError::InvalidCandidate)
+}
+
+/// Returns the sole fully prepared but uncommitted state-edit generation, if one exists.
+pub fn pending_state_edit_generation(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<Option<GenerationId>, CommitError> {
+    let history = load_retained_history(layout, lease)?;
+    let mut pending = Vec::new();
+    for snapshot in history.snapshots() {
+        if matches!(
+            snapshot.generation().operation().kind(),
+            "remove" | "pin" | "unpin"
+        ) {
+            let prepared = journal_has_status(
+                layout,
+                lease,
+                snapshot.generation().operation().op_id(),
+                "commit",
+                "prepared",
+            )?;
+            let committed = journal_has_status(
+                layout,
+                lease,
+                snapshot.generation().operation().op_id(),
+                "commit",
+                "committed",
+            )?;
+            if committed && !prepared {
+                return Err(CommitError::InvalidCandidate);
+            }
+            if !prepared || committed {
+                continue;
+            }
+            pending.push(
+                GenerationId::new(snapshot.generation().id())
+                    .map_err(|_| CommitError::InvalidCandidate)?,
+            );
+        }
+    }
+    if pending.len() > 1 {
+        return Err(CommitError::InvalidCandidate);
+    }
+    Ok(pending.pop())
+}
+
+/// Discards state-edit snapshots visible before their `prepared` journal row became durable.
+pub fn discard_unprepared_state_edits(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<usize, CommitError> {
+    if !lease.authorizes(layout, LeaseMode::Exclusive) {
+        return Err(CommitError::LeaseRequired);
+    }
+    let history = load_retained_history(layout, lease)?;
+    let current = layout
+        .current_generation()
+        .map_err(|_| CommitError::StateIo)?;
+    let mut discarded = 0;
+    for snapshot in history.snapshots() {
+        let generation = snapshot.generation();
+        if !matches!(generation.operation().kind(), "remove" | "pin" | "unpin") {
+            continue;
+        }
+        let prepared = journal_has_status(
+            layout,
+            lease,
+            generation.operation().op_id(),
+            "commit",
+            "prepared",
+        )?;
+        let committed = journal_has_status(
+            layout,
+            lease,
+            generation.operation().op_id(),
+            "commit",
+            "committed",
+        )?;
+        if committed && !prepared {
+            return Err(CommitError::InvalidCandidate);
+        }
+        if prepared || committed {
+            continue;
+        }
+        let generation_id =
+            GenerationId::new(generation.id()).map_err(|_| CommitError::InvalidCandidate)?;
+        if current.as_ref() == Some(&generation_id) {
+            return Err(CommitError::InvalidCandidate);
+        }
+        let root = layout.state_root();
+        let record = read_verified_body(root, &format!("generations/{}.json", generation.id()))?;
+        let manifest = read_verified_snapshot(
+            root,
+            generation.manifest_snapshot(),
+            generation.manifest_hash(),
+        )?;
+        let lock =
+            read_verified_snapshot(root, generation.lock_snapshot(), generation.lock_hash())?;
+        let candidate = CandidateGeneration::new(manifest, lock, record)?;
+        discard_candidate(root, &candidate)?;
+        discarded += 1;
+    }
+    Ok(discarded)
+}
+
+/// Reopens an exact journaled pre-swap candidate for idempotent root transition and activation.
+pub fn resume_prepared_state_edit(
+    layout: StateLayout,
+    lease: StateLease,
+    generation_id: &GenerationId,
+) -> Result<PreparedGeneration, CommitError> {
+    if !lease.authorizes(&layout, LeaseMode::Exclusive) {
+        return Err(CommitError::LeaseRequired);
+    }
+    let snapshot = load_generation_snapshot(&layout, generation_id)?;
+    if !matches!(
+        snapshot.generation().operation().kind(),
+        "remove" | "pin" | "unpin"
+    ) || layout
+        .current_generation()
+        .map_err(|_| CommitError::StateIo)?
+        .as_ref()
+        .map(GenerationId::as_str)
+        != snapshot.generation().parent()
+        || !journal_has_status(
+            &layout,
+            &lease,
+            snapshot.generation().operation().op_id(),
+            "commit",
+            "prepared",
+        )?
+        || journal_has_status(
+            &layout,
+            &lease,
+            snapshot.generation().operation().op_id(),
+            "commit",
+            "committed",
+        )?
+    {
+        return Err(CommitError::InvalidCandidate);
+    }
+    let root = layout.state_root();
+    let generation = snapshot.generation();
+    let record = read_verified_body(root, &format!("generations/{}.json", generation.id()))?;
+    let manifest = read_verified_snapshot(
+        root,
+        generation.manifest_snapshot(),
+        generation.manifest_hash(),
+    )?;
+    let lock = read_verified_snapshot(root, generation.lock_snapshot(), generation.lock_hash())?;
+    let candidate = CandidateGeneration::new(manifest, lock, record)?;
+    let staging = root
+        .join("activations")
+        .join(format!("{}.staging", generation.id()));
+    let plan = inspect_staged_activation(&staging, generation.activation().output_roots().to_vec())
+        .map_err(|_| CommitError::StageMismatch)?;
+    validate_plan(&candidate, &plan)?;
+    let roots = if generation.activation().output_roots().is_empty() {
+        None
+    } else {
+        Some(
+            prepare_root_set(
+                generation.uid(),
+                generation_id.clone(),
+                generation
+                    .activation()
+                    .output_roots()
+                    .iter()
+                    .cloned()
+                    .map(RootCandidate::from_output_root),
+            )
+            .map_err(|_| CommitError::InvalidCandidate)?,
+        )
+    };
+    Ok(PreparedGeneration {
+        layout,
+        candidate,
+        plan,
+        roots,
+        lease,
+    })
+}
+
+/// Finishes a locally activated state edit whose transitioned roots are already durable.
+pub fn recover_transitioned_state_edit(
+    layout: &StateLayout,
+    lease: &StateLease,
+    generation_id: &GenerationId,
+) -> Result<RecoveryResult, CommitError> {
+    if !lease.authorizes(layout, LeaseMode::Exclusive) {
+        return Err(CommitError::LeaseRequired);
+    }
+    clean_current_temps(layout.state_root())?;
+    let snapshot = load_generation_snapshot(layout, generation_id)?;
+    let generation = snapshot.generation();
+    if !matches!(generation.operation().kind(), "remove" | "pin" | "unpin")
+        || layout
+            .current_generation()
+            .map_err(|_| CommitError::StateIo)?
+            .as_ref()
+            != Some(generation_id)
+        || !journal_has_status(
+            layout,
+            lease,
+            generation.operation().op_id(),
+            "commit",
+            "prepared",
+        )?
+    {
+        return Err(CommitError::InvalidCandidate);
+    }
+    let root = layout.state_root();
+    let record = read_verified_body(root, &format!("generations/{}.json", generation.id()))?;
+    let manifest = read_verified_snapshot(
+        root,
+        generation.manifest_snapshot(),
+        generation.manifest_hash(),
+    )?;
+    let lock = read_verified_snapshot(root, generation.lock_snapshot(), generation.lock_hash())?;
+    let candidate = CandidateGeneration::new(manifest, lock, record)?;
+    let digest = Digest::from_str(generation.activation().tree_digest())
+        .map_err(|_| CommitError::InvalidCandidate)?;
+    verify_recorded_activation(
+        &root.join(generation.activation().tree_path()),
+        digest,
+        generation.activation().entry_count(),
+        generation.activation().output_roots(),
+    )
+    .map_err(|_| CommitError::StageMismatch)?;
+    restore_current_views(layout, &candidate)?;
+    if journal_has_status(
+        layout,
+        lease,
+        generation.operation().op_id(),
+        "commit",
+        "committed",
+    )? {
+        return Ok(RecoveryResult::AlreadyCommitted);
+    }
+    append_phase(
+        layout,
+        lease,
+        generation.operation().op_id(),
+        "commit",
+        "committed",
+        [("nextStateHash", json!(generation.generation_hash()))],
+    )?;
+    Ok(RecoveryResult::FinishedActivated)
 }
 
 fn require_read_lease(layout: &StateLayout, lease: &StateLease) -> Result<(), CommitError> {
@@ -1672,6 +1920,77 @@ mod tests {
                 .state_root()
                 .join("generations/gen-0001.manifest.json")
                 .exists()
+        );
+    }
+
+    #[test]
+    fn interrupted_state_edit_resumes_before_and_after_the_current_switch() {
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap()
+        .activate(&fixture.maintenance, "source1")
+        .unwrap()
+        .finish()
+        .unwrap();
+
+        let edit_lease = mutation_lease(&fixture.layout);
+        let source = load_active_snapshot(&fixture.layout, &edit_lease)
+            .unwrap()
+            .unwrap();
+        let next = pkg_core::remove::remove_selectors(
+            source.state().clone(),
+            &[pkg_core::SelectorId::new("sel_demo").unwrap()],
+        )
+        .unwrap()
+        .into_state();
+        let prepared = crate::prepare_state_edit(
+            fixture.layout.clone(),
+            edit_lease,
+            &source,
+            next,
+            crate::StateEditMetadata::new(
+                "gen-0002",
+                "2026-08-11T00:00:00Z",
+                "op_remove",
+                crate::StateEditKind::Remove,
+            ),
+        )
+        .unwrap();
+        drop(prepared);
+
+        let resume_lease = mutation_lease(&fixture.layout);
+        let pending = pending_state_edit_generation(&fixture.layout, &resume_lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.as_str(), "gen-0002");
+        let resumed =
+            resume_prepared_state_edit(fixture.layout.clone(), resume_lease, &pending).unwrap();
+        let activated = resumed.activate_transitioned(None, "resume1").unwrap();
+        drop(activated);
+
+        let finish_lease = mutation_lease(&fixture.layout);
+        assert_eq!(
+            recover_transitioned_state_edit(&fixture.layout, &finish_lease, &pending).unwrap(),
+            RecoveryResult::FinishedActivated
+        );
+        assert_eq!(
+            pending_state_edit_generation(&fixture.layout, &finish_lease).unwrap(),
+            None
+        );
+        assert!(
+            load_active_snapshot(&fixture.layout, &finish_lease)
+                .unwrap()
+                .unwrap()
+                .state()
+                .manifest()
+                .entries()
+                .is_empty()
         );
     }
 

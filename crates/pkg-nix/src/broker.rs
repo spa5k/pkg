@@ -968,6 +968,10 @@ impl AuthenticatedCaller {
     ///
     /// The shared GC inhibitor remains held after a successful helper transition. The caller
     /// must commit its local generation state and then call [`Self::complete`] to release it.
+    /// A successful transition callback adds the destination roots but retains
+    /// the source generation roots for rollback. Cancellation, expiry,
+    /// disconnect, and restart release only admission and never remove either
+    /// retained generation; generation pruning owns eventual root removal.
     pub fn transition_root_intent(
         &self,
         handle: &OperationHandle,
@@ -2469,6 +2473,39 @@ mod tests {
 
         caller.complete(&handle).unwrap();
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn successful_root_transition_is_not_compensated_by_later_cancellation() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+        let intent = RootSetTransitionIntent::new(
+            GenerationId::new("gen-0007").unwrap(),
+            GenerationId::new("gen-0008").unwrap(),
+            vec![RootName::new("ripgrep-out").unwrap()],
+        )
+        .unwrap();
+        let privileged_commits = AtomicUsize::new(0);
+        caller
+            .transition_root_intent(&handle, intent, |request| {
+                privileged_commits.fetch_add(1, Ordering::SeqCst);
+                RootSetTransitionReport::new(
+                    RootSetReport::new(
+                        RootRef::new("/nix/var/nix/gcroots/pkg/users/1001/gen-0008").unwrap(),
+                        1,
+                    ),
+                    request.retained_names().to_vec(),
+                    Digest::from_bytes([0x41; 32]),
+                )
+            })
+            .unwrap();
+        caller.cancel(&handle).unwrap();
+        assert_eq!(privileged_commits.load(Ordering::SeqCst), 1);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
         assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
     }
 

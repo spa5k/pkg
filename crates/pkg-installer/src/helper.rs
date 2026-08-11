@@ -709,6 +709,10 @@ mod tests {
         };
         assert_eq!(report.root_set().entry_count(), 1);
         assert_eq!(report.retained_names()[0].as_str(), "ripgrep-out");
+        assert_eq!(
+            root_store.load(source.owner_uid(), source.generation())?,
+            source
+        );
         let destination = root_store.load(source.owner_uid(), &GenerationId::new("gen-0004")?)?;
         assert_eq!(destination.entries().len(), 1);
         assert_eq!(destination.entries()[0].name().as_str(), "ripgrep-out");
