@@ -20,9 +20,10 @@ use pkg_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    BuildApprovalReceipt, BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus,
-    DerivationPlanReport, DerivedOutputTarget, NarIntegrity, NixAdapter, NixVersion, OperationId,
-    PathInfoReport, Signature, TrustStatus, VerifyMode, VerifyRequest,
+    BuildApprovalReceipt, BuildOutputProvenance, BuildProgressEstimate, BuildReport, BuildRequest,
+    BuildStatus, DerivationPlanReport, DerivedOutputTarget, NarIntegrity, NixAdapter,
+    NixAdapterError, NixVersion, OperationId, PathInfoReport, Signature, TrustStatus, VerifyMode,
+    VerifyRequest,
 };
 
 const MAX_TEXT: usize = 256;
@@ -2131,6 +2132,13 @@ pub struct LocalBuildEngine {
     admission: BuildAdmission,
 }
 
+pub(crate) struct BuildExecutionRuntime<'a> {
+    pub(crate) resources: &'a dyn ResourceProbe,
+    pub(crate) cancellation: &'a CancellationToken,
+    pub(crate) adapter: &'a dyn NixAdapter,
+    pub(crate) progress: &'a mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+}
+
 impl LocalBuildEngine {
     /// Creates an empty engine; approvals never survive process restart.
     #[must_use]
@@ -2228,21 +2236,30 @@ impl LocalBuildEngine {
         cancellation: &CancellationToken,
         adapter: &dyn NixAdapter,
     ) -> Result<BuildReport, BuildEngineError> {
-        self.execute_revalidated(receipt, replan, estimate, resources, cancellation, adapter)
-            .map(|(report, _)| report)
+        let mut no_progress = |_| Ok(());
+        self.execute_revalidated(
+            receipt,
+            replan,
+            estimate,
+            BuildExecutionRuntime {
+                resources,
+                cancellation,
+                adapter,
+                progress: &mut no_progress,
+            },
+        )
+        .map(|(report, _)| report)
     }
 
-    pub(crate) fn execute_with_evidence(
+    pub(crate) fn execute_with_evidence_and_progress(
         &self,
         receipt: BuildApprovalReceipt,
         replan: impl FnOnce() -> Result<BuildPlan, BuildEngineError>,
         estimate: VolatileBuildEstimate,
-        resources: &dyn ResourceProbe,
-        cancellation: &CancellationToken,
-        adapter: &dyn NixAdapter,
+        runtime: BuildExecutionRuntime<'_>,
     ) -> Result<(BuildReport, InstallEvidence), BuildEngineError> {
-        let (report, plan) =
-            self.execute_revalidated(receipt, replan, estimate, resources, cancellation, adapter)?;
+        let adapter = runtime.adapter;
+        let (report, plan) = self.execute_revalidated(receipt, replan, estimate, runtime)?;
         let evidence = InstallEvidence::from_executed_plan(&plan, &report, adapter)?;
         Ok((report, evidence))
     }
@@ -2252,11 +2269,9 @@ impl LocalBuildEngine {
         receipt: BuildApprovalReceipt,
         replan: impl FnOnce() -> Result<BuildPlan, BuildEngineError>,
         estimate: VolatileBuildEstimate,
-        resources: &dyn ResourceProbe,
-        cancellation: &CancellationToken,
-        adapter: &dyn NixAdapter,
+        runtime: BuildExecutionRuntime<'_>,
     ) -> Result<(BuildReport, BuildPlan), BuildEngineError> {
-        let _permit = match self.admission.acquire(cancellation) {
+        let _permit = match self.admission.acquire(runtime.cancellation) {
             Ok(permit) => permit,
             Err(error) => {
                 self.revoke(receipt.operation_id());
@@ -2293,7 +2308,7 @@ impl LocalBuildEngine {
                 ));
             }
         }
-        let first_measurement = match resources.measure() {
+        let first_measurement = match runtime.resources.measure() {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 self.revoke(receipt.operation_id());
@@ -2303,7 +2318,7 @@ impl LocalBuildEngine {
         let resources_ready = if resource_ok(&current, estimate, first_measurement) {
             true
         } else {
-            match resources.measure() {
+            match runtime.resources.measure() {
                 Ok(snapshot) => resource_ok(&current, estimate, snapshot),
                 Err(error) => {
                     self.revoke(receipt.operation_id());
@@ -2329,8 +2344,9 @@ impl LocalBuildEngine {
             receipt,
         )
         .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
-        let report = adapter
-            .build(&request)
+        let report = runtime
+            .adapter
+            .build_with_progress(&request, runtime.progress)
             .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
         if report.status() == BuildStatus::AcquireNoBinary {
             return Err(BuildEngineError::new(BuildEngineErrorCode::AcquireNoBinary));

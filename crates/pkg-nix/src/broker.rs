@@ -8,17 +8,24 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest as _, Sha256};
 
+use crate::build::BuildExecutionRuntime;
 use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
-    BuildPlan, BuildPreview, BuildReport, CancellationToken, Digest, InstallEvidence,
-    LocalBuildEngine, NixAdapter, OperationId, ResourceProbe, RootSet, RootSetAttestationRequest,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
-    RootSetTransitionRequest, VolatileBuildEstimate,
+    BuildPlan, BuildPreview, BuildProgressEstimate, BuildReport, CancellationToken, Digest,
+    InstallEvidence, LocalBuildEngine, NixAdapter, NixAdapterError, OperationId, ResourceProbe,
+    RootSet, RootSetAttestationRequest, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport, RootSetTransitionRequest, VolatileBuildEstimate,
     maintenance::{MaintenanceError, random_secret},
 };
 
 const OPERATION_TTL: Duration = Duration::from_secs(30 * 60);
 const ADMISSION_WAIT_POLL: Duration = Duration::from_millis(25);
+
+pub(crate) struct BuildExecutionIo<'a> {
+    resources: &'a dyn ResourceProbe,
+    adapter: &'a dyn NixAdapter,
+    progress: &'a mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+}
 
 /// Stable in-process broker failure categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -788,6 +795,7 @@ impl AuthenticatedCaller {
     /// opaque handle and digest. The private receipt and raw targets never cross
     /// the broker boundary. Successful output remains admitted until the caller
     /// roots it and completes the operation.
+    #[cfg(test)]
     pub(crate) fn execute_build(
         &self,
         handle: &OperationHandle,
@@ -796,6 +804,27 @@ impl AuthenticatedCaller {
         estimate: VolatileBuildEstimate,
         resources: &dyn ResourceProbe,
         adapter: &dyn NixAdapter,
+    ) -> Result<BuildReport, BrokerError> {
+        self.execute_build_with_progress(
+            handle,
+            digest,
+            replan,
+            estimate,
+            BuildExecutionIo {
+                resources,
+                adapter,
+                progress: &mut |_| Ok(()),
+            },
+        )
+    }
+
+    pub(crate) fn execute_build_with_progress(
+        &self,
+        handle: &OperationHandle,
+        digest: Digest,
+        replan: impl FnOnce() -> Result<BuildPlan, BuildEngineError>,
+        estimate: VolatileBuildEstimate,
+        io: BuildExecutionIo<'_>,
     ) -> Result<BuildReport, BrokerError> {
         let (acquired, operation_cancellation) = {
             let mut state = self.broker.lock();
@@ -856,13 +885,16 @@ impl AuthenticatedCaller {
             }
         };
 
-        let result = self.broker.build_engine.execute_with_evidence(
+        let result = self.broker.build_engine.execute_with_evidence_and_progress(
             receipt,
             replan,
             estimate,
-            resources,
-            &operation_cancellation,
-            adapter,
+            BuildExecutionRuntime {
+                resources: io.resources,
+                cancellation: &operation_cancellation,
+                adapter: io.adapter,
+                progress: io.progress,
+            },
         );
         match result {
             Ok((report, evidence)) => self.finish_build_execution(handle, report, evidence),
@@ -967,6 +999,24 @@ impl AuthenticatedCaller {
         resources: &dyn ResourceProbe,
         adapter: &dyn NixAdapter,
     ) -> Result<BuildReport, BrokerError> {
+        self.execute_prepared_build_with_progress(handle, digest, resources, adapter, &mut |_| {
+            Ok(())
+        })
+    }
+
+    /// Executes a retained approved plan and emits sanitized live estimates.
+    ///
+    /// The callback receives only fixed-point completion values. Private Nix
+    /// activity identifiers, derivations, store paths, and log text remain
+    /// inside the managed adapter.
+    pub fn execute_prepared_build_with_progress(
+        &self,
+        handle: &OperationHandle,
+        digest: Digest,
+        resources: &dyn ResourceProbe,
+        adapter: &dyn NixAdapter,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<BuildReport, BrokerError> {
         let (replanner, estimate) = {
             let mut state = self.broker.lock();
             self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Build])?;
@@ -987,7 +1037,7 @@ impl AuthenticatedCaller {
                 .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildResourcePreflightFailed))?;
             (replanner, estimate)
         };
-        self.execute_build(
+        self.execute_build_with_progress(
             handle,
             digest,
             move || {
@@ -996,8 +1046,11 @@ impl AuthenticatedCaller {
                     .map_err(|_| BuildEngineError::approval_invalidated())
             },
             estimate,
-            resources,
-            adapter,
+            BuildExecutionIo {
+                resources,
+                adapter,
+                progress,
+            },
         )
     }
 

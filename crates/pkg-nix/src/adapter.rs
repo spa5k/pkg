@@ -42,13 +42,45 @@ use crate::contract::{
 use crate::error::NixAdapterError;
 use pkg_core::identity::StorePath;
 
+/// Sanitized best-effort completion estimate for one approved local build.
+///
+/// The value uses millionths so it crosses broker boundaries without
+/// floating-point ambiguity. Live estimates stay below completion;
+/// successful report validation is the only source of terminal 100%.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BuildProgressEstimate(u32);
+
+impl BuildProgressEstimate {
+    /// Number of units in one complete build.
+    pub const SCALE: u32 = 1_000_000;
+
+    /// Creates one non-terminal live estimate.
+    ///
+    /// # Errors
+    ///
+    /// Refuses zero and terminal-or-larger values.
+    pub fn new(millionths: u32) -> Result<Self, NixAdapterError> {
+        if millionths == 0 || millionths >= Self::SCALE {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        Ok(Self(millionths))
+    }
+
+    /// Returns the fixed-point millionths value.
+    #[must_use]
+    pub const fn millionths(self) -> u32 {
+        self.0
+    }
+}
+
 /// The single object-safe boundary between `pkg` and any concrete Nix backend
 /// (`plans/09` §4.1).
 ///
 /// See the [module docs](self) for the object-safety, `Send + Sync`, and
 /// no-per-call-knobs guarantees. There are exactly seven methods; the
 /// [`MethodKind`](crate::MethodKind) enum enumerates them in the same order for
-/// the `pkg-testkit` transcript replay engine (`plans/09` §4.4).
+/// the `pkg-testkit` transcript replay engine (`plans/09` §4.4). The progress
+/// method is an observation form of `build`, not another upstream operation.
 pub trait NixAdapter: Send + Sync {
     /// Pinned managed-Nix version and the upstream per-command JSON format
     /// versions this adapter accepts/rejects (`plans/01` §11). A read-only
@@ -74,10 +106,40 @@ pub trait NixAdapter: Send + Sync {
     /// Approved, sandboxed local build. No per-call trust/flag toggles.
     fn build(&self, req: &BuildRequest) -> Result<BuildReport, NixAdapterError>;
 
+    /// Approved local build with sanitized best-effort live estimates.
+    ///
+    /// Adapters without a trusted live source keep the stable build contract
+    /// and emit no estimates.
+    fn build_with_progress(
+        &self,
+        req: &BuildRequest,
+        _progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<BuildReport, NixAdapterError> {
+        self.build(req)
+    }
+
     /// Read-only integrity/trust verification. Never mutates the store.
     fn verify(&self, req: &VerifyRequest) -> Result<VerifyReport, NixAdapterError>;
 
     /// Collect unreachable paths. Consults the on-disk gcroots tree — there is
     /// no roots argument (`plans/01` ARCH-INV-04, `plans/05` T-STATE-4).
     fn gc(&self) -> Result<GcReport, NixAdapterError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_build_estimates_are_strictly_non_terminal() {
+        assert!(BuildProgressEstimate::new(0).is_err());
+        assert_eq!(BuildProgressEstimate::new(1).unwrap().millionths(), 1);
+        assert_eq!(
+            BuildProgressEstimate::new(BuildProgressEstimate::SCALE - 1)
+                .unwrap()
+                .millionths(),
+            999_999
+        );
+        assert!(BuildProgressEstimate::new(BuildProgressEstimate::SCALE).is_err());
+    }
 }

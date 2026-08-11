@@ -14,12 +14,13 @@ use std::{
 use pkg_core::PackageSelector;
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildPreview, BuildReport, BuildRequest, BuildRootPublicationErrorCode, CacheInstallErrorCode,
-    CacheInstallOutcome, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest,
-    EvaluateDerivationRequest, GcReport, GenerationId, GenerationRootAttestationErrorCode,
-    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, InstallDownloadProgress,
-    MethodKind, NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus,
-    PathInfoReport, ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    BuildPreview, BuildProgressEstimate, BuildReport, BuildRequest, BuildRootPublicationErrorCode,
+    CacheInstallErrorCode, CacheInstallOutcome, CliBrokerRequest, CliBrokerResponse,
+    DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport, GenerationId,
+    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    GenerationRootTransitionErrorCode, InstallDownloadProgress, MethodKind, NixAdapter,
+    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
+    ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
     RootSetTransitionReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
@@ -603,15 +604,103 @@ impl BrokerLifecycleClient {
         handle: OperationHandle,
         digest: Digest,
     ) -> Result<BuildReport, BrokerClientError> {
-        match self.transact_with_timeout(
+        self.execute_build_with_progress(handle, digest, &mut |_| Ok(()))
+    }
+
+    /// Executes one approved build and consumes validated live estimates.
+    pub fn execute_build_with_progress(
+        &mut self,
+        handle: OperationHandle,
+        digest: Digest,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), ()>,
+    ) -> Result<BuildReport, BrokerClientError> {
+        let response = self.transact_build_with_progress(
             &CliBrokerRequest::ExecuteBuild(handle, digest),
-            LONG_RUNNING_RESPONSE_TIMEOUT,
-        )? {
+            progress,
+        )?;
+        match response {
             CliBrokerResponse::BuildExecuted(report) => Ok(report),
             CliBrokerResponse::BuildExecutionRefused(code) => {
                 Err(BrokerClientError::build_refused(code))
             }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    fn transact_build_with_progress(
+        &mut self,
+        request: &CliBrokerRequest,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), ()>,
+    ) -> Result<CliBrokerResponse, BrokerClientError> {
+        if !self.healthy {
+            return Err(BrokerClientError::new(
+                BrokerClientErrorCode::ConnectionFailed,
+            ));
+        }
+        let result = self.transact_build_healthy(request, progress);
+        if result.is_err() {
+            self.healthy = false;
+        }
+        result
+    }
+
+    fn transact_build_healthy(
+        &mut self,
+        request: &CliBrokerRequest,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), ()>,
+    ) -> Result<CliBrokerResponse, BrokerClientError> {
+        if !matches!(request, CliBrokerRequest::ExecuteBuild(_, _)) {
+            return Err(BrokerClientError::new(
+                BrokerClientErrorCode::UnexpectedResponse,
+            ));
+        }
+        let request_id = self.next_request_id;
+        self.next_request_id = request_id
+            .checked_add(1)
+            .filter(|next| *next != 0)
+            .ok_or_else(|| BrokerClientError::new(BrokerClientErrorCode::RequestIdExhausted))?;
+        let frame = ProductFrameCodec::encode_cli_request(request_id, request)
+            .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::InvalidFrame))?;
+        let deadline = Instant::now()
+            .checked_add(LONG_RUNNING_RESPONSE_TIMEOUT)
+            .ok_or_else(|| BrokerClientError::new(BrokerClientErrorCode::TransportFailure))?;
+        write_all_until(&mut self.stream, &frame, deadline)?;
+        let mut last = 0;
+        loop {
+            let response = read_frame(&mut self.stream, deadline)?;
+            let (response_id, response) = ProductFrameCodec::decode_cli_response(&response)
+                .map_err(|_| BrokerClientError::new(BrokerClientErrorCode::InvalidFrame))?;
+            if response_id != request_id {
+                return Err(BrokerClientError::new(
+                    BrokerClientErrorCode::UnexpectedResponse,
+                ));
+            }
+            if let CliBrokerResponse::BuildExecutionProgress(update) = response {
+                if update.millionths() <= last {
+                    return Err(BrokerClientError::new(
+                        BrokerClientErrorCode::UnexpectedResponse,
+                    ));
+                }
+                last = update.millionths();
+                if progress(update).is_err() {
+                    let _ = self.stream.shutdown(Shutdown::Both);
+                    return Err(BrokerClientError::new(
+                        BrokerClientErrorCode::UnexpectedResponse,
+                    ));
+                }
+                continue;
+            }
+            return match response {
+                CliBrokerResponse::BuildExecuted(report) => {
+                    Ok(CliBrokerResponse::BuildExecuted(report))
+                }
+                CliBrokerResponse::BuildExecutionRefused(code) => {
+                    Ok(CliBrokerResponse::BuildExecutionRefused(code))
+                }
+                _ => Err(BrokerClientError::new(
+                    BrokerClientErrorCode::UnexpectedResponse,
+                )),
+            };
         }
     }
 
@@ -1333,6 +1422,68 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&request)?,
             (1, CliBrokerRequest::ExecuteBuild(handle, digest))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_progress_is_streamed_before_a_typed_refusal() -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Build)?;
+        let digest = Digest::from_bytes([0x34; 32]);
+        for millionths in [250_000, 750_000] {
+            server.write_all(&ProductFrameCodec::encode_cli_response(
+                1,
+                &CliBrokerResponse::BuildExecutionProgress(BuildProgressEstimate::new(millionths)?),
+            )?)?;
+        }
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::BuildExecutionRefused(BuildExecutionErrorCode::ExecutionFailed),
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+        let mut observed = Vec::new();
+
+        let error = client
+            .execute_build_with_progress(handle, digest, &mut |estimate| {
+                observed.push(estimate.millionths());
+                Ok(())
+            })
+            .unwrap_err();
+        assert_eq!(observed, vec![250_000, 750_000]);
+        assert_eq!(error.code(), BrokerClientErrorCode::BuildRefused);
+        assert!(client.healthy);
+        Ok(())
+    }
+
+    #[test]
+    fn regressing_build_progress_poisons_the_connection() -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Build)?;
+        let digest = Digest::from_bytes([0x35; 32]);
+        for millionths in [500_000, 250_000] {
+            server.write_all(&ProductFrameCodec::encode_cli_response(
+                1,
+                &CliBrokerResponse::BuildExecutionProgress(BuildProgressEstimate::new(millionths)?),
+            )?)?;
+        }
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        assert_eq!(
+            client
+                .execute_build(handle.clone(), digest)
+                .unwrap_err()
+                .code(),
+            BrokerClientErrorCode::UnexpectedResponse
+        );
+        assert!(!client.healthy);
+        assert_eq!(
+            client.execute_build(handle, digest).unwrap_err().code(),
+            BrokerClientErrorCode::ConnectionFailed
         );
         Ok(())
     }

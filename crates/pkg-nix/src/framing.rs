@@ -18,9 +18,9 @@ use crate::maintenance::{
     RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use crate::{
-    ApprovalSource, BuildPreview, BuildReport, DerivationPlanReport, EvaluateDerivationRequest,
-    GcReport, InstallEvidence, JsonCodec, PathInfoReport, RootName, RootRef, SubstituteReport,
-    VerifyReport, VerifyRequest, VersionInfo,
+    ApprovalSource, BuildPreview, BuildProgressEstimate, BuildReport, DerivationPlanReport,
+    EvaluateDerivationRequest, GcReport, InstallEvidence, JsonCodec, PathInfoReport, RootName,
+    RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
@@ -198,6 +198,8 @@ pub enum CliBrokerResponse {
     BuildPrepared(BuildPreview),
     /// Validated report from broker-owned build execution.
     BuildExecuted(BuildReport),
+    /// Sanitized best-effort live estimate for method 19.
+    BuildExecutionProgress(BuildProgressEstimate),
     /// Stable redacted refusal from broker-owned build execution.
     BuildExecutionRefused(BuildExecutionErrorCode),
     /// Durable root publication completed for the authenticated generation.
@@ -798,6 +800,12 @@ impl ProductFrameCodec {
             CliBrokerResponse::BuildExecuted(report) => {
                 (19, report.encode().map_err(adapter_payload)?)
             }
+            CliBrokerResponse::BuildExecutionProgress(progress) => (
+                19,
+                encode_json(&BuildExecutionProgressWire {
+                    progress_millionths: progress.millionths(),
+                })?,
+            ),
             CliBrokerResponse::BuildExecutionRefused(code) => (
                 19,
                 encode_json(&BuildExecutionFailureWire {
@@ -919,6 +927,14 @@ impl ProductFrameCodec {
             return Ok((
                 frame.request_id,
                 CliBrokerResponse::BuildExecutionRefused(code),
+            ));
+        }
+        if frame.method == 19
+            && let Some(progress) = decode_build_execution_progress(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::BuildExecutionProgress(progress),
             ));
         }
         if frame.method == 20
@@ -1462,6 +1478,17 @@ fn decode_install_download_progress(
     .map(Some)
 }
 
+fn decode_build_execution_progress(
+    bytes: &[u8],
+) -> Result<Option<BuildProgressEstimate>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<BuildExecutionProgressOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    BuildProgressEstimate::new(wire.progress_millionths)
+        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+        .map(Some)
+}
+
 fn parse_cache_install_error_code(value: &str) -> Result<CacheInstallErrorCode, FrameError> {
     match value {
         "invalid-intent" => Ok(CacheInstallErrorCode::InvalidIntent),
@@ -1778,6 +1805,18 @@ struct InstallDownloadProgressOwnedWire {
     selector: String,
     done: u64,
     total: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildExecutionProgressWire {
+    progress_millionths: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BuildExecutionProgressOwnedWire {
+    progress_millionths: u32,
 }
 
 #[derive(Serialize)]
@@ -2625,6 +2664,29 @@ mod tests {
             ProductFrameCodec::decode_cli_response(&encoded),
             Ok((11, response))
         );
+        let response =
+            CliBrokerResponse::BuildExecutionProgress(BuildProgressEstimate::new(420_000).unwrap());
+        let encoded = ProductFrameCodec::encode_cli_response(11, &response).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains(r#""progressMillionths":420000"#));
+        for forbidden in ["/nix/", "drv", "path", "system", "argv"] {
+            assert!(
+                !wire.contains(forbidden),
+                "build progress exposed {forbidden}"
+            );
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((11, response))
+        );
+        for payload in [
+            br#"{"progressMillionths":0}"#.as_slice(),
+            br#"{"progressMillionths":1000000}"#.as_slice(),
+            br#"{"progressMillionths":1,"path":"/nix/store/x"}"#.as_slice(),
+        ] {
+            let encoded = encode_frame(CHANNEL_CLI_BROKER, 19, 11, payload).unwrap();
+            assert!(ProductFrameCodec::decode_cli_response(&encoded).is_err());
+        }
 
         let root_intent = RootSetIntent::new(
             GenerationId::new("gen-0007").unwrap(),

@@ -13,7 +13,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,14 +27,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AcceptedFormats, BuildCacheError, BuildCacheErrorCode, BuildCacheProbe, BuildOutput,
-    BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus, CacheDownloadClosure,
-    CachePathObservation, DerivationPath, DerivationPlanReport, DerivationSystem,
-    EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport, GcStatus,
-    MaintenanceError, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion,
-    NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError, OutputName, PathInfoReport,
-    PathVerifyResult, RepairMode, RepairOutcomeKind, Signature, StorePath, SubstituteOutcome,
-    SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope,
-    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    BuildOutputProvenance, BuildProgressEstimate, BuildReport, BuildRequest, BuildStatus,
+    CacheDownloadClosure, CachePathObservation, DerivationPath, DerivationPlanReport,
+    DerivationSystem, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport,
+    GcStatus, MaintenanceError, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
+    NixVersion, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError, OutputName,
+    PathInfoReport, PathVerifyResult, RepairMode, RepairOutcomeKind, Signature, StorePath,
+    SubstituteOutcome, SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor,
+    VerifiedRepairScope, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
 const PINNED_NIX_VERSION: &str = "2.34.8";
@@ -48,6 +48,11 @@ const MANAGED_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socket";
 const MANAGED_PATH: &str = "/usr/bin:/bin";
 const MAX_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
+const MAX_INTERNAL_JSON_LINE_BYTES: usize = 256 * 1024;
+const MAX_STDERR_CHUNKS_PER_TICK: usize = 64;
+const INTERNAL_JSON_PREFIX: &[u8] = b"@nix ";
+const ACT_BUILDS: u64 = 104;
+const RESULT_PROGRESS: u64 = 105;
 const SHORT_TIMEOUT: Duration = Duration::from_secs(60);
 const EVALUATE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const BUILD_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
@@ -246,6 +251,83 @@ impl RealNixAdapter {
         self.require_success(MethodKind::Verify, args, SHORT_TIMEOUT)
             .map(|_| ())
             .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))
+    }
+
+    fn run_build_with_progress(
+        &self,
+        request: &BuildRequest,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<BuildReport, NixAdapterError> {
+        let mut args = base_args();
+        args.extend(os_args([
+            "--log-format",
+            "internal-json",
+            "build",
+            "--no-link",
+            "--json",
+        ]));
+        for target in request.targets() {
+            args.push(target.render_private().into());
+        }
+        let mut parser = InternalBuildProgressParser::default();
+        let outcome = execute_checked_with_stderr(
+            self.executor.as_ref(),
+            NixProgram::Modern,
+            args,
+            BUILD_TIMEOUT,
+            &mut |chunk| parser.push(chunk, progress),
+        )?;
+        parser.finish(progress)?;
+        if outcome.code != Some(0) {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        self.normalize_build_report(request, &outcome.stdout)
+    }
+
+    fn normalize_build_report(
+        &self,
+        request: &BuildRequest,
+        bytes: &[u8],
+    ) -> Result<BuildReport, NixAdapterError> {
+        let raw: Vec<RawBuildResult> = parse_json(bytes)?;
+        let expected = expected_build_outputs(request);
+        let mut seen_paths = BTreeSet::new();
+        let mut seen_outputs = BTreeSet::new();
+        let mut outputs = Vec::new();
+        for result in raw {
+            validate_build_metrics(&result)?;
+            let derivation = derivation_path(&result.drv_path)?;
+            for (name, raw_path) in result.outputs {
+                let output_name =
+                    OutputName::new(&name).map_err(|_| NixAdapterError::OperationFailed)?;
+                let derivation_name = derivation.as_str().to_owned();
+                if !expected.contains(&(derivation_name.clone(), Some(name.clone())))
+                    && !expected.contains(&(derivation_name.clone(), None))
+                {
+                    return Err(NixAdapterError::OperationFailed);
+                }
+                let path = store_path(&raw_path)?;
+                if !seen_paths.insert(path.as_str().to_owned()) {
+                    return Err(NixAdapterError::OperationFailed);
+                }
+                seen_outputs.insert((derivation_name, output_name.as_str().to_owned()));
+                let info = self.raw_path_info(&path, false, false)?;
+                let entry = root_path_info(&info, &path)?;
+                let output_signatures = signatures(&entry.signatures)?;
+                let provenance =
+                    classify_build_provenance(self, &path, entry.ultimate, &output_signatures)?;
+                outputs.push(BuildOutput::new(path, provenance));
+            }
+        }
+        if !expected.iter().all(|(derivation, output)| match output {
+            Some(output) => seen_outputs.contains(&(derivation.clone(), output.clone())),
+            None => seen_outputs
+                .iter()
+                .any(|(observed, _)| observed == derivation),
+        }) {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        BuildReport::new(BuildStatus::Built, outputs)
     }
 }
 
@@ -545,51 +627,15 @@ impl NixAdapter for RealNixAdapter {
     }
 
     fn build(&self, request: &BuildRequest) -> Result<BuildReport, NixAdapterError> {
-        let mut args = base_args();
-        args.extend(os_args(["build", "--no-link", "--json"]));
-        for target in request.targets() {
-            args.push(target.render_private().into());
-        }
-        let bytes = self.require_success(MethodKind::Build, args, BUILD_TIMEOUT)?;
-        let raw: Vec<RawBuildResult> = parse_json(&bytes)?;
-        let expected = expected_build_outputs(request);
-        let mut seen_paths = BTreeSet::new();
-        let mut seen_outputs = BTreeSet::new();
-        let mut outputs = Vec::new();
-        for result in raw {
-            validate_build_metrics(&result)?;
-            let derivation = derivation_path(&result.drv_path)?;
-            for (name, raw_path) in result.outputs {
-                let output_name =
-                    OutputName::new(&name).map_err(|_| NixAdapterError::OperationFailed)?;
-                let derivation_name = derivation.as_str().to_owned();
-                if !expected.contains(&(derivation_name.clone(), Some(name.clone())))
-                    && !expected.contains(&(derivation_name.clone(), None))
-                {
-                    return Err(NixAdapterError::OperationFailed);
-                }
-                let path = store_path(&raw_path)?;
-                if !seen_paths.insert(path.as_str().to_owned()) {
-                    return Err(NixAdapterError::OperationFailed);
-                }
-                seen_outputs.insert((derivation_name, output_name.as_str().to_owned()));
-                let info = self.raw_path_info(&path, false, false)?;
-                let entry = root_path_info(&info, &path)?;
-                let output_signatures = signatures(&entry.signatures)?;
-                let provenance =
-                    classify_build_provenance(self, &path, entry.ultimate, &output_signatures)?;
-                outputs.push(BuildOutput::new(path, provenance));
-            }
-        }
-        if !expected.iter().all(|(derivation, output)| match output {
-            Some(output) => seen_outputs.contains(&(derivation.clone(), output.clone())),
-            None => seen_outputs
-                .iter()
-                .any(|(observed, _)| observed == derivation),
-        }) {
-            return Err(NixAdapterError::OperationFailed);
-        }
-        BuildReport::new(BuildStatus::Built, outputs)
+        self.run_build_with_progress(request, &mut |_| Ok(()))
+    }
+
+    fn build_with_progress(
+        &self,
+        request: &BuildRequest,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<BuildReport, NixAdapterError> {
+        self.run_build_with_progress(request, progress)
     }
 
     fn verify(&self, request: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
@@ -668,6 +714,16 @@ impl NixAdapter for RealNixAdapter {
 
 trait CommandExecutor: Send + Sync {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError>;
+
+    fn execute_with_stderr(
+        &self,
+        spec: CommandSpec,
+        stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+    ) -> Result<CommandOutcome, NixAdapterError> {
+        let outcome = self.execute(spec)?;
+        stderr_chunk(&outcome.stderr)?;
+        Ok(outcome)
+    }
 }
 
 fn validated_process_executor(
@@ -734,6 +790,39 @@ fn execute_checked(
     Ok(outcome)
 }
 
+fn execute_checked_with_stderr(
+    executor: &dyn CommandExecutor,
+    program: NixProgram,
+    args: Vec<OsString>,
+    timeout: Duration,
+    stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+) -> Result<CommandOutcome, NixAdapterError> {
+    let outcome = executor.execute_with_stderr(
+        CommandSpec {
+            program,
+            args,
+            timeout,
+        },
+        stderr_chunk,
+    )?;
+    if outcome.stdout_oversized || outcome.stderr_oversized {
+        return Err(NixAdapterError::OversizedInput {
+            limit_bytes: if outcome.stdout_oversized {
+                MAX_STDOUT_BYTES
+            } else {
+                MAX_STDERR_BYTES
+            },
+        });
+    }
+    if outcome.timed_out {
+        return Err(NixAdapterError::Timeout);
+    }
+    if outcome.code.is_none() {
+        return Err(NixAdapterError::OperationFailed);
+    }
+    Ok(outcome)
+}
+
 #[derive(Debug)]
 struct ProcessExecutor {
     nix_binary: PathBuf,
@@ -743,6 +832,24 @@ struct ProcessExecutor {
 
 impl CommandExecutor for ProcessExecutor {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError> {
+        self.execute_process(spec, &mut |_| Ok(()))
+    }
+
+    fn execute_with_stderr(
+        &self,
+        spec: CommandSpec,
+        stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+    ) -> Result<CommandOutcome, NixAdapterError> {
+        self.execute_process(spec, stderr_chunk)
+    }
+}
+
+impl ProcessExecutor {
+    fn execute_process(
+        &self,
+        spec: CommandSpec,
+        stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+    ) -> Result<CommandOutcome, NixAdapterError> {
         let binary = match spec.program {
             NixProgram::Modern => &self.nix_binary,
             NixProgram::LegacyStore => &self.nix_store_binary,
@@ -773,25 +880,46 @@ impl CommandExecutor for ProcessExecutor {
             .stderr
             .take()
             .ok_or(NixAdapterError::OperationFailed)?;
+        let (stderr_tx, stderr_rx) = mpsc::sync_channel(64);
         let stdout_reader = thread::spawn(move || read_bounded(stdout, MAX_STDOUT_BYTES));
-        let stderr_reader = thread::spawn(move || read_bounded(stderr, MAX_STDERR_BYTES));
+        let stderr_reader =
+            thread::spawn(move || read_bounded_forward(stderr, MAX_STDERR_BYTES, &stderr_tx));
         let started = Instant::now();
         let mut observed_status = None;
-        let (status, timed_out) = loop {
+        let mut timed_out = false;
+        let mut callback_error = None;
+        let status = loop {
+            for chunk in stderr_rx.try_iter().take(MAX_STDERR_CHUNKS_PER_TICK) {
+                if callback_error.is_none()
+                    && let Err(error) = stderr_chunk(&chunk)
+                {
+                    callback_error = Some(error);
+                }
+            }
             if observed_status.is_none() {
                 observed_status = child
                     .try_wait()
                     .map_err(|_| NixAdapterError::OperationFailed)?;
             }
+            if callback_error.is_some() && observed_status.is_none() {
+                observed_status = Some(terminate_and_reap(&mut child, None)?);
+            }
             if let Some(status) = observed_status
                 && stdout_reader.is_finished()
                 && stderr_reader.is_finished()
             {
-                break (status, false);
+                for chunk in stderr_rx.try_iter() {
+                    if callback_error.is_none()
+                        && let Err(error) = stderr_chunk(&chunk)
+                    {
+                        callback_error = Some(error);
+                    }
+                }
+                break status;
             }
-            if started.elapsed() >= spec.timeout {
-                let status = terminate_and_reap(&mut child, observed_status)?;
-                break (status, true);
+            if !timed_out && started.elapsed() >= spec.timeout {
+                observed_status = Some(terminate_and_reap(&mut child, observed_status)?);
+                timed_out = true;
             }
             thread::sleep(Duration::from_millis(20));
         };
@@ -803,6 +931,9 @@ impl CommandExecutor for ProcessExecutor {
             .join()
             .map_err(|_| NixAdapterError::OperationFailed)?
             .map_err(|_| NixAdapterError::OperationFailed)?;
+        if let Some(error) = callback_error {
+            return Err(error);
+        }
         Ok(CommandOutcome {
             code: status.code(),
             stdout,
@@ -883,6 +1014,148 @@ fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<(Vec<u8>, boo
         oversized |= count > remaining;
     }
     Ok((stored, oversized))
+}
+
+fn read_bounded_forward(
+    mut reader: impl Read,
+    limit: usize,
+    sender: &mpsc::SyncSender<Vec<u8>>,
+) -> io::Result<(Vec<u8>, bool)> {
+    let mut stored = Vec::new();
+    let mut oversized = false;
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(stored.len());
+        stored.extend_from_slice(&chunk[..count.min(remaining)]);
+        oversized |= count > remaining;
+        if sender.send(chunk[..count].to_vec()).is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "stderr progress receiver closed",
+            ));
+        }
+    }
+    Ok((stored, oversized))
+}
+
+#[derive(Debug, Default)]
+struct InternalBuildProgressParser {
+    pending: Vec<u8>,
+    dropping_oversized_line: bool,
+    build_activity_ids: BTreeSet<u64>,
+    last_millionths: u32,
+}
+
+impl InternalBuildProgressParser {
+    fn push(
+        &mut self,
+        chunk: &[u8],
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<(), NixAdapterError> {
+        let mut remaining = chunk;
+        if self.dropping_oversized_line {
+            let Some(end) = remaining.iter().position(|byte| *byte == b'\n') else {
+                return Ok(());
+            };
+            self.dropping_oversized_line = false;
+            remaining = &remaining[end + 1..];
+        }
+        self.pending.extend_from_slice(remaining);
+        while let Some(end) = self.pending.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.pending.drain(..=end).collect::<Vec<_>>();
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            if line.len() <= MAX_INTERNAL_JSON_LINE_BYTES {
+                self.parse_line(&line, progress)?;
+            }
+        }
+        if self.pending.len() > MAX_INTERNAL_JSON_LINE_BYTES {
+            self.pending.clear();
+            self.dropping_oversized_line = true;
+        }
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<(), NixAdapterError> {
+        if !self.dropping_oversized_line && !self.pending.is_empty() {
+            let line = std::mem::take(&mut self.pending);
+            self.parse_line(&line, progress)?;
+        }
+        Ok(())
+    }
+
+    fn parse_line(
+        &mut self,
+        line: &[u8],
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<(), NixAdapterError> {
+        let Some(payload) = line.strip_prefix(INTERNAL_JSON_PREFIX) else {
+            return Ok(());
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) else {
+            return Ok(());
+        };
+        let Some(action) = value.get("action").and_then(serde_json::Value::as_str) else {
+            return Ok(());
+        };
+        let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) else {
+            return Ok(());
+        };
+        match action {
+            "start"
+                if value.get("type").and_then(serde_json::Value::as_u64) == Some(ACT_BUILDS) =>
+            {
+                self.build_activity_ids.insert(id);
+            }
+            "stop" => {
+                self.build_activity_ids.remove(&id);
+            }
+            "result"
+                if self.build_activity_ids.contains(&id)
+                    && value.get("type").and_then(serde_json::Value::as_u64)
+                        == Some(RESULT_PROGRESS) =>
+            {
+                let Some(fields) = value.get("fields").and_then(serde_json::Value::as_array) else {
+                    return Ok(());
+                };
+                if fields.len() != 4 {
+                    return Ok(());
+                }
+                let Some(done) = fields[0].as_u64() else {
+                    return Ok(());
+                };
+                let Some(expected) = fields[1].as_u64() else {
+                    return Ok(());
+                };
+                if fields[2].as_u64().is_none() || fields[3].as_u64().is_none() {
+                    return Ok(());
+                }
+                if expected == 0 || done == 0 || done > expected {
+                    return Ok(());
+                }
+                let scaled = ((u128::from(done) * u128::from(BuildProgressEstimate::SCALE))
+                    / u128::from(expected))
+                .min(u128::from(BuildProgressEstimate::SCALE - 1))
+                    as u32;
+                if scaled > self.last_millionths {
+                    let estimate = BuildProgressEstimate::new(scaled)?;
+                    progress(estimate)?;
+                    self.last_millionths = scaled;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 fn base_args() -> Vec<OsString> {
@@ -1826,6 +2099,113 @@ mod tests {
                 .code(),
             BuildCacheErrorCode::ProbeFailed
         );
+        Ok(())
+    }
+
+    #[test]
+    fn internal_json_build_progress_is_bounded_monotonic_and_path_free()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut parser = InternalBuildProgressParser::default();
+        let mut observed = Vec::new();
+        let mut collect = |estimate: BuildProgressEstimate| {
+            observed.push(estimate.millionths());
+            Ok(())
+        };
+        parser.push(
+            b"noise\n@nix {\"action\":\"start\",\"fields\":[],\"id\":9,\"level\":3,\"parent\":0,\"text\":\"\",\"type\":104}\n",
+            &mut collect,
+        )?;
+        parser.push(
+            b"@nix {\"action\":\"start\",\"fields\":[\"/nix/store/private.drv\",\"\",1,1],\"id\":10,\"level\":3,\"parent\":9,\"text\":\"private\",\"type\":105}\n@nix {\"action\":\"result\",\"fields\":[1,4,1,0],\"id\":9,\"type\":105}\n",
+            &mut collect,
+        )?;
+        parser.push(
+            b"@nix {\"action\":\"result\",\"fields\":[1,5,1,0],\"id\":9,\"type\":105}\n@nix {\"action\":\"result\",\"fields\":[4,4,0,0],\"id\":9,\"type\":105}\n",
+            &mut collect,
+        )?;
+        parser.finish(&mut collect)?;
+
+        assert_eq!(observed, vec![250_000, 999_999]);
+        Ok(())
+    }
+
+    #[test]
+    fn internal_json_parser_recovers_after_oversized_private_line()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut parser = InternalBuildProgressParser::default();
+        let oversized = vec![b'x'; MAX_INTERNAL_JSON_LINE_BYTES + 1];
+        parser.push(&oversized, &mut |_| Ok(()))?;
+        let mut observed = Vec::new();
+        parser.push(
+            b"\n@nix {\"action\":\"start\",\"fields\":[],\"id\":7,\"level\":3,\"parent\":0,\"text\":\"\",\"type\":104}\n@nix {\"action\":\"result\",\"fields\":[1,2,1,0],\"id\":7,\"type\":105}\n",
+            &mut |estimate| {
+                observed.push(estimate.millionths());
+                Ok(())
+            },
+        )?;
+        assert_eq!(observed, vec![500_000]);
+        Ok(())
+    }
+
+    #[test]
+    fn internal_json_progress_sink_failure_stops_parsing() {
+        let mut parser = InternalBuildProgressParser::default();
+        parser
+            .push(
+                b"@nix {\"action\":\"start\",\"fields\":[],\"id\":7,\"level\":3,\"parent\":0,\"text\":\"\",\"type\":104}\n",
+                &mut |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(
+            parser
+                .push(
+                    b"@nix {\"action\":\"result\",\"fields\":[1,2,1,0],\"id\":7,\"type\":105}\n",
+                    &mut |_| Err(NixAdapterError::OperationFailed),
+                )
+                .unwrap_err()
+                .code(),
+            crate::NixAdapterErrorCode::OperationFailed
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn noisy_stderr_cannot_starve_timeout_or_progress_cancellation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = tempfile::tempdir()?;
+        fs::create_dir(home.path().join("tmp"))?;
+        let executor = ProcessExecutor {
+            nix_binary: PathBuf::from("/bin/sh"),
+            nix_store_binary: PathBuf::from("/bin/sh"),
+            private_home: home.path().to_path_buf(),
+        };
+        let noisy = || CommandSpec {
+            program: NixProgram::Modern,
+            args: os_args(["-c", "while :; do printf 'noise\\n' >&2; done"]),
+            timeout: Duration::from_millis(100),
+        };
+
+        let started = Instant::now();
+        let timed_out = execute_checked_with_stderr(
+            &executor,
+            NixProgram::Modern,
+            noisy().args,
+            Duration::from_millis(100),
+            &mut |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(timed_out.code(), crate::NixAdapterErrorCode::Timeout);
+        assert!(started.elapsed() < Duration::from_secs(5));
+
+        let started = Instant::now();
+        let cancelled = executor
+            .execute_with_stderr(noisy(), &mut |_| Err(NixAdapterError::OperationFailed))
+            .unwrap_err();
+        assert_eq!(
+            cancelled.code(),
+            crate::NixAdapterErrorCode::OperationFailed
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
         Ok(())
     }
 

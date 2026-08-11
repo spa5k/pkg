@@ -1054,7 +1054,16 @@ fn acquire_install_evidence(
             )?;
         }
         broker
-            .execute_build(build_handle.clone(), digest)
+            .execute_build_with_progress(build_handle.clone(), digest, &mut |estimate| {
+                let pct = f64::from(estimate.millionths())
+                    / f64::from(pkg_nix::BuildProgressEstimate::SCALE);
+                for (selector, _, _) in &build_targets {
+                    let event = PublicEvent::build_progress(&public_operation_id, selector, pct)
+                        .map_err(|_| ())?;
+                    progress(event).map_err(|_| ())?;
+                }
+                Ok(())
+            })
             .map_err(install_broker_error)?;
         for (selector, _, _) in &build_targets {
             progress(

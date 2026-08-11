@@ -58,7 +58,7 @@ pub mod real;
 pub mod substitute;
 pub mod verify;
 
-pub use adapter::NixAdapter;
+pub use adapter::{BuildProgressEstimate, NixAdapter};
 pub use broker::{
     AdmissionSnapshot, AuthenticatedCaller, BrokerError, BrokerErrorCode, BrokerOperationKind,
     CacheInstallAttempt, CacheInstallOutcome, ChildContainmentPolicy, InProcessBroker,

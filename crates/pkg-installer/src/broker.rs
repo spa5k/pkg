@@ -9,13 +9,14 @@ use nix::{
 };
 use pkg_core::PackageSelector;
 use pkg_nix::{
-    AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
-    BuildRootPublicationErrorCode, CacheInstallErrorCode, CacheInstallOutcome, CliBrokerRequest,
-    CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
-    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
-    InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
-    NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
-    RootSetTransitionIntent, RootSetTransitionReport,
+    AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview,
+    BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode, CacheInstallErrorCode,
+    CacheInstallOutcome, CliBrokerRequest, CliBrokerResponse, Digest, GenerationId,
+    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
+    InstallDownloadProgress, MaintenanceError, MethodKind, NixAdapter, NixAdapterError,
+    OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport,
 };
 use pkg_pipeline::{AuthenticatedBuildAuthority, BuildAuthorityErrorCode};
 use std::{
@@ -196,6 +197,7 @@ trait BuildAuthorityDispatch: Send + Sync {
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
         digest: Digest,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), ()>,
     ) -> Result<BuildReport, BrokerErrorCode>;
 }
 
@@ -323,10 +325,17 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
         digest: Digest,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), ()>,
     ) -> Result<BuildReport, BrokerErrorCode> {
         let adapter = self.adapter();
         caller
-            .execute_prepared_build(handle, digest, &HostResourceProbe::new(), adapter.as_ref())
+            .execute_prepared_build_with_progress(
+                handle,
+                digest,
+                &HostResourceProbe::new(),
+                adapter.as_ref(),
+                &mut |estimate| progress(estimate).map_err(|()| NixAdapterError::OperationFailed),
+            )
             .map_err(pkg_nix::BrokerError::code)
     }
 }
@@ -399,7 +408,7 @@ fn dispatch_request_with_progress(
     approval_journal: Option<&BrokerCallerApprovalJournal>,
     authority: Option<&dyn BuildAuthorityDispatch>,
     roots: Option<&dyn RootAuthorityDispatch>,
-    progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
+    progress: &mut dyn FnMut(CliBrokerResponse) -> Result<(), ()>,
 ) -> Result<CliBrokerResponse, ()> {
     match request {
         CliBrokerRequest::Begin(kind) => caller
@@ -474,9 +483,9 @@ fn dispatch_request_with_progress(
             .ok_or(())?
             .prepare(selectors, caller, &handle)
             .map(CliBrokerResponse::BuildPrepared),
-        CliBrokerRequest::ExecuteBuild(handle, digest) => {
-            Ok(build_execution_response(authority, caller, &handle, digest))
-        }
+        CliBrokerRequest::ExecuteBuild(handle, digest) => Ok(build_execution_response(
+            authority, caller, &handle, digest, progress,
+        )),
         CliBrokerRequest::PublishBuildRoots(handle, intent) => {
             Ok(build_root_response(roots, caller, &handle, intent))
         }
@@ -489,9 +498,17 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::AttestGenerationRoots(handle, generation) => Ok(
             generation_root_attestation_response(roots, caller, &handle, generation),
         ),
-        CliBrokerRequest::AcquireInstall(handle, selectors) => Ok(install_acquisition_response(
-            authority, caller, &handle, selectors, progress,
-        )),
+        CliBrokerRequest::AcquireInstall(handle, selectors) => {
+            let mut download_progress =
+                |download| progress(CliBrokerResponse::InstallDownloadProgress(download));
+            Ok(install_acquisition_response(
+                authority,
+                caller,
+                &handle,
+                selectors,
+                &mut download_progress,
+            ))
+        }
     }
 }
 
@@ -784,10 +801,13 @@ fn build_execution_response(
     caller: &AuthenticatedCaller,
     handle: &OperationHandle,
     digest: Digest,
+    progress: &mut dyn FnMut(CliBrokerResponse) -> Result<(), ()>,
 ) -> CliBrokerResponse {
     authority.map_or(
         CliBrokerResponse::BuildExecutionRefused(BuildExecutionErrorCode::AuthorityUnavailable),
-        |authority| match authority.execute(caller, handle, digest) {
+        |authority| match authority.execute(caller, handle, digest, &mut |estimate| {
+            progress(CliBrokerResponse::BuildExecutionProgress(estimate))
+        }) {
             Ok(report) => CliBrokerResponse::BuildExecuted(report),
             Err(code) => CliBrokerResponse::BuildExecutionRefused(map_build_execution_error(code)),
         },
@@ -842,7 +862,7 @@ fn serve_frames(
     stream: &mut UnixStream,
     mut dispatch: impl FnMut(
         CliBrokerRequest,
-        &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
+        &mut dyn FnMut(CliBrokerResponse) -> Result<(), ()>,
     ) -> Result<CliBrokerResponse, ()>,
 ) -> Result<(), BrokerTransportError> {
     loop {
@@ -853,8 +873,7 @@ fn serve_frames(
             .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
         let mut progress_error = None;
         let response = {
-            let mut progress = |progress| {
-                let response = CliBrokerResponse::InstallDownloadProgress(progress);
+            let mut progress = |response| {
                 let encoded = ProductFrameCodec::encode_cli_response(request_id, &response)
                     .map_err(|_| {
                         progress_error = Some(BrokerTransportError::new(
@@ -1160,6 +1179,7 @@ mod tests {
             _caller: &AuthenticatedCaller,
             _handle: &OperationHandle,
             _digest: Digest,
+            _progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), ()>,
         ) -> Result<BuildReport, BrokerErrorCode> {
             Err(BrokerErrorCode::BuildResourcePreflightFailed)
         }
@@ -1189,14 +1209,14 @@ mod tests {
             server.set_nonblocking(true).unwrap();
             serve_frames(&mut server, |actual, progress| {
                 assert_eq!(actual, request);
-                progress(
+                progress(CliBrokerResponse::InstallDownloadProgress(
                     InstallDownloadProgress::new(SelectorInput::new("hello").unwrap(), 0, 42)
                         .unwrap(),
-                )?;
-                progress(
+                ))?;
+                progress(CliBrokerResponse::InstallDownloadProgress(
                     InstallDownloadProgress::new(SelectorInput::new("hello").unwrap(), 42, 42)
                         .unwrap(),
-                )?;
+                ))?;
                 Ok(CliBrokerResponse::InstallAcquired)
             })
         });
@@ -1222,6 +1242,63 @@ mod tests {
             CliBrokerResponse::InstallDownloadProgress(_)
         ));
         assert_eq!(responses[2].1, CliBrokerResponse::InstallAcquired);
+        client.shutdown(Shutdown::Both).unwrap();
+        worker.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn frame_server_streams_build_estimates_before_the_terminal_response() {
+        let (mut server, mut client) = UnixStream::pair().unwrap();
+        let handle = InProcessBroker::new()
+            .unwrap()
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap()
+            .begin(BrokerOperationKind::Build)
+            .unwrap();
+        let request = CliBrokerRequest::ExecuteBuild(handle, Digest::from_bytes([0x42; 32]));
+        client
+            .write_all(&ProductFrameCodec::encode_cli_request(9, &request).unwrap())
+            .unwrap();
+        let worker = thread::spawn(move || {
+            server.set_nonblocking(true).unwrap();
+            serve_frames(&mut server, |actual, progress| {
+                assert_eq!(actual, request);
+                progress(CliBrokerResponse::BuildExecutionProgress(
+                    BuildProgressEstimate::new(250_000).unwrap(),
+                ))?;
+                progress(CliBrokerResponse::BuildExecutionProgress(
+                    BuildProgressEstimate::new(750_000).unwrap(),
+                ))?;
+                Ok(CliBrokerResponse::BuildExecutionRefused(
+                    BuildExecutionErrorCode::ExecutionFailed,
+                ))
+            })
+        });
+        client.set_nonblocking(true).unwrap();
+        let responses = (0..3)
+            .map(|_| {
+                let frame = read_frame_with_timeout(&mut client, Duration::from_secs(2))?
+                    .ok_or_else(|| {
+                        BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure)
+                    })?;
+                ProductFrameCodec::decode_cli_response(&frame)
+                    .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(responses.iter().all(|(request_id, _)| *request_id == 9));
+        assert_eq!(
+            responses[0].1,
+            CliBrokerResponse::BuildExecutionProgress(BuildProgressEstimate::new(250_000).unwrap())
+        );
+        assert_eq!(
+            responses[1].1,
+            CliBrokerResponse::BuildExecutionProgress(BuildProgressEstimate::new(750_000).unwrap())
+        );
+        assert_eq!(
+            responses[2].1,
+            CliBrokerResponse::BuildExecutionRefused(BuildExecutionErrorCode::ExecutionFailed)
+        );
         client.shutdown(Shutdown::Both).unwrap();
         worker.join().unwrap().unwrap();
     }

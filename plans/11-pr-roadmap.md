@@ -1498,9 +1498,15 @@ flowchart TD
   product selectors whose evaluated closure intersects the trusted cache-miss set, and the CLI
   emits sanitized `build_started` plus 0%/100% events around the authenticated broker execution.
   The exact sequence stays on the original public operation id and is locked by the cache-miss
-  protocol test; preview decoding refuses a forged all-cache target set. Remaining production
-  install work is live intermediate build heuristics and the still-closed non-default
-  channel/collision policy surfaces. Authenticated download counters are now connected through the
+  protocol test; preview decoding refuses a forged all-cache target set. Live intermediate build
+  estimates are now connected through the exact pinned Nix 2.34.8 `internal-json` contract: the
+  adapter recognizes only the private aggregate derivation counter, derives monotonic fixed-point
+  completion below 100%, and streams only that number through method 19. The CLI applies the
+  best-effort aggregate estimate to each affected product selector; a validated build report is
+  still the sole terminal 100% source. Unknown, malformed, path-bearing, regressing, and oversized
+  activity cannot become public progress, while a failed progress sink cancels the build and
+  poisons the connection. Remaining production install work is the still-closed non-default
+  channel/collision policy surfaces. Authenticated download counters are connected through the
   complete cache closure: the managed probe verifies signed recursive cache metadata, excludes
   already-local objects, assigns shared closure objects once, and refuses any cache miss before a
   copy begins. Method 26 streams only selector-bound monotonic byte counters under the original

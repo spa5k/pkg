@@ -1473,10 +1473,19 @@ and are defined once here; plan 06 maps each command's outcomes to them.
 - **Q4.2 Build-time estimation.** Source of per-system build-time priors for
   the preview. *(Default: ship a coarse heuristic table; refine from
   opt-in telemetry in a later release — see plan 12.)*
-- **Q4.3 `internal-json` stability.** The internal-json log format is
-  nominally internal; confirm version-pinning of the bundled Nix (plan 07)
-  makes it a stable contract for us. *(Required spike — see plan 07 §"bundled
-  runtime pinning".)*
+- **Q4.3 `internal-json` stability (RESOLVED for V1).** The product pins Nix
+  2.34.8 and treats only one narrow source-verified subset as an adapter-private
+  contract. `nix build --log-format internal-json` writes newline-delimited
+  `@nix ` records. The adapter correlates `start` activity type `104`
+  (`actBuilds`) with `result` type `105` (`resProgress`), accepts exactly four
+  unsigned fields (`done`, `expected`, `running`, `failed`), and derives only a
+  monotonic `done / expected` fixed-point estimate. It ignores unknown,
+  malformed, unrelated, regressing, and oversized records. It caps a live
+  estimate below 100%; only a validated successful `BuildReport` produces the
+  terminal public 100%. Raw activity ids, drv/store paths, system, text, and
+  argv stay inside the managed adapter. A progress-sink/transport failure stops
+  the child build and poisons the connection. A Nix-version update must refresh
+  the source fixture and parser contract before the runtime pin can move.
 - **Q4.4 Multi-user authoritative state (RESOLVED → D-17).** Package environment
   state (manifest/lock/generations/activation/journal) is **per-user, keyed by uid**;
   only the runtime/channel/index/source/store service is root-owned and shared. This
