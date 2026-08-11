@@ -3,7 +3,7 @@
 #[cfg(any(target_os = "macos", test))]
 use crate::MacOsStoreVolumeContract;
 #[cfg(any(target_os = "macos", test))]
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
 
 #[cfg(any(target_os = "macos", test))]
@@ -34,6 +34,8 @@ pub enum MacOsStoreMountErrorCode {
     MountFailed,
     /// The final mounted-volume properties did not match the receipt contract.
     VerificationFailed,
+    /// The fixed dynamic volume record could not be published atomically.
+    PublicationFailed,
 }
 
 /// Redacted macOS store-mount failure.
@@ -71,8 +73,17 @@ pub enum MacOsStoreMountOutcome {
     Mounted,
 }
 
+/// Successful dynamic volume-record publication disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacOsStoreRecordOutcome {
+    /// The exact root-owned record was already present.
+    AlreadyPublished,
+    /// The exact root-owned record was published atomically.
+    Published,
+}
+
 #[cfg(any(target_os = "macos", test))]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoreVolumeReceipt {
     schema_version: u32,
@@ -86,22 +97,47 @@ struct StoreVolumeReceipt {
 
 #[cfg(any(target_os = "macos", test))]
 impl StoreVolumeReceipt {
+    fn new(volume_uuid: &str) -> Result<Self, MacOsStoreMountError> {
+        let receipt = Self {
+            schema_version: RECEIPT_SCHEMA_VERSION,
+            product: RECEIPT_PRODUCT.to_owned(),
+            volume_uuid: volume_uuid.to_owned(),
+            volume_name: MacOsStoreVolumeContract::VOLUME_NAME.to_owned(),
+            mount_point: MacOsStoreVolumeContract::MOUNT_POINT.to_owned(),
+            keychain_service: KEYCHAIN_SERVICE.to_owned(),
+            keychain_account: KEYCHAIN_ACCOUNT.to_owned(),
+        };
+        receipt.validate()?;
+        Ok(receipt)
+    }
+
     fn decode(bytes: &[u8]) -> Result<Self, MacOsStoreMountError> {
         let receipt: Self = serde_json::from_slice(bytes)
             .map_err(|_| MacOsStoreMountError::new(MacOsStoreMountErrorCode::InvalidReceipt))?;
-        if receipt.schema_version != RECEIPT_SCHEMA_VERSION
-            || receipt.product != RECEIPT_PRODUCT
-            || !canonical_uuid(&receipt.volume_uuid)
-            || receipt.volume_name != MacOsStoreVolumeContract::VOLUME_NAME
-            || receipt.mount_point != MacOsStoreVolumeContract::MOUNT_POINT
-            || receipt.keychain_service != KEYCHAIN_SERVICE
-            || receipt.keychain_account != KEYCHAIN_ACCOUNT
+        receipt.validate()?;
+        Ok(receipt)
+    }
+
+    fn encode(&self) -> Result<Vec<u8>, MacOsStoreMountError> {
+        self.validate()?;
+        serde_json::to_vec(self)
+            .map_err(|_| MacOsStoreMountError::new(MacOsStoreMountErrorCode::PublicationFailed))
+    }
+
+    fn validate(&self) -> Result<(), MacOsStoreMountError> {
+        if self.schema_version != RECEIPT_SCHEMA_VERSION
+            || self.product != RECEIPT_PRODUCT
+            || !canonical_uuid(&self.volume_uuid)
+            || self.volume_name != MacOsStoreVolumeContract::VOLUME_NAME
+            || self.mount_point != MacOsStoreVolumeContract::MOUNT_POINT
+            || self.keychain_service != KEYCHAIN_SERVICE
+            || self.keychain_account != KEYCHAIN_ACCOUNT
         {
             return Err(MacOsStoreMountError::new(
                 MacOsStoreMountErrorCode::InvalidReceipt,
             ));
         }
-        Ok(receipt)
+        Ok(())
     }
 }
 
@@ -214,6 +250,42 @@ pub fn run_macos_store_mount() -> Result<MacOsStoreMountOutcome, MacOsStoreMount
     mount_with_backend(&mut production::ProductionStoreMountBackend, &receipt)
 }
 
+/// Atomically publishes the fixed root-only dynamic APFS volume record.
+///
+/// The caller supplies only the canonical volume UUID returned by `diskutil`;
+/// every path, selector, name, and mount point remains compiled in.
+///
+/// # Errors
+///
+/// Returns a redacted error away from macOS, without exact root:wheel identity,
+/// for an invalid UUID, unsafe parent/record state, or incomplete publication.
+#[cfg(target_os = "macos")]
+pub fn publish_macos_store_volume_record(
+    volume_uuid: &str,
+) -> Result<MacOsStoreRecordOutcome, MacOsStoreMountError> {
+    if nix::unistd::geteuid().as_raw() != 0 || nix::unistd::getegid().as_raw() != 0 {
+        return Err(MacOsStoreMountError::new(
+            MacOsStoreMountErrorCode::InvalidIdentity,
+        ));
+    }
+    let receipt = StoreVolumeReceipt::new(volume_uuid)?;
+    production::publish_receipt(&receipt)
+}
+
+/// Fails closed away from macOS without inspecting its input.
+///
+/// # Errors
+///
+/// Always returns [`MacOsStoreMountErrorCode::InvalidRuntime`].
+#[cfg(not(target_os = "macos"))]
+pub const fn publish_macos_store_volume_record(
+    _volume_uuid: &str,
+) -> Result<MacOsStoreRecordOutcome, MacOsStoreMountError> {
+    Err(MacOsStoreMountError::new(
+        MacOsStoreMountErrorCode::InvalidRuntime,
+    ))
+}
+
 /// Fails closed away from macOS.
 ///
 /// # Errors
@@ -243,10 +315,13 @@ mod production {
     };
     use serde::Deserialize;
     use std::{
-        fs::{self, File},
-        io::Read,
-        os::unix::{fs::MetadataExt, process::CommandExt},
-        path::Path,
+        fs::{self, File, OpenOptions, Permissions},
+        io::{Read, Write},
+        os::unix::{
+            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+            process::CommandExt,
+        },
+        path::{Path, PathBuf},
         process::{Child, Command, ExitStatus, Stdio},
         thread,
         time::{Duration, Instant},
@@ -375,7 +450,7 @@ mod production {
             ));
         }
         let mut bytes = Vec::new();
-        file.by_ref()
+        Read::by_ref(&mut file)
             .take(MAX_RECEIPT_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| MacOsStoreMountError::new(MacOsStoreMountErrorCode::InvalidReceipt))?;
@@ -385,6 +460,98 @@ mod production {
             ));
         }
         StoreVolumeReceipt::decode(&bytes)
+    }
+
+    pub(super) fn publish_receipt(
+        receipt: &StoreVolumeReceipt,
+    ) -> Result<super::MacOsStoreRecordOutcome, MacOsStoreMountError> {
+        use super::MacOsStoreRecordOutcome;
+
+        validate_directory(Path::new(PRODUCT_PARENT), 0o711, false)?;
+        validate_directory(Path::new(RECEIPT_PARENT), 0o700, true)?;
+        match fs::symlink_metadata(RECEIPT_PATH) {
+            Ok(_) => {
+                return if load_receipt()? == *receipt {
+                    Ok(MacOsStoreRecordOutcome::AlreadyPublished)
+                } else {
+                    Err(MacOsStoreMountError::new(
+                        MacOsStoreMountErrorCode::InvalidReceipt,
+                    ))
+                };
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(MacOsStoreMountError::new(
+                    MacOsStoreMountErrorCode::PublicationFailed,
+                ));
+            }
+        }
+
+        let bytes = receipt.encode()?;
+        if bytes.len() as u64 > MAX_RECEIPT_BYTES {
+            return Err(MacOsStoreMountError::new(
+                MacOsStoreMountErrorCode::PublicationFailed,
+            ));
+        }
+        let temp_path = receipt_temp_path();
+        let result = publish_new_file(&temp_path, &bytes, 0, 0).and_then(|()| {
+            fs::hard_link(&temp_path, RECEIPT_PATH).map_err(|_| publication_failed())?;
+            fs::remove_file(&temp_path).map_err(|_| publication_failed())?;
+            File::open(RECEIPT_PARENT)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| publication_failed())?;
+            if load_receipt()? != *receipt {
+                return Err(publication_failed());
+            }
+            Ok(MacOsStoreRecordOutcome::Published)
+        });
+        if result.is_err() {
+            let _ = fs::remove_file(&temp_path);
+        }
+        result
+    }
+
+    fn receipt_temp_path() -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        Path::new(RECEIPT_PARENT).join(format!(
+            ".store-volume-v1.json.tmp.{}.{}",
+            std::process::id(),
+            nonce
+        ))
+    }
+
+    fn publish_new_file(
+        path: &Path,
+        bytes: &[u8],
+        expected_owner: u32,
+        expected_group: u32,
+    ) -> Result<(), MacOsStoreMountError> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|_| publication_failed())?;
+        file.write_all(bytes).map_err(|_| publication_failed())?;
+        file.set_permissions(Permissions::from_mode(0o600))
+            .map_err(|_| publication_failed())?;
+        file.sync_all().map_err(|_| publication_failed())?;
+        let metadata = file.metadata().map_err(|_| publication_failed())?;
+        if !metadata.is_file()
+            || metadata.uid() != expected_owner
+            || metadata.gid() != expected_group
+            || metadata.mode() & 0o7777 != 0o600
+            || !getfacl(path, None).is_ok_and(|acl| acl.is_empty())
+        {
+            return Err(publication_failed());
+        }
+        Ok(())
+    }
+
+    const fn publication_failed() -> MacOsStoreMountError {
+        MacOsStoreMountError::new(MacOsStoreMountErrorCode::PublicationFailed)
     }
 
     fn validate_directory(
@@ -533,15 +700,39 @@ mod production {
     mod tests {
         use super::{
             DISKUTIL, DiskInfo, SECURITY, info_arguments, keychain_arguments, mount_arguments,
-            unlock_arguments,
+            publish_new_file, unlock_arguments,
         };
         use crate::store_mount::{
             KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, MacOsStoreVolumeContract, RECEIPT_PRODUCT,
             RECEIPT_SCHEMA_VERSION, StoreVolumeReceipt,
         };
+        use nix::unistd::{Gid, Uid};
+        use std::{fs, os::unix::fs::PermissionsExt};
 
         #[test]
-        fn diskutil_plist_uses_the_exact_uuid_key() {
+        fn record_file_is_private_durable_and_no_clobber() -> Result<(), Box<dyn std::error::Error>>
+        {
+            let directory = tempfile::tempdir()?;
+            let temporary = directory.path().join("record.tmp");
+            let target = directory.path().join("record.json");
+            publish_new_file(
+                &temporary,
+                br#"{"schemaVersion":1}"#,
+                Uid::effective().as_raw(),
+                Gid::effective().as_raw(),
+            )?;
+            assert_eq!(
+                fs::metadata(&temporary)?.permissions().mode() & 0o7777,
+                0o600
+            );
+            fs::hard_link(&temporary, &target)?;
+            assert!(fs::hard_link(&temporary, &target).is_err());
+            assert_eq!(fs::read(&target)?, br#"{"schemaVersion":1}"#);
+            Ok(())
+        }
+
+        #[test]
+        fn diskutil_plist_uses_the_exact_uuid_key() -> Result<(), plist::Error> {
             let info: DiskInfo = plist::from_bytes(
                 br#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
@@ -552,9 +743,9 @@ mod production {
 <key>GlobalPermissionsEnabled</key><true/>
 <key>Locked</key><false/>
 </dict></plist>"#,
-            )
-            .expect("diskutil plist should decode");
+            )?;
             assert_eq!(info.volume_uuid, "01234567-89AB-CDEF-0123-456789ABCDEF");
+            Ok(())
         }
 
         #[test]
@@ -668,18 +859,21 @@ mod tests {
     }
 
     #[test]
-    fn receipt_schema_is_closed_and_canonical() {
+    fn receipt_schema_is_closed_and_canonical() -> Result<(), MacOsStoreMountError> {
         assert!(canonical_uuid(UUID));
         let valid = format!(
             r#"{{"schemaVersion":1,"product":"pkg","volumeUuid":"{UUID}","volumeName":"pkg Nix Store","mountPoint":"/nix","keychainService":"org.pkg.store-volume","keychainAccount":"pkg Nix Store"}}"#
         );
         assert!(StoreVolumeReceipt::decode(valid.as_bytes()).is_ok());
+        let generated = StoreVolumeReceipt::new(UUID)?;
+        assert_eq!(generated.encode().as_deref(), Ok(valid.as_bytes()));
         for invalid in [
             "01234567-89ab-cdef-0123-456789abcdef",
             "0123456789AB-CDEF-0123-456789ABCDEF",
             "01234567-89AB-CDEF-0123-456789ABCDEG",
         ] {
             assert!(!canonical_uuid(invalid));
+            assert!(StoreVolumeReceipt::new(invalid).is_err());
         }
         let extended = format!(
             r#"{{"schemaVersion":1,"product":"pkg","volumeUuid":"{UUID}","volumeName":"pkg Nix Store","mountPoint":"/nix","keychainService":"org.pkg.store-volume","keychainAccount":"pkg Nix Store","secret":"no"}}"#
@@ -690,6 +884,7 @@ mod tests {
                 .map(MacOsStoreMountError::code),
             Some(MacOsStoreMountErrorCode::InvalidReceipt)
         );
+        Ok(())
     }
 
     #[test]

@@ -55,7 +55,8 @@ pub use service::{
     run_linux_root_helper_from_activation, run_macos_broker, run_macos_root_helper,
 };
 pub use store_mount::{
-    MacOsStoreMountError, MacOsStoreMountErrorCode, MacOsStoreMountOutcome, run_macos_store_mount,
+    MacOsStoreMountError, MacOsStoreMountErrorCode, MacOsStoreMountOutcome,
+    MacOsStoreRecordOutcome, publish_macos_store_volume_record, run_macos_store_mount,
 };
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,

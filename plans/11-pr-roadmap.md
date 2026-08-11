@@ -868,11 +868,14 @@ flowchart TD
   transports. The separate root-only `--mount-store-volume` runtime now validates
   the private dynamic volume record, APFS identity/encryption/ownership, bounded
   System-keychain-to-diskutil secret pipe, and final `/nix` state. The production
-  installer backend must still create that volume record and provide real-host
-  evidence. S5 already supplies native sandbox/build evidence;
+  root-only record writer now validates the canonical UUID, compiles every other
+  field, and publishes root:wheel `0600` state durably without overwriting an
+  existing record. The installer backend must still create the encrypted APFS
+  volume/keychain/synthetic state, invoke that writer, and provide real-host evidence.
+  S5 already supplies native sandbox/build evidence;
   the refreshed S3 Detect is Complete but found zero Developer ID identities.
-  Therefore PR-28 is **not marked merge-complete** until production volume-record
-  provisioning lands, a Complete broker-run cache Preflight passes, and real
+  Therefore PR-28 is **not marked merge-complete** until production APFS/keychain/
+  synthetic provisioning invokes the record writer, a Complete broker-run cache Preflight passes, and real
   Developer-ID/notarization validation is recorded.
 - **Purpose:** macOS launchd-based privileged setup + authorized-client auth + notarized/signed installer/runtime, **and** integration/validation of the shared local-build engine (PR-26) on Darwin: `nixbld` build-user group / `_nixbld*` build users, Nix macOS sandbox under `sandbox=true`/`sandbox-fallback=false` with fail-closed readiness checks, native toolchain (Xcode/CLT) verification, and the honest resource boundary (**no** per-build memory/CPU/IO cap in stock Nix 2.34.8) (`07`, DR-003 from S3). It implements the broker↔helper contract (PR-39) on macOS — the real framed-RPC **transport**, **peer-auth** (caller uid via `getpeereid` on launchd-managed Unix sockets), **capability transport**, and the **launchd** service definitions for broker and helper. The OS credential/transport APIs are implemented **here**, not in PR-39. Installer/runtime codesigning & notarization remain **separate** from building Nix packages — local Nix outputs are not individually Apple-notarized.
 - **Owns:** `crates/pkg-installer/src/platform/macos.rs` (including the macOS transport binding of PR-39's `MaintenanceAdapter` + peer-auth + capability transport and the generated launchd plists), `_nixbld` build-user provisioning, notarization tooling, packaging.
