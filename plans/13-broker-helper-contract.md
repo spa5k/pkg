@@ -331,6 +331,16 @@ code; transport and protocol failures remain generic operation failures. `build`
 `UnavailableEngine`: that happens only after the product-command dispatcher and authenticated build
 capability are connected.
 
+The broker-side root client is narrower than `MaintenanceAdapter`. It opens only the compiled
+Linux/macOS helper endpoint, authenticates the connected helper as uid 0 from kernel peer
+credentials before transmitting, sends exactly one `PublishRootSet` frame with request id 1, and
+accepts only the matching `RootSetPublished` response. Connect is bounded to five seconds and the
+complete request/response uses one 30-second monotonic poll deadline with the one-MiB frame ceiling.
+The client has no API for root removal, repair-capability issue, or repair execution; those flows
+retain their independent lifecycle and timeout design. The build/root server seam accepts this
+concrete client rather than a generic maintenance implementation. Production listener injection
+still depends on bootstrapping the long-lived authenticated channel/build authority.
+
 ## 9. Restart handshake
 
 1. Supervisor restarts broker and/or helper.

@@ -10,6 +10,7 @@ mod helper;
 mod installer;
 pub mod platform;
 mod repair;
+mod root_client;
 mod service;
 mod uninstall;
 
@@ -47,6 +48,7 @@ pub use repair::{
     RepairCoordinatorErrorCode, RepairJournal, RepairJournalEntry, RepairJournalStatus,
     RepairRecoveryAction, RepairRequest, RepairResult, recover_repair, repair_generation,
 };
+pub use root_client::RootHelperClient;
 pub use service::{
     ServiceError, ServiceErrorCode, run_linux_broker_from_activation,
     run_linux_root_helper_from_activation,

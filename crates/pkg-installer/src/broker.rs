@@ -1,11 +1,13 @@
 //! Unix CLI-to-broker transport with kernel-derived caller identity.
 
-use crate::{BrokerApprovalAudit, BrokerCallerApprovalJournal, platform::peer_uid};
+use crate::{
+    BrokerApprovalAudit, BrokerCallerApprovalJournal, RootHelperClient, platform::peer_uid,
+};
 use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview, BuildReport,
     BuildRootPublicationErrorCode, CliBrokerRequest, CliBrokerResponse, Digest, HostResourceProbe,
-    InProcessBroker, InProcessCallerPeer, MaintenanceAdapter, MethodKind, NixAdapter,
+    InProcessBroker, InProcessCallerPeer, MaintenanceError, MethodKind, NixAdapter,
     NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
@@ -152,17 +154,16 @@ pub fn serve_broker_connection_with_build_and_root_authority(
     broker: &Arc<InProcessBroker>,
     approval_audit: &BrokerApprovalAudit,
     authority: &Arc<AuthenticatedBuildAuthority>,
-    roots: &Arc<dyn MaintenanceAdapter>,
+    roots: &RootHelperClient,
 ) -> Result<(), BrokerTransportError> {
     let adapter = authority.adapter();
-    let root_authority = MaintenanceRootAuthority(roots.as_ref());
     serve_broker_connection_inner(
         &mut stream,
         broker,
         Some(&adapter),
         Some(approval_audit),
         Some(authority.as_ref()),
-        Some(&root_authority),
+        Some(roots),
     )
 }
 
@@ -191,9 +192,7 @@ trait RootAuthorityDispatch: Send + Sync {
     ) -> Result<RootSetReport, BrokerErrorCode>;
 }
 
-struct MaintenanceRootAuthority<'a>(&'a dyn MaintenanceAdapter);
-
-impl RootAuthorityDispatch for MaintenanceRootAuthority<'_> {
+impl RootAuthorityDispatch for RootHelperClient {
     fn publish(
         &self,
         caller: &AuthenticatedCaller,
@@ -201,7 +200,10 @@ impl RootAuthorityDispatch for MaintenanceRootAuthority<'_> {
         intent: RootSetIntent,
     ) -> Result<RootSetReport, BrokerErrorCode> {
         caller
-            .publish_built_root_intent(handle, intent, |roots| self.0.publish_root_set(roots))
+            .publish_built_root_intent(handle, intent, |roots| {
+                self.publish_root_set(roots)
+                    .map_err(|_| MaintenanceError::backend_failure())
+            })
             .map_err(pkg_nix::BrokerError::code)
     }
 }

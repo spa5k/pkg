@@ -38,7 +38,7 @@ pub struct HelperTransportError {
 }
 
 impl HelperTransportError {
-    const fn new(code: HelperTransportErrorCode) -> Self {
+    pub(crate) const fn new(code: HelperTransportErrorCode) -> Self {
         Self { code }
     }
 

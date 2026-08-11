@@ -1395,6 +1395,7 @@ dependencies = [
  "pkg-pipeline",
  "pkg-testkit",
  "serde_json",
+ "socket2",
  "tempfile",
 ]
 
