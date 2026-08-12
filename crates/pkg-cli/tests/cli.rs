@@ -29,8 +29,20 @@ fn clap_usage_failures_exit_two() {
 
 #[test]
 fn development_stub_obeys_json_and_jsonl_terminal_contracts() {
+    let home = std::env::temp_dir().join(format!(
+        "pkg-cli-engine-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&home).unwrap();
     for (flag, expected_type) in [("--json", None), ("--jsonl", Some("result"))] {
-        let output = pkg().args([flag, "install", "ripgrep"]).output().unwrap();
+        let output = pkg()
+            .args([flag, "install", "ripgrep"])
+            .env("HOME", &home)
+            .env_remove("XDG_DATA_HOME")
+            .env_remove("PKG_STATE_DIR")
+            .output()
+            .unwrap();
         assert_eq!(output.status.code(), Some(79));
         assert!(output.stderr.is_empty());
         assert_eq!(
@@ -47,10 +59,11 @@ fn development_stub_obeys_json_and_jsonl_terminal_contracts() {
             expected_type
         );
     }
+    std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
-fn completion_is_real_static_source_and_doctor_is_honest_about_deferred_checks() {
+fn completion_is_real_static_source_and_doctor_fails_closed_without_the_broker() {
     let completion = pkg().args(["completion", "bash"]).output().unwrap();
     assert!(completion.status.success());
     assert!(
@@ -66,7 +79,7 @@ fn completion_is_real_static_source_and_doctor_is_honest_about_deferred_checks()
         .env("PATH", &expected_bin)
         .output()
         .unwrap();
-    // A clean CI host reaches the deferred implementation checks (78). A host
+    // A clean CI host reaches the failed production broker checks (78). A host
     // with an installed managed-Nix spike but no authenticated production
     // receipt must fail earlier at the PR-9 ownership gate (74). Both are
     // honest, fail-closed outcomes; this integration test must not pretend the
@@ -82,7 +95,13 @@ fn completion_is_real_static_source_and_doctor_is_honest_about_deferred_checks()
             .as_array()
             .unwrap()
             .iter()
-            .any(|check| check["status"] == "deferred")
+            .filter(|check| {
+                matches!(
+                    check["id"].as_str(),
+                    Some("runtime.managed" | "channel.signed")
+                )
+            })
+            .all(|check| check["status"] == "fail")
     );
 }
 

@@ -1150,6 +1150,15 @@ flowchart TD
 
 #### PR-36 — Technical-preview hardening + Real-Nix nightly CI + e2e parity
 - **Status (2026-08-12):** in progress. The first production Real-Nix connector slice is landed:
+  the shipped `pkg doctor` now replaces its development-only runtime and channel deferrals with
+  one fixed-endpoint private-broker health transaction. It requires a complete authenticated
+  Doctor operation, pinned managed-Nix version response, and lifecycle completion before it marks
+  either subsystem healthy. Because the production broker authenticates its signed channel and
+  native index before accepting client work, that same completed transaction proves startup trust
+  without giving the CLI a channel, URL, socket, raw Nix, or trust-control surface. Every transport,
+  frame, adapter, or completion failure produces two redacted fail-closed checks. The invoking uid
+  is also supplied to the existing state-owner check. Focused doctor/CLI/support tests, compiler
+  diagnostics, strict Clippy, and independent P1 security review pass.
   the Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
   and supplementary memberships, serializes product installers with a root-only runtime lock, and

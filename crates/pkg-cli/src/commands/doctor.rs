@@ -5,8 +5,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use pkg_core::System;
+use pkg_nix::BrokerOperationKind;
 use serde::Serialize;
 
+use crate::broker::BrokerLifecycleClient;
 use crate::exit::ExitCode;
 use crate::path::PathObservation;
 use crate::ux::{PUBLIC_SCHEMA_VERSION, sanitize_public_text, write_json_line};
@@ -154,6 +156,70 @@ impl DoctorInputs {
                 detail: "signed channel check is not wired".into(),
                 hint: "complete the signed channel client before relying on doctor".into(),
             },
+        }
+    }
+}
+
+/// Checks the fixed production broker, managed runtime, and broker-owned
+/// authenticated channel without exposing a raw Nix or trust-control surface.
+///
+/// The production broker authenticates its signed channel and native index
+/// before it accepts client work. A complete version operation therefore
+/// proves that the broker is reachable, its startup trust bootstrap succeeded,
+/// and the pinned managed Nix adapter answered through the private boundary.
+///
+/// # Errors
+///
+/// Failures are returned as closed subsystem observations. Transport, frame,
+/// adapter, and host details never cross into the public doctor report.
+#[must_use]
+pub fn observe_production_subsystems() -> (SubsystemObservation, SubsystemObservation) {
+    production_subsystems_from_health(probe_production_broker())
+}
+
+fn probe_production_broker() -> Option<String> {
+    let mut broker = BrokerLifecycleClient::connect_default().ok()?;
+    let handle = broker.begin(BrokerOperationKind::Doctor).ok()?;
+    let result = broker.version(handle.clone());
+    match result {
+        Ok(version) => {
+            if broker.complete(handle).is_err() {
+                return None;
+            }
+            Some(version.nix_version().as_str().to_owned())
+        }
+        Err(_) => {
+            let _ = broker.cancel(handle);
+            None
+        }
+    }
+}
+
+fn production_subsystems_from_health(
+    nix_version: Option<String>,
+) -> (SubsystemObservation, SubsystemObservation) {
+    match nix_version {
+        Some(version) => (
+            SubsystemObservation::Passed(format!(
+                "managed Nix {version} answered through the private broker"
+            )),
+            SubsystemObservation::Passed(
+                "the private broker authenticated its signed channel and native index at startup"
+                    .into(),
+            ),
+        ),
+        None => {
+            let detail = "the private broker health check did not complete".to_owned();
+            let hint =
+                "run `pkg doctor` again; restart the managed runtime if the failure persists"
+                    .to_owned();
+            (
+                SubsystemObservation::Failed {
+                    detail: detail.clone(),
+                    hint: hint.clone(),
+                },
+                SubsystemObservation::Failed { detail, hint },
+            )
         }
     }
 }
@@ -594,6 +660,37 @@ mod tests {
         let report = DoctorReport::evaluate(&inputs);
         assert_eq!(report.overall(), DoctorOverall::NeedsAttention);
         assert_eq!(report.exit_code(), ExitCode::Config);
+    }
+
+    #[test]
+    fn completed_broker_probe_proves_runtime_and_startup_trust() {
+        let (runtime, channel) = production_subsystems_from_health(Some("2.34.8".to_owned()));
+        assert_eq!(
+            runtime,
+            SubsystemObservation::Passed(
+                "managed Nix 2.34.8 answered through the private broker".into()
+            )
+        );
+        assert_eq!(
+            channel,
+            SubsystemObservation::Passed(
+                "the private broker authenticated its signed channel and native index at startup"
+                    .into()
+            )
+        );
+    }
+
+    #[test]
+    fn incomplete_broker_probe_fails_both_dependent_checks_without_detail() {
+        let (runtime, channel) = production_subsystems_from_health(None);
+        for observation in [runtime, channel] {
+            let SubsystemObservation::Failed { detail, hint } = observation else {
+                panic!("an incomplete production probe must fail closed")
+            };
+            assert_eq!(detail, "the private broker health check did not complete");
+            assert!(hint.contains("restart the managed runtime"));
+            assert!(!detail.contains("socket"));
+        }
     }
 
     #[test]

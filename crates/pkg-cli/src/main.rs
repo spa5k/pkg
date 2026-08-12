@@ -3,7 +3,7 @@ use std::process::ExitCode as ProcessExitCode;
 use clap::Parser;
 use nix::unistd::Uid;
 use pkg_cli::cli::{Cli, Command, DoctorArgs};
-use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport};
+use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport, observe_production_subsystems};
 use pkg_cli::commands::execute::{CoreEngine, execute_command_with_operation_log};
 use pkg_cli::commands::local::LocalStateOperations;
 use pkg_cli::completion::write_completion;
@@ -126,6 +126,8 @@ fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
         state_root,
         PathObservation::inspect(&expected_bin, &path_entries),
     );
+    inputs.expected_state_uid = Some(Uid::effective().as_raw());
+    (inputs.managed_runtime, inputs.channel) = observe_production_subsystems();
     if let Some(system) = inputs.system {
         let environment_keys = std::env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
         let detection = detect_unmanaged_nix(
