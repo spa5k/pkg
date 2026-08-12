@@ -24,6 +24,7 @@ use crate::exit::ExitCode;
 use crate::progress::PublicEvent;
 use crate::ux::CommandError;
 use pkg_core::state::CollisionPolicy as StateCollisionPolicy;
+use pkg_core::upgrade::{UpgradeScope, select_upgrade};
 use pkg_core::{
     History, OutputName, OutputSelection, PackageSelector, PinAction, SelectorId, SelectorInput,
     SourceRevision, VersionPreference,
@@ -37,11 +38,11 @@ use pkg_nix::{
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
-    StateEditMetadata, discard_unprepared_installs, discard_unprepared_state_edits,
-    load_active_snapshot, load_retained_history, pending_install_generation,
-    pending_state_edit_generation, pending_state_transition_source, prepare_install_generation,
-    prepare_rollback, prepare_state_edit, recover_generation, recover_transitioned_state_edit,
-    resume_prepared_install, resume_prepared_state_edit,
+    StateEditMetadata, assemble_upgrade_evidence_state, discard_unprepared_installs,
+    discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
+    pending_install_generation, pending_state_edit_generation, pending_state_transition_source,
+    prepare_install_generation, prepare_rollback, prepare_state_edit, recover_generation,
+    recover_transitioned_state_edit, resume_prepared_install, resume_prepared_state_edit,
 };
 use pkg_store::{
     GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
@@ -298,10 +299,10 @@ impl CoreOperations for LocalStateOperations {
 
     fn upgrade(
         &mut self,
-        _args: &UpgradeArgs,
-        _policy: OperationPolicy,
+        args: &UpgradeArgs,
+        policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        Err(mutation_unavailable())
+        self.upgrade_packages(args, policy)
     }
 
     fn pin(
@@ -482,6 +483,118 @@ fn invalid_active_state() -> CommandError {
 }
 
 impl LocalStateOperations {
+    fn upgrade_packages(
+        &self,
+        args: &UpgradeArgs,
+        policy: OperationPolicy,
+    ) -> Result<CommandResult, CommandError> {
+        self.require_broker_state()?;
+        require_supported_upgrade_options(args)?;
+        let layout = self.layout()?.clone();
+        let source = self.active()?;
+        let selection = select_upgrade(
+            source.state().clone(),
+            upgrade_scope(source.state(), args)?,
+            args.bump_pinned(),
+        )
+        .map_err(upgrade_failed)?;
+        let skipped_pinned = selection
+            .skipped_pinned()
+            .iter()
+            .map(SelectorId::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let selectors = selection.selectors().to_vec();
+        if selectors.is_empty() {
+            return upgrade_noop_result(&skipped_pinned);
+        }
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        if policy.dry_run() {
+            return preview_upgrade(&mut broker, selectors, &skipped_pinned);
+        }
+        self.recover_pending_install(&layout, &mut broker)?;
+        let mut ignore_progress = |_| Ok(());
+        let (handle, public_operation_id, evidence, build_approval) = acquire_install_evidence(
+            &mut broker,
+            selectors,
+            policy,
+            !args.no_build(),
+            &mut ignore_progress,
+        )?;
+        let mut local_committed = false;
+        let result = (|| {
+            let plan = selection
+                .bind_channel(evidence.channel_sequence(), evidence.revision().clone())
+                .map_err(upgrade_failed)?;
+            let created_at = utc_now()?;
+            let upgraded = assemble_upgrade_evidence_state(plan, &evidence, &created_at)
+                .map_err(|_| upgrade_failed(pkg_core::upgrade::UpgradeError::InvalidState))?;
+            if !upgraded.changed() {
+                let _ = broker.complete(handle.clone());
+                return upgrade_noop_result(&skipped_pinned);
+            }
+            let upgraded_ids = upgraded
+                .upgraded()
+                .iter()
+                .map(SelectorId::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let next = upgraded.into_state();
+            let nonce = secure_nonce()?;
+            let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
+                .map_err(state_lease_error)?;
+            let lease = StateLease::try_exclusive(&layout, &identity).map_err(state_lease_error)?;
+            let history = load_retained_history(&layout, &lease).map_err(state_read_error)?;
+            let newest = history
+                .snapshots()
+                .first()
+                .ok_or_else(no_active_generation)?;
+            let generation_id = next_generation_id(newest.generation().id())?;
+            let prepared = prepare_state_edit(
+                layout.clone(),
+                lease,
+                &source,
+                next,
+                StateEditMetadata::new(
+                    &generation_id,
+                    &created_at,
+                    handle.as_str(),
+                    StateEditKind::Upgrade,
+                )
+                .with_collision_policy(state_collision_policy(args.collision_policy()))
+                .with_build_approval(build_approval),
+            )
+            .map_err(|_| mutation_failed())?;
+            let report = prepared
+                .root_intent()
+                .map_err(|_| install_commit_failed())?
+                .map(|intent| {
+                    broker
+                        .publish_build_roots(handle.clone(), intent)
+                        .map_err(install_broker_error)
+                })
+                .transpose()?;
+            prepared
+                .activate_published(report.as_ref(), &nonce)
+                .map_err(|_| install_commit_failed())?
+                .finish()
+                .map_err(|_| install_commit_failed())?;
+            local_committed = true;
+            let _ = broker.complete(handle.clone());
+            upgrade_result(
+                &public_operation_id,
+                &generation_id,
+                &upgraded_ids,
+                &skipped_pinned,
+                build_approval,
+            )
+        })();
+        if result.is_err() && !local_committed {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+
     fn install_packages(
         &self,
         args: &InstallArgs,
@@ -501,7 +614,7 @@ impl LocalStateOperations {
         self.recover_pending_install(&layout, &mut broker)?;
 
         let (handle, public_operation_id, evidence, build_approval) =
-            acquire_install_evidence(&mut broker, selectors, policy, progress)?;
+            acquire_install_evidence(&mut broker, selectors, policy, true, progress)?;
         let mut local_committed = false;
         let result = (|| {
             emit_phase(progress, &public_operation_id, "stage", "started")?;
@@ -1099,6 +1212,7 @@ fn acquire_install_evidence(
     broker: &mut BrokerLifecycleClient,
     selectors: Vec<PackageSelector>,
     policy: OperationPolicy,
+    allow_build: bool,
     progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
 ) -> Result<(OperationHandle, String, InstallEvidence, &'static str), CommandError> {
     let acquire_handle = broker
@@ -1176,6 +1290,13 @@ fn acquire_install_evidence(
     if let Err(error) = emit_phase(progress, &public_operation_id, "acquire", "completed") {
         let _ = broker.cancel(acquire_handle);
         return Err(error);
+    }
+    if !allow_build {
+        return Err(CommandError::new(
+            ExitCode::AcquireNoBinary,
+            "one or more packages require a local build",
+            "remove `--no-build` to review and approve the sandboxed build",
+        ));
     }
 
     let build_handle = broker
@@ -1307,6 +1428,140 @@ fn preview_install(
         });
     let _ = broker.cancel(handle);
     result
+}
+
+fn preview_upgrade(
+    broker: &mut BrokerLifecycleClient,
+    selectors: Vec<PackageSelector>,
+    skipped_pinned: &[String],
+) -> Result<CommandResult, CommandError> {
+    let handle = broker
+        .begin(BrokerOperationKind::Build)
+        .map_err(broker_error)?;
+    let result = broker
+        .prepare_build(handle.clone(), selectors)
+        .map_err(install_broker_error)
+        .and_then(|preview| {
+            let value = preview
+                .to_json_value()
+                .map_err(|_| install_commit_failed())?;
+            CommandResult::new(
+                "Upgrade preview is ready. No package was downloaded or activated.",
+                Map::from_iter([
+                    ("dryRun".into(), json!(true)),
+                    ("preflight".into(), value),
+                    ("skippedPinned".into(), json!(skipped_pinned)),
+                ]),
+                Vec::new(),
+            )
+            .map_err(|_| install_commit_failed())
+        });
+    let _ = broker.cancel(handle);
+    result
+}
+
+fn upgrade_scope(
+    state: &pkg_core::lifecycle::LifecycleState,
+    args: &UpgradeArgs,
+) -> Result<UpgradeScope, CommandError> {
+    if args.all() {
+        return Ok(UpgradeScope::All);
+    }
+    let ids = args
+        .packages()
+        .iter()
+        .map(|name| {
+            let matches = state
+                .manifest()
+                .entries()
+                .iter()
+                .filter(|entry| entry.id().as_str() == name || entry.selector().as_str() == name)
+                .map(|entry| entry.id().clone())
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [id] => Ok(id.clone()),
+                [] => Err(CommandError::new(
+                    ExitCode::ResolveFailed,
+                    "package is not installed",
+                    "run `pkg list` and use an installed selector",
+                )),
+                _ => Err(CommandError::new(
+                    ExitCode::ResolveFailed,
+                    "installed selector is ambiguous",
+                    "use the stable selector id from machine output",
+                )),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(UpgradeScope::Named(ids))
+}
+
+fn require_supported_upgrade_options(args: &UpgradeArgs) -> Result<(), CommandError> {
+    if args.channel().is_some()
+        || !args.outputs().is_empty()
+        || args.keep_going()
+        || args.include_removed_upstream()
+    {
+        return Err(CommandError::new(
+            ExitCode::Config,
+            "the requested upgrade mode is not available",
+            "use the current channel without --with-outputs, --keep-going, or --include-removed-upstream",
+        ));
+    }
+    Ok(())
+}
+
+fn upgrade_noop_result(skipped_pinned: &[String]) -> Result<CommandResult, CommandError> {
+    CommandResult::new(
+        "No eligible package changed.",
+        Map::from_iter([
+            ("generation".into(), serde_json::Value::Null),
+            ("upgraded".into(), json!([])),
+            ("skippedPinned".into(), json!(skipped_pinned)),
+            ("buildApproval".into(), json!("not_required")),
+        ]),
+        Vec::new(),
+    )
+    .map_err(|_| mutation_failed())
+}
+
+fn upgrade_result(
+    operation_id: &str,
+    generation_id: &str,
+    upgraded: &[String],
+    skipped_pinned: &[String],
+    build_approval: &str,
+) -> Result<CommandResult, CommandError> {
+    CommandResult::new(
+        format!("Upgraded {} package(s) as {generation_id}.", upgraded.len()),
+        Map::from_iter([
+            ("operationId".into(), json!(operation_id)),
+            ("generation".into(), json!(generation_id)),
+            ("upgraded".into(), json!(upgraded)),
+            ("skippedPinned".into(), json!(skipped_pinned)),
+            ("buildApproval".into(), json!(build_approval)),
+        ]),
+        Vec::new(),
+    )
+    .map_err(|_| mutation_failed())
+}
+
+fn upgrade_failed(error: pkg_core::upgrade::UpgradeError) -> CommandError {
+    let (message, hint) = match error {
+        pkg_core::upgrade::UpgradeError::NotInstalled => (
+            "package is not installed",
+            "run `pkg list` and use an installed selector",
+        ),
+        pkg_core::upgrade::UpgradeError::SequenceRollback => (
+            "the authenticated channel is older than active package state",
+            "run `pkg update`; report the issue if the channel remains older",
+        ),
+        _ => (
+            "the package upgrade could not be applied safely",
+            "run `pkg doctor`; retry after the reported issue is resolved",
+        ),
+    };
+    CommandError::new(ExitCode::ResolveFailed, message, hint)
 }
 
 fn install_result(
@@ -2017,6 +2272,7 @@ mod tests {
             &mut broker,
             hello_selectors(),
             OperationPolicy::for_test(true, false),
+            true,
             &mut |event| {
                 events.push(event);
                 Ok(())
@@ -2158,6 +2414,7 @@ mod tests {
             &mut broker,
             hello_selectors(),
             OperationPolicy::for_test(true, false),
+            true,
             &mut |event| {
                 events.push(event);
                 Ok(())
@@ -2191,6 +2448,56 @@ mod tests {
                 .iter()
                 .all(|event| event.op_id() == public_operation_id)
         );
+        drop(broker);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn no_build_stops_after_cache_miss_without_opening_build_authority() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            let broker = InProcessBroker::new().unwrap();
+            let caller = broker
+                .connect(InProcessCallerPeer::authenticated(501))
+                .unwrap();
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Acquire)
+            );
+            let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::AcquireInstall(actual, _) = request else {
+                return;
+            };
+            assert_eq!(actual, handle);
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::InstallBuildRequired,
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Complete(handle));
+            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            let mut eof = [0_u8; 1];
+            assert_eq!(server.read(&mut eof).unwrap(), 0);
+        });
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+
+        let error = acquire_install_evidence(
+            &mut broker,
+            hello_selectors(),
+            OperationPolicy::for_test(true, false),
+            false,
+            &mut |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(error.exit_code(), ExitCode::AcquireNoBinary);
         drop(broker);
         worker.join().unwrap();
     }

@@ -577,7 +577,7 @@ fn is_resumable_state_operation(kind: &str) -> bool {
 }
 
 fn is_install_operation(kind: &str) -> bool {
-    kind == "install"
+    matches!(kind, "install" | "upgrade")
 }
 
 fn require_read_lease(layout: &StateLayout, lease: &StateLease) -> Result<(), CommitError> {
@@ -2287,6 +2287,85 @@ mod tests {
                 .entries()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn upgrade_generation_rebinds_channel_outputs_collision_and_approval() {
+        const NEXT_STORE: &str = "/nix/store/22222222222222222222222222222222-demo";
+        const NEXT_DRV: &str = "/nix/store/33333333333333333333333333333333-demo.drv";
+        const NEXT_REV: &str = "89abcdef0123456789abcdef0123456789abcdef";
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap()
+        .activate(&fixture.maintenance, "upgradesource1")
+        .unwrap()
+        .finish()
+        .unwrap();
+
+        let lease = mutation_lease(&fixture.layout);
+        let source = load_active_snapshot(&fixture.layout, &lease)
+            .unwrap()
+            .unwrap();
+        drop(lease);
+        let mut manifest: Value =
+            serde_json::from_slice(&source.state().manifest().to_json().unwrap()).unwrap();
+        manifest["channelSeq"] = json!(2);
+        let mut lock: Value =
+            serde_json::from_slice(&source.state().locked().to_json().unwrap()).unwrap();
+        lock["channelSeq"] = json!(2);
+        lock["entries"]["sel_demo"]["nixpkgsRev"] = json!(NEXT_REV);
+        let realized = &mut lock["entries"]["sel_demo"]["realized"];
+        realized["storePath"] = json!(NEXT_STORE);
+        realized["deriver"] = json!(NEXT_DRV);
+        realized["outputs"]["out"] = json!(NEXT_STORE);
+        realized["version"] = json!("2.0");
+        let next = pkg_core::lifecycle::LifecycleState::new(
+            pkg_core::state::Manifest::from_json(&serde_json::to_vec(&manifest).unwrap()).unwrap(),
+            pkg_core::state::LockedState::from_json(&serde_json::to_vec(&lock).unwrap()).unwrap(),
+        )
+        .unwrap();
+        let staging = fixture
+            .layout
+            .state_root()
+            .join("upgrade-candidate.staging");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(format!("{NEXT_STORE}/bin/demo"), staging.join("demo")).unwrap();
+        let plan = inspect_staged_activation(
+            &staging,
+            vec![pkg_core::StorePath::new(NEXT_STORE).unwrap()],
+        )
+        .unwrap();
+        let metadata = crate::StateEditMetadata::new(
+            "gen-0002",
+            "2026-08-12T00:00:00Z",
+            "op_upgrade",
+            crate::StateEditKind::Upgrade,
+        )
+        .with_collision_policy(pkg_core::state::CollisionPolicy::KeepLast)
+        .with_build_approval("yes");
+        let candidate = crate::state_edit::build_candidate(
+            &source,
+            next,
+            &metadata,
+            pkg_core::state::CollisionPolicy::KeepLast,
+            &plan,
+        )
+        .unwrap();
+        let generation: Value =
+            serde_json::from_slice(&candidate.generation().to_json().unwrap()).unwrap();
+        assert_eq!(generation["channelSeq"], 2);
+        assert_eq!(generation["outputs"][0]["storePath"], NEXT_STORE);
+        assert_eq!(generation["outputs"][0]["nixpkgsRev"], NEXT_REV);
+        assert_eq!(generation["activation"]["collisionPolicy"], "keep-last");
+        assert_eq!(generation["operation"]["kind"], "upgrade");
+        assert_eq!(generation["operation"]["approval"]["build"], "yes");
     }
 
     #[test]

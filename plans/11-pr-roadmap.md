@@ -1200,8 +1200,27 @@ flowchart TD
   transaction. Focused identity/sequence/protocol tests, the complete CLI suite,
   strict Clippy, secret scanning, and independent P1 review pass. Opportunistic
   freshness refresh and a stale-data warning remain open with the metadata
-  freshness work. Upgrade, repair command wiring, clean-host e2e coverage, and
-  optional update modes also remain open PR-36 work.
+  freshness work.
+  The default production upgrade transaction is now connected for named and
+  `--all` scopes. The pure core first selects only installed targets, skips pins
+  unless `--bump-pinned` is explicit, and then binds that selection to the exact
+  authenticated sequence and revision returned with broker acquisition evidence.
+  Sequence rollback, missing or duplicate outcomes, attribute drift, revision
+  drift, system drift, and incomplete evidence fail closed. Cache hits and the
+  same digest-bound approved local-build path used by install produce private
+  evidence; `--no-build` stops after the cache miss without opening Build
+  authority. A dedicated upgrade generation preserves untouched mixed-revision
+  entries, records the new channel sequence and realized outputs, applies the
+  requested collision policy, records the real build-approval source, publishes
+  exact roots while GC inhibition is held, and reuses the attested install-style
+  crash recovery boundary. Dry-run performs authenticated preparation without
+  acquisition or mutation. Core, evidence-promotion, generation, no-build, and
+  recovery tests, the complete affected suites, strict Clippy, secret scanning,
+  and independent P1 review pass. Explicit `--channel`, `--with-outputs`,
+  `--keep-going`, and `--include-removed-upstream` upgrade modes still refuse
+  instead of being ignored; live upgrade progress also remains open. Repair
+  command wiring, clean-host e2e coverage, metadata freshness, and optional
+  update modes remain open PR-36 work.
   The Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
   and supplementary memberships, serializes product installers with a root-only runtime lock, and

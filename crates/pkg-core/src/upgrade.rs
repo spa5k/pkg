@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::lifecycle::{LifecycleError, LifecycleState};
 use crate::state::{LockEntry, LockedState, Manifest};
-use crate::{NixpkgsRevision, PackageSelector, SelectorId};
+use crate::{ChannelSequence, NixpkgsRevision, PackageSelector, SelectorId};
 
 /// Which installed selectors an upgrade should reconsider.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,19 +65,18 @@ impl UpgradeOutcome {
     }
 }
 
-/// Mutation-free upgrade plan containing only selectors eligible for re-resolution.
+/// Mutation-free selection of installed packages eligible for re-resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UpgradePlan {
+pub struct UpgradeSelection {
     state: LifecycleState,
     target_ids: Vec<SelectorId>,
     selectors: Vec<PackageSelector>,
     skipped_pinned: Vec<SelectorId>,
     bump_pinned: bool,
-    target_revision: NixpkgsRevision,
 }
 
-impl UpgradePlan {
-    /// Resolver requests, each forced to the currently accepted pinned channel.
+impl UpgradeSelection {
+    /// Resolver requests forced to the authenticated current channel.
     #[must_use]
     pub fn selectors(&self) -> &[PackageSelector] {
         &self.selectors
@@ -89,6 +88,44 @@ impl UpgradePlan {
         &self.skipped_pinned
     }
 
+    /// Binds this selection to the exact authenticated channel used for acquisition.
+    pub fn bind_channel(
+        self,
+        target_sequence: ChannelSequence,
+        target_revision: NixpkgsRevision,
+    ) -> Result<UpgradePlan, UpgradeError> {
+        if target_sequence.get() < self.state.manifest().channel_seq().get() {
+            return Err(UpgradeError::SequenceRollback);
+        }
+        Ok(UpgradePlan {
+            selection: self,
+            target_sequence,
+            target_revision,
+        })
+    }
+}
+
+/// Upgrade selection bound to one authenticated target channel identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradePlan {
+    selection: UpgradeSelection,
+    target_sequence: ChannelSequence,
+    target_revision: NixpkgsRevision,
+}
+
+impl UpgradePlan {
+    /// Resolver requests, each forced to the currently accepted pinned channel.
+    #[must_use]
+    pub fn selectors(&self) -> &[PackageSelector] {
+        self.selection.selectors()
+    }
+
+    /// Pinned selectors deliberately left untouched by the default policy.
+    #[must_use]
+    pub fn skipped_pinned(&self) -> &[SelectorId] {
+        self.selection.skipped_pinned()
+    }
+
     /// Applies one exact outcome per resolver request, atomically.
     pub fn apply(
         self,
@@ -98,17 +135,18 @@ impl UpgradePlan {
         let mut by_id = BTreeMap::new();
         for outcome in outcomes {
             let id = outcome.id().clone();
-            if !self.target_ids.contains(&id) {
+            if !self.selection.target_ids.contains(&id) {
                 return Err(UpgradeError::UnexpectedOutcome);
             }
             if by_id.insert(id, outcome).is_some() {
                 return Err(UpgradeError::DuplicateOutcome);
             }
         }
-        if by_id.len() != self.target_ids.len() {
+        if by_id.len() != self.selection.target_ids.len() {
             return Err(UpgradeError::IncompleteOutcomes);
         }
         let removed_ids = self
+            .selection
             .target_ids
             .iter()
             .filter(|id| matches!(by_id.get(*id), Some(UpgradeOutcome::RemovedUpstream { .. })))
@@ -118,10 +156,9 @@ impl UpgradePlan {
             return Err(UpgradeError::RemovedUpstream);
         }
 
-        let original = self.state.clone();
-        let channel_seq = self.state.manifest().channel_seq();
-        let uid = self.state.manifest().uid();
-        let system = self.state.locked().system();
+        let original = self.selection.state.clone();
+        let uid = self.selection.state.manifest().uid();
+        let system = self.selection.state.locked().system();
         for outcome in by_id.values() {
             if let UpgradeOutcome::Resolved { id, entry } = outcome {
                 if entry.realization().system() != system {
@@ -131,6 +168,7 @@ impl UpgradePlan {
                     return Err(UpgradeError::RevisionMismatch);
                 }
                 let planned_attribute = self
+                    .selection
                     .selectors
                     .iter()
                     .find(|selector| selector.id() == id)
@@ -141,14 +179,17 @@ impl UpgradePlan {
                 }
             }
         }
-        let (manifest, locked) = self.state.into_parts();
+        let (manifest, locked) = self.selection.state.into_parts();
         let manifest_entries = manifest
             .into_lifecycle_entries()
             .into_iter()
             .map(|entry| match by_id.get(entry.id()) {
                 Some(UpgradeOutcome::Resolved {
                     entry: replacement, ..
-                }) => entry.retarget_for_upgrade(replacement.attribute().clone(), self.bump_pinned),
+                }) => entry.retarget_for_upgrade(
+                    replacement.attribute().clone(),
+                    self.selection.bump_pinned,
+                ),
                 _ => entry,
             })
             .collect();
@@ -158,10 +199,12 @@ impl UpgradePlan {
                 locked_entries.insert(id, *entry);
             }
         }
-        let manifest = Manifest::from_lifecycle_parts(channel_seq, uid, manifest_entries);
-        let locked = LockedState::from_lifecycle_parts(channel_seq, system, uid, locked_entries);
+        let manifest = Manifest::from_lifecycle_parts(self.target_sequence, uid, manifest_entries);
+        let locked =
+            LockedState::from_lifecycle_parts(self.target_sequence, system, uid, locked_entries);
         let state = LifecycleState::new(manifest, locked).map_err(map_lifecycle_error)?;
         let upgraded = self
+            .selection
             .target_ids
             .iter()
             .filter(|id| !removed_ids.contains(id))
@@ -171,7 +214,7 @@ impl UpgradePlan {
         Ok(UpgradeResult {
             state,
             upgraded,
-            skipped_pinned: self.skipped_pinned,
+            skipped_pinned: self.selection.skipped_pinned,
             removed_upstream: removed_ids,
             changed,
         })
@@ -246,6 +289,8 @@ pub enum UpgradeError {
     AttributeMismatch,
     /// A replacement was not realized from the authenticated current revision.
     RevisionMismatch,
+    /// The authenticated target channel sequence was older than active state.
+    SequenceRollback,
 }
 
 impl fmt::Display for UpgradeError {
@@ -263,6 +308,16 @@ pub fn plan_upgrade(
     bump_pinned: bool,
     current_revision: NixpkgsRevision,
 ) -> Result<UpgradePlan, UpgradeError> {
+    let current_sequence = state.manifest().channel_seq();
+    select_upgrade(state, scope, bump_pinned)?.bind_channel(current_sequence, current_revision)
+}
+
+/// Selects upgrade targets without accepting channel identity from the caller.
+pub fn select_upgrade(
+    state: LifecycleState,
+    scope: UpgradeScope,
+    bump_pinned: bool,
+) -> Result<UpgradeSelection, UpgradeError> {
     let requested = match scope {
         UpgradeScope::Named(ids) => {
             if ids.is_empty() {
@@ -308,13 +363,12 @@ pub fn plan_upgrade(
         );
         target_ids.push(id);
     }
-    Ok(UpgradePlan {
+    Ok(UpgradeSelection {
         state,
         target_ids,
         selectors,
         skipped_pinned,
         bump_pinned,
-        target_revision: current_revision,
     })
 }
 
@@ -465,6 +519,45 @@ mod tests {
             )
             .unwrap();
         assert!(!unchanged.changed());
+    }
+
+    #[test]
+    fn authenticated_channel_binding_advances_state_and_refuses_rollback() {
+        let selection =
+            select_upgrade(state(), UpgradeScope::Named(vec![id("sel_a")]), false).unwrap();
+        assert_eq!(
+            selection
+                .clone()
+                .bind_channel(
+                    ChannelSequence::from_u64(1).unwrap(),
+                    NixpkgsRevision::new(REV2).unwrap(),
+                )
+                .unwrap_err(),
+            UpgradeError::SequenceRollback
+        );
+        let result = selection
+            .bind_channel(
+                ChannelSequence::from_u64(3).unwrap(),
+                NixpkgsRevision::new(REV2).unwrap(),
+            )
+            .unwrap()
+            .apply(
+                vec![UpgradeOutcome::resolved(
+                    id("sel_a"),
+                    replacement("alpha", '3', REV2, "2.0"),
+                )],
+                RemovedUpstreamPolicy::Refuse,
+            )
+            .unwrap();
+        assert_eq!(result.state().manifest().channel_seq().get().get(), 3);
+        assert_eq!(result.state().locked().channel_seq().get().get(), 3);
+        assert_eq!(
+            result.state().locked().entries()[&id("sel_b")]
+                .realization()
+                .nixpkgs_revision()
+                .as_str(),
+            REV1
+        );
     }
 
     #[test]
