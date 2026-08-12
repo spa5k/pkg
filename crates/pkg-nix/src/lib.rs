@@ -118,7 +118,7 @@ pub use managed::provision::{
     ProvisionedBootstrapTransaction, ProvisionedRuntime, authenticate_installer_bundle,
     authenticate_installer_bundle_blocking, provision_authenticated_installer_bundle,
     provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
-    provision_managed_nix_from_bundle_blocking,
+    provision_managed_nix_from_bundle_blocking, verify_authenticated_managed_install,
 };
 pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,

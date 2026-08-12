@@ -6,10 +6,10 @@ use crate::{
     install_macos,
 };
 use pkg_channel::TrustedRoot;
-use pkg_core::{System, state::Digest};
+use pkg_core::System;
 use pkg_nix::{
     AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,
-    ManagedDaemon, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
+    ManagedDaemon, OwnershipExpectation, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
     authenticate_installer_bundle_blocking, provision_authenticated_installer_bundle_transaction,
 };
 
@@ -86,7 +86,7 @@ pub fn install_linux_from_bundle<'a>(
     let bundle = authenticate_installer_bundle_blocking(trusted_root, request)
         .map_err(|_| InstallError::backend_failure())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
-    backend.bind_authenticated_ownership_manifest(system, bundle.asset_manifest_digest())?;
+    backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
     let mut provisioner = AuthenticatedProvisioner::new(bundle);
     let (platform, outcome) =
         install_linux_with_provisioner(system, request, daemon, backend, &mut provisioner)?;
@@ -116,6 +116,7 @@ pub fn install_macos_from_bundle<'a>(
     let bundle = authenticate_installer_bundle_blocking(trusted_root, request)
         .map_err(|_| MacOsError::backend_failure())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
+    backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
     let mut provisioner = AuthenticatedProvisioner::new(bundle);
     let (platform, outcome) =
         install_macos_with_provisioner(system, request, daemon, backend, &mut provisioner)?;
@@ -231,13 +232,12 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, P> {
         self.inner.bind_authenticated_nix_config(config)
     }
 
-    fn bind_authenticated_ownership_manifest(
+    fn bind_authenticated_ownership_expectation(
         &mut self,
-        system: System,
-        digest: Digest,
+        expectation: &OwnershipExpectation,
     ) -> Result<(), InstallError> {
         self.inner
-            .bind_authenticated_ownership_manifest(system, digest)
+            .bind_authenticated_ownership_expectation(expectation)
     }
 
     fn preflight_privilege(&mut self) -> Result<(), InstallError> {
@@ -352,6 +352,14 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
         config: &AuthenticatedManagedNixConfig,
     ) -> Result<(), MacOsError> {
         self.inner.bind_authenticated_nix_config(config)
+    }
+
+    fn bind_authenticated_ownership_expectation(
+        &mut self,
+        expectation: &OwnershipExpectation,
+    ) -> Result<(), MacOsError> {
+        self.inner
+            .bind_authenticated_ownership_expectation(expectation)
     }
 
     fn preflight_privilege(&mut self) -> Result<(), MacOsError> {
@@ -525,10 +533,9 @@ mod tests {
             Ok(())
         }
 
-        fn bind_authenticated_ownership_manifest(
+        fn bind_authenticated_ownership_expectation(
             &mut self,
-            _system: System,
-            _digest: Digest,
+            _expectation: &OwnershipExpectation,
         ) -> Result<(), InstallError> {
             Ok(())
         }
@@ -587,6 +594,13 @@ mod tests {
         fn bind_authenticated_nix_config(
             &mut self,
             _config: &AuthenticatedManagedNixConfig,
+        ) -> Result<(), MacOsError> {
+            Ok(())
+        }
+
+        fn bind_authenticated_ownership_expectation(
+            &mut self,
+            _expectation: &OwnershipExpectation,
         ) -> Result<(), MacOsError> {
             Ok(())
         }

@@ -1,8 +1,8 @@
 //! Idempotent Linux installation orchestration over a closed privileged API.
 
 use crate::assets::{LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets};
-use pkg_core::{System, state::Digest};
-use pkg_nix::AuthenticatedManagedNixConfig;
+use pkg_core::System;
+use pkg_nix::{AuthenticatedManagedNixConfig, OwnershipExpectation};
 use std::{error::Error, fmt};
 
 /// Stable Linux installation failure classes.
@@ -71,17 +71,16 @@ pub trait LinuxInstallBackend {
         config: &AuthenticatedManagedNixConfig,
     ) -> Result<(), InstallError>;
 
-    /// Binds the authenticated runtime-manifest identity used by the uninstall receipt.
+    /// Binds the authenticated runtime ownership expectation used by preflight and uninstall.
     ///
     /// This must not mutate the host. It runs before privileged preflight.
     ///
     /// # Errors
     ///
     /// Returns a redacted backend error for a wrong-platform or conflicting binding.
-    fn bind_authenticated_ownership_manifest(
+    fn bind_authenticated_ownership_expectation(
         &mut self,
-        system: System,
-        digest: Digest,
+        expectation: &OwnershipExpectation,
     ) -> Result<(), InstallError>;
 
     /// Verifies this process has the fixed privileged installer authority.
@@ -410,10 +409,9 @@ mod tests {
             Ok(())
         }
 
-        fn bind_authenticated_ownership_manifest(
+        fn bind_authenticated_ownership_expectation(
             &mut self,
-            _system: System,
-            _digest: Digest,
+            _expectation: &OwnershipExpectation,
         ) -> Result<(), InstallError> {
             Ok(())
         }

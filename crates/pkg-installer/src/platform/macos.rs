@@ -12,7 +12,7 @@ use nix::unistd::getpeereid;
 use pkg_core::System;
 use pkg_nix::{
     AuthenticatedHelper, AuthenticatedManagedNixConfig, BrokerHelperRequest, BrokerHelperResponse,
-    BuildReadiness, MaintenanceError,
+    BuildReadiness, MaintenanceError, OwnershipExpectation,
 };
 use std::{error::Error, fmt, os::unix::net::UnixStream};
 
@@ -955,6 +955,17 @@ pub trait MacOsInstallBackend {
         config: &AuthenticatedManagedNixConfig,
     ) -> Result<(), MacOsError>;
 
+    /// Binds the authenticated runtime ownership expectation in memory.
+    ///
+    /// This must not mutate the host. It runs before privileged preflight.
+    ///
+    /// # Errors
+    /// Returns a closed error for a wrong-platform or conflicting binding.
+    fn bind_authenticated_ownership_expectation(
+        &mut self,
+        expectation: &OwnershipExpectation,
+    ) -> Result<(), MacOsError>;
+
     /// Verifies AuthorizationServices/sudo authority.
     ///
     /// # Errors
@@ -1539,6 +1550,13 @@ mod tests {
         fn bind_authenticated_nix_config(
             &mut self,
             _config: &AuthenticatedManagedNixConfig,
+        ) -> Result<(), MacOsError> {
+            Ok(())
+        }
+
+        fn bind_authenticated_ownership_expectation(
+            &mut self,
+            _expectation: &OwnershipExpectation,
         ) -> Result<(), MacOsError> {
             Ok(())
         }

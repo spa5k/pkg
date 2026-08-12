@@ -1569,7 +1569,16 @@ flowchart TD
   entry points bind it into the backend in memory before privileged preflight. No
   caller can construct the value or supply raw Nix configuration text. Focused
   cross-platform tests, strict Clippy, and independent P1 review pass.
-  This resolves plan 07 Q7.7 without claiming the still-missing privileged production backend.
+  Authenticated installer re-runs now promote the signed runtime asset manifest into
+  an opaque ownership expectation before host admission. An existing managed runtime
+  is reused only when its root-owned receipt and every signed artifact match exactly
+  and the detector reports no ambiguous or foreign Nix evidence. Reuse does not fetch,
+  rewrite, or claim existing paths, while bootstrap-daemon stop remains rollback-owned.
+  Runtime tampering and foreign environment evidence refuse before target fetch.
+  The Linux production backend repeats the same verification as root immediately before
+  mutation. Strict Clippy, 357 installer/Nix tests, the complete security lane, and an
+  independent P1 review pass.
+  This resolves plan 07 Q7.7 without claiming the still-missing macOS privileged production backend.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

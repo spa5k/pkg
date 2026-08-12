@@ -5,10 +5,11 @@ use crate::{
     LinuxReleasePayloads, LinuxSystemdManager,
 };
 use nix::unistd::{Gid, Uid};
-use pkg_core::{System, state::Digest};
+use pkg_core::System;
 use pkg_nix::{
-    AuthenticatedManagedNixConfig, DetectionDisposition, ManagedGroupBindings, RealNixAdapter,
-    detect_unmanaged_nix,
+    AuthenticatedManagedNixConfig, DetectionDisposition, ManagedGroupBindings,
+    OwnershipExpectation, RealNixAdapter, detect_unmanaged_nix,
+    verify_authenticated_managed_install,
 };
 use std::{env, path::Path};
 
@@ -21,6 +22,7 @@ pub struct ProductionLinuxInstallBackend {
     system: System,
     assets: LinuxPlatformAssetManager,
     services: LinuxSystemdManager,
+    ownership_expectation: Option<OwnershipExpectation>,
 }
 
 impl ProductionLinuxInstallBackend {
@@ -42,6 +44,7 @@ impl ProductionLinuxInstallBackend {
             assets: LinuxPlatformAssetManager::new(groups, payloads),
             services: LinuxSystemdManager::production()
                 .map_err(|_| InstallError::backend_failure())?,
+            ownership_expectation: None,
         })
     }
 
@@ -69,16 +72,24 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         self.assets.bind_authenticated_nix_config(config)
     }
 
-    fn bind_authenticated_ownership_manifest(
+    fn bind_authenticated_ownership_expectation(
         &mut self,
-        system: System,
-        digest: Digest,
+        expectation: &OwnershipExpectation,
     ) -> Result<(), InstallError> {
-        if system != self.system {
+        if expectation.system() != self.system
+            || self
+                .ownership_expectation
+                .as_ref()
+                .is_some_and(|bound| bound != expectation)
+        {
             return Err(InstallError::backend_failure());
         }
-        self.assets
-            .bind_authenticated_ownership_manifest(system, digest)
+        self.assets.bind_authenticated_ownership_manifest(
+            expectation.system(),
+            expectation.asset_manifest_digest(),
+        )?;
+        self.ownership_expectation = Some(expectation.clone());
+        Ok(())
     }
 
     fn preflight_privilege(&mut self) -> Result<(), InstallError> {
@@ -97,10 +108,18 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             .unwrap_or_default();
         let environment_keys = env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
         let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
-        if report.disposition() != DetectionDisposition::Clean {
-            return Err(InstallError::backend_failure());
+        if report.disposition() == DetectionDisposition::Clean {
+            return Ok(());
         }
-        Ok(())
+        verify_authenticated_managed_install(
+            Path::new("/"),
+            self.ownership_expectation
+                .as_ref()
+                .ok_or_else(InstallError::backend_failure)?,
+            &path_entries,
+            &environment_keys,
+        )
+        .map_err(|_| InstallError::backend_failure())
     }
 
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {

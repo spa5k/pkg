@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 use tar::{Archive, EntryType};
 
 use super::daemon::{DaemonErrorCode, ManagedDaemon};
-use super::detect::{DetectionDisposition, DetectionReport, detect_unmanaged_nix};
+use super::detect::{DetectionDisposition, DetectionReport, FindingKind, detect_unmanaged_nix};
 use super::installer_bundle::{VerifiedRuntimeBundle, load_installer_bundle};
 use super::ownership::{
     ManagedArtifact, ManagedArtifactKind, ManagedGroupBindings, OwnershipExpectation,
@@ -176,6 +176,7 @@ pub struct AuthenticatedInstallerBundle {
     source: VerifiedRuntimeBundle,
     spec: ProvisionSpec,
     managed_nix_config: AuthenticatedManagedNixConfig,
+    ownership_expectation: OwnershipExpectation,
     installation_root: PathBuf,
     scratch_parent: PathBuf,
     groups: ManagedGroupBindings,
@@ -192,6 +193,12 @@ impl AuthenticatedInstallerBundle {
     #[must_use]
     pub const fn asset_manifest_digest(&self) -> Digest {
         self.spec.asset_manifest_sha256
+    }
+
+    /// Returns the exact authenticated runtime ownership expectation.
+    #[must_use]
+    pub const fn ownership_expectation(&self) -> &OwnershipExpectation {
+        &self.ownership_expectation
     }
 }
 
@@ -482,6 +489,19 @@ pub async fn authenticate_installer_bundle(
         )
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?,
     };
+    let manifest_bytes = read_target_bytes(
+        &source,
+        &spec.asset_manifest_target,
+        MAX_ASSET_MANIFEST_BYTES,
+    )?;
+    let ownership_expectation = decode_ownership_asset_manifest(
+        &manifest_bytes,
+        spec.system,
+        &spec.nix_version,
+        spec.asset_manifest_sha256,
+        request.groups,
+    )
+    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAssetManifest))?;
     let provision_request = ProvisionRequest {
         installation_root: request.installation_root,
         scratch_parent: request.scratch_parent,
@@ -494,11 +514,14 @@ pub async fn authenticate_installer_bundle(
         &path_entries,
         &environment_keys,
         HostStatePolicy::Strict,
+        Some(&ownership_expectation),
+        0,
     )?;
     Ok(AuthenticatedInstallerBundle {
         source,
         spec,
         managed_nix_config,
+        ownership_expectation,
         installation_root: request.installation_root.to_path_buf(),
         scratch_parent: request.scratch_parent.to_path_buf(),
         groups: request.groups,
@@ -572,7 +595,10 @@ pub fn provision_authenticated_installer_bundle_transaction<'a>(
         0,
         &path_entries,
         &environment_keys,
-        HostStatePolicy::FixedPlatformPrerequisites,
+        HostStateRequirements::new(
+            HostStatePolicy::FixedPlatformPrerequisites,
+            Some(&bundle.ownership_expectation),
+        ),
     )?;
     Ok(ProvisionedBootstrapTransaction {
         bootstrap: Some(ProvisionedBootstrap { runtime, index }),
@@ -629,7 +655,7 @@ fn provision_with_owner(
         required_owner_uid,
         path_entries,
         environment_keys,
-        HostStatePolicy::Strict,
+        HostStateRequirements::new(HostStatePolicy::Strict, None),
     )?;
     if let Err(error) = source.commit_accepted_channel() {
         return match rollback.execute(daemon) {
@@ -646,6 +672,30 @@ enum HostStatePolicy {
     FixedPlatformPrerequisites,
 }
 
+#[derive(Clone, Copy)]
+struct HostStateRequirements<'a> {
+    policy: HostStatePolicy,
+    authenticated_expectation: Option<&'a OwnershipExpectation>,
+}
+
+impl<'a> HostStateRequirements<'a> {
+    const fn new(
+        policy: HostStatePolicy,
+        authenticated_expectation: Option<&'a OwnershipExpectation>,
+    ) -> Self {
+        Self {
+            policy,
+            authenticated_expectation,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VerifiedHostState {
+    CleanOrPlatformPrerequisites,
+    ExistingManagedInstall,
+}
+
 fn provision_with_owner_policy(
     request: &ProvisionRequest<'_>,
     source: &dyn RuntimeSource,
@@ -653,16 +703,46 @@ fn provision_with_owner_policy(
     required_owner_uid: u32,
     path_entries: &[PathBuf],
     environment_keys: &[std::ffi::OsString],
-    host_state_policy: HostStatePolicy,
+    requirements: HostStateRequirements<'_>,
 ) -> Result<(ProvisionedRuntime, RuntimeRollback), ProvisionError> {
     if source.descriptor_sha256() != request.spec.descriptor_sha256 {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
         ));
     }
-    require_host_state(request, path_entries, environment_keys, host_state_policy)?;
+    if requirements
+        .authenticated_expectation
+        .is_some_and(|expectation| {
+            expectation.system() != request.spec.system
+                || expectation.nix_version() != &request.spec.nix_version
+                || expectation.asset_manifest_digest() != request.spec.asset_manifest_sha256
+                || expectation.groups() != request.groups
+        })
+    {
+        return Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ));
+    }
+    let verified_host_state = require_host_state(
+        request,
+        path_entries,
+        environment_keys,
+        requirements.policy,
+        requirements.authenticated_expectation,
+        required_owner_uid,
+    )?;
     validate_private_directory(request.scratch_parent, required_owner_uid)?;
     validate_private_directory(request.installation_root, required_owner_uid)?;
+
+    if verified_host_state == VerifiedHostState::ExistingManagedInstall {
+        return reuse_authenticated_runtime(
+            request,
+            daemon,
+            requirements.authenticated_expectation.ok_or_else(|| {
+                ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput)
+            })?,
+        );
+    }
 
     let workspace = ScratchWorkspace::new(request.scratch_parent)?;
     let archive_path = workspace.path.join("runtime.tar.xz");
@@ -699,7 +779,23 @@ fn provision_with_owner_policy(
     // The privileged scan is deliberately repeated immediately before the
     // first installation mutation. Downloads and archive parsing cannot make
     // a previously dirty host become trusted.
-    require_host_state(request, path_entries, environment_keys, host_state_policy)?;
+    let verified_host_state = require_host_state(
+        request,
+        path_entries,
+        environment_keys,
+        requirements.policy,
+        requirements.authenticated_expectation,
+        required_owner_uid,
+    )?;
+    if verified_host_state == VerifiedHostState::ExistingManagedInstall {
+        return reuse_authenticated_runtime(
+            request,
+            daemon,
+            requirements.authenticated_expectation.ok_or_else(|| {
+                ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput)
+            })?,
+        );
+    }
     let mut transaction = InstallTransaction::new(request.installation_root, daemon);
     let result = (|| {
         transaction.install_artifacts(&staging, &expectation, required_owner_uid)?;
@@ -743,7 +839,9 @@ fn require_host_state(
     path_entries: &[PathBuf],
     environment_keys: &[std::ffi::OsString],
     policy: HostStatePolicy,
-) -> Result<(), ProvisionError> {
+    authenticated_expectation: Option<&OwnershipExpectation>,
+    required_owner_uid: u32,
+) -> Result<VerifiedHostState, ProvisionError> {
     let report = detect_unmanaged_nix(
         request.installation_root,
         request.spec.system,
@@ -754,27 +852,142 @@ fn require_host_state(
         || matches!(policy, HostStatePolicy::FixedPlatformPrerequisites)
             && has_only_fixed_platform_prerequisites(&report, request.spec.system)
     {
+        return Ok(VerifiedHostState::CleanOrPlatformPrerequisites);
+    }
+    if authenticated_expectation.is_some_and(|expectation| {
+        authenticated_managed_install_matches(
+            request.installation_root,
+            &report,
+            expectation,
+            required_owner_uid,
+        )
+    }) {
+        return Ok(VerifiedHostState::ExistingManagedInstall);
+    }
+    Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused))
+}
+
+/// Verifies that all detected Nix evidence belongs to the exact authenticated install.
+///
+/// This is the privileged platform recheck used immediately before mutation.
+/// A clean host is not an existing install and is therefore rejected here.
+///
+/// # Errors
+///
+/// Returns `ExistingNixRefused` for any ambiguous, foreign, unreadable, or
+/// receipt-mismatched state.
+pub fn verify_authenticated_managed_install(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    path_entries: &[PathBuf],
+    environment_keys: &[std::ffi::OsString],
+) -> Result<(), ProvisionError> {
+    let report = detect_unmanaged_nix(root, expectation.system(), path_entries, environment_keys);
+    if authenticated_managed_install_matches(root, &report, expectation, 0) {
         Ok(())
     } else {
         Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused))
     }
 }
 
+fn authenticated_managed_install_matches(
+    root: &Path,
+    report: &DetectionReport,
+    expectation: &OwnershipExpectation,
+    required_owner_uid: u32,
+) -> bool {
+    has_only_authenticated_managed_install_evidence(report, expectation.system())
+        && verify_with_owner_uid(root, expectation, required_owner_uid).is_ok()
+}
+
+fn has_only_authenticated_managed_install_evidence(
+    report: &DetectionReport,
+    system: System,
+) -> bool {
+    !report.findings().is_empty()
+        && report.findings().iter().all(|finding| {
+            finding.kind() != FindingKind::Ambiguous
+                && (matches!(
+                    finding.id(),
+                    "NIX_ROOT"
+                        | "NIX_STORE_POPULATED"
+                        | "NIX_STORE_EMPTY"
+                        | "NIX_VAR"
+                        | "NIX_DAEMON_SOCKET"
+                        | "NIX_DB"
+                        | "NIX_PROFILES"
+                        | "ETC_NIX_DIR"
+                        | "NIX_CONF"
+                        | "PKG_BROKER_CONFIGURATION"
+                        | "NIXBLD_USERS"
+                        | "NIXBLD_GROUP"
+                        | "PKG_OWNERSHIP_MARKER"
+                        | "PKG_OWNERSHIP_RECEIPT"
+                ) || matches!(
+                    (system, finding.id()),
+                    (
+                        System::X8664Linux | System::Aarch64Linux,
+                        "GETENT_NIXBLD_USER" | "GETENT_NIXBLD_GROUP"
+                    ) | (
+                        System::X8664Darwin | System::Aarch64Darwin,
+                        "NIX_ROOT_SYMLINK"
+                            | "DSCL_NIXBLD_USER"
+                            | "DSCL_NIXBLD_GROUP"
+                            | "SYNTHETIC_CONF_NIX"
+                            | "FSTAB_NIX"
+                    )
+                ))
+        })
+}
+
+fn reuse_authenticated_runtime(
+    request: &ProvisionRequest<'_>,
+    daemon: &dyn ManagedDaemon,
+    expectation: &OwnershipExpectation,
+) -> Result<(ProvisionedRuntime, RuntimeRollback), ProvisionError> {
+    daemon
+        .start(
+            request.installation_root,
+            request.spec.system,
+            &request.spec.nix_version,
+        )
+        .map_err(|error| ProvisionError::daemon(error.code()))?;
+    if let Err(error) = daemon.ping_store() {
+        return if daemon.stop().is_err() {
+            Err(ProvisionError::new(ProvisionErrorCode::RollbackFailed))
+        } else {
+            Err(ProvisionError::daemon(error.code()))
+        };
+    }
+    Ok((
+        ProvisionedRuntime {
+            system: request.spec.system,
+            nix_version: request.spec.nix_version.clone(),
+            artifact_count: expectation.artifacts().len(),
+        },
+        RuntimeRollback {
+            created: Vec::new(),
+            daemon_started: true,
+        },
+    ))
+}
+
 fn has_only_fixed_platform_prerequisites(report: &DetectionReport, system: System) -> bool {
     report.findings().iter().all(|finding| {
-        matches!(
-            finding.id(),
-            "NIX_ROOT" | "NIX_VAR" | "NIXBLD_USERS" | "NIXBLD_GROUP"
-        ) || matches!(
-            (system, finding.id()),
-            (
-                System::X8664Linux | System::Aarch64Linux,
-                "GETENT_NIXBLD_USER" | "GETENT_NIXBLD_GROUP"
-            ) | (
-                System::X8664Darwin | System::Aarch64Darwin,
-                "DSCL_NIXBLD_USER" | "DSCL_NIXBLD_GROUP" | "SYNTHETIC_CONF_NIX"
-            )
-        )
+        finding.kind() != FindingKind::Ambiguous
+            && (matches!(
+                finding.id(),
+                "NIX_ROOT" | "NIX_VAR" | "NIXBLD_USERS" | "NIXBLD_GROUP"
+            ) || matches!(
+                (system, finding.id()),
+                (
+                    System::X8664Linux | System::Aarch64Linux,
+                    "GETENT_NIXBLD_USER" | "GETENT_NIXBLD_GROUP"
+                ) | (
+                    System::X8664Darwin | System::Aarch64Darwin,
+                    "DSCL_NIXBLD_USER" | "DSCL_NIXBLD_GROUP" | "SYNTHETIC_CONF_NIX"
+                )
+            ))
     })
 }
 
@@ -784,6 +997,25 @@ fn current_host_inputs() -> (Vec<PathBuf>, Vec<std::ffi::OsString>) {
         .unwrap_or_default();
     let environment_keys = std::env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
     (path_entries, environment_keys)
+}
+
+fn read_target_bytes(
+    source: &dyn RuntimeSource,
+    target: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, ProvisionError> {
+    let mut reader = source
+        .open_target(target)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?
+        .take(max_bytes.saturating_add(1));
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ProvisionError::new(ProvisionErrorCode::TargetTooLarge));
+    }
+    Ok(bytes)
 }
 
 fn parse_raw_sha256(value: &str) -> Result<Digest, ProvisionError> {
@@ -1513,6 +1745,22 @@ mod tests {
                 groups: self.groups,
             }
         }
+
+        fn expectation(&self) -> OwnershipExpectation {
+            let bytes = self
+                .source
+                .targets
+                .get(&self.spec.asset_manifest_target)
+                .expect("fixture manifest");
+            decode_ownership_asset_manifest(
+                bytes,
+                self.spec.system,
+                &self.spec.nix_version,
+                self.spec.asset_manifest_sha256,
+                self.groups,
+            )
+            .expect("fixture expectation")
+        }
     }
 
     fn archive_with_file(path: &str, bytes: &[u8]) -> Vec<u8> {
@@ -1554,6 +1802,128 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_existing_runtime_is_reused_without_fetch_or_mutation() {
+        let fixture = Fixture::new();
+        provision_with_owner(
+            &fixture.request(),
+            &fixture.source,
+            &FakeDaemon::healthy(),
+            fixture.owner_uid,
+            &[],
+            &[],
+        )
+        .expect("first install");
+        let expectation = fixture.expectation();
+        let runtime_path = rooted(&fixture.root, Path::new(RUNTIME_PATH));
+        let receipt_path = rooted(&fixture.root, ownership_receipt_path(System::X8664Linux));
+        let runtime_before = fs::read(&runtime_path).expect("runtime bytes");
+        let receipt_before = fs::read(&receipt_path).expect("receipt bytes");
+        let opens_before = fixture.source.opens.load(Ordering::Relaxed);
+        let daemon = FakeDaemon::healthy();
+
+        let (report, rollback) = provision_with_owner_policy(
+            &fixture.request(),
+            &fixture.source,
+            &daemon,
+            fixture.owner_uid,
+            &[],
+            &[],
+            HostStateRequirements::new(
+                HostStatePolicy::FixedPlatformPrerequisites,
+                Some(&expectation),
+            ),
+        )
+        .expect("authenticated reuse");
+
+        assert_eq!(report.artifact_count(), expectation.artifacts().len());
+        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), opens_before);
+        assert_eq!(
+            fs::read(&runtime_path).expect("runtime bytes"),
+            runtime_before
+        );
+        assert_eq!(
+            fs::read(&receipt_path).expect("receipt bytes"),
+            receipt_before
+        );
+        rollback.execute(&daemon).expect("stop bootstrap daemon");
+        assert!(runtime_path.is_file());
+        assert!(receipt_path.is_file());
+        assert!(daemon.stopped.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn authenticated_existing_runtime_tampering_is_refused_before_fetch() {
+        let fixture = Fixture::new();
+        provision_with_owner(
+            &fixture.request(),
+            &fixture.source,
+            &FakeDaemon::healthy(),
+            fixture.owner_uid,
+            &[],
+            &[],
+        )
+        .expect("first install");
+        let expectation = fixture.expectation();
+        let runtime_path = rooted(&fixture.root, Path::new(RUNTIME_PATH));
+        fs::set_permissions(&runtime_path, fs::Permissions::from_mode(0o750)).expect("tamper mode");
+        let opens_before = fixture.source.opens.load(Ordering::Relaxed);
+
+        let result = provision_with_owner_policy(
+            &fixture.request(),
+            &fixture.source,
+            &FakeDaemon::healthy(),
+            fixture.owner_uid,
+            &[],
+            &[],
+            HostStateRequirements::new(
+                HostStatePolicy::FixedPlatformPrerequisites,
+                Some(&expectation),
+            ),
+        );
+
+        assert_eq!(
+            result.map(|_| ()).map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::ExistingNixRefused)
+        );
+        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), opens_before);
+    }
+
+    #[test]
+    fn authenticated_existing_runtime_with_foreign_environment_is_refused() {
+        let fixture = Fixture::new();
+        provision_with_owner(
+            &fixture.request(),
+            &fixture.source,
+            &FakeDaemon::healthy(),
+            fixture.owner_uid,
+            &[],
+            &[],
+        )
+        .expect("first install");
+        let expectation = fixture.expectation();
+        let opens_before = fixture.source.opens.load(Ordering::Relaxed);
+
+        let result = provision_with_owner_policy(
+            &fixture.request(),
+            &fixture.source,
+            &FakeDaemon::healthy(),
+            fixture.owner_uid,
+            &[],
+            &[std::ffi::OsString::from("NIX_PATH")],
+            HostStateRequirements::new(
+                HostStatePolicy::FixedPlatformPrerequisites,
+                Some(&expectation),
+            ),
+        );
+
+        assert_eq!(
+            result.map(|_| ()).map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::ExistingNixRefused)
+        );
+        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), opens_before);
+    }
+
+    #[test]
     fn finalized_platform_transaction_stops_the_bootstrap_daemon() {
         let fixture = Fixture::new();
         let daemon = FakeDaemon::healthy();
@@ -1564,7 +1934,7 @@ mod tests {
             fixture.owner_uid,
             &[],
             &[],
-            HostStatePolicy::Strict,
+            HostStateRequirements::new(HostStatePolicy::Strict, None),
         )
         .unwrap();
         let transaction = ProvisionedBootstrapTransaction {
@@ -1599,7 +1969,7 @@ mod tests {
             fixture.owner_uid,
             &[],
             &[],
-            HostStatePolicy::FixedPlatformPrerequisites,
+            HostStateRequirements::new(HostStatePolicy::FixedPlatformPrerequisites, None),
         )
         .unwrap();
 
@@ -1625,7 +1995,7 @@ mod tests {
             fixture.owner_uid,
             &[],
             &[],
-            HostStatePolicy::FixedPlatformPrerequisites,
+            HostStateRequirements::new(HostStatePolicy::FixedPlatformPrerequisites, None),
         );
 
         assert_eq!(
@@ -1647,6 +2017,8 @@ mod tests {
             &[],
             &[],
             HostStatePolicy::FixedPlatformPrerequisites,
+            None,
+            fixture.owner_uid,
         )
         .unwrap_err();
 
