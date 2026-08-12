@@ -1593,6 +1593,10 @@ flowchart TD
   every fixed unit before mutation, stops and disables the complete set in reverse order, reloads,
   and verifies the terminal state. The production uninstall action router and managed-store removal
   remain open before clean-host install/re-run/uninstall can be claimed.
+  Uninstall garbage collection now uses a dedicated root-only executor after service shutdown. It
+  accepts no caller-selected arguments, validates the bounded dead-path report before deletion, and
+  invokes the authenticated Nix 2.34.8 `nix-store` facade only with `--store local`. The normal test
+  suite and a privileged clean Linux arm64 container prove this path against the official runtime.
   This resolves plan 07 Q7.7 without claiming the still-missing macOS privileged production backend.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.

@@ -2326,6 +2326,13 @@ mod tests {
         assert!(Path::new("/nix/var/nix/db/db.sqlite").is_file());
         daemon.ping_store().unwrap();
         daemon.stop().unwrap();
+
+        let garbage =
+            crate::RootNixGcExecutor::new(Path::new("/opt/pkg/nix/current/bin/nix"), helper_home)
+                .unwrap()
+                .collect()
+                .unwrap();
+        assert_eq!(garbage.status(), crate::GcStatus::Collected);
     }
 
     #[test]

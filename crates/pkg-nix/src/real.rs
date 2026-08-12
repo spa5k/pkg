@@ -74,6 +74,16 @@ pub struct RootNixRepairExecutor {
     executor: Arc<dyn CommandExecutor>,
 }
 
+/// Root-installer-only executor for garbage-collecting the fixed managed local
+/// Nix store after the managed daemon has stopped.
+///
+/// The operation accepts no raw command, store URL, path, or option. It first
+/// validates Nix's bounded dead-path report and then invokes garbage collection
+/// directly against the local store, without using the daemon socket.
+pub struct RootNixGcExecutor {
+    executor: Arc<dyn CommandExecutor>,
+}
+
 impl std::fmt::Debug for RootNixRepairExecutor {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -109,6 +119,54 @@ impl RootNixRepairExecutor {
     ) -> Result<CommandOutcome, MaintenanceError> {
         execute_checked(self.executor.as_ref(), NixProgram::Modern, args, timeout)
             .map_err(|_| MaintenanceError::backend_failure())
+    }
+}
+
+impl std::fmt::Debug for RootNixGcExecutor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RootNixGcExecutor")
+            .finish_non_exhaustive()
+    }
+}
+
+impl RootNixGcExecutor {
+    /// Constructs the root-only garbage collector from installer-authenticated
+    /// absolute binary and private-home paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted adapter error when either fixed binary is unavailable
+    /// or the private execution directories fail validation.
+    pub fn new(nix_binary: &Path, private_home: &Path) -> Result<Self, NixAdapterError> {
+        Ok(Self {
+            executor: Arc::new(validated_process_executor(
+                nix_binary,
+                private_home,
+                Path::new(MANAGED_DAEMON_SOCKET),
+            )?),
+        })
+    }
+
+    #[cfg(test)]
+    fn scripted(executor: impl CommandExecutor + 'static) -> Self {
+        Self {
+            executor: Arc::new(executor),
+        }
+    }
+
+    /// Collects unreachable objects from the fixed local managed store.
+    ///
+    /// This method does not contact the managed daemon and accepts no
+    /// caller-selected command, store, path, or option.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed adapter error if the dead-path report is malformed,
+    /// either fixed command fails, output exceeds its bound, or execution times
+    /// out.
+    pub fn collect(&self) -> Result<GcReport, NixAdapterError> {
+        collect_garbage(self.executor.as_ref(), os_args(["--store", "local"]))
     }
 }
 
@@ -724,35 +782,41 @@ impl NixAdapter for RealNixAdapter {
     }
 
     fn gc(&self) -> Result<GcReport, NixAdapterError> {
-        let preflight = self.run_with_program(
-            MethodKind::Gc,
-            NixProgram::LegacyStore,
-            os_args(["--gc", "--print-dead"]),
-            GC_TIMEOUT,
-        )?;
-        if preflight.code != Some(0) {
-            return Err(NixAdapterError::OperationFailed);
-        }
-        // Validate the bounded report shape before the destructive call. This
-        // scales with dead paths rather than total store size.
-        GcReport::new(
-            GcStatus::Collected,
-            parse_gc_candidates(&preflight.stdout)?,
-            0,
-        )?;
-
-        let outcome = self.run_with_program(
-            MethodKind::Gc,
-            NixProgram::LegacyStore,
-            os_args(["--gc"]),
-            GC_TIMEOUT,
-        )?;
-        if outcome.code != Some(0) {
-            return Err(NixAdapterError::OperationFailed);
-        }
-        let collected = parse_gc_deletions(&outcome.stderr)?;
-        GcReport::new(GcStatus::Collected, collected, 0)
+        collect_garbage(self.executor.as_ref(), Vec::new())
     }
+}
+
+fn collect_garbage(
+    executor: &dyn CommandExecutor,
+    fixed_prefix: Vec<OsString>,
+) -> Result<GcReport, NixAdapterError> {
+    let mut preflight_args = fixed_prefix.clone();
+    preflight_args.extend(os_args(["--gc", "--print-dead"]));
+    let preflight = execute_checked(
+        executor,
+        NixProgram::LegacyStore,
+        preflight_args,
+        GC_TIMEOUT,
+    )?;
+    if preflight.code != Some(0) {
+        return Err(NixAdapterError::OperationFailed);
+    }
+    // Validate the bounded report shape before the destructive call. This
+    // scales with dead paths rather than total store size.
+    GcReport::new(
+        GcStatus::Collected,
+        parse_gc_candidates(&preflight.stdout)?,
+        0,
+    )?;
+
+    let mut collect_args = fixed_prefix;
+    collect_args.extend(os_args(["--gc"]));
+    let outcome = execute_checked(executor, NixProgram::LegacyStore, collect_args, GC_TIMEOUT)?;
+    if outcome.code != Some(0) {
+        return Err(NixAdapterError::OperationFailed);
+    }
+    let collected = parse_gc_deletions(&outcome.stderr)?;
+    GcReport::new(GcStatus::Collected, collected, 0)
 }
 
 trait CommandExecutor: Send + Sync {
@@ -1905,6 +1969,66 @@ mod tests {
             crate::MaintenanceErrorCode::BackendFailure
         );
         Ok(())
+    }
+
+    #[test]
+    fn root_gc_uses_only_the_fixed_local_store() -> Result<(), Box<dyn std::error::Error>> {
+        let path = "/nix/store/22222222222222222222222222222222-dead";
+        let scripted = Scripted::new(vec![
+            success(format!("{path}\n")),
+            success_with_stderr(format!("deleting '{path}'\n")),
+        ]);
+        let calls = Arc::clone(&scripted.calls);
+        let report = RootNixGcExecutor::scripted(scripted).collect()?;
+
+        assert_eq!(report.status(), GcStatus::Collected);
+        assert_eq!(
+            report
+                .collected()
+                .iter()
+                .map(StorePath::as_str)
+                .collect::<Vec<_>>(),
+            [path]
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(
+            calls.as_slice(),
+            [
+                vec![
+                    OsString::from("--store"),
+                    OsString::from("local"),
+                    OsString::from("--gc"),
+                    OsString::from("--print-dead"),
+                ],
+                vec![
+                    OsString::from("--store"),
+                    OsString::from("local"),
+                    OsString::from("--gc"),
+                ],
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_gc_refuses_malformed_preflight_before_deletion() {
+        let scripted = Scripted::new(vec![success("/tmp/not-a-store-path\n")]);
+        let calls = Arc::clone(&scripted.calls);
+        let error = RootNixGcExecutor::scripted(scripted)
+            .collect()
+            .expect_err("malformed dead-path report must refuse");
+
+        assert_eq!(error.code(), crate::NixAdapterErrorCode::MalformedPayload);
+        assert_eq!(calls.lock().expect("call log").len(), 1);
+    }
+
+    #[test]
+    fn root_gc_does_not_downgrade_command_failure() {
+        let error = RootNixGcExecutor::scripted(Scripted::new(vec![failure(1)]))
+            .collect()
+            .expect_err("failed local-store preflight must refuse");
+
+        assert_eq!(error.code(), crate::NixAdapterErrorCode::OperationFailed);
     }
 
     #[test]
