@@ -9,6 +9,7 @@ mod bootstrap;
 mod broker;
 mod helper;
 mod installer;
+mod linux_accounts;
 pub mod platform;
 mod repair;
 mod root_client;
@@ -48,6 +49,9 @@ pub use helper::{
 };
 pub use installer::{
     InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallReport, install_linux,
+};
+pub use linux_accounts::{
+    LinuxAccountError, LinuxAccountErrorCode, LinuxAccountManager, plan_linux_group_bindings,
 };
 pub use platform::linux::{
     LinuxPeerCredentials, LinuxPlatformError, LinuxPlatformErrorCode, LinuxRootSetStore,

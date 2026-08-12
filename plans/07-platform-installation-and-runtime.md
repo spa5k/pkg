@@ -1242,6 +1242,21 @@ snippets, or any foreign `/nix`.
     preflight. Callers cannot construct the type or pass raw configuration text.
     Production backends must refuse a missing, conflicting, or wrong-platform
     binding before host mutation.
+23. The Linux production account component now selects two free host-local GIDs
+    while reserving every observed group and primary-user GID. It reuses only
+    exact existing product groups. A root-owned lock directly below `/run`
+    serializes product installer attempts. Creation uses a closed allowlist of
+    root-owned, non-writable absolute `groupadd`/`useradd` and no-login paths;
+    callers cannot provide paths, names, arguments, or account data. The broker
+    and all sixteen build users must have nonzero unique UIDs, locked passwords,
+    exact primary groups, fixed homes, no-login shells, and no unexpected
+    supplementary memberships or gshadow administrator authority. Managed
+    groups require a locked gshadow password and no administrators. Rollback
+    records uncertain and verified states separately. Verified users are bound
+    to their observed UID. A changed or uncertain identity is never deleted. Debian 12 container
+    evidence confirms the emitted account commands create disabled accounts and
+    explicit `nixbld` membership. Linux filesystem and systemd activation remain
+    the next production-backend slices.
 
 ## 17. Unresolved questions / spikes
 

@@ -1144,6 +1144,11 @@ flowchart TD
 
 #### PR-36 — Technical-preview hardening + Real-Nix nightly CI + e2e parity
 - **Status (2026-08-12):** in progress. The first production Real-Nix connector slice is landed:
+  the Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
+  build identities through closed shadow-utils commands, verifies password locks plus exact primary
+  and supplementary memberships, serializes product installers with a root-only runtime lock, and
+  limits rollback to attempt-owned identities with UID-bound replacement checks. Uncertain command
+  failures fail closed without deleting a potentially foreign account.
   the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an
