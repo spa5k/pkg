@@ -420,6 +420,25 @@ impl LinuxFilesystemManager {
             .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))
     }
 
+    /// Verifies one fixed filesystem artifact without mutation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the artifact is absent or its type,
+    /// ancestry, metadata, or authenticated bytes do not match.
+    pub fn verify_asset(&self, asset: LinuxInstallAsset) -> Result<(), LinuxFilesystemError> {
+        let (parent, name) = self.open_parent(asset)?;
+        let target = open_child(&parent, &name, asset.kind()).map_err(open_error)?;
+        match asset.kind() {
+            LinuxAssetKind::Directory => self.verify_metadata(asset, &target),
+            LinuxAssetKind::File => {
+                let payload = self.payload_for(asset)?;
+                self.verify_file(asset, target, &payload)
+            }
+            LinuxAssetKind::User | LinuxAssetKind::Group => Err(unsupported()),
+        }
+    }
+
     /// Removes one artifact only when this exact attempt recorded its inode.
     ///
     /// # Errors
@@ -443,6 +462,41 @@ impl LinuxFilesystemManager {
         }
         self.attempt_owned.remove(asset.id());
         Ok(())
+    }
+
+    /// Removes one manifest-owned filesystem artifact after exact verification.
+    ///
+    /// This path is for a later uninstall process, so it does not depend on
+    /// in-memory installation-attempt state. An already absent artifact is an
+    /// idempotent success. Changed metadata, bytes, type, ancestry, or identity
+    /// always refuses removal.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when verification fails or the verified inode
+    /// cannot be removed without crossing the closed filesystem boundary.
+    pub fn remove_verified_asset(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        let Some((parent, name)) = self.open_parent_optional(asset)? else {
+            return Ok(());
+        };
+        let target = match open_child(&parent, &name, asset.kind()) {
+            Ok(target) => target,
+            Err(error) if error == Errno::NOENT => return Ok(()),
+            Err(error) => return Err(open_error(error)),
+        };
+        let target_identity = identity(&target, asset.kind())?;
+        match asset.kind() {
+            LinuxAssetKind::Directory => self.verify_metadata(asset, &target)?,
+            LinuxAssetKind::File => {
+                let payload = self.payload_for(asset)?;
+                self.verify_file(asset, target, &payload)?;
+            }
+            LinuxAssetKind::User | LinuxAssetKind::Group => return Err(unsupported()),
+        }
+        Self::remove_if_owned(&parent, &name, target_identity)
     }
 
     fn payload_for(&self, asset: LinuxInstallAsset) -> Result<Arc<[u8]>, LinuxFilesystemError> {
@@ -643,29 +697,41 @@ impl LinuxFilesystemManager {
         &self,
         asset: LinuxInstallAsset,
     ) -> Result<(File, OsString), LinuxFilesystemError> {
+        self.open_parent_optional(asset)?.ok_or_else(io_failure)
+    }
+
+    fn open_parent_optional(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<Option<(File, OsString)>, LinuxFilesystemError> {
         if !Self::handles(asset) {
             return Err(unsupported());
         }
         let components = absolute_components(Path::new(asset.path_or_name()))?;
         let (name, parents) = components.split_last().ok_or_else(unsupported)?;
-        let root = open(
+        let root = match open(
             &self.root,
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
-        )
-        .map(File::from)
-        .map_err(open_error)?;
-        let parent = parents.iter().try_fold(root, |directory, component| {
-            openat(
-                &directory,
+        ) {
+            Ok(root) => File::from(root),
+            Err(error) if error == Errno::NOENT => return Ok(None),
+            Err(error) => return Err(open_error(error)),
+        };
+        let mut parent = root;
+        for component in parents {
+            parent = match openat(
+                &parent,
                 component,
                 OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
                 Mode::empty(),
-            )
-            .map(File::from)
-            .map_err(open_error)
-        })?;
-        Ok((parent, name.clone()))
+            ) {
+                Ok(child) => File::from(child),
+                Err(error) if error == Errno::NOENT => return Ok(None),
+                Err(error) => return Err(open_error(error)),
+            };
+        }
+        Ok(Some((parent, name.clone())))
     }
 
     fn remove_if_owned(
@@ -1030,6 +1096,56 @@ mod tests {
             LinuxFilesystemErrorCode::RollbackConflict
         );
         assert_eq!(fs::read(path)?, b"foreign");
+        Ok(())
+    }
+
+    #[test]
+    fn verified_uninstall_removes_exact_files_and_is_retry_safe() -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
+        for id in ["product-root", "service-bin-dir"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let asset = Fixture::asset("product-cli");
+        assert!(fixture.manager.ensure_asset(asset)?);
+        let path = fixture.temporary.path().join("usr/local/bin/pkg");
+
+        fixture.manager.remove_verified_asset(asset)?;
+        fixture
+            .manager
+            .remove_verified_asset(Fixture::asset("service-bin-dir"))?;
+        fixture.manager.remove_verified_asset(asset)?;
+
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn verified_uninstall_refuses_changed_files_and_nonempty_directories()
+    -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
+        for id in ["product-root", "service-bin-dir"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let file = Fixture::asset("product-cli");
+        assert!(fixture.manager.ensure_asset(file)?);
+        let file_path = fixture.temporary.path().join("usr/local/bin/pkg");
+        fs::write(&file_path, b"foreign")?;
+        assert_eq!(
+            failure_code(&fixture.manager.remove_verified_asset(file))?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+        assert_eq!(fs::read(file_path)?, b"foreign");
+
+        let directory = Fixture::asset("service-bin-dir");
+        fs::write(
+            fixture.temporary.path().join("opt/pkg/bin/foreign"),
+            b"foreign",
+        )?;
+        assert_eq!(
+            failure_code(&fixture.manager.remove_verified_asset(directory))?,
+            LinuxFilesystemErrorCode::RollbackConflict
+        );
+        assert!(fixture.temporary.path().join("opt/pkg/bin").is_dir());
         Ok(())
     }
 

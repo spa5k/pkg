@@ -280,6 +280,32 @@ impl LinuxAccountManager {
             .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::Conflict))
     }
 
+    /// Verifies one fixed account against the complete managed contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the account is absent, conflicting, or
+    /// cannot be read through the fixed account database commands.
+    pub fn verify_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), LinuxAccountError> {
+        if !Self::handles(asset) {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::UnsupportedAsset,
+            ));
+        }
+        self.ensure_lock()?;
+        let spec = AccountSpec::for_asset(asset, self.groups)
+            .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::UnsupportedAsset))?;
+        let groups = self.system.groups()?;
+        let users = self.system.users()?;
+        if verify_existing(&spec, &groups, &users)? {
+            Ok(())
+        } else {
+            Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::VerificationFailure,
+            ))
+        }
+    }
+
     /// Removes one account only when this exact attempt recorded ownership.
     ///
     /// # Errors
@@ -331,6 +357,61 @@ impl LinuxAccountManager {
             }
         }
         self.attempt_owned.remove(asset.id());
+        Ok(())
+    }
+
+    /// Removes one manifest-owned account after revalidating its exact contract.
+    ///
+    /// This path is for a later uninstall process, so it does not depend on
+    /// in-memory installation-attempt state. An already absent account is an
+    /// idempotent success. A conflicting account is never removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the account database is unsafe, the
+    /// recorded contract no longer matches, or deletion cannot be verified.
+    pub fn remove_verified_asset(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxAccountError> {
+        if !Self::handles(asset) {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::UnsupportedAsset,
+            ));
+        }
+        self.ensure_lock()?;
+        let spec = AccountSpec::for_asset(asset, self.groups)
+            .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::UnsupportedAsset))?;
+        let groups = self.system.groups()?;
+        let users = self.system.users()?;
+        validate_group_directory(&groups)?;
+        validate_user_directory(&users)?;
+        if let AccountSpec::User { name, .. } = spec
+            && users.iter().all(|user| user.name != name)
+        {
+            return Ok(());
+        }
+        if !verify_existing(&spec, &groups, &users)? {
+            return Ok(());
+        }
+
+        match asset.kind() {
+            LinuxAssetKind::User => self.system.delete_user(asset.path_or_name())?,
+            LinuxAssetKind::Group => self.system.delete_group(asset.path_or_name())?,
+            LinuxAssetKind::Directory | LinuxAssetKind::File => {
+                return Err(LinuxAccountError::new(
+                    LinuxAccountErrorCode::UnsupportedAsset,
+                ));
+            }
+        }
+
+        let groups = self.system.groups()?;
+        let users = self.system.users()?;
+        if verify_existing(&spec, &groups, &users)? {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::VerificationFailure,
+            ));
+        }
         Ok(())
     }
 }
@@ -1506,6 +1587,74 @@ mod tests {
         assert_eq!(
             manager
                 .rollback_asset(broker)
+                .map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+        assert!(
+            state
+                .lock()
+                .map_err(|_| command_error())?
+                .deleted
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn verified_uninstall_removes_only_exact_accounts_and_is_retry_safe()
+    -> Result<(), Box<dyn Error>> {
+        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
+        let state = Arc::new(Mutex::new(FakeState {
+            users: vec![user("root", 0, 0, "/root")],
+            ..FakeState::default()
+        }));
+        let mut manager = fake_manager(bindings, Arc::clone(&state));
+        let group = account_asset("broker-group");
+        let user = account_asset("broker-user");
+        assert!(manager.ensure_asset(group)?);
+        assert!(manager.ensure_asset(user)?);
+
+        manager.remove_verified_asset(user)?;
+        manager.remove_verified_asset(group)?;
+        manager.remove_verified_asset(user)?;
+        manager.remove_verified_asset(group)?;
+
+        let state = state.lock().map_err(|_| command_error())?;
+        assert_eq!(
+            state.deleted,
+            ["user:pkg-nix-broker", "group:pkg-nix-broker"]
+        );
+        assert!(state.users.iter().all(|user| user.name != BROKER_NAME));
+        assert!(state.groups.iter().all(|group| group.name != BROKER_NAME));
+        drop(state);
+        Ok(())
+    }
+
+    #[test]
+    fn verified_uninstall_refuses_changed_accounts_without_deletion() -> Result<(), Box<dyn Error>>
+    {
+        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![group(BROKER_NAME, 30_000, &[])],
+            users: vec![
+                user("root", 0, 0, "/root"),
+                user(BROKER_NAME, 31_000, 30_000, BROKER_HOME),
+            ],
+            ..FakeState::default()
+        }));
+        state
+            .lock()
+            .map_err(|_| command_error())?
+            .users
+            .iter_mut()
+            .find(|user| user.name == BROKER_NAME)
+            .ok_or_else(command_error)?
+            .shell = "/bin/sh".to_owned();
+        let mut manager = fake_manager(bindings, Arc::clone(&state));
+
+        assert_eq!(
+            manager
+                .remove_verified_asset(account_asset("broker-user"))
                 .map_err(LinuxAccountError::code),
             Err(LinuxAccountErrorCode::Conflict)
         );

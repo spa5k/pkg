@@ -223,6 +223,54 @@ impl LinuxSystemdManager {
         Ok(())
     }
 
+    /// Stops and disables the complete fixed service set for uninstall.
+    ///
+    /// Every unit state is read before the first mutation. The manager then
+    /// attempts all required stops and disables in reverse activation order,
+    /// reloads systemd, and verifies that no fixed unit remains active or
+    /// enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted failure after attempting the complete fixed set.
+    pub fn deactivate_for_uninstall(&mut self) -> Result<(), LinuxSystemdError> {
+        if self.journal.is_some() {
+            return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed));
+        }
+        self.system.daemon_reload()?;
+        let states = UNITS
+            .iter()
+            .copied()
+            .map(|unit| self.system.unit_state(unit).map(|state| (unit, state)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut failed = false;
+        for (unit, state) in states.iter().rev() {
+            if state.active && self.system.stop(unit).is_err() {
+                failed = true;
+            }
+        }
+        for (unit, state) in states.iter().rev() {
+            if state.enabled && self.system.disable(unit).is_err() {
+                failed = true;
+            }
+        }
+        if self.system.daemon_reload().is_err() {
+            failed = true;
+        }
+        for unit in UNITS {
+            match self.system.unit_state(unit) {
+                Ok(state) if !state.active && !state.enabled => {}
+                Ok(_) | Err(_) => failed = true,
+            }
+        }
+        if failed {
+            return Err(LinuxSystemdError::new(
+                LinuxSystemdErrorCode::RollbackFailed,
+            ));
+        }
+        Ok(())
+    }
+
     /// Verifies that all fixed sockets and services are active.
     ///
     /// # Errors
@@ -623,5 +671,68 @@ mod tests {
         shared.borrow_mut().fail_call = None;
         manager.rollback()?;
         Ok(())
+    }
+
+    #[test]
+    fn uninstall_deactivation_stops_disables_and_verifies_every_unit() -> Result<(), Box<dyn Error>>
+    {
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: true,
+            active: true,
+        }));
+        let shared = Rc::clone(&fake.state);
+        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+
+        manager.deactivate_for_uninstall()?;
+
+        let state = shared.borrow();
+        assert!(
+            state
+                .units
+                .values()
+                .all(|unit| !unit.enabled && !unit.active)
+        );
+        let reverse = UNITS.into_iter().rev().collect::<Vec<_>>();
+        assert_eq!(
+            &state.calls[1..7],
+            reverse
+                .iter()
+                .map(|unit| format!("stop:{unit}"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            &state.calls[7..13],
+            reverse
+                .iter()
+                .map(|unit| format!("disable:{unit}"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(state.calls[13], "daemon-reload");
+        Ok(())
+    }
+
+    #[test]
+    fn uninstall_deactivation_attempts_all_units_after_failure() {
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: true,
+            active: true,
+        }));
+        let shared = Rc::clone(&fake.state);
+        shared.borrow_mut().fail_call = Some("stop:pkg-nix-broker.service".to_owned());
+        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+
+        assert_eq!(
+            manager.deactivate_for_uninstall(),
+            Err(LinuxSystemdError::new(
+                LinuxSystemdErrorCode::RollbackFailed
+            ))
+        );
+        assert!(
+            shared
+                .borrow()
+                .calls
+                .iter()
+                .any(|call| call == "disable:pkg-nix-daemon.socket")
+        );
     }
 }

@@ -1586,6 +1586,13 @@ flowchart TD
   store-link state. The actual upstream aarch64-linux archive maps and extracts successfully,
   and a privileged clean Linux container completes install, daemon ping, rollback, reinstall,
   commit, and daemon ping. This proves the runtime bootstrap seam, not the full product e2e lane.
+  Linux uninstall now has the first persistent production primitives: account deletion rechecks
+  the exact locked identity contract and is idempotent for absent users/groups; filesystem deletion
+  reopens no-follow parents, verifies exact metadata and authenticated bytes, binds the observed
+  inode, and refuses changed files, symlinks, or non-empty directories; systemd deactivation reads
+  every fixed unit before mutation, stops and disables the complete set in reverse order, reloads,
+  and verifies the terminal state. The production uninstall action router and managed-store removal
+  remain open before clean-host install/re-run/uninstall can be claimed.
   This resolves plan 07 Q7.7 without claiming the still-missing macOS privileged production backend.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
