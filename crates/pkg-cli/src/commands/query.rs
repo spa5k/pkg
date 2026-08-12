@@ -2,6 +2,7 @@
 
 use serde_json::{Map, Value, json};
 
+use pkg_core::{AttributePath, ChannelSequence, NixpkgsRevision, PackageVersion};
 use pkg_index::{IndexDocument, IndexQuery, InfoLookup, SearchOptions};
 use pkg_nix::{CatalogInfoLookup, CatalogInfoReport, CatalogPackageSummary, CatalogSearchReport};
 
@@ -9,6 +10,42 @@ use crate::cli::{InfoArgs, SearchArgs};
 use crate::commands::execute::CommandResult;
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
+
+/// One installed package identity used only for a read-only catalog comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledCatalogPackage {
+    package: AttributePath,
+    name: String,
+    version: PackageVersion,
+    revision: NixpkgsRevision,
+    pinned: bool,
+}
+
+impl InstalledCatalogPackage {
+    /// Retains the product fields from one already-verified active generation.
+    #[must_use]
+    pub fn new(
+        package: AttributePath,
+        name: String,
+        version: PackageVersion,
+        revision: NixpkgsRevision,
+        pinned: bool,
+    ) -> Self {
+        Self {
+            package,
+            name,
+            version,
+            revision,
+            pinned,
+        }
+    }
+
+    /// Returns the canonical package id used for the catalog lookup.
+    #[must_use]
+    pub fn package(&self) -> &str {
+        self.package.as_str()
+    }
+}
 
 /// Executes bounded offline search without treating the index as realization authority.
 pub fn search_index(
@@ -260,6 +297,124 @@ pub fn info_catalog_reports(reports: &[CatalogInfoReport]) -> Result<CommandResu
     .map_err(result_error)
 }
 
+/// Compares verified installed product identities with broker-owned catalog metadata.
+pub fn outdated_catalog_reports(
+    installed_sequence: ChannelSequence,
+    installed: &[InstalledCatalogPackage],
+    reports: &[CatalogInfoReport],
+) -> Result<CommandResult, CommandError> {
+    if installed.len() != reports.len() {
+        return Err(result_error(
+            crate::commands::execute::PublicResultError::InvalidValue,
+        ));
+    }
+    let catalog_sequence = reports
+        .first()
+        .map_or(installed_sequence, CatalogInfoReport::sequence);
+    if catalog_sequence.get() < installed_sequence.get()
+        || reports
+            .iter()
+            .any(|report| report.sequence() != catalog_sequence)
+    {
+        return Err(result_error(
+            crate::commands::execute::PublicResultError::InvalidValue,
+        ));
+    }
+
+    let mut entries = Vec::new();
+    for (installed, report) in installed.iter().zip(reports) {
+        let CatalogInfoLookup::Found(available) = report.lookup() else {
+            return Err(CommandError::new(
+                ExitCode::ResolveFailed,
+                "an installed package is absent from the verified catalog",
+                "run `pkg update`; use `pkg info` with the canonical package id if it persists",
+            ));
+        };
+        let summary = available.summary();
+        if summary.package() != installed.package() {
+            return Err(result_error(
+                crate::commands::execute::PublicResultError::InvalidValue,
+            ));
+        }
+        let version_changed = summary.version() != installed.version.as_str();
+        let revision_changed = available.catalog_revision() != installed.revision.as_str();
+        if !version_changed && !revision_changed {
+            continue;
+        }
+        let kind = if version_changed {
+            version_change_kind(installed.version.as_str(), summary.version())
+        } else {
+            "rev-only"
+        };
+        entries.push(json!({
+            "package": installed.package(),
+            "name": installed.name,
+            "current": installed.version.as_str(),
+            "available": summary.version(),
+            "pinned": installed.pinned,
+            "kind": kind
+        }));
+    }
+    let records = entries
+        .iter()
+        .filter_map(Value::as_object)
+        .map(|entry| {
+            let mut record = entry.clone();
+            record.insert("type".into(), json!("outdated_package"));
+            record
+        })
+        .collect();
+    CommandResult::new(
+        format!("{} package(s) outdated", entries.len()),
+        Map::from_iter([
+            (
+                "channelSequence".into(),
+                json!(catalog_sequence.get().get()),
+            ),
+            ("stale".into(), json!(false)),
+            ("entries".into(), Value::Array(entries)),
+        ]),
+        records,
+    )
+    .map_err(result_error)
+}
+
+fn version_change_kind(current: &str, available: &str) -> &'static str {
+    let current = dotted_release(current);
+    let available = dotted_release(available);
+    match (current, available) {
+        (Some((current_major, _, _)), Some((available_major, _, _)))
+            if current_major != available_major =>
+        {
+            "major"
+        }
+        (Some((_, current_minor, _)), Some((_, available_minor, _)))
+            if current_minor != available_minor =>
+        {
+            "minor"
+        }
+        _ => "patch",
+    }
+}
+
+fn dotted_release(value: &str) -> Option<(u64, Option<u64>, Option<u64>)> {
+    let value = value.strip_prefix('v').unwrap_or(value);
+    let mut parts = value.splitn(4, '.');
+    let major = numeric_prefix(parts.next()?)?;
+    let minor = parts.next().and_then(numeric_prefix);
+    let patch = parts.next().and_then(numeric_prefix);
+    Some((major, minor, patch))
+}
+
+fn numeric_prefix(value: &str) -> Option<u64> {
+    let end = value
+        .as_bytes()
+        .iter()
+        .position(|byte| !byte.is_ascii_digit())
+        .unwrap_or(value.len());
+    (end != 0).then(|| value[..end].parse().ok()).flatten()
+}
+
 fn summary_value(summary: &pkg_index::PackageSummary) -> Value {
     json!({
         "package": summary.package(),
@@ -302,8 +457,9 @@ fn result_error(_: crate::commands::execute::PublicResultError) -> CommandError 
 
 #[cfg(test)]
 mod tests {
-    use pkg_core::{ChannelSequence, NixpkgsRevision, System};
+    use pkg_core::{AttributePath, ChannelSequence, NixpkgsRevision, PackageVersion, System};
     use pkg_index::{BuildMetadata, build_index_from_json};
+    use pkg_nix::CatalogPackageInfo;
 
     use super::*;
     use crate::cli::{Cli, Command};
@@ -322,6 +478,53 @@ mod tests {
         build_index_from_json(metadata, FIXTURE).unwrap()
     }
 
+    fn installed_package(
+        package: &str,
+        version: &str,
+        revision: &str,
+        pinned: bool,
+    ) -> InstalledCatalogPackage {
+        InstalledCatalogPackage::new(
+            AttributePath::new(package).unwrap(),
+            package.to_owned(),
+            PackageVersion::new(version),
+            NixpkgsRevision::new(revision).unwrap(),
+            pinned,
+        )
+    }
+
+    fn catalog_info_report(
+        package: &str,
+        version: &str,
+        revision: &str,
+        sequence: u64,
+    ) -> CatalogInfoReport {
+        let summary = CatalogPackageSummary::new(
+            package,
+            package,
+            version,
+            "fixture package",
+            vec![String::from("MIT")],
+            true,
+            false,
+        )
+        .unwrap();
+        let info = CatalogPackageInfo::new(
+            summary,
+            "https://example.invalid",
+            vec![String::from("out")],
+            vec![String::from("linux-x86-64")],
+            revision,
+            "2026-08-12T00:00:00Z",
+        )
+        .unwrap();
+        CatalogInfoReport::new(
+            ChannelSequence::from_u64(sequence).unwrap(),
+            CatalogInfoLookup::Found(Box::new(info)),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn offline_search_maps_verified_index_to_product_fields() {
         let cli = Cli::try_parse(["pkg", "search", "ripgrep", "--license", "MIT"]).unwrap();
@@ -336,6 +539,62 @@ mod tests {
         let encoded = serde_json::to_string(result.fields()).unwrap();
         assert!(!encoded.contains("aarch64-darwin"));
         assert!(!encoded.contains("/nix/store/"));
+    }
+
+    #[test]
+    fn outdated_reports_all_version_kinds_and_revision_only_changes() {
+        const OLD_REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+        const NEW_REVISION: &str = "89abcdef0123456789abcdef0123456789abcdef";
+        let installed = vec![
+            installed_package("patch", "1.2.3", OLD_REVISION, false),
+            installed_package("minor", "1.2.3", OLD_REVISION, true),
+            installed_package("major", "1.2.3", OLD_REVISION, false),
+            installed_package("recipe", "1.2.3", OLD_REVISION, false),
+            installed_package("current", "1.2.3", NEW_REVISION, false),
+        ];
+        let reports = vec![
+            catalog_info_report("patch", "1.2.4", NEW_REVISION, 43),
+            catalog_info_report("minor", "1.3.0", NEW_REVISION, 43),
+            catalog_info_report("major", "2.0.0", NEW_REVISION, 43),
+            catalog_info_report("recipe", "1.2.3", NEW_REVISION, 43),
+            catalog_info_report("current", "1.2.3", NEW_REVISION, 43),
+        ];
+
+        let result =
+            outdated_catalog_reports(ChannelSequence::from_u64(42).unwrap(), &installed, &reports)
+                .unwrap();
+        assert_eq!(result.fields()["channelSequence"], 43);
+        assert_eq!(result.fields()["entries"].as_array().unwrap().len(), 4);
+        assert_eq!(result.fields()["entries"][0]["kind"], "patch");
+        assert_eq!(result.fields()["entries"][1]["kind"], "minor");
+        assert_eq!(result.fields()["entries"][1]["pinned"], true);
+        assert_eq!(result.fields()["entries"][2]["kind"], "major");
+        assert_eq!(result.fields()["entries"][3]["kind"], "rev-only");
+        assert_eq!(result.records()[0]["type"], "outdated_package");
+    }
+
+    #[test]
+    fn outdated_refuses_catalog_identity_or_sequence_drift() {
+        const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+        let installed = vec![installed_package("ripgrep", "14.1.0", REVISION, false)];
+        let wrong_package = vec![catalog_info_report("fd", "10.2.0", REVISION, 42)];
+        assert_eq!(
+            outdated_catalog_reports(
+                ChannelSequence::from_u64(42).unwrap(),
+                &installed,
+                &wrong_package,
+            )
+            .unwrap_err()
+            .exit_code(),
+            ExitCode::Config
+        );
+        let older = vec![catalog_info_report("ripgrep", "14.1.1", REVISION, 41)];
+        assert_eq!(
+            outdated_catalog_reports(ChannelSequence::from_u64(42).unwrap(), &installed, &older,)
+                .unwrap_err()
+                .exit_code(),
+            ExitCode::Config
+        );
     }
 
     #[test]

@@ -14,7 +14,9 @@ use crate::cli::{
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
-use crate::commands::query::{info_catalog_reports, search_catalog_report};
+use crate::commands::query::{
+    InstalledCatalogPackage, info_catalog_reports, outdated_catalog_reports, search_catalog_report,
+};
 use crate::commands::state::{
     LifecycleEdit, edit_pin_state, list_state, read_history, remove_state, rollback_state,
 };
@@ -260,7 +262,21 @@ impl CoreOperations for LocalStateOperations {
     }
 
     fn outdated(&mut self) -> Result<CommandResult, CommandError> {
-        Err(index_unavailable())
+        let active = self.active()?;
+        let installed = installed_catalog_packages(active.state())?;
+        if installed.is_empty() {
+            return outdated_catalog_reports(
+                active.state().manifest().channel_seq(),
+                &installed,
+                &[],
+            );
+        }
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        run_catalog_outdated(
+            &mut broker,
+            active.state().manifest().channel_seq(),
+            installed,
+        )
     }
 
     fn update(
@@ -400,6 +416,69 @@ fn run_catalog_info(
         let _ = broker.cancel(handle);
     }
     result
+}
+
+fn run_catalog_outdated(
+    broker: &mut BrokerLifecycleClient,
+    installed_sequence: pkg_core::ChannelSequence,
+    installed: Vec<InstalledCatalogPackage>,
+) -> Result<CommandResult, CommandError> {
+    let requests = installed
+        .iter()
+        .map(|package| CatalogInfoRequest::new(package.package()).ok_or_else(catalog_query_invalid))
+        .collect::<Result<Vec<_>, _>>()?;
+    let handle = broker
+        .begin(BrokerOperationKind::Resolve)
+        .map_err(broker_error)?;
+    let result = (|| {
+        let reports = requests
+            .into_iter()
+            .map(|request| {
+                broker
+                    .info_catalog(handle.clone(), request)
+                    .map_err(catalog_broker_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        broker.complete(handle.clone()).map_err(broker_error)?;
+        outdated_catalog_reports(installed_sequence, &installed, &reports)
+    })();
+    if result.is_err() {
+        let _ = broker.cancel(handle);
+    }
+    result
+}
+
+fn installed_catalog_packages(
+    state: &pkg_core::lifecycle::LifecycleState,
+) -> Result<Vec<InstalledCatalogPackage>, CommandError> {
+    state
+        .manifest()
+        .entries()
+        .iter()
+        .map(|desired| {
+            let locked = state
+                .locked()
+                .entries()
+                .get(desired.id())
+                .ok_or_else(invalid_active_state)?;
+            let realization = locked.realization();
+            Ok(InstalledCatalogPackage::new(
+                desired.attribute().clone(),
+                realization.pname().to_owned(),
+                realization.version().clone(),
+                realization.nixpkgs_revision().clone(),
+                desired.is_pinned(),
+            ))
+        })
+        .collect()
+}
+
+fn invalid_active_state() -> CommandError {
+    CommandError::new(
+        ExitCode::StateCorrupt,
+        "the active package generation is inconsistent",
+        "run `pkg doctor` before managing packages",
+    )
 }
 
 impl LocalStateOperations {
@@ -1741,7 +1820,7 @@ mod tests {
         CommandEngine, CommandRequest, CoreEngine, OperationPolicy, write_success,
     };
     use crate::ux::OutputMode;
-    use pkg_core::channel::ChannelSequence;
+    use pkg_core::{AttributePath, ChannelSequence, NixpkgsRevision, PackageVersion};
     use pkg_nix::{
         BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
         CatalogInfoLookup, CatalogInfoReport, CatalogPackageInfo, CatalogPackageSummary,
@@ -2438,6 +2517,94 @@ mod tests {
         assert!(!encoded.contains("/nix/store/"));
         assert!(!encoded.contains("drvPath"));
         assert!(!encoded.contains("narHash"));
+    }
+
+    #[test]
+    fn catalog_outdated_uses_one_closed_resolve_transaction() {
+        const NEW_REVISION: &str = "89abcdef0123456789abcdef0123456789abcdef";
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let handle = InProcessBroker::new()
+            .unwrap()
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap()
+            .begin(BrokerOperationKind::Resolve)
+            .unwrap();
+        let server_handle = handle.clone();
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
+        let worker = thread::spawn(move || {
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Resolve)
+            );
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(server_handle.clone()),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::InfoCatalog(
+                    server_handle.clone(),
+                    CatalogInfoRequest::new("ripgrep").unwrap(),
+                )
+            );
+            let summary = CatalogPackageSummary::new(
+                "ripgrep",
+                "ripgrep",
+                "15.0.0",
+                "fast search",
+                vec![String::from("MIT")],
+                true,
+                false,
+            )
+            .unwrap();
+            let info = CatalogPackageInfo::new(
+                summary,
+                "https://example.invalid/ripgrep",
+                vec![String::from("out")],
+                vec![String::from("linux-x86-64")],
+                NEW_REVISION,
+                "2026-08-12T00:00:00Z",
+            )
+            .unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::CatalogInfo(
+                    CatalogInfoReport::new(
+                        ChannelSequence::from_u64(43).unwrap(),
+                        CatalogInfoLookup::Found(Box::new(info)),
+                    )
+                    .unwrap(),
+                ),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Complete(server_handle));
+            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            release_rx.recv().unwrap();
+        });
+        let installed = vec![InstalledCatalogPackage::new(
+            AttributePath::new("ripgrep").unwrap(),
+            String::from("ripgrep"),
+            PackageVersion::new("14.1.1"),
+            NixpkgsRevision::new(REVISION).unwrap(),
+            true,
+        )];
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+
+        let result = run_catalog_outdated(
+            &mut broker,
+            ChannelSequence::from_u64(42).unwrap(),
+            installed,
+        );
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        let result = result.unwrap();
+        assert_eq!(result.fields()["channelSequence"], 43);
+        assert_eq!(result.fields()["entries"][0]["kind"], "major");
+        assert_eq!(result.fields()["entries"][0]["pinned"], true);
     }
 
     #[test]

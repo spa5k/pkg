@@ -1188,8 +1188,20 @@ flowchart TD
   snapshot without cloning the bounded index. Non-default `--channel` selection
   and `pkg info --exact` still refuse explicitly. The complete affected library
   suites, workspace diagnostics, formatting, strict Clippy, secret scanning,
-  and independent P1 review pass. Outdated, upgrade, repair command wiring,
-  clean-host e2e coverage, and optional update modes remain open PR-36 work.
+  and independent P1 review pass.
+  Production `pkg outdated` now composes the verified active generation with
+  that same broker-owned catalog. It sends only canonical package ids through
+  one caller-bound Resolve operation, requires one response per installed
+  package, rejects catalog sequence rollback or mixed snapshots, and binds each
+  response back to the exact requested package before comparison. Output is
+  limited to product package/name, current and available versions, pin state,
+  and the V1 `patch|minor|major|rev-only` heuristic. Store identities and exact
+  source revisions remain private. Empty active package sets need no broker
+  transaction. Focused identity/sequence/protocol tests, the complete CLI suite,
+  strict Clippy, secret scanning, and independent P1 review pass. Opportunistic
+  freshness refresh and a stale-data warning remain open with the metadata
+  freshness work. Upgrade, repair command wiring, clean-host e2e coverage, and
+  optional update modes also remain open PR-36 work.
   The Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
   and supplementary memberships, serializes product installers with a root-only runtime lock, and
