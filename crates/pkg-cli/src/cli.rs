@@ -492,10 +492,10 @@ impl ListArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct UpdateArgs {
     /// Report whether newer signed metadata is available without accepting it.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "force")]
     check: bool,
     /// Re-download metadata even when the local copy is fresh.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "check")]
     force: bool,
 }
 

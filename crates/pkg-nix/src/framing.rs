@@ -128,7 +128,7 @@ pub enum CliBrokerRequest {
     /// Run cache-first acquisition from broker-retained channel authority.
     AcquireInstall(OperationHandle, Vec<PackageSelector>),
     /// Refresh the broker-owned signed channel and native index.
-    RefreshChannel(OperationHandle),
+    RefreshChannel(OperationHandle, ChannelRefreshMode),
     /// Search the broker-owned verified native index.
     SearchCatalog(OperationHandle, CatalogSearchRequest),
     /// Inspect one package in the broker-owned verified native index.
@@ -426,6 +426,27 @@ impl RepairGenerationErrorCode {
 pub struct ChannelRefreshReport {
     updated: bool,
     sequence: ChannelSequence,
+}
+
+/// Closed user intent for one authenticated metadata refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelRefreshMode {
+    /// Authenticate and publish the newest channel and index.
+    Apply,
+    /// Authenticate and report change without publishing it.
+    Check,
+    /// Perform the normal network refresh even when metadata is current.
+    Force,
+}
+
+impl ChannelRefreshMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Apply => "apply",
+            Self::Check => "check",
+            Self::Force => "force",
+        }
+    }
 }
 
 impl ChannelRefreshReport {
@@ -856,10 +877,11 @@ impl ProductFrameCodec {
                     })?,
                 )
             }
-            CliBrokerRequest::RefreshChannel(handle) => (
+            CliBrokerRequest::RefreshChannel(handle, mode) => (
                 27,
-                encode_json(&HandleWire {
+                encode_json(&ChannelRefreshRequestWire {
                     handle: handle.as_str(),
+                    mode: mode.as_str(),
                 })?,
             ),
             CliBrokerRequest::SearchCatalog(handle, request) => (
@@ -905,7 +927,7 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 | 4 | 10 | 16 | 17 | 23 | 24 | 27 => {
+            2 | 3 | 4 | 10 | 16 | 17 | 23 | 24 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
                 match frame.method {
@@ -917,9 +939,15 @@ impl ProductFrameCodec {
                     17 => CliBrokerRequest::GetBuildPreview(handle),
                     23 => CliBrokerRequest::AcquireGc(handle),
                     24 => CliBrokerRequest::GetInstallEvidence(handle),
-                    27 => CliBrokerRequest::RefreshChannel(handle),
                     _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
                 }
+            }
+            27 => {
+                let wire: ChannelRefreshRequestOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::RefreshChannel(
+                    parse_handle(&wire.handle)?,
+                    parse_channel_refresh_mode(&wire.mode)?,
+                )
             }
             11 | 15 => {
                 let (handle, body) = decode_handle_body(frame.payload)?;
@@ -1979,6 +2007,15 @@ fn parse_channel_refresh_error(value: &str) -> Result<ChannelRefreshErrorCode, F
     }
 }
 
+fn parse_channel_refresh_mode(value: &str) -> Result<ChannelRefreshMode, FrameError> {
+    match value {
+        "apply" => Ok(ChannelRefreshMode::Apply),
+        "check" => Ok(ChannelRefreshMode::Check),
+        "force" => Ok(ChannelRefreshMode::Force),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
 fn decode_install_download_progress(
     bytes: &[u8],
 ) -> Result<Option<InstallDownloadProgress>, FrameError> {
@@ -2216,6 +2253,20 @@ struct HandleOwnedWire {
 struct ChannelRefreshWire {
     updated: bool,
     sequence: u64,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct ChannelRefreshRequestWire<'a> {
+    handle: &'a str,
+    mode: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChannelRefreshRequestOwnedWire {
+    handle: String,
+    mode: String,
 }
 
 #[derive(Deserialize)]
@@ -4115,25 +4166,34 @@ mod tests {
 
     #[test]
     fn channel_refresh_frame_contains_only_handle_and_sanitized_result() {
-        let request =
-            CliBrokerRequest::RefreshChannel(OperationHandle(format!("op_{}", "9".repeat(64))));
-        let encoded = ProductFrameCodec::encode_cli_request(27, &request).unwrap();
-        let wire = String::from_utf8_lossy(&encoded);
-        for forbidden in [
-            "url",
-            "target",
-            "system",
-            "root",
-            "key",
-            "descriptor",
-            "index",
+        for mode in [
+            ChannelRefreshMode::Apply,
+            ChannelRefreshMode::Check,
+            ChannelRefreshMode::Force,
         ] {
-            assert!(!wire.contains(forbidden), "refresh exposed {forbidden}");
+            let request = CliBrokerRequest::RefreshChannel(
+                OperationHandle(format!("op_{}", "9".repeat(64))),
+                mode,
+            );
+            let encoded = ProductFrameCodec::encode_cli_request(27, &request).unwrap();
+            let wire = String::from_utf8_lossy(&encoded);
+            for forbidden in [
+                "url",
+                "target",
+                "system",
+                "root",
+                "key",
+                "descriptor",
+                "index",
+            ] {
+                assert!(!wire.contains(forbidden), "refresh exposed {forbidden}");
+            }
+            assert!(wire.contains(mode.as_str()));
+            assert_eq!(
+                ProductFrameCodec::decode_cli_request(&encoded),
+                Ok((27, request))
+            );
         }
-        assert_eq!(
-            ProductFrameCodec::decode_cli_request(&encoded),
-            Ok((27, request))
-        );
 
         let mut responses = vec![CliBrokerResponse::ChannelRefreshed(
             ChannelRefreshReport::new(true, ChannelSequence::from_u64(42).unwrap()),
@@ -4162,6 +4222,14 @@ mod tests {
             let encoded = encode_frame(CHANNEL_CLI_BROKER, 27, 27, payload).unwrap();
             assert!(ProductFrameCodec::decode_cli_response(&encoded).is_err());
         }
+        let invalid_request = encode_frame(
+            CHANNEL_CLI_BROKER,
+            27,
+            27,
+            br#"{"handle":"op_9999999999999999999999999999999999999999999999999999999999999999","mode":"unsafe"}"#,
+        )
+        .unwrap();
+        assert!(ProductFrameCodec::decode_cli_request(&invalid_request).is_err());
     }
 
     #[test]

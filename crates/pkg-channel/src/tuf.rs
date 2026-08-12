@@ -243,6 +243,32 @@ impl ChannelClient {
                     .timeout(Duration::from_secs(30))
                     .tries(3),
             ),
+            true,
+            verifier,
+        )
+        .await
+    }
+
+    /// Authenticates the newest channel and index without accepting the
+    /// descriptor identity into durable product state.
+    ///
+    /// The TUF client may update its disposable transport metadata cache. The
+    /// accepted channel floor and all live broker authority remain unchanged.
+    pub async fn check_with_index<T>(
+        &self,
+        host: System,
+        verifier: impl FnOnce(&VerifiedChannel, &AuthenticatedIndexTarget) -> Result<T, ()>,
+    ) -> Result<ChannelRefresh<T>, ChannelError> {
+        self.refresh_with_index_and_transport(
+            host,
+            Timestamp::now(),
+            DefaultTransport::new_with_http_settings(
+                HttpTransportBuilder::new()
+                    .connect_timeout(Duration::from_secs(10))
+                    .timeout(Duration::from_secs(30))
+                    .tries(3),
+            ),
+            false,
             verifier,
         )
         .await
@@ -280,6 +306,7 @@ impl ChannelClient {
         host: System,
         now: Timestamp,
         transport: DefaultTransport,
+        persist: bool,
         verifier: impl FnOnce(&VerifiedChannel, &AuthenticatedIndexTarget) -> Result<T, ()>,
     ) -> Result<ChannelRefresh<T>, ChannelError> {
         let _refresh = self.refresh_lease.lock().await;
@@ -310,7 +337,9 @@ impl ChannelClient {
         };
         let index =
             verifier(channel, &target).map_err(|()| ChannelError::IndexVerificationRefused)?;
-        self.persist_outcome(&outcome)?;
+        if persist {
+            self.persist_outcome(&outcome)?;
+        }
         Ok(ChannelRefresh { outcome, index })
     }
 
@@ -476,17 +505,31 @@ mod tests {
                     System::Aarch64Darwin,
                     "2026-08-09T00:00:00Z".parse().unwrap(),
                     DefaultTransport::default(),
+                    true,
                     |_, _| Err::<AuthenticatedIndexTarget, ()>(()),
                 )
                 .await,
             Err(ChannelError::IndexVerificationRefused)
         ));
         assert_eq!(client.accepted.load().unwrap(), None);
+        let checked = client
+            .refresh_with_index_and_transport(
+                System::Aarch64Darwin,
+                "2026-08-09T00:00:00Z".parse().unwrap(),
+                DefaultTransport::default(),
+                false,
+                |_, target| Ok(target.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(checked.outcome(), RefreshOutcome::Updated(_)));
+        assert_eq!(client.accepted.load().unwrap(), None);
         let refresh = client
             .refresh_with_index_and_transport(
                 System::Aarch64Darwin,
                 "2026-08-09T00:00:00Z".parse().unwrap(),
                 DefaultTransport::default(),
+                true,
                 |_, target| Ok(target.clone()),
             )
             .await
@@ -522,6 +565,7 @@ mod tests {
                     System::Aarch64Darwin,
                     "2026-08-09T00:00:00Z".parse().unwrap(),
                     DefaultTransport::default(),
+                    true,
                     |_, target| Ok(target.clone()),
                 )
                 .await,

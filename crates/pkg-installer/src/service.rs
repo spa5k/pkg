@@ -85,9 +85,19 @@ struct ProductionChannelRefresh {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl ChannelRefreshDispatch for ProductionChannelRefresh {
-    fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode> {
+    fn refresh(
+        &self,
+        mode: pkg_nix::ChannelRefreshMode,
+    ) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode> {
         self.runtime
-            .block_on(self.service.refresh_with_sequence())
+            .block_on(async {
+                match mode {
+                    pkg_nix::ChannelRefreshMode::Check => self.service.check_with_sequence().await,
+                    pkg_nix::ChannelRefreshMode::Apply | pkg_nix::ChannelRefreshMode::Force => {
+                        self.service.refresh_with_sequence().await
+                    }
+                }
+            })
             .map(|(update, sequence)| {
                 ChannelRefreshReport::new(update == BuildAuthorityUpdate::Updated, sequence)
             })

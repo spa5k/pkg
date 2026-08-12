@@ -37,6 +37,11 @@ impl RollbackEdit {
 }
 
 impl LifecycleEdit {
+    /// Pairs one validated lifecycle state with its public transaction result.
+    #[must_use]
+    pub(crate) const fn new(state: LifecycleState, result: CommandResult) -> Self {
+        Self { state, result }
+    }
     /// Coherent next manifest/lock state that still requires generation commit.
     #[must_use]
     pub const fn state(&self) -> &LifecycleState {

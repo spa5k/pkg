@@ -94,8 +94,8 @@ pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildRootPublicationErrorCode, CacheInstallErrorCode, ChannelRefreshErrorCode,
-    ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode,
-    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    ChannelRefreshMode, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, FrameError,
+    FrameErrorCode, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
     GenerationRootTransitionErrorCode, InstallDownloadProgress, ProductFrameCodec,
     RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
     RepairGenerationStatus,

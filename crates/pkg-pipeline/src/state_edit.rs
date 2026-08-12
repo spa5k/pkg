@@ -15,6 +15,8 @@ use crate::{CandidateGeneration, CommitError, PreparedGeneration};
 /// Product provenance recorded for a state-only generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateEditKind {
+    /// Advance accepted metadata without changing any exact realization.
+    Update,
     /// Replace selected exact realizations with authenticated current-channel evidence.
     Upgrade,
     /// Remove one or more selectors.
@@ -28,6 +30,7 @@ pub enum StateEditKind {
 impl StateEditKind {
     const fn as_str(self) -> &'static str {
         match self {
+            Self::Update => "update",
             Self::Upgrade => "upgrade",
             Self::Remove => "remove",
             Self::Pin => "pin",

@@ -12,8 +12,8 @@ use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview,
     BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode, CacheInstallErrorCode,
     CacheInstallOutcome, CatalogInfoReport, CatalogInfoRequest, CatalogSearchReport,
-    CatalogSearchRequest, ChannelRefreshErrorCode, ChannelRefreshReport, CliBrokerRequest,
-    CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
+    CatalogSearchRequest, ChannelRefreshErrorCode, ChannelRefreshMode, ChannelRefreshReport,
+    CliBrokerRequest, CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
     GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
     InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
     NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RepairGenerationErrorCode,
@@ -235,7 +235,10 @@ pub trait ChannelRefreshDispatch: Send + Sync {
     ///
     /// Returns only sanitized network, verification, contention, or service
     /// failure classes.
-    fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode>;
+    fn refresh(
+        &self,
+        mode: ChannelRefreshMode,
+    ) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode>;
 }
 
 /// Closed production repair capability installed by the broker service.
@@ -632,8 +635,8 @@ fn dispatch_request_with_progress(
                 &mut download_progress,
             ))
         }
-        CliBrokerRequest::RefreshChannel(handle) => {
-            dispatch_channel_refresh(caller, authorities.refresh, &handle)
+        CliBrokerRequest::RefreshChannel(handle, mode) => {
+            dispatch_channel_refresh(caller, authorities.refresh, &handle, mode)
         }
         CliBrokerRequest::SearchCatalog(handle, request) => {
             dispatch_catalog_search(caller, authorities.build, &handle, &request)
@@ -728,9 +731,10 @@ fn dispatch_channel_refresh(
     caller: &AuthenticatedCaller,
     refresh: Option<&dyn ChannelRefreshDispatch>,
     handle: &OperationHandle,
+    mode: ChannelRefreshMode,
 ) -> Result<CliBrokerResponse, ()> {
     caller.authorize_channel_refresh(handle).map_err(|_| ())?;
-    Ok(match refresh.ok_or(())?.refresh() {
+    Ok(match refresh.ok_or(())?.refresh(mode) {
         Ok(report) => CliBrokerResponse::ChannelRefreshed(report),
         Err(code) => CliBrokerResponse::ChannelRefreshRefused(code),
     })
@@ -1492,7 +1496,10 @@ mod tests {
     struct TestChannelRefresh(Result<ChannelRefreshReport, ChannelRefreshErrorCode>);
 
     impl ChannelRefreshDispatch for TestChannelRefresh {
-        fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode> {
+        fn refresh(
+            &self,
+            _mode: ChannelRefreshMode,
+        ) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode> {
             self.0
         }
     }
@@ -1588,7 +1595,7 @@ mod tests {
         assert_eq!(
             dispatch_request_with_refresh(
                 &caller,
-                CliBrokerRequest::RefreshChannel(refresh_handle.clone()),
+                CliBrokerRequest::RefreshChannel(refresh_handle.clone(), ChannelRefreshMode::Apply,),
                 &refresh,
             ),
             Ok(CliBrokerResponse::ChannelRefreshed(report))
@@ -1609,7 +1616,7 @@ mod tests {
         assert_eq!(
             dispatch_request_with_refresh(
                 &caller,
-                CliBrokerRequest::RefreshChannel(doctor_handle.clone()),
+                CliBrokerRequest::RefreshChannel(doctor_handle.clone(), ChannelRefreshMode::Apply,),
                 &refresh,
             ),
             Err(())
@@ -1638,7 +1645,7 @@ mod tests {
         assert_eq!(
             dispatch_request_with_refresh(
                 &caller,
-                CliBrokerRequest::RefreshChannel(handle.clone()),
+                CliBrokerRequest::RefreshChannel(handle.clone(), ChannelRefreshMode::Apply),
                 &TestChannelRefresh(Err(ChannelRefreshErrorCode::Verification)),
             ),
             Ok(CliBrokerResponse::ChannelRefreshRefused(

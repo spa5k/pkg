@@ -118,6 +118,32 @@ impl AuthenticatedBuildAuthority {
         Ok(BuildAuthorityUpdate::Updated)
     }
 
+    /// Validates whether an authenticated channel/index pair would change the
+    /// live authority without publishing either value.
+    ///
+    /// # Errors
+    ///
+    /// Refuses mismatched index identity, rollback, descriptor reuse, policy
+    /// downgrade, or unavailable authority state.
+    pub fn check_with_index(
+        &self,
+        channel: &VerifiedChannel,
+        index: &VerifiedIndex,
+    ) -> Result<BuildAuthorityUpdate, BuildAuthorityError> {
+        if !index.matches_channel(channel) {
+            return Err(BuildAuthorityError::new(
+                BuildAuthorityErrorCode::IndexMismatch,
+            ));
+        }
+        let candidate = ChannelAuthorityIdentity::from_channel(channel);
+        let state = self.lock_state()?;
+        let update = compare_channel_identity(state.identity, candidate)?;
+        if update == BuildAuthorityUpdate::Unchanged && state.index.as_ref() != Some(index) {
+            return Ok(BuildAuthorityUpdate::Updated);
+        }
+        Ok(update)
+    }
+
     /// Publishes a verified channel monotonically and drops any older index.
     ///
     /// # Errors

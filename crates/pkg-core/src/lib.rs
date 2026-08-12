@@ -37,6 +37,7 @@ pub mod remove;
 pub mod selector;
 pub mod state;
 pub mod system;
+pub mod update;
 pub mod upgrade;
 pub mod version;
 
@@ -65,6 +66,7 @@ pub use selector::{
     SelectorInput,
 };
 pub use system::{Architecture, Os, System, SystemError};
+pub use update::{ChannelUpdateError, advance_channel};
 pub use version::{
     PackageVersion, VersionBound, VersionError, VersionPreference, VersionRange,
     compare_nix_versions,

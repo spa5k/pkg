@@ -109,6 +109,38 @@ impl AuthenticatedBuildAuthorityService {
             .map(|update| (update, sequence))
             .map_err(|_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Service))
     }
+
+    /// Authenticates and compares the newest channel/index pair without
+    /// accepting it into durable state or publishing live broker authority.
+    ///
+    /// # Errors
+    ///
+    /// Refuses the same network, verification, rollback, and service failures
+    /// as an applying refresh.
+    pub async fn check_with_sequence(
+        &self,
+    ) -> Result<(BuildAuthorityUpdate, ChannelSequence), BuildAuthorityRefreshError> {
+        let system = production_native_system().map_err(|_| {
+            BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Service)
+        })?;
+        let refresh = self
+            .channel
+            .check_with_index(system, |verified_channel, target| {
+                if target.system() != system {
+                    return Err(());
+                }
+                verify_index_artifact(target.bytes(), verified_channel, system).map_err(|_| ())
+            })
+            .await
+            .map_err(map_channel_error)?;
+        let (outcome, index) = refresh.into_parts();
+        let verified_channel = into_channel(outcome);
+        let sequence = verified_channel.sequence();
+        self.authority
+            .check_with_index(&verified_channel, &index)
+            .map(|update| (update, sequence))
+            .map_err(|_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Service))
+    }
 }
 
 fn into_channel(outcome: RefreshOutcome) -> pkg_channel::VerifiedChannel {

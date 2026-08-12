@@ -894,9 +894,10 @@ impl BrokerLifecycleClient {
     pub fn refresh_channel(
         &mut self,
         handle: OperationHandle,
+        mode: pkg_nix::ChannelRefreshMode,
     ) -> Result<ChannelRefreshReport, BrokerClientError> {
         match self.transact_with_timeout(
-            &CliBrokerRequest::RefreshChannel(handle),
+            &CliBrokerRequest::RefreshChannel(handle, mode),
             LONG_RUNNING_RESPONSE_TIMEOUT,
         )? {
             CliBrokerResponse::ChannelRefreshed(report) => Ok(report),
@@ -1956,13 +1957,19 @@ mod tests {
         )?)?;
         let mut client = BrokerLifecycleClient::from_stream(client);
 
-        assert_eq!(client.refresh_channel(handle.clone())?, report);
+        assert_eq!(
+            client.refresh_channel(handle.clone(), pkg_nix::ChannelRefreshMode::Check)?,
+            report
+        );
         let deadline = Instant::now()
             .checked_add(RESPONSE_TIMEOUT)
             .ok_or_else(|| io::Error::other("deadline overflow"))?;
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
-            (1, CliBrokerRequest::RefreshChannel(handle))
+            (
+                1,
+                CliBrokerRequest::RefreshChannel(handle, pkg_nix::ChannelRefreshMode::Check)
+            )
         );
         Ok(())
     }
@@ -1980,7 +1987,9 @@ mod tests {
         )?)?;
         let mut client = BrokerLifecycleClient::from_stream(client);
 
-        let error = client.refresh_channel(handle.clone()).unwrap_err();
+        let error = client
+            .refresh_channel(handle.clone(), pkg_nix::ChannelRefreshMode::Force)
+            .unwrap_err();
         assert_eq!(
             error.code(),
             BrokerClientErrorCode::ChannelRefreshVerification
@@ -1991,7 +2000,10 @@ mod tests {
             .ok_or_else(|| io::Error::other("deadline overflow"))?;
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
-            (1, CliBrokerRequest::RefreshChannel(handle))
+            (
+                1,
+                CliBrokerRequest::RefreshChannel(handle, pkg_nix::ChannelRefreshMode::Force)
+            )
         );
         Ok(())
     }

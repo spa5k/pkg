@@ -27,14 +27,15 @@ use pkg_core::state::CollisionPolicy as StateCollisionPolicy;
 use pkg_core::upgrade::{UpgradeScope, select_upgrade};
 use pkg_core::{
     History, OutputName, OutputSelection, PackageSelector, PinAction, SelectorId, SelectorInput,
-    SourceRevision, VersionPreference,
+    SourceRevision, VersionPreference, advance_channel,
 };
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome,
-    CatalogInfoRequest, CatalogSearchRequest, Digest, GenerationRootAttestationErrorCode,
-    InstallEvidence, MaintenanceAdapter, MaintenanceError, OperationHandle, RemoveRootSetRequest,
-    RepairGenerationRequest, RepairGenerationStatus, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
+    CatalogInfoRequest, CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest,
+    GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter, MaintenanceError,
+    OperationHandle, RemoveRootSetRequest, RepairGenerationRequest, RepairGenerationStatus,
+    RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetAttestationRequest,
+    RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
@@ -286,15 +287,35 @@ impl CoreOperations for LocalStateOperations {
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
-        if args.check() || args.force() || policy.dry_run() {
-            return Err(CommandError::new(
-                ExitCode::Config,
-                "the requested metadata refresh mode is not available",
-                "run `pkg update` without --check, --force, or --dry-run",
-            ));
-        }
+        let mode = if args.check() || policy.dry_run() {
+            ChannelRefreshMode::Check
+        } else if args.force() {
+            ChannelRefreshMode::Force
+        } else {
+            ChannelRefreshMode::Apply
+        };
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        refresh_channel_metadata(&mut broker)
+        let report = refresh_channel_metadata(&mut broker, mode)?;
+        if mode == ChannelRefreshMode::Check {
+            return channel_refresh_result(report, mode, false);
+        }
+        let layout = self.layout()?;
+        if layout
+            .current_generation()
+            .map_err(|_| mutation_failed())?
+            .is_none()
+        {
+            return channel_refresh_result(report, mode, false);
+        }
+        let current = self.active()?.state().manifest().channel_seq();
+        if report.sequence() == current {
+            return channel_refresh_result(report, mode, false);
+        }
+        let result = channel_refresh_result(report, mode, true)?;
+        self.commit_state_edit(StateEditKind::Update, |state| {
+            let state = advance_channel(state, report.sequence()).map_err(|_| mutation_failed())?;
+            Ok(LifecycleEdit::new(state, result))
+        })
     }
 
     fn upgrade(
@@ -2172,42 +2193,69 @@ fn channel_refresh_error_fields(
 
 fn refresh_channel_metadata(
     broker: &mut BrokerLifecycleClient,
-) -> Result<CommandResult, CommandError> {
+    mode: ChannelRefreshMode,
+) -> Result<ChannelRefreshReport, CommandError> {
     let handle = broker
         .begin(BrokerOperationKind::Refresh)
         .map_err(broker_error)?;
     let result = (|| {
         let report = broker
-            .refresh_channel(handle.clone())
+            .refresh_channel(handle.clone(), mode)
             .map_err(channel_refresh_error)?;
         broker.complete(handle.clone()).map_err(broker_error)?;
-        CommandResult::new(
-            if report.updated() {
-                format!(
-                    "Channel metadata updated to sequence {}.",
-                    report.sequence()
-                )
-            } else {
-                format!(
-                    "Channel metadata is current at sequence {}.",
-                    report.sequence()
-                )
-            },
-            Map::from_iter([
-                ("updated".into(), json!(report.updated())),
-                (
-                    "channelSequence".into(),
-                    json!(report.sequence().get().get()),
-                ),
-            ]),
-            Vec::new(),
-        )
-        .map_err(|_| mutation_failed())
+        Ok(report)
     })();
     if result.is_err() {
         let _ = broker.cancel(handle);
     }
     result
+}
+
+fn channel_refresh_result(
+    report: ChannelRefreshReport,
+    mode: ChannelRefreshMode,
+    state_updated: bool,
+) -> Result<CommandResult, CommandError> {
+    let message = if mode == ChannelRefreshMode::Check {
+        if report.updated() {
+            format!(
+                "New channel metadata is available at sequence {}.",
+                report.sequence()
+            )
+        } else {
+            format!(
+                "Channel metadata is current at sequence {}.",
+                report.sequence()
+            )
+        }
+    } else if report.updated() {
+        format!(
+            "Channel metadata updated to sequence {}.",
+            report.sequence()
+        )
+    } else {
+        format!(
+            "Channel metadata is current at sequence {}.",
+            report.sequence()
+        )
+    };
+    CommandResult::new(
+        message,
+        Map::from_iter([
+            ("updated".into(), json!(report.updated())),
+            (
+                "checkedOnly".into(),
+                json!(mode == ChannelRefreshMode::Check),
+            ),
+            ("stateUpdated".into(), json!(state_updated)),
+            (
+                "channelSequence".into(),
+                json!(report.sequence().get().get()),
+            ),
+        ]),
+        Vec::new(),
+    )
+    .map_err(|_| mutation_failed())
 }
 
 fn mutation_failed() -> CommandError {
@@ -2876,7 +2924,7 @@ mod tests {
             let (request_id, request) = read_request(&mut server);
             assert_eq!(
                 request,
-                CliBrokerRequest::RefreshChannel(server_handle.clone())
+                CliBrokerRequest::RefreshChannel(server_handle.clone(), ChannelRefreshMode::Apply,)
             );
             write_response(
                 &mut server,
@@ -2894,10 +2942,11 @@ mod tests {
         });
         let mut broker = BrokerLifecycleClient::from_stream(client);
 
-        let result = refresh_channel_metadata(&mut broker);
+        let result = refresh_channel_metadata(&mut broker, ChannelRefreshMode::Apply);
         release_tx.send(()).unwrap();
         worker.join().unwrap();
-        let result = result.unwrap();
+        let report = result.unwrap();
+        let result = channel_refresh_result(report, ChannelRefreshMode::Apply, false).unwrap();
 
         assert_eq!(result.fields()["updated"], Value::Bool(true));
         assert_eq!(result.fields()["channelSequence"], Value::from(43));
