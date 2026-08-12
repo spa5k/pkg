@@ -616,6 +616,15 @@ impl AuthenticatedCaller {
         self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Refresh])
     }
 
+    /// Authorizes one read-only query against broker-owned catalog authority.
+    ///
+    /// The request can contain only bounded product query text. It cannot
+    /// select an index, channel, system, source, URL, or Nix evaluation input.
+    pub fn authorize_catalog_query(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Resolve])
+    }
+
     /// Retains one broker-derived private plan and returns only its public preview.
     ///
     /// This is an in-broker API, not an RPC shape: callers never provide raw
@@ -3657,6 +3666,13 @@ mod tests {
 
         let refresh = caller.begin(BrokerOperationKind::Refresh).unwrap();
         caller.authorize_channel_refresh(&refresh).unwrap();
+        assert_eq!(
+            caller.authorize_catalog_query(&refresh).unwrap_err().code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+
+        let resolve = caller.begin(BrokerOperationKind::Resolve).unwrap();
+        caller.authorize_catalog_query(&resolve).unwrap();
 
         let build = caller.begin(BrokerOperationKind::Build).unwrap();
         assert_eq!(

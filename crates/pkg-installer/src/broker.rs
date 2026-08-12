@@ -11,7 +11,8 @@ use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview,
     BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode, CacheInstallErrorCode,
-    CacheInstallOutcome, ChannelRefreshErrorCode, ChannelRefreshReport, CliBrokerRequest,
+    CacheInstallOutcome, CatalogInfoReport, CatalogInfoRequest, CatalogSearchReport,
+    CatalogSearchRequest, ChannelRefreshErrorCode, ChannelRefreshReport, CliBrokerRequest,
     CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
     GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
     InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
@@ -223,6 +224,10 @@ pub trait ChannelRefreshDispatch: Send + Sync {
 }
 
 trait BuildAuthorityDispatch: Send + Sync {
+    fn search(&self, request: &CatalogSearchRequest) -> Result<CatalogSearchReport, ()>;
+
+    fn info(&self, request: &CatalogInfoRequest) -> Result<CatalogInfoReport, ()>;
+
     fn acquire(
         &self,
         selectors: Vec<PackageSelector>,
@@ -345,6 +350,14 @@ impl RootAuthorityDispatch for RootHelperClient {
 }
 
 impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
+    fn search(&self, request: &CatalogSearchRequest) -> Result<CatalogSearchReport, ()> {
+        self.search_catalog(request).map_err(|_| ())
+    }
+
+    fn info(&self, request: &CatalogInfoRequest) -> Result<CatalogInfoReport, ()> {
+        self.info_catalog(request).map_err(|_| ())
+    }
+
     fn acquire(
         &self,
         selectors: Vec<PackageSelector>,
@@ -504,26 +517,20 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::EvaluateDerivation(handle, request) => {
             dispatch_evaluation(caller, authorities.adapter, &handle, &request)
         }
-        CliBrokerRequest::PathInfo(handle, path) => {
-            caller
-                .authorize_adapter_call(&handle, MethodKind::PathInfo)
-                .map_err(|_| ())?;
-            Ok(adapter_response(
-                MethodKind::PathInfo,
-                authorities.adapter.ok_or(())?.path_info(&path),
-                CliBrokerResponse::PathInfo,
-            ))
-        }
-        CliBrokerRequest::Substitute(handle, path) => {
-            caller
-                .authorize_adapter_call(&handle, MethodKind::Substitute)
-                .map_err(|_| ())?;
-            Ok(adapter_response(
-                MethodKind::Substitute,
-                authorities.adapter.ok_or(())?.substitute(&path),
-                CliBrokerResponse::Substitute,
-            ))
-        }
+        CliBrokerRequest::PathInfo(handle, path) => dispatch_path_query(
+            caller,
+            authorities.adapter,
+            &handle,
+            MethodKind::PathInfo,
+            &path,
+        ),
+        CliBrokerRequest::Substitute(handle, path) => dispatch_path_query(
+            caller,
+            authorities.adapter,
+            &handle,
+            MethodKind::Substitute,
+            &path,
+        ),
         CliBrokerRequest::ApproveBuild(handle, approval) => {
             let timestamp = broker_timestamp()?;
             caller
@@ -585,6 +592,12 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::RefreshChannel(handle) => {
             dispatch_channel_refresh(caller, authorities.refresh, &handle)
         }
+        CliBrokerRequest::SearchCatalog(handle, request) => {
+            dispatch_catalog_search(caller, authorities.build, &handle, &request)
+        }
+        CliBrokerRequest::InfoCatalog(handle, request) => {
+            dispatch_catalog_info(caller, authorities.build, &handle, &request)
+        }
     }
 }
 
@@ -602,6 +615,31 @@ fn dispatch_evaluation(
         adapter.ok_or(())?.evaluate_derivation(request),
         CliBrokerResponse::DerivationPlan,
     ))
+}
+
+fn dispatch_path_query(
+    caller: &AuthenticatedCaller,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+    handle: &OperationHandle,
+    method: MethodKind,
+    path: &pkg_nix::StorePath,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .authorize_adapter_call(handle, method)
+        .map_err(|_| ())?;
+    match method {
+        MethodKind::PathInfo => Ok(adapter_response(
+            method,
+            adapter.ok_or(())?.path_info(path),
+            CliBrokerResponse::PathInfo,
+        )),
+        MethodKind::Substitute => Ok(adapter_response(
+            method,
+            adapter.ok_or(())?.substitute(path),
+            CliBrokerResponse::Substitute,
+        )),
+        _ => Err(()),
+    }
 }
 
 fn dispatch_verify(
@@ -630,6 +668,36 @@ fn dispatch_channel_refresh(
         Ok(report) => CliBrokerResponse::ChannelRefreshed(report),
         Err(code) => CliBrokerResponse::ChannelRefreshRefused(code),
     })
+}
+
+fn dispatch_catalog_search(
+    caller: &AuthenticatedCaller,
+    authority: Option<&dyn BuildAuthorityDispatch>,
+    handle: &OperationHandle,
+    request: &CatalogSearchRequest,
+) -> Result<CliBrokerResponse, ()> {
+    caller.authorize_catalog_query(handle).map_err(|_| ())?;
+    Ok(authority
+        .ok_or(())?
+        .search(request)
+        .map_or(CliBrokerResponse::CatalogSearchRefused, |report| {
+            CliBrokerResponse::CatalogSearch(report)
+        }))
+}
+
+fn dispatch_catalog_info(
+    caller: &AuthenticatedCaller,
+    authority: Option<&dyn BuildAuthorityDispatch>,
+    handle: &OperationHandle,
+    request: &CatalogInfoRequest,
+) -> Result<CliBrokerResponse, ()> {
+    caller.authorize_catalog_query(handle).map_err(|_| ())?;
+    Ok(authority
+        .ok_or(())?
+        .info(request)
+        .map_or(CliBrokerResponse::CatalogInfoRefused, |report| {
+            CliBrokerResponse::CatalogInfo(report)
+        }))
 }
 
 fn dispatch_version(
@@ -1264,6 +1332,56 @@ mod tests {
     struct TestAuthority(BuildPlan);
 
     impl BuildAuthorityDispatch for TestAuthority {
+        fn search(&self, request: &CatalogSearchRequest) -> Result<CatalogSearchReport, ()> {
+            if request.query() != "ripgrep" {
+                return Err(());
+            }
+            CatalogSearchReport::new(
+                ChannelSequence::from_u64(42).unwrap(),
+                vec![
+                    pkg_nix::CatalogPackageSummary::new(
+                        "ripgrep",
+                        "ripgrep",
+                        "14.1.1",
+                        "fast search",
+                        vec![String::from("MIT")],
+                        true,
+                        false,
+                    )
+                    .unwrap(),
+                ],
+            )
+            .ok_or(())
+        }
+
+        fn info(&self, request: &CatalogInfoRequest) -> Result<CatalogInfoReport, ()> {
+            let lookup = if request.selector() == "ripgrep" {
+                let summary = pkg_nix::CatalogPackageSummary::new(
+                    "ripgrep",
+                    "ripgrep",
+                    "14.1.1",
+                    "fast search",
+                    vec![String::from("MIT")],
+                    true,
+                    false,
+                )
+                .unwrap();
+                let package = pkg_nix::CatalogPackageInfo::new(
+                    summary,
+                    "https://example.invalid/ripgrep",
+                    vec![String::from("out")],
+                    vec![String::from("linux-x86-64")],
+                    REVISION,
+                    "2026-08-12T00:00:00Z",
+                )
+                .unwrap();
+                pkg_nix::CatalogInfoLookup::Found(Box::new(package))
+            } else {
+                pkg_nix::CatalogInfoLookup::NotFound
+            };
+            CatalogInfoReport::new(ChannelSequence::from_u64(42).unwrap(), lookup).ok_or(())
+        }
+
         fn acquire(
             &self,
             selectors: Vec<PackageSelector>,
@@ -1393,6 +1511,90 @@ mod tests {
                 None,
             ),
             Ok(CliBrokerResponse::Cancelled)
+        );
+    }
+
+    #[test]
+    fn catalog_queries_require_resolve_authority_and_return_product_metadata() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let authority = TestAuthority(build_plan());
+        let handle = caller.begin(BrokerOperationKind::Resolve).unwrap();
+
+        let response = dispatch_request(
+            &caller,
+            CliBrokerRequest::SearchCatalog(
+                handle.clone(),
+                CatalogSearchRequest::new("ripgrep", 25, false, None).unwrap(),
+            ),
+            None,
+            None,
+            Some(&authority),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(response, CliBrokerResponse::CatalogSearch(_)));
+        let CliBrokerResponse::CatalogSearch(report) = response else {
+            return;
+        };
+        assert_eq!(report.results()[0].package(), "ripgrep");
+
+        let response = dispatch_request(
+            &caller,
+            CliBrokerRequest::InfoCatalog(
+                handle.clone(),
+                CatalogInfoRequest::new("ripgrep").unwrap(),
+            ),
+            None,
+            None,
+            Some(&authority),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            response,
+            CliBrokerResponse::CatalogInfo(ref report)
+                if matches!(report.lookup(), pkg_nix::CatalogInfoLookup::Found(_))
+        ));
+
+        let doctor = caller.begin(BrokerOperationKind::Doctor).unwrap();
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::InfoCatalog(
+                    doctor.clone(),
+                    CatalogInfoRequest::new("ripgrep").unwrap(),
+                ),
+                None,
+                None,
+                Some(&authority),
+                None,
+            ),
+            Err(())
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Cancel(doctor),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Cancelled)
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Complete(handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Completed)
         );
     }
 

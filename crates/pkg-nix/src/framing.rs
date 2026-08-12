@@ -11,6 +11,10 @@ use pkg_core::version::{PackageVersion, VersionBound, VersionPreference, Version
 use serde::{Deserialize, Serialize};
 
 use crate::broker::{BrokerOperationKind, OperationHandle, OperationStatus};
+use crate::catalog::{
+    CatalogInfoLookup, CatalogInfoReport, CatalogInfoRequest, CatalogPackageInfo,
+    CatalogPackageSummary, CatalogSearchReport, CatalogSearchRequest,
+};
 use crate::maintenance::{
     GenerationId, MaintenanceCapability, RemoveRootSetRequest, RepairMode, RepairOutcomeKind,
     RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
@@ -125,6 +129,10 @@ pub enum CliBrokerRequest {
     AcquireInstall(OperationHandle, Vec<PackageSelector>),
     /// Refresh the broker-owned signed channel and native index.
     RefreshChannel(OperationHandle),
+    /// Search the broker-owned verified native index.
+    SearchCatalog(OperationHandle, CatalogSearchRequest),
+    /// Inspect one package in the broker-owned verified native index.
+    InfoCatalog(OperationHandle, CatalogInfoRequest),
 }
 
 /// One sanitized, authority-produced cache download counter.
@@ -236,6 +244,14 @@ pub enum CliBrokerResponse {
     ChannelRefreshed(ChannelRefreshReport),
     /// Signed channel refresh was refused without changing live authority.
     ChannelRefreshRefused(ChannelRefreshErrorCode),
+    /// Ranked product metadata from the broker-owned verified index.
+    CatalogSearch(CatalogSearchReport),
+    /// One product metadata lookup from the broker-owned verified index.
+    CatalogInfo(CatalogInfoReport),
+    /// The authenticated native index was unavailable or refused search.
+    CatalogSearchRefused,
+    /// The authenticated native index was unavailable or refused info lookup.
+    CatalogInfoRefused,
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
 }
@@ -677,6 +693,23 @@ impl ProductFrameCodec {
                     handle: handle.as_str(),
                 })?,
             ),
+            CliBrokerRequest::SearchCatalog(handle, request) => (
+                28,
+                encode_json(&CatalogSearchRequestWire {
+                    handle: handle.as_str(),
+                    query: request.query(),
+                    limit: request.limit(),
+                    exact: request.exact(),
+                    license: request.license(),
+                })?,
+            ),
+            CliBrokerRequest::InfoCatalog(handle, request) => (
+                29,
+                encode_json(&CatalogInfoRequestWire {
+                    handle: handle.as_str(),
+                    selector: request.selector(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -795,6 +828,27 @@ impl ProductFrameCodec {
                     parse_handle(&wire.handle)?,
                     GenerationId::new(&wire.generation)
                         .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                )
+            }
+            28 => {
+                let wire: CatalogSearchRequestOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::SearchCatalog(
+                    parse_handle(&wire.handle)?,
+                    CatalogSearchRequest::new(
+                        &wire.query,
+                        wire.limit,
+                        wire.exact,
+                        wire.license.as_deref(),
+                    )
+                    .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                )
+            }
+            29 => {
+                let wire: CatalogInfoRequestOwnedWire = decode_json(frame.payload)?;
+                CliBrokerRequest::InfoCatalog(
+                    parse_handle(&wire.handle)?,
+                    CatalogInfoRequest::new(&wire.selector)
+                        .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?,
                 )
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
@@ -963,6 +1017,26 @@ impl ProductFrameCodec {
                 27,
                 encode_json(&ChannelRefreshFailureWire {
                     error: channel_refresh_error_name(*code),
+                })?,
+            ),
+            CliBrokerResponse::CatalogSearch(report) => (
+                28,
+                encode_json(&CatalogSearchResponseWire::from_report(report))?,
+            ),
+            CliBrokerResponse::CatalogInfo(report) => (
+                29,
+                encode_json(&CatalogInfoResponseWire::from_report(report))?,
+            ),
+            CliBrokerResponse::CatalogSearchRefused => (
+                28,
+                encode_json(&CatalogQueryFailureWire {
+                    error: "unavailable",
+                })?,
+            ),
+            CliBrokerResponse::CatalogInfoRefused => (
+                29,
+                encode_json(&CatalogQueryFailureWire {
+                    error: "unavailable",
                 })?,
             ),
             CliBrokerResponse::AdapterFailure(method, code) => (
@@ -1157,6 +1231,24 @@ impl ProductFrameCodec {
                         wire.updated,
                         sequence,
                     ))
+                }
+            }
+            28 => {
+                if decode_catalog_query_failure(frame.payload)? {
+                    CliBrokerResponse::CatalogSearchRefused
+                } else {
+                    CliBrokerResponse::CatalogSearch(
+                        decode_json::<CatalogSearchResponseOwnedWire>(frame.payload)?.promote()?,
+                    )
+                }
+            }
+            29 => {
+                if decode_catalog_query_failure(frame.payload)? {
+                    CliBrokerResponse::CatalogInfoRefused
+                } else {
+                    CliBrokerResponse::CatalogInfo(
+                        decode_json::<CatalogInfoResponseOwnedWire>(frame.payload)?.promote()?,
+                    )
                 }
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
@@ -1551,6 +1643,16 @@ fn decode_channel_refresh_failure(
     parse_channel_refresh_error(&wire.error).map(Some)
 }
 
+fn decode_catalog_query_failure(bytes: &[u8]) -> Result<bool, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<CatalogQueryFailureOwnedWire>(bytes) else {
+        return Ok(false);
+    };
+    if wire.error != "unavailable" {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    Ok(true)
+}
+
 const fn channel_refresh_error_name(code: ChannelRefreshErrorCode) -> &'static str {
     match code {
         ChannelRefreshErrorCode::Network => "network",
@@ -1825,6 +1927,266 @@ struct ChannelRefreshFailureWire<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChannelRefreshFailureOwnedWire {
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogSearchRequestWire<'a> {
+    handle: &'a str,
+    query: &'a str,
+    limit: u16,
+    exact: bool,
+    license: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogSearchRequestOwnedWire {
+    handle: String,
+    query: String,
+    limit: u16,
+    exact: bool,
+    license: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogInfoRequestWire<'a> {
+    handle: &'a str,
+    selector: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogInfoRequestOwnedWire {
+    handle: String,
+    selector: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogSummaryWire<'a> {
+    package: &'a str,
+    name: &'a str,
+    version: &'a str,
+    description: &'a str,
+    licenses: &'a [String],
+    available: bool,
+    broken: bool,
+}
+
+impl<'a> From<&'a CatalogPackageSummary> for CatalogSummaryWire<'a> {
+    fn from(value: &'a CatalogPackageSummary) -> Self {
+        Self {
+            package: value.package(),
+            name: value.name(),
+            version: value.version(),
+            description: value.description(),
+            licenses: value.licenses(),
+            available: value.available(),
+            broken: value.broken(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogSummaryOwnedWire {
+    package: String,
+    name: String,
+    version: String,
+    description: String,
+    licenses: Vec<String>,
+    available: bool,
+    broken: bool,
+}
+
+impl CatalogSummaryOwnedWire {
+    fn promote(self) -> Result<CatalogPackageSummary, FrameError> {
+        CatalogPackageSummary::new(
+            &self.package,
+            &self.name,
+            &self.version,
+            &self.description,
+            self.licenses,
+            self.available,
+            self.broken,
+        )
+        .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogSearchResponseWire<'a> {
+    sequence: u64,
+    results: Vec<CatalogSummaryWire<'a>>,
+}
+
+impl<'a> CatalogSearchResponseWire<'a> {
+    fn from_report(report: &'a CatalogSearchReport) -> Self {
+        Self {
+            sequence: report.sequence().get().get(),
+            results: report
+                .results()
+                .iter()
+                .map(CatalogSummaryWire::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogSearchResponseOwnedWire {
+    sequence: u64,
+    results: Vec<CatalogSummaryOwnedWire>,
+}
+
+impl CatalogSearchResponseOwnedWire {
+    fn promote(self) -> Result<CatalogSearchReport, FrameError> {
+        let sequence = ChannelSequence::from_u64(self.sequence)
+            .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?;
+        let results = self
+            .results
+            .into_iter()
+            .map(CatalogSummaryOwnedWire::promote)
+            .collect::<Result<Vec<_>, _>>()?;
+        CatalogSearchReport::new(sequence, results)
+            .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogPackageInfoWire<'a> {
+    summary: CatalogSummaryWire<'a>,
+    homepage: &'a str,
+    outputs: &'a [String],
+    platforms: &'a [String],
+    catalog_revision: &'a str,
+    catalog_generated_at: &'a str,
+}
+
+impl<'a> From<&'a CatalogPackageInfo> for CatalogPackageInfoWire<'a> {
+    fn from(value: &'a CatalogPackageInfo) -> Self {
+        Self {
+            summary: CatalogSummaryWire::from(value.summary()),
+            homepage: value.homepage(),
+            outputs: value.outputs(),
+            platforms: value.platforms(),
+            catalog_revision: value.catalog_revision(),
+            catalog_generated_at: value.catalog_generated_at(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogPackageInfoOwnedWire {
+    summary: CatalogSummaryOwnedWire,
+    homepage: String,
+    outputs: Vec<String>,
+    platforms: Vec<String>,
+    catalog_revision: String,
+    catalog_generated_at: String,
+}
+
+impl CatalogPackageInfoOwnedWire {
+    fn promote(self) -> Result<CatalogPackageInfo, FrameError> {
+        CatalogPackageInfo::new(
+            self.summary.promote()?,
+            &self.homepage,
+            self.outputs,
+            self.platforms,
+            &self.catalog_revision,
+            &self.catalog_generated_at,
+        )
+        .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogInfoResponseWire<'a> {
+    sequence: u64,
+    status: &'static str,
+    package: Option<CatalogPackageInfoWire<'a>>,
+    candidates: Vec<CatalogSummaryWire<'a>>,
+}
+
+impl<'a> CatalogInfoResponseWire<'a> {
+    fn from_report(report: &'a CatalogInfoReport) -> Self {
+        match report.lookup() {
+            CatalogInfoLookup::Found(package) => Self {
+                sequence: report.sequence().get().get(),
+                status: "found",
+                package: Some(CatalogPackageInfoWire::from(package.as_ref())),
+                candidates: Vec::new(),
+            },
+            CatalogInfoLookup::Ambiguous(candidates) => Self {
+                sequence: report.sequence().get().get(),
+                status: "ambiguous",
+                package: None,
+                candidates: candidates.iter().map(CatalogSummaryWire::from).collect(),
+            },
+            CatalogInfoLookup::NotFound => Self {
+                sequence: report.sequence().get().get(),
+                status: "not-found",
+                package: None,
+                candidates: Vec::new(),
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogInfoResponseOwnedWire {
+    sequence: u64,
+    status: String,
+    package: Option<CatalogPackageInfoOwnedWire>,
+    candidates: Vec<CatalogSummaryOwnedWire>,
+}
+
+impl CatalogInfoResponseOwnedWire {
+    fn promote(self) -> Result<CatalogInfoReport, FrameError> {
+        let sequence = ChannelSequence::from_u64(self.sequence)
+            .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?;
+        let lookup = match self.status.as_str() {
+            "found" if self.candidates.is_empty() => CatalogInfoLookup::Found(Box::new(
+                self.package
+                    .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?
+                    .promote()?,
+            )),
+            "ambiguous" if self.package.is_none() && !self.candidates.is_empty() => {
+                CatalogInfoLookup::Ambiguous(
+                    self.candidates
+                        .into_iter()
+                        .map(CatalogSummaryOwnedWire::promote)
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            }
+            "not-found" if self.package.is_none() && self.candidates.is_empty() => {
+                CatalogInfoLookup::NotFound
+            }
+            _ => return Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+        };
+        CatalogInfoReport::new(sequence, lookup)
+            .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogQueryFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogQueryFailureOwnedWire {
     error: String,
 }
 
@@ -3352,6 +3714,95 @@ mod tests {
         ] {
             let encoded = encode_frame(CHANNEL_CLI_BROKER, 27, 27, payload).unwrap();
             assert!(ProductFrameCodec::decode_cli_response(&encoded).is_err());
+        }
+    }
+
+    #[test]
+    fn catalog_frames_are_bounded_product_metadata_only() {
+        let handle = OperationHandle(format!("op_{}", "8".repeat(64)));
+        let request = CliBrokerRequest::SearchCatalog(
+            handle.clone(),
+            CatalogSearchRequest::new("ripgrep", 25, false, Some("MIT")).unwrap(),
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(28, &request).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        for forbidden in ["url", "system", "index", "nixpkgs", "store", "target"] {
+            assert!(
+                !wire.contains(forbidden),
+                "catalog request exposed {forbidden}"
+            );
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((28, request))
+        );
+
+        let summary = CatalogPackageSummary::new(
+            "ripgrep",
+            "ripgrep",
+            "14.1.1",
+            "fast search",
+            vec![String::from("MIT")],
+            true,
+            false,
+        )
+        .unwrap();
+        let search = CliBrokerResponse::CatalogSearch(
+            CatalogSearchReport::new(
+                ChannelSequence::from_u64(42).unwrap(),
+                vec![summary.clone()],
+            )
+            .unwrap(),
+        );
+        let encoded = ProductFrameCodec::encode_cli_response(28, &search).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((28, search))
+        );
+
+        let info = CatalogPackageInfo::new(
+            summary,
+            "https://example.invalid/ripgrep",
+            vec![String::from("out")],
+            vec![String::from("macos-apple-silicon")],
+            "0123456789abcdef0123456789abcdef01234567",
+            "2026-08-12T00:00:00Z",
+        )
+        .unwrap();
+        let response = CliBrokerResponse::CatalogInfo(
+            CatalogInfoReport::new(
+                ChannelSequence::from_u64(42).unwrap(),
+                CatalogInfoLookup::Found(Box::new(info)),
+            )
+            .unwrap(),
+        );
+        let encoded = ProductFrameCodec::encode_cli_response(29, &response).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((29, response))
+        );
+
+        for (method, payload) in [
+            (
+                28,
+                br#"{"handle":"bad","query":"ripgrep","limit":0,"exact":false,"license":null}"#
+                    .as_slice(),
+            ),
+            (
+                29,
+                br#"{"handle":"bad","selector":"bad\nselector"}"#.as_slice(),
+            ),
+            (28, br#"{"sequence":0,"results":[]}"#.as_slice()),
+            (
+                29,
+                br#"{"sequence":42,"status":"found","package":null,"candidates":[]}"#.as_slice(),
+            ),
+        ] {
+            let encoded = encode_frame(CHANNEL_CLI_BROKER, method, 30, payload).unwrap();
+            assert!(
+                ProductFrameCodec::decode_cli_request(&encoded).is_err()
+                    || ProductFrameCodec::decode_cli_response(&encoded).is_err()
+            );
         }
     }
 

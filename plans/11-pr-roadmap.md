@@ -1175,10 +1175,22 @@ flowchart TD
   caller authorization, atomic publication, production wiring, focused package
   tests, workspace diagnostics, strict Clippy, secret scanning, and independent
   P1 review pass. `pkg update --check`, `--force`, and `--dry-run` still refuse
-  explicitly as unsupported. Search, info, outdated, upgrade, repair command
-  wiring, clean-host e2e coverage, and those optional update modes remain open
-  PR-36 work.
-  the Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
+  explicitly as unsupported.
+  Production `pkg search` and default `pkg info` now query only the broker-owned
+  authenticated native index. Closed methods 28 and 29 require one caller-bound
+  live Resolve operation and accept only bounded display query or selector text,
+  result limits, exact-search mode, and an optional display license filter. The
+  CLI cannot supply index bytes, channel or system selection, repository or
+  trust controls, Nix expressions or options, targets, derivations, or store
+  paths. The response carries only bounded product metadata and the nonzero
+  authenticated channel sequence. Query reports remain below the private frame
+  ceiling even after JSON escaping, and queries read the current authority
+  snapshot without cloning the bounded index. Non-default `--channel` selection
+  and `pkg info --exact` still refuse explicitly. The complete affected library
+  suites, workspace diagnostics, formatting, strict Clippy, secret scanning,
+  and independent P1 review pass. Outdated, upgrade, repair command wiring,
+  clean-host e2e coverage, and optional update modes remain open PR-36 work.
+  The Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
   and supplementary memberships, serializes product installers with a root-only runtime lock, and
   limits rollback to attempt-owned identities with UID-bound replacement checks. Uncertain command

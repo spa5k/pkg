@@ -48,6 +48,7 @@ pub mod adapter;
 pub mod broker;
 pub mod build;
 pub mod build_cache;
+pub mod catalog;
 pub mod contract;
 pub mod error;
 pub mod framing;
@@ -75,6 +76,10 @@ pub use build::{
 pub use build_cache::{
     BuildCacheError, BuildCacheErrorCode, BuildCacheEvidence, BuildCacheProbe, BuildCacheSubject,
     CacheDownloadClosure, CachePathObservation, classify_build_cache,
+};
+pub use catalog::{
+    CatalogInfoLookup, CatalogInfoReport, CatalogInfoRequest, CatalogPackageInfo,
+    CatalogPackageSummary, CatalogSearchReport, CatalogSearchRequest,
 };
 pub use contract::{
     AcceptedFormats, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance, BuildReport,

@@ -3,6 +3,7 @@
 use serde_json::{Map, Value, json};
 
 use pkg_index::{IndexDocument, IndexQuery, InfoLookup, SearchOptions};
+use pkg_nix::{CatalogInfoLookup, CatalogInfoReport, CatalogPackageSummary, CatalogSearchReport};
 
 use crate::cli::{InfoArgs, SearchArgs};
 use crate::commands::execute::CommandResult;
@@ -149,7 +150,129 @@ pub fn info_index(
     .map_err(result_error)
 }
 
+/// Renders one broker-produced authenticated catalog search report.
+pub fn search_catalog_report(report: &CatalogSearchReport) -> Result<CommandResult, CommandError> {
+    let entries = report
+        .results()
+        .iter()
+        .map(catalog_summary_value)
+        .collect::<Vec<_>>();
+    let records = entries
+        .iter()
+        .filter_map(Value::as_object)
+        .map(|entry| {
+            let mut record = entry.clone();
+            record.insert("type".into(), json!("package"));
+            record
+        })
+        .collect();
+    CommandResult::new(
+        format!("{} package(s) found", entries.len()),
+        Map::from_iter([
+            (
+                "channelSequence".into(),
+                json!(report.sequence().get().get()),
+            ),
+            ("stale".into(), json!(false)),
+            ("entries".into(), Value::Array(entries)),
+        ]),
+        records,
+    )
+    .map_err(result_error)
+}
+
+/// Renders broker-produced authenticated package-info reports.
+pub fn info_catalog_reports(reports: &[CatalogInfoReport]) -> Result<CommandResult, CommandError> {
+    let sequence = reports.first().map(CatalogInfoReport::sequence);
+    if reports
+        .iter()
+        .any(|report| Some(report.sequence()) != sequence)
+    {
+        return Err(result_error(
+            crate::commands::execute::PublicResultError::InvalidValue,
+        ));
+    }
+    let mut entries = Vec::with_capacity(reports.len());
+    for report in reports {
+        match report.lookup() {
+            CatalogInfoLookup::Found(package) => {
+                let summary = package.summary();
+                entries.push(json!({
+                    "package": summary.package(),
+                    "name": summary.name(),
+                    "version": summary.version(),
+                    "description": summary.description(),
+                    "homepage": package.homepage(),
+                    "licenses": summary.licenses(),
+                    "outputs": package.outputs(),
+                    "outputsToInstall": null,
+                    "platforms": package.platforms(),
+                    "available": summary.available(),
+                    "broken": summary.broken(),
+                    "sourceRevision": package.catalog_revision(),
+                    "catalogGeneratedAt": package.catalog_generated_at(),
+                    "advisoryStatus": "unavailable",
+                    "installedSizeEstimateBytes": null,
+                    "installed": null,
+                    "pinned": null
+                }));
+            }
+            CatalogInfoLookup::Ambiguous(candidates) => {
+                return Err(CommandError::new(
+                    ExitCode::ResolveFailed,
+                    format!(
+                        "package selector is ambiguous across {} candidates",
+                        candidates.len()
+                    ),
+                    "use a canonical package id from `pkg search`",
+                ));
+            }
+            CatalogInfoLookup::NotFound => {
+                return Err(CommandError::new(
+                    ExitCode::ResolveFailed,
+                    "package was not found in the verified index",
+                    "run `pkg search` or `pkg update` and try again",
+                ));
+            }
+        }
+    }
+    let records = entries
+        .iter()
+        .filter_map(Value::as_object)
+        .map(|entry| {
+            let mut record = entry.clone();
+            record.insert("type".into(), json!("package_info"));
+            record
+        })
+        .collect();
+    CommandResult::new(
+        format!("{} package(s) inspected", entries.len()),
+        Map::from_iter([
+            (
+                "channelSequence".into(),
+                json!(sequence.map_or(0, |value| value.get().get())),
+            ),
+            ("stale".into(), json!(false)),
+            ("entries".into(), Value::Array(entries)),
+        ]),
+        records,
+    )
+    .map_err(result_error)
+}
+
 fn summary_value(summary: &pkg_index::PackageSummary) -> Value {
+    json!({
+        "package": summary.package(),
+        "name": summary.name(),
+        "version": summary.version(),
+        "description": summary.description(),
+        "licenses": summary.licenses(),
+        "available": summary.available(),
+        "broken": summary.broken()
+    })
+}
+
+fn catalog_summary_value(summary: &CatalogPackageSummary) -> Value {
     json!({
         "package": summary.package(),
         "name": summary.name(),

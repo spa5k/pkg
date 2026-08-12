@@ -75,6 +75,8 @@ pub enum BrokerClientErrorCode {
     ChannelRefreshBusy,
     /// Durable channel state or atomic authority publication is unavailable.
     ChannelRefreshServiceUnavailable,
+    /// The broker-owned authenticated catalog was unavailable or refused the query.
+    CatalogQueryRefused,
 }
 
 /// Redacted failure from the private broker connector.
@@ -858,6 +860,36 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Searches the broker-owned authenticated native catalog.
+    pub fn search_catalog(
+        &mut self,
+        handle: OperationHandle,
+        request: pkg_nix::CatalogSearchRequest,
+    ) -> Result<pkg_nix::CatalogSearchReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::SearchCatalog(handle, request))? {
+            CliBrokerResponse::CatalogSearch(report) => Ok(report),
+            CliBrokerResponse::CatalogSearchRefused => Err(BrokerClientError::new(
+                BrokerClientErrorCode::CatalogQueryRefused,
+            )),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
+    /// Inspects one selector through the broker-owned authenticated native catalog.
+    pub fn info_catalog(
+        &mut self,
+        handle: OperationHandle,
+        request: pkg_nix::CatalogInfoRequest,
+    ) -> Result<pkg_nix::CatalogInfoReport, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::InfoCatalog(handle, request))? {
+            CliBrokerResponse::CatalogInfo(report) => Ok(report),
+            CliBrokerResponse::CatalogInfoRefused => Err(BrokerClientError::new(
+                BrokerClientErrorCode::CatalogQueryRefused,
+            )),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     fn transact(
         &mut self,
         request: &CliBrokerRequest,
@@ -1097,9 +1129,8 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::ChannelRefreshNetwork
         | BrokerClientErrorCode::ChannelRefreshVerification
         | BrokerClientErrorCode::ChannelRefreshBusy
-        | BrokerClientErrorCode::ChannelRefreshServiceUnavailable => {
-            NixAdapterError::OperationFailed
-        }
+        | BrokerClientErrorCode::ChannelRefreshServiceUnavailable
+        | BrokerClientErrorCode::CatalogQueryRefused => NixAdapterError::OperationFailed,
     }
 }
 

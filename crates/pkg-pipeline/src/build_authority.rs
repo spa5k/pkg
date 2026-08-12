@@ -8,10 +8,12 @@ use std::{
 
 use pkg_channel::VerifiedChannel;
 use pkg_core::{ChannelSequence, PackageSelector, PolicyVersion};
-use pkg_index::VerifiedIndex;
+use pkg_index::{IndexQuery, InfoLookup, SearchOptions, VerifiedIndex};
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildPreview, CacheInstallAttempt, CacheInstallOutcome,
-    InstallDownloadProgress, NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
+    CatalogInfoLookup, CatalogInfoReport, CatalogInfoRequest, CatalogPackageInfo,
+    CatalogPackageSummary, CatalogSearchReport, CatalogSearchRequest, InstallDownloadProgress,
+    NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
 };
 
 use crate::{
@@ -161,6 +163,78 @@ impl AuthenticatedBuildAuthority {
         Ok(BuildAuthorityUpdate::Updated)
     }
 
+    /// Searches only the broker-owned verified native index.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an unavailable index, invalid bounded query, or metadata that
+    /// cannot fit the closed product response contract.
+    pub fn search_catalog(
+        &self,
+        request: &CatalogSearchRequest,
+    ) -> Result<CatalogSearchReport, BuildAuthorityError> {
+        let state = self.lock_state()?;
+        let index = state
+            .index
+            .as_ref()
+            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+        let options = SearchOptions::new(
+            request.query(),
+            usize::from(request.limit()),
+            request.exact(),
+            request.license(),
+        )
+        .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+        let response = IndexQuery::new(index.document(), false)
+            .search(&options)
+            .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+        let sequence = ChannelSequence::from_u64(response.channel_seq())
+            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+        let results = response
+            .results()
+            .iter()
+            .map(catalog_summary)
+            .collect::<Result<Vec<_>, _>>()?;
+        CatalogSearchReport::new(sequence, results)
+            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))
+    }
+
+    /// Inspects one selector only through the broker-owned verified native index.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an unavailable index, invalid selector, or metadata that cannot
+    /// fit the closed product response contract.
+    pub fn info_catalog(
+        &self,
+        request: &CatalogInfoRequest,
+    ) -> Result<CatalogInfoReport, BuildAuthorityError> {
+        let state = self.lock_state()?;
+        let index = state
+            .index
+            .as_ref()
+            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+        let response = IndexQuery::new(index.document(), false)
+            .info(request.selector())
+            .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+        let sequence = ChannelSequence::from_u64(response.channel_seq())
+            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+        let lookup = match response.lookup() {
+            InfoLookup::Found { package } => {
+                CatalogInfoLookup::Found(Box::new(catalog_info(package)?))
+            }
+            InfoLookup::Ambiguous { candidates } => CatalogInfoLookup::Ambiguous(
+                candidates
+                    .iter()
+                    .map(catalog_summary)
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            InfoLookup::NotFound { .. } => CatalogInfoLookup::NotFound,
+        };
+        CatalogInfoReport::new(sequence, lookup)
+            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))
+    }
+
     /// Prepares and installs a build using a short broker-owned authority snapshot.
     ///
     /// The mutex is released before host observation, Nix evaluation, or cache
@@ -296,6 +370,47 @@ impl AuthenticatedBuildAuthority {
     }
 }
 
+fn catalog_summary(
+    value: &pkg_index::PackageSummary,
+) -> Result<CatalogPackageSummary, BuildAuthorityError> {
+    CatalogPackageSummary::new(
+        value.package(),
+        value.name(),
+        value.version(),
+        value.description(),
+        value.licenses().to_vec(),
+        value.available(),
+        value.broken(),
+    )
+    .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))
+}
+
+fn catalog_info(value: &pkg_index::PackageInfo) -> Result<CatalogPackageInfo, BuildAuthorityError> {
+    let summary = CatalogPackageSummary::new(
+        value.package(),
+        value.name(),
+        value.version(),
+        value.description(),
+        value.licenses().to_vec(),
+        value.available(),
+        value.broken(),
+    )
+    .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
+    CatalogPackageInfo::new(
+        summary,
+        value.homepage(),
+        value.outputs().to_vec(),
+        value
+            .platforms()
+            .iter()
+            .map(|platform| (*platform).to_owned())
+            .collect(),
+        value.catalog_revision(),
+        value.catalog_generated_at(),
+    )
+    .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))
+}
+
 struct AuthorityState {
     identity: ChannelAuthorityIdentity,
     channel: VerifiedChannel,
@@ -358,6 +473,8 @@ pub enum BuildAuthorityErrorCode {
     IndexMismatch,
     /// The broker's in-memory authority could not be read safely.
     StateUnavailable,
+    /// The current authenticated native index or bounded query result was unavailable.
+    CatalogUnavailable,
     /// Authenticated planning or caller-bound installation refused.
     PreparationRefused,
     /// Cache-first acquisition or its broker lifecycle failed closed.

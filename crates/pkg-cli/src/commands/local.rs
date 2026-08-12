@@ -14,6 +14,7 @@ use crate::cli::{
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
+use crate::commands::query::{info_catalog_reports, search_catalog_report};
 use crate::commands::state::{
     LifecycleEdit, edit_pin_state, list_state, read_history, remove_state, rollback_state,
 };
@@ -26,10 +27,11 @@ use pkg_core::{
     SourceRevision, VersionPreference,
 };
 use pkg_nix::{
-    ApprovalSource, BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome, Digest,
-    GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter, MaintenanceError,
-    OperationHandle, RemoveRootSetRequest, RepairStorePathsReport, RepairStorePathsRequest,
-    RootSet, RootSetAttestationRequest, RootSetReport,
+    ApprovalSource, BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome,
+    CatalogInfoRequest, CatalogSearchRequest, Digest, GenerationRootAttestationErrorCode,
+    InstallEvidence, MaintenanceAdapter, MaintenanceError, OperationHandle, RemoveRootSetRequest,
+    RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetAttestationRequest,
+    RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
@@ -179,12 +181,43 @@ impl LocalStateOperations {
 }
 
 impl CoreOperations for LocalStateOperations {
-    fn search(&mut self, _args: &SearchArgs) -> Result<CommandResult, CommandError> {
-        Err(index_unavailable())
+    fn search(&mut self, args: &SearchArgs) -> Result<CommandResult, CommandError> {
+        if args.channel().is_some() {
+            return Err(CommandError::new(
+                ExitCode::ResolveFailed,
+                "the selected channel is not loaded",
+                "omit `--channel` or run `pkg update` for the current channel",
+            ));
+        }
+        let request =
+            CatalogSearchRequest::new(args.query(), args.limit(), args.exact(), args.license())
+                .ok_or_else(catalog_query_invalid)?;
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        run_catalog_search(&mut broker, request)
     }
 
-    fn info(&mut self, _args: &InfoArgs) -> Result<CommandResult, CommandError> {
-        Err(index_unavailable())
+    fn info(&mut self, args: &InfoArgs) -> Result<CommandResult, CommandError> {
+        if args.exact() {
+            return Err(CommandError::new(
+                ExitCode::EngineUnavailable,
+                "exact package inspection requires the private package engine",
+                "omit `--exact` for verified catalog metadata",
+            ));
+        }
+        if args.channel().is_some() {
+            return Err(CommandError::new(
+                ExitCode::ResolveFailed,
+                "the selected channel is not loaded",
+                "omit `--channel` or run `pkg update` for the current channel",
+            ));
+        }
+        let requests = args
+            .packages()
+            .iter()
+            .map(|selector| CatalogInfoRequest::new(selector).ok_or_else(catalog_query_invalid))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        run_catalog_info(&mut broker, requests)
     }
 
     fn install(
@@ -322,6 +355,51 @@ impl CoreOperations for LocalStateOperations {
     ) -> Result<CommandResult, CommandError> {
         Err(mutation_unavailable())
     }
+}
+
+fn run_catalog_search(
+    broker: &mut BrokerLifecycleClient,
+    request: CatalogSearchRequest,
+) -> Result<CommandResult, CommandError> {
+    let handle = broker
+        .begin(BrokerOperationKind::Resolve)
+        .map_err(broker_error)?;
+    let result = (|| {
+        let report = broker
+            .search_catalog(handle.clone(), request)
+            .map_err(catalog_broker_error)?;
+        broker.complete(handle.clone()).map_err(broker_error)?;
+        search_catalog_report(&report)
+    })();
+    if result.is_err() {
+        let _ = broker.cancel(handle);
+    }
+    result
+}
+
+fn run_catalog_info(
+    broker: &mut BrokerLifecycleClient,
+    requests: Vec<CatalogInfoRequest>,
+) -> Result<CommandResult, CommandError> {
+    let handle = broker
+        .begin(BrokerOperationKind::Resolve)
+        .map_err(broker_error)?;
+    let result = (|| {
+        let reports = requests
+            .into_iter()
+            .map(|request| {
+                broker
+                    .info_catalog(handle.clone(), request)
+                    .map_err(catalog_broker_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        broker.complete(handle.clone()).map_err(broker_error)?;
+        info_catalog_reports(&reports)
+    })();
+    if result.is_err() {
+        let _ = broker.cancel(handle);
+    }
+    result
 }
 
 impl LocalStateOperations {
@@ -1495,6 +1573,22 @@ fn broker_error(_error: crate::broker::BrokerClientError) -> CommandError {
     )
 }
 
+fn catalog_broker_error(error: BrokerClientError) -> CommandError {
+    if error.code() == BrokerClientErrorCode::CatalogQueryRefused {
+        index_unavailable()
+    } else {
+        broker_error(error)
+    }
+}
+
+fn catalog_query_invalid() -> CommandError {
+    CommandError::new(
+        ExitCode::ResolveFailed,
+        "package query was invalid",
+        "use a bounded query and a valid display license identifier",
+    )
+}
+
 fn channel_refresh_error(error: BrokerClientError) -> CommandError {
     let (exit_code, message, hint) = channel_refresh_error_fields(error.code());
     CommandError::new(exit_code, message, hint)
@@ -1650,8 +1744,9 @@ mod tests {
     use pkg_core::channel::ChannelSequence;
     use pkg_nix::{
         BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
-        ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, InProcessBroker,
-        InProcessCallerPeer, ProductFrameCodec, StorePath,
+        CatalogInfoLookup, CatalogInfoReport, CatalogPackageInfo, CatalogPackageSummary,
+        CatalogSearchReport, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse,
+        InProcessBroker, InProcessCallerPeer, ProductFrameCodec, StorePath,
     };
 
     const FRAME_HEADER_BYTES: usize = 20;
@@ -2069,15 +2164,10 @@ mod tests {
         fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let uid = fs::symlink_metadata(home.path()).unwrap().uid();
         let state = home.path().join("pkg");
-        for relative in ["", "generations", "journal", "activations", "run"] {
-            let path = state.join(relative);
-            fs::create_dir_all(&path).unwrap();
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-        }
         let identity =
             pkg_store::LeaseIdentity::new("op_initialize", "nonce1", "2026-08-11T00:00:00Z")
                 .unwrap();
-        let layout = StateLayout::open(home.path(), &state, uid).unwrap();
+        let layout = StateLayout::initialize(home.path(), &state, uid).unwrap();
         drop(StateLease::try_exclusive(&layout, &identity).unwrap());
 
         let cli = Cli::try_parse(["pkg", "history"]).unwrap();
@@ -2247,6 +2337,107 @@ mod tests {
         ] {
             assert_eq!(channel_refresh_error_fields(code).0, expected);
         }
+    }
+
+    #[test]
+    fn catalog_search_runs_one_closed_resolve_transaction() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let handle = InProcessBroker::new()
+            .unwrap()
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap()
+            .begin(BrokerOperationKind::Resolve)
+            .unwrap();
+        let server_handle = handle.clone();
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
+        let worker = thread::spawn(move || {
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Resolve)
+            );
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(server_handle.clone()),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::SearchCatalog(
+                    server_handle.clone(),
+                    CatalogSearchRequest::new("ripgrep", 25, false, None).unwrap(),
+                )
+            );
+            let summary = CatalogPackageSummary::new(
+                "ripgrep",
+                "ripgrep",
+                "14.1.1",
+                "fast search",
+                vec![String::from("MIT")],
+                true,
+                false,
+            )
+            .unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::CatalogSearch(
+                    CatalogSearchReport::new(ChannelSequence::from_u64(42).unwrap(), vec![summary])
+                        .unwrap(),
+                ),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Complete(server_handle));
+            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            release_rx.recv().unwrap();
+        });
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+
+        let result = run_catalog_search(
+            &mut broker,
+            CatalogSearchRequest::new("ripgrep", 25, false, None).unwrap(),
+        );
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        let result = result.unwrap();
+        assert_eq!(result.fields()["stale"], Value::Bool(false));
+        assert_eq!(result.fields()["entries"][0]["package"], "ripgrep");
+    }
+
+    #[test]
+    fn catalog_info_renders_only_product_metadata() {
+        let summary = CatalogPackageSummary::new(
+            "ripgrep",
+            "ripgrep",
+            "14.1.1",
+            "fast search",
+            vec![String::from("MIT")],
+            true,
+            false,
+        )
+        .unwrap();
+        let info = CatalogPackageInfo::new(
+            summary,
+            "https://example.invalid/ripgrep",
+            vec![String::from("out")],
+            vec![String::from("linux-x86-64")],
+            REVISION,
+            "2026-08-12T00:00:00Z",
+        )
+        .unwrap();
+        let report = CatalogInfoReport::new(
+            ChannelSequence::from_u64(42).unwrap(),
+            CatalogInfoLookup::Found(Box::new(info)),
+        )
+        .unwrap();
+
+        let result = info_catalog_reports(&[report]).unwrap();
+        let encoded = serde_json::to_string(result.fields()).unwrap();
+        assert!(encoded.contains("ripgrep"));
+        assert!(!encoded.contains("/nix/store/"));
+        assert!(!encoded.contains("drvPath"));
+        assert!(!encoded.contains("narHash"));
     }
 
     #[test]
