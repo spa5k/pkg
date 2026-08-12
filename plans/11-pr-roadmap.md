@@ -1157,8 +1157,14 @@ flowchart TD
   uninstall manifest records the authenticated runtime-manifest digest plus created/pre-existing
   state for every compiled asset and is published receipt-last. The production asset router joins
   the account and filesystem components and resolves the broker uid only from the verified account
-  contract. Service-manager activation and a complete production `LinuxInstallBackend` remain the
-  next slice.
+  contract. The Linux service slice now snapshots the enabled and active state of every fixed unit
+  before mutation, runs only root-controlled absolute `systemctl`/`systemd-tmpfiles` programs with
+  an empty environment and bounded process-group cleanup, records write-ahead enable/start intent,
+  and restores only attempt-owned state in reverse order. The complete production
+  `LinuxInstallBackend` binds authenticated assets, repeats the root-only clean-host scan immediately
+  before mutation, activates the fixed units, checks every unit plus the managed daemon store, and
+  reloads systemd after rollback removes a unit file. Clean-host install/re-run/uninstall evidence
+  on a real systemd VM remains the next Linux slice.
   the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an

@@ -198,7 +198,14 @@ impl RealNixAdapter {
         })
     }
 
-    pub(crate) fn ping_managed_store(&self) -> Result<(), NixAdapterError> {
+    /// Performs the fixed bounded managed-daemon store readiness check.
+    ///
+    /// This accepts no caller-selected store, command, option, or environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted adapter error when the managed daemon does not answer.
+    pub fn ping_managed_store(&self) -> Result<(), NixAdapterError> {
         self.require_success(
             MethodKind::Version,
             vec![
