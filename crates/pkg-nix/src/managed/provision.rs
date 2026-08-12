@@ -287,6 +287,9 @@ impl ProvisionedBootstrapTransaction<'_> {
         if !self.channel_committed {
             return Err(ProvisionError::new(ProvisionErrorCode::ChannelStateFailed));
         }
+        self.daemon
+            .stop()
+            .map_err(|error| ProvisionError::daemon(error.code()))?;
         let bootstrap = self
             .bootstrap
             .take()
@@ -1542,6 +1545,38 @@ mod tests {
         assert!(daemon.started.load(Ordering::Relaxed));
         assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 2);
         assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn finalized_platform_transaction_stops_the_bootstrap_daemon() {
+        let fixture = Fixture::new();
+        let daemon = FakeDaemon::healthy();
+        let (runtime, rollback) = provision_with_owner_policy(
+            &fixture.request(),
+            &fixture.source,
+            &daemon,
+            fixture.owner_uid,
+            &[],
+            &[],
+            HostStatePolicy::Strict,
+        )
+        .unwrap();
+        let transaction = ProvisionedBootstrapTransaction {
+            bootstrap: Some(ProvisionedBootstrap {
+                runtime,
+                index: Vec::new(),
+            }),
+            rollback: Some(rollback),
+            source: None,
+            channel_committed: true,
+            daemon: &daemon,
+        };
+
+        let result = transaction.finalize().unwrap();
+
+        assert_eq!(result.runtime().system(), System::X8664Linux);
+        assert!(daemon.stopped.load(Ordering::Relaxed));
+        assert!(rooted(&fixture.root, Path::new(RUNTIME_PATH)).is_file());
     }
 
     #[test]

@@ -1540,6 +1540,9 @@ flowchart TD
   directory; live or untrusted endpoints refuse installation. The fixed authenticated
   `nix.conf` is installed before bootstrap on Linux and macOS. Strict Clippy, focused
   rollback/contract tests, and independent P1 review pass.
+  Successful platform transaction finalization now also stops the temporary bootstrap
+  daemon before it releases runtime rollback ownership. A stop failure stays fail-closed
+  and rolls the runtime back. The focused lifecycle test and independent P1 review pass.
   Bundle authentication also now renders `nix.conf` from the signed channel cache
   policy and promotes an opaque authenticated configuration value. Both platform
   entry points bind it into the backend in memory before privileged preflight. No
