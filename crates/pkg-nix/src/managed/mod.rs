@@ -7,3 +7,4 @@ mod installer_bundle;
 pub mod ownership;
 pub mod provision;
 pub(crate) mod runtime_archive;
+pub mod uninstall;

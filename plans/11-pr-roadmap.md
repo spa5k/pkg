@@ -1591,8 +1591,15 @@ flowchart TD
   reopens no-follow parents, verifies exact metadata and authenticated bytes, binds the observed
   inode, and refuses changed files, symlinks, or non-empty directories; systemd deactivation reads
   every fixed unit before mutation, stops and disables the complete set in reverse order, reloads,
-  and verifies the terminal state. The production uninstall action router and managed-store removal
-  remain open before clean-host install/re-run/uninstall can be claimed.
+  and verifies the terminal state. Persistent managed-runtime removal now reauthenticates the exact
+  signed receipt, manifest, runtime tree, and store closure; captures device/inode identities; rejects
+  mount boundaries and unsigned residue; and coordinates with Nix through its POSIX `gc.lock` record
+  lock. A store closure that survived GC can be removed only when all remaining direct objects are
+  signed, every signed tree remains exact, temporary roots and user profiles are empty, and fixed GC
+  roots are empty. Foreign store objects preserve all `/nix` state. Cleanup stays best-effort after
+  its hard barrier while identity replacement still stops immediately. Unit tests, strict Clippy,
+  independent P1 review, and the official Nix 2.34.8 privileged Linux container pass. The production
+  uninstall action router remains open before clean-host install/re-run/uninstall can be claimed.
   Uninstall garbage collection now uses a dedicated root-only executor after service shutdown. It
   accepts no caller-selected arguments, validates the bounded dead-path report before deletion, and
   invokes the authenticated Nix 2.34.8 `nix-store` facade only with `--store local`. The normal test

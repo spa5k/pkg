@@ -2324,6 +2324,7 @@ mod tests {
         rollback.registration_pending = false;
         assert_eq!(report.system(), system);
         assert!(Path::new("/nix/var/nix/db/db.sqlite").is_file());
+        let removal = crate::prepare_managed_runtime_removal(Path::new("/"), &expectation).unwrap();
         daemon.ping_store().unwrap();
         daemon.stop().unwrap();
 
@@ -2333,6 +2334,14 @@ mod tests {
                 .collect()
                 .unwrap();
         assert_eq!(garbage.status(), crate::GcStatus::Collected);
+        let removal_outcome = removal.remove().unwrap();
+        assert_eq!(
+            removal_outcome,
+            crate::ManagedRuntimeRemovalOutcome::Removed
+        );
+        assert!(!Path::new("/opt/pkg/nix").exists());
+        assert!(!Path::new("/nix/var/nix/db").exists());
+        assert_eq!(fs::read_dir("/nix/store").unwrap().count(), 0);
     }
 
     #[test]

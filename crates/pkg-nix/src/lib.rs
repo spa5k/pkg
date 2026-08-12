@@ -123,6 +123,10 @@ pub use managed::provision::{
 pub use managed::runtime_archive::{
     RuntimeManifestError, RuntimeManifestErrorCode, build_upstream_runtime_asset_manifest,
 };
+pub use managed::uninstall::{
+    ManagedRuntimeRemoval, ManagedRuntimeRemovalError, ManagedRuntimeRemovalErrorCode,
+    ManagedRuntimeRemovalOutcome, prepare_managed_runtime_removal,
+};
 pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
     NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,
