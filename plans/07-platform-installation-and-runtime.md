@@ -1232,6 +1232,13 @@ snippets, or any foreign `/nix`.
     untrusted endpoints fail closed. The installer writes the authenticated fixed
     `nix.conf` before runtime verification on both platforms. Production
     Linux/macOS asset, account, and service backends remain the next PR-36 slices.
+22. Bundle authentication now renders the managed `nix.conf` from the signed
+    channel cache policy and promotes it as an opaque
+    `AuthenticatedManagedNixConfig`. The Linux and macOS product entry points
+    bind this value into their platform backend in memory before privileged
+    preflight. Callers cannot construct the type or pass raw configuration text.
+    Production backends must refuse a missing, conflicting, or wrong-platform
+    binding before host mutation.
 
 ## 17. Unresolved questions / spikes
 

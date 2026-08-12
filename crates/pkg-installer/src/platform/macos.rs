@@ -11,8 +11,8 @@ use crate::{BrokerHelperDispatch, LinuxHelperSession, platform::linux::LinuxRoot
 use nix::unistd::getpeereid;
 use pkg_core::System;
 use pkg_nix::{
-    AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, BuildReadiness,
-    MaintenanceError,
+    AuthenticatedHelper, AuthenticatedManagedNixConfig, BrokerHelperRequest, BrokerHelperResponse,
+    BuildReadiness, MaintenanceError,
 };
 use std::{error::Error, fmt, os::unix::net::UnixStream};
 
@@ -944,6 +944,17 @@ impl BrokerHelperDispatch for MacOsHelperSession {
 
 /// Closed privileged operations used by the macOS installer.
 pub trait MacOsInstallBackend {
+    /// Binds the exact authenticated managed-Nix configuration in memory.
+    ///
+    /// This must not mutate the host. It runs before privileged preflight.
+    ///
+    /// # Errors
+    /// Returns a closed error for a wrong-platform or conflicting binding.
+    fn bind_authenticated_nix_config(
+        &mut self,
+        config: &AuthenticatedManagedNixConfig,
+    ) -> Result<(), MacOsError>;
+
     /// Verifies AuthorizationServices/sudo authority.
     ///
     /// # Errors
@@ -1525,6 +1536,13 @@ mod tests {
     }
 
     impl MacOsInstallBackend for FakeBackend {
+        fn bind_authenticated_nix_config(
+            &mut self,
+            _config: &AuthenticatedManagedNixConfig,
+        ) -> Result<(), MacOsError> {
+            Ok(())
+        }
+
         fn preflight_privilege(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }

@@ -1540,6 +1540,11 @@ flowchart TD
   directory; live or untrusted endpoints refuse installation. The fixed authenticated
   `nix.conf` is installed before bootstrap on Linux and macOS. Strict Clippy, focused
   rollback/contract tests, and independent P1 review pass.
+  Bundle authentication also now renders `nix.conf` from the signed channel cache
+  policy and promotes an opaque authenticated configuration value. Both platform
+  entry points bind it into the backend in memory before privileged preflight. No
+  caller can construct the value or supply raw Nix configuration text. Focused
+  cross-platform tests, strict Clippy, and independent P1 review pass.
   This resolves plan 07 Q7.7 without claiming the still-missing privileged production backend.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.

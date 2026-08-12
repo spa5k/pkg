@@ -8,9 +8,9 @@ use crate::{
 use pkg_channel::TrustedRoot;
 use pkg_core::System;
 use pkg_nix::{
-    AuthenticatedInstallerBundle, InstallerProvisionRequest, ManagedDaemon, ProvisionedBootstrap,
-    ProvisionedBootstrapTransaction, authenticate_installer_bundle_blocking,
-    provision_authenticated_installer_bundle_transaction,
+    AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,
+    ManagedDaemon, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
+    authenticate_installer_bundle_blocking, provision_authenticated_installer_bundle_transaction,
 };
 
 /// Successful Linux installation and its authenticated runtime/index result.
@@ -85,6 +85,7 @@ pub fn install_linux_from_bundle<'a>(
     }
     let bundle = authenticate_installer_bundle_blocking(trusted_root, request)
         .map_err(|_| InstallError::backend_failure())?;
+    backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     let mut provisioner = AuthenticatedProvisioner::new(bundle);
     let (platform, outcome) =
         install_linux_with_provisioner(system, request, daemon, backend, &mut provisioner)?;
@@ -113,6 +114,7 @@ pub fn install_macos_from_bundle<'a>(
     }
     let bundle = authenticate_installer_bundle_blocking(trusted_root, request)
         .map_err(|_| MacOsError::backend_failure())?;
+    backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     let mut provisioner = AuthenticatedProvisioner::new(bundle);
     let (platform, outcome) =
         install_macos_with_provisioner(system, request, daemon, backend, &mut provisioner)?;
@@ -221,6 +223,13 @@ struct LinuxBundleBackend<'a, P> {
 }
 
 impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, P> {
+    fn bind_authenticated_nix_config(
+        &mut self,
+        config: &AuthenticatedManagedNixConfig,
+    ) -> Result<(), InstallError> {
+        self.inner.bind_authenticated_nix_config(config)
+    }
+
     fn preflight_privilege(&mut self) -> Result<(), InstallError> {
         self.inner.preflight_privilege()
     }
@@ -325,6 +334,13 @@ struct MacOsBundleBackend<'a, P> {
 }
 
 impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
+    fn bind_authenticated_nix_config(
+        &mut self,
+        config: &AuthenticatedManagedNixConfig,
+    ) -> Result<(), MacOsError> {
+        self.inner.bind_authenticated_nix_config(config)
+    }
+
     fn preflight_privilege(&mut self) -> Result<(), MacOsError> {
         self.inner.preflight_privilege()
     }
@@ -489,6 +505,13 @@ mod tests {
     }
 
     impl LinuxInstallBackend for LinuxBackend {
+        fn bind_authenticated_nix_config(
+            &mut self,
+            _config: &AuthenticatedManagedNixConfig,
+        ) -> Result<(), InstallError> {
+            Ok(())
+        }
+
         fn preflight_privilege(&mut self) -> Result<(), InstallError> {
             Ok(())
         }
@@ -540,6 +563,13 @@ mod tests {
     }
 
     impl MacOsInstallBackend for MacBackend {
+        fn bind_authenticated_nix_config(
+            &mut self,
+            _config: &AuthenticatedManagedNixConfig,
+        ) -> Result<(), MacOsError> {
+            Ok(())
+        }
+
         fn preflight_privilege(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }

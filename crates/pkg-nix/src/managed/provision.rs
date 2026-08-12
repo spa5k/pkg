@@ -21,7 +21,7 @@ use super::ownership::{
     decode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
     verify_with_owner_uid,
 };
-use crate::{Digest, NixVersion, System};
+use crate::{Digest, NixVersion, System, render_managed_build_nix_conf};
 
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ASSET_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -134,6 +134,39 @@ pub struct InstallerProvisionRequest<'a> {
     pub groups: ManagedGroupBindings,
 }
 
+/// Exact managed-Nix configuration derived from authenticated channel policy.
+///
+/// Callers cannot construct this value. Platform installers may only consume
+/// the bytes already promoted by the bundle authentication boundary.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthenticatedManagedNixConfig {
+    system: System,
+    contents: String,
+}
+
+impl AuthenticatedManagedNixConfig {
+    /// Returns the native system bound to these configuration bytes.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.system
+    }
+
+    /// Returns the exact authenticated bytes for atomic installation.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.contents.as_bytes()
+    }
+}
+
+impl std::fmt::Debug for AuthenticatedManagedNixConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedManagedNixConfig")
+            .field("system", &self.system)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Opaque authenticated installer bundle retained in private snapshots.
 ///
 /// This value exposes no target reader, repository handle, datastore writer,
@@ -142,9 +175,18 @@ pub struct InstallerProvisionRequest<'a> {
 pub struct AuthenticatedInstallerBundle {
     source: VerifiedRuntimeBundle,
     spec: ProvisionSpec,
+    managed_nix_config: AuthenticatedManagedNixConfig,
     installation_root: PathBuf,
     scratch_parent: PathBuf,
     groups: ManagedGroupBindings,
+}
+
+impl AuthenticatedInstallerBundle {
+    /// Returns the exact authenticated configuration for the platform backend.
+    #[must_use]
+    pub const fn managed_nix_config(&self) -> &AuthenticatedManagedNixConfig {
+        &self.managed_nix_config
+    }
 }
 
 impl std::fmt::Debug for AuthenticatedInstallerBundle {
@@ -423,6 +465,14 @@ pub async fn authenticate_installer_bundle(
     .await
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
     let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
+    let managed_nix_config = AuthenticatedManagedNixConfig {
+        system: source.system(),
+        contents: render_managed_build_nix_conf(
+            source.system(),
+            source.channel().descriptor().cache(),
+        )
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?,
+    };
     let provision_request = ProvisionRequest {
         installation_root: request.installation_root,
         scratch_parent: request.scratch_parent,
@@ -439,6 +489,7 @@ pub async fn authenticate_installer_bundle(
     Ok(AuthenticatedInstallerBundle {
         source,
         spec,
+        managed_nix_config,
         installation_root: request.installation_root.to_path_buf(),
         scratch_parent: request.scratch_parent.to_path_buf(),
         groups: request.groups,

@@ -2,6 +2,7 @@
 
 use crate::assets::{LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets};
 use pkg_core::System;
+use pkg_nix::AuthenticatedManagedNixConfig;
 use std::{error::Error, fmt};
 
 /// Stable Linux installation failure classes.
@@ -58,6 +59,18 @@ impl Error for InstallError {}
 /// Every artifact value originates from [`linux_install_assets`]; the trait
 /// carries no arbitrary path, command, unit text, user, or group input.
 pub trait LinuxInstallBackend {
+    /// Binds the exact authenticated managed-Nix configuration in memory.
+    ///
+    /// This must not mutate the host. It runs before privileged preflight.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error for a wrong-platform or conflicting binding.
+    fn bind_authenticated_nix_config(
+        &mut self,
+        config: &AuthenticatedManagedNixConfig,
+    ) -> Result<(), InstallError>;
+
     /// Verifies this process has the fixed privileged installer authority.
     ///
     /// # Errors
@@ -350,6 +363,13 @@ mod tests {
     }
 
     impl LinuxInstallBackend for FakeBackend {
+        fn bind_authenticated_nix_config(
+            &mut self,
+            _config: &AuthenticatedManagedNixConfig,
+        ) -> Result<(), InstallError> {
+            Ok(())
+        }
+
         fn preflight_privilege(&mut self) -> Result<(), InstallError> {
             Ok(())
         }

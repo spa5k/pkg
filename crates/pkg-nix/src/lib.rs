@@ -113,11 +113,12 @@ pub use managed::ownership::{
     verify_ownership_receipt,
 };
 pub use managed::provision::{
-    AuthenticatedInstallerBundle, InstallerProvisionRequest, ProvisionError, ProvisionErrorCode,
-    ProvisionRequest, ProvisionSpec, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
-    ProvisionedRuntime, authenticate_installer_bundle, authenticate_installer_bundle_blocking,
-    provision_authenticated_installer_bundle, provision_authenticated_installer_bundle_transaction,
-    provision_managed_nix_from_bundle, provision_managed_nix_from_bundle_blocking,
+    AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,
+    ProvisionError, ProvisionErrorCode, ProvisionRequest, ProvisionSpec, ProvisionedBootstrap,
+    ProvisionedBootstrapTransaction, ProvisionedRuntime, authenticate_installer_bundle,
+    authenticate_installer_bundle_blocking, provision_authenticated_installer_bundle,
+    provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
+    provision_managed_nix_from_bundle_blocking,
 };
 pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
