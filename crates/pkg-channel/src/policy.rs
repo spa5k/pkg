@@ -125,6 +125,8 @@ pub enum ChannelError {
     AcceptedStateUnavailable,
     /// Another process already holds the datastore writer lease.
     DatastoreBusy,
+    /// Authenticated repository bytes could not be acquired from the network.
+    TransportUnavailable,
     /// `tough` rejected the authenticated metadata or target stream.
     TufVerification(String),
     /// The signed repository has no `descriptor.json` target.
@@ -194,6 +196,9 @@ impl fmt::Display for ChannelError {
                 f.write_str("durable accepted channel state is unavailable")
             }
             Self::DatastoreBusy => f.write_str("another channel refresh owns the TUF datastore"),
+            Self::TransportUnavailable => {
+                f.write_str("authenticated repository transport is unavailable")
+            }
             Self::TufVerification(message) => write!(f, "TUF verification failed: {message}"),
             Self::MissingDescriptor => f.write_str("authenticated descriptor.json is missing"),
             Self::DescriptorTooLarge => f.write_str("descriptor.json exceeds the product limit"),

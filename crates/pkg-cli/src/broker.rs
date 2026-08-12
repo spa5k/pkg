@@ -15,9 +15,9 @@ use pkg_core::PackageSelector;
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
     BuildPreview, BuildProgressEstimate, BuildReport, BuildRequest, BuildRootPublicationErrorCode,
-    CacheInstallErrorCode, CacheInstallOutcome, CliBrokerRequest, CliBrokerResponse,
-    DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport, GenerationId,
-    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    CacheInstallErrorCode, CacheInstallOutcome, ChannelRefreshReport, CliBrokerRequest,
+    CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
+    GenerationId, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
     GenerationRootTransitionErrorCode, InstallDownloadProgress, MethodKind, NixAdapter,
     NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
     ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
@@ -67,6 +67,14 @@ pub enum BrokerClientErrorCode {
     GenerationRootAttestationRefused,
     /// Cache-first installation returned a stable refusal code.
     InstallAcquisitionRefused,
+    /// Signed channel/index bytes could not be acquired.
+    ChannelRefreshNetwork,
+    /// Signed channel/index verification refused publication.
+    ChannelRefreshVerification,
+    /// Another process owns the durable channel writer lease.
+    ChannelRefreshBusy,
+    /// Durable channel state or atomic authority publication is unavailable.
+    ChannelRefreshServiceUnavailable,
 }
 
 /// Redacted failure from the private broker connector.
@@ -817,6 +825,39 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Refreshes the broker-owned signed channel and native index.
+    ///
+    /// The request contains only a caller-bound Refresh handle. No trust,
+    /// origin, system, target, or raw Nix input crosses this boundary.
+    pub fn refresh_channel(
+        &mut self,
+        handle: OperationHandle,
+    ) -> Result<ChannelRefreshReport, BrokerClientError> {
+        match self.transact_with_timeout(
+            &CliBrokerRequest::RefreshChannel(handle),
+            LONG_RUNNING_RESPONSE_TIMEOUT,
+        )? {
+            CliBrokerResponse::ChannelRefreshed(report) => Ok(report),
+            CliBrokerResponse::ChannelRefreshRefused(code) => {
+                Err(BrokerClientError::new(match code {
+                    pkg_nix::ChannelRefreshErrorCode::Network => {
+                        BrokerClientErrorCode::ChannelRefreshNetwork
+                    }
+                    pkg_nix::ChannelRefreshErrorCode::Verification => {
+                        BrokerClientErrorCode::ChannelRefreshVerification
+                    }
+                    pkg_nix::ChannelRefreshErrorCode::Busy => {
+                        BrokerClientErrorCode::ChannelRefreshBusy
+                    }
+                    pkg_nix::ChannelRefreshErrorCode::ServiceUnavailable => {
+                        BrokerClientErrorCode::ChannelRefreshServiceUnavailable
+                    }
+                }))
+            }
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     fn transact(
         &mut self,
         request: &CliBrokerRequest,
@@ -1052,22 +1093,30 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::GenerationRootTransitionRefused
         | BrokerClientErrorCode::GenerationRootRemovalRefused
         | BrokerClientErrorCode::GenerationRootAttestationRefused
-        | BrokerClientErrorCode::InstallAcquisitionRefused => NixAdapterError::OperationFailed,
+        | BrokerClientErrorCode::InstallAcquisitionRefused
+        | BrokerClientErrorCode::ChannelRefreshNetwork
+        | BrokerClientErrorCode::ChannelRefreshVerification
+        | BrokerClientErrorCode::ChannelRefreshBusy
+        | BrokerClientErrorCode::ChannelRefreshServiceUnavailable => {
+            NixAdapterError::OperationFailed
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pkg_core::{SelectorId, SelectorInput, SourceRevision, VersionPreference};
+    use pkg_core::{
+        SelectorId, SelectorInput, SourceRevision, VersionPreference, channel::ChannelSequence,
+    };
     use pkg_installer::serve_broker_connection_with_nix;
     use pkg_nix::{
-        AcceptedFormats, AttributePath, BuildApprovalReceipt, DerivationPath, DerivedOutputTarget,
-        Digest, EvaluatedDerivation, FormatVersion, GcStatus, GenerationId, InProcessBroker,
-        InProcessCallerPeer, NarHash, NarIntegrity, NixAdapter, NixAdapterError, NixVersion,
-        NixpkgsRevision, OperationId, OutputName, OutputSelection, PackageVersion,
-        PathVerifyResult, PolicyVersion, RootName, RootSetEntry, Signature, SubstituteReceipt,
-        System, TrustStatus, VerifyMode, VersionInfo,
+        AcceptedFormats, AttributePath, BuildApprovalReceipt, ChannelRefreshErrorCode,
+        DerivationPath, DerivedOutputTarget, Digest, EvaluatedDerivation, FormatVersion, GcStatus,
+        GenerationId, InProcessBroker, InProcessCallerPeer, NarHash, NarIntegrity, NixAdapter,
+        NixAdapterError, NixVersion, NixpkgsRevision, OperationId, OutputName, OutputSelection,
+        PackageVersion, PathVerifyResult, PolicyVersion, RootName, RootSetEntry, Signature,
+        SubstituteReceipt, System, TrustStatus, VerifyMode, VersionInfo,
     };
     use pkg_testkit::FakeNix;
     use std::{
@@ -1757,6 +1806,61 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
             (1, CliBrokerRequest::AcquireGc(handle))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn channel_refresh_round_trips_a_sanitized_report() -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Refresh)?;
+        let sequence = ChannelSequence::from_u64(43)
+            .ok_or_else(|| io::Error::other("invalid test channel sequence"))?;
+        let report = ChannelRefreshReport::new(true, sequence);
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::ChannelRefreshed(report),
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        assert_eq!(client.refresh_channel(handle.clone())?, report);
+        let deadline = Instant::now()
+            .checked_add(RESPONSE_TIMEOUT)
+            .ok_or_else(|| io::Error::other("deadline overflow"))?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (1, CliBrokerRequest::RefreshChannel(handle))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn channel_refresh_refusal_is_typed_and_keeps_the_connection_usable()
+    -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Refresh)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::ChannelRefreshRefused(ChannelRefreshErrorCode::Verification),
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client.refresh_channel(handle.clone()).unwrap_err();
+        assert_eq!(
+            error.code(),
+            BrokerClientErrorCode::ChannelRefreshVerification
+        );
+        assert!(client.healthy);
+        let deadline = Instant::now()
+            .checked_add(RESPONSE_TIMEOUT)
+            .ok_or_else(|| io::Error::other("deadline overflow"))?;
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
+            (1, CliBrokerRequest::RefreshChannel(handle))
         );
         Ok(())
     }

@@ -1159,6 +1159,25 @@ flowchart TD
   frame, adapter, or completion failure produces two redacted fail-closed checks. The invoking uid
   is also supplied to the existing state-owner check. Focused doctor/CLI/support tests, compiler
   diagnostics, strict Clippy, and independent P1 security review pass.
+  The production `pkg update` connector slice is also complete for the default
+  refresh mode. The CLI sends only a caller-owned live Refresh handle to the
+  fixed broker endpoint. The broker owns the compiled TUF root, repository
+  origins, native system, descriptor target, and index target. It loads the
+  descriptor and native index from one authenticated repository view, verifies
+  the compressed index capability, and atomically publishes the pair to the
+  existing build authority. The response contains only `updated` and the
+  nonzero authenticated channel sequence. Closed failure codes preserve network
+  (66), verification (70), writer contention (72), and service failure (79)
+  semantics without exposing private URLs or Tough/Nix errors. Streamed target
+  hash/length failures remain verification failures, while typed TUF datastore
+  I/O failures remain service failures. The retained one-worker multi-thread
+  Tokio runtime drives refresh I/O from broker connection workers. Framing,
+  caller authorization, atomic publication, production wiring, focused package
+  tests, workspace diagnostics, strict Clippy, secret scanning, and independent
+  P1 review pass. `pkg update --check`, `--force`, and `--dry-run` still refuse
+  explicitly as unsupported. Search, info, outdated, upgrade, repair command
+  wiring, clean-host e2e coverage, and those optional update modes remain open
+  PR-36 work.
   the Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
   and supplementary memberships, serializes product installers with a root-only runtime lock, and

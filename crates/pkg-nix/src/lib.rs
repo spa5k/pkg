@@ -87,8 +87,9 @@ pub use contract::{
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildRootPublicationErrorCode, CacheInstallErrorCode, CliBrokerRequest, CliBrokerResponse,
-    FrameError, FrameErrorCode, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    BuildRootPublicationErrorCode, CacheInstallErrorCode, ChannelRefreshErrorCode,
+    ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode,
+    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
     GenerationRootTransitionErrorCode, InstallDownloadProgress, ProductFrameCodec,
 };
 pub use maintenance::{

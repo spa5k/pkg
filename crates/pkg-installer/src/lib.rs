@@ -44,10 +44,10 @@ pub use bootstrap::{
     install_macos_from_bundle,
 };
 pub use broker::{
-    BrokerTransportError, BrokerTransportErrorCode, serve_broker_connection,
-    serve_broker_connection_with_build_and_root_authority,
+    BrokerTransportError, BrokerTransportErrorCode, ChannelRefreshDispatch,
+    serve_broker_connection, serve_broker_connection_with_build_and_root_authority,
     serve_broker_connection_with_build_authority, serve_broker_connection_with_nix,
-    serve_broker_connection_with_nix_and_approval,
+    serve_broker_connection_with_nix_and_approval, serve_broker_connection_with_product_authority,
 };
 pub use helper::{
     BrokerHelperDispatch, HelperTransportError, HelperTransportErrorCode, LinuxHelperSession,

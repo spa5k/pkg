@@ -11,12 +11,12 @@ use pkg_core::PackageSelector;
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview,
     BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode, CacheInstallErrorCode,
-    CacheInstallOutcome, CliBrokerRequest, CliBrokerResponse, Digest, GenerationId,
-    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
-    InstallDownloadProgress, MaintenanceError, MethodKind, NixAdapter, NixAdapterError,
-    OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
-    RootSetTransitionReport,
+    CacheInstallOutcome, ChannelRefreshErrorCode, ChannelRefreshReport, CliBrokerRequest,
+    CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
+    InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
+    NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
+    RootSetTransitionIntent, RootSetTransitionReport,
 };
 use pkg_pipeline::{AuthenticatedBuildAuthority, BuildAuthorityErrorCode};
 use std::{
@@ -87,7 +87,7 @@ pub fn serve_broker_connection(
     mut stream: UnixStream,
     broker: &Arc<InProcessBroker>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, None, None, None, None)
+    serve_broker_connection_inner(&mut stream, broker, None, None, None, None, None)
 }
 
 /// Serves lifecycle plus typed managed-Nix calls for one authenticated peer.
@@ -101,7 +101,7 @@ pub fn serve_broker_connection_with_nix(
     broker: &Arc<InProcessBroker>,
     adapter: &Arc<dyn NixAdapter>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None, None, None)
+    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None, None, None, None)
 }
 
 /// Serves typed managed-Nix calls plus broker-private durable build approval.
@@ -124,6 +124,7 @@ pub fn serve_broker_connection_with_nix_and_approval(
         broker,
         Some(adapter),
         Some(approval_audit),
+        None,
         None,
         None,
     )
@@ -149,6 +150,7 @@ pub fn serve_broker_connection_with_build_authority(
         Some(approval_audit),
         Some(authority.as_ref()),
         None,
+        None,
     )
 }
 
@@ -173,7 +175,51 @@ pub fn serve_broker_connection_with_build_and_root_authority(
         Some(approval_audit),
         Some(authority.as_ref()),
         Some(roots),
+        None,
     )
+}
+
+/// Serves the complete production authority, including authenticated channel refresh.
+///
+/// The refresh request carries only a caller-bound operation handle. The
+/// implementation owns every channel origin, trust root, system, target, and
+/// publication decision.
+///
+/// # Errors
+///
+/// Refuses unauthenticated peers, invalid frames, unavailable authorities,
+/// helper failures, or bounded transport failures.
+pub fn serve_broker_connection_with_product_authority(
+    mut stream: UnixStream,
+    broker: &Arc<InProcessBroker>,
+    approval_audit: &BrokerApprovalAudit,
+    authority: &Arc<AuthenticatedBuildAuthority>,
+    roots: &RootHelperClient,
+    refresh: &dyn ChannelRefreshDispatch,
+) -> Result<(), BrokerTransportError> {
+    let adapter = authority.adapter();
+    serve_broker_connection_inner(
+        &mut stream,
+        broker,
+        Some(&adapter),
+        Some(approval_audit),
+        Some(authority.as_ref()),
+        Some(roots),
+        Some(refresh),
+    )
+}
+
+/// Closed production channel-refresh capability installed by the broker service.
+pub trait ChannelRefreshDispatch: Send + Sync {
+    /// Authenticates and atomically publishes the current signed channel/index pair.
+    ///
+    /// Returns one closed failure category when refresh is refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns only sanitized network, verification, contention, or service
+    /// failure classes.
+    fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode>;
 }
 
 trait BuildAuthorityDispatch: Send + Sync {
@@ -229,6 +275,15 @@ trait RootAuthorityDispatch: Send + Sync {
         handle: &OperationHandle,
         generation: GenerationId,
     ) -> Result<RootSetReport, BrokerErrorCode>;
+}
+
+#[derive(Clone, Copy)]
+struct DispatchAuthorities<'a> {
+    adapter: Option<&'a Arc<dyn NixAdapter>>,
+    approval_journal: Option<&'a BrokerCallerApprovalJournal>,
+    build: Option<&'a dyn BuildAuthorityDispatch>,
+    roots: Option<&'a dyn RootAuthorityDispatch>,
+    refresh: Option<&'a dyn ChannelRefreshDispatch>,
 }
 
 impl RootAuthorityDispatch for RootHelperClient {
@@ -347,6 +402,7 @@ fn serve_broker_connection_inner(
     approval_audit: Option<&BrokerApprovalAudit>,
     authority: Option<&dyn BuildAuthorityDispatch>,
     roots: Option<&dyn RootAuthorityDispatch>,
+    refresh: Option<&dyn ChannelRefreshDispatch>,
 ) -> Result<(), BrokerTransportError> {
     let uid = peer_uid(stream)
         .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?;
@@ -364,10 +420,13 @@ fn serve_broker_connection_inner(
         dispatch_request_with_progress(
             &caller,
             request,
-            adapter,
-            approval_journal.as_ref(),
-            authority,
-            roots,
+            DispatchAuthorities {
+                adapter,
+                approval_journal: approval_journal.as_ref(),
+                build: authority,
+                roots,
+                refresh,
+            },
             progress,
         )
     });
@@ -393,10 +452,33 @@ fn dispatch_request(
     dispatch_request_with_progress(
         caller,
         request,
-        adapter,
-        approval_journal,
-        authority,
-        roots,
+        DispatchAuthorities {
+            adapter,
+            approval_journal,
+            build: authority,
+            roots,
+            refresh: None,
+        },
+        &mut |_| Ok(()),
+    )
+}
+
+#[cfg(test)]
+fn dispatch_request_with_refresh(
+    caller: &AuthenticatedCaller,
+    request: CliBrokerRequest,
+    refresh: &dyn ChannelRefreshDispatch,
+) -> Result<CliBrokerResponse, ()> {
+    dispatch_request_with_progress(
+        caller,
+        request,
+        DispatchAuthorities {
+            adapter: None,
+            approval_journal: None,
+            build: None,
+            roots: None,
+            refresh: Some(refresh),
+        },
         &mut |_| Ok(()),
     )
 }
@@ -404,10 +486,7 @@ fn dispatch_request(
 fn dispatch_request_with_progress(
     caller: &AuthenticatedCaller,
     request: CliBrokerRequest,
-    adapter: Option<&Arc<dyn NixAdapter>>,
-    approval_journal: Option<&BrokerCallerApprovalJournal>,
-    authority: Option<&dyn BuildAuthorityDispatch>,
-    roots: Option<&dyn RootAuthorityDispatch>,
+    authorities: DispatchAuthorities<'_>,
     progress: &mut dyn FnMut(CliBrokerResponse) -> Result<(), ()>,
 ) -> Result<CliBrokerResponse, ()> {
     match request {
@@ -421,16 +500,9 @@ fn dispatch_request_with_progress(
             .map_err(|_| ()),
         CliBrokerRequest::Cancel(handle) => cancel_response(caller, &handle),
         CliBrokerRequest::Complete(handle) => complete_response(caller, &handle),
-        CliBrokerRequest::Version(handle) => dispatch_version(caller, adapter, &handle),
+        CliBrokerRequest::Version(handle) => dispatch_version(caller, authorities.adapter, &handle),
         CliBrokerRequest::EvaluateDerivation(handle, request) => {
-            caller
-                .authorize_adapter_call(&handle, MethodKind::EvaluateDerivation)
-                .map_err(|_| ())?;
-            Ok(adapter_response(
-                MethodKind::EvaluateDerivation,
-                adapter.ok_or(())?.evaluate_derivation(&request),
-                CliBrokerResponse::DerivationPlan,
-            ))
+            dispatch_evaluation(caller, authorities.adapter, &handle, &request)
         }
         CliBrokerRequest::PathInfo(handle, path) => {
             caller
@@ -438,7 +510,7 @@ fn dispatch_request_with_progress(
                 .map_err(|_| ())?;
             Ok(adapter_response(
                 MethodKind::PathInfo,
-                adapter.ok_or(())?.path_info(&path),
+                authorities.adapter.ok_or(())?.path_info(&path),
                 CliBrokerResponse::PathInfo,
             ))
         }
@@ -448,7 +520,7 @@ fn dispatch_request_with_progress(
                 .map_err(|_| ())?;
             Ok(adapter_response(
                 MethodKind::Substitute,
-                adapter.ok_or(())?.substitute(&path),
+                authorities.adapter.ok_or(())?.substitute(&path),
                 CliBrokerResponse::Substitute,
             ))
         }
@@ -460,56 +532,104 @@ fn dispatch_request_with_progress(
                     approval.build_plan_digest(),
                     approval.source(),
                     &timestamp,
-                    approval_journal.ok_or(())?,
+                    authorities.approval_journal.ok_or(())?,
                 )
                 .map_err(|_| ())?;
             Ok(CliBrokerResponse::BuildApproved)
         }
         CliBrokerRequest::Verify(handle, request) => {
-            caller
-                .authorize_adapter_call(&handle, MethodKind::Verify)
-                .map_err(|_| ())?;
-            Ok(adapter_response(
-                MethodKind::Verify,
-                adapter.ok_or(())?.verify(&request),
-                CliBrokerResponse::Verify,
-            ))
+            dispatch_verify(caller, authorities.adapter, &handle, &request)
         }
-        CliBrokerRequest::Gc(handle) => dispatch_gc(caller, adapter, &handle),
+        CliBrokerRequest::Gc(handle) => dispatch_gc(caller, authorities.adapter, &handle),
         CliBrokerRequest::AcquireGc(handle) => gc_admission_response(caller, &handle),
         CliBrokerRequest::GetInstallEvidence(handle) => install_evidence_response(caller, &handle),
         CliBrokerRequest::GetBuildPreview(handle) => build_preview_response(caller, &handle),
-        CliBrokerRequest::PrepareBuild(handle, selectors) => authority
+        CliBrokerRequest::PrepareBuild(handle, selectors) => authorities
+            .build
             .ok_or(())?
             .prepare(selectors, caller, &handle)
             .map(CliBrokerResponse::BuildPrepared),
         CliBrokerRequest::ExecuteBuild(handle, digest) => Ok(build_execution_response(
-            authority, caller, &handle, digest, progress,
+            authorities.build,
+            caller,
+            &handle,
+            digest,
+            progress,
         )),
-        CliBrokerRequest::PublishBuildRoots(handle, intent) => {
-            Ok(build_root_response(roots, caller, &handle, intent))
-        }
+        CliBrokerRequest::PublishBuildRoots(handle, intent) => Ok(build_root_response(
+            authorities.roots,
+            caller,
+            &handle,
+            intent,
+        )),
         CliBrokerRequest::TransitionGenerationRoots(handle, intent) => Ok(
-            generation_root_transition_response(roots, caller, &handle, intent),
+            generation_root_transition_response(authorities.roots, caller, &handle, intent),
         ),
         CliBrokerRequest::RemoveGenerationRoots(handle, generation) => Ok(
-            generation_root_removal_response(roots, caller, &handle, generation),
+            generation_root_removal_response(authorities.roots, caller, &handle, generation),
         ),
         CliBrokerRequest::AttestGenerationRoots(handle, generation) => Ok(
-            generation_root_attestation_response(roots, caller, &handle, generation),
+            generation_root_attestation_response(authorities.roots, caller, &handle, generation),
         ),
         CliBrokerRequest::AcquireInstall(handle, selectors) => {
             let mut download_progress =
                 |download| progress(CliBrokerResponse::InstallDownloadProgress(download));
             Ok(install_acquisition_response(
-                authority,
+                authorities.build,
                 caller,
                 &handle,
                 selectors,
                 &mut download_progress,
             ))
         }
+        CliBrokerRequest::RefreshChannel(handle) => {
+            dispatch_channel_refresh(caller, authorities.refresh, &handle)
+        }
     }
+}
+
+fn dispatch_evaluation(
+    caller: &AuthenticatedCaller,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+    handle: &OperationHandle,
+    request: &pkg_nix::EvaluateDerivationRequest,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .authorize_adapter_call(handle, MethodKind::EvaluateDerivation)
+        .map_err(|_| ())?;
+    Ok(adapter_response(
+        MethodKind::EvaluateDerivation,
+        adapter.ok_or(())?.evaluate_derivation(request),
+        CliBrokerResponse::DerivationPlan,
+    ))
+}
+
+fn dispatch_verify(
+    caller: &AuthenticatedCaller,
+    adapter: Option<&Arc<dyn NixAdapter>>,
+    handle: &OperationHandle,
+    request: &pkg_nix::VerifyRequest,
+) -> Result<CliBrokerResponse, ()> {
+    caller
+        .authorize_adapter_call(handle, MethodKind::Verify)
+        .map_err(|_| ())?;
+    Ok(adapter_response(
+        MethodKind::Verify,
+        adapter.ok_or(())?.verify(request),
+        CliBrokerResponse::Verify,
+    ))
+}
+
+fn dispatch_channel_refresh(
+    caller: &AuthenticatedCaller,
+    refresh: Option<&dyn ChannelRefreshDispatch>,
+    handle: &OperationHandle,
+) -> Result<CliBrokerResponse, ()> {
+    caller.authorize_channel_refresh(handle).map_err(|_| ())?;
+    Ok(match refresh.ok_or(())?.refresh() {
+        Ok(report) => CliBrokerResponse::ChannelRefreshed(report),
+        Err(code) => CliBrokerResponse::ChannelRefreshRefused(code),
+    })
 }
 
 fn dispatch_version(
@@ -1183,6 +1303,97 @@ mod tests {
         ) -> Result<BuildReport, BrokerErrorCode> {
             Err(BrokerErrorCode::BuildResourcePreflightFailed)
         }
+    }
+
+    struct TestChannelRefresh(Result<ChannelRefreshReport, ChannelRefreshErrorCode>);
+
+    impl ChannelRefreshDispatch for TestChannelRefresh {
+        fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn channel_refresh_requires_refresh_authority_and_returns_only_the_report() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let refresh_handle = caller.begin(BrokerOperationKind::Refresh).unwrap();
+        let report = ChannelRefreshReport::new(true, ChannelSequence::from_u64(43).unwrap());
+        let refresh = TestChannelRefresh(Ok(report));
+
+        assert_eq!(
+            dispatch_request_with_refresh(
+                &caller,
+                CliBrokerRequest::RefreshChannel(refresh_handle.clone()),
+                &refresh,
+            ),
+            Ok(CliBrokerResponse::ChannelRefreshed(report))
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Complete(refresh_handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Completed)
+        );
+
+        let doctor_handle = caller.begin(BrokerOperationKind::Doctor).unwrap();
+        assert_eq!(
+            dispatch_request_with_refresh(
+                &caller,
+                CliBrokerRequest::RefreshChannel(doctor_handle.clone()),
+                &refresh,
+            ),
+            Err(())
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Cancel(doctor_handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Cancelled)
+        );
+    }
+
+    #[test]
+    fn channel_refresh_refusal_is_typed() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Refresh).unwrap();
+
+        assert_eq!(
+            dispatch_request_with_refresh(
+                &caller,
+                CliBrokerRequest::RefreshChannel(handle.clone()),
+                &TestChannelRefresh(Err(ChannelRefreshErrorCode::Verification)),
+            ),
+            Ok(CliBrokerResponse::ChannelRefreshRefused(
+                ChannelRefreshErrorCode::Verification
+            ))
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Cancel(handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Cancelled)
+        );
     }
 
     #[test]

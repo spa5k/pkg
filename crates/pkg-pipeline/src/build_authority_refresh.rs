@@ -3,6 +3,7 @@
 use std::{error::Error, fmt, sync::Arc};
 
 use pkg_channel::{ChannelClient, ChannelError, RefreshOutcome};
+use pkg_core::ChannelSequence;
 use pkg_index::verify_index_artifact;
 
 use crate::{
@@ -38,8 +39,9 @@ impl AuthenticatedBuildAuthorityService {
         channel: ChannelClient,
         adapter: Arc<dyn BuildPlanningAdapter>,
     ) -> Result<Self, BuildAuthorityRefreshError> {
-        let system = production_native_system()
-            .map_err(|_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Host))?;
+        let system = production_native_system().map_err(|_| {
+            BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Service)
+        })?;
         let refresh = channel
             .refresh_with_index(system, |verified_channel, target| {
                 if target.system() != system {
@@ -53,7 +55,7 @@ impl AuthenticatedBuildAuthorityService {
         let verified_channel = into_channel(outcome);
         let authority =
             AuthenticatedBuildAuthority::new_with_index(verified_channel, index, adapter).map_err(
-                |_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Authority),
+                |_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Service),
             )?;
         Ok(Self {
             channel,
@@ -74,8 +76,21 @@ impl AuthenticatedBuildAuthorityService {
     /// Refuses without changing live broker authority unless every TUF,
     /// compressed-index, source-identity, and monotonic publication check passes.
     pub async fn refresh(&self) -> Result<BuildAuthorityUpdate, BuildAuthorityRefreshError> {
-        let system = production_native_system()
-            .map_err(|_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Host))?;
+        self.refresh_with_sequence().await.map(|(update, _)| update)
+    }
+
+    /// Authenticates and publishes the next channel/index pair and returns its
+    /// sanitized sequence from the same verified capability.
+    ///
+    /// # Errors
+    ///
+    /// Has the same fail-closed behavior as [`Self::refresh`].
+    pub async fn refresh_with_sequence(
+        &self,
+    ) -> Result<(BuildAuthorityUpdate, ChannelSequence), BuildAuthorityRefreshError> {
+        let system = production_native_system().map_err(|_| {
+            BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Service)
+        })?;
         let refresh = self
             .channel
             .refresh_with_index(system, |verified_channel, target| {
@@ -88,9 +103,11 @@ impl AuthenticatedBuildAuthorityService {
             .map_err(map_channel_error)?;
         let (outcome, index) = refresh.into_parts();
         let verified_channel = into_channel(outcome);
+        let sequence = verified_channel.sequence();
         self.authority
             .refresh_with_index(verified_channel, index)
-            .map_err(|_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Authority))
+            .map(|update| (update, sequence))
+            .map_err(|_| BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Service))
     }
 }
 
@@ -101,10 +118,13 @@ fn into_channel(outcome: RefreshOutcome) -> pkg_channel::VerifiedChannel {
 }
 
 fn map_channel_error(error: ChannelError) -> BuildAuthorityRefreshError {
-    let code = if matches!(error, ChannelError::IndexVerificationRefused) {
-        BuildAuthorityRefreshErrorCode::Index
-    } else {
-        BuildAuthorityRefreshErrorCode::Channel
+    let code = match error {
+        ChannelError::TransportUnavailable => BuildAuthorityRefreshErrorCode::Network,
+        ChannelError::DatastoreBusy => BuildAuthorityRefreshErrorCode::Busy,
+        ChannelError::DatastoreUnavailable | ChannelError::AcceptedStateUnavailable => {
+            BuildAuthorityRefreshErrorCode::Service
+        }
+        _ => BuildAuthorityRefreshErrorCode::Verification,
     };
     BuildAuthorityRefreshError::new(code)
 }
@@ -112,14 +132,14 @@ fn map_channel_error(error: ChannelError) -> BuildAuthorityRefreshError {
 /// Stable trusted-refresh refusal categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildAuthorityRefreshErrorCode {
-    /// The compiled host is outside the four V1 systems.
-    Host,
-    /// TUF, transport, descriptor, target, or durable rollback checks refused.
-    Channel,
-    /// Compressed index bytes or source identity refused promotion.
-    Index,
-    /// The broker authority rejected atomic publication.
-    Authority,
+    /// Authenticated repository bytes could not be acquired.
+    Network,
+    /// Another process owns the durable refresh lease.
+    Busy,
+    /// TUF, descriptor, target, rollback, or index verification refused.
+    Verification,
+    /// Host, durable state, or atomic authority publication is unavailable.
+    Service,
 }
 
 /// Redacted failure at the trusted build-authority refresh boundary.
@@ -158,8 +178,37 @@ mod tests {
         assert_send_sync::<AuthenticatedBuildAuthorityService>();
         assert!(production_native_system().is_ok());
         assert_eq!(
-            BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Index).to_string(),
+            BuildAuthorityRefreshError::new(BuildAuthorityRefreshErrorCode::Verification)
+                .to_string(),
             "authenticated build authority refresh refused"
         );
+    }
+
+    #[test]
+    fn refresh_failures_keep_public_retry_and_trust_classes_distinct() {
+        for (error, expected) in [
+            (
+                ChannelError::TransportUnavailable,
+                BuildAuthorityRefreshErrorCode::Network,
+            ),
+            (
+                ChannelError::DatastoreBusy,
+                BuildAuthorityRefreshErrorCode::Busy,
+            ),
+            (
+                ChannelError::AcceptedStateUnavailable,
+                BuildAuthorityRefreshErrorCode::Service,
+            ),
+            (
+                ChannelError::TufVerification(String::from("redacted")),
+                BuildAuthorityRefreshErrorCode::Verification,
+            ),
+            (
+                ChannelError::IndexVerificationRefused,
+                BuildAuthorityRefreshErrorCode::Verification,
+            ),
+        ] {
+            assert_eq!(map_channel_error(error).code(), expected);
+        }
     }
 }

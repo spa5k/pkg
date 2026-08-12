@@ -3,7 +3,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use pkg_core::channel::{PolicyVersion, SourceRevision};
+use pkg_core::channel::{ChannelSequence, PolicyVersion, SourceRevision};
 use pkg_core::identity::{OutputName, StorePath};
 use pkg_core::selector::{OutputSelection, PackageSelector, SelectorId, SelectorInput};
 use pkg_core::state::Digest;
@@ -123,6 +123,8 @@ pub enum CliBrokerRequest {
     AttestGenerationRoots(OperationHandle, GenerationId),
     /// Run cache-first acquisition from broker-retained channel authority.
     AcquireInstall(OperationHandle, Vec<PackageSelector>),
+    /// Refresh the broker-owned signed channel and native index.
+    RefreshChannel(OperationHandle),
 }
 
 /// One sanitized, authority-produced cache download counter.
@@ -230,8 +232,52 @@ pub enum CliBrokerResponse {
     InstallAcquisitionRefused(CacheInstallErrorCode),
     /// Intermediate authenticated download progress for method 26.
     InstallDownloadProgress(InstallDownloadProgress),
+    /// Signed channel and native index refresh completed atomically.
+    ChannelRefreshed(ChannelRefreshReport),
+    /// Signed channel refresh was refused without changing live authority.
+    ChannelRefreshRefused(ChannelRefreshErrorCode),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
+}
+
+/// Public result of one broker-owned authenticated channel refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelRefreshReport {
+    updated: bool,
+    sequence: ChannelSequence,
+}
+
+impl ChannelRefreshReport {
+    /// Constructs a sanitized refresh result from broker-owned authority.
+    #[must_use]
+    pub const fn new(updated: bool, sequence: ChannelSequence) -> Self {
+        Self { updated, sequence }
+    }
+
+    /// Whether a newer authenticated channel/index pair became current.
+    #[must_use]
+    pub const fn updated(self) -> bool {
+        self.updated
+    }
+
+    /// Current authenticated channel sequence after the refresh.
+    #[must_use]
+    pub const fn sequence(self) -> ChannelSequence {
+        self.sequence
+    }
+}
+
+/// Stable sanitized failure categories for authenticated channel refresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelRefreshErrorCode {
+    /// Authenticated repository bytes could not be acquired.
+    Network,
+    /// Signed metadata, target, rollback, or index verification refused.
+    Verification,
+    /// Another refresh owns the durable channel writer lease.
+    Busy,
+    /// Durable state or atomic authority publication is unavailable.
+    ServiceUnavailable,
 }
 
 /// Stable public failure categories for cache-first acquisition.
@@ -625,6 +671,12 @@ impl ProductFrameCodec {
                     })?,
                 )
             }
+            CliBrokerRequest::RefreshChannel(handle) => (
+                27,
+                encode_json(&HandleWire {
+                    handle: handle.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -637,7 +689,7 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 | 4 | 10 | 16 | 17 | 23 | 24 => {
+            2 | 3 | 4 | 10 | 16 | 17 | 23 | 24 | 27 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
                 match frame.method {
@@ -649,6 +701,7 @@ impl ProductFrameCodec {
                     17 => CliBrokerRequest::GetBuildPreview(handle),
                     23 => CliBrokerRequest::AcquireGc(handle),
                     24 => CliBrokerRequest::GetInstallEvidence(handle),
+                    27 => CliBrokerRequest::RefreshChannel(handle),
                     _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
                 }
             }
@@ -899,6 +952,19 @@ impl ProductFrameCodec {
                     total: progress.total(),
                 })?,
             ),
+            CliBrokerResponse::ChannelRefreshed(report) => (
+                27,
+                encode_json(&ChannelRefreshWire {
+                    updated: report.updated(),
+                    sequence: report.sequence().get().get(),
+                })?,
+            ),
+            CliBrokerResponse::ChannelRefreshRefused(code) => (
+                27,
+                encode_json(&ChannelRefreshFailureWire {
+                    error: channel_refresh_error_name(*code),
+                })?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -1078,6 +1144,19 @@ impl ProductFrameCodec {
                         "build-required" => CliBrokerResponse::InstallBuildRequired,
                         _ => return Err(FrameError::new(FrameErrorCode::InvalidPayload)),
                     }
+                }
+            }
+            27 => {
+                if let Some(code) = decode_channel_refresh_failure(frame.payload)? {
+                    CliBrokerResponse::ChannelRefreshRefused(code)
+                } else {
+                    let wire: ChannelRefreshOwnedWire = decode_json(frame.payload)?;
+                    let sequence = ChannelSequence::from_u64(wire.sequence)
+                        .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?;
+                    CliBrokerResponse::ChannelRefreshed(ChannelRefreshReport::new(
+                        wire.updated,
+                        sequence,
+                    ))
                 }
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
@@ -1463,6 +1542,34 @@ fn decode_install_acquisition_failure(
     parse_cache_install_error_code(&wire.error).map(Some)
 }
 
+fn decode_channel_refresh_failure(
+    bytes: &[u8],
+) -> Result<Option<ChannelRefreshErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<ChannelRefreshFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_channel_refresh_error(&wire.error).map(Some)
+}
+
+const fn channel_refresh_error_name(code: ChannelRefreshErrorCode) -> &'static str {
+    match code {
+        ChannelRefreshErrorCode::Network => "network",
+        ChannelRefreshErrorCode::Verification => "verification",
+        ChannelRefreshErrorCode::Busy => "busy",
+        ChannelRefreshErrorCode::ServiceUnavailable => "service-unavailable",
+    }
+}
+
+fn parse_channel_refresh_error(value: &str) -> Result<ChannelRefreshErrorCode, FrameError> {
+    match value {
+        "network" => Ok(ChannelRefreshErrorCode::Network),
+        "verification" => Ok(ChannelRefreshErrorCode::Verification),
+        "busy" => Ok(ChannelRefreshErrorCode::Busy),
+        "service-unavailable" => Ok(ChannelRefreshErrorCode::ServiceUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
 fn decode_install_download_progress(
     bytes: &[u8],
 ) -> Result<Option<InstallDownloadProgress>, FrameError> {
@@ -1693,6 +1800,32 @@ struct HandleWire<'a> {
 #[serde(deny_unknown_fields)]
 struct HandleOwnedWire {
     handle: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChannelRefreshWire {
+    updated: bool,
+    sequence: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ChannelRefreshOwnedWire {
+    updated: bool,
+    sequence: u64,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct ChannelRefreshFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChannelRefreshFailureOwnedWire {
+    error: String,
 }
 
 #[derive(Serialize)]
@@ -3169,6 +3302,57 @@ mod tests {
                 .code(),
             FrameErrorCode::InvalidPayload
         );
+    }
+
+    #[test]
+    fn channel_refresh_frame_contains_only_handle_and_sanitized_result() {
+        let request =
+            CliBrokerRequest::RefreshChannel(OperationHandle(format!("op_{}", "9".repeat(64))));
+        let encoded = ProductFrameCodec::encode_cli_request(27, &request).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        for forbidden in [
+            "url",
+            "target",
+            "system",
+            "root",
+            "key",
+            "descriptor",
+            "index",
+        ] {
+            assert!(!wire.contains(forbidden), "refresh exposed {forbidden}");
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((27, request))
+        );
+
+        let mut responses = vec![CliBrokerResponse::ChannelRefreshed(
+            ChannelRefreshReport::new(true, ChannelSequence::from_u64(42).unwrap()),
+        )];
+        responses.extend(
+            [
+                ChannelRefreshErrorCode::Network,
+                ChannelRefreshErrorCode::Verification,
+                ChannelRefreshErrorCode::Busy,
+                ChannelRefreshErrorCode::ServiceUnavailable,
+            ]
+            .map(CliBrokerResponse::ChannelRefreshRefused),
+        );
+        for response in responses {
+            let encoded = ProductFrameCodec::encode_cli_response(27, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((27, response))
+            );
+        }
+        for payload in [
+            br#"{"updated":true,"sequence":0}"#.as_slice(),
+            br#"{"updated":true,"sequence":42,"url":"https://example.invalid"}"#.as_slice(),
+            br#"{"error":"unknown"}"#.as_slice(),
+        ] {
+            let encoded = encode_frame(CHANNEL_CLI_BROKER, 27, 27, payload).unwrap();
+            assert!(ProductFrameCodec::decode_cli_response(&encoded).is_err());
+        }
     }
 
     #[test]

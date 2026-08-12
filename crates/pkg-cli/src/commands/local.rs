@@ -232,10 +232,19 @@ impl CoreOperations for LocalStateOperations {
 
     fn update(
         &mut self,
-        _args: &UpdateArgs,
-        _policy: OperationPolicy,
+        args: &UpdateArgs,
+        policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        Err(index_unavailable())
+        self.require_broker_state()?;
+        if args.check() || args.force() || policy.dry_run() {
+            return Err(CommandError::new(
+                ExitCode::Config,
+                "the requested metadata refresh mode is not available",
+                "run `pkg update` without --check, --force, or --dry-run",
+            ));
+        }
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        refresh_channel_metadata(&mut broker)
     }
 
     fn upgrade(
@@ -1486,6 +1495,83 @@ fn broker_error(_error: crate::broker::BrokerClientError) -> CommandError {
     )
 }
 
+fn channel_refresh_error(error: BrokerClientError) -> CommandError {
+    let (exit_code, message, hint) = channel_refresh_error_fields(error.code());
+    CommandError::new(exit_code, message, hint)
+}
+
+fn channel_refresh_error_fields(
+    code: BrokerClientErrorCode,
+) -> (ExitCode, &'static str, &'static str) {
+    match code {
+        BrokerClientErrorCode::ChannelRefreshNetwork => (
+            ExitCode::AcquireNetwork,
+            "signed channel metadata could not be downloaded",
+            "check network access, then retry `pkg update`",
+        ),
+        BrokerClientErrorCode::ChannelRefreshVerification => (
+            ExitCode::VerifyFail,
+            "signed channel metadata was refused",
+            "check system time, then retry `pkg update`",
+        ),
+        BrokerClientErrorCode::ChannelRefreshBusy => (
+            ExitCode::StateLocked,
+            "another channel refresh is active",
+            "wait for the active refresh, then retry `pkg update`",
+        ),
+        BrokerClientErrorCode::ChannelRefreshServiceUnavailable => (
+            ExitCode::EngineUnavailable,
+            "the managed package service refused the transaction",
+            "run `pkg doctor` to inspect managed broker readiness",
+        ),
+        _ => (
+            ExitCode::EngineUnavailable,
+            "the managed package service refused the transaction",
+            "run `pkg doctor` to inspect managed broker readiness",
+        ),
+    }
+}
+
+fn refresh_channel_metadata(
+    broker: &mut BrokerLifecycleClient,
+) -> Result<CommandResult, CommandError> {
+    let handle = broker
+        .begin(BrokerOperationKind::Refresh)
+        .map_err(broker_error)?;
+    let result = (|| {
+        let report = broker
+            .refresh_channel(handle.clone())
+            .map_err(channel_refresh_error)?;
+        broker.complete(handle.clone()).map_err(broker_error)?;
+        CommandResult::new(
+            if report.updated() {
+                format!(
+                    "Channel metadata updated to sequence {}.",
+                    report.sequence()
+                )
+            } else {
+                format!(
+                    "Channel metadata is current at sequence {}.",
+                    report.sequence()
+                )
+            },
+            Map::from_iter([
+                ("updated".into(), json!(report.updated())),
+                (
+                    "channelSequence".into(),
+                    json!(report.sequence().get().get()),
+                ),
+            ]),
+            Vec::new(),
+        )
+        .map_err(|_| mutation_failed())
+    })();
+    if result.is_err() {
+        let _ = broker.cancel(handle);
+    }
+    result
+}
+
 fn mutation_failed() -> CommandError {
     CommandError::new(
         ExitCode::StateCorrupt,
@@ -1548,6 +1634,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
     use std::thread;
 
     use serde_json::Value;
@@ -1560,10 +1647,11 @@ mod tests {
         CommandEngine, CommandRequest, CoreEngine, OperationPolicy, write_success,
     };
     use crate::ux::OutputMode;
+    use pkg_core::channel::ChannelSequence;
     use pkg_nix::{
         BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
-        CliBrokerRequest, CliBrokerResponse, InProcessBroker, InProcessCallerPeer,
-        ProductFrameCodec, StorePath,
+        ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, InProcessBroker,
+        InProcessCallerPeer, ProductFrameCodec, StorePath,
     };
 
     const FRAME_HEADER_BYTES: usize = 20;
@@ -2081,6 +2169,83 @@ mod tests {
             };
             require_supported_install_options(args).unwrap();
             assert_eq!(state_collision_policy(args.collision_policy()), expected);
+        }
+    }
+
+    #[test]
+    fn channel_refresh_runs_one_authenticated_transaction() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let handle = InProcessBroker::new()
+            .unwrap()
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap()
+            .begin(BrokerOperationKind::Refresh)
+            .unwrap();
+        let server_handle = handle.clone();
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
+        let worker = thread::spawn(move || {
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Refresh)
+            );
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(server_handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::RefreshChannel(server_handle.clone())
+            );
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::ChannelRefreshed(ChannelRefreshReport::new(
+                    true,
+                    ChannelSequence::from_u64(43).unwrap(),
+                )),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Complete(server_handle));
+            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            release_rx.recv().unwrap();
+        });
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+
+        let result = refresh_channel_metadata(&mut broker);
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        let result = result.unwrap();
+
+        assert_eq!(result.fields()["updated"], Value::Bool(true));
+        assert_eq!(result.fields()["channelSequence"], Value::from(43));
+    }
+
+    #[test]
+    fn channel_refresh_failure_classes_keep_stable_exit_codes() {
+        for (code, expected) in [
+            (
+                BrokerClientErrorCode::ChannelRefreshNetwork,
+                ExitCode::AcquireNetwork,
+            ),
+            (
+                BrokerClientErrorCode::ChannelRefreshVerification,
+                ExitCode::VerifyFail,
+            ),
+            (
+                BrokerClientErrorCode::ChannelRefreshBusy,
+                ExitCode::StateLocked,
+            ),
+            (
+                BrokerClientErrorCode::ChannelRefreshServiceUnavailable,
+                ExitCode::EngineUnavailable,
+            ),
+        ] {
+            assert_eq!(channel_refresh_error_fields(code).0, expected);
         }
     }
 

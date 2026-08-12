@@ -2,8 +2,8 @@
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::{
-    BrokerApprovalAudit, RootHelperClient, serve_broker_connection_with_build_and_root_authority,
-    serve_helper_connection,
+    BrokerApprovalAudit, ChannelRefreshDispatch, RootHelperClient,
+    serve_broker_connection_with_product_authority, serve_helper_connection,
 };
 #[cfg(target_os = "linux")]
 use crate::{LinuxHelperSession, LinuxRootSetStore};
@@ -21,11 +21,14 @@ use nix::unistd::{Gid, Uid, User};
 use pkg_channel::{ChannelClient, TrustedRoot};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use pkg_nix::{
-    InProcessBroker, InProcessHelper, InProcessPeer, RealNixAdapter, RootNixRepairExecutor,
-    VerifiedRepairExecutor,
+    ChannelRefreshErrorCode, ChannelRefreshReport, InProcessBroker, InProcessHelper, InProcessPeer,
+    RealNixAdapter, RootNixRepairExecutor, VerifiedRepairExecutor,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use pkg_pipeline::{AuthenticatedBuildAuthorityService, BuildPlanningAdapter};
+use pkg_pipeline::{
+    AuthenticatedBuildAuthorityService, BuildAuthorityRefreshErrorCode, BuildAuthorityUpdate,
+    BuildPlanningAdapter,
+};
 use std::{error::Error, fmt};
 #[cfg(target_os = "macos")]
 use std::{
@@ -41,7 +44,7 @@ use std::{
     thread,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Handle};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use url::Url;
 
@@ -73,6 +76,33 @@ const RELEASE_TUF_ROOT_JSON: Option<&str> = option_env!("PKG_RELEASE_TUF_ROOT_JS
 const RELEASE_CHANNEL_METADATA_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_METADATA_URL");
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const RELEASE_CHANNEL_TARGETS_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_TARGETS_URL");
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ProductionChannelRefresh {
+    service: Arc<AuthenticatedBuildAuthorityService>,
+    runtime: Handle,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ChannelRefreshDispatch for ProductionChannelRefresh {
+    fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode> {
+        self.runtime
+            .block_on(self.service.refresh_with_sequence())
+            .map(|(update, sequence)| {
+                ChannelRefreshReport::new(update == BuildAuthorityUpdate::Updated, sequence)
+            })
+            .map_err(|error| match error.code() {
+                BuildAuthorityRefreshErrorCode::Network => ChannelRefreshErrorCode::Network,
+                BuildAuthorityRefreshErrorCode::Busy => ChannelRefreshErrorCode::Busy,
+                BuildAuthorityRefreshErrorCode::Verification => {
+                    ChannelRefreshErrorCode::Verification
+                }
+                BuildAuthorityRefreshErrorCode::Service => {
+                    ChannelRefreshErrorCode::ServiceUnavailable
+                }
+            })
+    }
+}
 
 /// Stable production-service startup/runtime failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,13 +206,19 @@ fn run_broker_listener(
         .build()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
     let channel = production_channel(&home.join("channel"))?;
-    let authority_service = runtime
-        .block_on(AuthenticatedBuildAuthorityService::bootstrap(
-            channel,
-            planning_adapter,
-        ))
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let authority_service = Arc::new(
+        runtime
+            .block_on(AuthenticatedBuildAuthorityService::bootstrap(
+                channel,
+                planning_adapter,
+            ))
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+    );
     let authority = authority_service.authority();
+    let refresh = Arc::new(ProductionChannelRefresh {
+        service: Arc::clone(&authority_service),
+        runtime: runtime.handle().clone(),
+    });
     let roots = Arc::new(RootHelperClient::production());
     let limiter = ConnectionLimiter::new(MAX_BROKER_CONNECTIONS);
 
@@ -197,16 +233,18 @@ fn run_broker_listener(
                 let connection_authority = Arc::clone(&authority);
                 let connection_roots = Arc::clone(&roots);
                 let connection_approval_audit = approval_audit.clone();
+                let connection_refresh = Arc::clone(&refresh);
                 thread::Builder::new()
                     .name(String::from("pkg-broker-client"))
                     .spawn(move || {
                         let _permit = permit;
-                        let _ = serve_broker_connection_with_build_and_root_authority(
+                        let _ = serve_broker_connection_with_product_authority(
                             stream,
                             &connection_broker,
                             &connection_approval_audit,
                             &connection_authority,
                             &connection_roots,
+                            connection_refresh.as_ref(),
                         );
                     })
                     .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;

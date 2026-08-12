@@ -606,6 +606,16 @@ impl AuthenticatedCaller {
         self.require_running_kind(&mut state, handle, allowed)
     }
 
+    /// Authorizes one broker-owned signed-channel refresh operation.
+    ///
+    /// This capability accepts no channel, URL, target, system, or trust
+    /// input. It only proves that the authenticated caller owns a live Refresh
+    /// handle before the service uses its compiled trust configuration.
+    pub fn authorize_channel_refresh(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Refresh])
+    }
+
     /// Retains one broker-derived private plan and returns only its public preview.
     ///
     /// This is an in-broker API, not an RPC shape: callers never provide raw
@@ -3637,6 +3647,16 @@ mod tests {
         caller
             .authorize_adapter_call(&doctor, crate::MethodKind::Version)
             .unwrap();
+        assert_eq!(
+            caller
+                .authorize_channel_refresh(&doctor)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+
+        let refresh = caller.begin(BrokerOperationKind::Refresh).unwrap();
+        caller.authorize_channel_refresh(&refresh).unwrap();
 
         let build = caller.begin(BrokerOperationKind::Build).unwrap();
         assert_eq!(

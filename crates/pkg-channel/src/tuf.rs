@@ -266,7 +266,7 @@ impl ChannelClient {
         .datastore(&self.datastore)
         .load()
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
+        .map_err(map_tough_error)?;
 
         let bytes = read_descriptor_target(&repository).await?;
         let previous = self.accepted.load()?;
@@ -294,7 +294,7 @@ impl ChannelClient {
         .datastore(&self.datastore)
         .load()
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))?;
+        .map_err(map_tough_error)?;
 
         let bytes = read_descriptor_target(&repository).await?;
         let previous = self.accepted.load()?;
@@ -334,11 +334,9 @@ async fn read_descriptor_target(repository: &tough::Repository) -> Result<Vec<u8
     let stream = repository
         .read_target(&name)
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))?
+        .map_err(map_tough_error)?
         .ok_or(ChannelError::MissingDescriptor)?;
-    IntoVec::into_vec(stream)
-        .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))
+    IntoVec::into_vec(stream).await.map_err(map_tough_error)
 }
 
 async fn read_required_index_target(
@@ -356,11 +354,38 @@ async fn read_required_index_target(
     let stream = repository
         .read_target(&name)
         .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))?
+        .map_err(map_tough_error)?
         .ok_or(ChannelError::MissingIndexTarget)?;
-    IntoVec::into_vec(stream)
-        .await
-        .map_err(|error| ChannelError::TufVerification(error.to_string()))
+    IntoVec::into_vec(stream).await.map_err(map_tough_error)
+}
+
+fn map_tough_error(error: tough::error::Error) -> ChannelError {
+    use tough::error::Error;
+
+    match error {
+        Error::Transport { .. } => ChannelError::TransportUnavailable,
+        Error::AbsolutePath { .. }
+        | Error::DatastoreInit { .. }
+        | Error::DatastoreCreate { .. }
+        | Error::DatastoreOpen { .. }
+        | Error::DatastoreRemove { .. }
+        | Error::DatastoreSerialize { .. }
+        | Error::DirCreate { .. }
+        | Error::FileMetadata { .. }
+        | Error::FileOpen { .. }
+        | Error::FileRead { .. }
+        | Error::FileParseJson { .. }
+        | Error::FileWrite { .. }
+        | Error::NamedTempFileCreate { .. }
+        | Error::NamedTempFilePersist { .. }
+        | Error::CacheFileRead { .. }
+        | Error::CacheFileWrite { .. }
+        | Error::CacheDirectoryCreate { .. }
+        | Error::CacheTargetWrite { .. }
+        | Error::WalkDir { .. }
+        | Error::JoinSpawnBlockingTask { .. } => ChannelError::DatastoreUnavailable,
+        other => ChannelError::TufVerification(other.to_string()),
+    }
 }
 
 #[cfg(test)]
