@@ -487,6 +487,21 @@ mod tests {
     struct StubDaemon;
 
     impl ManagedDaemon for StubDaemon {
+        fn register_runtime(
+            &self,
+            _root: &Path,
+            _system: System,
+            _version: &NixVersion,
+            _registration: &Path,
+        ) -> Result<(), DaemonError> {
+            Ok(())
+        }
+        fn commit_runtime_registration(&self) -> Result<(), DaemonError> {
+            Ok(())
+        }
+        fn rollback_runtime_registration(&self) -> Result<(), DaemonError> {
+            Ok(())
+        }
         fn start(
             &self,
             _root: &Path,

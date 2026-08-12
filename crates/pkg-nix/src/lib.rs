@@ -120,6 +120,9 @@ pub use managed::provision::{
     provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
     provision_managed_nix_from_bundle_blocking, verify_authenticated_managed_install,
 };
+pub use managed::runtime_archive::{
+    RuntimeManifestError, RuntimeManifestErrorCode, build_upstream_runtime_asset_manifest,
+};
 pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
     NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,

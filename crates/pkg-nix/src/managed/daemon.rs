@@ -8,6 +8,8 @@ use std::ffi::OsString;
 #[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
+use std::fs::File;
+#[cfg(unix)]
 use std::os::unix::fs::FileTypeExt as _;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt as _;
@@ -39,10 +41,22 @@ use crate::real::{
 const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(unix)]
 const DAEMON_READY_POLL: Duration = Duration::from_millis(50);
+#[cfg(unix)]
+const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(120);
+#[cfg(unix)]
+const REGISTRATION_POLL: Duration = Duration::from_millis(50);
+#[cfg(unix)]
+const MAX_REGISTRATION_ENTRIES: usize = 64;
+#[cfg(unix)]
+const STORE_LINKS: &str = "/nix/store/.links";
 
 /// Stable daemon lifecycle failure categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonErrorCode {
+    /// The authenticated upstream registration could not initialize the store database.
+    RegistrationFailed,
+    /// Attempt-owned store registration state could not be removed safely.
+    RegistrationRollbackFailed,
     /// The platform service definition could not be loaded or started.
     StartFailed,
     /// The managed daemon did not answer its bounded store health check.
@@ -85,6 +99,21 @@ impl std::error::Error for DaemonError {}
 /// layers. They may invoke the bundled `nix-daemon`, systemd, or launchd, but
 /// callers cannot pass argv, environment, sockets, or arbitrary service names.
 pub trait ManagedDaemon: Send + Sync {
+    /// Registers the authenticated upstream runtime closure in the fixed local store.
+    fn register_runtime(
+        &self,
+        installation_root: &Path,
+        system: System,
+        version: &NixVersion,
+        registration: &Path,
+    ) -> Result<(), DaemonError>;
+
+    /// Releases rollback ownership after the platform install commits.
+    fn commit_runtime_registration(&self) -> Result<(), DaemonError>;
+
+    /// Removes only the store-database paths created by this install attempt.
+    fn rollback_runtime_registration(&self) -> Result<(), DaemonError>;
+
     /// Starts the one fixed managed service for the authenticated runtime.
     fn start(
         &self,
@@ -115,6 +144,15 @@ struct ProductionDaemonState {
     child: Option<Child>,
     adapter: Option<Arc<RealNixAdapter>>,
     socket: Option<PathBuf>,
+    registration: Option<Vec<OwnedRegistrationEntry>>,
+}
+
+#[cfg(unix)]
+struct OwnedRegistrationEntry {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+    directory: bool,
 }
 
 #[cfg(unix)]
@@ -145,6 +183,7 @@ impl ProductionManagedDaemon {
                 child: None,
                 adapter: None,
                 socket: None,
+                registration: None,
             }),
         }
     }
@@ -159,6 +198,99 @@ impl Default for ProductionManagedDaemon {
 
 #[cfg(unix)]
 impl ManagedDaemon for ProductionManagedDaemon {
+    fn register_runtime(
+        &self,
+        installation_root: &Path,
+        system: System,
+        version: &NixVersion,
+        registration: &Path,
+    ) -> Result<(), DaemonError> {
+        let contract = registration_contract(installation_root, system, version, registration)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationFailed))?;
+        if state.child.is_some() || state.registration.is_some() {
+            return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+        }
+        require_fresh_registration_state()?;
+        let input = File::open(registration)
+            .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationFailed))?;
+        let mut command = Command::new(&contract.binary);
+        command
+            .arg("--load-db")
+            .env_clear()
+            .env("HOME", &contract.home)
+            .env("TMPDIR", &contract.temporary)
+            .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
+            .env("NIX_STATE_DIR", MANAGED_NIX_STATE)
+            .env("NIX_USER_CONF_FILES", "")
+            .env("PATH", MANAGED_PATH)
+            .current_dir(&contract.home)
+            .stdin(Stdio::from(input))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0);
+        let mut child = command
+            .spawn()
+            .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationFailed))?;
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if started.elapsed() < REGISTRATION_TIMEOUT => {
+                    thread::sleep(REGISTRATION_POLL);
+                }
+                Ok(None) | Err(_) => {
+                    let _ = terminate_and_reap(&mut child, None);
+                    let _ = cleanup_registration_state(None);
+                    return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+                }
+            }
+        };
+        let _ = terminate_and_reap(&mut child, Some(status));
+        if !status.success() {
+            let _ = cleanup_registration_state(None);
+            return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+        }
+        let entries = capture_registration_state(true).inspect_err(|_| {
+            let _ = cleanup_registration_state(None);
+        })?;
+        state.registration = Some(entries);
+        Ok(())
+    }
+
+    fn commit_runtime_registration(&self) -> Result<(), DaemonError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationFailed))?;
+        if state.registration.take().is_none() {
+            return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+        }
+        Ok(())
+    }
+
+    fn rollback_runtime_registration(&self) -> Result<(), DaemonError> {
+        let entries = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationRollbackFailed))?;
+            if state.child.is_some() {
+                return Err(DaemonError::new(
+                    DaemonErrorCode::RegistrationRollbackFailed,
+                ));
+            }
+            state.registration.take()
+        };
+        let store_links = capture_owned_registration_paths([PathBuf::from(STORE_LINKS)], false)
+            .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationRollbackFailed))?;
+        cleanup_registration_state(Some(&store_links))
+            .and_then(|()| cleanup_registration_state(entries.as_deref()))
+            .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationRollbackFailed))
+    }
+
     fn start(
         &self,
         installation_root: &Path,
@@ -310,6 +442,141 @@ fn launch_contract(
 }
 
 #[cfg(unix)]
+fn registration_contract(
+    installation_root: &Path,
+    system: System,
+    version: &NixVersion,
+    registration: &Path,
+) -> Result<DaemonLaunchContract, DaemonError> {
+    let registration_error = || DaemonError::new(DaemonErrorCode::RegistrationFailed);
+    let mut contract =
+        launch_contract(installation_root, system, version).map_err(|_| registration_error())?;
+    contract.binary = Path::new("/opt/pkg/nix")
+        .join(version.as_str())
+        .join("bin/nix-store");
+    validate_file(&contract.binary, true).map_err(|_| registration_error())?;
+    validate_file(registration, false).map_err(|_| registration_error())?;
+    validate_private_directory(&contract.home).map_err(|_| registration_error())?;
+    validate_private_directory(&contract.temporary).map_err(|_| registration_error())?;
+    Ok(contract)
+}
+
+#[cfg(unix)]
+fn registration_roots() -> [PathBuf; 4] {
+    [
+        PathBuf::from("/nix/var/nix/db"),
+        PathBuf::from("/nix/var/nix/profiles"),
+        PathBuf::from("/nix/var/nix/temproots"),
+        PathBuf::from("/nix/var/nix/gcroots"),
+    ]
+}
+
+#[cfg(unix)]
+fn require_fresh_registration_state() -> Result<(), DaemonError> {
+    if registration_roots()
+        .iter()
+        .any(|path| fs::symlink_metadata(path).is_ok())
+        || fs::symlink_metadata(STORE_LINKS).is_ok()
+    {
+        return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn capture_registration_state(
+    require_every_root: bool,
+) -> Result<Vec<OwnedRegistrationEntry>, DaemonError> {
+    capture_owned_registration_paths(registration_roots(), require_every_root)
+}
+
+#[cfg(unix)]
+fn capture_owned_registration_paths<const N: usize>(
+    roots: [PathBuf; N],
+    require_every_root: bool,
+) -> Result<Vec<OwnedRegistrationEntry>, DaemonError> {
+    let mut pending = Vec::new();
+    for root in roots {
+        match fs::symlink_metadata(&root) {
+            Ok(_) => pending.push(root),
+            Err(error) if !require_every_root && error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed)),
+        }
+    }
+    let mut entries = Vec::new();
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationFailed))?;
+        if metadata.uid() != 0
+            || metadata.file_type().is_symlink()
+            || !(metadata.file_type().is_dir() || metadata.file_type().is_file())
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+        }
+        if entries.len() >= MAX_REGISTRATION_ENTRIES {
+            return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+        }
+        if metadata.file_type().is_dir() {
+            let children = fs::read_dir(&path)
+                .map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationFailed))?;
+            for child in children {
+                let child =
+                    child.map_err(|_| DaemonError::new(DaemonErrorCode::RegistrationFailed))?;
+                pending.push(child.path());
+            }
+        }
+        entries.push(OwnedRegistrationEntry {
+            path,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            directory: metadata.file_type().is_dir(),
+        });
+    }
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.path.components().count()));
+    Ok(entries)
+}
+
+#[cfg(unix)]
+fn cleanup_registration_state(
+    captured: Option<&[OwnedRegistrationEntry]>,
+) -> Result<(), DaemonError> {
+    let discovered;
+    let owned = if let Some(entries) = captured {
+        entries
+    } else {
+        discovered = capture_registration_state(false)?;
+        &discovered
+    };
+    let mut failed = false;
+    for entry in owned {
+        let result = match fs::symlink_metadata(&entry.path) {
+            Ok(metadata)
+                if metadata.dev() == entry.device
+                    && metadata.ino() == entry.inode
+                    && metadata.file_type().is_dir() == entry.directory =>
+            {
+                if entry.directory {
+                    fs::remove_dir(&entry.path)
+                } else {
+                    fs::remove_file(&entry.path)
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(_) | Err(_) => Err(std::io::Error::other("registration identity changed")),
+        };
+        failed |= result.is_err();
+    }
+    if failed {
+        Err(DaemonError::new(
+            DaemonErrorCode::RegistrationRollbackFailed,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
 fn validate_launch_contract(contract: &DaemonLaunchContract) -> Result<(), DaemonError> {
     validate_file(&contract.binary, true)?;
     validate_file(Path::new("/opt/pkg/etc/pkg/nix.conf"), false)?;
@@ -426,6 +693,26 @@ impl fmt::Debug for ProductionManagedDaemon {
 
 #[cfg(not(unix))]
 impl ManagedDaemon for ProductionManagedDaemon {
+    fn register_runtime(
+        &self,
+        _installation_root: &Path,
+        _system: System,
+        _version: &NixVersion,
+        _registration: &Path,
+    ) -> Result<(), DaemonError> {
+        Err(DaemonError::new(DaemonErrorCode::RegistrationFailed))
+    }
+
+    fn commit_runtime_registration(&self) -> Result<(), DaemonError> {
+        Err(DaemonError::new(DaemonErrorCode::RegistrationFailed))
+    }
+
+    fn rollback_runtime_registration(&self) -> Result<(), DaemonError> {
+        Err(DaemonError::new(
+            DaemonErrorCode::RegistrationRollbackFailed,
+        ))
+    }
+
     fn start(
         &self,
         _installation_root: &Path,

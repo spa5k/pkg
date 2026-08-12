@@ -1578,6 +1578,14 @@ flowchart TD
   The Linux production backend repeats the same verification as root immediately before
   mutation. Strict Clippy, 357 installer/Nix tests, the complete security lane, and an
   independent P1 review pass.
+  The managed runtime producer and provisioner now share one bounded parser for the official
+  Nix 2.34.8 archive layout. The signed asset manifest covers the complete store closure and
+  registration data, while the broker-facing `nix`, `nix-store`, and `nix-daemon` files are
+  authenticated regular copies of the upstream multi-call binary. Registration loads through
+  the fixed managed `nix-store`, and rollback removes only attempt-owned database, GC-root, and
+  store-link state. The actual upstream aarch64-linux archive maps and extracts successfully,
+  and a privileged clean Linux container completes install, daemon ping, rollback, reinstall,
+  commit, and daemon ping. This proves the runtime bootstrap seam, not the full product e2e lane.
   This resolves plan 07 Q7.7 without claiming the still-missing macOS privileged production backend.
   This does **not** yet claim the full PR: production installer completion, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.

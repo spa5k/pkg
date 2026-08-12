@@ -28,7 +28,11 @@ use crate::{Digest, NixVersion};
 const SCHEMA_VERSION: u32 = 1;
 const PRODUCT: &str = "pkg";
 const MAX_RECEIPT_BYTES: u64 = 1_048_576;
-const MAX_ARTIFACTS: usize = 512;
+// A pinned Nix 2.34.8 runtime closure contains about two thousand filesystem
+// entries on the supported Linux systems. Keep this limit aligned with the
+// independently bounded archive-entry ceiling so a complete authenticated
+// runtime can be represented without making either parser unbounded.
+const MAX_ARTIFACTS: usize = 4096;
 const MAX_PATH_BYTES: usize = 512;
 
 /// The filesystem kind of one managed artifact.

@@ -21,12 +21,15 @@ use super::ownership::{
     decode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
     verify_with_owner_uid,
 };
+use super::runtime_archive::{
+    MAX_ARCHIVE_ENTRIES, MAX_REGISTRATION_BYTES, UpstreamArchiveMember,
+    classify_upstream_archive_member, is_runtime_bin,
+};
 use crate::{Digest, NixVersion, System, render_managed_build_nix_conf};
 
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ASSET_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-const MAX_ARCHIVE_ENTRIES: usize = 4096;
 static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 
 /// An authenticated pair of TUF target identities needed for provisioning.
@@ -307,6 +310,15 @@ impl ProvisionedBootstrapTransaction<'_> {
             .bootstrap
             .take()
             .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
+        if self
+            .rollback
+            .as_ref()
+            .is_some_and(|rollback| rollback.registration_pending)
+        {
+            self.daemon
+                .commit_runtime_registration()
+                .map_err(|error| ProvisionError::daemon(error.code()))?;
+        }
         self.rollback = None;
         Ok(bootstrap)
     }
@@ -648,7 +660,7 @@ fn provision_with_owner(
     path_entries: &[PathBuf],
     environment_keys: &[std::ffi::OsString],
 ) -> Result<ProvisionedRuntime, ProvisionError> {
-    let (runtime, rollback) = provision_with_owner_policy(
+    let (runtime, mut rollback) = provision_with_owner_policy(
         request,
         source,
         daemon,
@@ -662,6 +674,15 @@ fn provision_with_owner(
             Ok(()) => Err(error),
             Err(rollback_error) => Err(rollback_error),
         };
+    }
+    if rollback.registration_pending {
+        if let Err(error) = daemon.commit_runtime_registration() {
+            return match rollback.execute(daemon) {
+                Ok(()) => Err(ProvisionError::daemon(error.code())),
+                Err(rollback_error) => Err(rollback_error),
+            };
+        }
+        rollback.registration_pending = false;
     }
     Ok(runtime)
 }
@@ -774,7 +795,13 @@ fn provision_with_owner_policy(
 
     let staging = workspace.path.join("staging");
     create_private_directory(&staging)?;
-    extract_exact_archive(&archive_path, &staging, &expectation)?;
+    let registration = extract_exact_archive(
+        &archive_path,
+        &staging,
+        request.spec.system,
+        &request.spec.nix_version,
+        &expectation,
+    )?;
 
     // The privileged scan is deliberately repeated immediately before the
     // first installation mutation. Downloads and archive parsing cannot make
@@ -800,6 +827,15 @@ fn provision_with_owner_policy(
     let result = (|| {
         transaction.install_artifacts(&staging, &expectation, required_owner_uid)?;
         transaction.install_manifest(request.spec.system, &manifest_bytes, required_owner_uid)?;
+        daemon
+            .register_runtime(
+                request.installation_root,
+                request.spec.system,
+                &request.spec.nix_version,
+                &registration,
+            )
+            .map_err(|error| ProvisionError::daemon(error.code()))?;
+        transaction.registration_pending = true;
         daemon
             .start(
                 request.installation_root,
@@ -968,6 +1004,7 @@ fn reuse_authenticated_runtime(
         RuntimeRollback {
             created: Vec::new(),
             daemon_started: true,
+            registration_pending: false,
         },
     ))
 }
@@ -977,7 +1014,7 @@ fn has_only_fixed_platform_prerequisites(report: &DetectionReport, system: Syste
         finding.kind() != FindingKind::Ambiguous
             && (matches!(
                 finding.id(),
-                "NIX_ROOT" | "NIX_VAR" | "NIXBLD_USERS" | "NIXBLD_GROUP"
+                "NIX_ROOT" | "NIX_STORE_EMPTY" | "NIX_VAR" | "NIXBLD_USERS" | "NIXBLD_GROUP"
             ) || matches!(
                 (system, finding.id()),
                 (
@@ -1069,19 +1106,24 @@ fn fetch_target(
 fn extract_exact_archive(
     archive_path: &Path,
     staging: &Path,
+    system: System,
+    version: &NixVersion,
     expectation: &OwnershipExpectation,
-) -> Result<(), ProvisionError> {
+) -> Result<PathBuf, ProvisionError> {
     let expected: BTreeMap<String, &ManagedArtifact> = expectation
         .artifacts()
         .iter()
         .map(|artifact| (artifact.path().to_string_lossy().into_owned(), artifact))
         .collect();
+    let registration_path = staging.join(".reginfo");
     let file = File::open(archive_path)
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
     let decoder = XzReader::new(file, false);
     let bounded = BoundedReader::new(decoder, MAX_UNCOMPRESSED_BYTES);
     let mut archive = Archive::new(bounded);
     let mut seen = BTreeSet::new();
+    let mut runtime_executable = None;
+    let mut runtime_aliases = BTreeMap::new();
     let entries = archive
         .entries()
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
@@ -1091,19 +1133,50 @@ fn extract_exact_archive(
         }
         let mut entry =
             entry.map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        let relative = canonical_archive_path(
-            &entry
-                .path()
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?,
-        )?;
-        let absolute = format!("/{}", relative.to_string_lossy());
+        let archived = entry
+            .path()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        let member = classify_upstream_archive_member(&archived, system, version)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        let store_relative = match member {
+            UpstreamArchiveMember::Registration => {
+                if registration_path.exists()
+                    || !entry.header().entry_type().is_file()
+                    || entry.size() == 0
+                    || entry.size() > MAX_REGISTRATION_BYTES
+                {
+                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                }
+                let mut output = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(&registration_path)
+                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+                std::io::copy(&mut entry, &mut output)
+                    .and_then(|_| output.sync_all())
+                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+                continue;
+            }
+            UpstreamArchiveMember::Installer => {
+                if !entry.header().entry_type().is_file() {
+                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                }
+                std::io::copy(&mut entry, &mut std::io::sink())
+                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+                continue;
+            }
+            UpstreamArchiveMember::Store(relative) => relative,
+        };
+        let installed_relative = Path::new("nix/store").join(store_relative);
+        let absolute = format!("/{}", installed_relative.to_string_lossy());
         let artifact = expected
             .get(&absolute)
             .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
         if !seen.insert(absolute) {
             return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
         }
-        let destination = staging.join(&relative);
+        let destination = staging.join(&installed_relative);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)
                 .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
@@ -1111,6 +1184,15 @@ fn extract_exact_archive(
         match artifact.kind() {
             ManagedArtifactKind::File if entry.header().entry_type().is_file() => {
                 extract_file(&mut entry, &destination, artifact)?;
+                if is_runtime_bin(&installed_relative, "nix") {
+                    if runtime_executable.replace(destination.clone()).is_some() {
+                        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                    }
+                } else if is_runtime_bin(&installed_relative, "nix-store")
+                    || is_runtime_bin(&installed_relative, "nix-daemon")
+                {
+                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                }
             }
             ManagedArtifactKind::Directory if entry.header().entry_type().is_dir() => {
                 fs::create_dir_all(&destination)
@@ -1123,6 +1205,15 @@ fn extract_exact_archive(
                     .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
                 if target.as_ref() != Path::new(artifact.target().unwrap_or_default()) {
                     return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                }
+                for name in ["nix-store", "nix-daemon"] {
+                    if is_runtime_bin(&installed_relative, name)
+                        && runtime_aliases
+                            .insert(name, (destination.clone(), target.as_ref().to_path_buf()))
+                            .is_some()
+                    {
+                        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                    }
                 }
                 symlink(target.as_ref(), &destination)
                     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
@@ -1146,6 +1237,54 @@ fn extract_exact_archive(
     if bounded.exceeded {
         return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
     }
+    if !registration_path.is_file() {
+        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+    }
+    let runtime_executable = runtime_executable
+        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    let runtime_parent = runtime_executable
+        .parent()
+        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    if runtime_aliases.len() != 2
+        || ["nix-store", "nix-daemon"].iter().any(|name| {
+            !runtime_aliases.get(name).is_some_and(|(path, target)| {
+                path.parent() == Some(runtime_parent) && target == Path::new("nix")
+            })
+        })
+    {
+        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+    }
+    for name in ["nix", "nix-store", "nix-daemon"] {
+        let absolute = format!("/opt/pkg/nix/{}/bin/{name}", version.as_str());
+        let artifact = expected
+            .get(&absolute)
+            .filter(|artifact| artifact.kind() == ManagedArtifactKind::File)
+            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        let destination = rooted(staging, artifact.path());
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        }
+        copy_exact_file(&runtime_executable, &destination, artifact)?;
+        seen.insert(absolute);
+    }
+    for artifact in expectation.artifacts().iter().filter(|artifact| {
+        artifact.kind() == ManagedArtifactKind::Symlink
+            && artifact.path().starts_with(Path::new("/opt/pkg/nix"))
+    }) {
+        let absolute = artifact.path().to_string_lossy().into_owned();
+        if seen.contains(&absolute) {
+            continue;
+        }
+        let destination = rooted(staging, artifact.path());
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        }
+        symlink(artifact.target().unwrap_or_default(), &destination)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        seen.insert(absolute);
+    }
     for artifact in expectation.artifacts() {
         if artifact.kind() != ManagedArtifactKind::Directory
             && !seen.contains(&artifact.path().to_string_lossy().into_owned())
@@ -1153,7 +1292,7 @@ fn extract_exact_archive(
             return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
         }
     }
-    Ok(())
+    Ok(registration_path)
 }
 
 fn extract_file<R: Read>(
@@ -1199,22 +1338,54 @@ fn extract_file<R: Read>(
     Ok(())
 }
 
-fn canonical_archive_path(path: &Path) -> Result<PathBuf, ProvisionError> {
-    if path.as_os_str().is_empty() || path.is_absolute() {
-        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-    }
-    let mut canonical = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(value) => canonical.push(value),
-            _ => return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive)),
+fn copy_exact_file(
+    source: &Path,
+    destination: &Path,
+    artifact: &ManagedArtifact,
+) -> Result<(), ProvisionError> {
+    let expected_size = artifact
+        .size()
+        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    let mut input =
+        File::open(source).map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(destination)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    let mut hasher = Sha256::new();
+    let mut size = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = input
+            .read(&mut buffer)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        if count == 0 {
+            break;
         }
+        size = size
+            .checked_add(count as u64)
+            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        if size > expected_size {
+            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+        }
+        hasher.update(&buffer[..count]);
+        output
+            .write_all(&buffer[..count])
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
     }
-    if canonical.as_os_str().is_empty() || canonical.to_str().is_none() {
+    if size != expected_size
+        || Digest::from_bytes(hasher.finalize().into())
+            != artifact
+                .sha256()
+                .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?
+    {
         return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
     }
-    Ok(canonical)
+    output
+        .sync_all()
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))
 }
 
 struct BoundedReader<R> {
@@ -1271,28 +1442,32 @@ impl Drop for ScratchWorkspace {
 struct InstallTransaction<'a> {
     root: &'a Path,
     daemon: &'a dyn ManagedDaemon,
-    created: Vec<PathBuf>,
+    created: Vec<AttemptPath>,
     daemon_started: bool,
+    registration_pending: bool,
     committed: bool,
 }
 
 struct RuntimeRollback {
-    created: Vec<PathBuf>,
+    created: Vec<AttemptPath>,
     daemon_started: bool,
+    registration_pending: bool,
+}
+
+struct AttemptPath {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+    directory: bool,
 }
 
 impl RuntimeRollback {
     fn execute(mut self, daemon: &dyn ManagedDaemon) -> Result<(), ProvisionError> {
         let mut failed = self.daemon_started && daemon.stop().is_err();
-        for path in self.created.drain(..).rev() {
-            let result = match fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.file_type().is_dir() => fs::remove_dir(&path),
-                Ok(_) => fs::remove_file(&path),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            };
-            failed |= result.is_err();
+        if self.registration_pending && daemon.rollback_runtime_registration().is_err() {
+            failed = true;
         }
+        failed |= remove_attempt_paths(&mut self.created);
         if failed {
             Err(ProvisionError::new(ProvisionErrorCode::RollbackFailed))
         } else {
@@ -1308,6 +1483,7 @@ impl<'a> InstallTransaction<'a> {
             daemon,
             created: Vec::new(),
             daemon_started: false,
+            registration_pending: false,
             committed: false,
         }
     }
@@ -1320,6 +1496,7 @@ impl<'a> InstallTransaction<'a> {
     ) -> Result<(), ProvisionError> {
         let mut artifacts: Vec<&ManagedArtifact> = expectation.artifacts().iter().collect();
         artifacts.sort_by_key(|artifact| artifact.path().components().count());
+        let mut created_directories = Vec::new();
         for artifact in artifacts {
             let destination = rooted(self.root, artifact.path());
             ensure_safe_parent(self.root, &destination, owner_uid)?;
@@ -1339,14 +1516,16 @@ impl<'a> InstallTransaction<'a> {
                     }
                     fs::create_dir(&destination)
                         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    self.created.push(destination.clone());
+                    self.record_created(&destination, ProvisionErrorCode::InstallFailed)?;
                     chown(&destination, Some(owner_uid), Some(gid))
                         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
+                    let final_mode = artifact.mode().unwrap_or(0o700);
                     fs::set_permissions(
                         &destination,
-                        fs::Permissions::from_mode(artifact.mode().unwrap_or(0o700)),
+                        fs::Permissions::from_mode(final_mode | 0o700),
                     )
                     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
+                    created_directories.push((artifact, destination));
                 }
                 ManagedArtifactKind::File => {
                     let source = rooted(staging, artifact.path());
@@ -1358,7 +1537,7 @@ impl<'a> InstallTransaction<'a> {
                         .mode(0o600)
                         .open(&destination)
                         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    self.created.push(destination.clone());
+                    self.record_created(&destination, ProvisionErrorCode::InstallFailed)?;
                     std::io::copy(&mut input, &mut output)
                         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
                     output
@@ -1375,11 +1554,18 @@ impl<'a> InstallTransaction<'a> {
                 ManagedArtifactKind::Symlink => {
                     symlink(artifact.target().unwrap_or_default(), &destination)
                         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    self.created.push(destination.clone());
+                    self.record_created(&destination, ProvisionErrorCode::InstallFailed)?;
                     lchown(&destination, Some(owner_uid), Some(gid))
                         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
                 }
             }
+        }
+        for (artifact, destination) in created_directories.into_iter().rev() {
+            fs::set_permissions(
+                destination,
+                fs::Permissions::from_mode(artifact.mode().unwrap_or(0o700)),
+            )
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
         }
         Ok(())
     }
@@ -1417,7 +1603,7 @@ impl<'a> InstallTransaction<'a> {
         if fs::symlink_metadata(parent).is_err() {
             fs::create_dir(parent)
                 .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-            self.created.push(parent.to_path_buf());
+            self.record_created(parent, ProvisionErrorCode::ReceiptFailed)?;
             let metadata_gid = if owner_uid == 0 {
                 0
             } else {
@@ -1441,7 +1627,7 @@ impl<'a> InstallTransaction<'a> {
             .mode(0o600)
             .open(&temporary)
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        self.created.push(temporary.clone());
+        self.record_created(&temporary, ProvisionErrorCode::ReceiptFailed)?;
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
@@ -1456,7 +1642,7 @@ impl<'a> InstallTransaction<'a> {
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
         fs::hard_link(&temporary, path)
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        self.created.push(path.to_path_buf());
+        self.record_created(path, ProvisionErrorCode::ReceiptFailed)?;
         fs::remove_file(&temporary)
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
         let temporary_index = self.created.len() - 2;
@@ -1469,19 +1655,27 @@ impl<'a> InstallTransaction<'a> {
         if self.daemon_started && self.daemon.stop().is_err() {
             failed = true;
         }
-        for path in self.created.iter().rev() {
-            let result = match fs::symlink_metadata(path) {
-                Ok(metadata) if metadata.file_type().is_dir() => fs::remove_dir(path),
-                Ok(_) => fs::remove_file(path),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            };
-            if result.is_err() {
-                failed = true;
-            }
+        if self.registration_pending && self.daemon.rollback_runtime_registration().is_err() {
+            failed = true;
         }
-        self.created.clear();
+        self.registration_pending = false;
+        failed |= remove_attempt_paths(&mut self.created);
         if failed { Err(()) } else { Ok(()) }
+    }
+
+    fn record_created(
+        &mut self,
+        path: &Path,
+        code: ProvisionErrorCode,
+    ) -> Result<(), ProvisionError> {
+        let metadata = fs::symlink_metadata(path).map_err(|_| ProvisionError::new(code))?;
+        self.created.push(AttemptPath {
+            path: path.to_path_buf(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            directory: metadata.file_type().is_dir(),
+        });
+        Ok(())
     }
 
     fn detach_rollback(&mut self) -> RuntimeRollback {
@@ -1489,13 +1683,54 @@ impl<'a> InstallTransaction<'a> {
         RuntimeRollback {
             created: std::mem::take(&mut self.created),
             daemon_started: self.daemon_started,
+            registration_pending: self.registration_pending,
         }
     }
 }
 
+fn remove_attempt_paths(paths: &mut Vec<AttemptPath>) -> bool {
+    let mut failed = false;
+    for entry in paths.iter().filter(|entry| entry.directory) {
+        match fs::symlink_metadata(&entry.path) {
+            Ok(metadata)
+                if metadata.dev() == entry.device
+                    && metadata.ino() == entry.inode
+                    && metadata.file_type().is_dir() =>
+            {
+                failed |= fs::set_permissions(
+                    &entry.path,
+                    fs::Permissions::from_mode(metadata.mode() & 0o7777 | 0o700),
+                )
+                .is_err();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) | Err(_) => failed = true,
+        }
+    }
+    for entry in paths.drain(..).rev() {
+        let result = match fs::symlink_metadata(&entry.path) {
+            Ok(metadata)
+                if metadata.dev() == entry.device
+                    && metadata.ino() == entry.inode
+                    && metadata.file_type().is_dir() == entry.directory =>
+            {
+                if entry.directory {
+                    fs::remove_dir(&entry.path)
+                } else {
+                    fs::remove_file(&entry.path)
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Ok(_) | Err(_) => Err(std::io::Error::other("attempt-owned path identity changed")),
+        };
+        failed |= result.is_err();
+    }
+    failed
+}
+
 impl Drop for InstallTransaction<'_> {
     fn drop(&mut self) {
-        if !self.committed && !self.created.is_empty() {
+        if !self.committed && (!self.created.is_empty() || self.registration_pending) {
             let _ = self.rollback();
         }
     }
@@ -1577,7 +1812,7 @@ mod tests {
     use crate::managed::daemon::{DaemonError, DaemonErrorCode};
     use crate::managed::ownership::{ManagedGroup, encode_ownership_asset_manifest};
 
-    const RUNTIME_PATH: &str = "/opt/pkg/nix/2.24.10/bin/nix";
+    const RUNTIME_PATH: &str = "/nix/store/fixture-nix-2.24.10/bin/nix";
     const RUNTIME_BYTES: &[u8] = b"fixture managed nix\n";
 
     #[tokio::test]
@@ -1625,6 +1860,9 @@ mod tests {
         fail_ping: bool,
         started: AtomicBool,
         stopped: AtomicBool,
+        registered: AtomicBool,
+        registration_committed: AtomicBool,
+        registration_rolled_back: AtomicBool,
     }
 
     impl FakeDaemon {
@@ -1633,11 +1871,47 @@ mod tests {
                 fail_ping: false,
                 started: AtomicBool::new(false),
                 stopped: AtomicBool::new(false),
+                registered: AtomicBool::new(false),
+                registration_committed: AtomicBool::new(false),
+                registration_rolled_back: AtomicBool::new(false),
             }
         }
     }
 
     impl ManagedDaemon for FakeDaemon {
+        fn register_runtime(
+            &self,
+            _installation_root: &Path,
+            _system: System,
+            _version: &NixVersion,
+            registration: &Path,
+        ) -> Result<(), DaemonError> {
+            if registration.is_file() {
+                self.registered.store(true, Ordering::Relaxed);
+                Ok(())
+            } else {
+                Err(DaemonError::new(DaemonErrorCode::RegistrationFailed))
+            }
+        }
+
+        fn commit_runtime_registration(&self) -> Result<(), DaemonError> {
+            if !self.registered.swap(false, Ordering::Relaxed) {
+                return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
+            }
+            self.registration_committed.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn rollback_runtime_registration(&self) -> Result<(), DaemonError> {
+            if !self.registered.swap(false, Ordering::Relaxed) {
+                return Err(DaemonError::new(
+                    DaemonErrorCode::RegistrationRollbackFailed,
+                ));
+            }
+            self.registration_rolled_back.store(true, Ordering::Relaxed);
+            Ok(())
+        }
+
         fn start(
             &self,
             _installation_root: &Path,
@@ -1688,26 +1962,79 @@ mod tests {
             let artifacts = vec![
                 ManagedArtifact::directory("/nix", ManagedGroup::Broker, 0o755).unwrap(),
                 ManagedArtifact::directory("/nix/store", ManagedGroup::BuildUsers, 0o1775).unwrap(),
-                ManagedArtifact::directory("/opt/pkg", ManagedGroup::Broker, 0o750).unwrap(),
+                ManagedArtifact::directory(
+                    "/nix/store/fixture-nix-2.24.10",
+                    ManagedGroup::Broker,
+                    0o555,
+                )
+                .unwrap(),
+                ManagedArtifact::directory(
+                    "/nix/store/fixture-nix-2.24.10/bin",
+                    ManagedGroup::Broker,
+                    0o555,
+                )
+                .unwrap(),
+                ManagedArtifact::file(
+                    RUNTIME_PATH,
+                    ManagedGroup::Broker,
+                    0o555,
+                    RUNTIME_BYTES.len() as u64,
+                    body_digest(RUNTIME_BYTES),
+                )
+                .unwrap(),
+                ManagedArtifact::symlink(
+                    "/nix/store/fixture-nix-2.24.10/bin/nix-store",
+                    ManagedGroup::Broker,
+                    "nix",
+                )
+                .unwrap(),
+                ManagedArtifact::symlink(
+                    "/nix/store/fixture-nix-2.24.10/bin/nix-daemon",
+                    ManagedGroup::Broker,
+                    "nix",
+                )
+                .unwrap(),
+                ManagedArtifact::directory("/opt/pkg", ManagedGroup::Broker, 0o755).unwrap(),
                 ManagedArtifact::directory("/opt/pkg/nix", ManagedGroup::Broker, 0o750).unwrap(),
                 ManagedArtifact::directory("/opt/pkg/nix/2.24.10", ManagedGroup::Broker, 0o750)
                     .unwrap(),
                 ManagedArtifact::directory("/opt/pkg/nix/2.24.10/bin", ManagedGroup::Broker, 0o750)
                     .unwrap(),
                 ManagedArtifact::file(
-                    RUNTIME_PATH,
+                    "/opt/pkg/nix/2.24.10/bin/nix",
                     ManagedGroup::Broker,
                     0o550,
                     RUNTIME_BYTES.len() as u64,
                     body_digest(RUNTIME_BYTES),
                 )
                 .unwrap(),
+                ManagedArtifact::file(
+                    "/opt/pkg/nix/2.24.10/bin/nix-store",
+                    ManagedGroup::Broker,
+                    0o550,
+                    RUNTIME_BYTES.len() as u64,
+                    body_digest(RUNTIME_BYTES),
+                )
+                .unwrap(),
+                ManagedArtifact::file(
+                    "/opt/pkg/nix/2.24.10/bin/nix-daemon",
+                    ManagedGroup::Broker,
+                    0o550,
+                    RUNTIME_BYTES.len() as u64,
+                    body_digest(RUNTIME_BYTES),
+                )
+                .unwrap(),
+                ManagedArtifact::symlink("/opt/pkg/nix/current", ManagedGroup::Broker, "2.24.10")
+                    .unwrap(),
                 ManagedArtifact::directory("/var/lib/pkg", ManagedGroup::Broker, 0o700).unwrap(),
             ];
             let version = NixVersion::new("2.24.10").unwrap();
             let manifest =
                 encode_ownership_asset_manifest(System::X8664Linux, &version, &artifacts).unwrap();
-            let archive = archive_with_file("opt/pkg/nix/2.24.10/bin/nix", RUNTIME_BYTES);
+            let archive = archive_with_file(
+                "nix-2.24.10-x86_64-linux/store/fixture-nix-2.24.10/bin/nix",
+                RUNTIME_BYTES,
+            );
             let runtime_target = "nix/2.24.10/x86_64-linux.tar.xz".to_string();
             let manifest_target = "nix/2.24.10/x86_64-linux.assets.json".to_string();
             let spec = ProvisionSpec {
@@ -1772,6 +2099,31 @@ mod tests {
         header.set_mode(0o550);
         header.set_cksum();
         archive.append(&header, bytes).unwrap();
+        for name in ["nix-store", "nix-daemon"] {
+            let mut alias = tar::Header::new_gnu();
+            alias.set_entry_type(EntryType::Symlink);
+            alias
+                .set_path(format!(
+                    "nix-2.24.10-x86_64-linux/store/fixture-nix-2.24.10/bin/{name}"
+                ))
+                .unwrap();
+            alias.set_link_name("nix").unwrap();
+            alias.set_size(0);
+            alias.set_mode(0o777);
+            alias.set_cksum();
+            archive.append(&alias, Cursor::new([])).unwrap();
+        }
+        let registration = b"fixture registration\n";
+        let mut registration_header = tar::Header::new_gnu();
+        registration_header
+            .set_path("nix-2.24.10-x86_64-linux/.reginfo")
+            .unwrap();
+        registration_header.set_size(registration.len() as u64);
+        registration_header.set_mode(0o600);
+        registration_header.set_cksum();
+        archive
+            .append(&registration_header, registration.as_slice())
+            .unwrap();
         let writer = archive.into_inner().unwrap();
         writer.finish().unwrap()
     }
@@ -1797,8 +2149,183 @@ mod tests {
         );
         assert!(rooted(&fixture.root, ownership_receipt_path(System::X8664Linux)).is_file());
         assert!(daemon.started.load(Ordering::Relaxed));
+        assert!(daemon.registration_committed.load(Ordering::Relaxed));
         assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 2);
         assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    #[ignore = "requires PKG_TEST_NIX_ARCHIVE with the official Nix 2.34.8 aarch64-linux tarball"]
+    fn official_nix_archive_matches_the_shared_manifest_during_extraction() {
+        let archive = std::env::var_os("PKG_TEST_NIX_ARCHIVE")
+            .map(PathBuf::from)
+            .expect("PKG_TEST_NIX_ARCHIVE must be set");
+        let version = NixVersion::new("2.34.8").unwrap();
+        let manifest =
+            crate::build_upstream_runtime_asset_manifest(&archive, System::Aarch64Linux, &version)
+                .unwrap();
+        let expectation = decode_ownership_asset_manifest(
+            &manifest,
+            System::Aarch64Linux,
+            &version,
+            body_digest(&manifest),
+            ManagedGroupBindings::new(1001, 1002).unwrap(),
+        )
+        .unwrap();
+        let staging = TempDir::new().unwrap();
+        let registration = extract_exact_archive(
+            &archive,
+            staging.path(),
+            System::Aarch64Linux,
+            &version,
+            &expectation,
+        )
+        .unwrap();
+        assert_eq!(registration, staging.path().join(".reginfo"));
+        assert!(registration.is_file());
+        for binary in ["nix", "nix-store", "nix-daemon"] {
+            assert!(
+                fs::symlink_metadata(
+                    staging
+                        .path()
+                        .join(format!("opt/pkg/nix/2.34.8/bin/{binary}"))
+                )
+                .unwrap()
+                .file_type()
+                .is_file()
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "mutates only an explicitly opted-in disposable clean Linux container"]
+    fn production_daemon_registers_the_official_runtime_on_a_clean_container() {
+        assert_eq!(
+            std::env::var_os("PKG_TEST_ALLOW_ROOT_INSTALL").as_deref(),
+            Some(std::ffi::OsStr::new("1"))
+        );
+        assert!(Path::new("/.dockerenv").is_file());
+        for path in ["/nix", "/opt/pkg", "/var/lib/pkg"] {
+            assert!(!Path::new(path).exists(), "container must start clean");
+        }
+
+        let archive_path = std::env::var_os("PKG_TEST_NIX_ARCHIVE")
+            .map(PathBuf::from)
+            .expect("PKG_TEST_NIX_ARCHIVE must be set");
+        let system = if cfg!(target_arch = "aarch64") {
+            System::Aarch64Linux
+        } else {
+            System::X8664Linux
+        };
+        let version = NixVersion::new("2.34.8").unwrap();
+        let archive = fs::read(&archive_path).unwrap();
+        let manifest =
+            crate::build_upstream_runtime_asset_manifest(&archive_path, system, &version).unwrap();
+        let groups = ManagedGroupBindings::new(30_001, 30_002).unwrap();
+        let expectation = decode_ownership_asset_manifest(
+            &manifest,
+            system,
+            &version,
+            body_digest(&manifest),
+            groups,
+        )
+        .unwrap();
+        let runtime_target = format!("nix/2.34.8/{system}.tar.xz");
+        let manifest_target = format!("nix/2.34.8/{system}.assets.json");
+        let spec = ProvisionSpec {
+            descriptor_sha256: [0x5a; 32],
+            system,
+            nix_version: version,
+            runtime_target: runtime_target.clone(),
+            runtime_sha256: body_digest(&archive),
+            asset_manifest_target: manifest_target.clone(),
+            asset_manifest_sha256: body_digest(&manifest),
+        };
+        let source = FakeSource {
+            descriptor_sha256: spec.descriptor_sha256,
+            targets: BTreeMap::from([(runtime_target, archive), (manifest_target, manifest)]),
+            opens: AtomicUsize::new(0),
+            commits: AtomicUsize::new(0),
+            fail_commit: false,
+        };
+        let helper_home = Path::new("/var/lib/pkg/helper-home");
+        let scratch = helper_home.join("tmp");
+        fs::create_dir_all(&scratch).unwrap();
+        fs::set_permissions(helper_home, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&scratch, fs::Permissions::from_mode(0o700)).unwrap();
+        let config_directory = Path::new("/opt/pkg/etc/pkg");
+        fs::create_dir_all(config_directory).unwrap();
+        fs::set_permissions("/opt/pkg", fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions("/opt/pkg/etc", fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(config_directory, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(
+            config_directory.join("nix.conf"),
+            b"build-users-group =\ntrusted-users = root\nallowed-users = root\nexperimental-features = nix-command flakes cgroups\nsandbox = true\nsandbox-fallback = false\nallow-import-from-derivation = false\nuse-cgroups = true\nrequire-sigs = true\nbuilders =\nsubstituters =\ntrusted-public-keys =\nmax-jobs = 1\ncores = 0\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            config_directory.join("nix.conf"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        fs::create_dir("/nix").unwrap();
+        fs::create_dir("/nix/store").unwrap();
+        chown("/nix/store", Some(0), Some(groups.build_users_gid())).unwrap();
+        fs::set_permissions("/nix/store", fs::Permissions::from_mode(0o1775)).unwrap();
+        fs::create_dir_all("/nix/var/nix").unwrap();
+        let prepared = detect_unmanaged_nix(Path::new("/"), system, &[], &[]);
+        assert!(
+            has_only_fixed_platform_prerequisites(&prepared, system),
+            "unexpected prerequisite findings: {:?}",
+            prepared.findings()
+        );
+
+        let request = ProvisionRequest {
+            installation_root: Path::new("/"),
+            scratch_parent: &scratch,
+            spec: &spec,
+            groups,
+        };
+        let daemon = crate::ProductionManagedDaemon::production();
+        let (_, rollback) = provision_with_owner_policy(
+            &request,
+            &source,
+            &daemon,
+            0,
+            &[],
+            &[],
+            HostStateRequirements::new(
+                HostStatePolicy::FixedPlatformPrerequisites,
+                Some(&expectation),
+            ),
+        )
+        .unwrap();
+        rollback.execute(&daemon).unwrap();
+        assert!(!Path::new("/nix/var/nix/db").exists());
+        assert!(!Path::new("/opt/pkg/nix").exists());
+        assert_eq!(fs::read_dir("/nix/store").unwrap().count(), 0);
+
+        let (report, mut rollback) = provision_with_owner_policy(
+            &request,
+            &source,
+            &daemon,
+            0,
+            &[],
+            &[],
+            HostStateRequirements::new(
+                HostStatePolicy::FixedPlatformPrerequisites,
+                Some(&expectation),
+            ),
+        )
+        .unwrap();
+        source.commit_accepted_channel().unwrap();
+        daemon.commit_runtime_registration().unwrap();
+        rollback.registration_pending = false;
+        assert_eq!(report.system(), system);
+        assert!(Path::new("/nix/var/nix/db/db.sqlite").is_file());
+        daemon.ping_store().unwrap();
+        daemon.stop().unwrap();
     }
 
     #[test]
@@ -2079,6 +2606,7 @@ mod tests {
         assert_eq!(error.code(), ProvisionErrorCode::ChannelStateFailed);
         assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
         assert!(daemon.stopped.load(Ordering::Relaxed));
+        assert!(daemon.registration_rolled_back.load(Ordering::Relaxed));
         assert!(!fixture.root.join("nix").exists());
         assert!(!rooted(&fixture.root, ownership_receipt_path(System::X8664Linux)).exists());
     }
@@ -2090,6 +2618,9 @@ mod tests {
             fail_ping: true,
             started: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
+            registered: AtomicBool::new(false),
+            registration_committed: AtomicBool::new(false),
+            registration_rolled_back: AtomicBool::new(false),
         };
         let error = provision_with_owner(
             &fixture.request(),
@@ -2103,6 +2634,7 @@ mod tests {
         assert_eq!(error.code(), ProvisionErrorCode::DaemonFailed);
         assert_eq!(error.daemon_code(), Some(DaemonErrorCode::ReadinessFailed));
         assert!(daemon.stopped.load(Ordering::Relaxed));
+        assert!(daemon.registration_rolled_back.load(Ordering::Relaxed));
         assert!(!fixture.root.join("nix").exists());
         assert!(!fixture.root.join("opt/pkg").exists());
         assert!(!fixture.root.join("var/lib/pkg").exists());
