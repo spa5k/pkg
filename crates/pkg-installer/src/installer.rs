@@ -1,7 +1,7 @@
 //! Idempotent Linux installation orchestration over a closed privileged API.
 
 use crate::assets::{LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets};
-use pkg_core::System;
+use pkg_core::{System, state::Digest};
 use pkg_nix::AuthenticatedManagedNixConfig;
 use std::{error::Error, fmt};
 
@@ -69,6 +69,19 @@ pub trait LinuxInstallBackend {
     fn bind_authenticated_nix_config(
         &mut self,
         config: &AuthenticatedManagedNixConfig,
+    ) -> Result<(), InstallError>;
+
+    /// Binds the authenticated runtime-manifest identity used by the uninstall receipt.
+    ///
+    /// This must not mutate the host. It runs before privileged preflight.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error for a wrong-platform or conflicting binding.
+    fn bind_authenticated_ownership_manifest(
+        &mut self,
+        system: System,
+        digest: Digest,
     ) -> Result<(), InstallError>;
 
     /// Verifies this process has the fixed privileged installer authority.
@@ -155,7 +168,7 @@ pub trait LinuxInstallBackend {
     /// # Errors
     ///
     /// Returns a redacted backend error when receipt-last publication fails.
-    fn publish_ownership_receipt(&mut self) -> Result<(), InstallError>;
+    fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError>;
 
     /// Reverts one exact artifact created by this attempt.
     ///
@@ -244,10 +257,10 @@ pub fn install_linux(
         if !backend.provision_managed_runtime()? {
             let _ = mutations.pop();
         }
-        for asset in linux_install_assets()
-            .iter()
-            .filter(|asset| asset.kind() == LinuxAssetKind::File && asset.id() != "nix-config")
-        {
+        for asset in linux_install_assets().iter().filter(|asset| {
+            asset.kind() == LinuxAssetKind::File
+                && !matches!(asset.id(), "nix-config" | "uninstall-manifest")
+        }) {
             mutations.push(InstallMutation::Asset(*asset));
             let was_created = {
                 if let Some(contents) = static_asset_contents(*asset) {
@@ -273,9 +286,12 @@ pub fn install_linux(
         backend
             .check_managed_daemon()
             .map_err(|_| InstallError::new(InstallErrorCode::ServiceUnhealthy))?;
-        backend
-            .publish_ownership_receipt()
-            .map_err(|_| InstallError::new(InstallErrorCode::ReceiptFailure))?;
+        publish_linux_receipt(
+            backend,
+            &mut mutations,
+            &mut created_artifacts,
+            &mut existing,
+        )?;
         Ok(LinuxInstallReport {
             created_artifacts,
             existing_artifacts: existing,
@@ -299,6 +315,30 @@ pub fn install_linux(
         }
     }
     result
+}
+
+fn publish_linux_receipt(
+    backend: &mut dyn LinuxInstallBackend,
+    mutations: &mut Vec<InstallMutation>,
+    created_artifacts: &mut usize,
+    existing_artifacts: &mut usize,
+) -> Result<(), InstallError> {
+    let asset = linux_install_assets()
+        .iter()
+        .copied()
+        .find(|asset| asset.id() == "uninstall-manifest")
+        .ok_or_else(InstallError::backend_failure)?;
+    mutations.push(InstallMutation::Asset(asset));
+    if backend
+        .publish_ownership_receipt()
+        .map_err(|_| InstallError::new(InstallErrorCode::ReceiptFailure))?
+    {
+        *created_artifacts = created_artifacts.saturating_add(1);
+    } else {
+        let _ = mutations.pop();
+        *existing_artifacts = existing_artifacts.saturating_add(1);
+    }
+    Ok(())
 }
 
 fn static_asset_contents(asset: LinuxInstallAsset) -> Option<&'static str> {
@@ -366,6 +406,14 @@ mod tests {
         fn bind_authenticated_nix_config(
             &mut self,
             _config: &AuthenticatedManagedNixConfig,
+        ) -> Result<(), InstallError> {
+            Ok(())
+        }
+
+        fn bind_authenticated_ownership_manifest(
+            &mut self,
+            _system: System,
+            _digest: Digest,
         ) -> Result<(), InstallError> {
             Ok(())
         }
@@ -440,9 +488,8 @@ mod tests {
             }
         }
 
-        fn publish_ownership_receipt(&mut self) -> Result<(), InstallError> {
-            self.states.insert("receipt");
-            Ok(())
+        fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
+            Ok(self.states.insert("receipt"))
         }
 
         fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
@@ -505,7 +552,10 @@ mod tests {
             .ok_or_else(|| io::Error::other("runtime rollback missing"))?;
         let post_runtime_file_count = linux_install_assets()
             .iter()
-            .filter(|asset| asset.kind() == LinuxAssetKind::File && asset.id() != "nix-config")
+            .filter(|asset| {
+                asset.kind() == LinuxAssetKind::File
+                    && !matches!(asset.id(), "nix-config" | "uninstall-manifest")
+            })
             .count();
         assert_eq!(runtime, post_runtime_file_count.saturating_add(1));
         assert!(!backend.states.contains("runtime"));

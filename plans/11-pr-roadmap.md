@@ -1149,6 +1149,16 @@ flowchart TD
   and supplementary memberships, serializes product installers with a root-only runtime lock, and
   limits rollback to attempt-owned identities with UID-bound replacement checks. Uncertain command
   failures fail closed without deleting a potentially foreign account.
+  The Linux filesystem slice now adds the previously missing `/nix/store`, `/nix/var/nix`,
+  GC-root, and uninstall-receipt assets to the closed installation allowlist. A production writer
+  traverses only no-follow directory descriptors, publishes authenticated config, compiled units,
+  PATH integration, and release binaries through same-directory no-replace staging, verifies exact
+  owner/group/mode/bytes, and binds rollback to the attempt-owned device/inode. The strict canonical
+  uninstall manifest records the authenticated runtime-manifest digest plus created/pre-existing
+  state for every compiled asset and is published receipt-last. The production asset router joins
+  the account and filesystem components and resolves the broker uid only from the verified account
+  contract. Service-manager activation and a complete production `LinuxInstallBackend` remain the
+  next slice.
   the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an

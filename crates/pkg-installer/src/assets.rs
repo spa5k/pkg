@@ -20,6 +20,8 @@ pub enum LinuxAssetPrincipal {
     Root,
     /// The unprivileged singleton broker identity.
     Broker,
+    /// The isolated Nix build-user group.
+    BuildUsers,
 }
 
 /// One static Linux artifact that PR-29 may later remove by exact identity.
@@ -133,6 +135,31 @@ const ASSETS: &[LinuxInstallAsset] = &[
     LinuxInstallAsset::new("build-user-16", LinuxAssetKind::User, "nixbld16", None),
     LinuxInstallAsset::new("nix-root", LinuxAssetKind::Directory, "/nix", Some(0o755)),
     LinuxInstallAsset::new(
+        "nix-store",
+        LinuxAssetKind::Directory,
+        "/nix/store",
+        Some(0o1775),
+    )
+    .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::BuildUsers),
+    LinuxInstallAsset::new(
+        "nix-var",
+        LinuxAssetKind::Directory,
+        "/nix/var",
+        Some(0o755),
+    ),
+    LinuxInstallAsset::new(
+        "nix-state",
+        LinuxAssetKind::Directory,
+        "/nix/var/nix",
+        Some(0o755),
+    ),
+    LinuxInstallAsset::new(
+        "nix-gcroots",
+        LinuxAssetKind::Directory,
+        "/nix/var/nix/gcroots",
+        Some(0o755),
+    ),
+    LinuxInstallAsset::new(
         "product-root",
         LinuxAssetKind::Directory,
         "/opt/pkg",
@@ -149,6 +176,12 @@ const ASSETS: &[LinuxInstallAsset] = &[
         LinuxAssetKind::Directory,
         "/opt/pkg/etc/pkg",
         Some(0o755),
+    ),
+    LinuxInstallAsset::new(
+        "uninstall-root",
+        LinuxAssetKind::Directory,
+        "/opt/pkg/uninstall",
+        Some(0o700),
     ),
     LinuxInstallAsset::new(
         "service-bin-dir",
@@ -310,6 +343,12 @@ const ASSETS: &[LinuxInstallAsset] = &[
         LinuxAssetKind::File,
         "/usr/local/bin/pkg",
         Some(0o755),
+    ),
+    LinuxInstallAsset::new(
+        "uninstall-manifest",
+        LinuxAssetKind::File,
+        "/opt/pkg/uninstall/manifest.json",
+        Some(0o600),
     ),
 ];
 

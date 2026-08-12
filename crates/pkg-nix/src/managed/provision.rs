@@ -187,6 +187,12 @@ impl AuthenticatedInstallerBundle {
     pub const fn managed_nix_config(&self) -> &AuthenticatedManagedNixConfig {
         &self.managed_nix_config
     }
+
+    /// Returns the exact authenticated managed-runtime asset-manifest digest.
+    #[must_use]
+    pub const fn asset_manifest_digest(&self) -> Digest {
+        self.spec.asset_manifest_sha256
+    }
 }
 
 impl std::fmt::Debug for AuthenticatedInstallerBundle {

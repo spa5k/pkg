@@ -254,6 +254,32 @@ impl LinuxAccountManager {
         Ok(())
     }
 
+    /// Returns the verified non-root broker uid for filesystem ownership binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted conflict if the complete broker account contract is not met.
+    pub fn broker_uid(&mut self) -> Result<u32, LinuxAccountError> {
+        self.ensure_lock()?;
+        let spec = AccountSpec::User {
+            name: BROKER_NAME,
+            gid: self.groups.broker_gid(),
+            home: BROKER_HOME,
+            shell: DEFAULT_NOLOGIN_SHELL,
+            build_number: None,
+        };
+        let groups = self.system.groups()?;
+        let users = self.system.users()?;
+        if !verify_existing(&spec, &groups, &users)? {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        users
+            .iter()
+            .find(|user| user.name == BROKER_NAME && user.uid != 0)
+            .map(|user| user.uid)
+            .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::Conflict))
+    }
+
     /// Removes one account only when this exact attempt recorded ownership.
     ///
     /// # Errors
@@ -1337,6 +1363,7 @@ mod tests {
         {
             assert!(!manager.ensure_asset(asset)?);
         }
+        assert_eq!(manager.broker_uid()?, 31_000);
         assert!(
             state
                 .lock()

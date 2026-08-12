@@ -10,6 +10,8 @@ mod broker;
 mod helper;
 mod installer;
 mod linux_accounts;
+mod linux_filesystem;
+mod linux_platform_assets;
 pub mod platform;
 mod repair;
 mod root_client;
@@ -53,6 +55,10 @@ pub use installer::{
 pub use linux_accounts::{
     LinuxAccountError, LinuxAccountErrorCode, LinuxAccountManager, plan_linux_group_bindings,
 };
+pub use linux_filesystem::{
+    LinuxFilesystemError, LinuxFilesystemErrorCode, LinuxFilesystemManager, LinuxReleasePayloads,
+};
+pub use linux_platform_assets::LinuxPlatformAssetManager;
 pub use platform::linux::{
     LinuxPeerCredentials, LinuxPlatformError, LinuxPlatformErrorCode, LinuxRootSetStore,
     authenticate_broker_peer, peer_credentials,
@@ -101,5 +107,5 @@ pub use synthetic_file::{
 pub use uninstall::{
     RecordedAsset, RecordedAssetState, UninstallAction, UninstallAssetKind, UninstallBackend,
     UninstallError, UninstallErrorCode, UninstallManifest, UninstallPlan, UninstallReport,
-    execute_uninstall, plan_uninstall,
+    decode_uninstall_manifest, encode_uninstall_manifest, execute_uninstall, plan_uninstall,
 };

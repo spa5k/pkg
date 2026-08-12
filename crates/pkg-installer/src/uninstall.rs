@@ -6,8 +6,10 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::str::FromStr;
 
 use pkg_core::{System, state::Digest};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     LinuxAssetKind, linux_install_assets,
@@ -16,6 +18,9 @@ use crate::{
 
 const MAX_RECORDED_ASSETS: usize = 256;
 const MAX_ASSET_ID_BYTES: usize = 96;
+const MAX_MANIFEST_BYTES: usize = 64 * 1024;
+const MANIFEST_SCHEMA_VERSION: u8 = 1;
+const PRODUCT: &str = "pkg";
 
 /// Stable uninstall failure categories suitable for public reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +197,118 @@ impl UninstallManifest {
     pub fn assets(&self) -> &[RecordedAsset] {
         &self.assets
     }
+}
+
+/// Encodes the validated uninstall manifest into its canonical V1 disk form.
+///
+/// # Errors
+///
+/// Returns [`UninstallErrorCode::InvalidManifest`] if serialization exceeds the
+/// fixed receipt bound.
+pub fn encode_uninstall_manifest(manifest: &UninstallManifest) -> Result<Vec<u8>, UninstallError> {
+    let wire = WireManifest::from_manifest(manifest);
+    let mut bytes = serde_json::to_vec(&wire)
+        .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+    bytes.push(b'\n');
+    if bytes.len() > MAX_MANIFEST_BYTES {
+        return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+    }
+    Ok(bytes)
+}
+
+/// Decodes only the exact canonical V1 uninstall-manifest representation.
+///
+/// # Errors
+///
+/// Returns [`UninstallErrorCode::InvalidManifest`] for malformed, extended,
+/// non-canonical, oversized, incomplete, duplicate, or unknown records.
+pub fn decode_uninstall_manifest(bytes: &[u8]) -> Result<UninstallManifest, UninstallError> {
+    if bytes.is_empty() || bytes.len() > MAX_MANIFEST_BYTES {
+        return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+    }
+    let wire: WireManifest = serde_json::from_slice(bytes)
+        .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+    let manifest = wire.promote()?;
+    if encode_uninstall_manifest(&manifest)? != bytes {
+        return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+    }
+    Ok(manifest)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireManifest {
+    schema_version: u8,
+    product: String,
+    system: String,
+    ownership_manifest_digest: String,
+    assets: Vec<WireRecordedAsset>,
+}
+
+impl WireManifest {
+    fn from_manifest(manifest: &UninstallManifest) -> Self {
+        Self {
+            schema_version: MANIFEST_SCHEMA_VERSION,
+            product: PRODUCT.to_owned(),
+            system: manifest.system().as_str().to_owned(),
+            ownership_manifest_digest: manifest.ownership_manifest_digest().to_string(),
+            assets: manifest
+                .assets()
+                .iter()
+                .map(WireRecordedAsset::from_record)
+                .collect(),
+        }
+    }
+
+    fn promote(self) -> Result<UninstallManifest, UninstallError> {
+        if self.schema_version != MANIFEST_SCHEMA_VERSION || self.product != PRODUCT {
+            return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+        }
+        let system = System::from_str(&self.system)
+            .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let digest = Digest::from_str(&self.ownership_manifest_digest)
+            .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let assets = self
+            .assets
+            .into_iter()
+            .map(WireRecordedAsset::promote)
+            .collect::<Result<Vec<_>, _>>()?;
+        UninstallManifest::new(system, digest, assets)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct WireRecordedAsset {
+    id: String,
+    state: WireRecordedAssetState,
+}
+
+impl WireRecordedAsset {
+    fn from_record(record: &RecordedAsset) -> Self {
+        Self {
+            id: record.id().to_owned(),
+            state: match record.state() {
+                RecordedAssetState::Created => WireRecordedAssetState::Created,
+                RecordedAssetState::PreExisting => WireRecordedAssetState::PreExisting,
+            },
+        }
+    }
+
+    fn promote(self) -> Result<RecordedAsset, UninstallError> {
+        let state = match self.state {
+            WireRecordedAssetState::Created => RecordedAssetState::Created,
+            WireRecordedAssetState::PreExisting => RecordedAssetState::PreExisting,
+        };
+        RecordedAsset::new(self.id, state)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum WireRecordedAssetState {
+    Created,
+    PreExisting,
 }
 
 /// Closed target kind used in dry-run output and privileged dispatch.
@@ -553,6 +670,32 @@ mod tests {
             Some(UninstallErrorCode::InvalidManifest)
         );
         assert!(RecordedAsset::new("../../etc/passwd", RecordedAssetState::Created).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn uninstall_manifest_disk_form_is_strict_canonical_and_complete() -> Result<(), UninstallError>
+    {
+        let manifest = manifest(System::Aarch64Linux, RecordedAssetState::Created)?;
+        let encoded = encode_uninstall_manifest(&manifest)?;
+        assert_eq!(decode_uninstall_manifest(&encoded)?, manifest);
+        assert!(encoded.ends_with(b"\n"));
+        assert!(encoded.starts_with(b"{\"schemaVersion\":1,\"product\":\"pkg\","));
+
+        let mut extended: serde_json::Value = serde_json::from_slice(&encoded)
+            .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        extended["extension"] = serde_json::json!(true);
+        let mut extended = serde_json::to_vec(&extended)
+            .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        extended.push(b'\n');
+        assert_eq!(
+            error_code(decode_uninstall_manifest(&extended)),
+            Some(UninstallErrorCode::InvalidManifest)
+        );
+        assert_eq!(
+            error_code(decode_uninstall_manifest(encoded.trim_ascii_end())),
+            Some(UninstallErrorCode::InvalidManifest)
+        );
         Ok(())
     }
 

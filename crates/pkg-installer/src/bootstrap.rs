@@ -6,7 +6,7 @@ use crate::{
     install_macos,
 };
 use pkg_channel::TrustedRoot;
-use pkg_core::System;
+use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,
     ManagedDaemon, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
@@ -86,6 +86,7 @@ pub fn install_linux_from_bundle<'a>(
     let bundle = authenticate_installer_bundle_blocking(trusted_root, request)
         .map_err(|_| InstallError::backend_failure())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
+    backend.bind_authenticated_ownership_manifest(system, bundle.asset_manifest_digest())?;
     let mut provisioner = AuthenticatedProvisioner::new(bundle);
     let (platform, outcome) =
         install_linux_with_provisioner(system, request, daemon, backend, &mut provisioner)?;
@@ -230,6 +231,15 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, P> {
         self.inner.bind_authenticated_nix_config(config)
     }
 
+    fn bind_authenticated_ownership_manifest(
+        &mut self,
+        system: System,
+        digest: Digest,
+    ) -> Result<(), InstallError> {
+        self.inner
+            .bind_authenticated_ownership_manifest(system, digest)
+    }
+
     fn preflight_privilege(&mut self) -> Result<(), InstallError> {
         self.inner.preflight_privilege()
     }
@@ -268,7 +278,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, P> {
     fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
         self.inner.check_managed_daemon()
     }
-    fn publish_ownership_receipt(&mut self) -> Result<(), InstallError> {
+    fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
         let outcome = self
             .outcome
             .take()
@@ -279,15 +289,18 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, P> {
                     self.outcome = Some(BootstrapOutcome::Pending(transaction));
                     return Err(InstallError::backend_failure());
                 }
-                if let Err(error) = self.inner.publish_ownership_receipt() {
-                    self.outcome = Some(BootstrapOutcome::Pending(transaction));
-                    return Err(error);
-                }
+                let receipt_created = match self.inner.publish_ownership_receipt() {
+                    Ok(created) => created,
+                    Err(error) => {
+                        self.outcome = Some(BootstrapOutcome::Pending(transaction));
+                        return Err(error);
+                    }
+                };
                 let bootstrap = transaction
                     .finalize()
                     .map_err(|_| InstallError::backend_failure())?;
                 self.outcome = Some(BootstrapOutcome::Complete(bootstrap));
-                Ok(())
+                Ok(receipt_created)
             }
             #[cfg(test)]
             BootstrapOutcome::Stub(rolled_back) => {
@@ -512,6 +525,14 @@ mod tests {
             Ok(())
         }
 
+        fn bind_authenticated_ownership_manifest(
+            &mut self,
+            _system: System,
+            _digest: Digest,
+        ) -> Result<(), InstallError> {
+            Ok(())
+        }
+
         fn preflight_privilege(&mut self) -> Result<(), InstallError> {
             Ok(())
         }
@@ -548,8 +569,8 @@ mod tests {
                 Ok(())
             }
         }
-        fn publish_ownership_receipt(&mut self) -> Result<(), InstallError> {
-            Ok(())
+        fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
+            Ok(false)
         }
         fn rollback_asset(&mut self, _asset: LinuxInstallAsset) -> Result<(), InstallError> {
             Ok(())
