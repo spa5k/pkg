@@ -14,6 +14,8 @@ mod linux_backend;
 mod linux_filesystem;
 mod linux_platform_assets;
 mod linux_systemd;
+mod linux_uninstall;
+mod linux_user_cleanup;
 pub mod platform;
 mod repair;
 mod root_client;
@@ -63,6 +65,7 @@ pub use linux_filesystem::{
 };
 pub use linux_platform_assets::LinuxPlatformAssetManager;
 pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode, LinuxSystemdManager};
+pub use linux_uninstall::ProductionLinuxUninstallBackend;
 pub use platform::linux::{
     LinuxPeerCredentials, LinuxPlatformError, LinuxPlatformErrorCode, LinuxRootSetStore,
     authenticate_broker_peer, peer_credentials,

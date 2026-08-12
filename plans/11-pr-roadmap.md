@@ -920,8 +920,14 @@ flowchart TD
 - **Milestone:** M5.
 
 #### PR-29 — Uninstall boundaries (asset manifest; never touch unmanaged Nix)
-- **Status (2026-08-10):** implementation complete locally; signed commit and external
-  privileged install→uninstall evidence gate pending.
+- **Status (2026-08-12):** Linux production routing, fail-closed service shutdown, exact
+  user-root/state cleanup and restoration, foreign-root/profile detection, shared-store
+  preservation, bounded root GC, authenticated managed-runtime removal, state ownership markers,
+  and mount/identity defenses are implemented. macOS unit checks, privileged Linux unit/lint and
+  same-filesystem bind-mount tests, and the official Nix 2.34.8 clean-container
+  provision→rollback→re-provision→daemon→GC→remove test pass. Signed commit and a future packaged
+  CLI `pkg uninstall --dry-run`/`doctor --post-uninstall` UX test remain; that CLI wiring belongs
+  to the PR-36 production connector rather than this backend slice.
 - **Purpose:** remove only recorded product assets; dry-run preview; refuse to touch
   unmanaged Nix; verify zero privileged residue (`08` T-UNINST-1/2/3).
 - **Owns:** `crates/pkg-installer/src/uninstall.rs` + tests.

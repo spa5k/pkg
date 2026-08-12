@@ -353,6 +353,8 @@ pub enum UninstallAction {
     RemoveRegisteredUserState,
     /// Remove `/nix` (or the Darwin volume) only after proving exclusive ownership.
     RemoveManagedStoreIfExclusive,
+    /// Remove only the product runtime when the manifest records a pre-existing store.
+    RemoveManagedRuntimePreservingStore,
     /// Verify that no product service, helper, account, or privileged path remains.
     VerifyNoPrivilegedResidue,
 }
@@ -406,12 +408,21 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
         .collect::<Vec<_>>();
     removable.sort_by(|left, right| removal_key(right).cmp(&removal_key(left)));
 
-    let mut actions = vec![
-        UninstallAction::StopServices,
-        UninstallAction::RemoveUserRoots,
-        UninstallAction::CollectGarbage,
-        UninstallAction::RemoveRegisteredUserState,
-    ];
+    let nix_root_state = states
+        .get("nix-root")
+        .copied()
+        .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+    let mut actions = vec![UninstallAction::StopServices];
+    match nix_root_state {
+        RecordedAssetState::Created => {
+            actions.push(UninstallAction::RemoveManagedStoreIfExclusive);
+        }
+        RecordedAssetState::PreExisting => {
+            actions.push(UninstallAction::RemoveUserRoots);
+            actions.push(UninstallAction::RemoveManagedRuntimePreservingStore);
+        }
+    }
+    actions.push(UninstallAction::RemoveRegisteredUserState);
     actions.extend(
         removable
             .into_iter()
@@ -421,9 +432,6 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
                 target: asset.target,
             }),
     );
-    if states.get("nix-root") == Some(&RecordedAssetState::Created) {
-        actions.push(UninstallAction::RemoveManagedStoreIfExclusive);
-    }
     actions.push(UninstallAction::VerifyNoPrivilegedResidue);
 
     Ok(UninstallPlan {
@@ -731,10 +739,22 @@ mod tests {
     fn preexisting_assets_are_never_removal_targets() -> Result<(), UninstallError> {
         let manifest = manifest(System::Aarch64Darwin, RecordedAssetState::PreExisting)?;
         let plan = plan_uninstall(&manifest)?;
-        assert!(!plan.actions().iter().any(|action| matches!(
-            action,
-            UninstallAction::RemoveAsset { .. } | UninstallAction::RemoveManagedStoreIfExclusive
-        )));
+        assert!(
+            !plan
+                .actions()
+                .iter()
+                .any(|action| matches!(action, UninstallAction::RemoveAsset { .. }))
+        );
+        assert!(
+            plan.actions()
+                .contains(&UninstallAction::RemoveManagedRuntimePreservingStore)
+        );
+        assert!(!plan.actions().contains(&UninstallAction::CollectGarbage));
+        assert!(
+            !plan
+                .actions()
+                .contains(&UninstallAction::RemoveManagedStoreIfExclusive)
+        );
         Ok(())
     }
 

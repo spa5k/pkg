@@ -414,6 +414,42 @@ impl LinuxAccountManager {
         }
         Ok(())
     }
+
+    /// Verifies that one fixed account or group is absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the account database is unsafe, unreadable,
+    /// or still contains the fixed identity.
+    pub fn verify_asset_absent(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxAccountError> {
+        if !Self::handles(asset) {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::UnsupportedAsset,
+            ));
+        }
+        self.ensure_lock()?;
+        let groups = self.system.groups()?;
+        let users = self.system.users()?;
+        validate_group_directory(&groups)?;
+        validate_user_directory(&users)?;
+        let present = match asset.kind() {
+            LinuxAssetKind::User => users.iter().any(|user| user.name == asset.path_or_name()),
+            LinuxAssetKind::Group => groups
+                .iter()
+                .any(|group| group.name == asset.path_or_name()),
+            LinuxAssetKind::Directory | LinuxAssetKind::File => true,
+        };
+        if present {
+            Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::VerificationFailure,
+            ))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -499,6 +499,26 @@ impl LinuxFilesystemManager {
         Self::remove_if_owned(&parent, &name, target_identity)
     }
 
+    /// Verifies that one fixed filesystem asset is absent without following links.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the asset still exists or its parent path is unsafe.
+    pub fn verify_asset_absent(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        let Some((parent, name)) = self.open_parent_optional(asset)? else {
+            return Ok(());
+        };
+        match open_child(&parent, &name, asset.kind()) {
+            Err(error) if error == Errno::NOENT => Ok(()),
+            Ok(_) | Err(_) => Err(LinuxFilesystemError::new(
+                LinuxFilesystemErrorCode::Conflict,
+            )),
+        }
+    }
+
     fn payload_for(&self, asset: LinuxInstallAsset) -> Result<Arc<[u8]>, LinuxFilesystemError> {
         if let Some(payload) = self.payloads.for_asset(asset) {
             return Ok(payload);
@@ -853,6 +873,8 @@ fn asset_mode(asset: LinuxInstallAsset) -> Result<u32, LinuxFilesystemError> {
 
 fn rustix_mode(asset: LinuxInstallAsset) -> Result<Mode, LinuxFilesystemError> {
     let mode = u16::try_from(asset_mode(asset)?).map_err(|_| unsupported())?;
+    #[cfg(target_os = "linux")]
+    let mode = u32::from(mode);
     Ok(Mode::from_raw_mode(mode))
 }
 
@@ -1089,8 +1111,10 @@ mod tests {
         let asset = Fixture::asset("product-cli");
         assert!(fixture.manager.ensure_asset(asset)?);
         let path = fixture.temporary.path().join("usr/local/bin/pkg");
+        let replacement = fixture.temporary.path().join("usr/local/bin/pkg.foreign");
+        fs::write(&replacement, b"foreign")?;
         fs::remove_file(&path)?;
-        fs::write(&path, b"foreign")?;
+        fs::rename(replacement, &path)?;
         assert_eq!(
             failure_code(&fixture.manager.rollback_asset(asset))?,
             LinuxFilesystemErrorCode::RollbackConflict

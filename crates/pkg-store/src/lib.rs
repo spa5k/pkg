@@ -17,9 +17,9 @@ pub use activate::{
     inspect_staged_activation, stage_activation, verify_activation, verify_recorded_activation,
 };
 pub use current::{
-    ActivationEvent, CurrentError, RecoveryAction, RecoveryEvidence, StateLayout,
-    activate_generation, activate_published_generation, activate_rooted_generation,
-    activate_transitioned_generation, classify_recovery,
+    ActivationEvent, CurrentError, RecoveryAction, RecoveryEvidence, STATE_OWNERSHIP_MARKER_BYTES,
+    STATE_OWNERSHIP_MARKER_NAME, StateLayout, activate_generation, activate_published_generation,
+    activate_rooted_generation, activate_transitioned_generation, classify_recovery,
 };
 pub use gc::{
     GcError, GcPlan, GcPolicy, GcRunReport, PruneCandidate, PruneOutcome,

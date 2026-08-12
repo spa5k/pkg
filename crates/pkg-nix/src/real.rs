@@ -49,6 +49,8 @@ pub(crate) const MANAGED_PATH: &str = "/usr/bin:/bin";
 const MAX_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
 const MAX_INTERNAL_JSON_LINE_BYTES: usize = 256 * 1024;
+const MAX_UNINSTALL_ROOTS: usize = 4_096;
+const MAX_UNINSTALL_ROOT_BYTES: usize = 1024 * 1024;
 const MAX_STDERR_CHUNKS_PER_TICK: usize = 64;
 const INTERNAL_JSON_PREFIX: &[u8] = b"@nix ";
 const ACT_BUILDS: u64 = 104;
@@ -167,6 +169,69 @@ impl RootNixGcExecutor {
     /// out.
     pub fn collect(&self) -> Result<GcReport, NixAdapterError> {
         collect_garbage(self.executor.as_ref(), os_args(["--store", "local"]))
+    }
+
+    /// Resolves the exact local closure protected by product GC roots.
+    ///
+    /// The command is fixed to the local store and recursive JSON path-info.
+    /// It accepts only validated store roots and returns a canonical bounded set.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed adapter error for excessive input, missing roots,
+    /// malformed output, a non-local store, or command failure.
+    pub fn closure_for_roots(
+        &self,
+        roots: &[StorePath],
+    ) -> Result<Vec<StorePath>, NixAdapterError> {
+        if roots.is_empty() {
+            return Ok(Vec::new());
+        }
+        if roots.len() > MAX_UNINSTALL_ROOTS
+            || roots
+                .iter()
+                .try_fold(0_usize, |total, root| {
+                    total.checked_add(root.as_str().len())
+                })
+                .is_none_or(|total| total > MAX_UNINSTALL_ROOT_BYTES)
+        {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        let mut args = base_args();
+        args.extend(os_args([
+            "path-info",
+            "--json",
+            "--json-format",
+            "2",
+            "--recursive",
+            "--store",
+            "local",
+        ]));
+        args.extend(roots.iter().map(|root| root.as_str().into()));
+        let outcome = execute_checked(
+            self.executor.as_ref(),
+            NixProgram::Modern,
+            args,
+            SHORT_TIMEOUT,
+        )?;
+        if outcome.code != Some(0) {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        let raw: RawPathInfoEnvelope = parse_json(&outcome.stdout)?;
+        validate_path_info_envelope(&raw)?;
+        for root in roots {
+            root_path_info(&raw, root)?;
+        }
+        let mut closure = Vec::new();
+        for (path, info) in raw.info {
+            if info.is_none() {
+                return Err(malformed());
+            }
+            closure.push(store_path(&path)?);
+        }
+        closure.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        closure.dedup_by(|left, right| left.as_str() == right.as_str());
+        Ok(closure)
     }
 }
 
@@ -2029,6 +2094,43 @@ mod tests {
             .expect_err("failed local-store preflight must refuse");
 
         assert_eq!(error.code(), crate::NixAdapterErrorCode::OperationFailed);
+    }
+
+    #[test]
+    fn root_gc_resolves_only_the_fixed_local_product_closure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = StorePath::new("/nix/store/22222222222222222222222222222222-product")?;
+        let dependency = "/nix/store/33333333333333333333333333333333-dependency";
+        let raw = br#"{"info":{"22222222222222222222222222222222-product":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":5,"references":["33333333333333333333333333333333-dependency"],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2},"33333333333333333333333333333333-dependency":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":7,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2}},"storeDir":"/nix/store","version":2}"#;
+        let scripted = Scripted::new(vec![success(raw.as_slice())]);
+        let calls = Arc::clone(&scripted.calls);
+        let closure =
+            RootNixGcExecutor::scripted(scripted).closure_for_roots(std::slice::from_ref(&root))?;
+
+        assert_eq!(
+            closure.iter().map(StorePath::as_str).collect::<Vec<_>>(),
+            [root.as_str(), dependency]
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(
+            calls.as_slice(),
+            [vec![
+                OsString::from("--extra-experimental-features"),
+                OsString::from("nix-command flakes"),
+                OsString::from("--option"),
+                OsString::from("allow-import-from-derivation"),
+                OsString::from("false"),
+                OsString::from("path-info"),
+                OsString::from("--json"),
+                OsString::from("--json-format"),
+                OsString::from("2"),
+                OsString::from("--recursive"),
+                OsString::from("--store"),
+                OsString::from("local"),
+                OsString::from(root.as_str()),
+            ]]
+        );
+        Ok(())
     }
 
     #[test]

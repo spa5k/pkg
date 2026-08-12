@@ -1,6 +1,7 @@
 use std::fmt;
-use std::fs;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink};
 use std::path::{Component, Path, PathBuf};
 
 use pkg_core::identity::StorePath;
@@ -8,6 +9,11 @@ use pkg_nix::{GenerationId, MaintenanceAdapter, RootSetReport, RootSetTransition
 
 use crate::activate::{ActivationPlan, verify_activation};
 use crate::roots::{PreparedRootSet, RootError, publish_root_set};
+
+/// Fixed receipt proving that pkg created or safely adopted an empty state root.
+pub const STATE_OWNERSHIP_MARKER_NAME: &str = ".pkg-state-v1";
+/// Exact marker bytes. The marker is private user-owned state, not secret authority.
+pub const STATE_OWNERSHIP_MARKER_BYTES: &[u8] = b"pkg-state-v1\n";
 
 /// A validated product-owned state layout rooted beneath a trusted boundary.
 #[derive(Debug, Clone)]
@@ -144,7 +150,10 @@ impl StateLayout {
         state_root: &Path,
         owner_uid: u32,
     ) -> Result<Self, CurrentError> {
-        if !trusted_root.is_absolute() || !state_root.starts_with(trusted_root) {
+        if !trusted_root.is_absolute()
+            || state_root == trusted_root
+            || !state_root.starts_with(trusted_root)
+        {
             return Err(CurrentError::UnsafePath);
         }
         validate_component(trusted_root, owner_uid)?;
@@ -152,13 +161,18 @@ impl StateLayout {
             .strip_prefix(trusted_root)
             .map_err(|_| CurrentError::UnsafePath)?;
         let mut cursor = trusted_root.to_path_buf();
+        let mut state_root_created = false;
         for component in relative.components() {
             let Component::Normal(component) = component else {
                 return Err(CurrentError::UnsafePath);
             };
             cursor.push(component);
-            ensure_private_directory(&cursor, owner_uid)?;
+            let created = ensure_private_directory(&cursor, owner_uid)?;
+            if cursor == state_root {
+                state_root_created = created;
+            }
         }
+        ensure_state_ownership_marker(state_root, owner_uid, state_root_created)?;
         for relative in [
             "generations",
             "journal",
@@ -276,24 +290,74 @@ impl StateLayout {
     }
 }
 
-fn ensure_private_directory(path: &Path, owner_uid: u32) -> Result<(), CurrentError> {
+fn ensure_private_directory(path: &Path, owner_uid: u32) -> Result<bool, CurrentError> {
     match fs::symlink_metadata(path) {
-        Ok(_) => validate_component(path, owner_uid),
+        Ok(_) => validate_component(path, owner_uid).map(|()| false),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let mut builder = fs::DirBuilder::new();
             builder.mode(0o700);
-            match builder.create(path) {
+            let created = match builder.create(path) {
                 Ok(()) => {
                     let parent = path.parent().ok_or(CurrentError::UnsafePath)?;
                     sync_dir(parent)?;
+                    true
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
                 Err(error) => return Err(error.into()),
-            }
-            validate_component(path, owner_uid)
+            };
+            validate_component(path, owner_uid)?;
+            Ok(created)
         }
         Err(error) => Err(error.into()),
     }
+}
+
+fn ensure_state_ownership_marker(
+    state_root: &Path,
+    owner_uid: u32,
+    state_root_created: bool,
+) -> Result<(), CurrentError> {
+    let marker = state_root.join(STATE_OWNERSHIP_MARKER_NAME);
+    match fs::symlink_metadata(&marker) {
+        Ok(_) => return validate_state_ownership_marker(&marker, owner_uid),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    if !state_root_created {
+        // V1 is the first supported state format. There is no markerless
+        // legacy format to migrate; inferring ownership from directory names
+        // or contents would let an unrelated pre-existing tree be adopted.
+        // Even an empty tree is refused because emptiness and marker creation
+        // cannot be made atomic against its owning user at this layer.
+        return Err(CurrentError::UnsafePath);
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    match options.open(&marker) {
+        Ok(mut file) => {
+            file.write_all(STATE_OWNERSHIP_MARKER_BYTES)?;
+            file.sync_all()?;
+            sync_dir(state_root)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    validate_state_ownership_marker(&marker, owner_uid)
+}
+
+fn validate_state_ownership_marker(path: &Path, owner_uid: u32) -> Result<(), CurrentError> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != owner_uid
+        || metadata.permissions().mode() & 0o777 != 0o600
+        || metadata.nlink() != 1
+        || metadata.len() != STATE_OWNERSHIP_MARKER_BYTES.len() as u64
+        || fs::read(path)? != STATE_OWNERSHIP_MARKER_BYTES
+    {
+        return Err(CurrentError::UnsafePath);
+    }
+    Ok(())
 }
 
 /// Publishes roots, retains the staged forest, then atomically switches `current`.
@@ -624,6 +688,11 @@ mod tests {
             assert!(metadata.file_type().is_dir());
             assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
         }
+        let marker = state.join(STATE_OWNERSHIP_MARKER_NAME);
+        let metadata = fs::symlink_metadata(&marker).unwrap();
+        assert!(metadata.file_type().is_file());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(marker).unwrap(), STATE_OWNERSHIP_MARKER_BYTES);
         assert!(StateLayout::initialize(temp.path(), &state, uid).is_ok());
 
         let escaped = temp.path().parent().unwrap().join("pkg-escaped-state");
@@ -631,6 +700,31 @@ mod tests {
             StateLayout::initialize(temp.path(), &escaped, uid),
             Err(CurrentError::UnsafePath)
         ));
+    }
+
+    #[test]
+    fn initialization_never_adopts_nonempty_unmarked_state() {
+        let temp = Builder::new().prefix("pkg-store-").tempdir_in(".").unwrap();
+        let uid = fs::symlink_metadata(temp.path()).unwrap().uid();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let state = temp.path().join("state");
+        fs::create_dir(&state).unwrap();
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(state.join("foreign"), b"keep").unwrap();
+
+        assert!(matches!(
+            StateLayout::initialize(temp.path(), &state, uid),
+            Err(CurrentError::UnsafePath)
+        ));
+        assert_eq!(fs::read(state.join("foreign")).unwrap(), b"keep");
+        assert!(!state.join(STATE_OWNERSHIP_MARKER_NAME).exists());
+
+        fs::remove_file(state.join("foreign")).unwrap();
+        assert!(matches!(
+            StateLayout::initialize(temp.path(), &state, uid),
+            Err(CurrentError::UnsafePath)
+        ));
+        assert!(!state.join(STATE_OWNERSHIP_MARKER_NAME).exists());
     }
 
     #[test]

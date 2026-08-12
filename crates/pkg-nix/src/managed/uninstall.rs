@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use pkg_core::System;
+use pkg_core::{StorePath, System};
 use rustix::{
     fs::{FlockOperation, fcntl_lock},
     io::Errno,
@@ -77,7 +77,7 @@ impl std::error::Error for ManagedRuntimeRemovalError {}
 pub enum ManagedRuntimeRemovalOutcome {
     /// The local store was empty and all product-owned runtime state was removed.
     Removed,
-    /// An unrecognized store object remained, so all `/nix` state was preserved.
+    /// An unrecognized store object remained, so the complete runtime was preserved.
     StorePreserved,
 }
 
@@ -107,6 +107,13 @@ pub struct ManagedRuntimeRemoval {
     store: Vec<CapturedEntry>,
     runtime: Vec<CapturedEntry>,
     metadata: Vec<CapturedEntry>,
+}
+
+/// Exclusive store-removal authority holding Nix's GC lock.
+#[derive(Debug)]
+pub struct ExclusiveManagedRuntimeRemoval {
+    removal: ManagedRuntimeRemoval,
+    _gc_lock: fs::File,
 }
 
 /// Prepares persistent removal after verifying the complete authenticated
@@ -218,14 +225,62 @@ fn prepare_with_owner_uid(
 }
 
 impl ManagedRuntimeRemoval {
+    /// Acquires exclusive store-removal authority before closure capture.
+    pub fn begin_exclusive_removal(
+        self,
+    ) -> Result<ExclusiveManagedRuntimeRemoval, ManagedRuntimeRemovalError> {
+        let gc_lock = acquire_gc_lock(&rooted(&self.root, Path::new(GC_LOCK)), self.owner_uid)?;
+        capture_dynamic_store_state(&self.root, self.owner_uid, false)?;
+        Ok(ExclusiveManagedRuntimeRemoval {
+            removal: self,
+            _gc_lock: gc_lock,
+        })
+    }
+
+    /// Proves that no foreign GC root, profile, or temporary root can keep a
+    /// store object live.
+    ///
+    /// The proof is made while holding Nix's GC lock. Removal repeats the same
+    /// proof under a newly acquired lock before it deletes any store object.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed error if a foreign liveness record exists or mutable
+    /// Nix state is unsafe.
+    pub fn verify_no_foreign_liveness(&self) -> Result<(), ManagedRuntimeRemovalError> {
+        let _gc_lock = acquire_gc_lock(&rooted(&self.root, Path::new(GC_LOCK)), self.owner_uid)?;
+        capture_dynamic_store_state(&self.root, self.owner_uid, true).map(|_| ())
+    }
+
+    /// Proves that every direct store object belongs to the authenticated
+    /// runtime or to the exact product closure captured before root removal.
+    ///
+    /// `.links` is Nix-owned implementation state and is the only additional
+    /// direct entry accepted. The method is read-only and bounded.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed error if the store is unsafe, input paths are outside
+    /// the canonical store, or directory enumeration exceeds its bound.
+    pub fn store_contains_only_product_objects(
+        &self,
+        product_closure: &[StorePath],
+    ) -> Result<bool, ManagedRuntimeRemovalError> {
+        store_contains_only_authenticated_objects(
+            &rooted(&self.root, Path::new(STORE_PREFIX)),
+            &self.store,
+            product_closure,
+        )
+    }
+
     /// Removes the authenticated product runtime after product roots are gone
     /// and root-local Nix garbage collection has completed.
     ///
     /// If any unrecognized store object remains, the method preserves all
     /// `/nix` state. Signed objects that survived GC are removed only while the
     /// Nix record lock is held and every root/profile liveness directory is
-    /// empty. The independently authenticated `/opt/pkg/nix` runtime and local
-    /// ownership metadata are still removed through captured identities.
+    /// empty. An unrecognized store object preserves `/opt/pkg/nix` and its
+    /// ownership metadata so the remaining store is never stranded.
     ///
     /// # Errors
     ///
@@ -236,11 +291,47 @@ impl ManagedRuntimeRemoval {
     /// the product-level supported recovery is reinstall, as required by the
     /// V1 uninstall contract.
     pub fn remove(mut self) -> Result<ManagedRuntimeRemovalOutcome, ManagedRuntimeRemovalError> {
-        let _gc_lock = acquire_gc_lock(&rooted(&self.root, Path::new(GC_LOCK)), self.owner_uid)?;
-        let store_is_exclusive = store_contains_only_authenticated_objects(
-            &rooted(&self.root, Path::new(STORE_PREFIX)),
-            &self.store,
-        )?;
+        self.remove_with_store_policy(true, false)
+    }
+
+    /// Removes only the authenticated product runtime and registration metadata.
+    ///
+    /// This variant is required when the install manifest records `/nix` as
+    /// pre-existing. It never acquires the Nix GC lock, inspects store contents,
+    /// or mutates any path below `/nix`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed error if the captured runtime or metadata changed or
+    /// could not be removed completely.
+    pub fn remove_preserving_store(
+        mut self,
+    ) -> Result<ManagedRuntimeRemovalOutcome, ManagedRuntimeRemovalError> {
+        self.remove_with_store_policy(false, false)
+    }
+
+    fn remove_with_store_policy(
+        &mut self,
+        allow_store_removal: bool,
+        lock_already_held: bool,
+    ) -> Result<ManagedRuntimeRemovalOutcome, ManagedRuntimeRemovalError> {
+        let _gc_lock = if allow_store_removal && !lock_already_held {
+            Some(acquire_gc_lock(
+                &rooted(&self.root, Path::new(GC_LOCK)),
+                self.owner_uid,
+            )?)
+        } else {
+            None
+        };
+        let store_is_exclusive = allow_store_removal
+            && store_contains_only_authenticated_objects(
+                &rooted(&self.root, Path::new(STORE_PREFIX)),
+                &self.store,
+                &[],
+            )?;
+        if allow_store_removal && !store_is_exclusive {
+            return Ok(ManagedRuntimeRemovalOutcome::StorePreserved);
+        }
         verify_tree_matches_captured(
             &rooted(&self.root, Path::new(RUNTIME_PREFIX)),
             &self.runtime,
@@ -248,12 +339,13 @@ impl ManagedRuntimeRemoval {
         verify_captured(&self.runtime)?;
         verify_captured(&self.metadata)?;
         let mut incomplete = false;
+        let mut dynamic = Vec::new();
         if store_is_exclusive {
             verify_authenticated_store_trees(
                 &rooted(&self.root, Path::new(STORE_PREFIX)),
                 &self.store,
             )?;
-            let mut dynamic = capture_dynamic_store_state(&self.root, self.owner_uid)?;
+            dynamic = capture_dynamic_store_state(&self.root, self.owner_uid, true)?;
             verify_captured(&self.store)?;
             verify_captured(&dynamic)?;
             record_cleanup_result(remove_captured(&mut self.store), &mut incomplete)?;
@@ -265,14 +357,20 @@ impl ManagedRuntimeRemoval {
                         false
                     }
                 };
-            if store_is_empty {
-                record_cleanup_result(remove_captured(&mut dynamic), &mut incomplete)?;
-            } else {
+            if !store_is_empty {
                 incomplete = true;
+            }
+            if incomplete {
+                return Err(ManagedRuntimeRemovalError::new(
+                    ManagedRuntimeRemovalErrorCode::RemovalFailed,
+                ));
             }
         }
         record_cleanup_result(remove_captured(&mut self.runtime), &mut incomplete)?;
         record_cleanup_result(remove_captured(&mut self.metadata), &mut incomplete)?;
+        if store_is_exclusive && !incomplete {
+            record_cleanup_result(remove_captured(&mut dynamic), &mut incomplete)?;
+        }
         if incomplete {
             return Err(ManagedRuntimeRemovalError::new(
                 ManagedRuntimeRemovalErrorCode::RemovalFailed,
@@ -283,6 +381,46 @@ impl ManagedRuntimeRemoval {
         } else {
             ManagedRuntimeRemovalOutcome::StorePreserved
         })
+    }
+
+    fn remove_with_store_policy_locked(
+        &mut self,
+    ) -> Result<ManagedRuntimeRemovalOutcome, ManagedRuntimeRemovalError> {
+        self.remove_with_store_policy(true, true)
+    }
+}
+
+impl ExclusiveManagedRuntimeRemoval {
+    /// Captures the exact product closure after the GC lock is held.
+    pub fn capture_product_closure(
+        &mut self,
+        product_closure: &[StorePath],
+    ) -> Result<(), ManagedRuntimeRemovalError> {
+        let store = rooted(&self.removal.root, Path::new(STORE_PREFIX));
+        if !store_contains_only_authenticated_objects(&store, &self.removal.store, product_closure)?
+        {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        let device = capture(&store, self.removal.owner_uid, false)?.device;
+        for path in product_closure {
+            let path = rooted(&self.removal.root, Path::new(path.as_str()));
+            if !self.removal.store.iter().any(|entry| entry.path == path) {
+                capture_tree_on_device(
+                    &path,
+                    self.removal.owner_uid,
+                    Some(device),
+                    &mut self.removal.store,
+                )?;
+            }
+        }
+        verify_authenticated_store_trees(&store, &self.removal.store)
+    }
+
+    /// Removes the closure and runtime while the pre-root-removal lock is held.
+    pub fn remove(&mut self) -> Result<ManagedRuntimeRemovalOutcome, ManagedRuntimeRemovalError> {
+        self.removal.remove_with_store_policy_locked()
     }
 }
 
@@ -303,6 +441,7 @@ fn record_cleanup_result(
 fn store_contains_only_authenticated_objects(
     store: &Path,
     authenticated: &[CapturedEntry],
+    product_closure: &[StorePath],
 ) -> Result<bool, ManagedRuntimeRemovalError> {
     let metadata = fs::symlink_metadata(store).map_err(|_| {
         ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
@@ -312,14 +451,35 @@ fn store_contains_only_authenticated_objects(
             ManagedRuntimeRemovalErrorCode::UnsafeState,
         ));
     }
-    let allowed = authenticated
+    let mut allowed = authenticated
         .iter()
         .filter(|entry| entry.path.parent() == Some(store))
         .filter_map(|entry| entry.path.file_name().map(|name| name.to_os_string()))
         .collect::<BTreeSet<_>>();
+    for path in product_closure {
+        let path = Path::new(path.as_str());
+        if path.parent() != Some(Path::new(STORE_PREFIX)) {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        let name = path.file_name().ok_or_else(|| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        allowed.insert(name.to_os_string());
+    }
+    let mut count = 0_usize;
     for child in fs::read_dir(store)
         .map_err(|_| ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState))?
     {
+        count = count.checked_add(1).ok_or_else(|| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        if count > MAX_DYNAMIC_ENTRIES {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
         let child = child.map_err(|_| {
             ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
         })?;
@@ -458,6 +618,7 @@ fn verify_tree_entry(
 fn capture_dynamic_store_state(
     root: &Path,
     owner_uid: u32,
+    require_product_roots_empty: bool,
 ) -> Result<Vec<CapturedEntry>, ManagedRuntimeRemovalError> {
     let nix = capture(&rooted(root, Path::new("/nix")), owner_uid, false)?;
     let store = capture(&rooted(root, Path::new(STORE_PREFIX)), owner_uid, false)?;
@@ -480,33 +641,24 @@ fn capture_dynamic_store_state(
                 let child = child.map_err(|_| {
                     ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
                 })?;
-                if child.file_name() != "per-user" && child.file_name() != "auto" {
-                    return Err(ManagedRuntimeRemovalError::new(
-                        ManagedRuntimeRemovalErrorCode::UnsafeState,
-                    ));
-                }
                 let path = child.path();
-                let metadata = fs::symlink_metadata(&path).map_err(|_| {
-                    ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
-                })?;
-                if !metadata.file_type().is_dir()
-                    || metadata.dev() != state.device
-                    || metadata.uid() != owner_uid
-                    || metadata.mode() & 0o022 != 0
-                    || fs::read_dir(&path)
-                        .map_err(|_| {
-                            ManagedRuntimeRemovalError::new(
-                                ManagedRuntimeRemovalErrorCode::UnsafeState,
-                            )
-                        })?
-                        .next()
-                        .is_some()
-                {
-                    return Err(ManagedRuntimeRemovalError::new(
-                        ManagedRuntimeRemovalErrorCode::UnsafeState,
-                    ));
+                match child.file_name().to_str() {
+                    Some("per-user" | "auto") => {
+                        entries.push(capture_empty_directory(&path, owner_uid, state.device)?)
+                    }
+                    Some("pkg") => capture_product_gcroots(
+                        &path,
+                        owner_uid,
+                        state.device,
+                        require_product_roots_empty,
+                        &mut entries,
+                    )?,
+                    _ => {
+                        return Err(ManagedRuntimeRemovalError::new(
+                            ManagedRuntimeRemovalErrorCode::UnsafeState,
+                        ));
+                    }
                 }
-                entries.push(capture_from_metadata(&path, &metadata)?);
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -541,6 +693,91 @@ fn capture_dynamic_store_state(
         )?;
     }
     Ok(entries)
+}
+
+fn capture_empty_directory(
+    path: &Path,
+    owner_uid: u32,
+    expected_device: u64,
+) -> Result<CapturedEntry, ManagedRuntimeRemovalError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+    })?;
+    if !metadata.file_type().is_dir()
+        || metadata.dev() != expected_device
+        || metadata.uid() != owner_uid
+        || metadata.mode() & 0o022 != 0
+        || fs::read_dir(path)
+            .map_err(|_| {
+                ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+            })?
+            .next()
+            .is_some()
+    {
+        return Err(ManagedRuntimeRemovalError::new(
+            ManagedRuntimeRemovalErrorCode::UnsafeState,
+        ));
+    }
+    capture_from_metadata(path, &metadata)
+}
+
+fn capture_product_gcroots(
+    path: &Path,
+    owner_uid: u32,
+    expected_device: u64,
+    require_empty: bool,
+    entries: &mut Vec<CapturedEntry>,
+) -> Result<(), ManagedRuntimeRemovalError> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+    })?;
+    if !metadata.file_type().is_dir()
+        || metadata.dev() != expected_device
+        || metadata.uid() != owner_uid
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(ManagedRuntimeRemovalError::new(
+            ManagedRuntimeRemovalErrorCode::UnsafeState,
+        ));
+    }
+    let mut children = fs::read_dir(path).map_err(|_| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+    })?;
+    let users = children
+        .next()
+        .ok_or_else(|| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?
+        .map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+    if users.file_name() != "users" || children.next().is_some() {
+        return Err(ManagedRuntimeRemovalError::new(
+            ManagedRuntimeRemovalErrorCode::UnsafeState,
+        ));
+    }
+    entries.push(capture_from_metadata(path, &metadata)?);
+    if require_empty {
+        entries.push(capture_empty_directory(
+            &users.path(),
+            owner_uid,
+            expected_device,
+        )?);
+    } else {
+        let users_metadata = fs::symlink_metadata(users.path()).map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        if !users_metadata.file_type().is_dir()
+            || users_metadata.dev() != expected_device
+            || users_metadata.uid() != owner_uid
+            || users_metadata.mode() & 0o022 != 0
+        {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn require_empty_directory(
@@ -1033,6 +1270,7 @@ mod tests {
             "/nix/var/nix/profiles/per-user",
             "/nix/var/nix/temproots",
             "/nix/var/nix/gcroots/per-user",
+            "/nix/var/nix/gcroots/pkg/users",
             "/nix/store/.links",
         ] {
             let path = rooted(fixture.temporary.path(), Path::new(path));
@@ -1052,6 +1290,33 @@ mod tests {
         assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
         assert!(!rooted(fixture.temporary.path(), Path::new("/nix/var/nix/db")).exists());
         assert!(rooted(fixture.temporary.path(), Path::new("/nix/store")).is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn foreign_profile_refuses_gc_authorization_even_for_product_store_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new()?;
+        let profiles = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/var/nix/profiles/per-user/1000"),
+        );
+        fs::create_dir_all(&profiles)?;
+        fs::set_permissions(&profiles, fs::Permissions::from_mode(0o700))?;
+        let store_object = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/store/22222222222222222222222222222222-runtime"),
+        );
+        symlink(&store_object, profiles.join("profile"))?;
+
+        let error = fixture
+            .prepare()?
+            .verify_no_foreign_liveness()
+            .expect_err("a foreign profile must block product GC");
+        assert_eq!(error.code(), ManagedRuntimeRemovalErrorCode::UnsafeState);
+        assert!(store_object.is_file());
         Ok(())
     }
 
@@ -1207,6 +1472,11 @@ mod tests {
     fn ordinary_runtime_failure_still_removes_metadata_and_store_state()
     -> Result<(), Box<dyn std::error::Error>> {
         let fixture = Fixture::new()?;
+        if fixture.owner_uid == 0 {
+            // Root can unlink entries from a non-writable directory, so this
+            // permission-based fault injection has no meaning in root CI.
+            return Ok(());
+        }
         let removal = fixture.prepare()?;
         collect_authenticated_store(&fixture)?;
         let runtime_version = rooted(fixture.temporary.path(), Path::new("/opt/pkg/nix/2.34.8"));
@@ -1326,6 +1596,75 @@ mod tests {
         );
         assert!(foreign.is_file());
         assert!(db.is_dir());
+        assert!(rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn product_closure_inventory_accepts_only_exact_store_objects()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let product = StorePath::new("/nix/store/44444444444444444444444444444444-product")?;
+        let product_path = rooted(fixture.temporary.path(), Path::new(product.as_str()));
+        fs::write(&product_path, b"product")?;
+        let removal = fixture.prepare()?;
+
+        assert!(removal.store_contains_only_product_objects(std::slice::from_ref(&product))?);
+
+        let foreign = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/store/11111111111111111111111111111111-foreign"),
+        );
+        fs::write(foreign, b"foreign")?;
+        assert!(!removal.store_contains_only_product_objects(&[product])?);
+        Ok(())
+    }
+
+    #[test]
+    fn exclusive_authority_captures_and_removes_product_closure_under_lock()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new()?;
+        let product = StorePath::new("/nix/store/44444444444444444444444444444444-product")?;
+        let product_path = rooted(fixture.temporary.path(), Path::new(product.as_str()));
+        fs::write(&product_path, b"product")?;
+        let users = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/var/nix/gcroots/pkg/users"),
+        );
+        fs::create_dir_all(&users)?;
+        fs::set_permissions(&users, fs::Permissions::from_mode(0o700))?;
+        let root = users.join("1000");
+        symlink(product.as_str(), &root)?;
+        let mut authority = fixture.prepare()?.begin_exclusive_removal()?;
+        authority.capture_product_closure(std::slice::from_ref(&product))?;
+        fs::remove_file(root)?;
+
+        assert_eq!(authority.remove()?, ManagedRuntimeRemovalOutcome::Removed);
+        assert!(!product_path.exists());
+        assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn preexisting_store_policy_never_mutates_nix() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let store_object = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/store/22222222222222222222222222222222-runtime"),
+        );
+        let state = rooted(fixture.temporary.path(), Path::new("/nix/var/nix/db"));
+        fs::create_dir_all(&state)?;
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o700))?;
+        fs::write(state.join("preexisting"), b"keep")?;
+
+        assert_eq!(
+            fixture.prepare()?.remove_preserving_store()?,
+            ManagedRuntimeRemovalOutcome::StorePreserved
+        );
+        assert!(store_object.is_file());
+        assert_eq!(fs::read(state.join("preexisting"))?, b"keep");
         assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
         Ok(())
     }
@@ -1345,8 +1684,10 @@ mod tests {
             fixture.temporary.path(),
             Path::new("/opt/pkg/nix/2.34.8/nix"),
         );
+        let replacement = fixture.temporary.path().join("replacement-runtime");
+        fs::write(&replacement, b"replacement")?;
         fs::remove_file(&binary)?;
-        fs::write(&binary, b"replacement")?;
+        fs::rename(&replacement, &binary)?;
 
         let error = removal.remove().expect_err("replacement must refuse");
         assert_eq!(
