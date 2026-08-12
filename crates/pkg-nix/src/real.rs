@@ -27,14 +27,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AcceptedFormats, BuildCacheError, BuildCacheErrorCode, BuildCacheProbe, BuildOutput,
-    BuildOutputProvenance, BuildProgressEstimate, BuildReport, BuildRequest, BuildStatus,
-    CacheDownloadClosure, CachePathObservation, DerivationPath, DerivationPlanReport,
+    BuildOutputProvenance, BuildProgressEstimate, BuildReadiness, BuildReport, BuildRequest,
+    BuildStatus, CacheDownloadClosure, CachePathObservation, DerivationPath, DerivationPlanReport,
     DerivationSystem, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport,
     GcStatus, MaintenanceError, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
     NixVersion, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError, OutputName,
-    PathInfoReport, PathVerifyResult, RepairMode, RepairOutcomeKind, Signature, StorePath,
-    SubstituteOutcome, SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor,
-    VerifiedRepairScope, VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    PathInfoReport, PathVerifyResult, RepairBuildPlan, RepairMode, RepairOutcomeKind,
+    RepairPlanDerivation, RepairPlanTarget, Signature, StorePath, SubstituteOutcome,
+    SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope,
+    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
 };
 
 pub(crate) const PINNED_NIX_VERSION: &str = "2.34.8";
@@ -42,6 +43,7 @@ const PATH_INFO_FORMAT: u32 = 2;
 const STORE_DIRECTORY: &str = "/nix/store";
 const CACHE_URL: &str = "https://cache.nixos.org";
 const CACHE_SIGNING_KEY_NAME: &str = "cache.nixos.org-1";
+const MAX_REPAIR_CLOSURE: usize = 4096;
 pub(crate) const MANAGED_NIX_CONFIG: &str = "include /opt/pkg/etc/pkg/nix.conf";
 pub(crate) const MANAGED_NIX_STATE: &str = "/nix/var/nix";
 pub(crate) const MANAGED_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socket";
@@ -59,7 +61,12 @@ const SHORT_TIMEOUT: Duration = Duration::from_secs(60);
 const EVALUATE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const BUILD_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const GC_TIMEOUT: Duration = Duration::from_secs(60 * 60);
-const REPAIR_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+/// Maximum wall time for one complete privileged repair request.
+///
+/// The broker helper client waits slightly longer than this bound. This keeps
+/// the broker's admission and GC-inhibit leases live until the fixed root
+/// executor has either completed or killed its child process group.
+pub const MAX_REPAIR_EXECUTION_DURATION: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Real, version-pinned adapter around the product-managed Nix executable.
 pub struct RealNixAdapter {
@@ -240,6 +247,9 @@ impl VerifiedRepairExecutor for RootNixRepairExecutor {
         &self,
         scope: &VerifiedRepairScope,
     ) -> Result<Vec<RepairOutcomeKind>, MaintenanceError> {
+        let deadline = Instant::now()
+            .checked_add(MAX_REPAIR_EXECUTION_DURATION)
+            .ok_or_else(MaintenanceError::backend_failure)?;
         let mut outcomes = Vec::with_capacity(scope.paths().len());
         for path in scope.paths() {
             let mut repair = root_store_args();
@@ -257,14 +267,14 @@ impl VerifiedRepairExecutor for RootNixRepairExecutor {
                 "repair",
             ]));
             repair.push(OsString::from(path.as_str()));
-            if self.run(repair, REPAIR_TIMEOUT)?.code != Some(0) {
+            if self.run(repair, repair_time_remaining(deadline)?)?.code != Some(0) {
                 return Err(MaintenanceError::backend_failure());
             }
 
             let mut verify = root_store_args();
             verify.extend(os_args(["store", "verify", "--no-trust"]));
             verify.push(OsString::from(path.as_str()));
-            let verify = self.run(verify, SHORT_TIMEOUT)?;
+            let verify = self.run(verify, repair_short_time_remaining(deadline)?)?;
             if verify.code == Some(0) {
                 outcomes.push(RepairOutcomeKind::Restored);
                 continue;
@@ -275,13 +285,24 @@ impl VerifiedRepairExecutor for RootNixRepairExecutor {
 
             let mut info = root_store_args();
             info.extend(os_args(["store", "info"]));
-            if self.run(info, SHORT_TIMEOUT)?.code != Some(0) {
+            if self.run(info, repair_short_time_remaining(deadline)?)?.code != Some(0) {
                 return Err(MaintenanceError::backend_failure());
             }
             outcomes.push(RepairOutcomeKind::CacheMiss);
         }
         Ok(outcomes)
     }
+}
+
+fn repair_time_remaining(deadline: Instant) -> Result<Duration, MaintenanceError> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(MaintenanceError::backend_failure)
+}
+
+fn repair_short_time_remaining(deadline: Instant) -> Result<Duration, MaintenanceError> {
+    Ok(repair_time_remaining(deadline)?.min(SHORT_TIMEOUT))
 }
 
 impl std::fmt::Debug for RealNixAdapter {
@@ -340,6 +361,148 @@ impl RealNixAdapter {
             Duration::from_secs(2),
         )
         .map(|_| ())
+    }
+
+    /// Resolves the exact recursive closure of authenticated generation roots.
+    ///
+    /// This is a fixed read-only managed-daemon query. It accepts only typed
+    /// store paths and exposes no store, command, option, or trust control.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed adapter error for an empty or excessive scope, a
+    /// missing root, malformed output, or a managed-daemon failure.
+    pub fn closure_for_roots(
+        &self,
+        roots: &[StorePath],
+    ) -> Result<Vec<StorePath>, NixAdapterError> {
+        if roots.is_empty() || roots.len() > MAX_REPAIR_CLOSURE {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        let mut closure = BTreeMap::new();
+        for root in roots {
+            let raw = self.raw_path_info(root, true, false)?;
+            validate_path_info_envelope(&raw)?;
+            root_path_info(&raw, root)?;
+            for (path, info) in raw.info {
+                if info.is_none() {
+                    return Err(malformed());
+                }
+                let path = store_path(&path)?;
+                closure.insert(path.as_str().to_owned(), path);
+                if closure.len() > MAX_REPAIR_CLOSURE {
+                    return Err(NixAdapterError::OperationFailed);
+                }
+            }
+        }
+        if closure.is_empty() {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        Ok(closure.into_values().collect())
+    }
+
+    /// Builds a private full-output local-repair approval subject.
+    ///
+    /// Every input is a broker-derived damaged store path. The method accepts
+    /// no installable, expression, option, store selector, or output selection.
+    /// It requires a valid local deriver and includes every declared output of
+    /// that deriver in the canonical plan.
+    pub fn repair_build_plan(
+        &self,
+        damaged: &[StorePath],
+        policy_version: pkg_core::PolicyVersion,
+        system: pkg_core::System,
+        readiness: BuildReadiness,
+        host_cores: u32,
+    ) -> Result<RepairBuildPlan, NixAdapterError> {
+        if damaged.is_empty() || damaged.len() > 4096 {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        let mut ordered = damaged.to_vec();
+        ordered.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        if ordered.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        let mut targets = Vec::with_capacity(ordered.len());
+        for path in ordered {
+            targets.push(self.repair_plan_target(path, system)?);
+        }
+        let version = <Self as NixAdapter>::version(self)?.nix_version().clone();
+        RepairBuildPlan::new(
+            &version,
+            policy_version,
+            system,
+            readiness,
+            host_cores,
+            targets,
+        )
+        .map_err(|_| NixAdapterError::OperationFailed)
+    }
+
+    fn repair_plan_target(
+        &self,
+        path: StorePath,
+        system: pkg_core::System,
+    ) -> Result<RepairPlanTarget, NixAdapterError> {
+        let info = self.raw_path_info(&path, false, false)?;
+        validate_path_info_envelope(&info)?;
+        let deriver = root_path_info(&info, &path)?
+            .deriver
+            .as_deref()
+            .map(derivation_path)
+            .transpose()?
+            .ok_or(NixAdapterError::OperationFailed)?;
+        let deriver_store = store_path(deriver.as_str())?;
+        let deriver_info = self.raw_path_info(&deriver_store, false, false)?;
+        validate_path_info_envelope(&deriver_info)?;
+        root_path_info(&deriver_info, &deriver_store)?;
+
+        let mut args = base_args();
+        args.extend(os_args(["derivation", "show", "--recursive"]));
+        args.push(deriver.as_str().into());
+        let bytes = self.require_success(MethodKind::EvaluateDerivation, args, EVALUATE_TIMEOUT)?;
+        let raw: RawDerivationEnvelope = parse_json(&bytes)?;
+        validate_derivation_envelope(&raw)?;
+        let item = raw
+            .derivations
+            .get(deriver.as_str())
+            .ok_or(NixAdapterError::OperationFailed)?;
+        let observed_system = DerivationSystem::from_str(&item.system)?;
+        if !observed_system.is_compatible_with(system) {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        let outputs = item
+            .outputs
+            .iter()
+            .map(|(name, output)| {
+                let output_path = output
+                    .path
+                    .as_deref()
+                    .or_else(|| item.env.get(name).map(String::as_str))
+                    .ok_or(NixAdapterError::OperationFailed)?;
+                Ok((
+                    OutputName::new(name).map_err(|_| NixAdapterError::OperationFailed)?,
+                    store_path(output_path)?,
+                    validate_derivation_output(output)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, NixAdapterError>>()?;
+        let fixed_output = outputs.iter().any(|(_, _, fixed)| *fixed);
+        let outputs = outputs
+            .into_iter()
+            .map(|(name, output_path, _)| (name, output_path))
+            .collect();
+        let document = serde_json::to_vec(item).map_err(|_| malformed())?;
+        let derivation = RepairPlanDerivation::new(
+            deriver,
+            item.name.clone(),
+            system,
+            outputs,
+            body_digest(&document),
+            fixed_output,
+        )
+        .map_err(|_| NixAdapterError::OperationFailed)?;
+        Ok(RepairPlanTarget::new(path, derivation))
     }
 
     #[cfg(test)]
@@ -2129,6 +2292,63 @@ mod tests {
                 OsString::from("local"),
                 OsString::from(root.as_str()),
             ]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn broker_repair_closure_uses_only_fixed_recursive_daemon_queries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = StorePath::new("/nix/store/22222222222222222222222222222222-product")?;
+        let dependency = "/nix/store/33333333333333333333333333333333-dependency";
+        let raw = br#"{"info":{"22222222222222222222222222222222-product":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":5,"references":["33333333333333333333333333333333-dependency"],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2},"33333333333333333333333333333333-dependency":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":7,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2}},"storeDir":"/nix/store","version":2}"#;
+        let scripted = Scripted::new(vec![success(raw.as_slice())]);
+        let calls = Arc::clone(&scripted.calls);
+        let closure =
+            RealNixAdapter::scripted(scripted).closure_for_roots(std::slice::from_ref(&root))?;
+
+        assert_eq!(
+            closure.iter().map(StorePath::as_str).collect::<Vec<_>>(),
+            [root.as_str(), dependency]
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(
+            calls.as_slice(),
+            [vec![
+                OsString::from("--extra-experimental-features"),
+                OsString::from("nix-command flakes"),
+                OsString::from("--option"),
+                OsString::from("allow-import-from-derivation"),
+                OsString::from("false"),
+                OsString::from("path-info"),
+                OsString::from("--json"),
+                OsString::from("--json-format"),
+                OsString::from("2"),
+                OsString::from("--recursive"),
+                OsString::from(root.as_str()),
+            ]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn broker_repair_closure_counts_shared_dependencies_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = StorePath::new("/nix/store/11111111111111111111111111111111-first")?;
+        let second = StorePath::new("/nix/store/22222222222222222222222222222222-second")?;
+        let shared = "/nix/store/33333333333333333333333333333333-shared";
+        let first_raw = br#"{"info":{"11111111111111111111111111111111-first":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":5,"references":["33333333333333333333333333333333-shared"],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2},"33333333333333333333333333333333-shared":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":7,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2}},"storeDir":"/nix/store","version":2}"#;
+        let second_raw = br#"{"info":{"22222222222222222222222222222222-second":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":5,"references":["33333333333333333333333333333333-shared"],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2},"33333333333333333333333333333333-shared":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":7,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2}},"storeDir":"/nix/store","version":2}"#;
+        let adapter = RealNixAdapter::scripted(Scripted::new(vec![
+            success(first_raw.as_slice()),
+            success(second_raw.as_slice()),
+        ]));
+
+        let closure = adapter.closure_for_roots(&[first.clone(), second.clone()])?;
+
+        assert_eq!(
+            closure.iter().map(StorePath::as_str).collect::<Vec<_>>(),
+            [first.as_str(), second.as_str(), shared]
         );
         Ok(())
     }

@@ -33,8 +33,8 @@ use pkg_nix::{
     ApprovalSource, BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome,
     CatalogInfoRequest, CatalogSearchRequest, Digest, GenerationRootAttestationErrorCode,
     InstallEvidence, MaintenanceAdapter, MaintenanceError, OperationHandle, RemoveRootSetRequest,
-    RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetAttestationRequest,
-    RootSetReport,
+    RepairGenerationRequest, RepairGenerationStatus, RepairStorePathsReport,
+    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
@@ -367,10 +367,141 @@ impl CoreOperations for LocalStateOperations {
 
     fn repair(
         &mut self,
-        _args: &RepairArgs,
-        _policy: OperationPolicy,
+        args: &RepairArgs,
+        policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        Err(mutation_unavailable())
+        self.require_broker_state()?;
+        if args.from_manifest().is_some() || args.from_lock() {
+            return Err(CommandError::new(
+                ExitCode::Config,
+                "the requested state-reconstruction repair mode is not available",
+                "omit --from-manifest and --from-lock to verify or repair a generation",
+            ));
+        }
+        let layout = self.layout()?.clone();
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        let mut handle = broker
+            .begin(BrokerOperationKind::Repair)
+            .map_err(broker_error)?;
+        let result = (|| {
+            let lease = self.gc_lease(&layout, &handle)?;
+            let generation = match args.generation() {
+                Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
+                    CommandError::new(
+                        ExitCode::Usage,
+                        "the repair generation identifier is invalid",
+                        "use an identifier shown by `pkg history`",
+                    )
+                })?,
+                None => {
+                    let active = load_active_snapshot(&layout, &lease)
+                        .map_err(state_read_error)?
+                        .ok_or_else(no_active_generation)?;
+                    pkg_nix::GenerationId::new(active.generation().id()).map_err(|_| {
+                        CommandError::new(
+                            ExitCode::StateCorrupt,
+                            "the active generation identifier is invalid",
+                            "run `pkg doctor` before repairing packages",
+                        )
+                    })?
+                }
+            };
+            let verify_only = args.verify_only() || policy.dry_run();
+            if !verify_only {
+                write_repair_warning()?;
+                require_confirmation(
+                    policy,
+                    "Repair can temporarily make affected commands unavailable. Continue?",
+                )?;
+            }
+            let mut report = broker
+                .repair_generation(
+                    handle.clone(),
+                    RepairGenerationRequest::new(generation.clone(), verify_only),
+                )
+                .map_err(repair_broker_error)?;
+            let mut approved_preview = None;
+            if report.status() == RepairGenerationStatus::NeedsApproval {
+                let preview = report.build_preview().ok_or_else(|| {
+                    CommandError::new(
+                        ExitCode::EngineUnavailable,
+                        "the repair service returned no build preview",
+                        "retry after running `pkg doctor`",
+                    )
+                })?;
+                render_build_preview(preview)?;
+                approved_preview = Some(
+                    preview
+                        .to_json_value()
+                        .map_err(|_| install_commit_failed())?,
+                );
+                require_confirmation(policy, "Rebuild the damaged packages locally?")?;
+                let source = if policy.yes() {
+                    ApprovalSource::AssumeYes
+                } else {
+                    ApprovalSource::Interactive
+                };
+                let digest = parse_build_plan_digest(preview.build_plan_digest())?;
+                handle = broker
+                    .begin(BrokerOperationKind::Repair)
+                    .map_err(broker_error)?;
+                report = broker
+                    .repair_generation(
+                        handle.clone(),
+                        RepairGenerationRequest::with_approval(
+                            generation.clone(),
+                            pkg_nix::BuildApprovalRequest::new(digest, source),
+                        ),
+                    )
+                    .map_err(repair_broker_error)?;
+            }
+            match report.status() {
+                RepairGenerationStatus::Clean => repair_result(
+                    "The generation is clean.",
+                    &generation,
+                    "clean",
+                    0,
+                    verify_only,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::RepairedFromCache => repair_result(
+                    "The generation was repaired from the signed cache.",
+                    &generation,
+                    "repaired-from-cache",
+                    0,
+                    false,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::RepairedByBuild => repair_result(
+                    "The generation was repaired by an approved local build.",
+                    &generation,
+                    "repaired-by-build",
+                    0,
+                    false,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::DamageDetected => Err(CommandError::new(
+                    ExitCode::VerifyFail,
+                    format!(
+                        "verification found {} damaged store path(s)",
+                        report.damaged_paths()
+                    ),
+                    "run `pkg repair` without --verify-only to restore signed cache paths",
+                )),
+                RepairGenerationStatus::NeedsApproval => Err(CommandError::new(
+                    ExitCode::AcquireNeedsApproval,
+                    format!(
+                        "{} damaged store path(s) require an approved local rebuild",
+                        report.damaged_paths()
+                    ),
+                    "retry and approve the newly displayed repair build plan",
+                )),
+            }
+        })();
+        if result.is_err() {
+            let _ = broker.cancel(handle);
+        }
+        result
     }
 }
 
@@ -1907,6 +2038,85 @@ fn broker_error(_error: crate::broker::BrokerClientError) -> CommandError {
     )
 }
 
+fn repair_broker_error(error: BrokerClientError) -> CommandError {
+    let (exit, message, hint) = match error.code() {
+        BrokerClientErrorCode::RepairInvalidScope => (
+            ExitCode::ResolveFailed,
+            "the selected rooted generation cannot be repaired",
+            "use a generation shown by `pkg history`, then retry",
+        ),
+        BrokerClientErrorCode::RepairVerifyFailed | BrokerClientErrorCode::RepairStillDamaged => (
+            ExitCode::VerifyFail,
+            "generation integrity verification failed",
+            "run `pkg doctor`, then retry the repair",
+        ),
+        BrokerClientErrorCode::RepairAdmissionFailed => (
+            ExitCode::StateLocked,
+            "another managed operation prevents repair",
+            "wait for the active operation, then retry",
+        ),
+        BrokerClientErrorCode::RepairHelperFailed => (
+            ExitCode::Permission,
+            "the privileged repair helper refused the operation",
+            "run `pkg doctor` to inspect helper readiness",
+        ),
+        BrokerClientErrorCode::RepairJournalFailed => (
+            ExitCode::StateCorrupt,
+            "the durable repair journal is unavailable or invalid",
+            "run `pkg doctor` before retrying repair",
+        ),
+        BrokerClientErrorCode::RepairFreshApprovalRequired => (
+            ExitCode::AcquireNeedsApproval,
+            "the local repair build requires a fresh approval",
+            "review the new repair build preview before approving it",
+        ),
+        BrokerClientErrorCode::RepairAuthorityUnavailable => (
+            ExitCode::EngineUnavailable,
+            "the production repair authority is unavailable",
+            "run `pkg doctor` to inspect managed service readiness",
+        ),
+        _ => return broker_error(error),
+    };
+    CommandError::new(exit, message, hint)
+}
+
+fn write_repair_warning() -> Result<(), CommandError> {
+    let mut stderr = io::stderr();
+    writeln!(
+        stderr,
+        "Warning: repair is non-atomic. Affected commands can be temporarily unavailable."
+    )
+    .and_then(|()| stderr.flush())
+    .map_err(|_| {
+        CommandError::new(
+            ExitCode::Config,
+            "the repair warning could not be displayed",
+            "retry from a terminal with a writable standard error stream",
+        )
+    })
+}
+
+fn repair_result(
+    summary: &str,
+    generation: &pkg_nix::GenerationId,
+    status: &str,
+    damaged_paths: u32,
+    verify_only: bool,
+    build_preview: Option<serde_json::Value>,
+) -> Result<CommandResult, CommandError> {
+    let mut fields = Map::from_iter([
+        ("generation".into(), json!(generation.as_str())),
+        ("status".into(), json!(status)),
+        ("damagedPathCount".into(), json!(damaged_paths)),
+        ("verifyOnly".into(), json!(verify_only)),
+        ("nonAtomic".into(), json!(!verify_only)),
+    ]);
+    if let Some(preview) = build_preview {
+        fields.insert("buildPreview".into(), preview);
+    }
+    CommandResult::new(summary, fields, Vec::new()).map_err(|_| mutation_failed())
+}
+
 fn catalog_broker_error(error: BrokerClientError) -> CommandError {
     if error.code() == BrokerClientErrorCode::CatalogQueryRefused {
         index_unavailable()
@@ -2044,14 +2254,6 @@ fn index_unavailable() -> CommandError {
     CommandError::new(
         ExitCode::EngineUnavailable,
         "authenticated package metadata is not available",
-        "run `pkg doctor` to inspect managed broker readiness",
-    )
-}
-
-fn mutation_unavailable() -> CommandError {
-    CommandError::new(
-        ExitCode::EngineUnavailable,
-        "the complete package mutation transaction is not available",
         "run `pkg doctor` to inspect managed broker readiness",
     )
 }

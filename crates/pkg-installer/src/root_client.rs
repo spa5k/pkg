@@ -1,13 +1,18 @@
 //! Root-publication and path-free-transition client for the private helper channel.
 
-use crate::{HelperTransportError, HelperTransportErrorCode, platform::peer_uid};
+use crate::{
+    HelperTransportError, HelperTransportErrorCode, RepairCoordinatorError, RepairMaintenance,
+    platform::peer_uid,
+};
 use nix::{
     errno::Errno,
     poll::{PollFd, PollFlags, PollTimeout, poll},
 };
 use pkg_nix::{
-    BrokerHelperRequest, BrokerHelperResponse, ProductFrameCodec, RemoveRootSetRequest, RootSet,
-    RootSetAttestationRequest, RootSetReport, RootSetTransitionReport, RootSetTransitionRequest,
+    BrokerHelperRequest, BrokerHelperResponse, MAX_REPAIR_EXECUTION_DURATION,
+    MaintenanceCapability, ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsReport,
+    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
+    RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
@@ -25,16 +30,14 @@ const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 const REQUEST_ID: u64 = 1;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const REPAIR_RESPONSE_GRACE: Duration = Duration::from_mins(1);
 
 #[cfg(target_os = "linux")]
 const DEFAULT_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
 #[cfg(target_os = "macos")]
 const DEFAULT_HELPER_SOCKET: &str = "/Library/Application Support/pkg/run/helper/root-helper.sock";
 
-/// Fixed-policy client for durable root publication, removal, and transitions.
-///
-/// It deliberately does not implement the wider maintenance contract: repair
-/// has separate lifecycle and timeout requirements.
+/// Fixed-policy client for durable roots and capability-gated repair.
 pub struct RootHelperClient {
     endpoint: Option<PathBuf>,
     expected_uid: u32,
@@ -219,6 +222,120 @@ impl RootHelperClient {
         }
     }
 
+    /// Loads exact durable roots for broker-private repair planning.
+    ///
+    /// The request is path-free. The returned paths stay on the authenticated
+    /// broker-to-helper channel and never cross the public CLI boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport, authentication, framing, or helper error.
+    pub fn load_repair_root_set(
+        &self,
+        request: &RootSetAttestationRequest,
+    ) -> Result<RootSet, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let frame = ProductFrameCodec::encode_helper_request(
+            REQUEST_ID,
+            &BrokerHelperRequest::LoadRepairRootSet(request.clone()),
+        )
+        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
+        write_all_until(&mut stream, &frame, deadline)?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        let response = read_frame(&mut stream, deadline)?;
+        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        if response_id != REQUEST_ID {
+            return Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            ));
+        }
+        match response {
+            BrokerHelperResponse::RepairRootSetLoaded(root_set) => Ok(root_set),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    /// Issues one opaque capability for a broker-derived verified repair scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport, authentication, framing, or helper error.
+    pub fn issue_repair_capability(
+        &self,
+        scope: &VerifiedRepairScope,
+    ) -> Result<MaintenanceCapability, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let frame = ProductFrameCodec::encode_helper_request(
+            REQUEST_ID,
+            &BrokerHelperRequest::IssueRepairCapability(scope.clone()),
+        )
+        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
+        write_all_until(&mut stream, &frame, deadline)?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        let response = read_frame(&mut stream, deadline)?;
+        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        if response_id != REQUEST_ID {
+            return Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            ));
+        }
+        match response {
+            BrokerHelperResponse::RepairCapabilityIssued(capability) => Ok(capability),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    /// Redeems one opaque capability for the helper's fixed repair executor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport, authentication, framing, or helper error.
+    pub fn repair_store_paths(
+        &self,
+        request: &RepairStorePathsRequest,
+    ) -> Result<RepairStorePathsReport, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let frame = ProductFrameCodec::encode_helper_request(
+            REQUEST_ID,
+            &BrokerHelperRequest::RepairStorePaths(request.clone()),
+        )
+        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        // The privileged executor owns a bounded process-group deadline. The
+        // broker waits beyond that bound so it does not release build or GC
+        // admission while the helper can still mutate the store.
+        let deadline = deadline_after(repair_response_timeout()?)?;
+        write_all_until(&mut stream, &frame, deadline)?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        let response = read_frame(&mut stream, deadline)?;
+        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        if response_id != REQUEST_ID {
+            return Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            ));
+        }
+        match response {
+            BrokerHelperResponse::RepairCompleted(report) => Ok(report),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
     fn connect(&self) -> Result<UnixStream, HelperTransportError> {
         let endpoint = self
             .endpoint
@@ -244,6 +361,24 @@ impl RootHelperClient {
             .set_nonblocking(true)
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
         Ok(stream)
+    }
+}
+
+impl RepairMaintenance for RootHelperClient {
+    fn issue_repair_capability(
+        &self,
+        scope: &VerifiedRepairScope,
+    ) -> Result<MaintenanceCapability, RepairCoordinatorError> {
+        Self::issue_repair_capability(self, scope)
+            .map_err(|_| RepairCoordinatorError::helper_failure())
+    }
+
+    fn repair_store_paths(
+        &self,
+        request: &RepairStorePathsRequest,
+    ) -> Result<RepairStorePathsReport, RepairCoordinatorError> {
+        Self::repair_store_paths(self, request)
+            .map_err(|_| RepairCoordinatorError::helper_failure())
     }
 }
 
@@ -365,6 +500,12 @@ fn wait_ready(
 fn deadline_after(timeout: Duration) -> Result<Instant, HelperTransportError> {
     Instant::now()
         .checked_add(timeout)
+        .ok_or_else(|| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))
+}
+
+fn repair_response_timeout() -> Result<Duration, HelperTransportError> {
+    MAX_REPAIR_EXECUTION_DURATION
+        .checked_add(REPAIR_RESPONSE_GRACE)
         .ok_or_else(|| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))
 }
 

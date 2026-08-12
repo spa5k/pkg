@@ -9,9 +9,10 @@ use std::fmt;
 
 use pkg_core::{PolicyVersion, state::Digest};
 use pkg_nix::{
-    AuthenticatedCaller, BrokerOperationKind, BuildApprovalReceipt, CallerMaintenance,
-    GenerationId, MaintenanceAdapter, NixAdapter, OperationHandle, OperationId, RepairMode,
-    RepairStorePathsRequest, StorePath, VerifiedRepairScope, verify_closure,
+    AuthenticatedCaller, BuildApprovalReceipt, CallerMaintenance, GenerationId, MaintenanceAdapter,
+    MaintenanceCapability, NixAdapter, OperationHandle, OperationId, RepairMode,
+    RepairStorePathsReport, RepairStorePathsRequest, StorePath, VerifiedRepairScope,
+    verify_closure,
 };
 
 /// Stable repair-coordinator failure categories.
@@ -40,7 +41,7 @@ pub struct RepairCoordinatorError {
 }
 
 impl RepairCoordinatorError {
-    const fn new(code: RepairCoordinatorErrorCode) -> Self {
+    pub(crate) const fn new(code: RepairCoordinatorErrorCode) -> Self {
         Self { code }
     }
 
@@ -48,6 +49,12 @@ impl RepairCoordinatorError {
     #[must_use]
     pub const fn journal_failure() -> Self {
         Self::new(RepairCoordinatorErrorCode::JournalFailure)
+    }
+
+    /// Constructs a redacted privileged-helper failure.
+    #[must_use]
+    pub const fn helper_failure() -> Self {
+        Self::new(RepairCoordinatorErrorCode::HelperFailure)
     }
 
     /// Returns the stable public category.
@@ -103,6 +110,27 @@ pub struct RepairJournalEntry {
 }
 
 impl RepairJournalEntry {
+    pub(crate) fn from_parts(
+        sequence: u64,
+        path: StorePath,
+        mode: Option<RepairMode>,
+        status: RepairJournalStatus,
+        approval_operation: Option<OperationId>,
+    ) -> Result<Self, RepairCoordinatorError> {
+        if sequence == 0 {
+            return Err(RepairCoordinatorError::journal_failure());
+        }
+        validate_mode(status, mode)?;
+        validate_approval(mode, approval_operation.as_ref())?;
+        Ok(Self {
+            sequence,
+            path,
+            mode,
+            status,
+            approval_operation,
+        })
+    }
+
     /// Returns the contiguous journal sequence.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
@@ -253,6 +281,47 @@ pub trait RepairApprovalGate {
     ) -> Result<(), RepairCoordinatorError>;
 }
 
+/// Broker-private capability issuance and execution seam used by repair.
+pub trait RepairMaintenance: Send + Sync {
+    /// Issues one opaque capability for the exact broker-derived scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed helper failure if capability issuance is refused.
+    fn issue_repair_capability(
+        &self,
+        scope: &VerifiedRepairScope,
+    ) -> Result<MaintenanceCapability, RepairCoordinatorError>;
+
+    /// Redeems one capability through the fixed privileged repair executor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed helper failure if the capability or repair is refused.
+    fn repair_store_paths(
+        &self,
+        request: &RepairStorePathsRequest,
+    ) -> Result<RepairStorePathsReport, RepairCoordinatorError>;
+}
+
+impl RepairMaintenance for CallerMaintenance {
+    fn issue_repair_capability(
+        &self,
+        scope: &VerifiedRepairScope,
+    ) -> Result<MaintenanceCapability, RepairCoordinatorError> {
+        Self::issue_repair_capability(self, scope)
+            .map_err(|_| RepairCoordinatorError::new(RepairCoordinatorErrorCode::HelperFailure))
+    }
+
+    fn repair_store_paths(
+        &self,
+        request: &RepairStorePathsRequest,
+    ) -> Result<RepairStorePathsReport, RepairCoordinatorError> {
+        MaintenanceAdapter::repair_store_paths(self, request)
+            .map_err(|_| RepairCoordinatorError::new(RepairCoordinatorErrorCode::HelperFailure))
+    }
+}
+
 impl RepairRequest {
     /// Constructs one bounded request from broker-held rooted-generation state.
     ///
@@ -354,39 +423,61 @@ pub fn recover_repair(
 /// Returns a closed error for verify, admission, journal, capability, helper,
 /// or final-integrity failure. Any opened broker operation is cancelled on
 /// failure, releasing its build/GC permits.
+#[allow(clippy::too_many_lines)]
 pub fn repair_generation(
     request: &RepairRequest,
     adapter: &dyn NixAdapter,
     admission: &AuthenticatedCaller,
-    maintenance: &CallerMaintenance,
+    handle: &OperationHandle,
+    maintenance: &dyn RepairMaintenance,
     approval_gate: &dyn RepairApprovalGate,
     journal: &mut dyn RepairJournal,
 ) -> Result<RepairResult, RepairCoordinatorError> {
-    let initial = verify_closure(adapter, request.closure.clone())
-        .map_err(|_| RepairCoordinatorError::new(RepairCoordinatorErrorCode::VerifyFailure))?;
+    if admission.authorize_repair(handle).is_err() {
+        return Err(RepairCoordinatorError::new(
+            RepairCoordinatorErrorCode::AdmissionFailure,
+        ));
+    }
+    let initial = verify_closure(adapter, request.closure.clone()).map_err(|_| {
+        cancel_with_error(
+            admission,
+            handle,
+            RepairCoordinatorError::new(RepairCoordinatorErrorCode::VerifyFailure),
+        )
+    })?;
     if initial.is_clean() {
-        reconcile_clean_journal(initial.closure(), journal)?;
+        if request.verify_only {
+            complete_or_cancel(admission, handle)?;
+            return Ok(RepairResult::Clean);
+        }
+        if let Err(error) = reconcile_clean_journal(initial.closure(), journal) {
+            return Err(cancel_with_error(admission, handle, error));
+        }
+        complete_or_cancel(admission, handle)?;
         return Ok(RepairResult::Clean);
     }
     if request.verify_only {
+        complete_or_cancel(admission, handle)?;
         return Ok(RepairResult::DamageDetected);
     }
-    ensure_fresh_approval(
+    if let Err(error) = ensure_fresh_approval(
         initial.damaged(),
         journal.entries(),
         request.approved_build.as_ref(),
-    )?;
+    ) {
+        return Err(cancel_with_error(admission, handle, error));
+    }
     for path in initial.damaged() {
-        journal.append(path.clone(), None, RepairJournalStatus::Detected, None)?;
+        if let Err(error) = journal.append(path.clone(), None, RepairJournalStatus::Detected, None)
+        {
+            return Err(cancel_with_error(admission, handle, error));
+        }
     }
 
-    let handle = admission
-        .begin(BrokerOperationKind::Repair)
-        .map_err(|_| RepairCoordinatorError::new(RepairCoordinatorErrorCode::AdmissionFailure))?;
-    if admission.acquire_gc_inhibit(&handle).is_err() {
+    if admission.acquire_gc_inhibit(handle).is_err() {
         return Err(cancel_with_error(
             admission,
-            &handle,
+            handle,
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::AdmissionFailure),
         ));
     }
@@ -400,29 +491,29 @@ pub fn repair_generation(
         maintenance,
         journal,
     ) {
-        return Err(cancel_with_error(admission, &handle, error));
+        return Err(cancel_with_error(admission, handle, error));
     }
     let after_cache = verify_closure(adapter, request.closure.clone()).map_err(|_| {
         cancel_with_error(
             admission,
-            &handle,
+            handle,
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::VerifyFailure),
         )
     })?;
     if after_cache.is_clean() {
         if let Err(error) = mark_repaired(initial.damaged(), journal) {
-            return Err(cancel_with_error(admission, &handle, error));
+            return Err(cancel_with_error(admission, handle, error));
         }
-        complete_or_cancel(admission, &handle)?;
+        complete_or_cancel(admission, handle)?;
         return Ok(RepairResult::RepairedFromCache);
     }
 
     if let Err(error) = mark_cache_successes(initial.damaged(), after_cache.damaged(), journal) {
-        return Err(cancel_with_error(admission, &handle, error));
+        return Err(cancel_with_error(admission, handle, error));
     }
 
     let Some(approval) = request.approved_build.as_ref() else {
-        return stop_for_approval(after_cache.damaged(), admission, &handle, journal);
+        return stop_for_approval(after_cache.damaged(), admission, handle, journal);
     };
     let build_plan_digest = approval.build_plan_digest();
     let approval_operation = approval.operation_id().clone();
@@ -436,14 +527,14 @@ pub fn repair_generation(
     if approval_gate.consume(approval, &approval_scope).is_err() {
         return Err(cancel_with_error(
             admission,
-            &handle,
+            handle,
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired),
         ));
     }
-    if admission.acquire_build(&handle).is_err() {
+    if admission.acquire_build(handle).is_err() {
         return Err(cancel_with_error(
             admission,
-            &handle,
+            handle,
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::AdmissionFailure),
         ));
     }
@@ -456,13 +547,13 @@ pub fn repair_generation(
         maintenance,
         journal,
     ) {
-        return Err(cancel_with_error(admission, &handle, error));
+        return Err(cancel_with_error(admission, handle, error));
     }
     finish_build_repair(
         request,
         adapter,
         admission,
-        &handle,
+        handle,
         after_cache.damaged(),
         journal,
     )
@@ -548,7 +639,7 @@ fn run_helper_phase(
     mode: RepairMode,
     build_plan_digest: Option<Digest>,
     approval_operation: Option<&OperationId>,
-    maintenance: &CallerMaintenance,
+    maintenance: &dyn RepairMaintenance,
     journal: &mut dyn RepairJournal,
 ) -> Result<(), RepairCoordinatorError> {
     for path in paths {
@@ -568,9 +659,7 @@ fn run_helper_phase(
         mode,
     )
     .map_err(|_| RepairCoordinatorError::new(RepairCoordinatorErrorCode::ValidationFailure))?;
-    let capability = maintenance
-        .issue_repair_capability(&scope)
-        .map_err(|_| RepairCoordinatorError::new(RepairCoordinatorErrorCode::HelperFailure))?;
+    let capability = maintenance.issue_repair_capability(&scope)?;
     for path in paths {
         journal.append(
             path.clone(),
@@ -579,9 +668,7 @@ fn run_helper_phase(
             approval_operation.cloned(),
         )?;
     }
-    let report = maintenance
-        .repair_store_paths(&RepairStorePathsRequest::new(capability))
-        .map_err(|_| RepairCoordinatorError::new(RepairCoordinatorErrorCode::HelperFailure))?;
+    let report = maintenance.repair_store_paths(&RepairStorePathsRequest::new(capability))?;
     if report.mode() != mode
         || report.outcomes().len() != paths.len()
         || report
@@ -716,7 +803,7 @@ fn validate_approval(
     }
 }
 
-fn validate_journal(entries: &[RepairJournalEntry]) -> Result<(), RepairCoordinatorError> {
+pub fn validate_journal(entries: &[RepairJournalEntry]) -> Result<(), RepairCoordinatorError> {
     let mut previous = BTreeMap::new();
     for (index, entry) in entries.iter().enumerate() {
         let expected = u64::try_from(index)
@@ -771,9 +858,9 @@ fn valid_transition(previous: Option<&RepairJournalEntry>, next: &RepairJournalE
 mod tests {
     use super::*;
     use pkg_nix::{
-        InProcessBroker, InProcessCallerPeer, InProcessHelper, InProcessPeer, NarIntegrity,
-        PathVerifyResult, RootName, RootSet, RootSetEntry, TrustStatus, VerifyMode, VerifyReport,
-        VerifyRequest,
+        BrokerOperationKind, InProcessBroker, InProcessCallerPeer, InProcessHelper, InProcessPeer,
+        NarIntegrity, PathVerifyResult, RootName, RootSet, RootSetEntry, TrustStatus, VerifyMode,
+        VerifyReport, VerifyRequest,
     };
     use pkg_testkit::FakeNix;
 
@@ -821,6 +908,12 @@ mod tests {
         StorePath::new(&format!(
             "/nix/store/00000000000000000000000000000000-{name}"
         ))
+    }
+
+    fn repair_handle(
+        admission: &AuthenticatedCaller,
+    ) -> Result<OperationHandle, pkg_nix::BrokerError> {
+        admission.begin(BrokerOperationKind::Repair)
     }
 
     type Harness = (
@@ -1004,6 +1097,7 @@ mod tests {
                 &request,
                 &adapter,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal,
@@ -1015,6 +1109,45 @@ mod tests {
             journal.entries().last().map(RepairJournalEntry::status),
             Some(RepairJournalStatus::Repaired)
         );
+        adapter.assert_exhausted()?;
+        Ok(())
+    }
+
+    #[test]
+    fn verify_only_clean_never_reconciles_durable_repair_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let target = path("verify-clean")?;
+        let (_, admission, maintenance, generation) = harness(&target)?;
+        let adapter = FakeNix::new();
+        adapter.expect_verify(
+            verify_request(&target)?,
+            Ok(verify_report(&target, NarIntegrity::Intact)?),
+        );
+        let request = RepairRequest::new(
+            1000,
+            generation,
+            vec![target.clone()],
+            PolicyVersion::new(std::num::NonZeroU64::MIN),
+            true,
+            None,
+        )?;
+        let mut journal = MemoryRepairJournal::default();
+        journal.append(target, None, RepairJournalStatus::Detected, None)?;
+        let before = journal.entries().to_vec();
+
+        assert_eq!(
+            repair_generation(
+                &request,
+                &adapter,
+                &admission,
+                &repair_handle(&admission)?,
+                &maintenance,
+                &TestApprovalGate::default(),
+                &mut journal,
+            )?,
+            RepairResult::Clean
+        );
+        assert_eq!(journal.entries(), before);
         adapter.assert_exhausted()?;
         Ok(())
     }
@@ -1048,6 +1181,7 @@ mod tests {
                 &request,
                 &adapter,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal
@@ -1088,6 +1222,7 @@ mod tests {
                 &request,
                 &adapter,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal
@@ -1125,6 +1260,7 @@ mod tests {
                 &request,
                 &adapter,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal
@@ -1179,6 +1315,7 @@ mod tests {
                 &request,
                 &adapter,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal
@@ -1221,6 +1358,7 @@ mod tests {
                 &initial,
                 &first,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal
@@ -1260,6 +1398,7 @@ mod tests {
                 &follow_up,
                 &approved,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal
@@ -1342,6 +1481,7 @@ mod tests {
                 &request,
                 &adapter,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal
@@ -1408,6 +1548,7 @@ mod tests {
                 &request,
                 &adapter,
                 &admission,
+                &repair_handle(&admission)?,
                 &maintenance,
                 &TestApprovalGate::default(),
                 &mut journal

@@ -17,7 +17,9 @@ mod linux_systemd;
 mod linux_uninstall;
 mod linux_user_cleanup;
 pub mod platform;
+mod production_repair;
 mod repair;
+mod repair_journal_file;
 mod root_client;
 mod service;
 #[cfg(target_os = "macos")]
@@ -45,7 +47,8 @@ pub use bootstrap::{
 };
 pub use broker::{
     BrokerTransportError, BrokerTransportErrorCode, ChannelRefreshDispatch,
-    serve_broker_connection, serve_broker_connection_with_build_and_root_authority,
+    RepairAuthorityDispatch, serve_broker_connection,
+    serve_broker_connection_with_build_and_root_authority,
     serve_broker_connection_with_build_authority, serve_broker_connection_with_nix,
     serve_broker_connection_with_nix_and_approval, serve_broker_connection_with_product_authority,
 };
@@ -77,11 +80,14 @@ pub use platform::macos::{
     MacOsRootSetStore, MacOsSandboxReadiness, MacOsSocketContract, MacOsStoreVolumeContract,
     MacOsToolchainReadiness, install_macos, macos_install_assets, macos_release_steps,
 };
+pub use production_repair::ProductionRepairAuthority;
 pub use repair::{
     MemoryRepairJournal, RepairApprovalGate, RepairApprovalScope, RepairCoordinatorError,
     RepairCoordinatorErrorCode, RepairJournal, RepairJournalEntry, RepairJournalStatus,
-    RepairRecoveryAction, RepairRequest, RepairResult, recover_repair, repair_generation,
+    RepairMaintenance, RepairRecoveryAction, RepairRequest, RepairResult, recover_repair,
+    repair_generation,
 };
+pub use repair_journal_file::{BrokerRepairJournals, DurableRepairJournal};
 pub use root_client::RootHelperClient;
 pub use service::{
     ServiceError, ServiceErrorCode, run_linux_broker_from_activation,

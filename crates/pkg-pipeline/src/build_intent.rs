@@ -198,6 +198,24 @@ impl BuildHostFacts {
             host_cores,
         })
     }
+
+    /// Returns the authenticated native target system.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.system
+    }
+
+    /// Returns the current fail-closed sandbox and build-user evidence.
+    #[must_use]
+    pub const fn readiness(&self) -> &BuildReadiness {
+        &self.readiness
+    }
+
+    /// Returns the observed host core count used by admission policy.
+    #[must_use]
+    pub const fn host_cores(&self) -> u32 {
+        self.host_cores
+    }
 }
 
 /// Redacted failure to observe current build host facts.

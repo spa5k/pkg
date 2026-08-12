@@ -376,6 +376,280 @@ pub struct BuildPlan {
     install_targets: Vec<BuildPlanTarget>,
 }
 
+/// One broker-derived derivation included in a repair-build approval subject.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairPlanDerivation {
+    derivation: DerivationPath,
+    name: String,
+    system: System,
+    outputs: BTreeMap<OutputName, StorePath>,
+    document_digest: Digest,
+    fixed_output: bool,
+}
+
+impl RepairPlanDerivation {
+    /// Constructs one validated repair derivation from trusted Nix metadata.
+    pub fn new(
+        derivation: DerivationPath,
+        name: String,
+        system: System,
+        outputs: BTreeMap<OutputName, StorePath>,
+        document_digest: Digest,
+        fixed_output: bool,
+    ) -> Result<Self, BuildEngineError> {
+        if outputs.is_empty() || outputs.len() > MAX_PREVIEW_ITEMS {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        checked_text(&name)?;
+        Ok(Self {
+            derivation,
+            name,
+            system,
+            outputs,
+            document_digest,
+            fixed_output,
+        })
+    }
+}
+
+/// One damaged path and the valid derivation that may replace it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairPlanTarget {
+    path: StorePath,
+    derivation: RepairPlanDerivation,
+}
+
+impl RepairPlanTarget {
+    /// Binds one exact damaged path to trusted local derivation metadata.
+    #[must_use]
+    pub const fn new(path: StorePath, derivation: RepairPlanDerivation) -> Self {
+        Self { path, derivation }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CanonicalRepairTarget {
+    path: String,
+    deriver: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CanonicalRepairOutput {
+    name: String,
+    path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CanonicalRepairDerivation {
+    derivation: String,
+    document_digest: String,
+    name: String,
+    system: String,
+    outputs: Vec<CanonicalRepairOutput>,
+    fixed_output: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepairBuildPlanDigestSubject<'a> {
+    schema_version: u32,
+    nix_runtime_version: &'a str,
+    policy_version: u64,
+    system: &'a str,
+    targets: &'a [CanonicalRepairTarget],
+    derivations: &'a [CanonicalRepairDerivation],
+    readiness: &'a BuildReadiness,
+    resources: &'a BuildResources,
+    admission: &'a BuildAdmissionPolicy,
+}
+
+/// Private full-output approval subject for a local repair rebuild.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairBuildPlan {
+    schema_version: u32,
+    nix_runtime_version: String,
+    policy_version: u64,
+    system: String,
+    targets: Vec<CanonicalRepairTarget>,
+    derivations: Vec<CanonicalRepairDerivation>,
+    readiness: BuildReadiness,
+    resources: BuildResources,
+    admission: BuildAdmissionPolicy,
+    policy_identity: PolicyVersion,
+    system_identity: System,
+}
+
+impl RepairBuildPlan {
+    /// Constructs the deterministic full-output repair approval subject.
+    pub fn new(
+        nix_runtime_version: &NixVersion,
+        policy_version: PolicyVersion,
+        system: System,
+        readiness: BuildReadiness,
+        host_cores: u32,
+        mut inputs: Vec<RepairPlanTarget>,
+    ) -> Result<Self, BuildEngineError> {
+        readiness.validate(system)?;
+        if inputs.is_empty() || inputs.len() > MAX_PREVIEW_ITEMS {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        inputs.sort_by(|left, right| left.path.as_str().cmp(right.path.as_str()));
+        if inputs.windows(2).any(|pair| pair[0].path == pair[1].path)
+            || inputs.iter().any(|input| input.derivation.system != system)
+        {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+
+        let targets = inputs
+            .iter()
+            .map(|input| CanonicalRepairTarget {
+                path: input.path.as_str().to_owned(),
+                deriver: input.derivation.derivation.as_str().to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let mut by_derivation = BTreeMap::new();
+        for input in inputs {
+            let key = input.derivation.derivation.as_str().to_owned();
+            if by_derivation
+                .insert(key, input.derivation.clone())
+                .is_some_and(|previous| previous != input.derivation)
+            {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+            }
+        }
+        let derivations = by_derivation
+            .into_values()
+            .map(|derivation| CanonicalRepairDerivation {
+                derivation: derivation.derivation.as_str().to_owned(),
+                document_digest: digest_string(derivation.document_digest),
+                name: derivation.name,
+                system: derivation.system.as_str().to_owned(),
+                outputs: derivation
+                    .outputs
+                    .into_iter()
+                    .map(|(name, path)| CanonicalRepairOutput {
+                        name: name.as_str().to_owned(),
+                        path: path.as_str().to_owned(),
+                    })
+                    .collect(),
+                fixed_output: derivation.fixed_output,
+            })
+            .collect::<Vec<_>>();
+        if derivations.is_empty() || derivations.len() > MAX_PREVIEW_ITEMS {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+        }
+        Ok(Self {
+            schema_version: 1,
+            nix_runtime_version: checked_text(nix_runtime_version.as_str())?,
+            policy_version: policy_version.get().get(),
+            system: system.as_str().to_owned(),
+            targets,
+            derivations,
+            readiness,
+            resources: BuildResources::default(),
+            admission: BuildAdmissionPolicy::for_host_cores(host_cores)?,
+            policy_identity: policy_version,
+            system_identity: system,
+        })
+    }
+
+    /// Computes the RFC 8785/JCS repair-plan identity.
+    pub fn digest(&self) -> Result<Digest, BuildEngineError> {
+        canonical_digest(&RepairBuildPlanDigestSubject {
+            schema_version: self.schema_version,
+            nix_runtime_version: &self.nix_runtime_version,
+            policy_version: self.policy_version,
+            system: &self.system,
+            targets: &self.targets,
+            derivations: &self.derivations,
+            readiness: &self.readiness,
+            resources: &self.resources,
+            admission: &self.admission,
+        })
+        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+    }
+
+    /// Returns the policy version bound into this plan.
+    #[must_use]
+    pub const fn policy_version(&self) -> PolicyVersion {
+        self.policy_identity
+    }
+
+    /// Produces the ordinary sanitized build-preview shape for repair approval.
+    pub fn preview(&self) -> Result<BuildPreview, BuildEngineError> {
+        let digest = self.digest()?;
+        let (os, arch) = product_platform(self.system_identity);
+        let targets = self
+            .derivations
+            .iter()
+            .enumerate()
+            .map(|(index, derivation)| PreviewTarget {
+                selector: format!("repair-{}", index + 1),
+                package_name: derivation.name.clone(),
+                version: "installed".to_owned(),
+                outputs_to_install: derivation
+                    .outputs
+                    .iter()
+                    .map(|output| output.name.clone())
+                    .collect(),
+                local_build_required: true,
+            })
+            .collect::<Vec<_>>();
+        let unknown_local_outputs = self.derivations.iter().try_fold(0_u64, |total, item| {
+            total
+                .checked_add(
+                    u64::try_from(item.outputs.len())
+                        .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
+                )
+                .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))
+        })?;
+        let preview = BuildPreview {
+            schema_version: 1,
+            platform: PreviewPlatform {
+                os: os.to_owned(),
+                arch: arch.to_owned(),
+            },
+            policy_version: self.policy_version,
+            build_plan_digest: digest_string(digest),
+            targets,
+            build: PreviewBuild {
+                count: self.derivations.len(),
+                names: self
+                    .derivations
+                    .iter()
+                    .map(|derivation| derivation.name.clone())
+                    .collect(),
+                has_fixed_output: self
+                    .derivations
+                    .iter()
+                    .any(|derivation| derivation.fixed_output),
+            },
+            cache: PreviewCache {
+                known_download_bytes: 0,
+                known_content_bytes: 0,
+            },
+            unknown_local_outputs,
+            estimates: BuildPreviewEstimates::unavailable(),
+            readiness: PreviewReadiness {
+                sandboxed: self.readiness.sandbox.enabled,
+                build_isolation_ready: self.readiness.build_users_ready,
+                native_build: true,
+                resource_boundary: PreviewResourceBoundary {
+                    isolation: "sandbox".to_owned(),
+                    per_build_resource_cap: false,
+                    notice: RESOURCE_NOTICE.to_owned(),
+                },
+            },
+            approval_required: true,
+        };
+        preview.validate()?;
+        Ok(preview)
+    }
+}
+
 impl fmt::Debug for BuildPlan {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1688,7 +1962,7 @@ impl BuildPreview {
         Ok(preview)
     }
 
-    fn validate(&self) -> Result<(), BuildEngineError> {
+    pub(crate) fn validate(&self) -> Result<(), BuildEngineError> {
         if self.schema_version != 1
             || self.policy_version == 0
             || !is_public_digest(&self.build_plan_digest)
@@ -2155,18 +2429,37 @@ impl LocalBuildEngine {
         timestamp: &str,
         journal: &dyn ApprovalJournal,
     ) -> Result<BuildApprovalReceipt, BuildEngineError> {
-        let timestamp = checked_text(timestamp)?;
         let digest = plan.digest()?;
+        self.approve_subject(
+            operation_id,
+            digest,
+            plan.policy_identity,
+            source,
+            timestamp,
+            journal,
+        )
+    }
+
+    pub(crate) fn approve_subject(
+        &self,
+        operation_id: OperationId,
+        digest: Digest,
+        policy_version: PolicyVersion,
+        source: ApprovalSource,
+        timestamp: &str,
+        journal: &dyn ApprovalJournal,
+    ) -> Result<BuildApprovalReceipt, BuildEngineError> {
+        let timestamp = checked_text(timestamp)?;
         let record = ApprovalJournalRecord {
             operation_id: operation_id.clone(),
             build_plan_digest: digest,
-            policy_version: plan.policy_identity,
+            policy_version,
             source,
             timestamp,
         };
         let grant = ApprovalGrant {
             digest,
-            policy_version: plan.policy_identity,
+            policy_version,
         };
         let reservation = self
             .next_approval_reservation
@@ -2205,8 +2498,32 @@ impl LocalBuildEngine {
         Ok(BuildApprovalReceipt::new(
             operation_id,
             digest,
-            plan.policy_identity,
+            policy_version,
         ))
+    }
+
+    pub(crate) fn consume_subject(
+        &self,
+        receipt: &BuildApprovalReceipt,
+        digest: Digest,
+        policy_version: PolicyVersion,
+    ) -> Result<(), BuildEngineError> {
+        if receipt.build_plan_digest() != digest || receipt.policy_version() != policy_version {
+            self.revoke(receipt.operation_id());
+            return Err(BuildEngineError::new(
+                BuildEngineErrorCode::ApprovalInvalidated,
+            ));
+        }
+        let expected = ApprovalState::Approved(ApprovalGrant {
+            digest,
+            policy_version,
+        });
+        if lock_recover(&self.approvals).remove(receipt.operation_id()) != Some(expected) {
+            return Err(BuildEngineError::new(
+                BuildEngineErrorCode::ApprovalRequired,
+            ));
+        }
+        Ok(())
     }
 
     /// Revokes an unconsumed approval when its broker operation ends.
@@ -2451,7 +2768,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use pkg_core::PackageVersion;
+    use pkg_core::{PackageVersion, state::body_digest};
 
     use crate::{
         BuildOutput, BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus, DerivationPath,
@@ -2735,6 +3052,56 @@ mod tests {
             .unwrap()
             .insert("privatePlan".to_owned(), serde_json::json!("forbidden"));
         assert!(BuildPreview::from_json_bytes(&serde_json::to_vec(&extended).unwrap()).is_err());
+    }
+
+    #[test]
+    fn repair_plan_binds_every_deriver_output_and_preview_hides_store_identity() {
+        let derivation =
+            DerivationPath::from_str("/nix/store/00000000000000000000000000000000-demo.drv")
+                .unwrap();
+        let outputs = BTreeMap::from([
+            (
+                OutputName::new("man").unwrap(),
+                StorePath::new("/nix/store/11111111111111111111111111111111-demo-man").unwrap(),
+            ),
+            (
+                OutputName::new("out").unwrap(),
+                StorePath::new("/nix/store/22222222222222222222222222222222-demo").unwrap(),
+            ),
+        ]);
+        let input = RepairPlanTarget::new(
+            StorePath::new("/nix/store/22222222222222222222222222222222-demo").unwrap(),
+            RepairPlanDerivation::new(
+                derivation,
+                "demo-1.0".to_owned(),
+                System::X8664Linux,
+                outputs,
+                body_digest(b"derivation document"),
+                false,
+            )
+            .unwrap(),
+        );
+        let make = || {
+            RepairBuildPlan::new(
+                &NixVersion::new("2.34.8").unwrap(),
+                PolicyVersion::from_u64(7).unwrap(),
+                System::X8664Linux,
+                linux_readiness(),
+                8,
+                vec![input.clone()],
+            )
+            .unwrap()
+        };
+
+        let first = make();
+        assert_eq!(first.digest().unwrap(), make().digest().unwrap());
+        let preview = first.preview().unwrap();
+        let json = serde_json::to_string(&preview).unwrap();
+        assert!(json.contains("\"man\""));
+        assert!(json.contains("\"out\""));
+        assert!(!json.contains("/nix/store"));
+        assert!(!json.contains(".drv"));
+        assert_eq!(preview.local_build_targets().count(), 1);
     }
 
     #[test]

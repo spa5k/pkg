@@ -70,8 +70,9 @@ pub use build::{
     ApprovalJournal, ApprovalJournalError, ApprovalJournalRecord, ApprovalSource, BuildEngineError,
     BuildEngineErrorCode, BuildPlan, BuildPlanTarget, BuildPreview, BuildPreviewEstimates,
     BuildReadiness, BuildResources, CacheClassification, CancellationToken, HostResourceProbe,
-    InstallEvidence, InstallOutputEvidence, InstallTargetEvidence, LocalBuildEngine, ResourceProbe,
-    ResourceSnapshot, VolatileBuildEstimate, render_managed_build_nix_conf,
+    InstallEvidence, InstallOutputEvidence, InstallTargetEvidence, LocalBuildEngine,
+    RepairBuildPlan, RepairPlanDerivation, RepairPlanTarget, ResourceProbe, ResourceSnapshot,
+    VolatileBuildEstimate, render_managed_build_nix_conf,
 };
 pub use build_cache::{
     BuildCacheError, BuildCacheErrorCode, BuildCacheEvidence, BuildCacheProbe, BuildCacheSubject,
@@ -96,6 +97,8 @@ pub use framing::{
     ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, FrameError, FrameErrorCode,
     GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
     GenerationRootTransitionErrorCode, InstallDownloadProgress, ProductFrameCodec,
+    RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
+    RepairGenerationStatus,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,
@@ -137,7 +140,9 @@ pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
     NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,
 };
-pub use real::{RealNixAdapter, RootNixGcExecutor, RootNixRepairExecutor};
+pub use real::{
+    MAX_REPAIR_EXECUTION_DURATION, RealNixAdapter, RootNixGcExecutor, RootNixRepairExecutor,
+};
 pub use substitute::{
     CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,
     acquire_substitute,

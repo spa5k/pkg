@@ -17,9 +17,10 @@ use pkg_nix::{
 };
 
 use crate::{
-    AcquireError, AuthenticatedBuildPreparation, BuildPlanningAdapter,
-    acquire_cache_only_with_progress, assemble_cache_install_evidence,
-    host_facts::production_native_system, preflight_cache_only, resolve_install, verify_acquired,
+    AcquireError, AuthenticatedBuildPreparation, BuildHostFacts, BuildHostFactsProbe,
+    BuildPlanningAdapter, acquire_cache_only_with_progress, assemble_cache_install_evidence,
+    host_facts::{ProductionBuildHostFactsProbe, production_native_system},
+    preflight_cache_only, resolve_install, verify_acquired,
 };
 
 /// Result of publishing authenticated service state.
@@ -361,6 +362,51 @@ impl AuthenticatedBuildAuthority {
     #[must_use]
     pub fn adapter(&self) -> Arc<dyn NixAdapter> {
         Arc::clone(&self.adapter) as Arc<dyn NixAdapter>
+    }
+
+    /// Returns the policy version of the current authenticated channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed authority error if the private state lock is poisoned.
+    pub fn policy_version(&self) -> Result<PolicyVersion, BuildAuthorityError> {
+        Ok(self.lock_state()?.identity.policy_version)
+    }
+
+    /// Observes one current, internally consistent repair-build policy and host snapshot.
+    pub fn repair_build_context(
+        &self,
+    ) -> Result<(PolicyVersion, BuildHostFacts), BuildAuthorityError> {
+        let (channel, identity) = {
+            let state = self.lock_state()?;
+            (state.channel.clone(), state.identity)
+        };
+        let facts = ProductionBuildHostFactsProbe::from_verified_channel(&channel)
+            .and_then(|probe| probe.observe())
+            .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::PreparationRefused))?;
+        if self.lock_state()?.identity != identity {
+            return Err(BuildAuthorityError::new(
+                BuildAuthorityErrorCode::PreparationRefused,
+            ));
+        }
+        Ok((identity.policy_version, facts))
+    }
+
+    /// Runs one short approval transition only while the expected policy is current.
+    pub fn under_current_policy<T>(
+        &self,
+        expected: PolicyVersion,
+        transition: impl FnOnce() -> T,
+    ) -> Result<T, BuildAuthorityError> {
+        let state = self.lock_state()?;
+        if state.identity.policy_version != expected {
+            return Err(BuildAuthorityError::new(
+                BuildAuthorityErrorCode::PreparationRefused,
+            ));
+        }
+        let result = transition();
+        drop(state);
+        Ok(result)
     }
 
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, AuthorityState>, BuildAuthorityError> {

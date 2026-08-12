@@ -20,8 +20,9 @@ use pkg_nix::{
     GenerationId, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
     GenerationRootTransitionErrorCode, InstallDownloadProgress, MethodKind, NixAdapter,
     NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
-    ProductFrameCodec, RootSetIntent, RootSetReport, RootSetTransitionIntent,
-    RootSetTransitionReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
+    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, StorePath,
+    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -77,6 +78,22 @@ pub enum BrokerClientErrorCode {
     ChannelRefreshServiceUnavailable,
     /// The broker-owned authenticated catalog was unavailable or refused the query.
     CatalogQueryRefused,
+    /// The broker rejected the selected generation or derived repair scope.
+    RepairInvalidScope,
+    /// Read-only repair verification failed.
+    RepairVerifyFailed,
+    /// Repair admission was unavailable or invalid.
+    RepairAdmissionFailed,
+    /// The privileged repair helper failed or refused the request.
+    RepairHelperFailed,
+    /// Durable repair journaling failed.
+    RepairJournalFailed,
+    /// Damage remained after a reported repair.
+    RepairStillDamaged,
+    /// Repair needs a new explicit local-build approval.
+    RepairFreshApprovalRequired,
+    /// The broker has no usable production repair authority.
+    RepairAuthorityUnavailable,
 }
 
 /// Redacted failure from the private broker connector.
@@ -814,6 +831,49 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Verifies or cache-repairs one authenticated rooted generation.
+    pub fn repair_generation(
+        &mut self,
+        handle: OperationHandle,
+        request: RepairGenerationRequest,
+    ) -> Result<RepairGenerationReport, BrokerClientError> {
+        match self.transact_with_timeout(
+            &CliBrokerRequest::RepairGeneration(handle, request),
+            LONG_RUNNING_RESPONSE_TIMEOUT,
+        )? {
+            CliBrokerResponse::RepairGeneration(report) => Ok(report),
+            CliBrokerResponse::RepairGenerationRefused(code) => {
+                Err(BrokerClientError::new(match code {
+                    RepairGenerationErrorCode::InvalidScope => {
+                        BrokerClientErrorCode::RepairInvalidScope
+                    }
+                    RepairGenerationErrorCode::VerifyFailed => {
+                        BrokerClientErrorCode::RepairVerifyFailed
+                    }
+                    RepairGenerationErrorCode::AdmissionFailed => {
+                        BrokerClientErrorCode::RepairAdmissionFailed
+                    }
+                    RepairGenerationErrorCode::HelperFailed => {
+                        BrokerClientErrorCode::RepairHelperFailed
+                    }
+                    RepairGenerationErrorCode::JournalFailed => {
+                        BrokerClientErrorCode::RepairJournalFailed
+                    }
+                    RepairGenerationErrorCode::StillDamaged => {
+                        BrokerClientErrorCode::RepairStillDamaged
+                    }
+                    RepairGenerationErrorCode::FreshApprovalRequired => {
+                        BrokerClientErrorCode::RepairFreshApprovalRequired
+                    }
+                    RepairGenerationErrorCode::AuthorityUnavailable => {
+                        BrokerClientErrorCode::RepairAuthorityUnavailable
+                    }
+                }))
+            }
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     /// Collects unreachable paths using only the managed on-disk roots.
     pub fn gc(&mut self, handle: OperationHandle) -> Result<GcReport, BrokerClientError> {
         match self
@@ -1130,7 +1190,15 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::ChannelRefreshVerification
         | BrokerClientErrorCode::ChannelRefreshBusy
         | BrokerClientErrorCode::ChannelRefreshServiceUnavailable
-        | BrokerClientErrorCode::CatalogQueryRefused => NixAdapterError::OperationFailed,
+        | BrokerClientErrorCode::CatalogQueryRefused
+        | BrokerClientErrorCode::RepairInvalidScope
+        | BrokerClientErrorCode::RepairVerifyFailed
+        | BrokerClientErrorCode::RepairAdmissionFailed
+        | BrokerClientErrorCode::RepairHelperFailed
+        | BrokerClientErrorCode::RepairJournalFailed
+        | BrokerClientErrorCode::RepairStillDamaged
+        | BrokerClientErrorCode::RepairFreshApprovalRequired
+        | BrokerClientErrorCode::RepairAuthorityUnavailable => NixAdapterError::OperationFailed,
     }
 }
 
@@ -1837,6 +1905,38 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&read_frame(&mut server, deadline)?)?,
             (1, CliBrokerRequest::AcquireGc(handle))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repair_generation_round_trips_only_path_free_intent_and_count() -> Result<(), Box<dyn Error>>
+    {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Repair)?;
+        let request = RepairGenerationRequest::new(GenerationId::new("gen-0042")?, true);
+        let report =
+            RepairGenerationReport::new(pkg_nix::RepairGenerationStatus::DamageDetected, 2)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::RepairGeneration(report.clone()),
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        assert_eq!(
+            client.repair_generation(handle.clone(), request.clone())?,
+            report
+        );
+        let deadline = Instant::now()
+            .checked_add(RESPONSE_TIMEOUT)
+            .ok_or_else(|| io::Error::other("deadline overflow"))?;
+        let frame = read_frame(&mut server, deadline)?;
+        assert!(!String::from_utf8_lossy(&frame).contains("/nix/"));
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&frame)?,
+            (1, CliBrokerRequest::RepairGeneration(handle, request))
         );
         Ok(())
     }

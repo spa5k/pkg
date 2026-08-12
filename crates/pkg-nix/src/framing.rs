@@ -133,6 +133,8 @@ pub enum CliBrokerRequest {
     SearchCatalog(OperationHandle, CatalogSearchRequest),
     /// Inspect one package in the broker-owned verified native index.
     InfoCatalog(OperationHandle, CatalogInfoRequest),
+    /// Verify or cache-repair one caller-owned rooted generation.
+    RepairGeneration(OperationHandle, RepairGenerationRequest),
 }
 
 /// One sanitized, authority-produced cache download counter.
@@ -252,8 +254,171 @@ pub enum CliBrokerResponse {
     CatalogSearchRefused,
     /// The authenticated native index was unavailable or refused info lookup.
     CatalogInfoRefused,
+    /// Sanitized outcome from one generation repair transaction.
+    RepairGeneration(RepairGenerationReport),
+    /// Stable redacted refusal from generation repair.
+    RepairGenerationRefused(RepairGenerationErrorCode),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
+}
+
+/// Closed caller intent for one rooted-generation repair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairGenerationRequest {
+    generation: GenerationId,
+    verify_only: bool,
+    approval: Option<BuildApprovalRequest>,
+}
+
+impl RepairGenerationRequest {
+    /// Constructs path-free repair intent. The broker and helper derive every path.
+    #[must_use]
+    pub const fn new(generation: GenerationId, verify_only: bool) -> Self {
+        Self {
+            generation,
+            verify_only,
+            approval: None,
+        }
+    }
+
+    /// Constructs a mutating continuation for one displayed repair plan.
+    #[must_use]
+    pub const fn with_approval(generation: GenerationId, approval: BuildApprovalRequest) -> Self {
+        Self {
+            generation,
+            verify_only: false,
+            approval: Some(approval),
+        }
+    }
+
+    /// Returns the caller-selected rooted generation identity.
+    #[must_use]
+    pub const fn generation(&self) -> &GenerationId {
+        &self.generation
+    }
+
+    /// Returns whether mutation is forbidden for this request.
+    #[must_use]
+    pub const fn verify_only(&self) -> bool {
+        self.verify_only
+    }
+
+    /// Returns the optional explicit approval pointer.
+    #[must_use]
+    pub const fn approval(&self) -> Option<&BuildApprovalRequest> {
+        self.approval.as_ref()
+    }
+}
+
+/// Public, path-free result category for one repair transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairGenerationStatus {
+    /// The complete closure verified clean without mutation.
+    Clean,
+    /// Verify-only mode found one or more damaged paths.
+    DamageDetected,
+    /// Cache-only repair restored the complete closure.
+    RepairedFromCache,
+    /// An explicitly approved local rebuild restored the complete closure.
+    RepairedByBuild,
+    /// Cache misses remain and an approved rebuild is required.
+    NeedsApproval,
+}
+
+/// Sanitized repair report. Raw paths and helper outcomes remain private.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairGenerationReport {
+    status: RepairGenerationStatus,
+    damaged_paths: u32,
+    build_preview: Option<BuildPreview>,
+}
+
+impl RepairGenerationReport {
+    /// Constructs a report while enforcing status/count consistency.
+    pub fn new(status: RepairGenerationStatus, damaged_paths: u32) -> Result<Self, FrameError> {
+        let expects_damage = matches!(
+            status,
+            RepairGenerationStatus::DamageDetected | RepairGenerationStatus::NeedsApproval
+        );
+        if expects_damage != (damaged_paths > 0) || status == RepairGenerationStatus::NeedsApproval
+        {
+            return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+        }
+        Ok(Self {
+            status,
+            damaged_paths,
+            build_preview: None,
+        })
+    }
+
+    /// Constructs the approval-required outcome with its sanitized preview.
+    pub fn needs_approval(
+        damaged_paths: u32,
+        build_preview: BuildPreview,
+    ) -> Result<Self, FrameError> {
+        if damaged_paths == 0 {
+            return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+        }
+        Ok(Self {
+            status: RepairGenerationStatus::NeedsApproval,
+            damaged_paths,
+            build_preview: Some(build_preview),
+        })
+    }
+
+    /// Returns the sanitized terminal category.
+    #[must_use]
+    pub const fn status(&self) -> RepairGenerationStatus {
+        self.status
+    }
+
+    /// Returns only the number of paths that remain damaged.
+    #[must_use]
+    pub const fn damaged_paths(&self) -> u32 {
+        self.damaged_paths
+    }
+
+    /// Returns the sanitized repair-build preview when approval is required.
+    #[must_use]
+    pub const fn build_preview(&self) -> Option<&BuildPreview> {
+        self.build_preview.as_ref()
+    }
+}
+
+/// Closed, redacted production repair failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairGenerationErrorCode {
+    /// The generation or derived repair scope was invalid.
+    InvalidScope,
+    /// Read-only verification failed or returned inconsistent evidence.
+    VerifyFailed,
+    /// Broker admission was unavailable or invalid.
+    AdmissionFailed,
+    /// The privileged helper refused or failed the closed operation.
+    HelperFailed,
+    /// Durable repair journaling failed.
+    JournalFailed,
+    /// Damage remained after a purported repair.
+    StillDamaged,
+    /// A fresh explicit local-build approval is required.
+    FreshApprovalRequired,
+    /// The production repair authority was unavailable.
+    AuthorityUnavailable,
+}
+
+impl RepairGenerationErrorCode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidScope => "invalid-scope",
+            Self::VerifyFailed => "verify-failed",
+            Self::AdmissionFailed => "admission-failed",
+            Self::HelperFailed => "helper-failed",
+            Self::JournalFailed => "journal-failed",
+            Self::StillDamaged => "still-damaged",
+            Self::FreshApprovalRequired => "fresh-approval-required",
+            Self::AuthorityUnavailable => "authority-unavailable",
+        }
+    }
 }
 
 /// Public result of one broker-owned authenticated channel refresh.
@@ -504,6 +669,8 @@ pub enum BrokerHelperRequest {
     TransitionRootSet(RootSetTransitionRequest),
     /// Attest one durable generation without accepting names or store paths.
     AttestRootSet(RootSetAttestationRequest),
+    /// Load durable generation roots only for authenticated broker repair planning.
+    LoadRepairRootSet(RootSetAttestationRequest),
 }
 
 /// Closed privileged responses on the helper-to-broker channel.
@@ -521,6 +688,8 @@ pub enum BrokerHelperResponse {
     RootSetTransitioned(RootSetTransitionReport),
     /// One durable generation was reconstructed and exactly attested.
     RootSetAttested(RootSetReport),
+    /// Exact durable roots returned only to the authenticated broker.
+    RepairRootSetLoaded(RootSet),
 }
 
 /// Exact V1 product frame codec.
@@ -710,6 +879,20 @@ impl ProductFrameCodec {
                     selector: request.selector(),
                 })?,
             ),
+            CliBrokerRequest::RepairGeneration(handle, request) => (
+                30,
+                encode_json(&RepairGenerationRequestWire {
+                    handle: handle.as_str(),
+                    generation: request.generation().as_str(),
+                    verify_only: request.verify_only(),
+                    build_plan_digest: request
+                        .approval()
+                        .map(|approval| approval.build_plan_digest().to_string()),
+                    approval_source: request
+                        .approval()
+                        .map(|approval| approval_source_name(approval.source())),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -850,6 +1033,26 @@ impl ProductFrameCodec {
                     CatalogInfoRequest::new(&wire.selector)
                         .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?,
                 )
+            }
+            30 => {
+                let wire: RepairGenerationRequestOwnedWire = decode_json(frame.payload)?;
+                let generation = GenerationId::new(&wire.generation)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+                let request = match (wire.build_plan_digest, wire.approval_source) {
+                    (None, None) => RepairGenerationRequest::new(generation, wire.verify_only),
+                    (Some(digest), Some(source)) if !wire.verify_only => {
+                        RepairGenerationRequest::with_approval(
+                            generation,
+                            BuildApprovalRequest::new(
+                                Digest::from_str(&digest)
+                                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                                parse_approval_source(&source)?,
+                            ),
+                        )
+                    }
+                    _ => return Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+                };
+                CliBrokerRequest::RepairGeneration(parse_handle(&wire.handle)?, request)
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
@@ -1039,6 +1242,20 @@ impl ProductFrameCodec {
                     error: "unavailable",
                 })?,
             ),
+            CliBrokerResponse::RepairGeneration(report) => (
+                30,
+                encode_json(&RepairGenerationReportWire {
+                    status: repair_generation_status_name(report.status()),
+                    damaged_paths: report.damaged_paths(),
+                    build_preview: report.build_preview(),
+                })?,
+            ),
+            CliBrokerResponse::RepairGenerationRefused(code) => (
+                30,
+                encode_json(&RepairGenerationFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
             CliBrokerResponse::AdapterFailure(method, code) => (
                 cli_adapter_method(*method)
                     .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
@@ -1107,6 +1324,14 @@ impl ProductFrameCodec {
             return Ok((
                 frame.request_id,
                 CliBrokerResponse::GenerationRootAttestationRefused(code),
+            ));
+        }
+        if frame.method == 30
+            && let Some(code) = decode_repair_generation_failure(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::RepairGenerationRefused(code),
             ));
         }
         let response = match frame.method {
@@ -1251,6 +1476,23 @@ impl ProductFrameCodec {
                     )
                 }
             }
+            30 => {
+                let wire: RepairGenerationReportOwnedWire = decode_json(frame.payload)?;
+                let status = parse_repair_generation_status(&wire.status)?;
+                let report = match (status, wire.build_preview) {
+                    (RepairGenerationStatus::NeedsApproval, Some(preview)) => {
+                        preview
+                            .validate()
+                            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+                        RepairGenerationReport::needs_approval(wire.damaged_paths, preview)?
+                    }
+                    (RepairGenerationStatus::NeedsApproval, None) | (_, Some(_)) => {
+                        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                    }
+                    (_, None) => RepairGenerationReport::new(status, wire.damaged_paths)?,
+                };
+                CliBrokerResponse::RepairGeneration(report)
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -1301,6 +1543,13 @@ impl ProductFrameCodec {
                     generation: request.generation().as_str(),
                 })?,
             ),
+            BrokerHelperRequest::LoadRepairRootSet(request) => (
+                7,
+                encode_json(&RemoveRootSetWire {
+                    owner_uid: request.owner_uid(),
+                    generation: request.generation().as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -1335,6 +1584,14 @@ impl ProductFrameCodec {
             6 => {
                 let wire: RemoveRootSetOwnedWire = decode_json(frame.payload)?;
                 BrokerHelperRequest::AttestRootSet(RootSetAttestationRequest::new(
+                    wire.owner_uid,
+                    GenerationId::new(&wire.generation)
+                        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                ))
+            }
+            7 => {
+                let wire: RemoveRootSetOwnedWire = decode_json(frame.payload)?;
+                BrokerHelperRequest::LoadRepairRootSet(RootSetAttestationRequest::new(
                     wire.owner_uid,
                     GenerationId::new(&wire.generation)
                         .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
@@ -1390,6 +1647,9 @@ impl ProductFrameCodec {
                     mapping_digest: report.mapping_digest().to_string(),
                 })?,
             ),
+            BrokerHelperResponse::RepairRootSetLoaded(root_set) => {
+                (7, encode_json(&RootSetWire::from_root_set(root_set))?)
+            }
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -1438,6 +1698,9 @@ impl ProductFrameCodec {
                     parse_mapping_digest(&wire.mapping_digest)?,
                 ))
             }
+            7 => BrokerHelperResponse::RepairRootSetLoaded(
+                decode_json::<RootSetOwnedWire>(frame.payload)?.promote()?,
+            ),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -1651,6 +1914,50 @@ fn decode_catalog_query_failure(bytes: &[u8]) -> Result<bool, FrameError> {
         return Err(FrameError::new(FrameErrorCode::InvalidPayload));
     }
     Ok(true)
+}
+
+fn decode_repair_generation_failure(
+    bytes: &[u8],
+) -> Result<Option<RepairGenerationErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<RepairGenerationFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_repair_generation_error(&wire.error).map(Some)
+}
+
+const fn repair_generation_status_name(status: RepairGenerationStatus) -> &'static str {
+    match status {
+        RepairGenerationStatus::Clean => "clean",
+        RepairGenerationStatus::DamageDetected => "damage-detected",
+        RepairGenerationStatus::RepairedFromCache => "repaired-from-cache",
+        RepairGenerationStatus::RepairedByBuild => "repaired-by-build",
+        RepairGenerationStatus::NeedsApproval => "needs-approval",
+    }
+}
+
+fn parse_repair_generation_status(value: &str) -> Result<RepairGenerationStatus, FrameError> {
+    match value {
+        "clean" => Ok(RepairGenerationStatus::Clean),
+        "damage-detected" => Ok(RepairGenerationStatus::DamageDetected),
+        "repaired-from-cache" => Ok(RepairGenerationStatus::RepairedFromCache),
+        "repaired-by-build" => Ok(RepairGenerationStatus::RepairedByBuild),
+        "needs-approval" => Ok(RepairGenerationStatus::NeedsApproval),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+fn parse_repair_generation_error(value: &str) -> Result<RepairGenerationErrorCode, FrameError> {
+    match value {
+        "invalid-scope" => Ok(RepairGenerationErrorCode::InvalidScope),
+        "verify-failed" => Ok(RepairGenerationErrorCode::VerifyFailed),
+        "admission-failed" => Ok(RepairGenerationErrorCode::AdmissionFailed),
+        "helper-failed" => Ok(RepairGenerationErrorCode::HelperFailed),
+        "journal-failed" => Ok(RepairGenerationErrorCode::JournalFailed),
+        "still-damaged" => Ok(RepairGenerationErrorCode::StillDamaged),
+        "fresh-approval-required" => Ok(RepairGenerationErrorCode::FreshApprovalRequired),
+        "authority-unavailable" => Ok(RepairGenerationErrorCode::AuthorityUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
 }
 
 const fn channel_refresh_error_name(code: ChannelRefreshErrorCode) -> &'static str {
@@ -2471,6 +2778,54 @@ struct GenerationRootRemovalWire<'a> {
 struct GenerationRootRemovalOwnedWire {
     handle: String,
     generation: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RepairGenerationRequestWire<'a> {
+    handle: &'a str,
+    generation: &'a str,
+    verify_only: bool,
+    build_plan_digest: Option<String>,
+    approval_source: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RepairGenerationRequestOwnedWire {
+    handle: String,
+    generation: String,
+    verify_only: bool,
+    build_plan_digest: Option<String>,
+    approval_source: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RepairGenerationReportWire<'a> {
+    status: &'a str,
+    damaged_paths: u32,
+    build_preview: Option<&'a BuildPreview>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RepairGenerationReportOwnedWire {
+    status: String,
+    damaged_paths: u32,
+    build_preview: Option<BuildPreview>,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepairGenerationFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepairGenerationFailureOwnedWire {
+    error: String,
 }
 
 #[derive(Serialize)]
@@ -3663,6 +4018,98 @@ mod tests {
                 .unwrap_err()
                 .code(),
             FrameErrorCode::InvalidPayload
+        );
+    }
+
+    #[test]
+    fn repair_generation_frames_keep_paths_and_nix_controls_private() {
+        let request = CliBrokerRequest::RepairGeneration(
+            OperationHandle(format!("op_{}", "8".repeat(64))),
+            RepairGenerationRequest::new(GenerationId::new("gen-0042").unwrap(), true),
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(30, &request).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("gen-0042"));
+        assert!(wire.contains("verifyOnly"));
+        for forbidden in [
+            "/nix/",
+            "path",
+            "derivation",
+            "installable",
+            "substituter",
+            "trusted-public-key",
+            "max-jobs",
+            "builders",
+            "argv",
+        ] {
+            assert!(!wire.contains(forbidden), "repair exposed {forbidden}");
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((30, request))
+        );
+
+        let approved = CliBrokerRequest::RepairGeneration(
+            OperationHandle(format!("op_{}", "9".repeat(64))),
+            RepairGenerationRequest::with_approval(
+                GenerationId::new("gen-0042").unwrap(),
+                BuildApprovalRequest::new(body_digest(b"repair plan"), ApprovalSource::Interactive),
+            ),
+        );
+        let encoded = ProductFrameCodec::encode_cli_request(31, &approved).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(wire.contains("buildPlanDigest"));
+        assert!(wire.contains("interactive"));
+        assert!(!wire.contains("/nix/"));
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((31, approved))
+        );
+
+        let responses = [
+            CliBrokerResponse::RepairGeneration(
+                RepairGenerationReport::new(RepairGenerationStatus::Clean, 0).unwrap(),
+            ),
+            CliBrokerResponse::RepairGeneration(
+                RepairGenerationReport::new(RepairGenerationStatus::DamageDetected, 3).unwrap(),
+            ),
+            CliBrokerResponse::RepairGenerationRefused(
+                RepairGenerationErrorCode::FreshApprovalRequired,
+            ),
+        ];
+        for response in responses {
+            let encoded = ProductFrameCodec::encode_cli_response(30, &response).unwrap();
+            let wire = String::from_utf8_lossy(&encoded);
+            assert!(!wire.contains("/nix/"));
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((30, response))
+            );
+        }
+
+        for payload in [
+            br#"{"status":"clean","damagedPaths":1}"#.as_slice(),
+            br#"{"status":"damage-detected","damagedPaths":0}"#.as_slice(),
+            br#"{"handle":"op_x","generation":"gen-0042","verifyOnly":true,"path":"/nix/store/x"}"#
+                .as_slice(),
+        ] {
+            let encoded = encode_frame(CHANNEL_CLI_BROKER, 30, 30, payload).unwrap();
+            assert!(
+                ProductFrameCodec::decode_cli_request(&encoded).is_err()
+                    || ProductFrameCodec::decode_cli_response(&encoded).is_err()
+            );
+        }
+
+        let load = BrokerHelperRequest::LoadRepairRootSet(RootSetAttestationRequest::new(
+            1000,
+            GenerationId::new("gen-0042").unwrap(),
+        ));
+        let encoded = ProductFrameCodec::encode_helper_request(7, &load).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        assert!(!wire.contains("/nix/store"));
+        assert_eq!(
+            ProductFrameCodec::decode_helper_request(&encoded),
+            Ok((7, load))
         );
     }
 

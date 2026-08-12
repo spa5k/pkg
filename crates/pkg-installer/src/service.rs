@@ -2,8 +2,8 @@
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::{
-    BrokerApprovalAudit, ChannelRefreshDispatch, RootHelperClient,
-    serve_broker_connection_with_product_authority, serve_helper_connection,
+    BrokerApprovalAudit, BrokerRepairJournals, ChannelRefreshDispatch, ProductionRepairAuthority,
+    RootHelperClient, serve_broker_connection_with_product_authority, serve_helper_connection,
 };
 #[cfg(target_os = "linux")]
 use crate::{LinuxHelperSession, LinuxRootSetStore};
@@ -194,11 +194,14 @@ fn run_broker_listener(
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
     let approval_audit = BrokerApprovalAudit::open(log, expected_uid)
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let repair_journals = BrokerRepairJournals::open(log, expected_uid)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
     let adapter = Arc::new(
         RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), home)
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
-    let planning_adapter: Arc<dyn BuildPlanningAdapter> = adapter;
+    let planning_adapter: Arc<dyn BuildPlanningAdapter> =
+        Arc::clone(&adapter) as Arc<dyn BuildPlanningAdapter>;
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .thread_name("pkg-trust-runtime")
@@ -220,6 +223,12 @@ fn run_broker_listener(
         runtime: runtime.handle().clone(),
     });
     let roots = Arc::new(RootHelperClient::production());
+    let repair = Arc::new(ProductionRepairAuthority::new(
+        Arc::clone(&adapter),
+        Arc::clone(&roots),
+        Arc::clone(&authority),
+        repair_journals,
+    ));
     let limiter = ConnectionLimiter::new(MAX_BROKER_CONNECTIONS);
 
     loop {
@@ -234,6 +243,7 @@ fn run_broker_listener(
                 let connection_roots = Arc::clone(&roots);
                 let connection_approval_audit = approval_audit.clone();
                 let connection_refresh = Arc::clone(&refresh);
+                let connection_repair = Arc::clone(&repair);
                 thread::Builder::new()
                     .name(String::from("pkg-broker-client"))
                     .spawn(move || {
@@ -245,6 +255,7 @@ fn run_broker_listener(
                             &connection_authority,
                             &connection_roots,
                             connection_refresh.as_ref(),
+                            connection_repair.as_ref(),
                         );
                     })
                     .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;

@@ -201,6 +201,16 @@ impl LinuxHelperSession {
         self.caller(request.owner_uid()).publish_root_set(&durable)
     }
 
+    fn load_repair_roots(
+        &self,
+        request: &RootSetAttestationRequest,
+    ) -> Result<pkg_nix::RootSet, MaintenanceError> {
+        let _transaction = lock_recover(&self.root_transactions);
+        self.roots
+            .load(request.owner_uid(), request.generation())
+            .map_err(|_| platform_failure())
+    }
+
     fn issue(
         &self,
         scope: &VerifiedRepairScope,
@@ -277,6 +287,9 @@ impl BrokerHelperDispatch for LinuxHelperSession {
             BrokerHelperRequest::AttestRootSet(request) => self
                 .attest(&request)
                 .map(BrokerHelperResponse::RootSetAttested),
+            BrokerHelperRequest::LoadRepairRootSet(request) => self
+                .load_repair_roots(&request)
+                .map(BrokerHelperResponse::RepairRootSetLoaded),
         }
     }
 }

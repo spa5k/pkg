@@ -943,14 +943,21 @@ flowchart TD
 ### Milestone M6 — Hardening & operations
 
 #### PR-30 — Two-phase `pkg repair` + corruption recovery (privilege-split; non-atomic)
-- **Status (2026-08-10):** Phase-0 exact-closure verification, missing-path contract,
+- **Status (2026-08-13):** Phase-0 exact-closure verification, missing-path contract,
   capability-driven Phase A/B coordinator, broker admission integration, final-verify gate,
   scope-bound single-use build approval, checked admission cleanup, validated per-path journal
   state machine, clean-after-crash reconciliation, and cache-only/fresh-approval restart policy are
-  implemented and locally evidence-gated. Workspace tests/lints/docs, docs link checks,
-  dependency policy/audit, Linux container tests, and independent P1 review pass. Real-Nix 2.34.8
-  Linux/macOS fault evidence and the PR-36 production broker connector remain external merge
-  gates; no Real-Nix completion claim is made here.
+  implemented and locally evidence-gated. The production broker connector now authenticates the
+  rooted generation, derives the exact recursive closure, runs cache-only repair through the root
+  helper, and returns a sanitized full-output local-build preview on a cache miss. A second live
+  Repair operation must approve the exact recomputed digest under the current channel policy before
+  the single-use build grant is consumed. Per-uid/per-generation schema-versioned recovery journals
+  are isolated, hash chained, bounded, and atomically compacted; interrupted cache repair can resume,
+  while interrupted local build always requires fresh approval. The root client retains admission
+  for the helper's bounded process lifetime, and every repaired path must pass a fresh broker-side
+  verify before success. Workspace tests/lints/docs, docs link checks, dependency policy/audit,
+  Linux container tests, and independent P1 review pass. Real-Nix 2.34.8 Linux/macOS fault evidence
+  remains an external merge gate; no Real-Nix completion claim is made here.
 - **Purpose:** `pkg repair` is **explicitly user-initiated** and **verified non-atomic** (`00`
   D-19/INV-12; `05` §10; `08` T-CACHE-3/T-INST-7). It re-verifies integrity and restores it across
   the broker/helper privilege split: (Phase 0) **read-only** `nix store verify --recursive` (**no**
@@ -1218,9 +1225,19 @@ flowchart TD
   recovery tests, the complete affected suites, strict Clippy, secret scanning,
   and independent P1 review pass. Explicit `--channel`, `--with-outputs`,
   `--keep-going`, and `--include-removed-upstream` upgrade modes still refuse
-  instead of being ignored; live upgrade progress also remains open. Repair
-  command wiring, clean-host e2e coverage, metadata freshness, and optional
-  update modes remain open PR-36 work.
+  instead of being ignored; live upgrade progress also remains open.
+  Production `pkg repair` now uses closed wire method 30 and never accepts a path, derivation,
+  installable, Nix option, store selector, or trust control from the CLI. The first authenticated
+  transaction resolves the rooted generation closure, verifies it, performs cache-only helper
+  repair, and either returns final verified outcomes or a sanitized full-output local-build preview.
+  A cache miss needs a second fresh Repair operation. The broker recomputes the plan before it
+  records approval and again under current policy immediately before one-shot consumption. Repair
+  journals are isolated by uid and generation, reject schema or hash-chain drift, compact atomically,
+  resume only cache repair after interruption, and force new approval after interrupted local build.
+  The helper has one bounded execution lifetime, and post-repair store queries cannot extend it.
+  Protocol, recovery, approval, policy-race, helper-lifetime, journal-isolation, compaction, redaction,
+  and unique-closure tests pass locally. Clean-host e2e coverage, Real-Nix Linux/macOS fault evidence,
+  metadata freshness, live progress, and optional update modes remain open PR-36 work.
   The Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
   and supplementary memberships, serializes product installers with a root-only runtime lock, and

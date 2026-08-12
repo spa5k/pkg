@@ -16,7 +16,8 @@ use pkg_nix::{
     CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
     GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
     InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
-    NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RootSetIntent, RootSetReport,
+    NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RepairGenerationErrorCode,
+    RepairGenerationReport, RepairGenerationRequest, RootSetIntent, RootSetReport,
     RootSetTransitionIntent, RootSetTransitionReport,
 };
 use pkg_pipeline::{AuthenticatedBuildAuthority, BuildAuthorityErrorCode};
@@ -88,7 +89,7 @@ pub fn serve_broker_connection(
     mut stream: UnixStream,
     broker: &Arc<InProcessBroker>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, None, None, None, None, None)
+    serve_broker_connection_inner(&mut stream, broker, ConnectionAuthorities::default())
 }
 
 /// Serves lifecycle plus typed managed-Nix calls for one authenticated peer.
@@ -102,7 +103,14 @@ pub fn serve_broker_connection_with_nix(
     broker: &Arc<InProcessBroker>,
     adapter: &Arc<dyn NixAdapter>,
 ) -> Result<(), BrokerTransportError> {
-    serve_broker_connection_inner(&mut stream, broker, Some(adapter), None, None, None, None)
+    serve_broker_connection_inner(
+        &mut stream,
+        broker,
+        ConnectionAuthorities {
+            adapter: Some(adapter),
+            ..ConnectionAuthorities::default()
+        },
+    )
 }
 
 /// Serves typed managed-Nix calls plus broker-private durable build approval.
@@ -123,11 +131,11 @@ pub fn serve_broker_connection_with_nix_and_approval(
     serve_broker_connection_inner(
         &mut stream,
         broker,
-        Some(adapter),
-        Some(approval_audit),
-        None,
-        None,
-        None,
+        ConnectionAuthorities {
+            adapter: Some(adapter),
+            approval_audit: Some(approval_audit),
+            ..ConnectionAuthorities::default()
+        },
     )
 }
 
@@ -147,11 +155,12 @@ pub fn serve_broker_connection_with_build_authority(
     serve_broker_connection_inner(
         &mut stream,
         broker,
-        Some(&adapter),
-        Some(approval_audit),
-        Some(authority.as_ref()),
-        None,
-        None,
+        ConnectionAuthorities {
+            adapter: Some(&adapter),
+            approval_audit: Some(approval_audit),
+            build: Some(authority.as_ref()),
+            ..ConnectionAuthorities::default()
+        },
     )
 }
 
@@ -172,11 +181,13 @@ pub fn serve_broker_connection_with_build_and_root_authority(
     serve_broker_connection_inner(
         &mut stream,
         broker,
-        Some(&adapter),
-        Some(approval_audit),
-        Some(authority.as_ref()),
-        Some(roots),
-        None,
+        ConnectionAuthorities {
+            adapter: Some(&adapter),
+            approval_audit: Some(approval_audit),
+            build: Some(authority.as_ref()),
+            roots: Some(roots),
+            ..ConnectionAuthorities::default()
+        },
     )
 }
 
@@ -197,16 +208,20 @@ pub fn serve_broker_connection_with_product_authority(
     authority: &Arc<AuthenticatedBuildAuthority>,
     roots: &RootHelperClient,
     refresh: &dyn ChannelRefreshDispatch,
+    repair: &dyn RepairAuthorityDispatch,
 ) -> Result<(), BrokerTransportError> {
     let adapter = authority.adapter();
     serve_broker_connection_inner(
         &mut stream,
         broker,
-        Some(&adapter),
-        Some(approval_audit),
-        Some(authority.as_ref()),
-        Some(roots),
-        Some(refresh),
+        ConnectionAuthorities {
+            adapter: Some(&adapter),
+            approval_audit: Some(approval_audit),
+            build: Some(authority.as_ref()),
+            roots: Some(roots),
+            refresh: Some(refresh),
+            repair: Some(repair),
+        },
     )
 }
 
@@ -221,6 +236,22 @@ pub trait ChannelRefreshDispatch: Send + Sync {
     /// Returns only sanitized network, verification, contention, or service
     /// failure classes.
     fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode>;
+}
+
+/// Closed production repair capability installed by the broker service.
+pub trait RepairAuthorityDispatch: Send + Sync {
+    /// Repairs one authenticated rooted generation without accepting paths or Nix controls.
+    ///
+    /// # Errors
+    ///
+    /// Returns only a stable sanitized repair failure category.
+    fn repair(
+        &self,
+        caller: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        request: &RepairGenerationRequest,
+        approval_journal: Option<&BrokerCallerApprovalJournal>,
+    ) -> Result<RepairGenerationReport, RepairGenerationErrorCode>;
 }
 
 trait BuildAuthorityDispatch: Send + Sync {
@@ -289,6 +320,17 @@ struct DispatchAuthorities<'a> {
     build: Option<&'a dyn BuildAuthorityDispatch>,
     roots: Option<&'a dyn RootAuthorityDispatch>,
     refresh: Option<&'a dyn ChannelRefreshDispatch>,
+    repair: Option<&'a dyn RepairAuthorityDispatch>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ConnectionAuthorities<'a> {
+    adapter: Option<&'a Arc<dyn NixAdapter>>,
+    approval_audit: Option<&'a BrokerApprovalAudit>,
+    build: Option<&'a dyn BuildAuthorityDispatch>,
+    roots: Option<&'a dyn RootAuthorityDispatch>,
+    refresh: Option<&'a dyn ChannelRefreshDispatch>,
+    repair: Option<&'a dyn RepairAuthorityDispatch>,
 }
 
 impl RootAuthorityDispatch for RootHelperClient {
@@ -411,18 +453,15 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
 fn serve_broker_connection_inner(
     stream: &mut UnixStream,
     broker: &Arc<InProcessBroker>,
-    adapter: Option<&Arc<dyn NixAdapter>>,
-    approval_audit: Option<&BrokerApprovalAudit>,
-    authority: Option<&dyn BuildAuthorityDispatch>,
-    roots: Option<&dyn RootAuthorityDispatch>,
-    refresh: Option<&dyn ChannelRefreshDispatch>,
+    authorities: ConnectionAuthorities<'_>,
 ) -> Result<(), BrokerTransportError> {
     let uid = peer_uid(stream)
         .map_err(|()| BrokerTransportError::new(BrokerTransportErrorCode::UnauthenticatedPeer))?;
     let caller = broker
         .connect(InProcessCallerPeer::authenticated(uid))
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
-    let approval_journal = approval_audit
+    let approval_journal = authorities
+        .approval_audit
         .map(|audit| audit.for_caller(uid))
         .transpose()
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
@@ -434,11 +473,12 @@ fn serve_broker_connection_inner(
             &caller,
             request,
             DispatchAuthorities {
-                adapter,
+                adapter: authorities.adapter,
                 approval_journal: approval_journal.as_ref(),
-                build: authority,
-                roots,
-                refresh,
+                build: authorities.build,
+                roots: authorities.roots,
+                refresh: authorities.refresh,
+                repair: authorities.repair,
             },
             progress,
         )
@@ -471,6 +511,7 @@ fn dispatch_request(
             build: authority,
             roots,
             refresh: None,
+            repair: None,
         },
         &mut |_| Ok(()),
     )
@@ -491,11 +532,13 @@ fn dispatch_request_with_refresh(
             build: None,
             roots: None,
             refresh: Some(refresh),
+            repair: None,
         },
         &mut |_| Ok(()),
     )
 }
 
+#[allow(clippy::too_many_lines)]
 fn dispatch_request_with_progress(
     caller: &AuthenticatedCaller,
     request: CliBrokerRequest,
@@ -598,7 +641,30 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::InfoCatalog(handle, request) => {
             dispatch_catalog_info(caller, authorities.build, &handle, &request)
         }
+        CliBrokerRequest::RepairGeneration(handle, request) => Ok(repair_generation_response(
+            authorities.repair,
+            caller,
+            &handle,
+            &request,
+            authorities.approval_journal,
+        )),
     }
+}
+
+fn repair_generation_response(
+    authority: Option<&dyn RepairAuthorityDispatch>,
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    request: &RepairGenerationRequest,
+    approval_journal: Option<&BrokerCallerApprovalJournal>,
+) -> CliBrokerResponse {
+    authority.map_or(
+        CliBrokerResponse::RepairGenerationRefused(RepairGenerationErrorCode::AuthorityUnavailable),
+        |repair| match repair.repair(caller, handle, request, approval_journal) {
+            Ok(report) => CliBrokerResponse::RepairGeneration(report),
+            Err(error) => CliBrokerResponse::RepairGenerationRefused(error),
+        },
+    )
 }
 
 fn dispatch_evaluation(
@@ -1429,6 +1495,84 @@ mod tests {
         fn refresh(&self) -> Result<ChannelRefreshReport, ChannelRefreshErrorCode> {
             self.0
         }
+    }
+
+    struct TestRepairAuthority {
+        seen: std::sync::Mutex<Option<(u32, String, bool)>>,
+    }
+
+    impl RepairAuthorityDispatch for TestRepairAuthority {
+        fn repair(
+            &self,
+            caller: &AuthenticatedCaller,
+            handle: &OperationHandle,
+            request: &RepairGenerationRequest,
+            _approval_journal: Option<&BrokerCallerApprovalJournal>,
+        ) -> Result<RepairGenerationReport, RepairGenerationErrorCode> {
+            let uid = caller
+                .authorize_repair(handle)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
+            *self
+                .seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((
+                uid,
+                request.generation().as_str().to_owned(),
+                request.verify_only(),
+            ));
+            RepairGenerationReport::new(pkg_nix::RepairGenerationStatus::DamageDetected, 2)
+                .map_err(|_| RepairGenerationErrorCode::VerifyFailed)
+        }
+    }
+
+    #[test]
+    fn repair_dispatch_uses_authenticated_uid_and_path_free_intent() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        let authority = TestRepairAuthority {
+            seen: std::sync::Mutex::new(None),
+        };
+        let request = RepairGenerationRequest::new(GenerationId::new("gen-0042").unwrap(), true);
+        assert_eq!(
+            dispatch_request_with_progress(
+                &caller,
+                CliBrokerRequest::RepairGeneration(handle.clone(), request),
+                DispatchAuthorities {
+                    adapter: None,
+                    approval_journal: None,
+                    build: None,
+                    roots: None,
+                    refresh: None,
+                    repair: Some(&authority),
+                },
+                &mut |_| Ok(()),
+            ),
+            Ok(CliBrokerResponse::RepairGeneration(
+                RepairGenerationReport::new(pkg_nix::RepairGenerationStatus::DamageDetected, 2,)
+                    .unwrap()
+            ))
+        );
+        assert_eq!(
+            *authority
+                .seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Some((1001, String::from("gen-0042"), true))
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::Cancel(handle),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::Cancelled)
+        );
     }
 
     #[test]

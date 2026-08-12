@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use pkg_core::PolicyVersion;
 use sha2::{Digest as _, Sha256};
 
 use crate::build::BuildExecutionRuntime;
@@ -604,6 +605,69 @@ impl AuthenticatedCaller {
         };
         let mut state = self.broker.lock();
         self.require_running_kind(&mut state, handle, allowed)
+    }
+
+    /// Verifies one caller-owned live repair handle and returns its transport UID.
+    ///
+    /// This is a broker-internal intent boundary. The UID is never accepted from
+    /// a serialized repair request.
+    pub fn authorize_repair(&self, handle: &OperationHandle) -> Result<u32, BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Repair])?;
+        Ok(self.uid)
+    }
+
+    /// Durably approves one broker-derived repair plan for this repair operation.
+    pub fn approve_repair_subject(
+        &self,
+        handle: &OperationHandle,
+        digest: Digest,
+        policy_version: PolicyVersion,
+        source: ApprovalSource,
+        timestamp: &str,
+        journal: &dyn ApprovalJournal,
+    ) -> Result<BuildApprovalReceipt, BrokerError> {
+        let operation_id = {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Repair])?;
+            build_operation_id(self.record_mut(&mut state, handle)?)
+                .cloned()
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?
+        };
+        self.broker
+            .build_engine
+            .approve_subject(
+                operation_id,
+                digest,
+                policy_version,
+                source,
+                timestamp,
+                journal,
+            )
+            .map_err(|error| map_build_engine_error(error.code()))
+    }
+
+    /// Atomically consumes one repair approval after exact admission-time replan.
+    pub fn consume_repair_subject(
+        &self,
+        handle: &OperationHandle,
+        receipt: &BuildApprovalReceipt,
+        digest: Digest,
+        policy_version: PolicyVersion,
+    ) -> Result<(), BrokerError> {
+        {
+            let mut state = self.broker.lock();
+            self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Repair])?;
+            let expected = build_operation_id(self.record_mut(&mut state, handle)?)
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::BuildApprovalUnavailable))?;
+            if expected != receipt.operation_id() {
+                return Err(BrokerError::new(BrokerErrorCode::BuildApprovalMismatch));
+            }
+        }
+        self.broker
+            .build_engine
+            .consume_subject(receipt, digest, policy_version)
+            .map_err(|error| map_build_engine_error(error.code()))
     }
 
     /// Authorizes one broker-owned signed-channel refresh operation.
@@ -1440,7 +1504,10 @@ impl AuthenticatedCaller {
         );
         state.next_operation = state.next_operation.saturating_add(1);
         let handle = mint_handle(&state, self.uid, kind);
-        let build_operation_id = if kind == BrokerOperationKind::Build {
+        let build_operation_id = if matches!(
+            kind,
+            BrokerOperationKind::Build | BrokerOperationKind::Repair
+        ) {
             Some(mint_build_operation_id(&handle)?)
         } else {
             None
@@ -2673,6 +2740,39 @@ mod tests {
                 .code(),
             BrokerErrorCode::InvalidAdmissionTransition
         );
+    }
+
+    #[test]
+    fn repair_approval_is_operation_bound_journaled_and_single_use() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        let digest = pkg_core::state::body_digest(b"repair plan");
+        let policy = PolicyVersion::from_u64(7).unwrap();
+        let journal = Journal::default();
+        let receipt = caller
+            .approve_repair_subject(
+                &handle,
+                digest,
+                policy,
+                ApprovalSource::Interactive,
+                "unix-ms:1",
+                &journal,
+            )
+            .unwrap();
+
+        caller
+            .consume_repair_subject(&handle, &receipt, digest, policy)
+            .unwrap();
+        assert!(
+            caller
+                .consume_repair_subject(&handle, &receipt, digest, policy)
+                .is_err()
+        );
+        assert_eq!(journal.rows.lock().unwrap().len(), 1);
+        caller.complete(&handle).unwrap();
     }
 
     #[test]
