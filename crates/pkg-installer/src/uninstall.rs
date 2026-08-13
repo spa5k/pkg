@@ -404,7 +404,7 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
     let mut removable = platform
         .into_iter()
         .filter(|asset| states.get(asset.id) == Some(&RecordedAssetState::Created))
-        .filter(|asset| asset.id != "nix-root")
+        .filter(|asset| !matches!(asset.id, "nix-root" | "uninstall-manifest"))
         .collect::<Vec<_>>();
     removable.sort_by(|left, right| removal_key(right).cmp(&removal_key(left)));
 
@@ -432,6 +432,17 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
                 target: asset.target,
             }),
     );
+    if states.get("uninstall-manifest") == Some(&RecordedAssetState::Created) {
+        let manifest_asset = platform_assets(manifest.system)
+            .into_iter()
+            .find(|asset| asset.id == "uninstall-manifest")
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        actions.push(UninstallAction::RemoveAsset {
+            id: manifest_asset.id,
+            kind: manifest_asset.kind,
+            target: manifest_asset.target,
+        });
+    }
     actions.push(UninstallAction::VerifyNoPrivilegedResidue);
 
     Ok(UninstallPlan {
@@ -522,6 +533,17 @@ pub fn execute_uninstall(
     let mut cleanup_failed = false;
     let mut residue_failed = false;
     for action in rest {
+        if cleanup_failed
+            && matches!(
+                action,
+                UninstallAction::RemoveAsset {
+                    id: "uninstall-manifest",
+                    ..
+                }
+            )
+        {
+            continue;
+        }
         match backend.execute(*action) {
             Ok(()) => completed += 1,
             Err(_) if *action == UninstallAction::VerifyNoPrivilegedResidue => {
@@ -722,6 +744,23 @@ mod tests {
                 first.actions().last(),
                 Some(&UninstallAction::VerifyNoPrivilegedResidue)
             );
+            if first.actions().iter().any(|action| {
+                matches!(
+                    action,
+                    UninstallAction::RemoveAsset {
+                        id: "uninstall-manifest",
+                        ..
+                    }
+                )
+            }) {
+                assert!(matches!(
+                    first.actions().iter().rev().nth(1),
+                    Some(UninstallAction::RemoveAsset {
+                        id: "uninstall-manifest",
+                        ..
+                    })
+                ));
+            }
             assert!(
                 first
                     .actions()
@@ -819,6 +858,12 @@ mod tests {
         assert_eq!(
             backend.calls.last().map(String::as_str),
             Some("VerifyNoPrivilegedResidue")
+        );
+        assert!(
+            !backend
+                .calls
+                .iter()
+                .any(|call| { call.starts_with("RemoveAsset { id: \"uninstall-manifest\"") })
         );
         Ok(())
     }
