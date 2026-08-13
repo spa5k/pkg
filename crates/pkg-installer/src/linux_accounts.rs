@@ -138,6 +138,29 @@ pub fn plan_linux_group_bindings() -> Result<ManagedGroupBindings, LinuxAccountE
     plan_group_bindings(&mut ProductionAccountSystem)
 }
 
+pub fn verify_linux_accounts_absent() -> Result<(), LinuxAccountError> {
+    let mut system = ProductionAccountSystem;
+    let groups = system.groups()?;
+    let users = system.users()?;
+    validate_group_directory(&groups)?;
+    validate_user_directory(&users)?;
+    for asset in crate::linux_install_assets() {
+        let present = match asset.kind() {
+            LinuxAssetKind::Group => groups
+                .iter()
+                .any(|group| group.name == asset.path_or_name()),
+            LinuxAssetKind::User => users.iter().any(|user| user.name == asset.path_or_name()),
+            LinuxAssetKind::Directory | LinuxAssetKind::File => false,
+        };
+        if present {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::VerificationFailure,
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Owns Linux account mutations made by one installer attempt.
 ///
 /// Dropping this value does not delete accounts. The enclosing installer calls

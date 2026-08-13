@@ -48,7 +48,7 @@ pub struct UninstallError {
 }
 
 impl UninstallError {
-    const fn new(code: UninstallErrorCode) -> Self {
+    pub(super) const fn new(code: UninstallErrorCode) -> Self {
         Self { code }
     }
 
@@ -482,6 +482,29 @@ pub struct UninstallReport {
     completed_actions: usize,
 }
 
+pub fn preflight_uninstall(
+    manifest: &UninstallManifest,
+    plan: &UninstallPlan,
+    backend: &mut dyn UninstallBackend,
+) -> Result<(), UninstallError> {
+    if plan.system != manifest.system
+        || plan.ownership_manifest_digest != manifest.ownership_manifest_digest
+        || plan.actions != plan_uninstall(manifest)?.actions
+    {
+        return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+    }
+
+    backend
+        .preflight_privilege()
+        .map_err(|_| UninstallError::new(UninstallErrorCode::PrivilegeRequired))?;
+    backend
+        .verify_ownership(manifest)
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    backend
+        .preflight_unmanaged_nix()
+        .map_err(|_| UninstallError::new(UninstallErrorCode::UnmanagedNix))
+}
+
 impl UninstallReport {
     /// Returns the number of completed closed operations, including residue verification.
     #[must_use]
@@ -501,22 +524,7 @@ pub fn execute_uninstall(
     plan: &UninstallPlan,
     backend: &mut dyn UninstallBackend,
 ) -> Result<UninstallReport, UninstallError> {
-    if plan.system != manifest.system
-        || plan.ownership_manifest_digest != manifest.ownership_manifest_digest
-        || plan.actions != plan_uninstall(manifest)?.actions
-    {
-        return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
-    }
-
-    backend
-        .preflight_privilege()
-        .map_err(|_| UninstallError::new(UninstallErrorCode::PrivilegeRequired))?;
-    backend
-        .verify_ownership(manifest)
-        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
-    backend
-        .preflight_unmanaged_nix()
-        .map_err(|_| UninstallError::new(UninstallErrorCode::UnmanagedNix))?;
+    preflight_uninstall(manifest, plan, backend)?;
 
     let mut completed = 0;
     let Some((first, rest)) = plan.actions.split_first() else {

@@ -4,8 +4,11 @@ use clap::Parser;
 use nix::unistd::Uid;
 use pkg_cli::cli::{Cli, Command, DoctorArgs};
 use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport, observe_production_subsystems};
-use pkg_cli::commands::execute::{CoreEngine, execute_command_with_operation_log};
-use pkg_cli::commands::local::LocalStateOperations;
+use pkg_cli::commands::execute::{
+    CommandEngine, CommandRequest, CommandResult, CoreEngine, execute_command,
+    execute_command_with_operation_log,
+};
+use pkg_cli::commands::local::{LocalStateOperations, confirm_destructive};
 use pkg_cli::completion::write_completion;
 use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
 use pkg_cli::exit::ExitCode;
@@ -13,6 +16,7 @@ use pkg_cli::log::{LogConfig, LogLevel, LogRecord, StructuredLog};
 use pkg_cli::path::{HostFamily, PathObservation, default_state_root};
 use pkg_cli::support::SupportBundle;
 use pkg_cli::ux::{CommandError, OutputMode, write_error};
+use pkg_installer::{UninstallErrorCode, uninstall_linux_production};
 use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
 
 fn main() -> ProcessExitCode {
@@ -42,6 +46,7 @@ fn main() -> ProcessExitCode {
             };
         }
         Command::Doctor(args) => return run_doctor(&cli, args),
+        Command::Uninstall => return run_uninstall(&cli),
         _ => {}
     }
 
@@ -69,6 +74,102 @@ fn main() -> ProcessExitCode {
     };
     write_command_log(&cli, exit);
     exit.into()
+}
+
+struct UninstallEngine;
+
+impl CommandEngine for UninstallEngine {
+    fn execute(&mut self, request: &CommandRequest) -> Result<CommandResult, CommandError> {
+        if request.command() != &Command::Uninstall {
+            return Err(CommandError::new(
+                ExitCode::Config,
+                "the uninstall command is invalid",
+                "run `pkg uninstall`",
+            ));
+        }
+        if !cfg!(target_os = "linux") {
+            return Err(CommandError::new(
+                ExitCode::Config,
+                "uninstall is not available on this system",
+                "do not remove pkg files manually",
+            ));
+        }
+        if !Uid::effective().is_root() {
+            return Err(uninstall_command_error(
+                UninstallErrorCode::PrivilegeRequired,
+            ));
+        }
+        if !request.dry_run() {
+            confirm_destructive(request.yes(), "Uninstall pkg?")?;
+        }
+        let actions = uninstall_linux_production(request.dry_run())
+            .map_err(|error| uninstall_command_error(error.code()))?;
+        let (summary, status) = if actions == 0 {
+            ("pkg is not installed.", "absent")
+        } else if request.dry_run() {
+            ("pkg can be safely uninstalled.", "planned")
+        } else {
+            ("pkg is uninstalled.", "removed")
+        };
+        CommandResult::new(
+            summary,
+            serde_json::Map::from_iter([
+                ("actions".to_owned(), serde_json::json!(actions)),
+                ("status".to_owned(), serde_json::json!(status)),
+            ]),
+            Vec::new(),
+        )
+        .map_err(|_| {
+            CommandError::new(
+                ExitCode::EngineUnavailable,
+                "pkg could not report the uninstall result",
+                "run `pkg doctor`",
+            )
+        })
+    }
+}
+
+fn run_uninstall(cli: &Cli) -> ProcessExitCode {
+    match execute_command(
+        cli,
+        &mut UninstallEngine,
+        std::io::stdout(),
+        std::io::stderr(),
+    ) {
+        Ok(exit) => exit.into(),
+        Err(_) => ProcessExitCode::FAILURE,
+    }
+}
+
+fn uninstall_command_error(code: UninstallErrorCode) -> CommandError {
+    let (exit, message, hint) = match code {
+        UninstallErrorCode::PrivilegeRequired => (
+            ExitCode::Permission,
+            "administrator access is required",
+            "run `sudo pkg uninstall`",
+        ),
+        UninstallErrorCode::UnmanagedNix => (
+            ExitCode::UnmanagedNix,
+            "pkg found system state that it does not own",
+            "restore the verified pkg installation before you retry",
+        ),
+        UninstallErrorCode::InvalidManifest | UninstallErrorCode::OwnershipRefused => (
+            ExitCode::VerifyFail,
+            "pkg could not verify this installation",
+            "run `pkg doctor` before you retry",
+        ),
+        UninstallErrorCode::ServiceStopFailed => (
+            ExitCode::EngineUnavailable,
+            "pkg could not stop its services",
+            "run `pkg uninstall` again",
+        ),
+        UninstallErrorCode::CleanupIncomplete | UninstallErrorCode::ResidueRemaining => (
+            ExitCode::EngineUnavailable,
+            "pkg uninstall did not complete",
+            "run `pkg uninstall` again",
+        ),
+    };
+    CommandError::new(exit, message, hint)
 }
 
 fn observability_root(cli: &Cli) -> Option<std::path::PathBuf> {
@@ -167,5 +268,29 @@ fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
         ProcessExitCode::FAILURE
     } else {
         report.exit_code().into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uninstall_errors_are_stable_and_redacted() {
+        for code in [
+            UninstallErrorCode::InvalidManifest,
+            UninstallErrorCode::PrivilegeRequired,
+            UninstallErrorCode::OwnershipRefused,
+            UninstallErrorCode::UnmanagedNix,
+            UninstallErrorCode::ServiceStopFailed,
+            UninstallErrorCode::CleanupIncomplete,
+            UninstallErrorCode::ResidueRemaining,
+        ] {
+            let error = uninstall_command_error(code);
+            let public = format!("{} {}", error.message(), error.hint());
+            for forbidden in ["nix", "/opt/", "/var/", "http", "store path", "trust root"] {
+                assert!(!public.to_ascii_lowercase().contains(forbidden));
+            }
+        }
     }
 }

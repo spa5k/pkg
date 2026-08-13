@@ -288,11 +288,13 @@ impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
             Command::Rollback(args) => self.operations.rollback(args, policy),
             Command::Gc(args) => self.operations.gc(args, policy),
             Command::Repair(args) => self.operations.repair(args, policy),
-            Command::Doctor(_) | Command::Completion(_) => Err(CommandError::new(
-                ExitCode::Config,
-                "bootstrap command reached the private engine",
-                "report this product integration error",
-            )),
+            Command::Doctor(_) | Command::Uninstall | Command::Completion(_) => {
+                Err(CommandError::new(
+                    ExitCode::Config,
+                    "bootstrap command reached the private engine",
+                    "report this product integration error",
+                ))
+            }
         }
     }
 }

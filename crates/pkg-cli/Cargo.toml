@@ -22,6 +22,7 @@ clap_complete = "=4.6.9"
 nix = { version = "0.31.3", features = ["user"] }
 pkg-core = { path = "../pkg-core" }
 pkg-index = { path = "../pkg-index" }
+pkg-installer = { path = "../pkg-installer" }
 pkg-nix = { path = "../pkg-nix" }
 pkg-pipeline = { path = "../pkg-pipeline" }
 pkg-store = { path = "../pkg-store" }
@@ -30,6 +31,5 @@ serde_json = "=1.0.151"
 socket2 = "=0.6.5"
 
 [dev-dependencies]
-pkg-installer = { path = "../pkg-installer" }
 pkg-testkit = { path = "../pkg-testkit" }
 tempfile = "=3.27.0"

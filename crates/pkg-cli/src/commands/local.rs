@@ -251,8 +251,8 @@ impl CoreOperations for LocalStateOperations {
                 .into_parts()
                 .1);
         }
-        require_confirmation(
-            policy,
+        confirm_destructive(
+            policy.yes(),
             &format!("Remove {} package(s)?", args.packages().len()),
         )?;
         self.commit_state_edit(StateEditKind::Remove, |state| remove_state(state, args))
@@ -430,8 +430,8 @@ impl CoreOperations for LocalStateOperations {
             let verify_only = args.verify_only() || policy.dry_run();
             if !verify_only {
                 write_repair_warning()?;
-                require_confirmation(
-                    policy,
+                confirm_destructive(
+                    policy.yes(),
                     "Repair can temporarily make affected commands unavailable. Continue?",
                 )?;
             }
@@ -456,7 +456,7 @@ impl CoreOperations for LocalStateOperations {
                         .to_json_value()
                         .map_err(|_| install_commit_failed())?,
                 );
-                require_confirmation(policy, "Rebuild the damaged packages locally?")?;
+                confirm_destructive(policy.yes(), "Rebuild the damaged packages locally?")?;
                 let source = if policy.yes() {
                     ApprovalSource::AssumeYes
                 } else {
@@ -956,7 +956,7 @@ impl LocalStateOperations {
             let candidate =
                 plan_generation_prune(&active, history.snapshots(), generation, unix_now()?)
                     .map_err(|_| gc_failed())?;
-            require_confirmation(policy, &format!("Prune generation {generation}?"))?;
+            confirm_destructive(policy.yes(), &format!("Prune generation {generation}?"))?;
             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let maintenance = BrokerGcMaintenance {
                 broker: Mutex::new(&mut broker),
@@ -1294,8 +1294,8 @@ fn require_gc_confirmation(
         .map(|candidate| candidate.generation_id())
         .collect::<Vec<_>>()
         .join(", ");
-    require_confirmation(
-        policy,
+    confirm_destructive(
+        policy.yes(),
         &format!(
             "Prune {} generation(s) [{}] and run store GC (estimated reclaimable: {} bytes)?",
             plan.candidates().len(),
@@ -1465,7 +1465,7 @@ fn acquire_install_evidence(
         if !policy.yes() {
             render_build_preview(&preview)?;
         }
-        require_confirmation(policy, "Build the missing packages locally?")?;
+        confirm_destructive(policy.yes(), "Build the missing packages locally?")?;
         let source = if policy.yes() {
             ApprovalSource::AssumeYes
         } else {
@@ -1833,8 +1833,13 @@ fn ensure_generation_deletable(
     Ok(())
 }
 
-fn require_confirmation(policy: OperationPolicy, prompt: &str) -> Result<(), CommandError> {
-    if policy.yes() {
+/// Requests one terminal confirmation unless the caller supplied `--yes`.
+///
+/// # Errors
+///
+/// Returns a stable public refusal when confirmation is unavailable or denied.
+pub fn confirm_destructive(yes: bool, prompt: &str) -> Result<(), CommandError> {
+    if yes {
         return Ok(());
     }
     let stdin = io::stdin();

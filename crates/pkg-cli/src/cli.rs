@@ -226,6 +226,8 @@ pub enum Command {
     Install(InstallArgs),
     /// Remove packages and activate a new generation.
     Remove(RemoveArgs),
+    /// Remove pkg and its verified managed system assets.
+    Uninstall,
     /// List packages in the active generation.
     List(ListArgs),
     /// Compare installed packages with the accepted source revision.
@@ -258,6 +260,7 @@ impl Command {
             Self::Info(_) => "info",
             Self::Install(_) => "install",
             Self::Remove(_) => "remove",
+            Self::Uninstall => "uninstall",
             Self::List(_) => "list",
             Self::Outdated => "outdated",
             Self::Update(_) => "update",
@@ -775,6 +778,7 @@ mod tests {
             "info",
             "install",
             "remove",
+            "uninstall",
             "list",
             "outdated",
             "update",
@@ -802,6 +806,7 @@ mod tests {
             vec!["pkg", "info", "ripgrep"],
             vec!["pkg", "install", "ripgrep"],
             vec!["pkg", "remove", "ripgrep"],
+            vec!["pkg", "uninstall"],
             vec!["pkg", "list"],
             vec!["pkg", "outdated"],
             vec!["pkg", "update"],

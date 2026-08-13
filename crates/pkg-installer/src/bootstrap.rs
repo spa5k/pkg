@@ -1,6 +1,7 @@
 //! Product installer entry points for authenticated managed-Nix bundles.
 
 use std::{
+    ffi::OsStr,
     fs,
     os::unix::{
         ffi::OsStrExt,
@@ -11,23 +12,31 @@ use std::{
 
 use crate::{
     InstallError, LinuxAssetPresence, LinuxInstallAsset, LinuxInstallBackend, LinuxInstallJournal,
-    LinuxInstallJournalStorage, LinuxInstallMutation, LinuxInstallReport, MacOsBuildReadiness,
-    MacOsError, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallReport, install_macos,
+    LinuxInstallJournalStorage, LinuxInstallMutation, LinuxInstallReport, LinuxReleasePayloads,
+    MacOsBuildReadiness, MacOsError, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallReport,
+    ProductionLinuxUninstallBackend, UninstallError, UninstallErrorCode, execute_uninstall,
+    install_macos,
     installer::{install_linux_preflighted, recover_linux_install},
+    linux_uninstall::verify_linux_install_absent,
+    service::production_release_inputs,
+    uninstall::preflight_uninstall,
 };
+use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
 use pkg_channel::TrustedRoot;
 use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,
-    ManagedDaemon, ManagedRuntimeRemovalOutcome, OwnershipExpectation, ProvisionErrorCode,
-    ProvisionedBootstrap, ProvisionedBootstrapTransaction, authenticate_installer_bundle_blocking,
-    prepare_managed_runtime_removal_without_receipt,
+    InstallerRepository, ManagedDaemon, ManagedRuntimeRemovalOutcome, OwnershipExpectation,
+    ProvisionErrorCode, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
+    authenticate_installer_bundle_blocking, prepare_managed_runtime_removal_without_receipt,
     provision_authenticated_installer_bundle_transaction, reauthenticate_installer_bundle_blocking,
     recover_interrupted_provision_workspace, verify_provision_workspace_absent,
 };
 use sha2::{Digest as _, Sha256};
 
 const LINUX_AUTH_DATASTORE: &str = "/run/pkg-install-auth";
+const LINUX_CHANNEL_DATASTORE: &str = "/var/lib/pkg/broker-home/channel";
+const LINUX_SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
 
 /// Successful Linux installation and its authenticated runtime/index result.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,22 +109,7 @@ pub fn install_linux_from_bundle<'a>(
         return Err(InstallError::backend_failure());
     }
     backend.preflight_privilege()?;
-    let auth_datastore = prepare_linux_auth_datastore()?;
-    // This root-owned datastore exists only for strict authentication before
-    // persistent mutation. Final reauthentication uses the durable datastore.
-    let auth_request = InstallerProvisionRequest {
-        repository: request.repository,
-        datastore: &auth_datastore,
-        installation_root: request.installation_root,
-        scratch_parent: request.scratch_parent,
-        system: request.system,
-        groups: request.groups,
-    };
-    let bundle = authenticate_installer_bundle_blocking(trusted_root.clone(), &auth_request)
-        .map_err(|_| InstallError::backend_failure())?;
-    // The capability retains verified target snapshots. Tough metadata is no
-    // longer needed in this temporary datastore after authentication.
-    prepare_linux_auth_datastore_at(&auth_datastore, 0, 0)?;
+    let bundle = authenticate_linux_bundle(trusted_root.clone(), request)?;
     backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
@@ -185,18 +179,101 @@ pub fn install_linux_from_bundle<'a>(
     })
 }
 
+/// Authenticates the fixed production release and uninstalls its Linux assets.
+///
+/// A dry run performs all read-only ownership and foreign-state checks but no
+/// service, account, store, or installed-file mutation.
+///
+/// # Errors
+///
+/// Returns a stable redacted uninstall failure.
+pub fn uninstall_linux_production(dry_run: bool) -> Result<usize, UninstallError> {
+    if !nix::unistd::Uid::effective().is_root() {
+        return Err(UninstallError::new(UninstallErrorCode::PrivilegeRequired));
+    }
+    let system = match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("x86_64", "linux") => System::X8664Linux,
+        ("aarch64", "linux") => System::Aarch64Linux,
+        (_, _) => return Err(UninstallError::backend_failure()),
+    };
+    if verify_linux_install_absent().is_ok() {
+        return Ok(0);
+    }
+
+    let groups = crate::plan_linux_group_bindings()
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    // These URLs are compiled into this installed CLI and name its immutable
+    // release publication. They do not follow the latest product channel.
+    let (trusted_root, metadata_url, targets_url) = production_release_inputs()
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let request = InstallerProvisionRequest {
+        repository: InstallerRepository::Remote {
+            metadata_url: &metadata_url,
+            targets_url: &targets_url,
+        },
+        datastore: Path::new(LINUX_CHANNEL_DATASTORE),
+        installation_root: Path::new("/"),
+        scratch_parent: Path::new(LINUX_SCRATCH_PARENT),
+        system,
+        groups,
+    };
+    let bundle = authenticate_linux_bundle(trusted_root, &request)
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let payloads = LinuxReleasePayloads::from_authenticated_bundle(bundle.installer_payloads())
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let mut backend = ProductionLinuxUninstallBackend::new(
+        bundle.managed_nix_config(),
+        bundle.ownership_expectation(),
+        payloads,
+    )?;
+    let manifest = backend
+        .installed_manifest()?
+        .ok_or_else(|| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let plan = crate::plan_uninstall(&manifest)?;
+    if dry_run {
+        preflight_uninstall(&manifest, &plan, &mut backend)?;
+        Ok(plan.actions().len())
+    } else {
+        execute_uninstall(&manifest, &plan, &mut backend)
+            .map(crate::UninstallReport::completed_actions)
+    }
+}
+
+fn authenticate_linux_bundle(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, InstallError> {
+    let auth_datastore = prepare_linux_auth_datastore()?;
+    let auth_request = InstallerProvisionRequest {
+        repository: request.repository,
+        datastore: &auth_datastore,
+        installation_root: request.installation_root,
+        scratch_parent: request.scratch_parent,
+        system: request.system,
+        groups: request.groups,
+    };
+    let result = authenticate_installer_bundle_blocking(trusted_root, &auth_request)
+        .map_err(|_| InstallError::backend_failure());
+    remove_linux_auth_datastore(&auth_datastore)?;
+    result
+}
+
 fn prepare_linux_auth_datastore() -> Result<PathBuf, InstallError> {
     let uid = nix::unistd::Uid::effective().as_raw();
     let gid = nix::unistd::Gid::effective().as_raw();
     if uid != 0 || gid != 0 {
         return Err(InstallError::backend_failure());
     }
-    let path = PathBuf::from(LINUX_AUTH_DATASTORE);
+    let root = PathBuf::from(LINUX_AUTH_DATASTORE);
+    prepare_private_directory_at(&root, uid, gid)?;
+    remove_legacy_linux_auth_datastore_files(&root, uid, gid)?;
+    remove_stale_linux_auth_datastores(&root, uid, gid)?;
+    let path = root.join(std::process::id().to_string());
     prepare_linux_auth_datastore_at(&path, uid, gid)?;
     Ok(path)
 }
 
-fn prepare_linux_auth_datastore_at(
+fn prepare_private_directory_at(
     path: &Path,
     expected_user: u32,
     expected_group: u32,
@@ -221,39 +298,88 @@ fn prepare_linux_auth_datastore_at(
     {
         return Err(InstallError::backend_failure());
     }
+    Ok(())
+}
+
+fn remove_stale_linux_auth_datastores(
+    root: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    let own_pid = std::process::id();
+    for entry in fs::read_dir(root).map_err(|_| InstallError::backend_failure())? {
+        let entry = entry.map_err(|_| InstallError::backend_failure())?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| InstallError::backend_failure())?;
+        let pid = name
+            .parse::<u32>()
+            .ok()
+            .filter(|pid| *pid > 0)
+            .ok_or_else(InstallError::backend_failure)?;
+        if pid != own_pid && process_is_alive(pid)? {
+            continue;
+        }
+        remove_linux_auth_datastore_at(&entry.path(), expected_user, expected_group)?;
+    }
+    Ok(())
+}
+
+fn remove_legacy_linux_auth_datastore_files(
+    root: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(root).map_err(|_| InstallError::backend_failure())? {
+        let entry = entry.map_err(|_| InstallError::backend_failure())?;
+        let metadata =
+            fs::symlink_metadata(entry.path()).map_err(|_| InstallError::backend_failure())?;
+        if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+            continue;
+        }
+        validate_linux_auth_datastore_file(
+            &entry.file_name(),
+            &metadata,
+            expected_user,
+            expected_group,
+        )?;
+        files.push(entry.path());
+    }
+    for path in &files {
+        fs::remove_file(path).map_err(|_| InstallError::backend_failure())?;
+    }
+    if !files.is_empty() {
+        fs::File::open(root)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| InstallError::backend_failure())?;
+    }
+    Ok(())
+}
+
+fn process_is_alive(pid: u32) -> Result<bool, InstallError> {
+    let pid = i32::try_from(pid).map_err(|_| InstallError::backend_failure())?;
+    match kill(Pid::from_raw(pid), None) {
+        Ok(()) | Err(Errno::EPERM) => Ok(true),
+        Err(Errno::ESRCH) => Ok(false),
+        Err(_) => Err(InstallError::backend_failure()),
+    }
+}
+
+fn prepare_linux_auth_datastore_at(
+    path: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    prepare_private_directory_at(path, expected_user, expected_group)?;
     let mut removed_metadata = false;
     for entry in fs::read_dir(path).map_err(|_| InstallError::backend_failure())? {
         let entry = entry.map_err(|_| InstallError::backend_failure())?;
         let name = entry.file_name();
         let metadata =
             fs::symlink_metadata(entry.path()).map_err(|_| InstallError::backend_failure())?;
-        let exact_restart_file =
-            name == "pkg-channel.lock" || name == "accepted-channel.initializing";
-        let metadata_limit = match name.to_str() {
-            Some("root.json") => Some(64 * 1024),
-            Some("timestamp.json" | "snapshot.json") => Some(32 * 1024),
-            Some("targets.json") => Some(256 * 1024),
-            Some("latest_known_time.json") => Some(1024),
-            _ => None,
-        };
-        let mode = metadata.permissions().mode() & 0o7777;
-        let invalid_metadata = metadata_limit.is_some_and(|limit| {
-            mode & !0o644 != 0
-                || mode & 0o600 != 0o600
-                || metadata.len() == 0
-                || metadata.len() > limit
-        });
-        if !metadata.file_type().is_file()
-            || metadata.file_type().is_symlink()
-            || metadata.uid() != expected_user
-            || metadata.gid() != expected_group
-            || (exact_restart_file && (mode != 0o600 || metadata.len() != 0))
-            || invalid_metadata
-            || (!exact_restart_file && metadata_limit.is_none())
-        {
-            return Err(InstallError::backend_failure());
-        }
-        if metadata_limit.is_some() {
+        if validate_linux_auth_datastore_file(&name, &metadata, expected_user, expected_group)? {
             fs::remove_file(entry.path()).map_err(|_| InstallError::backend_failure())?;
             removed_metadata = true;
         }
@@ -264,6 +390,71 @@ fn prepare_linux_auth_datastore_at(
             .map_err(|_| InstallError::backend_failure())?;
     }
     Ok(())
+}
+
+fn validate_linux_auth_datastore_file(
+    name: &OsStr,
+    metadata: &fs::Metadata,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<bool, InstallError> {
+    let exact_restart_file = name == "pkg-channel.lock" || name == "accepted-channel.initializing";
+    let metadata_limit = match name.to_str() {
+        Some("root.json") => Some(64 * 1024),
+        Some("timestamp.json" | "snapshot.json") => Some(32 * 1024),
+        Some("targets.json") => Some(256 * 1024),
+        Some("latest_known_time.json") => Some(1024),
+        _ => None,
+    };
+    let mode = metadata.permissions().mode() & 0o7777;
+    let invalid_metadata = metadata_limit.is_some_and(|limit| {
+        mode & !0o644 != 0 || mode & 0o600 != 0o600 || metadata.len() == 0 || metadata.len() > limit
+    });
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != expected_user
+        || metadata.gid() != expected_group
+        || (exact_restart_file && (mode != 0o600 || metadata.len() != 0))
+        || invalid_metadata
+        || (!exact_restart_file && metadata_limit.is_none())
+    {
+        return Err(InstallError::backend_failure());
+    }
+    Ok(metadata_limit.is_some())
+}
+
+fn remove_linux_auth_datastore(path: &Path) -> Result<(), InstallError> {
+    remove_linux_auth_datastore_at(path, 0, 0)?;
+    let Some(root) = path.parent() else {
+        return Err(InstallError::backend_failure());
+    };
+    match fs::remove_dir(root) {
+        Ok(()) => {
+            let parent = root.parent().ok_or_else(InstallError::backend_failure)?;
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| InstallError::backend_failure())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => Ok(()),
+        Err(_) => Err(InstallError::backend_failure()),
+    }
+}
+
+fn remove_linux_auth_datastore_at(
+    path: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    prepare_linux_auth_datastore_at(path, expected_user, expected_group)?;
+    for entry in fs::read_dir(path).map_err(|_| InstallError::backend_failure())? {
+        let entry = entry.map_err(|_| InstallError::backend_failure())?;
+        fs::remove_file(entry.path()).map_err(|_| InstallError::backend_failure())?;
+    }
+    fs::remove_dir(path).map_err(|_| InstallError::backend_failure())?;
+    let parent = path.parent().ok_or_else(InstallError::backend_failure)?;
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| InstallError::backend_failure())
 }
 
 fn recover_linux_bundle_install(
@@ -1066,6 +1257,27 @@ mod tests {
         }
         prepare_linux_auth_datastore_at(&exact, uid, gid)?;
         assert_eq!(fs::read_dir(&exact)?.count(), 2);
+        remove_linux_auth_datastore_at(&exact, uid, gid)?;
+        assert!(!exact.exists());
+
+        let legacy_pool = root.path().join("legacy-pool");
+        prepare_private_directory_at(&legacy_pool, uid, gid)?;
+        fs::File::options()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(legacy_pool.join("pkg-channel.lock"))?;
+        let legacy_metadata = legacy_pool.join("root.json");
+        fs::write(&legacy_metadata, b"{}")?;
+        fs::set_permissions(&legacy_metadata, fs::Permissions::from_mode(0o644))?;
+        remove_legacy_linux_auth_datastore_files(&legacy_pool, uid, gid)?;
+        assert_eq!(fs::read_dir(&legacy_pool)?.count(), 0);
+
+        let legacy_foreign = root.path().join("legacy-foreign");
+        prepare_private_directory_at(&legacy_foreign, uid, gid)?;
+        fs::write(legacy_foreign.join("foreign"), [])?;
+        assert!(remove_legacy_linux_auth_datastore_files(&legacy_foreign, uid, gid).is_err());
+        assert!(legacy_foreign.join("foreign").exists());
 
         let unknown = root.path().join("unknown");
         prepare_linux_auth_datastore_at(&unknown, uid, gid)?;
@@ -1080,6 +1292,23 @@ mod tests {
         let linked = root.path().join("linked");
         symlink(root.path().join("missing"), &linked)?;
         assert!(prepare_linux_auth_datastore_at(&linked, uid, gid).is_err());
+
+        let pool = root.path().join("pool");
+        prepare_private_directory_at(&pool, uid, gid)?;
+        let stale = pool.join(std::process::id().to_string());
+        prepare_linux_auth_datastore_at(&stale, uid, gid)?;
+        fs::File::options()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(stale.join("pkg-channel.lock"))?;
+        remove_stale_linux_auth_datastores(&pool, uid, gid)?;
+        assert!(!stale.exists());
+        assert!(process_is_alive(std::process::id())?);
+
+        let foreign = pool.join("foreign");
+        prepare_private_directory_at(&foreign, uid, gid)?;
+        assert!(remove_stale_linux_auth_datastores(&pool, uid, gid).is_err());
         Ok(())
     }
 

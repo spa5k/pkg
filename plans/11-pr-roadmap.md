@@ -925,9 +925,10 @@ flowchart TD
   preservation, bounded root GC, authenticated managed-runtime removal, state ownership markers,
   and mount/identity defenses are implemented. macOS unit checks, privileged Linux unit/lint and
   same-filesystem bind-mount tests, and the official Nix 2.34.8 clean-container
-  provision→rollback→re-provision→daemon→GC→remove test pass. Signed commit and a future packaged
-  CLI `pkg uninstall --dry-run`/`doctor --post-uninstall` UX test remain; that CLI wiring belongs
-  to the PR-36 production connector rather than this backend slice.
+  provision→rollback→re-provision→daemon→GC→remove test pass. The production `pkg uninstall`
+  router now reauthenticates the fixed release, reopens the root-owned manifest, runs the same
+  closed preflight for `--dry-run`, and keeps the manifest until all earlier cleanup succeeds.
+  The packaged clean-host `doctor --post-uninstall` UX proof remains.
 - **Purpose:** remove only recorded product assets; dry-run preview; refuse to touch
   unmanaged Nix; verify zero privileged residue (`08` T-UNINST-1/2/3).
 - **Owns:** `crates/pkg-installer/src/uninstall.rs` + tests.
@@ -1693,13 +1694,16 @@ flowchart TD
   roots are empty. Foreign store objects preserve all `/nix` state. Cleanup stays best-effort after
   its hard barrier while identity replacement still stops immediately. Unit tests, strict Clippy,
   independent P1 review, and the official Nix 2.34.8 privileged Linux container pass. The production
-  uninstall action router remains open before clean-host install/re-run/uninstall can be claimed.
+  uninstall action router and public `pkg uninstall` command are now connected. They authenticate
+  only the compiled release repository, revalidate the installed receipt and assets, preserve the
+  recovery manifest until final cleanup, and return redacted product errors. Clean-host
+  install/re-run/uninstall evidence still remains before that product flow can be claimed.
   Uninstall garbage collection now uses a dedicated root-only executor after service shutdown. It
   accepts no caller-selected arguments, validates the bounded dead-path report before deletion, and
   invokes the authenticated Nix 2.34.8 `nix-store` facade only with `--store local`. The normal test
   suite and a privileged clean Linux arm64 container prove this path against the official runtime.
   This resolves plan 07 Q7.7 without claiming the still-missing macOS privileged production backend.
-  This does **not** yet claim the full PR: production installer completion, the authenticated
+  This does **not** yet claim the full PR: production release artifact publication, the authenticated
   Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real
   parity, and self-host the product on Real Nix end-to-end (`09` §7).

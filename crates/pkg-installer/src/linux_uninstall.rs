@@ -13,6 +13,7 @@ use pkg_nix::{
 use rustix::fs::{Mode, OFlags, open, openat};
 use rustix::io::Errno;
 
+use crate::linux_accounts::verify_linux_accounts_absent;
 use crate::linux_user_cleanup::LinuxUserCleanup;
 use crate::{
     LinuxAccountManager, LinuxAssetKind, LinuxFilesystemManager, LinuxInstallAsset,
@@ -25,6 +26,7 @@ const HELPER_HOME: &str = "/var/lib/pkg/helper-home";
 const MANAGED_RUNTIME_ROOT: &str = "/opt/pkg/nix";
 
 trait LinuxUninstallRuntime {
+    fn installed_manifest(&mut self) -> Result<Option<UninstallManifest>, UninstallError>;
     fn preflight_privilege(&mut self) -> Result<(), UninstallError>;
     fn verify_ownership(&mut self, manifest: &UninstallManifest) -> Result<(), UninstallError>;
     fn preflight_unmanaged_nix(&mut self) -> Result<(), UninstallError>;
@@ -71,6 +73,15 @@ impl ProductionLinuxUninstallBackend {
             runtime: Box::new(runtime),
             services_stopped: false,
         })
+    }
+
+    /// Reads and verifies the installed uninstall manifest without mutation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the fixed manifest path or metadata is unsafe.
+    pub fn installed_manifest(&mut self) -> Result<Option<UninstallManifest>, UninstallError> {
+        self.runtime.installed_manifest()
     }
 
     #[cfg(test)]
@@ -352,6 +363,12 @@ impl ProductionRuntime {
 }
 
 impl LinuxUninstallRuntime for ProductionRuntime {
+    fn installed_manifest(&mut self) -> Result<Option<UninstallManifest>, UninstallError> {
+        self.filesystem
+            .existing_uninstall_manifest()
+            .map_err(|_| UninstallError::backend_failure())
+    }
+
     fn preflight_privilege(&mut self) -> Result<(), UninstallError> {
         if Uid::effective().is_root() && Gid::effective().as_raw() == 0 {
             Ok(())
@@ -484,6 +501,25 @@ fn manifest_preserves_nix(manifest: &UninstallManifest) -> Result<bool, Uninstal
         .ok_or_else(UninstallError::backend_failure)
 }
 
+pub fn verify_linux_install_absent() -> Result<(), UninstallError> {
+    let mut services =
+        LinuxSystemdManager::production().map_err(|_| UninstallError::backend_failure())?;
+    if services
+        .classify_activation()
+        .map_err(|_| UninstallError::backend_failure())?
+    {
+        return Err(UninstallError::backend_failure());
+    }
+    verify_linux_accounts_absent().map_err(|_| UninstallError::backend_failure())?;
+    for asset in linux_install_assets() {
+        if !LinuxAccountManager::handles(*asset) {
+            verify_fixed_path_absent(Path::new(asset.path_or_name()))?;
+        }
+    }
+    verify_fixed_path_absent(Path::new(MANAGED_RUNTIME_ROOT))?;
+    verify_fixed_path_absent(Path::new("/run/pkg-install-auth"))
+}
+
 fn verify_fixed_path_absent(path: &Path) -> Result<(), UninstallError> {
     if !path.is_absolute() || path == Path::new("/") {
         return Err(UninstallError::backend_failure());
@@ -545,6 +581,10 @@ mod tests {
     struct FakeRuntime(Rc<RefCell<FakeState>>);
 
     impl LinuxUninstallRuntime for FakeRuntime {
+        fn installed_manifest(&mut self) -> Result<Option<UninstallManifest>, UninstallError> {
+            Ok(None)
+        }
+
         fn preflight_privilege(&mut self) -> Result<(), UninstallError> {
             Ok(())
         }

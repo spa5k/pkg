@@ -9,7 +9,14 @@ fn help_exits_success_and_lists_the_product_commands() {
     let output = pkg().arg("--help").output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    for verb in ["doctor", "install", "upgrade", "rollback", "repair"] {
+    for verb in [
+        "doctor",
+        "install",
+        "upgrade",
+        "rollback",
+        "repair",
+        "uninstall",
+    ] {
         assert!(stdout.contains(verb));
     }
 }
@@ -186,4 +193,19 @@ fn semantic_usage_failure_uses_the_selected_machine_format() {
     assert!(output.stderr.is_empty());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["error"]["symbol"], "USAGE");
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn uninstall_refuses_an_unsupported_host_before_privilege() {
+    let output = pkg()
+        .args(["--json", "--dry-run", "uninstall"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(78));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        value["error"]["message"],
+        "uninstall is not available on this system"
+    );
 }

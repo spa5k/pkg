@@ -278,8 +278,13 @@ fn run_broker_listener(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn production_channel(datastore: &Path) -> Result<ChannelClient, ServiceError> {
-    channel_from_compiled_release(
-        datastore,
+    let (trusted_root, metadata_url, targets_url) = production_release_inputs()?;
+    ChannelClient::new(trusted_root, metadata_url, targets_url, datastore)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))
+}
+
+pub fn production_release_inputs() -> Result<(TrustedRoot, Url, Url), ServiceError> {
+    release_inputs(
         RELEASE_TUF_ROOT_JSON,
         RELEASE_CHANNEL_METADATA_URL,
         RELEASE_CHANNEL_TARGETS_URL,
@@ -287,12 +292,24 @@ fn production_channel(datastore: &Path) -> Result<ChannelClient, ServiceError> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(test)]
 fn channel_from_compiled_release(
     datastore: &Path,
     root_json: Option<&'static str>,
     metadata_url: Option<&str>,
     targets_url: Option<&str>,
 ) -> Result<ChannelClient, ServiceError> {
+    let (trusted_root, metadata_url, targets_url) =
+        release_inputs(root_json, metadata_url, targets_url)?;
+    ChannelClient::new(trusted_root, metadata_url, targets_url, datastore)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))
+}
+
+fn release_inputs(
+    root_json: Option<&'static str>,
+    metadata_url: Option<&str>,
+    targets_url: Option<&str>,
+) -> Result<(TrustedRoot, Url, Url), ServiceError> {
     let root_json = required_release_value(root_json)?;
     let metadata_url = required_release_value(metadata_url)?;
     let targets_url = required_release_value(targets_url)?;
@@ -302,8 +319,7 @@ fn channel_from_compiled_release(
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
     let targets_url =
         Url::parse(targets_url).map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    ChannelClient::new(trusted_root, metadata_url, targets_url, datastore)
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))
+    Ok((trusted_root, metadata_url, targets_url))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

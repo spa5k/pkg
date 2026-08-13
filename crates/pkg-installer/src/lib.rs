@@ -45,7 +45,7 @@ pub use assets::{
 };
 pub use bootstrap::{
     LinuxBundleInstallReport, MacOsBundleInstallReport, install_linux_from_bundle,
-    install_macos_from_bundle,
+    install_macos_from_bundle, uninstall_linux_production,
 };
 pub use broker::{
     BrokerTransportError, BrokerTransportErrorCode, ChannelRefreshDispatch,
