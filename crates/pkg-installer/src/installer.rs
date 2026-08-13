@@ -3,6 +3,9 @@
 use crate::{
     LinuxAssetPresence,
     assets::{LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets},
+    linux_install_journal::{
+        LinuxInstallJournal, LinuxInstallMutation, LinuxInstallRecoveryAction,
+    },
 };
 use pkg_core::System;
 use pkg_nix::{AuthenticatedManagedNixConfig, OwnershipExpectation};
@@ -111,6 +114,39 @@ pub trait LinuxInstallBackend {
         &mut self,
         asset: LinuxInstallAsset,
     ) -> Result<LinuxAssetPresence, InstallError>;
+
+    /// Removes one exact fixed asset during authenticated restart recovery.
+    ///
+    /// This operation must not use in-memory attempt ownership. It must reopen
+    /// and verify the current object before mutation. Absence is safe.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error when the object is unsafe, changed, or
+    /// cannot be removed.
+    fn recover_asset(&mut self, _asset: LinuxInstallAsset) -> Result<(), InstallError> {
+        Err(InstallError::backend_failure())
+    }
+
+    /// Removes an interrupted authenticated runtime during restart recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error when exact runtime ownership or cleanup
+    /// cannot be proved.
+    fn recover_managed_runtime(&mut self) -> Result<(), InstallError> {
+        Err(InstallError::backend_failure())
+    }
+
+    /// Stops and disables the fixed product services during restart recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error when service state cannot be verified
+    /// or restored to absence.
+    fn recover_services(&mut self) -> Result<(), InstallError> {
+        Err(InstallError::backend_failure())
+    }
 
     /// Ensures one fixed artifact exists and returns whether this attempt created it.
     ///
@@ -330,6 +366,63 @@ pub fn install_linux(
     result
 }
 
+/// Reverts one interrupted authenticated Linux installation from durable state.
+///
+/// This uses stateless, verified recovery operations. It does not use the
+/// in-memory rollback records from the process that created the journal.
+///
+/// # Errors
+///
+/// Returns a redacted backend failure when any current object is unsafe,
+/// changed, or cannot be restored to absence.
+pub fn recover_linux_install(
+    journal: &LinuxInstallJournal,
+    backend: &mut dyn LinuxInstallBackend,
+) -> Result<(), InstallError> {
+    for action in journal.recovery_actions() {
+        let (mutation, revalidate) = match action {
+            LinuxInstallRecoveryAction::RevalidateIntended(mutation) => (mutation, true),
+            LinuxInstallRecoveryAction::RevertCreated(mutation) => (mutation, false),
+        };
+        match mutation {
+            LinuxInstallMutation::Asset { id } => {
+                let asset = asset_by_id(id)?;
+                if !revalidate || backend.classify_asset(asset)? == LinuxAssetPresence::ExactPresent
+                {
+                    backend.recover_asset(asset)?;
+                }
+            }
+            LinuxInstallMutation::ManagedRuntime => backend.recover_managed_runtime()?,
+            LinuxInstallMutation::Services => {
+                require_exact_service_assets(backend)?;
+                backend.recover_services()?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn asset_by_id(id: &str) -> Result<LinuxInstallAsset, InstallError> {
+    linux_install_assets()
+        .iter()
+        .copied()
+        .find(|asset| asset.id() == id)
+        .ok_or_else(InstallError::backend_failure)
+}
+
+fn require_exact_service_assets(backend: &mut dyn LinuxInstallBackend) -> Result<(), InstallError> {
+    for asset in linux_install_assets()
+        .iter()
+        .copied()
+        .filter(|asset| static_asset_contents(*asset).is_some())
+    {
+        if backend.classify_asset(asset)? != LinuxAssetPresence::ExactPresent {
+            return Err(InstallError::backend_failure());
+        }
+    }
+    Ok(())
+}
+
 fn publish_linux_receipt(
     backend: &mut dyn LinuxInstallBackend,
     mutations: &mut Vec<InstallMutation>,
@@ -370,6 +463,7 @@ fn static_asset_contents(asset: LinuxInstallAsset) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkg_core::state::Digest;
     use std::{collections::BTreeSet, error::Error, io};
 
     struct FakeBackend {
@@ -382,6 +476,7 @@ mod tests {
         rollback_failures: BTreeSet<&'static str>,
         fail_health_check: bool,
         fail_service_activation: bool,
+        fail_recover_runtime: bool,
     }
 
     impl FakeBackend {
@@ -396,6 +491,7 @@ mod tests {
                 rollback_failures: BTreeSet::new(),
                 fail_health_check: false,
                 fail_service_activation: false,
+                fail_recover_runtime: false,
             }
         }
 
@@ -413,6 +509,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn journal_before_runtime(digest: u8) -> Result<LinuxInstallJournal, Box<dyn Error>> {
+        let mut journal =
+            LinuxInstallJournal::new(System::X8664Linux, Digest::from_bytes([digest; 32]))?;
+        for asset in linux_install_assets()
+            .iter()
+            .filter(|asset| asset.kind() != LinuxAssetKind::File)
+        {
+            journal.record_preexisting(LinuxInstallMutation::Asset {
+                id: asset.id().to_owned(),
+            })?;
+        }
+        journal.record_preexisting(LinuxInstallMutation::Asset {
+            id: "nix-config".to_owned(),
+        })?;
+        Ok(journal)
+    }
+
+    fn journal_before_services(digest: u8) -> Result<LinuxInstallJournal, Box<dyn Error>> {
+        let mut journal = journal_before_runtime(digest)?;
+        journal.record_preexisting(LinuxInstallMutation::ManagedRuntime)?;
+        for asset in linux_install_assets().iter().filter(|asset| {
+            asset.kind() == LinuxAssetKind::File
+                && !matches!(asset.id(), "nix-config" | "uninstall-manifest")
+        }) {
+            journal.record_preexisting(LinuxInstallMutation::Asset {
+                id: asset.id().to_owned(),
+            })?;
+        }
+        Ok(journal)
     }
 
     impl LinuxInstallBackend for FakeBackend {
@@ -451,6 +578,27 @@ mod tests {
             } else {
                 LinuxAssetPresence::Absent
             })
+        }
+
+        fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
+            self.existing.remove(asset.id());
+            self.rolled_back.push(asset.id());
+            Ok(())
+        }
+
+        fn recover_managed_runtime(&mut self) -> Result<(), InstallError> {
+            if self.fail_recover_runtime {
+                return Err(InstallError::backend_failure());
+            }
+            self.states.remove("runtime");
+            self.rollback_events.push("recover-runtime");
+            Ok(())
+        }
+
+        fn recover_services(&mut self) -> Result<(), InstallError> {
+            self.states.remove("services");
+            self.rollback_events.push("recover-services");
+            Ok(())
         }
 
         fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
@@ -538,6 +686,111 @@ mod tests {
         let second = install_linux(System::X8664Linux, &mut backend)?;
         assert_eq!(second.created_artifacts(), 0);
         assert_eq!(second.existing_artifacts(), linux_install_assets().len());
+        Ok(())
+    }
+
+    #[test]
+    fn restart_recovery_removes_only_revalidated_created_assets() -> Result<(), Box<dyn Error>> {
+        let asset = linux_install_assets()
+            .iter()
+            .copied()
+            .find(|asset| asset.kind() != LinuxAssetKind::File)
+            .ok_or_else(|| io::Error::other("missing fixed asset"))?;
+        let mutation = LinuxInstallMutation::Asset {
+            id: asset.id().to_owned(),
+        };
+        let mut journal =
+            LinuxInstallJournal::new(System::X8664Linux, Digest::from_bytes([0x44; 32]))?;
+        journal.intend(mutation)?;
+        journal.complete_created()?;
+        let mut backend = FakeBackend::clean();
+        backend.existing.insert(asset.id());
+
+        recover_linux_install(&journal, &mut backend)?;
+
+        assert!(!backend.existing.contains(asset.id()));
+        assert_eq!(backend.rolled_back, [asset.id()]);
+        Ok(())
+    }
+
+    #[test]
+    fn restart_recovery_preserves_absent_intended_asset() -> Result<(), Box<dyn Error>> {
+        let asset = linux_install_assets()
+            .iter()
+            .copied()
+            .find(|asset| asset.kind() != LinuxAssetKind::File)
+            .ok_or_else(|| io::Error::other("missing fixed asset"))?;
+        let mut journal =
+            LinuxInstallJournal::new(System::X8664Linux, Digest::from_bytes([0x55; 32]))?;
+        journal.intend(LinuxInstallMutation::Asset {
+            id: asset.id().to_owned(),
+        })?;
+        let mut backend = FakeBackend::clean();
+
+        recover_linux_install(&journal, &mut backend)?;
+
+        assert!(backend.rolled_back.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn restart_recovery_refuses_unconnected_runtime_cleanup() -> Result<(), Box<dyn Error>> {
+        let mut journal = journal_before_runtime(0x66)?;
+        journal.intend(LinuxInstallMutation::ManagedRuntime)?;
+        let mut backend = FakeBackend::clean();
+        backend.states.insert("runtime");
+        backend.fail_recover_runtime = true;
+
+        let error = match recover_linux_install(&journal, &mut backend) {
+            Ok(()) => {
+                return Err(io::Error::other("runtime recovery unexpectedly succeeded").into());
+            }
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code(), InstallErrorCode::BackendFailure);
+        assert!(backend.states.contains("runtime"));
+        Ok(())
+    }
+
+    #[test]
+    fn restart_recovery_deactivates_only_with_exact_service_assets() -> Result<(), Box<dyn Error>> {
+        let mut journal = journal_before_services(0x77)?;
+        journal.intend(LinuxInstallMutation::Services)?;
+        let mut backend = FakeBackend::clean();
+        backend.states.insert("services");
+        backend.existing.extend(
+            linux_install_assets()
+                .iter()
+                .filter(|asset| static_asset_contents(**asset).is_some())
+                .map(|asset| asset.id()),
+        );
+
+        recover_linux_install(&journal, &mut backend)?;
+
+        assert!(!backend.states.contains("services"));
+        assert_eq!(backend.rollback_events, ["recover-services"]);
+        Ok(())
+    }
+
+    #[test]
+    fn restart_recovery_preserves_services_when_a_unit_is_not_exact() -> Result<(), Box<dyn Error>>
+    {
+        let mut journal = journal_before_services(0x88)?;
+        journal.intend(LinuxInstallMutation::Services)?;
+        let mut backend = FakeBackend::clean();
+        backend.states.insert("services");
+
+        let error = match recover_linux_install(&journal, &mut backend) {
+            Ok(()) => {
+                return Err(io::Error::other("service recovery unexpectedly succeeded").into());
+            }
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code(), InstallErrorCode::BackendFailure);
+        assert!(backend.states.contains("services"));
+        assert!(backend.rollback_events.is_empty());
         Ok(())
     }
 

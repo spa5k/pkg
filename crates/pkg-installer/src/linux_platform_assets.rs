@@ -268,6 +268,26 @@ impl LinuxPlatformAssetManager {
         }
     }
 
+    /// Reopens, verifies, and removes one exact fixed asset after a process restart.
+    ///
+    /// Absence is safe. This method does not depend on in-memory attempt state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend failure when the current object is unsafe,
+    /// changed, or cannot be removed.
+    pub fn remove_verified_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
+        if LinuxAccountManager::handles(asset) {
+            self.accounts
+                .remove_verified_asset(asset)
+                .map_err(|_| InstallError::backend_failure())
+        } else {
+            self.ensure_filesystem()?
+                .remove_verified_asset(asset)
+                .map_err(|_| InstallError::backend_failure())
+        }
+    }
+
     fn ensure_filesystem(&mut self) -> Result<&mut LinuxFilesystemManager, InstallError> {
         if self.filesystem.is_none() {
             let broker_uid = self

@@ -129,6 +129,22 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         self.assets.classify_asset(asset)
     }
 
+    fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
+        self.assets.remove_verified_asset(asset)?;
+        if Self::is_systemd_unit(asset) {
+            self.services
+                .reload_units()
+                .map_err(|_| InstallError::backend_failure())?;
+        }
+        Ok(())
+    }
+
+    fn recover_services(&mut self) -> Result<(), InstallError> {
+        self.services
+            .deactivate_for_uninstall()
+            .map_err(|_| InstallError::backend_failure())
+    }
+
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
         self.assets.ensure_asset(asset)
     }

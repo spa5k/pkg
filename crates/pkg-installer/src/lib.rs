@@ -60,6 +60,7 @@ pub use helper::{
 };
 pub use installer::{
     InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallReport, install_linux,
+    recover_linux_install,
 };
 pub use linux_accounts::{
     LinuxAccountError, LinuxAccountErrorCode, LinuxAccountManager, plan_linux_group_bindings,

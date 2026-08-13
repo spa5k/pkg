@@ -330,6 +330,16 @@ impl ManagedDaemon for ProductionManagedDaemon {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0);
+        #[cfg(target_os = "linux")]
+        {
+            let installer_pid = std::process::id();
+            // SAFETY: `arm_parent_death_signal` only invokes async-signal-safe
+            // rustix syscall wrappers and allocates nothing, so it satisfies the
+            // `pre_exec` contract for code run after `fork` and before `exec`.
+            unsafe {
+                command.pre_exec(move || arm_parent_death_signal(installer_pid));
+            }
+        }
         let child = command
             .spawn()
             .map_err(|_| DaemonError::new(DaemonErrorCode::StartFailed))?;
@@ -409,6 +419,38 @@ impl ProductionManagedDaemon {
             .err()
             .unwrap_or_else(|| DaemonError::new(DaemonErrorCode::ReadinessFailed))
     }
+}
+
+/// Pure decision behind the parent-death race guard for the daemon child.
+///
+/// `PR_SET_PDEATHSIG` fires on the death of whatever process is the child's
+/// parent at the moment the signal is armed. If the installer died between
+/// `fork` and arming the signal, the kernel has already reparented the child,
+/// so the observed parent pid no longer matches the installer. The decision is
+/// kept host-independent so the fail-closed semantics can be tested directly.
+#[cfg(any(target_os = "linux", test))]
+fn parent_death_race_lost(installer_pid: u32, observed_parent: Option<u32>) -> bool {
+    observed_parent != Some(installer_pid)
+}
+
+/// Arms the Linux parent-death signal on the daemon child before `exec`.
+///
+/// This runs inside the child via `pre_exec`, after `fork` and before `exec`,
+/// so it must stay async-signal-safe: it only calls syscall wrappers and
+/// performs no allocation. `PR_SET_PDEATHSIG` makes the kernel deliver
+/// `SIGKILL` to the daemon when the installer (its parent) dies, so a daemon
+/// started by an installer that is killed can never outlive that installer. The
+/// `getppid` guard closes the fork-to-`prctl` race described above.
+#[cfg(target_os = "linux")]
+fn arm_parent_death_signal(installer_pid: u32) -> std::io::Result<()> {
+    use rustix::process::{Signal, getppid, set_parent_process_death_signal};
+
+    set_parent_process_death_signal(Some(Signal::KILL))?;
+    let observed_parent = getppid().map(|pid| pid.as_raw_nonzero().get() as u32);
+    if parent_death_race_lost(installer_pid, observed_parent) {
+        return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -769,5 +811,16 @@ mod tests {
             format!("{:?}", ProductionManagedDaemon::production()),
             "ProductionManagedDaemon { .. }"
         );
+    }
+
+    #[test]
+    fn parent_death_race_guard_treats_reparenting_as_lost() {
+        // The installer is still the child's parent: race not lost.
+        assert!(!parent_death_race_lost(1000, Some(1000)));
+        // Reparented to init (or a subreaper) while arming the signal: lost.
+        assert!(parent_death_race_lost(1000, Some(1)));
+        assert!(parent_death_race_lost(1000, Some(42)));
+        // A pid of zero (getppid returned None) cannot confirm ownership: lost.
+        assert!(parent_death_race_lost(1000, None));
     }
 }
