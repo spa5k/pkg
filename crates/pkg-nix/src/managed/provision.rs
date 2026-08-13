@@ -14,7 +14,7 @@ use tar::{Archive, EntryType};
 
 use super::daemon::{DaemonErrorCode, ManagedDaemon};
 use super::detect::{DetectionDisposition, DetectionReport, FindingKind, detect_unmanaged_nix};
-use super::installer_bundle::{VerifiedRuntimeBundle, load_installer_bundle};
+use super::installer_bundle::{DatastoreOwner, VerifiedRuntimeBundle, load_installer_bundle};
 use super::ownership::{
     ManagedArtifact, ManagedArtifactKind, ManagedGroupBindings, OwnershipExpectation,
     decode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
@@ -507,11 +507,20 @@ async fn load_authenticated_installer_bundle(
     trusted_root: TrustedRoot,
     request: &InstallerProvisionRequest<'_>,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    load_authenticated_installer_bundle_with_owner(trusted_root, request, None).await
+}
+
+async fn load_authenticated_installer_bundle_with_owner(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+    datastore_owner: Option<DatastoreOwner>,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     let source = load_installer_bundle(
         trusted_root,
         request.bundle_root,
         request.datastore,
         request.system,
+        datastore_owner,
     )
     .await
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
@@ -555,10 +564,13 @@ async fn load_authenticated_installer_bundle(
 /// repeat the strict clean-host scan because the platform transaction has now
 /// created its fixed prerequisites. Provisioning reopens those prerequisites
 /// with [`HostStatePolicy::FixedPlatformPrerequisites`] before runtime mutation.
+/// The final datastore and every state file must have the verified non-root
+/// broker owner before they can be used or published.
 pub async fn reauthenticate_installer_bundle(
     trusted_root: TrustedRoot,
     request: &InstallerProvisionRequest<'_>,
     authenticated: AuthenticatedInstallerBundle,
+    broker_uid: u32,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     if request.system != authenticated.spec.system
         || request.installation_root != authenticated.installation_root
@@ -569,7 +581,10 @@ pub async fn reauthenticate_installer_bundle(
             ProvisionErrorCode::InvalidAuthenticatedInput,
         ));
     }
-    let replacement = load_authenticated_installer_bundle(trusted_root, request).await?;
+    let owner = DatastoreOwner::new(broker_uid, request.groups.broker_gid())
+        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    let replacement =
+        load_authenticated_installer_bundle_with_owner(trusted_root, request, Some(owner)).await?;
     if !authenticated_identity_matches(
         &authenticated.spec,
         &authenticated.managed_nix_config,
@@ -618,6 +633,7 @@ pub fn reauthenticate_installer_bundle_blocking(
     trusted_root: TrustedRoot,
     request: &InstallerProvisionRequest<'_>,
     authenticated: AuthenticatedInstallerBundle,
+    broker_uid: u32,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     refuse_nested_runtime()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -627,6 +643,7 @@ pub fn reauthenticate_installer_bundle_blocking(
         trusted_root,
         request,
         authenticated,
+        broker_uid,
     ))
 }
 
@@ -2032,6 +2049,7 @@ mod tests {
 
     #[test]
     fn reauthentication_requires_the_exact_authenticated_identity() {
+        assert!(DatastoreOwner::new(0, 30_000).is_none());
         let fixture = Fixture::new();
         let expected_spec = fixture.spec.clone();
         let expected_config = AuthenticatedManagedNixConfig {

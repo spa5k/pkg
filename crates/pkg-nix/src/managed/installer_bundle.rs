@@ -3,7 +3,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Seek as _, Write as _};
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use futures_util::StreamExt as _;
@@ -38,6 +38,22 @@ const TEMP_FILE: &str = ".accepted-channel.json.tmp";
 const INITIALIZING_FILE: &str = "accepted-channel.initializing";
 const LOCK_FILE: &str = "pkg-channel.lock";
 const MAX_STATE_BYTES: u64 = 1024;
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct DatastoreOwner {
+    uid: u32,
+    gid: u32,
+}
+
+impl DatastoreOwner {
+    pub(super) const fn new(uid: u32, gid: u32) -> Option<Self> {
+        if uid == 0 || gid == 0 {
+            None
+        } else {
+            Some(Self { uid, gid })
+        }
+    }
+}
 
 /// One completely authenticated installer view retained in private files.
 pub(super) struct VerifiedRuntimeBundle {
@@ -111,6 +127,7 @@ pub(super) async fn load_installer_bundle(
     bundle_root: &Path,
     datastore: &Path,
     host: System,
+    datastore_owner: Option<DatastoreOwner>,
 ) -> Result<VerifiedRuntimeBundle, ChannelError> {
     let root = canonical_directory(bundle_root)?;
     let metadata = canonical_directory(&root.join("metadata"))?;
@@ -119,8 +136,13 @@ pub(super) async fn load_installer_bundle(
         return Err(ChannelError::InstallerBundleUnavailable);
     }
     validate_private_datastore(datastore)?;
-    let datastore_lease = open_datastore_lease(datastore)?;
-    let accepted = AcceptedChannelStore::new(datastore);
+    if let Some(owner) = datastore_owner {
+        let metadata =
+            fs::symlink_metadata(datastore).map_err(|_| ChannelError::DatastoreUnavailable)?;
+        validate_owner(&metadata, owner, 0o700)?;
+    }
+    let datastore_lease = open_datastore_lease(datastore, datastore_owner)?;
+    let accepted = AcceptedChannelStore::new(datastore, datastore_owner);
     accepted.initialize()?;
 
     let metadata_url = Url::from_directory_path(metadata)
@@ -310,7 +332,10 @@ fn redact_repository_error(error: ChannelError) -> ChannelError {
     }
 }
 
-fn open_datastore_lease(datastore: &Path) -> Result<File, ChannelError> {
+fn open_datastore_lease(
+    datastore: &Path,
+    owner: Option<DatastoreOwner>,
+) -> Result<File, ChannelError> {
     let lock_path = datastore.join(LOCK_FILE);
     if matches!(
         fs::symlink_metadata(&lock_path),
@@ -318,18 +343,38 @@ fn open_datastore_lease(datastore: &Path) -> Result<File, ChannelError> {
     ) {
         return Err(ChannelError::DatastoreUnavailable);
     }
-    let mut options = File::options();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    let lease = options
-        .open(lock_path)
-        .map_err(|_| ChannelError::DatastoreUnavailable)?;
+    let lease = if owner.is_some() {
+        let mut create = File::options();
+        create.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        create.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        match create.open(&lock_path) {
+            Ok(file) => {
+                apply_owner(&file, owner, &lock_path)?;
+                file
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                open_existing_lease(&lock_path)?
+            }
+            Err(_) => return Err(ChannelError::DatastoreUnavailable),
+        }
+    } else {
+        let mut options = File::options();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        options
+            .open(&lock_path)
+            .map_err(|_| ChannelError::DatastoreUnavailable)?
+    };
     #[cfg(unix)]
     {
         let metadata = lease
             .metadata()
             .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        if let Some(owner) = owner {
+            validate_owner(&metadata, owner, 0o600)?;
+        }
         if metadata.permissions().mode() & 0o177 != 0 {
             lease
                 .set_permissions(fs::Permissions::from_mode(0o600))
@@ -346,36 +391,54 @@ fn open_datastore_lease(datastore: &Path) -> Result<File, ChannelError> {
     Ok(lease)
 }
 
+fn open_existing_lease(path: &Path) -> Result<File, ChannelError> {
+    let mut options = File::options();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW);
+    options
+        .open(path)
+        .map_err(|_| ChannelError::DatastoreUnavailable)
+}
+
 #[derive(Debug, Clone)]
 struct AcceptedChannelStore {
     directory: PathBuf,
+    owner: Option<DatastoreOwner>,
 }
 
 impl AcceptedChannelStore {
-    fn new(directory: &Path) -> Self {
+    fn new(directory: &Path, owner: Option<DatastoreOwner>) -> Self {
         Self {
             directory: directory.to_path_buf(),
+            owner,
         }
     }
 
     fn load(&self) -> Result<Option<AcceptedChannel>, ChannelError> {
         let path = self.directory.join(STATE_FILE);
-        let metadata = match fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Err(ChannelError::AcceptedStateUnavailable),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(ChannelError::AcceptedStateUnavailable),
-        };
-        if !metadata.is_file()
-            || metadata.file_type().is_symlink()
-            || metadata.len() > MAX_STATE_BYTES
-        {
+        }
+        let file = open_read_nofollow(&path)?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+        if !metadata.is_file() || metadata.len() > MAX_STATE_BYTES {
             return Err(ChannelError::AcceptedStateUnavailable);
         }
         #[cfg(unix)]
-        if metadata.permissions().mode() & 0o177 != 0 {
-            return Err(ChannelError::AcceptedStateUnavailable);
+        {
+            if metadata.permissions().mode() & 0o177 != 0 {
+                return Err(ChannelError::AcceptedStateUnavailable);
+            }
+            if let Some(owner) = self.owner {
+                validate_owner(&metadata, owner, 0o600)?;
+            }
         }
-        let file = open_read_nofollow(&path)?;
         let mut bytes = Vec::new();
         file.take(MAX_STATE_BYTES + 1)
             .read_to_end(&mut bytes)
@@ -399,9 +462,21 @@ impl AcceptedChannelStore {
                     && !metadata.file_type().is_symlink()
                     && metadata.len() == 0 =>
             {
-                #[cfg(unix)]
-                if metadata.permissions().mode() & 0o177 != 0 {
+                let file = open_read_nofollow(&marker)?;
+                let metadata = file
+                    .metadata()
+                    .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+                if !metadata.is_file() || metadata.len() != 0 {
                     return Err(ChannelError::AcceptedStateUnavailable);
+                }
+                #[cfg(unix)]
+                {
+                    if metadata.permissions().mode() & 0o177 != 0 {
+                        return Err(ChannelError::AcceptedStateUnavailable);
+                    }
+                    if let Some(owner) = self.owner {
+                        validate_owner(&metadata, owner, 0o600)?;
+                    }
                 }
                 return Ok(());
             }
@@ -417,7 +492,7 @@ impl AcceptedChannelStore {
                 return Err(ChannelError::AcceptedStateUnavailable);
             }
         }
-        let marker_file = open_create_new_nofollow(&marker)?;
+        let marker_file = open_create_new_nofollow(&marker, self.owner)?;
         marker_file
             .sync_all()
             .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
@@ -433,8 +508,8 @@ impl AcceptedChannelStore {
             return Err(ChannelError::AcceptedStateUnavailable);
         }
         let temporary = self.directory.join(TEMP_FILE);
-        remove_stale_regular_temp(&temporary)?;
-        let mut file = open_create_new_nofollow(&temporary)?;
+        remove_stale_regular_temp(&temporary, self.owner)?;
+        let mut file = open_create_new_nofollow(&temporary, self.owner)?;
         let result = (|| {
             file.write_all(&bytes)
                 .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
@@ -443,7 +518,7 @@ impl AcceptedChannelStore {
             fs::rename(&temporary, self.directory.join(STATE_FILE))
                 .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
             sync_directory(&self.directory)?;
-            remove_initializing_marker(&self.directory.join(INITIALIZING_FILE))?;
+            remove_initializing_marker(&self.directory.join(INITIALIZING_FILE), self.owner)?;
             sync_directory(&self.directory)
         })();
         if result.is_err() {
@@ -499,9 +574,16 @@ impl AcceptedChannelWire {
     }
 }
 
-fn remove_initializing_marker(path: &Path) -> Result<(), ChannelError> {
+fn remove_initializing_marker(
+    path: &Path,
+    owner: Option<DatastoreOwner>,
+) -> Result<(), ChannelError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+        Ok(metadata)
+            if metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && owner.is_none_or(|owner| validate_owner(&metadata, owner, 0o600).is_ok()) =>
+        {
             fs::remove_file(path).map_err(|_| ChannelError::AcceptedStateUnavailable)
         }
         Ok(_) => Err(ChannelError::AcceptedStateUnavailable),
@@ -516,9 +598,16 @@ fn sync_directory(path: &Path) -> Result<(), ChannelError> {
         .map_err(|_| ChannelError::AcceptedStateUnavailable)
 }
 
-fn remove_stale_regular_temp(path: &Path) -> Result<(), ChannelError> {
+fn remove_stale_regular_temp(
+    path: &Path,
+    owner: Option<DatastoreOwner>,
+) -> Result<(), ChannelError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+        Ok(metadata)
+            if metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && owner.is_none_or(|owner| validate_owner(&metadata, owner, 0o600).is_ok()) =>
+        {
             fs::remove_file(path).map_err(|_| ChannelError::AcceptedStateUnavailable)
         }
         Ok(_) => Err(ChannelError::AcceptedStateUnavailable),
@@ -537,14 +626,55 @@ fn open_read_nofollow(path: &Path) -> Result<File, ChannelError> {
         .map_err(|_| ChannelError::AcceptedStateUnavailable)
 }
 
-fn open_create_new_nofollow(path: &Path) -> Result<File, ChannelError> {
+fn open_create_new_nofollow(
+    path: &Path,
+    owner: Option<DatastoreOwner>,
+) -> Result<File, ChannelError> {
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
     options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    options
+    let file = options
         .open(path)
-        .map_err(|_| ChannelError::AcceptedStateUnavailable)
+        .map_err(|_| ChannelError::AcceptedStateUnavailable)?;
+    apply_owner(&file, owner, path)?;
+    Ok(file)
+}
+
+fn apply_owner(
+    file: &File,
+    owner: Option<DatastoreOwner>,
+    path: &Path,
+) -> Result<(), ChannelError> {
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    if rustix::fs::fchown(
+        file,
+        Some(rustix::fs::Uid::from_raw(owner.uid)),
+        Some(rustix::fs::Gid::from_raw(owner.gid)),
+    )
+    .is_err()
+    {
+        let _ = fs::remove_file(path);
+        return Err(ChannelError::DatastoreUnavailable);
+    }
+    file.sync_all()
+        .map_err(|_| ChannelError::DatastoreUnavailable)
+}
+
+fn validate_owner(
+    metadata: &fs::Metadata,
+    owner: DatastoreOwner,
+    mode: u32,
+) -> Result<(), ChannelError> {
+    if metadata.uid() != owner.uid
+        || metadata.gid() != owner.gid
+        || metadata.permissions().mode() & 0o7777 != mode
+    {
+        return Err(ChannelError::DatastoreUnavailable);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -571,6 +701,7 @@ mod tests {
             &fixture,
             &datastore,
             System::Aarch64Darwin,
+            None,
         )
         .await
         .unwrap();
@@ -588,5 +719,54 @@ mod tests {
         );
         bundle.commit_accepted_channel().unwrap();
         assert!(datastore.join(STATE_FILE).is_file());
+    }
+
+    #[test]
+    fn owner_bound_state_is_private_before_publication() {
+        let temporary = TempDir::new().unwrap();
+        let datastore = temporary.path().join("datastore");
+        fs::create_dir(&datastore).unwrap();
+        fs::set_permissions(&datastore, fs::Permissions::from_mode(0o700)).unwrap();
+        let owner = DatastoreOwner {
+            uid: rustix::process::geteuid().as_raw(),
+            gid: rustix::process::getegid().as_raw(),
+        };
+        let lease = open_datastore_lease(&datastore, Some(owner)).unwrap();
+        let store = AcceptedChannelStore::new(&datastore, Some(owner));
+
+        store.initialize().unwrap();
+        for name in [LOCK_FILE, INITIALIZING_FILE] {
+            validate_owner(
+                &fs::symlink_metadata(datastore.join(name)).unwrap(),
+                owner,
+                0o600,
+            )
+            .unwrap();
+        }
+        store
+            .persist(&AcceptedChannel::new(
+                ChannelSequence::from_u64(7).unwrap(),
+                PolicyVersion::from_u64(3).unwrap(),
+                [5; 32],
+            ))
+            .unwrap();
+        validate_owner(
+            &fs::symlink_metadata(datastore.join(STATE_FILE)).unwrap(),
+            owner,
+            0o600,
+        )
+        .unwrap();
+        assert!(!datastore.join(INITIALIZING_FILE).exists());
+
+        fs::set_permissions(
+            datastore.join(STATE_FILE),
+            fs::Permissions::from_mode(0o640),
+        )
+        .unwrap();
+        assert!(store.load().is_err());
+
+        drop(lease);
+        fs::set_permissions(datastore.join(LOCK_FILE), fs::Permissions::from_mode(0o640)).unwrap();
+        assert!(open_datastore_lease(&datastore, Some(owner)).is_err());
     }
 }
