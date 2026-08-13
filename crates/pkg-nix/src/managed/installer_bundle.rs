@@ -46,6 +46,13 @@ pub(super) struct DatastoreOwner {
 }
 
 impl DatastoreOwner {
+    pub(super) fn current() -> Self {
+        Self {
+            uid: rustix::process::geteuid().as_raw(),
+            gid: rustix::process::getegid().as_raw(),
+        }
+    }
+
     pub(super) const fn new(uid: u32, gid: u32) -> Option<Self> {
         if uid == 0 || gid == 0 {
             None

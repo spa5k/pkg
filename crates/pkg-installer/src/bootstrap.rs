@@ -1,6 +1,13 @@
 //! Product installer entry points for authenticated managed-Nix bundles.
 
-use std::os::unix::ffi::OsStrExt;
+use std::{
+    fs,
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{DirBuilderExt, MetadataExt, PermissionsExt},
+    },
+    path::{Path, PathBuf},
+};
 
 use crate::{
     InstallError, LinuxAssetPresence, LinuxInstallAsset, LinuxInstallBackend, LinuxInstallJournal,
@@ -15,10 +22,12 @@ use pkg_nix::{
     ManagedDaemon, ManagedRuntimeRemovalOutcome, OwnershipExpectation, ProvisionErrorCode,
     ProvisionedBootstrap, ProvisionedBootstrapTransaction, authenticate_installer_bundle_blocking,
     prepare_managed_runtime_removal_without_receipt,
-    provision_authenticated_installer_bundle_transaction, recover_interrupted_provision_workspace,
-    verify_provision_workspace_absent,
+    provision_authenticated_installer_bundle_transaction, reauthenticate_installer_bundle_blocking,
+    recover_interrupted_provision_workspace, verify_provision_workspace_absent,
 };
 use sha2::{Digest as _, Sha256};
+
+const LINUX_AUTH_DATASTORE: &str = "/run/pkg-install-auth";
 
 /// Successful Linux installation and its authenticated runtime/index result.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,11 +99,25 @@ pub fn install_linux_from_bundle<'a>(
     if request.system != system {
         return Err(InstallError::backend_failure());
     }
-    let bundle = authenticate_installer_bundle_blocking(trusted_root, request)
+    backend.preflight_privilege()?;
+    let auth_datastore = prepare_linux_auth_datastore()?;
+    // This root-owned datastore exists only for strict authentication before
+    // persistent mutation. Final reauthentication uses the durable datastore.
+    let auth_request = InstallerProvisionRequest {
+        bundle_root: request.bundle_root,
+        datastore: &auth_datastore,
+        installation_root: request.installation_root,
+        scratch_parent: request.scratch_parent,
+        system: request.system,
+        groups: request.groups,
+    };
+    let bundle = authenticate_installer_bundle_blocking(trusted_root.clone(), &auth_request)
         .map_err(|_| InstallError::backend_failure())?;
+    // The capability retains verified target snapshots. Tough metadata is no
+    // longer needed in this temporary datastore after authentication.
+    prepare_linux_auth_datastore_at(&auth_datastore, 0, 0)?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
-    backend.preflight_privilege()?;
     let recovery_context_digest =
         linux_recovery_context_digest(bundle.asset_manifest_digest(), request);
     recover_linux_bundle_install(
@@ -128,7 +151,9 @@ pub fn install_linux_from_bundle<'a>(
     storage
         .create(&journal)
         .map_err(|_| InstallError::backend_failure())?;
-    let mut provisioner = AuthenticatedProvisioner::new(bundle);
+    // Keep the original request so final state is broker-owned and durable,
+    // instead of root-owned and temporary under /run.
+    let mut provisioner = AuthenticatedProvisioner::with_reauthentication(trusted_root, bundle);
     let installation = install_linux_with_provisioner_journaled(
         system,
         request,
@@ -157,6 +182,87 @@ pub fn install_linux_from_bundle<'a>(
         platform,
         bootstrap,
     })
+}
+
+fn prepare_linux_auth_datastore() -> Result<PathBuf, InstallError> {
+    let uid = nix::unistd::Uid::effective().as_raw();
+    let gid = nix::unistd::Gid::effective().as_raw();
+    if uid != 0 || gid != 0 {
+        return Err(InstallError::backend_failure());
+    }
+    let path = PathBuf::from(LINUX_AUTH_DATASTORE);
+    prepare_linux_auth_datastore_at(&path, uid, gid)?;
+    Ok(path)
+}
+
+fn prepare_linux_auth_datastore_at(
+    path: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            builder
+                .create(path)
+                .map_err(|_| InstallError::backend_failure())?;
+        }
+        Err(_) => return Err(InstallError::backend_failure()),
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|_| InstallError::backend_failure())?;
+    if !metadata.file_type().is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != expected_user
+        || metadata.gid() != expected_group
+        || metadata.permissions().mode() & 0o7777 != 0o700
+    {
+        return Err(InstallError::backend_failure());
+    }
+    let mut removed_metadata = false;
+    for entry in fs::read_dir(path).map_err(|_| InstallError::backend_failure())? {
+        let entry = entry.map_err(|_| InstallError::backend_failure())?;
+        let name = entry.file_name();
+        let metadata =
+            fs::symlink_metadata(entry.path()).map_err(|_| InstallError::backend_failure())?;
+        let exact_restart_file =
+            name == "pkg-channel.lock" || name == "accepted-channel.initializing";
+        let metadata_limit = match name.to_str() {
+            Some("root.json") => Some(64 * 1024),
+            Some("timestamp.json" | "snapshot.json") => Some(32 * 1024),
+            Some("targets.json") => Some(256 * 1024),
+            Some("latest_known_time.json") => Some(1024),
+            _ => None,
+        };
+        let mode = metadata.permissions().mode() & 0o7777;
+        let invalid_metadata = metadata_limit.is_some_and(|limit| {
+            mode & !0o644 != 0
+                || mode & 0o600 != 0o600
+                || metadata.len() == 0
+                || metadata.len() > limit
+        });
+        if !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.uid() != expected_user
+            || metadata.gid() != expected_group
+            || (exact_restart_file && (mode != 0o600 || metadata.len() != 0))
+            || invalid_metadata
+            || (!exact_restart_file && metadata_limit.is_none())
+        {
+            return Err(InstallError::backend_failure());
+        }
+        if metadata_limit.is_some() {
+            fs::remove_file(entry.path()).map_err(|_| InstallError::backend_failure())?;
+            removed_metadata = true;
+        }
+    }
+    if removed_metadata {
+        fs::File::open(path)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| InstallError::backend_failure())?;
+    }
+    Ok(())
 }
 
 fn recover_linux_bundle_install(
@@ -321,6 +427,14 @@ impl BootstrapOutcome<'_> {
 }
 
 trait BundleProvisioner {
+    fn reauthenticate_linux(
+        &mut self,
+        _request: &InstallerProvisionRequest<'_>,
+        _backend: &mut dyn LinuxInstallBackend,
+    ) -> Result<(), BundleProvisionError> {
+        Ok(())
+    }
+
     fn preflight_workspace(
         &self,
         _request: &InstallerProvisionRequest<'_>,
@@ -342,18 +456,50 @@ enum BundleProvisionError {
 }
 
 struct AuthenticatedProvisioner {
+    trusted_root: Option<TrustedRoot>,
     bundle: Option<AuthenticatedInstallerBundle>,
 }
 
 impl AuthenticatedProvisioner {
     const fn new(bundle: AuthenticatedInstallerBundle) -> Self {
         Self {
+            trusted_root: None,
+            bundle: Some(bundle),
+        }
+    }
+
+    const fn with_reauthentication(
+        trusted_root: TrustedRoot,
+        bundle: AuthenticatedInstallerBundle,
+    ) -> Self {
+        Self {
+            trusted_root: Some(trusted_root),
             bundle: Some(bundle),
         }
     }
 }
 
 impl BundleProvisioner for AuthenticatedProvisioner {
+    fn reauthenticate_linux(
+        &mut self,
+        request: &InstallerProvisionRequest<'_>,
+        backend: &mut dyn LinuxInstallBackend,
+    ) -> Result<(), BundleProvisionError> {
+        let trusted_root = self
+            .trusted_root
+            .take()
+            .ok_or(BundleProvisionError::Failed)?;
+        let bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
+        let broker_uid = backend
+            .broker_uid()
+            .map_err(|_| BundleProvisionError::Failed)?;
+        self.bundle = Some(
+            reauthenticate_installer_bundle_blocking(trusted_root, request, bundle, broker_uid)
+                .map_err(|_| BundleProvisionError::Failed)?,
+        );
+        Ok(())
+    }
+
     fn preflight_workspace(
         &self,
         request: &InstallerProvisionRequest<'_>,
@@ -518,6 +664,9 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
     fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
         let mutation = LinuxInstallMutation::ManagedRuntime;
         let presence = self.inner.classify_managed_runtime()?;
+        self.provisioner
+            .reauthenticate_linux(self.request, self.inner)
+            .map_err(linux_provision_error)?;
         self.provisioner
             .preflight_workspace(self.request)
             .map_err(linux_provision_error)?;
@@ -848,7 +997,12 @@ mod tests {
     use super::*;
     use pkg_core::state::Digest;
     use pkg_nix::{DaemonError, ManagedGroupBindings, NixVersion};
-    use std::{cell::RefCell, path::Path};
+    use std::{
+        cell::RefCell,
+        fs,
+        os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink},
+        path::Path,
+    };
 
     #[test]
     fn linux_recovery_context_binds_installation_and_scratch_paths()
@@ -878,6 +1032,53 @@ mod tests {
             expected,
             context(Path::new("/"), Path::new("/other-scratch"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn linux_auth_datastore_accepts_only_exact_private_restart_state()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let uid = nix::unistd::Uid::effective().as_raw();
+        let gid = nix::unistd::Gid::effective().as_raw();
+
+        let exact = root.path().join("exact");
+        prepare_linux_auth_datastore_at(&exact, uid, gid)?;
+        prepare_linux_auth_datastore_at(&exact, uid, gid)?;
+        for name in ["pkg-channel.lock", "accepted-channel.initializing"] {
+            fs::File::options()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(exact.join(name))?;
+        }
+        for name in [
+            "root.json",
+            "timestamp.json",
+            "snapshot.json",
+            "targets.json",
+            "latest_known_time.json",
+        ] {
+            let path = exact.join(name);
+            fs::write(&path, b"{}")?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
+        }
+        prepare_linux_auth_datastore_at(&exact, uid, gid)?;
+        assert_eq!(fs::read_dir(&exact)?.count(), 2);
+
+        let unknown = root.path().join("unknown");
+        prepare_linux_auth_datastore_at(&unknown, uid, gid)?;
+        fs::write(unknown.join("foreign"), [])?;
+        assert!(prepare_linux_auth_datastore_at(&unknown, uid, gid).is_err());
+
+        let permissive = root.path().join("permissive");
+        fs::DirBuilder::new().mode(0o755).create(&permissive)?;
+        fs::set_permissions(&permissive, fs::Permissions::from_mode(0o755))?;
+        assert!(prepare_linux_auth_datastore_at(&permissive, uid, gid).is_err());
+
+        let linked = root.path().join("linked");
+        symlink(root.path().join("missing"), &linked)?;
+        assert!(prepare_linux_auth_datastore_at(&linked, uid, gid).is_err());
         Ok(())
     }
 
@@ -940,6 +1141,36 @@ mod tests {
         ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
             self.calls = self.calls.saturating_add(1);
             Ok(BootstrapOutcome::Stub(self.rolled_back.clone()))
+        }
+    }
+
+    struct ReauthProvisioner {
+        calls: usize,
+        reauthenticated: bool,
+    }
+
+    impl BundleProvisioner for ReauthProvisioner {
+        fn reauthenticate_linux(
+            &mut self,
+            _request: &InstallerProvisionRequest<'_>,
+            _backend: &mut dyn LinuxInstallBackend,
+        ) -> Result<(), BundleProvisionError> {
+            self.reauthenticated = true;
+            Ok(())
+        }
+
+        fn provision<'a>(
+            &mut self,
+            _request: &InstallerProvisionRequest<'_>,
+            _daemon: &'a dyn ManagedDaemon,
+        ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
+            if !self.reauthenticated {
+                return Err(BundleProvisionError::Failed);
+            }
+            self.calls = self.calls.saturating_add(1);
+            Ok(BootstrapOutcome::Stub(std::rc::Rc::new(
+                std::cell::Cell::new(false),
+            )))
         }
     }
 
@@ -1405,10 +1636,9 @@ mod tests {
             groups: ManagedGroupBindings::new(100, 101)?,
         };
         let mut backend = LinuxBackend::default();
-        let rolled_back = std::rc::Rc::new(std::cell::Cell::new(false));
-        let mut provisioner = StubProvisioner {
+        let mut provisioner = ReauthProvisioner {
             calls: 0,
-            rolled_back,
+            reauthenticated: false,
         };
         let (report, outcome) = install_linux_with_provisioner(
             request.system,
@@ -1421,6 +1651,7 @@ mod tests {
         assert_eq!(report.created_artifacts(), 0);
         drop(outcome);
         assert_eq!(provisioner.calls, 1);
+        assert!(provisioner.reauthenticated);
         assert_eq!(backend.raw_provision_calls, 0);
         Ok(())
     }

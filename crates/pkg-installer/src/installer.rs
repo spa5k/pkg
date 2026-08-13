@@ -108,6 +108,15 @@ pub trait LinuxInstallBackend {
     /// Returns `UnmanagedNix` for unmanaged, ambiguous, or unreadable evidence.
     fn preflight_clean_host(&mut self, system: System) -> Result<(), InstallError>;
 
+    /// Returns the revalidated non-root broker uid after account creation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend failure if the account cannot be revalidated.
+    fn broker_uid(&mut self) -> Result<u32, InstallError> {
+        Err(InstallError::backend_failure())
+    }
+
     /// Classifies one fixed asset without mutation.
     ///
     /// # Errors

@@ -507,7 +507,12 @@ async fn load_authenticated_installer_bundle(
     trusted_root: TrustedRoot,
     request: &InstallerProvisionRequest<'_>,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
-    load_authenticated_installer_bundle_with_owner(trusted_root, request, None).await
+    load_authenticated_installer_bundle_with_owner(
+        trusted_root,
+        request,
+        Some(DatastoreOwner::current()),
+    )
+    .await
 }
 
 async fn load_authenticated_installer_bundle_with_owner(

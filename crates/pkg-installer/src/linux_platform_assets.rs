@@ -122,6 +122,17 @@ impl LinuxPlatformAssetManager {
         Ok(created)
     }
 
+    /// Returns the revalidated non-root broker uid after account creation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted failure if the broker account cannot be revalidated.
+    pub fn broker_uid(&mut self) -> Result<u32, InstallError> {
+        self.accounts
+            .broker_uid()
+            .map_err(|_| InstallError::backend_failure())
+    }
+
     /// Installs one exact compiled systemd or tmpfiles file.
     ///
     /// # Errors

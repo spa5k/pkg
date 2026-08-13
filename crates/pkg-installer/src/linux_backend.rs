@@ -127,6 +127,10 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         Ok(())
     }
 
+    fn broker_uid(&mut self) -> Result<u32, InstallError> {
+        self.assets.broker_uid()
+    }
+
     fn classify_asset(
         &mut self,
         asset: LinuxInstallAsset,
