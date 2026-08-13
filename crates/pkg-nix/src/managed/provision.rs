@@ -1799,6 +1799,17 @@ fn verify_provision_workspace_absent_with_owner(
     scratch_parent: &Path,
     owner_uid: u32,
 ) -> Result<(), ProvisionError> {
+    match fs::symlink_metadata(scratch_parent) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // The platform transaction creates this fixed parent. Provisioning
+            // reopens and validates it before ScratchWorkspace creates a child.
+            return Ok(());
+        }
+        Ok(_) => {}
+        Err(_) => {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        }
+    }
     validate_private_directory(scratch_parent, owner_uid)?;
     match fs::symlink_metadata(scratch_parent.join(PROVISION_WORKSPACE_NAME)) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1998,6 +2009,22 @@ mod tests {
         assert_eq!(fs::read(external).unwrap(), b"keep");
         assert_eq!(fs::read(sibling).unwrap(), b"keep");
         assert!(!recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid).unwrap());
+    }
+
+    #[test]
+    fn absent_scratch_parent_proves_the_workspace_is_absent() {
+        let temp = TempDir::new().unwrap();
+        let scratch = temp.path().join("scratch");
+        let owner_uid = fs::metadata(temp.path()).unwrap().uid();
+
+        verify_provision_workspace_absent_with_owner(&scratch, owner_uid).unwrap();
+
+        symlink(temp.path(), &scratch).unwrap();
+        assert_eq!(
+            verify_provision_workspace_absent_with_owner(&scratch, owner_uid)
+                .map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::UnsafeDestination)
+        );
     }
 
     #[test]
