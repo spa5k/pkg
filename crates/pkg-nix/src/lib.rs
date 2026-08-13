@@ -122,14 +122,15 @@ pub use managed::ownership::{
     verify_ownership_expectation, verify_ownership_receipt,
 };
 pub use managed::provision::{
-    AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,
-    ProvisionError, ProvisionErrorCode, ProvisionRequest, ProvisionSpec, ProvisionedBootstrap,
-    ProvisionedBootstrapTransaction, ProvisionedRuntime, authenticate_installer_bundle,
-    authenticate_installer_bundle_blocking, provision_authenticated_installer_bundle,
-    provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
-    provision_managed_nix_from_bundle_blocking, reauthenticate_installer_bundle,
-    reauthenticate_installer_bundle_blocking, recover_interrupted_provision_workspace,
-    verify_authenticated_managed_install, verify_provision_workspace_absent,
+    AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
+    InstallerProvisionRequest, ProvisionError, ProvisionErrorCode, ProvisionRequest, ProvisionSpec,
+    ProvisionedBootstrap, ProvisionedBootstrapTransaction, ProvisionedRuntime,
+    authenticate_installer_bundle, authenticate_installer_bundle_blocking,
+    provision_authenticated_installer_bundle, provision_authenticated_installer_bundle_transaction,
+    provision_managed_nix_from_bundle, provision_managed_nix_from_bundle_blocking,
+    reauthenticate_installer_bundle, reauthenticate_installer_bundle_blocking,
+    recover_interrupted_provision_workspace, verify_authenticated_managed_install,
+    verify_provision_workspace_absent,
 };
 pub use managed::runtime_archive::{
     RuntimeManifestError, RuntimeManifestErrorCode, build_upstream_runtime_asset_manifest,

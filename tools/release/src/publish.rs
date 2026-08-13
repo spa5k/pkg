@@ -21,6 +21,8 @@ use crate::{
     TimestampAuthority, TimestampAuthorization,
 };
 
+pub(crate) const RELEASE_OBJECT_COUNT: usize = 37;
+
 /// One immutable byte object in a release publication.
 #[derive(Debug, Clone)]
 pub struct PublicationObject {
@@ -642,7 +644,8 @@ pub(crate) fn seal_objects(
     }
     let mut target_files = Vec::new();
     collect_files(&targets, &targets, &mut target_files)?;
-    if target_files.len() != 13 {
+    let target_count = release.tuf_targets().count();
+    if target_files.len() != target_count {
         return Err(PublicationError::InvalidObject);
     }
     let manifest_path = output.join("release-manifest.json");
@@ -658,6 +661,8 @@ pub(crate) fn seal_objects(
     }
 
     let mut objects = Vec::new();
+    let expected_object_count =
+        expected_metadata.len() + target_count + 2 + release.cli_files().count();
     for name in expected_metadata {
         objects.push(PublicationObject::from_file(
             &format!("channel/{}/{name}", release.release_id()),
@@ -691,7 +696,7 @@ pub(crate) fn seal_objects(
             length,
         )?);
     }
-    if objects.len() != 25 {
+    if objects.len() != expected_object_count {
         return Err(PublicationError::InvalidObject);
     }
     Ok(objects)
@@ -740,7 +745,8 @@ fn record(
         || !valid_atom(lease_id)
         || !matches!(
             (kind, timestamp_version, objects.len()),
-            (TransactionKind::Release, None, 25) | (TransactionKind::Timestamp, Some(1..), 2)
+            (TransactionKind::Release, None, RELEASE_OBJECT_COUNT)
+                | (TransactionKind::Timestamp, Some(1..), 2)
         )
     {
         return Err(PublicationError::InvalidObject);
@@ -867,7 +873,7 @@ fn load_record(
         || record.objects.is_empty()
         || record.objects.len()
             != match expected_kind {
-                TransactionKind::Release => 25,
+                TransactionKind::Release => RELEASE_OBJECT_COUNT,
                 TransactionKind::Timestamp => 2,
             }
     {

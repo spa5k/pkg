@@ -116,6 +116,7 @@ pub fn install_linux_from_bundle<'a>(
     // The capability retains verified target snapshots. Tough metadata is no
     // longer needed in this temporary datastore after authentication.
     prepare_linux_auth_datastore_at(&auth_datastore, 0, 0)?;
+    backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
     let recovery_context_digest =

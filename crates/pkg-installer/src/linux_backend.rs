@@ -2,13 +2,13 @@
 
 use crate::{
     InstallError, LinuxAssetPresence, LinuxInstallAsset, LinuxInstallBackend,
-    LinuxPlatformAssetManager, LinuxReleasePayloads, LinuxSystemdManager,
+    LinuxPlatformAssetManager, LinuxSystemdManager,
 };
 use nix::unistd::{Gid, Uid};
 use pkg_core::System;
 use pkg_nix::{
-    AuthenticatedManagedNixConfig, DetectionDisposition, ManagedGroupBindings,
-    OwnershipExpectation, RealNixAdapter, detect_unmanaged_nix,
+    AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, DetectionDisposition,
+    ManagedGroupBindings, OwnershipExpectation, RealNixAdapter, detect_unmanaged_nix,
     verify_authenticated_managed_install,
 };
 use std::{env, path::Path};
@@ -32,17 +32,13 @@ impl ProductionLinuxInstallBackend {
     /// # Errors
     ///
     /// Returns a redacted error for a non-Linux system or unavailable systemd tools.
-    pub fn new(
-        system: System,
-        groups: ManagedGroupBindings,
-        payloads: LinuxReleasePayloads,
-    ) -> Result<Self, InstallError> {
+    pub fn new(system: System, groups: ManagedGroupBindings) -> Result<Self, InstallError> {
         if !matches!(system, System::X8664Linux | System::Aarch64Linux) {
             return Err(InstallError::backend_failure());
         }
         Ok(Self {
             system,
-            assets: LinuxPlatformAssetManager::new(groups, payloads),
+            assets: LinuxPlatformAssetManager::new(groups),
             services: LinuxSystemdManager::production()
                 .map_err(|_| InstallError::backend_failure())?,
             ownership_expectation: None,
@@ -64,6 +60,16 @@ impl ProductionLinuxInstallBackend {
 }
 
 impl LinuxInstallBackend for ProductionLinuxInstallBackend {
+    fn bind_authenticated_installer_payloads(
+        &mut self,
+        payloads: &AuthenticatedInstallerPayloads,
+    ) -> Result<(), InstallError> {
+        if payloads.system() != self.system {
+            return Err(InstallError::backend_failure());
+        }
+        self.assets.bind_authenticated_installer_payloads(payloads)
+    }
+
     fn bind_authenticated_nix_config(
         &mut self,
         config: &AuthenticatedManagedNixConfig,
@@ -102,7 +108,11 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn preflight_clean_host(&mut self, system: System) -> Result<(), InstallError> {
-        if system != self.system || !Uid::effective().is_root() || Gid::effective().as_raw() != 0 {
+        if system != self.system
+            || !self.assets.authenticated_inputs_bound(system)
+            || !Uid::effective().is_root()
+            || Gid::effective().as_raw() != 0
+        {
             return Err(InstallError::backend_failure());
         }
         let path_entries = env::var_os("PATH")

@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use pkg_core::{System, state::Digest};
-use pkg_nix::{AuthenticatedManagedNixConfig, ManagedGroupBindings};
+use pkg_nix::{
+    AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
+};
 
 use crate::{
     InstallError, LinuxAccountManager, LinuxFilesystemManager, LinuxInstallAsset,
@@ -26,7 +28,7 @@ pub struct LinuxPlatformAssetManager {
     groups: ManagedGroupBindings,
     accounts: LinuxAccountManager,
     filesystem: Option<LinuxFilesystemManager>,
-    payloads: LinuxReleasePayloads,
+    payloads: Option<LinuxReleasePayloads>,
     config: Option<AuthenticatedManagedNixConfig>,
     receipt_binding: Option<(System, Digest)>,
     states: BTreeMap<&'static str, RecordedAssetState>,
@@ -46,19 +48,43 @@ impl std::fmt::Debug for LinuxPlatformAssetManager {
 }
 
 impl LinuxPlatformAssetManager {
-    /// Creates the production asset router from authenticated host group ids and
-    /// release binary bytes.
+    /// Creates the production asset router from authenticated host group ids.
     #[must_use]
-    pub fn new(groups: ManagedGroupBindings, payloads: LinuxReleasePayloads) -> Self {
+    pub fn new(groups: ManagedGroupBindings) -> Self {
         Self {
             groups,
             accounts: LinuxAccountManager::new(groups),
             filesystem: None,
-            payloads,
+            payloads: None,
             config: None,
             receipt_binding: None,
             states: BTreeMap::new(),
         }
+    }
+
+    /// Binds product binaries that the authenticated bundle supplied.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error for a conflicting binding or a filesystem that is already active.
+    pub fn bind_authenticated_installer_payloads(
+        &mut self,
+        payloads: &AuthenticatedInstallerPayloads,
+    ) -> Result<(), InstallError> {
+        if self.filesystem.is_some() {
+            return Err(InstallError::backend_failure());
+        }
+        let payloads = LinuxReleasePayloads::from_authenticated_bundle(payloads)
+            .map_err(|_| InstallError::backend_failure())?;
+        if self
+            .payloads
+            .as_ref()
+            .is_some_and(|bound| bound != &payloads)
+        {
+            return Err(InstallError::backend_failure());
+        }
+        self.payloads = Some(payloads);
+        Ok(())
     }
 
     /// Binds exact authenticated managed-Nix configuration bytes without mutation.
@@ -101,6 +127,17 @@ impl LinuxPlatformAssetManager {
         }
         self.receipt_binding = Some((system, digest));
         Ok(())
+    }
+
+    pub(crate) fn authenticated_inputs_bound(&self, system: System) -> bool {
+        self.payloads.is_some()
+            && self
+                .config
+                .as_ref()
+                .is_some_and(|config| config.system() == system)
+            && self
+                .receipt_binding
+                .is_some_and(|(bound_system, _)| bound_system == system)
     }
 
     /// Verifies or creates one closed account, directory, or release file.
@@ -305,9 +342,12 @@ impl LinuxPlatformAssetManager {
                 .accounts
                 .broker_uid()
                 .map_err(|_| InstallError::backend_failure())?;
-            let mut filesystem =
-                LinuxFilesystemManager::new(self.groups, broker_uid, self.payloads.clone())
-                    .map_err(|_| InstallError::backend_failure())?;
+            let payloads = self
+                .payloads
+                .clone()
+                .ok_or_else(InstallError::backend_failure)?;
+            let mut filesystem = LinuxFilesystemManager::new(self.groups, broker_uid, payloads)
+                .map_err(|_| InstallError::backend_failure())?;
             if let Some(config) = self.config.as_ref() {
                 filesystem
                     .bind_authenticated_nix_config(config)

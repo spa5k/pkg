@@ -29,6 +29,8 @@ pub enum ArtifactKind {
     ManagedNixAssets,
     /// One disposable per-system index.
     Index,
+    /// One product binary consumed only through the signed installer bundle.
+    InstallerPayload,
 }
 
 /// One artifact that must become a TUF target.
@@ -448,11 +450,18 @@ fn validate_sets(
                     SYSTEMS.contains(&system)
                         && artifact.target == format!("index/{sequence}/{system}.json.br")
                 }) => {}
+            ArtifactKind::InstallerPayload
+                if artifact.system.as_deref().is_some_and(|system| {
+                    SYSTEMS.contains(&system)
+                        && ["pkg-root-helper", "pkg-nix-broker", "pkg"]
+                            .iter()
+                            .any(|name| artifact.target == format!("installer/{system}/{name}"))
+                }) => {}
             _ => return Err(ValidationError::InvalidArtifactSet),
         }
     }
     if counts.get(&(ArtifactKind::Descriptor, None)) != Some(&1)
-        || artifacts.len() != 13
+        || artifacts.len() != 25
         || runtime_versions.len() != 1
         || [
             ArtifactKind::ManagedNix,
@@ -464,6 +473,9 @@ fn validate_sets(
             SYSTEMS
                 .iter()
                 .any(|system| counts.get(&(*kind, Some((*system).to_owned()))) != Some(&1))
+        })
+        || SYSTEMS.iter().any(|system| {
+            counts.get(&(ArtifactKind::InstallerPayload, Some((*system).to_owned()))) != Some(&3)
         })
     {
         return Err(ValidationError::InvalidArtifactSet);

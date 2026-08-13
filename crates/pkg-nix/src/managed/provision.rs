@@ -6,6 +6,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, chown, lchown, symlink};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use lzma_rust2::XzReader;
 use pkg_channel::{TrustedRoot, VerifiedChannel};
@@ -28,6 +29,7 @@ use crate::{Digest, NixVersion, System, render_managed_build_nix_conf};
 
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ASSET_MANIFEST_BYTES: u64 = 1024 * 1024;
+const MAX_INSTALLER_BINARY_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const PROVISION_WORKSPACE_NAME: &str = "pkg-provision";
 const MAX_PROVISION_WORKSPACE_ENTRIES: usize = MAX_ARCHIVE_ENTRIES + 8;
@@ -147,6 +149,50 @@ pub struct AuthenticatedManagedNixConfig {
     contents: String,
 }
 
+/// Exact product binaries read from fixed targets in the authenticated bundle.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AuthenticatedInstallerPayloads {
+    system: System,
+    root_helper: Arc<[u8]>,
+    broker: Arc<[u8]>,
+    product_cli: Arc<[u8]>,
+}
+
+impl AuthenticatedInstallerPayloads {
+    /// Returns the native system bound to these payloads.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.system
+    }
+
+    /// Returns the exact authenticated root-helper bytes.
+    #[must_use]
+    pub fn root_helper(&self) -> &[u8] {
+        &self.root_helper
+    }
+
+    /// Returns the exact authenticated broker bytes.
+    #[must_use]
+    pub fn broker(&self) -> &[u8] {
+        &self.broker
+    }
+
+    /// Returns the exact authenticated public CLI bytes.
+    #[must_use]
+    pub fn product_cli(&self) -> &[u8] {
+        &self.product_cli
+    }
+}
+
+impl std::fmt::Debug for AuthenticatedInstallerPayloads {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthenticatedInstallerPayloads")
+            .field("system", &self.system)
+            .finish_non_exhaustive()
+    }
+}
+
 impl AuthenticatedManagedNixConfig {
     /// Returns the native system bound to these configuration bytes.
     #[must_use]
@@ -179,6 +225,7 @@ pub struct AuthenticatedInstallerBundle {
     source: VerifiedRuntimeBundle,
     spec: ProvisionSpec,
     managed_nix_config: AuthenticatedManagedNixConfig,
+    installer_payloads: AuthenticatedInstallerPayloads,
     ownership_expectation: OwnershipExpectation,
     installation_root: PathBuf,
     scratch_parent: PathBuf,
@@ -186,10 +233,25 @@ pub struct AuthenticatedInstallerBundle {
 }
 
 impl AuthenticatedInstallerBundle {
+    fn identity(&self) -> AuthenticatedInstallerIdentity<'_> {
+        AuthenticatedInstallerIdentity {
+            spec: &self.spec,
+            config: &self.managed_nix_config,
+            payloads: &self.installer_payloads,
+            ownership: &self.ownership_expectation,
+        }
+    }
+
     /// Returns the exact authenticated configuration for the platform backend.
     #[must_use]
     pub const fn managed_nix_config(&self) -> &AuthenticatedManagedNixConfig {
         &self.managed_nix_config
+    }
+
+    /// Returns the exact product binaries authenticated by the bundle.
+    #[must_use]
+    pub const fn installer_payloads(&self) -> &AuthenticatedInstallerPayloads {
+        &self.installer_payloads
     }
 
     /// Returns the exact authenticated managed-runtime asset-manifest digest.
@@ -203,6 +265,14 @@ impl AuthenticatedInstallerBundle {
     pub const fn ownership_expectation(&self) -> &OwnershipExpectation {
         &self.ownership_expectation
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct AuthenticatedInstallerIdentity<'a> {
+    spec: &'a ProvisionSpec,
+    config: &'a AuthenticatedManagedNixConfig,
+    payloads: &'a AuthenticatedInstallerPayloads,
+    ownership: &'a OwnershipExpectation,
 }
 
 impl std::fmt::Debug for AuthenticatedInstallerBundle {
@@ -530,6 +600,7 @@ async fn load_authenticated_installer_bundle_with_owner(
     .await
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
     let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
+    let installer_payloads = load_authenticated_installer_payloads(&source, spec.system)?;
     let managed_nix_config = AuthenticatedManagedNixConfig {
         system: source.system(),
         contents: render_managed_build_nix_conf(
@@ -555,6 +626,7 @@ async fn load_authenticated_installer_bundle_with_owner(
         source,
         spec,
         managed_nix_config,
+        installer_payloads,
         ownership_expectation,
         installation_root: request.installation_root.to_path_buf(),
         scratch_parent: request.scratch_parent.to_path_buf(),
@@ -590,14 +662,7 @@ pub async fn reauthenticate_installer_bundle(
         .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
     let replacement =
         load_authenticated_installer_bundle_with_owner(trusted_root, request, Some(owner)).await?;
-    if !authenticated_identity_matches(
-        &authenticated.spec,
-        &authenticated.managed_nix_config,
-        &authenticated.ownership_expectation,
-        &replacement.spec,
-        &replacement.managed_nix_config,
-        &replacement.ownership_expectation,
-    ) {
+    if authenticated.identity() != replacement.identity() {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
         ));
@@ -605,17 +670,38 @@ pub async fn reauthenticate_installer_bundle(
     Ok(replacement)
 }
 
-fn authenticated_identity_matches(
-    expected_spec: &ProvisionSpec,
-    expected_config: &AuthenticatedManagedNixConfig,
-    expected_ownership: &OwnershipExpectation,
-    replacement_spec: &ProvisionSpec,
-    replacement_config: &AuthenticatedManagedNixConfig,
-    replacement_ownership: &OwnershipExpectation,
-) -> bool {
-    replacement_spec == expected_spec
-        && replacement_config == expected_config
-        && replacement_ownership == expected_ownership
+fn load_authenticated_installer_payloads(
+    source: &dyn RuntimeSource,
+    system: System,
+) -> Result<AuthenticatedInstallerPayloads, ProvisionError> {
+    let read = |name: &str| {
+        read_target_bytes(
+            source,
+            &format!("installer/{system}/{name}"),
+            MAX_INSTALLER_BINARY_BYTES,
+        )
+    };
+    let root_helper = read("pkg-root-helper")?;
+    let broker = read("pkg-nix-broker")?;
+    let product_cli = read("pkg")?;
+    if [
+        root_helper.as_slice(),
+        broker.as_slice(),
+        product_cli.as_slice(),
+    ]
+    .into_iter()
+    .any(|payload| payload.is_empty())
+    {
+        return Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ));
+    }
+    Ok(AuthenticatedInstallerPayloads {
+        system,
+        root_helper: Arc::from(root_helper),
+        broker: Arc::from(broker),
+        product_cli: Arc::from(product_cli),
+    })
 }
 
 /// Authenticates an installer bundle from a synchronous privileged entry point.
@@ -2061,37 +2147,52 @@ mod tests {
             system: expected_spec.system,
             contents: "fixed config".to_owned(),
         };
+        let expected_payloads =
+            load_authenticated_installer_payloads(&fixture.source, expected_spec.system).unwrap();
         let expected_ownership = fixture.expectation();
 
-        assert!(authenticated_identity_matches(
-            &expected_spec,
-            &expected_config,
-            &expected_ownership,
-            &expected_spec,
-            &expected_config,
-            &expected_ownership,
-        ));
+        let expected_identity = AuthenticatedInstallerIdentity {
+            spec: &expected_spec,
+            config: &expected_config,
+            payloads: &expected_payloads,
+            ownership: &expected_ownership,
+        };
+        assert_eq!(expected_identity, expected_identity);
         let mut changed_spec = expected_spec.clone();
         changed_spec.runtime_sha256 = Digest::from_bytes([9; 32]);
-        assert!(!authenticated_identity_matches(
-            &expected_spec,
-            &expected_config,
-            &expected_ownership,
-            &changed_spec,
-            &expected_config,
-            &expected_ownership,
-        ));
-        assert!(!authenticated_identity_matches(
-            &expected_spec,
-            &expected_config,
-            &expected_ownership,
-            &expected_spec,
-            &AuthenticatedManagedNixConfig {
-                system: expected_spec.system,
-                contents: "changed config".to_owned(),
-            },
-            &expected_ownership,
-        ));
+        assert_ne!(
+            expected_identity,
+            AuthenticatedInstallerIdentity {
+                spec: &changed_spec,
+                config: &expected_config,
+                payloads: &expected_payloads,
+                ownership: &expected_ownership,
+            }
+        );
+        let changed_config = AuthenticatedManagedNixConfig {
+            system: expected_spec.system,
+            contents: "changed config".to_owned(),
+        };
+        assert_ne!(
+            expected_identity,
+            AuthenticatedInstallerIdentity {
+                spec: &expected_spec,
+                config: &changed_config,
+                payloads: &expected_payloads,
+                ownership: &expected_ownership,
+            }
+        );
+        let mut changed_payloads = expected_payloads.clone();
+        changed_payloads.product_cli = Arc::from(b"changed pkg".as_slice());
+        assert_ne!(
+            expected_identity,
+            AuthenticatedInstallerIdentity {
+                spec: &expected_spec,
+                config: &expected_config,
+                payloads: &changed_payloads,
+                ownership: &expected_ownership,
+            }
+        );
         let changed_ownership = OwnershipExpectation::new(
             expected_ownership.system(),
             expected_ownership.nix_version().clone(),
@@ -2100,14 +2201,15 @@ mod tests {
             expected_ownership.artifacts().to_vec(),
         )
         .unwrap();
-        assert!(!authenticated_identity_matches(
-            &expected_spec,
-            &expected_config,
-            &expected_ownership,
-            &expected_spec,
-            &expected_config,
-            &changed_ownership,
-        ));
+        assert_ne!(
+            expected_identity,
+            AuthenticatedInstallerIdentity {
+                spec: &expected_spec,
+                config: &expected_config,
+                payloads: &expected_payloads,
+                ownership: &changed_ownership,
+            }
+        );
     }
 
     #[test]
@@ -2455,7 +2557,19 @@ mod tests {
             };
             let source = FakeSource {
                 descriptor_sha256: spec.descriptor_sha256,
-                targets: BTreeMap::from([(runtime_target, archive), (manifest_target, manifest)]),
+                targets: BTreeMap::from([
+                    (runtime_target, archive),
+                    (manifest_target, manifest),
+                    (
+                        "installer/x86_64-linux/pkg-root-helper".to_owned(),
+                        b"root-helper".to_vec(),
+                    ),
+                    (
+                        "installer/x86_64-linux/pkg-nix-broker".to_owned(),
+                        b"broker".to_vec(),
+                    ),
+                    ("installer/x86_64-linux/pkg".to_owned(), b"pkg-cli".to_vec()),
+                ]),
                 opens: AtomicUsize::new(0),
                 commits: AtomicUsize::new(0),
                 fail_commit: false,
@@ -2495,6 +2609,39 @@ mod tests {
             )
             .expect("fixture expectation")
         }
+    }
+
+    #[test]
+    fn installer_payloads_use_only_fixed_authenticated_targets() {
+        let fixture = Fixture::new();
+        let payloads =
+            load_authenticated_installer_payloads(&fixture.source, System::X8664Linux).unwrap();
+
+        assert_eq!(payloads.system(), System::X8664Linux);
+        assert_eq!(payloads.root_helper(), b"root-helper");
+        assert_eq!(payloads.broker(), b"broker");
+        assert_eq!(payloads.product_cli(), b"pkg-cli");
+        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn missing_or_empty_installer_payload_refuses_authentication() {
+        let mut fixture = Fixture::new();
+        fixture.source.targets.insert(
+            "installer/x86_64-linux/pkg-nix-broker".to_owned(),
+            Vec::new(),
+        );
+        assert_eq!(
+            load_authenticated_installer_payloads(&fixture.source, System::X8664Linux)
+                .map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::InvalidAuthenticatedInput)
+        );
+        fixture.source.targets.remove("installer/x86_64-linux/pkg");
+        assert_eq!(
+            load_authenticated_installer_payloads(&fixture.source, System::X8664Linux)
+                .map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::FetchFailed)
+        );
     }
 
     fn archive_with_file(path: &str, bytes: &[u8]) -> Vec<u8> {

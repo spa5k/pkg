@@ -8,7 +8,9 @@ use crate::{
     },
 };
 use pkg_core::System;
-use pkg_nix::{AuthenticatedManagedNixConfig, OwnershipExpectation};
+use pkg_nix::{
+    AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, OwnershipExpectation,
+};
 use std::{error::Error, fmt};
 
 /// Stable Linux installation failure classes.
@@ -69,6 +71,20 @@ impl Error for InstallError {}
 /// Every artifact value originates from [`linux_install_assets`]; the trait
 /// carries no arbitrary path, command, unit text, user, or group input.
 pub trait LinuxInstallBackend {
+    /// Binds the exact product binaries authenticated by the release bundle.
+    ///
+    /// This must not mutate the host. The default refuses the operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error for a wrong-platform or conflicting binding.
+    fn bind_authenticated_installer_payloads(
+        &mut self,
+        _payloads: &AuthenticatedInstallerPayloads,
+    ) -> Result<(), InstallError> {
+        Err(InstallError::backend_failure())
+    }
+
     /// Binds the exact authenticated managed-Nix configuration in memory.
     ///
     /// This must not mutate the host. It runs before privileged preflight.

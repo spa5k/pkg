@@ -574,6 +574,13 @@ mod tests {
                 let (digest, length) = write_file(root, &source, bytes.as_bytes());
                 artifacts.push(serde_json::json!({"kind":kind,"system":system,"target":target,"source":source,"sha256":digest,"length":length}));
             }
+            for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
+                let target = format!("installer/{system}/{name}");
+                let source = target.clone();
+                let bytes = format!("installer payload {name} {system}\n");
+                let (digest, length) = write_file(root, &source, bytes.as_bytes());
+                artifacts.push(serde_json::json!({"kind":"installer-payload","system":system,"target":target,"source":source,"sha256":digest,"length":length}));
+            }
         }
         let mut cli = Vec::new();
         for system in ["aarch64-darwin", "aarch64-linux", "x86_64-linux"] {
@@ -649,6 +656,20 @@ mod tests {
         assert!(
             ReleaseManifest::from_json(
                 &serde_json::to_vec(&confused).unwrap(),
+                root,
+                &TestAuthority,
+            )
+            .is_err()
+        );
+
+        let mut missing_payload = release_fixture_json(root);
+        missing_payload["artifacts"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|artifact| artifact["target"] != "installer/x86_64-linux/pkg-root-helper");
+        assert!(
+            ReleaseManifest::from_json(
+                &serde_json::to_vec(&missing_payload).unwrap(),
                 root,
                 &TestAuthority,
             )
@@ -749,7 +770,7 @@ mod tests {
         .await
         .expect("dry-run sign");
         let publication = signed.objects();
-        assert_eq!(publication.len(), 25);
+        assert_eq!(publication.len(), crate::publish::RELEASE_OBJECT_COUNT);
         assert!(
             publication
                 .iter()
@@ -851,6 +872,18 @@ mod tests {
             .await
             .expect("fully verified target");
         assert_eq!(bytes, b"fixture descriptor\n");
+        let stream = repository
+            .read_target(
+                &TargetName::new("installer/x86_64-linux/pkg-root-helper")
+                    .expect("installer target name"),
+            )
+            .await
+            .expect("installer target read")
+            .expect("installer target exists");
+        let bytes = IntoVec::<tough::error::Error>::into_vec(stream)
+            .await
+            .expect("fully verified installer target");
+        assert_eq!(bytes, b"installer payload pkg-root-helper x86_64-linux\n");
         assert!(!output.join("targets/pkg-aarch64-darwin").exists());
         let transaction_path = temporary.path().join("release-transaction");
         let durable = signed

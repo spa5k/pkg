@@ -11,7 +11,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use nix::unistd::{Gid, Uid};
-use pkg_nix::{AuthenticatedManagedNixConfig, ManagedGroupBindings};
+use pkg_nix::{
+    AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
+};
 use rustix::fs::{
     AtFlags, Mode, OFlags, RenameFlags, fchmod, fsync, mkdirat, open, openat, renameat_with,
     unlinkat,
@@ -81,7 +83,7 @@ impl fmt::Display for LinuxFilesystemError {
 impl std::error::Error for LinuxFilesystemError {}
 
 /// Exact release binary bytes supplied by the authenticated release boundary.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LinuxReleasePayloads {
     root_helper: Arc<[u8]>,
     broker: Arc<[u8]>,
@@ -100,6 +102,16 @@ impl fmt::Debug for LinuxReleasePayloads {
 }
 
 impl LinuxReleasePayloads {
+    pub(crate) fn from_authenticated_bundle(
+        payloads: &AuthenticatedInstallerPayloads,
+    ) -> Result<Self, LinuxFilesystemError> {
+        Self::from_authenticated_bytes(
+            payloads.root_helper(),
+            payloads.broker(),
+            payloads.product_cli(),
+        )
+    }
+
     /// Binds exact bytes that an outer release verifier already authenticated.
     ///
     /// # Errors
