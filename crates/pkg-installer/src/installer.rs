@@ -1,6 +1,9 @@
 //! Idempotent Linux installation orchestration over a closed privileged API.
 
-use crate::assets::{LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets};
+use crate::{
+    LinuxAssetPresence,
+    assets::{LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets},
+};
 use pkg_core::System;
 use pkg_nix::{AuthenticatedManagedNixConfig, OwnershipExpectation};
 use std::{error::Error, fmt};
@@ -97,6 +100,17 @@ pub trait LinuxInstallBackend {
     ///
     /// Returns `UnmanagedNix` for unmanaged, ambiguous, or unreadable evidence.
     fn preflight_clean_host(&mut self, system: System) -> Result<(), InstallError>;
+
+    /// Classifies one fixed asset without mutation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error when the asset is conflicting, unsafe,
+    /// or unreadable.
+    fn classify_asset(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<LinuxAssetPresence, InstallError>;
 
     /// Ensures one fixed artifact exists and returns whether this attempt created it.
     ///
@@ -426,6 +440,17 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn classify_asset(
+            &mut self,
+            asset: LinuxInstallAsset,
+        ) -> Result<LinuxAssetPresence, InstallError> {
+            Ok(if self.existing.contains(asset.id()) {
+                LinuxAssetPresence::ExactPresent
+            } else {
+                LinuxAssetPresence::Absent
+            })
         }
 
         fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {

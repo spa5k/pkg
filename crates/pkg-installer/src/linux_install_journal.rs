@@ -155,7 +155,7 @@ impl LinuxInstallJournal {
         self.system == system.as_str() && self.ownership_manifest_digest == digest.to_string()
     }
 
-    /// Records the next fixed mutation intent in this snapshot.
+    /// Records the next fixed mutation intent after exact absence was verified.
     ///
     /// # Errors
     ///
@@ -181,26 +181,45 @@ impl LinuxInstallJournal {
         Ok(())
     }
 
-    /// Records the current intent with its verified ownership result.
+    /// Records one exact object that existed before this attempt.
+    ///
+    /// No intent is needed because this operation does not mutate the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidTransition` when an intent is pending or the mutation
+    /// does not match the compiled install sequence.
+    pub fn record_preexisting(
+        &mut self,
+        mutation: LinuxInstallMutation,
+    ) -> Result<(), LinuxInstallJournalError> {
+        if self.committed
+            || self
+                .entries
+                .last()
+                .is_some_and(|entry| entry.state == LinuxInstallMutationState::Intended)
+            || expected_mutation(self.entries.len()).as_ref() != Some(&mutation)
+        {
+            return Err(invalid_transition());
+        }
+        self.entries.push(LinuxInstallJournalEntry {
+            mutation,
+            state: LinuxInstallMutationState::PreExisting,
+        });
+        Ok(())
+    }
+
+    /// Records that the current absent-before intent created the fixed object.
     ///
     /// # Errors
     ///
     /// Returns `InvalidTransition` when no matching intent is current.
-    pub fn complete(
-        &mut self,
-        state: LinuxInstallMutationState,
-    ) -> Result<(), LinuxInstallJournalError> {
-        if !matches!(
-            state,
-            LinuxInstallMutationState::Created | LinuxInstallMutationState::PreExisting
-        ) {
-            return Err(invalid_transition());
-        }
+    pub fn complete_created(&mut self) -> Result<(), LinuxInstallJournalError> {
         let entry = self.entries.last_mut().ok_or_else(invalid_transition)?;
         if entry.state != LinuxInstallMutationState::Intended {
             return Err(invalid_transition());
         }
-        entry.state = state;
+        entry.state = LinuxInstallMutationState::Created;
         Ok(())
     }
 
@@ -227,6 +246,32 @@ impl LinuxInstallJournal {
     #[must_use]
     pub const fn is_committed(&self) -> bool {
         self.committed
+    }
+
+    /// Returns the durable state for one mutation at the current sequence point.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidTransition` when the caller skips an earlier mutation or
+    /// names a mutation outside the compiled sequence.
+    pub fn mutation_state(
+        &self,
+        mutation: &LinuxInstallMutation,
+    ) -> Result<Option<LinuxInstallMutationState>, LinuxInstallJournalError> {
+        let Some(index) = install_sequence()
+            .iter()
+            .position(|expected| expected == mutation)
+        else {
+            return Err(invalid_transition());
+        };
+        if index > self.entries.len() {
+            return Err(invalid_transition());
+        }
+        self.entries.get(index).map_or(Ok(None), |entry| {
+            (entry.mutation == *mutation)
+                .then_some(Some(entry.state))
+                .ok_or_else(invalid_transition)
+        })
     }
 
     /// Returns bounded recovery actions in reverse mutation order.
@@ -340,9 +385,7 @@ mod tests {
         let mut journal = journal();
         let first = install_sequence().first().cloned().unwrap();
         journal.intend(first.clone()).unwrap();
-        journal
-            .complete(LinuxInstallMutationState::Created)
-            .unwrap();
+        journal.complete_created().unwrap();
 
         let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
         assert_eq!(decoded, journal);
@@ -365,20 +408,34 @@ mod tests {
         journal.intend(first.clone()).unwrap();
         assert_eq!(journal.intend(first), Err(invalid_transition()));
         assert_eq!(
-            journal.complete(LinuxInstallMutationState::Intended),
+            journal.record_preexisting(install_sequence()[1].clone()),
             Err(invalid_transition())
         );
         assert_eq!(journal.commit(), Err(invalid_transition()));
     }
 
     #[test]
+    fn state_lookup_refuses_skips_and_distinguishes_pending_state() {
+        let mut journal = journal();
+        let sequence = install_sequence();
+        assert_eq!(journal.mutation_state(&sequence[0]).unwrap(), None);
+        assert_eq!(
+            journal.mutation_state(&sequence[1]),
+            Err(invalid_transition())
+        );
+        journal.record_preexisting(sequence[0].clone()).unwrap();
+        assert_eq!(
+            journal.mutation_state(&sequence[0]).unwrap(),
+            Some(LinuxInstallMutationState::PreExisting)
+        );
+        assert_eq!(journal.mutation_state(&sequence[1]).unwrap(), None);
+    }
+
+    #[test]
     fn recovery_preserves_preexisting_and_flags_uncertain_intent() {
         let mut journal = journal();
         let sequence = install_sequence();
-        journal.intend(sequence[0].clone()).unwrap();
-        journal
-            .complete(LinuxInstallMutationState::PreExisting)
-            .unwrap();
+        journal.record_preexisting(sequence[0].clone()).unwrap();
         journal.intend(sequence[1].clone()).unwrap();
         assert_eq!(
             journal.recovery_actions(),
@@ -391,9 +448,7 @@ mod tests {
         let mut journal = journal();
         for mutation in install_sequence() {
             journal.intend(mutation).unwrap();
-            journal
-                .complete(LinuxInstallMutationState::Created)
-                .unwrap();
+            journal.complete_created().unwrap();
         }
         journal.commit().unwrap();
         assert!(journal.is_committed());

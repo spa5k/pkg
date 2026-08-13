@@ -119,7 +119,7 @@ pub use managed::ownership::{
     ManagedArtifact, ManagedArtifactKind, ManagedGroup, ManagedGroupBindings, OwnershipError,
     OwnershipErrorCode, OwnershipExpectation, VerifiedOwnership, decode_ownership_asset_manifest,
     encode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
-    verify_ownership_receipt,
+    verify_ownership_expectation, verify_ownership_receipt,
 };
 pub use managed::provision::{
     AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,

@@ -75,7 +75,7 @@ pub use linux_install_journal::{
 pub use linux_install_journal_file::{
     LinuxInstallJournalFileError, LinuxInstallJournalFileErrorCode, LinuxInstallJournalStorage,
 };
-pub use linux_platform_assets::LinuxPlatformAssetManager;
+pub use linux_platform_assets::{LinuxAssetPresence, LinuxPlatformAssetManager};
 pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode, LinuxSystemdManager};
 pub use linux_uninstall::ProductionLinuxUninstallBackend;
 pub use platform::linux::{

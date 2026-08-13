@@ -1645,6 +1645,10 @@ impl<'a> InstallTransaction<'a> {
         self.record_created(path, ProvisionErrorCode::ReceiptFailed)?;
         fs::remove_file(&temporary)
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
+        // The final name publication and the temp unlink both mutate this
+        // directory; the receipt or manifest is not durable until the parent
+        // directory is synced.
+        sync_directory(parent)?;
         let temporary_index = self.created.len() - 2;
         self.created.remove(temporary_index);
         Ok(())
@@ -1726,6 +1730,13 @@ fn remove_attempt_paths(paths: &mut Vec<AttemptPath>) -> bool {
         failed |= result.is_err();
     }
     failed
+}
+
+/// Durably publishes directory mutations by syncing the parent directory.
+fn sync_directory(directory: &Path) -> Result<(), ProvisionError> {
+    fs::File::open(directory)
+        .and_then(|handle| handle.sync_all())
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))
 }
 
 impl Drop for InstallTransaction<'_> {
@@ -1820,6 +1831,35 @@ mod tests {
         assert_eq!(
             refuse_nested_runtime().map_err(ProvisionError::code),
             Err(ProvisionErrorCode::InvalidAuthenticatedInput)
+        );
+    }
+
+    #[test]
+    fn metadata_file_syncs_parent_directory_and_publishes_once() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("root");
+        create_private_directory(&root).unwrap();
+        let owner_uid = fs::metadata(&root).unwrap().uid();
+
+        let daemon = FakeDaemon::healthy();
+        let mut transaction = InstallTransaction::new(&root, &daemon);
+        let path = root.join("manifest.json");
+
+        transaction
+            .install_metadata_file(&path, b"payload", owner_uid)
+            .unwrap();
+
+        // The final metadata name is published with the exact bytes ...
+        assert_eq!(fs::read(&path).unwrap(), b"payload");
+        // ... the installer temp is removed ...
+        let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+        assert!(!temporary.exists());
+        // ... and re-publishing the same final name fails closed.
+        assert_eq!(
+            transaction
+                .install_metadata_file(&path, b"payload", owner_uid)
+                .map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::ReceiptFailed)
         );
     }
 

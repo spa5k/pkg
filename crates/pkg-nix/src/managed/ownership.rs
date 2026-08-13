@@ -654,6 +654,42 @@ pub(super) fn verify_with_owner_uid(
         return Err(OwnershipError::new(OwnershipErrorCode::ReceiptMismatch));
     }
 
+    let verified = verify_artifacts(&root, expectation, required_owner_uid)?;
+
+    let second_receipt = read_safe_receipt(&root, &receipt_path, required_owner_uid)?;
+    if first_receipt != second_receipt {
+        return Err(OwnershipError::new(OwnershipErrorCode::ReceiptMismatch));
+    }
+    Ok(verified)
+}
+
+/// Corroborates every authenticated artifact on disk without a receipt.
+///
+/// Recovery uses this when no root-owned receipt is available or trusted. It
+/// accepts only an authenticated [`OwnershipExpectation`], a fixed host root,
+/// and the required owner uid. It reuses the same per-artifact verification as
+/// [`verify_with_owner_uid`] but never reads, trusts, or publishes a receipt,
+/// and it inspects only paths rooted in the authenticated artifact set.
+///
+/// # Errors
+///
+/// Returns the same artifact failures as receipt-bound verification.
+pub fn verify_ownership_expectation(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    required_owner_uid: u32,
+) -> Result<VerifiedOwnership, OwnershipError> {
+    let root = root
+        .canonicalize()
+        .map_err(|_| OwnershipError::new(OwnershipErrorCode::IoFailure))?;
+    verify_artifacts(&root, expectation, required_owner_uid)
+}
+
+fn verify_artifacts(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    required_owner_uid: u32,
+) -> Result<VerifiedOwnership, OwnershipError> {
     let store_gid = expectation
         .artifacts
         .iter()
@@ -662,21 +698,16 @@ pub(super) fn verify_with_owner_uid(
         .ok_or_else(|| OwnershipError::new(OwnershipErrorCode::ExpectationInvalid))?;
 
     // Dynamic store objects are authenticated by Nix and tracked by the Nix DB
-    // plus pkg state; this receipt corroborates all static privileged assets.
+    // plus pkg state; this corroborates all static privileged assets.
     for (index, artifact) in expectation.artifacts.iter().enumerate() {
         verify_artifact(
-            &root,
+            root,
             artifact,
             expectation.groups.gid_for(artifact.group),
             required_owner_uid,
             store_gid,
             index,
         )?;
-    }
-
-    let second_receipt = read_safe_receipt(&root, &receipt_path, required_owner_uid)?;
-    if first_receipt != second_receipt {
-        return Err(OwnershipError::new(OwnershipErrorCode::ReceiptMismatch));
     }
 
     Ok(VerifiedOwnership {
@@ -1680,5 +1711,85 @@ mod tests {
             fs::metadata(&fixture.root).unwrap().gid()
         );
         assert!(fixture.verify().is_ok());
+    }
+
+    #[test]
+    fn receipt_free_verifier_passes_without_a_receipt() {
+        let fixture = Fixture::new();
+        // Receipt-bound verification requires the receipt; remove it to prove
+        // the new verifier needs none.
+        fs::remove_file(fixture.receipt()).unwrap();
+        assert_eq!(
+            fixture.verify().unwrap_err().code(),
+            OwnershipErrorCode::ReceiptMissing
+        );
+        let verified =
+            verify_ownership_expectation(&fixture.root, &fixture.expectation, fixture.owner_uid)
+                .unwrap();
+        assert_eq!(verified.system(), fixture.expectation.system());
+        assert_eq!(
+            verified.artifact_count(),
+            fixture.expectation.artifacts().len()
+        );
+    }
+
+    #[test]
+    fn receipt_free_verifier_refuses_missing_and_tampered_artifacts() {
+        let fixture = Fixture::new();
+
+        // Missing artifact.
+        let file = fixture.root.join("opt/pkg/bin/nix");
+        fs::remove_file(&file).unwrap();
+        assert_eq!(
+            verify_ownership_expectation(&fixture.root, &fixture.expectation, fixture.owner_uid)
+                .unwrap_err()
+                .code(),
+            OwnershipErrorCode::ArtifactMissing
+        );
+
+        // Tampered bytes restore the file but change its content at the
+        // exact recorded size, exercising the digest check.
+        fs::write(&file, b"tampered ni\n").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o555)).unwrap();
+        assert_eq!(
+            verify_ownership_expectation(&fixture.root, &fixture.expectation, fixture.owner_uid)
+                .unwrap_err()
+                .code(),
+            OwnershipErrorCode::ArtifactDigestMismatch
+        );
+
+        // Exact bytes pass again. Loosen the recorded mode for the rewrite,
+        // then restore 0o555 before verification.
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&file, b"managed nix\n").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(
+            verify_ownership_expectation(&fixture.root, &fixture.expectation, fixture.owner_uid)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn forged_receipt_is_irrelevant_to_the_receipt_free_verifier() {
+        let fixture = Fixture::new();
+        // Forge a structurally valid receipt bound to a different digest.
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&encode_ownership_receipt(&fixture.expectation).unwrap())
+                .unwrap();
+        value["assetManifestDigest"] = serde_json::json!(
+            "sha256-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+        fs::write(fixture.receipt(), serde_json::to_vec(&value).unwrap()).unwrap();
+
+        // Receipt-bound verification must reject the forgery.
+        assert_eq!(
+            fixture.verify().unwrap_err().code(),
+            OwnershipErrorCode::ReceiptMismatch
+        );
+        // The receipt-free verifier never inspects the receipt.
+        assert!(
+            verify_ownership_expectation(&fixture.root, &fixture.expectation, fixture.owner_uid)
+                .is_ok()
+        );
     }
 }

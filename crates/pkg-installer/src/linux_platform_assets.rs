@@ -11,6 +11,15 @@ use crate::{
     linux_install_assets,
 };
 
+/// Whether one fixed asset is exact-present or absent before a write-ahead intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxAssetPresence {
+    /// The exact fixed asset exists and matches the closed contract.
+    ExactPresent,
+    /// The fixed asset is absent.
+    Absent,
+}
+
 /// Routes the closed Linux asset set through the production account and
 /// descriptor-relative filesystem implementations.
 pub struct LinuxPlatformAssetManager {
@@ -224,6 +233,39 @@ impl LinuxPlatformAssetManager {
         }
         self.states.remove(asset.id());
         Ok(())
+    }
+
+    /// Classifies one fixed asset as exact-present or absent without mutation.
+    ///
+    /// This runs before a write-ahead intent. A conflicting, unreadable, unsafe,
+    /// or wrong asset is neither exact-present nor cleanly absent and returns the
+    /// existing redacted `InstallError`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend failure when the production component refuses.
+    pub fn classify_asset(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<LinuxAssetPresence, InstallError> {
+        if LinuxAccountManager::handles(asset) {
+            if self.accounts.verify_asset(asset).is_ok() {
+                return Ok(LinuxAssetPresence::ExactPresent);
+            }
+            self.accounts
+                .verify_asset_absent(asset)
+                .map(|()| LinuxAssetPresence::Absent)
+                .map_err(|_| InstallError::backend_failure())
+        } else {
+            let filesystem = self.ensure_filesystem()?;
+            if filesystem.verify_asset(asset).is_ok() {
+                return Ok(LinuxAssetPresence::ExactPresent);
+            }
+            filesystem
+                .verify_asset_absent(asset)
+                .map(|()| LinuxAssetPresence::Absent)
+                .map_err(|_| InstallError::backend_failure())
+        }
     }
 
     fn ensure_filesystem(&mut self) -> Result<&mut LinuxFilesystemManager, InstallError> {

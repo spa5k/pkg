@@ -582,9 +582,7 @@ mod tests {
                 id: "broker-group".to_owned(),
             })
             .unwrap();
-        second
-            .complete(crate::LinuxInstallMutationState::Created)
-            .unwrap();
+        second.complete_created().unwrap();
         storage.replace(&second).unwrap();
         assert_eq!(storage.load().unwrap(), Some(second));
 

@@ -246,6 +246,12 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, P> {
     fn preflight_clean_host(&mut self, system: System) -> Result<(), InstallError> {
         self.inner.preflight_clean_host(system)
     }
+    fn classify_asset(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<crate::LinuxAssetPresence, InstallError> {
+        self.inner.classify_asset(asset)
+    }
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
         self.inner.ensure_asset(asset)
     }
@@ -560,6 +566,12 @@ mod tests {
         }
         fn preflight_clean_host(&mut self, _system: System) -> Result<(), InstallError> {
             Ok(())
+        }
+        fn classify_asset(
+            &mut self,
+            _asset: LinuxInstallAsset,
+        ) -> Result<crate::LinuxAssetPresence, InstallError> {
+            Ok(crate::LinuxAssetPresence::ExactPresent)
         }
         fn ensure_asset(&mut self, _asset: LinuxInstallAsset) -> Result<bool, InstallError> {
             Ok(false)

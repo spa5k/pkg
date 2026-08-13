@@ -1,8 +1,8 @@
 //! Complete production binding for the closed Linux installer transaction.
 
 use crate::{
-    InstallError, LinuxInstallAsset, LinuxInstallBackend, LinuxPlatformAssetManager,
-    LinuxReleasePayloads, LinuxSystemdManager,
+    InstallError, LinuxAssetPresence, LinuxInstallAsset, LinuxInstallBackend,
+    LinuxPlatformAssetManager, LinuxReleasePayloads, LinuxSystemdManager,
 };
 use nix::unistd::{Gid, Uid};
 use pkg_core::System;
@@ -120,6 +120,13 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             &environment_keys,
         )
         .map_err(|_| InstallError::backend_failure())
+    }
+
+    fn classify_asset(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<LinuxAssetPresence, InstallError> {
+        self.assets.classify_asset(asset)
     }
 
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
