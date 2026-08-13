@@ -104,7 +104,7 @@ pub fn install_linux_from_bundle<'a>(
     // This root-owned datastore exists only for strict authentication before
     // persistent mutation. Final reauthentication uses the durable datastore.
     let auth_request = InstallerProvisionRequest {
-        bundle_root: request.bundle_root,
+        repository: request.repository,
         datastore: &auth_datastore,
         installation_root: request.installation_root,
         scratch_parent: request.scratch_parent,
@@ -1014,7 +1014,7 @@ mod tests {
             linux_recovery_context_digest(
                 digest,
                 &InstallerProvisionRequest {
-                    bundle_root: Path::new("/bundle"),
+                    repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
                     datastore: Path::new("/state"),
                     installation_root,
                     scratch_parent,
@@ -1296,7 +1296,7 @@ mod tests {
             ..LinuxBackend::default()
         };
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),
@@ -1347,7 +1347,7 @@ mod tests {
             ..LinuxBackend::default()
         };
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),
@@ -1405,7 +1405,7 @@ mod tests {
             ..LinuxBackend::default()
         };
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),
@@ -1449,7 +1449,7 @@ mod tests {
             Digest::from_bytes([0xa3; 32]),
         )?;
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),
@@ -1498,7 +1498,7 @@ mod tests {
             Digest::from_bytes([0xa4; 32]),
         )?;
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),
@@ -1629,7 +1629,7 @@ mod tests {
     fn linux_adapter_routes_runtime_only_through_authenticated_provisioner()
     -> Result<(), Box<dyn std::error::Error>> {
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),
@@ -1661,7 +1661,7 @@ mod tests {
     fn linux_adapter_rolls_back_through_the_authenticated_owner()
     -> Result<(), Box<dyn std::error::Error>> {
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),
@@ -1700,7 +1700,7 @@ mod tests {
     fn macos_adapter_rolls_back_through_the_authenticated_owner()
     -> Result<(), Box<dyn std::error::Error>> {
         let request = InstallerProvisionRequest {
-            bundle_root: Path::new("/bundle"),
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
             datastore: Path::new("/state"),
             installation_root: Path::new("/"),
             scratch_parent: Path::new("/scratch"),

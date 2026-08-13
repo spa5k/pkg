@@ -589,7 +589,15 @@ mod tests {
             let (digest, length) = write_file(root, &source, system.as_bytes());
             let (bundle_digest, bundle_length) =
                 write_file(root, &bundle, b"fixture sigstore bundle\n");
-            cli.push(serde_json::json!({"system":system,"source":source,"sha256":digest,"length":length,"sigstoreBundle":bundle,"sigstoreBundleSha256":bundle_digest,"sigstoreBundleLength":bundle_length}));
+            cli.push(serde_json::json!({"kind":"pkg","system":system,"source":source,"sha256":digest,"length":length,"sigstoreBundle":bundle,"sigstoreBundleSha256":bundle_digest,"sigstoreBundleLength":bundle_length}));
+        }
+        for system in ["aarch64-linux", "x86_64-linux"] {
+            let source = format!("cli/pkg-installer-{system}");
+            let bundle = format!("cli/pkg-installer-{system}.sigstore.json");
+            let (digest, length) = write_file(root, &source, system.as_bytes());
+            let (bundle_digest, bundle_length) =
+                write_file(root, &bundle, b"fixture installer sigstore bundle\n");
+            cli.push(serde_json::json!({"kind":"pkg-install","system":system,"source":source,"sha256":digest,"length":length,"sigstoreBundle":bundle,"sigstoreBundleSha256":bundle_digest,"sigstoreBundleLength":bundle_length}));
         }
         serde_json::json!({
             "schemaVersion":1,"releaseId":"v0.1.0","channelSequence":1,"timestampVersion":1,"policyVersion":1,
@@ -670,6 +678,22 @@ mod tests {
         assert!(
             ReleaseManifest::from_json(
                 &serde_json::to_vec(&missing_payload).unwrap(),
+                root,
+                &TestAuthority,
+            )
+            .is_err()
+        );
+
+        let mut missing_bootstrap = release_fixture_json(root);
+        missing_bootstrap["cliArtifacts"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|artifact| {
+                artifact["kind"] != "pkg-install" || artifact["system"] != "x86_64-linux"
+            });
+        assert!(
+            ReleaseManifest::from_json(
+                &serde_json::to_vec(&missing_bootstrap).unwrap(),
                 root,
                 &TestAuthority,
             )
@@ -776,6 +800,14 @@ mod tests {
                 .iter()
                 .any(|object| object.name().ends_with("signing-audit.ndjson"))
         );
+        assert!(publication.iter().any(|object| {
+            object
+                .name()
+                .ends_with("cli/pkg-installer-x86_64-linux.sigstore.json")
+        }));
+        assert!(!publication.iter().any(|object| {
+            object.name().contains("/targets/") && object.name().contains("pkg-install")
+        }));
 
         let timestamp_keys: Vec<Box<dyn KeySource>> =
             vec![Box::new(online[2].clone()) as Box<dyn KeySource>];

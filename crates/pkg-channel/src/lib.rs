@@ -23,5 +23,6 @@ pub use policy::{
     AcceptedChannel, ChannelError, RefreshOutcome, VerifiedChannel,
     validate_datastore as validate_private_datastore,
     validate_descriptor as verify_authenticated_descriptor,
+    validate_repository_url as validate_https_repository_url,
 };
 pub use tuf::{AuthenticatedIndexTarget, ChannelClient, ChannelRefresh};

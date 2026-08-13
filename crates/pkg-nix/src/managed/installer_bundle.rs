@@ -1,4 +1,4 @@
-//! Private offline installer-bundle authentication and runtime snapshots.
+//! Private installer-repository authentication and runtime snapshots.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -6,20 +6,24 @@ use std::io::{Read as _, Seek as _, Write as _};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use futures_util::StreamExt as _;
 use jiff::Timestamp;
 use pkg_channel::{
     AcceptedChannel, ChannelError, RefreshOutcome, TrustedRoot, VerifiedChannel,
-    validate_private_datastore, verify_authenticated_descriptor,
+    validate_https_repository_url, validate_private_datastore, verify_authenticated_descriptor,
 };
 use pkg_core::{ChannelSequence, PolicyVersion, System};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tough::{
-    ExpirationEnforcement, FilesystemTransport, IntoVec, Limits, RepositoryLoader, TargetName,
+    DefaultTransport, ExpirationEnforcement, FilesystemTransport, HttpTransportBuilder, IntoVec,
+    Limits, RepositoryLoader, TargetName,
 };
 use url::Url;
+
+use super::provision::InstallerRepository;
 
 const DESCRIPTOR_TARGET: &str = "descriptor.json";
 const MAX_DESCRIPTOR_BYTES: u64 = 256 * 1024;
@@ -136,17 +140,35 @@ impl VerifiedRuntimeBundle {
 /// crate.
 pub(super) async fn load_installer_bundle(
     trusted_root: TrustedRoot,
-    bundle_root: &Path,
+    source: InstallerRepository<'_>,
     datastore: &Path,
     host: System,
     datastore_owner: Option<DatastoreOwner>,
 ) -> Result<VerifiedRuntimeBundle, ChannelError> {
-    let root = canonical_directory(bundle_root)?;
-    let metadata = canonical_directory(&root.join("metadata"))?;
-    let targets = canonical_directory(&root.join("targets"))?;
-    if !metadata.starts_with(&root) || !targets.starts_with(&root) {
-        return Err(ChannelError::InstallerBundleUnavailable);
-    }
+    let local_urls = match source {
+        InstallerRepository::Bundle(bundle_root) => {
+            let root = canonical_directory(bundle_root)?;
+            let metadata = canonical_directory(&root.join("metadata"))?;
+            let targets = canonical_directory(&root.join("targets"))?;
+            if !metadata.starts_with(&root) || !targets.starts_with(&root) {
+                return Err(ChannelError::InstallerBundleUnavailable);
+            }
+            Some((
+                Url::from_directory_path(metadata)
+                    .map_err(|()| ChannelError::InstallerBundleUnavailable)?,
+                Url::from_directory_path(targets)
+                    .map_err(|()| ChannelError::InstallerBundleUnavailable)?,
+            ))
+        }
+        InstallerRepository::Remote {
+            metadata_url,
+            targets_url,
+        } => {
+            validate_https_repository_url(metadata_url)?;
+            validate_https_repository_url(targets_url)?;
+            None
+        }
+    };
     validate_private_datastore(datastore)?;
     if let Some(owner) = datastore_owner {
         let metadata =
@@ -157,18 +179,39 @@ pub(super) async fn load_installer_bundle(
     let accepted = AcceptedChannelStore::new(datastore, datastore_owner);
     accepted.initialize()?;
 
-    let metadata_url = Url::from_directory_path(metadata)
-        .map_err(|()| ChannelError::InstallerBundleUnavailable)?;
-    let targets_url =
-        Url::from_directory_path(targets).map_err(|()| ChannelError::InstallerBundleUnavailable)?;
-    let repository = RepositoryLoader::new(&trusted_root.as_bytes(), metadata_url, targets_url)
-        .transport(FilesystemTransport)
+    let repository = if let Some((metadata_url, targets_url)) = local_urls {
+        RepositoryLoader::new(&trusted_root.as_bytes(), metadata_url, targets_url)
+            .transport(FilesystemTransport)
+            .limits(LIMITS)
+            .expiration_enforcement(ExpirationEnforcement::Safe)
+            .datastore(datastore)
+            .load()
+            .await
+    } else if let InstallerRepository::Remote {
+        metadata_url,
+        targets_url,
+    } = source
+    {
+        RepositoryLoader::new(
+            &trusted_root.as_bytes(),
+            metadata_url.clone(),
+            targets_url.clone(),
+        )
+        .transport(DefaultTransport::new_with_http_settings(
+            HttpTransportBuilder::new()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .tries(3),
+        ))
         .limits(LIMITS)
         .expiration_enforcement(ExpirationEnforcement::Safe)
         .datastore(datastore)
         .load()
         .await
-        .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    } else {
+        return Err(ChannelError::InstallerBundleUnavailable);
+    }
+    .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
     load_verified_repository(
         repository,
         accepted,
@@ -707,6 +750,29 @@ mod tests {
     const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
 
     #[tokio::test]
+    async fn remote_repository_refuses_unsafe_urls_before_state_creation() {
+        let temporary = TempDir::new().unwrap();
+        let datastore = temporary.path().join("datastore");
+        let metadata_url = Url::parse("http://release.invalid/metadata/").unwrap();
+        let targets_url = Url::parse("https://release.invalid/targets/").unwrap();
+
+        let result = load_installer_bundle(
+            TrustedRoot::from_embedded(ROOT).unwrap(),
+            InstallerRepository::Remote {
+                metadata_url: &metadata_url,
+                targets_url: &targets_url,
+            },
+            &datastore,
+            System::Aarch64Linux,
+            None,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ChannelError::InvalidRepositoryUrl)));
+        assert!(!datastore.exists());
+    }
+
+    #[tokio::test]
     async fn bundle_targets_are_private_and_floor_is_explicit() {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/channel-v1")
@@ -720,7 +786,7 @@ mod tests {
 
         let mut bundle = load_installer_bundle(
             TrustedRoot::from_embedded(ROOT).unwrap(),
-            &fixture,
+            InstallerRepository::Bundle(&fixture),
             &datastore,
             System::Aarch64Darwin,
             None,

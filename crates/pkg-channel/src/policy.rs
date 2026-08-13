@@ -256,7 +256,8 @@ pub fn validate_datastore(path: &Path) -> Result<(), ChannelError> {
     Ok(())
 }
 
-pub(crate) fn validate_repository_url(url: &Url) -> Result<(), ChannelError> {
+/// Rejects repository URLs that are not canonical HTTPS endpoints.
+pub fn validate_repository_url(url: &Url) -> Result<(), ChannelError> {
     if url.scheme() != "https"
         || url.host_str().is_none()
         || !url.username().is_empty()

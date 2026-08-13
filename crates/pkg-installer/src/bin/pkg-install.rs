@@ -1,14 +1,17 @@
 use std::{fmt, path::Path, process::ExitCode};
 
 use nix::unistd::Uid;
-use pkg_channel::TrustedRoot;
+use pkg_channel::{TrustedRoot, validate_https_repository_url};
 use pkg_core::System;
 use pkg_installer::{
     ProductionLinuxInstallBackend, install_linux_from_bundle, plan_linux_group_bindings,
 };
-use pkg_nix::{InstallerProvisionRequest, ProductionManagedDaemon};
+use pkg_nix::{InstallerProvisionRequest, InstallerRepository, ProductionManagedDaemon};
+use url::Url;
 
 const RELEASE_TUF_ROOT_JSON: Option<&str> = option_env!("PKG_RELEASE_TUF_ROOT_JSON");
+const RELEASE_METADATA_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_METADATA_URL");
+const RELEASE_TARGETS_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_TARGETS_URL");
 const CHANNEL_DATASTORE: &str = "/var/lib/pkg/broker-home/channel";
 const SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
 
@@ -33,14 +36,14 @@ fn run() -> Result<(), PublicInstallError> {
         return Err(PublicInstallError::RootRequired);
     }
     let system = host_system().ok_or(PublicInstallError::UnsupportedSystem)?;
-    let executable = std::env::current_exe()
-        .and_then(std::fs::canonicalize)
-        .map_err(|_| PublicInstallError::InvalidRelease)?;
-    let bundle_root = release_root(&executable)?;
     let trusted_root = trusted_root(RELEASE_TUF_ROOT_JSON)?;
+    let (metadata_url, targets_url) = release_urls(RELEASE_METADATA_URL, RELEASE_TARGETS_URL)?;
     let groups = plan_linux_group_bindings().map_err(|_| PublicInstallError::InstallFailed)?;
     let request = InstallerProvisionRequest {
-        bundle_root,
+        repository: InstallerRepository::Remote {
+            metadata_url: &metadata_url,
+            targets_url: &targets_url,
+        },
         datastore: Path::new(CHANNEL_DATASTORE),
         installation_root: Path::new("/"),
         scratch_parent: Path::new(SCRATCH_PARENT),
@@ -55,16 +58,6 @@ fn run() -> Result<(), PublicInstallError> {
     Ok(())
 }
 
-fn release_root(executable: &Path) -> Result<&Path, PublicInstallError> {
-    if !executable.is_absolute() {
-        return Err(PublicInstallError::InvalidRelease);
-    }
-    executable
-        .parent()
-        .filter(|parent| parent != &Path::new("/"))
-        .ok_or(PublicInstallError::InvalidRelease)
-}
-
 fn trusted_root(root_json: Option<&'static str>) -> Result<TrustedRoot, PublicInstallError> {
     TrustedRoot::from_embedded(
         root_json
@@ -72,6 +65,24 @@ fn trusted_root(root_json: Option<&'static str>) -> Result<TrustedRoot, PublicIn
             .as_bytes(),
     )
     .map_err(|_| PublicInstallError::InvalidRelease)
+}
+
+fn release_urls(
+    metadata: Option<&str>,
+    targets: Option<&str>,
+) -> Result<(Url, Url), PublicInstallError> {
+    let metadata = Url::parse(metadata.ok_or(PublicInstallError::InvalidRelease)?)
+        .map_err(|_| PublicInstallError::InvalidRelease)?;
+    let targets = Url::parse(targets.ok_or(PublicInstallError::InvalidRelease)?)
+        .map_err(|_| PublicInstallError::InvalidRelease)?;
+    if !metadata.path().ends_with('/')
+        || !targets.path().ends_with('/')
+        || validate_https_repository_url(&metadata).is_err()
+        || validate_https_repository_url(&targets).is_err()
+    {
+        return Err(PublicInstallError::InvalidRelease);
+    }
+    Ok((metadata, targets))
 }
 
 fn host_system() -> Option<System> {
@@ -126,12 +137,20 @@ mod tests {
                 && asset.mode() == Some(0o700)
         }));
         assert_eq!(
-            release_root(Path::new("/release/pkg-install")),
-            Ok(Path::new("/release"))
+            release_urls(
+                Some("https://releases.pkg.example/v1/metadata/"),
+                Some("https://releases.pkg.example/v1/targets/"),
+            )
+            .map(
+                |(metadata, targets)| (metadata.scheme().to_owned(), targets.scheme().to_owned(),)
+            ),
+            Ok(("https".to_owned(), "https".to_owned())),
         );
-        assert_eq!(
-            release_root(Path::new("pkg-install")),
-            Err(PublicInstallError::InvalidRelease)
+        assert!(
+            release_urls(Some("http://host/metadata/"), Some("https://host/targets/"),).is_err()
+        );
+        assert!(
+            release_urls(Some("https://host/metadata"), Some("https://host/targets/"),).is_err()
         );
         assert!(trusted_root(Some(FIXTURE_ROOT)).is_ok());
         assert!(matches!(

@@ -16,8 +16,8 @@ mod timestamp;
 
 pub use audit::{AuditEvent, write_audit_log};
 pub use manifest::{
-    Approval, ApprovalRole, ArtifactKind, CliArtifact, ReleaseArtifact, ReleaseAuthority,
-    ReleaseAuthorization, ReleaseManifest, ValidatedRelease, ValidationError,
+    Approval, ApprovalRole, ArtifactKind, CliArtifact, CliArtifactKind, ReleaseArtifact,
+    ReleaseAuthority, ReleaseAuthorization, ReleaseManifest, ValidatedRelease, ValidationError,
 };
 pub use publish::{
     ActivationStatus, DurableRelease, DurableTimestampRefresh, PublicationError, PublicationObject,

@@ -7,7 +7,8 @@ release:
   distinct release/security attestations while reserving the next sequence;
 - require exactly the descriptor, four managed-Nix archives, four privileged
   asset manifests, and four per-system indexes as TUF targets;
-- keep the three CLI binaries and their Sigstore bundles outside TUF while
+- keep the three `pkg` binaries and two Linux `pkg-install` binaries with their
+  Sigstore bundles outside TUF while
   checking every committed checksum and length;
 - accept an already-signed offline root and sign only targets, snapshot, and
   timestamp through `tough::key_source::KeySource`; the exact trusted-root
@@ -30,6 +31,12 @@ release:
 The CI workflow uses fresh in-memory Ed25519 test keys. It proves a 2-of-3
 offline root, separate online-role keys, a real signed repository, and a real
 `tough` client verification. Test keys never leave process memory.
+
+The Linux `pkg-install` build embeds the approved root and the immutable HTTPS
+metadata and target directory URLs. The release build sets
+`PKG_RELEASE_TUF_ROOT_JSON`, `PKG_RELEASE_CHANNEL_METADATA_URL`, and
+`PKG_RELEASE_CHANNEL_TARGETS_URL`. The public installer accepts no replacement
+values.
 
 Production deployment must provide KMS/HSM-backed `KeySource`, `ReleaseAuthority`,
 and `Publisher` adapters. The authority must verify approval attestations,

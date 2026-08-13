@@ -12,6 +12,7 @@ use lzma_rust2::XzReader;
 use pkg_channel::{TrustedRoot, VerifiedChannel};
 use sha2::{Digest as _, Sha256};
 use tar::{Archive, EntryType};
+use url::Url;
 
 use super::daemon::{DaemonErrorCode, ManagedDaemon};
 use super::detect::{DetectionDisposition, DetectionReport, FindingKind, detect_unmanaged_nix};
@@ -123,10 +124,24 @@ impl RuntimeSource for VerifiedRuntimeBundle {
     }
 }
 
+/// A fixed installer repository selected by product code.
+#[derive(Clone, Copy)]
+pub enum InstallerRepository<'a> {
+    /// A local release directory containing `metadata/` and `targets/`.
+    Bundle(&'a Path),
+    /// Immutable HTTPS release endpoints compiled into the installer.
+    Remote {
+        /// TUF metadata directory.
+        metadata_url: &'a Url,
+        /// TUF target directory.
+        targets_url: &'a Url,
+    },
+}
+
 /// Public inputs that do not contain authenticated target handles or Nix controls.
 pub struct InstallerProvisionRequest<'a> {
-    /// Fixed offline release bundle root containing `metadata/` and `targets/`.
-    pub bundle_root: &'a Path,
+    /// Fixed local or product-compiled authenticated repository.
+    pub repository: InstallerRepository<'a>,
     /// Existing private state directory for TUF metadata and rollback memory.
     pub datastore: &'a Path,
     /// Filesystem root to install beneath. Production callers pass `/`.
@@ -592,7 +607,7 @@ async fn load_authenticated_installer_bundle_with_owner(
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     let source = load_installer_bundle(
         trusted_root,
-        request.bundle_root,
+        request.repository,
         request.datastore,
         request.system,
         datastore_owner,

@@ -15,7 +15,6 @@ const SYSTEMS: [&str; 4] = [
     "x86_64-darwin",
     "x86_64-linux",
 ];
-const CLI_SYSTEMS: [&str; 3] = ["aarch64-darwin", "aarch64-linux", "x86_64-linux"];
 
 /// One TUF-authenticated release-artifact category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -33,6 +32,24 @@ pub enum ArtifactKind {
     InstallerPayload,
 }
 
+/// One public binary category authenticated outside TUF with Sigstore.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CliArtifactKind {
+    /// The public package-manager CLI.
+    Pkg,
+    /// The Linux bootstrap installer.
+    PkgInstall,
+}
+
+const CLI_ARTIFACTS: [(CliArtifactKind, &str); 5] = [
+    (CliArtifactKind::Pkg, "aarch64-darwin"),
+    (CliArtifactKind::Pkg, "aarch64-linux"),
+    (CliArtifactKind::Pkg, "x86_64-linux"),
+    (CliArtifactKind::PkgInstall, "aarch64-linux"),
+    (CliArtifactKind::PkgInstall, "x86_64-linux"),
+];
+
 /// One artifact that must become a TUF target.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -49,6 +66,7 @@ pub struct ReleaseArtifact {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CliArtifact {
+    kind: CliArtifactKind,
     system: String,
     source: String,
     sha256: String,
@@ -480,11 +498,20 @@ fn validate_sets(
     {
         return Err(ValidationError::InvalidArtifactSet);
     }
-    let cli_systems: BTreeSet<_> = cli.iter().map(|item| item.system.as_str()).collect();
-    if cli.len() != CLI_SYSTEMS.len()
-        || cli_systems != CLI_SYSTEMS.into_iter().collect()
+    let cli_artifacts: BTreeSet<_> = cli
+        .iter()
+        .map(|item| (item.kind, item.system.as_str()))
+        .collect();
+    if cli.len() != CLI_ARTIFACTS.len()
+        || cli_artifacts != CLI_ARTIFACTS.into_iter().collect()
         || cli.iter().any(|item| {
-            !sources.insert(&item.source)
+            let expected_source = match item.kind {
+                CliArtifactKind::Pkg => format!("cli/pkg-{}", item.system),
+                CliArtifactKind::PkgInstall => format!("cli/pkg-installer-{}", item.system),
+            };
+            item.source != expected_source
+                || item.sigstore_bundle != format!("{expected_source}.sigstore.json")
+                || !sources.insert(&item.source)
                 || !sources.insert(&item.sigstore_bundle)
                 || item.source == item.sigstore_bundle
         })
