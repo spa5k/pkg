@@ -3,14 +3,8 @@
     "_type": "targets",
     "spec_version": "1.0.0",
     "version": 1,
-    "expires": "2036-08-07T23:05:02.651293Z",
+    "expires": "2036-08-10T18:45:12.536883Z",
     "targets": {
-      "index/42/aarch64-darwin.json.br": {
-        "length": 133,
-        "hashes": {
-          "sha256": "36f261dcb207178def9855f625b8016adb150cb8bc3904403fa3ae9f6b7d0b0b"
-        }
-      },
       "index/42/x86_64-darwin.json.br": {
         "length": 132,
         "hashes": {
@@ -21,6 +15,12 @@
         "length": 129,
         "hashes": {
           "sha256": "2fedc40944fcb009ec0742abab6bb427a62fc2e8f62c59f6f9828dad863ac958"
+        }
+      },
+      "index/42/aarch64-darwin.json.br": {
+        "length": 133,
+        "hashes": {
+          "sha256": "36f261dcb207178def9855f625b8016adb150cb8bc3904403fa3ae9f6b7d0b0b"
         }
       },
       "index/42/aarch64-linux.json.br": {
@@ -37,8 +37,8 @@
   },
   "signatures": [
     {
-      "keyid": "70774dc8c52aeaf42bb88b6a94e25cd96d8f6781e80afaf5dc78b0619998d3fa",
-      "sig": "57209eefd292b29d1536ab1e828fce11ceaab79527347411242b6da2e376828f76b1eb673729e8dda40bd90a1fec32ad02d492147dc29ce6e33547b000962503"
+      "keyid": "e8612f33cd91c98713d798189680fa65778569a2a07c9827a03b70437c572fbc",
+      "sig": "ce390a4507998d81361b7c1d0603a148d1900e3e8bbb2cf23c5278e725d3ba6abc67973995ad05a878d5a6ee615e0c648240a78f9a2e389c2f54ebe2edbf230e"
     }
   ]
 }

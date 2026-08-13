@@ -3,7 +3,8 @@
 This is the committed contract fixture for `pkg-channel` PR-11. It contains a
 generated TUF repository with threshold-capable root metadata, a signed
 `descriptor.json`, managed-Nix runtime and canonical asset-manifest targets for
-all four V1 systems, and delegated per-system RFC 8785 canonical,
+all four V1 systems, fixed product installer payloads, and delegated per-system
+RFC 8785 canonical,
 Brotli-compressed schema-v1 catalog indexes. All keys and artifact bytes are
 synthetic test data; the indexes are structurally real but deliberately empty.
 

@@ -9,6 +9,7 @@
 //                                   target per system; tiny bytes)
 //     * nix/<ver>/<sys>.assets.json — canonical static privileged-asset manifest
 //                                     with stable group roles (one per system)
+//     * installer/<sys>/<name>     — fixed product installer payloads
 // Nixpkgs source is intentionally not a product TUF target; the descriptor
 // authenticates rev/narHash and bundled Nix verifies the direct flake fetch.
 //
@@ -66,6 +67,8 @@ pub struct Fixture {
     pub nix_targets: Vec<(String, Vec<u8>)>,
     /// Canonical static privileged-asset manifests (one per system).
     pub asset_manifest_targets: Vec<(String, Vec<u8>)>,
+    /// Fixed installer payloads (three per system).
+    pub installer_targets: Vec<(String, Vec<u8>)>,
     /// The four per-system index targets (delegated to the "index" role).
     pub index_targets: Vec<(String, Vec<u8>)>,
     /// The delegated role name holding the index targets.
@@ -160,6 +163,17 @@ fn index_target_name(system: &str) -> String {
     format!("index/{SEQUENCE}/{system}.json.br")
 }
 
+fn installer_targets(system: &str) -> impl Iterator<Item = (String, Vec<u8>)> + '_ {
+    ["pkg-root-helper", "pkg-nix-broker", "pkg"]
+        .into_iter()
+        .map(move |name| {
+            (
+                format!("installer/{system}/{name}"),
+                format!("installer payload {name} {system}\n").into_bytes(),
+            )
+        })
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CatalogIndex<'a> {
@@ -215,6 +229,10 @@ pub async fn build_fixture() -> Fixture {
     let index_targets: Vec<(String, Vec<u8>)> = SUPPORTED_SYSTEMS
         .iter()
         .map(|sys| (index_target_name(sys), index_target_bytes(sys)))
+        .collect();
+    let installer_targets: Vec<(String, Vec<u8>)> = SUPPORTED_SYSTEMS
+        .iter()
+        .flat_map(|system| installer_targets(system))
         .collect();
 
     // --- descriptor with declared hashes matching the target bytes ---
@@ -316,6 +334,9 @@ pub async fn build_fixture() -> Fixture {
     for (name, bytes) in &asset_manifest_targets {
         builder = builder.target(name.clone(), bytes.clone());
     }
+    for (name, bytes) in &installer_targets {
+        builder = builder.target(name.clone(), bytes.clone());
+    }
     builder = builder.delegated_role(DelegationSpec {
         role_name: "index".to_string(),
         key: SignKey::generate(),
@@ -335,6 +356,7 @@ pub async fn build_fixture() -> Fixture {
         descriptor_bytes,
         nix_targets,
         asset_manifest_targets,
+        installer_targets,
         index_targets,
         index_role: "index".to_string(),
     }

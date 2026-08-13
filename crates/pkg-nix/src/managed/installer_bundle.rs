@@ -1,5 +1,6 @@
 //! Private offline installer-bundle authentication and runtime snapshots.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Seek as _, Write as _};
 #[cfg(unix)]
@@ -25,6 +26,7 @@ const MAX_DESCRIPTOR_BYTES: u64 = 256 * 1024;
 const MAX_INDEX_TARGET_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_RUNTIME_TARGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_RUNTIME_MANIFEST_TARGET_BYTES: u64 = 1024 * 1024;
+const MAX_INSTALLER_BINARY_BYTES: u64 = 128 * 1024 * 1024;
 const LIMITS: Limits = Limits {
     max_root_size: 64 * 1024,
     max_targets_size: 256 * 1024,
@@ -69,6 +71,7 @@ pub(super) struct VerifiedRuntimeBundle {
     index: Option<Vec<u8>>,
     archive: File,
     asset_manifest: File,
+    installer_payloads: BTreeMap<String, File>,
     runtime_target: String,
     asset_manifest_target: String,
     accepted_state: AcceptedChannel,
@@ -110,6 +113,8 @@ impl VerifiedRuntimeBundle {
             &self.archive
         } else if target == self.asset_manifest_target {
             &self.asset_manifest
+        } else if let Some(payload) = self.installer_payloads.get(target) {
+            payload
         } else {
             return Err(ChannelError::InstallerBundleUnavailable);
         };
@@ -200,16 +205,23 @@ async fn load_verified_repository(
         &repository,
         runtime.target(),
         MAX_RUNTIME_TARGET_BYTES,
-        runtime_sha256,
+        Some(runtime_sha256),
     )
     .await?;
     let asset_manifest = snapshot_exact_target(
         &repository,
         runtime.asset_manifest_target(),
         MAX_RUNTIME_MANIFEST_TARGET_BYTES,
-        asset_manifest_sha256,
+        Some(asset_manifest_sha256),
     )
     .await?;
+    let mut installer_payloads = BTreeMap::new();
+    for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
+        let target = format!("installer/{host}/{name}");
+        let snapshot =
+            snapshot_exact_target(&repository, &target, MAX_INSTALLER_BINARY_BYTES, None).await?;
+        installer_payloads.insert(target, snapshot);
+    }
     Ok(VerifiedRuntimeBundle {
         accepted_state: channel.accepted_state(),
         runtime_target: runtime.target().to_owned(),
@@ -219,6 +231,7 @@ async fn load_verified_repository(
         index: Some(index),
         archive,
         asset_manifest,
+        installer_payloads,
         accepted,
         _datastore_lease: datastore_lease,
     })
@@ -269,7 +282,7 @@ async fn snapshot_exact_target(
     repository: &tough::Repository,
     target: &str,
     max_bytes: u64,
-    expected_sha256: [u8; 32],
+    expected_sha256: Option<[u8; 32]>,
 ) -> Result<File, ChannelError> {
     let name =
         TargetName::new(target).map_err(|_| ChannelError::MissingTufTarget(target.into()))?;
@@ -302,7 +315,9 @@ async fn snapshot_exact_target(
             .write_all(chunk.as_ref())
             .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
     }
-    if copied != metadata.length || <[u8; 32]>::from(digest.finalize()) != expected_sha256 {
+    if copied != metadata.length
+        || expected_sha256.is_some_and(|expected| <[u8; 32]>::from(digest.finalize()) != expected)
+    {
         return Err(ChannelError::InstallerBundleUnavailable);
     }
     snapshot
@@ -724,6 +739,19 @@ mod tests {
                 .unwrap()
                 .is_file()
         );
+        for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
+            let target = format!("installer/aarch64-darwin/{name}");
+            let mut bytes = Vec::new();
+            bundle
+                .open_target(&target)
+                .unwrap()
+                .read_to_end(&mut bytes)
+                .unwrap();
+            assert_eq!(
+                bytes,
+                format!("installer payload {name} aarch64-darwin\n").as_bytes()
+            );
+        }
         bundle.commit_accepted_channel().unwrap();
         assert!(datastore.join(STATE_FILE).is_file());
     }

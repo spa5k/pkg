@@ -48,3 +48,7 @@ path = "src/bin/pkg-root-helper.rs"
 [[bin]]
 name = "pkg-nix-broker"
 path = "src/bin/pkg-nix-broker.rs"
+
+[[bin]]
+name = "pkg-install"
+path = "src/bin/pkg-install.rs"

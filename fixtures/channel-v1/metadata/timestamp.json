@@ -3,12 +3,12 @@
     "_type": "timestamp",
     "spec_version": "1.0.0",
     "version": 1,
-    "expires": "2036-08-07T23:05:02.651293Z",
+    "expires": "2036-08-10T18:45:12.536883Z",
     "meta": {
       "snapshot.json": {
         "length": 811,
         "hashes": {
-          "sha256": "742bcf2ebb286de3719f81ba29922bae11786f180e614ac2b14065fb05941454"
+          "sha256": "c0482407861413046dc57c6026cf692edf6347dec82ed27a494982c9033c14f8"
         },
         "version": 1
       }
@@ -16,8 +16,8 @@
   },
   "signatures": [
     {
-      "keyid": "45094be6580aeb4ef7ba4af40647598a6fe36b1c72a42cfc4f33b914bd33d3fd",
-      "sig": "160e7ad42ceaa2e55dcaf0e28c6825efb1be86f4c21ddbca3775f84ebe831ae47852faa02e637e1a9308e22c554d87afb4a6556fc5a6fed1abeeb251bf4cab09"
+      "keyid": "c9c1859eabbf132c07e061810f9362e8f0ff5330d791c155f44edaa06a301ffc",
+      "sig": "196d206e4662dbe9f45d17d6e246a12efb4eb069b239de90926f757b5023043af342f7bbb6fecf9adc908ad616ebca47829903eb63a2c2b3305fc0cb3dc99a05"
     }
   ]
 }
