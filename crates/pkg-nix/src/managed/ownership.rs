@@ -685,7 +685,7 @@ pub fn verify_ownership_expectation(
     verify_artifacts(&root, expectation, required_owner_uid)
 }
 
-fn verify_artifacts(
+pub(super) fn verify_artifacts(
     root: &Path,
     expectation: &OwnershipExpectation,
     required_owner_uid: u32,
@@ -716,6 +716,51 @@ fn verify_artifacts(
         asset_manifest_digest: expectation.asset_manifest_digest,
         artifact_count: expectation.artifacts.len(),
     })
+}
+
+/// Verifies that every authenticated static artifact beneath `root` is absent or
+/// matches the signed expectation exactly, without the ownership receipt.
+///
+/// This backs authenticated recovery of a partially installed managed runtime
+/// whose install was interrupted, typically before the ownership receipt was
+/// published. An absent path is accepted, because the outer journal plus
+/// clean-host preflight established absence before mutation, so any present
+/// allowlisted exact object is attempt-owned. A present path must match the
+/// authenticated type, owner, group, mode, content, and symlink target exactly.
+/// Ownership drift, mode drift, content mismatch, or unsafe access is refused.
+pub(super) fn verify_artifacts_absent_or_exact(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    required_owner_uid: u32,
+) -> Result<(), OwnershipError> {
+    let store_gid = expectation
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.path == "/nix/store")
+        .map(|artifact| expectation.groups.gid_for(artifact.group))
+        .ok_or_else(|| OwnershipError::new(OwnershipErrorCode::ExpectationInvalid))?;
+    for (index, artifact) in expectation.artifacts.iter().enumerate() {
+        let path = rooted(root, artifact.path());
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                return Err(OwnershipError::artifact(
+                    OwnershipErrorCode::ArtifactUnsafe,
+                    index,
+                ));
+            }
+            Ok(_) => {}
+        }
+        verify_artifact(
+            root,
+            artifact,
+            expectation.groups.gid_for(artifact.group),
+            required_owner_uid,
+            store_gid,
+            index,
+        )?;
+    }
+    Ok(())
 }
 
 fn read_safe_receipt(
@@ -964,7 +1009,7 @@ fn rooted(root: &Path, absolute: &Path) -> PathBuf {
     root.join(relative)
 }
 
-fn verify_receipt_ancestors(
+pub(super) fn verify_receipt_ancestors(
     root: &Path,
     parent: &Path,
     required_owner_uid: u32,

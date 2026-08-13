@@ -60,6 +60,10 @@ impl MacOsError {
         Self::new(MacOsErrorCode::BackendFailure)
     }
 
+    pub(crate) const fn rollback_incomplete() -> Self {
+        Self::new(MacOsErrorCode::RollbackIncomplete)
+    }
+
     /// Returns the stable failure class.
     #[must_use]
     pub const fn code(self) -> MacOsErrorCode {

@@ -287,6 +287,31 @@ impl LinuxSystemdManager {
         Ok(())
     }
 
+    /// Classifies the complete fixed service set as active or inactive.
+    ///
+    /// Mixed enabled or active state is unsafe for install journaling and is
+    /// refused. This method does not mutate systemd.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted state error for mixed or unreadable unit state.
+    pub fn classify_activation(&mut self) -> Result<bool, LinuxSystemdError> {
+        let states = UNITS
+            .iter()
+            .copied()
+            .map(|unit| self.system.unit_state(unit))
+            .collect::<Result<Vec<_>, _>>()?;
+        if states.iter().all(|state| state.active && state.enabled) {
+            return Ok(true);
+        }
+        if states.iter().all(|state| !state.active && !state.enabled) {
+            return Ok(false);
+        }
+        Err(LinuxSystemdError::new(
+            LinuxSystemdErrorCode::StateQueryFailed,
+        ))
+    }
+
     /// Reloads unit definitions after an attempt-owned unit file is removed.
     ///
     /// # Errors
@@ -642,6 +667,45 @@ mod tests {
         assert_eq!(shared.borrow().calls, ["daemon-reload", "tmpfiles"]);
         manager.rollback()?;
         Ok(())
+    }
+
+    #[test]
+    fn activation_classification_accepts_only_complete_terminal_states()
+    -> Result<(), Box<dyn Error>> {
+        let mut active =
+            LinuxSystemdManager::with_system(Box::new(FakeSystem::new(all(UnitState {
+                enabled: true,
+                active: true,
+            }))));
+        assert!(active.classify_activation()?);
+
+        let mut inactive =
+            LinuxSystemdManager::with_system(Box::new(FakeSystem::new(all(UnitState {
+                enabled: false,
+                active: false,
+            }))));
+        assert!(!inactive.classify_activation()?);
+        Ok(())
+    }
+
+    #[test]
+    fn activation_classification_refuses_mixed_state() {
+        let mut states = all(UnitState {
+            enabled: false,
+            active: false,
+        });
+        states[0].1 = UnitState {
+            enabled: true,
+            active: false,
+        };
+        let mut manager = LinuxSystemdManager::with_system(Box::new(FakeSystem::new(states)));
+
+        assert_eq!(
+            manager
+                .classify_activation()
+                .map_err(super::LinuxSystemdError::code),
+            Err(LinuxSystemdErrorCode::StateQueryFailed)
+        );
     }
 
     #[test]

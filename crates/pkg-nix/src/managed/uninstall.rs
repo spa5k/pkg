@@ -21,7 +21,8 @@ use rustix::{
 
 use super::ownership::{
     ManagedArtifact, ManagedArtifactKind, OwnershipExpectation, encode_ownership_asset_manifest,
-    encode_ownership_receipt, ownership_receipt_path, verify_with_owner_uid,
+    encode_ownership_receipt, ownership_receipt_path, verify_artifacts_absent_or_exact,
+    verify_receipt_ancestors, verify_with_owner_uid,
 };
 
 const MAX_METADATA_BYTES: u64 = 1_048_576;
@@ -173,7 +174,234 @@ fn prepare_with_owner_uid(
         metadata.push(capture(&rooted_path, owner_uid, true)?);
     }
 
-    let runtime_root = rooted(&root, Path::new(RUNTIME_PREFIX));
+    capture_authenticated_state(&root, expectation, owner_uid, metadata)
+}
+
+/// Prepares persistent removal of an interrupted authenticated managed runtime
+/// whose final ownership receipt was never published.
+///
+/// Authentication comes from the caller's `expectation` (derived from the
+/// authenticated installer bundle), not from local metadata. Missing signed
+/// artifacts are accepted. Each present artifact must match exactly. An
+/// optional receipt or manifest must match the authenticated bytes. Foreign,
+/// tampered, redirected, or otherwise ambiguous state is refused before capture.
+///
+/// The returned [`ManagedRuntimeRemoval`] is drained by the existing GC-lock,
+/// liveness, and store-removal API; this entry never deletes `/nix/store`
+/// directly. Callers clean fixed Nix registration state with
+/// `ManagedDaemon::rollback_runtime_registration` between this prepare and
+/// `remove`; the armed `PR_SET_PDEATHSIG` is the barrier against a surviving
+/// daemon, so no daemon is started or stopped here.
+///
+/// Production callers pass `/`.
+///
+/// # Errors
+///
+/// Returns `Ok(None)` when no provisioned runtime state exists. Returns a closed
+/// error if any present path is not exact or cannot be captured safely.
+pub fn prepare_managed_runtime_removal_without_receipt(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+) -> Result<Option<ManagedRuntimeRemoval>, ManagedRuntimeRemovalError> {
+    prepare_without_receipt_with_owner_uid(root, expectation, 0)
+}
+
+fn prepare_without_receipt_with_owner_uid(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    owner_uid: u32,
+) -> Result<Option<ManagedRuntimeRemoval>, ManagedRuntimeRemovalError> {
+    let root = root.canonicalize().map_err(|_| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+    })?;
+    verify_artifacts_absent_or_exact(&root, expectation, owner_uid).map_err(|_| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::OwnershipRefused)
+    })?;
+
+    let expected_manifest = encode_ownership_asset_manifest(
+        expectation.system(),
+        expectation.nix_version(),
+        expectation.artifacts(),
+    )
+    .map_err(|_| ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState))?;
+    let expected_receipt = encode_ownership_receipt(expectation).map_err(|_| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+    })?;
+    let mut metadata = Vec::new();
+    capture_optional_metadata(
+        &root,
+        ownership_receipt_path(expectation.system()),
+        &expected_receipt,
+        owner_uid,
+        &mut metadata,
+    )?;
+    capture_optional_metadata(
+        &root,
+        asset_manifest_path(expectation.system()),
+        &expected_manifest,
+        owner_uid,
+        &mut metadata,
+    )?;
+
+    capture_partial_authenticated_state(&root, expectation, owner_uid, metadata)
+}
+
+fn capture_optional_metadata(
+    root: &Path,
+    path: &Path,
+    expected: &[u8],
+    owner_uid: u32,
+    metadata: &mut Vec<CapturedEntry>,
+) -> Result<(), ManagedRuntimeRemovalError> {
+    let path = rooted(root, path);
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        Ok(_) => {}
+    }
+    verify_receipt_ancestors(
+        root,
+        path.parent().ok_or_else(|| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?,
+        owner_uid,
+    )
+    .map_err(|_| ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState))?;
+    if read_exact_metadata_file(&path, owner_uid)? != expected {
+        return Err(ManagedRuntimeRemovalError::new(
+            ManagedRuntimeRemovalErrorCode::UnsafeState,
+        ));
+    }
+    metadata.push(capture(&path, owner_uid, true)?);
+    Ok(())
+}
+
+fn capture_partial_authenticated_state(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    owner_uid: u32,
+    metadata: Vec<CapturedEntry>,
+) -> Result<Option<ManagedRuntimeRemoval>, ManagedRuntimeRemovalError> {
+    let runtime_root = rooted(root, Path::new(RUNTIME_PREFIX));
+    let runtime = match fs::symlink_metadata(&runtime_root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        Ok(_) => {
+            let runtime_device = capture(&runtime_root, owner_uid, false)?.device;
+            capture_present_artifacts(
+                root,
+                expectation,
+                owner_uid,
+                |artifact| {
+                    artifact.path() == Path::new(RUNTIME_PREFIX)
+                        || artifact.path().starts_with(Path::new(RUNTIME_PREFIX))
+                },
+                Some(runtime_device),
+            )?
+        }
+    };
+    if !runtime.is_empty() {
+        verify_tree_matches_captured(&runtime_root, &runtime)?;
+    }
+
+    let nix_root = capture_optional(&rooted(root, Path::new("/nix")), owner_uid)?;
+    let store_root = capture_optional(&rooted(root, Path::new(STORE_PREFIX)), owner_uid)?;
+    let store = match (nix_root, store_root) {
+        (None, None) | (Some(_), None) => Vec::new(),
+        (None, Some(_)) => {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        (Some(nix_root), Some(store_root)) => {
+            if nix_root.kind != CapturedKind::Directory
+                || store_root.kind != CapturedKind::Directory
+                || store_root.device != nix_root.device
+            {
+                return Err(ManagedRuntimeRemovalError::new(
+                    ManagedRuntimeRemovalErrorCode::UnsafeState,
+                ));
+            }
+            capture_present_artifacts(
+                root,
+                expectation,
+                owner_uid,
+                |artifact| {
+                    artifact.path() != Path::new(STORE_PREFIX)
+                        && artifact.path().starts_with(Path::new(STORE_PREFIX))
+                },
+                Some(store_root.device),
+            )?
+        }
+    };
+
+    if runtime.is_empty() && store.is_empty() && metadata.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(ManagedRuntimeRemoval {
+        root: root.to_path_buf(),
+        owner_uid,
+        store,
+        runtime,
+        metadata,
+    }))
+}
+
+fn capture_optional(
+    path: &Path,
+    owner_uid: u32,
+) -> Result<Option<CapturedEntry>, ManagedRuntimeRemovalError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => capture(path, owner_uid, false).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(ManagedRuntimeRemovalError::new(
+            ManagedRuntimeRemovalErrorCode::UnsafeState,
+        )),
+    }
+}
+
+fn capture_present_artifacts<F>(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    owner_uid: u32,
+    select: F,
+    expected_device: Option<u64>,
+) -> Result<Vec<CapturedEntry>, ManagedRuntimeRemovalError>
+where
+    F: Fn(&ManagedArtifact) -> bool,
+{
+    expectation
+        .artifacts()
+        .iter()
+        .filter(|artifact| select(artifact))
+        .filter_map(|artifact| {
+            let path = rooted(root, artifact.path());
+            match fs::symlink_metadata(path) {
+                Ok(_) => Some(capture_artifact(root, artifact, owner_uid, expected_device)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(_) => Some(Err(ManagedRuntimeRemovalError::new(
+                    ManagedRuntimeRemovalErrorCode::UnsafeState,
+                ))),
+            }
+        })
+        .collect()
+}
+
+fn capture_authenticated_state(
+    root: &Path,
+    expectation: &OwnershipExpectation,
+    owner_uid: u32,
+    metadata: Vec<CapturedEntry>,
+) -> Result<ManagedRuntimeRemoval, ManagedRuntimeRemovalError> {
+    let runtime_root = rooted(root, Path::new(RUNTIME_PREFIX));
     let runtime_device = capture(&runtime_root, owner_uid, false)?.device;
     let runtime = expectation
         .artifacts()
@@ -182,15 +410,15 @@ fn prepare_with_owner_uid(
             artifact.path() == Path::new(RUNTIME_PREFIX)
                 || artifact.path().starts_with(Path::new(RUNTIME_PREFIX))
         })
-        .map(|artifact| capture_artifact(&root, artifact, owner_uid, Some(runtime_device)))
+        .map(|artifact| capture_artifact(root, artifact, owner_uid, Some(runtime_device)))
         .collect::<Result<Vec<_>, _>>()?;
     if runtime.is_empty() {
         return Err(ManagedRuntimeRemovalError::new(
             ManagedRuntimeRemovalErrorCode::UnsafeState,
         ));
     }
-    let nix_root = capture(&rooted(&root, Path::new("/nix")), owner_uid, false)?;
-    let store_root = capture(&rooted(&root, Path::new(STORE_PREFIX)), owner_uid, false)?;
+    let nix_root = capture(&rooted(root, Path::new("/nix")), owner_uid, false)?;
+    let store_root = capture(&rooted(root, Path::new(STORE_PREFIX)), owner_uid, false)?;
     if nix_root.kind != CapturedKind::Directory
         || store_root.kind != CapturedKind::Directory
         || store_root.device != nix_root.device
@@ -206,7 +434,7 @@ fn prepare_with_owner_uid(
             artifact.path() != Path::new(STORE_PREFIX)
                 && artifact.path().starts_with(Path::new(STORE_PREFIX))
         })
-        .map(|artifact| capture_artifact(&root, artifact, owner_uid, Some(store_root.device)))
+        .map(|artifact| capture_artifact(root, artifact, owner_uid, Some(store_root.device)))
         .collect::<Result<Vec<_>, _>>()?;
     if store.is_empty() {
         return Err(ManagedRuntimeRemovalError::new(
@@ -216,7 +444,7 @@ fn prepare_with_owner_uid(
     verify_tree_matches_captured(&runtime_root, &runtime)?;
 
     Ok(ManagedRuntimeRemoval {
-        root,
+        root: root.to_path_buf(),
         owner_uid,
         store,
         runtime,
@@ -332,10 +560,19 @@ impl ManagedRuntimeRemoval {
         if allow_store_removal && !store_is_exclusive {
             return Ok(ManagedRuntimeRemovalOutcome::StorePreserved);
         }
-        verify_tree_matches_captured(
-            &rooted(&self.root, Path::new(RUNTIME_PREFIX)),
-            &self.runtime,
-        )?;
+        let runtime_root = rooted(&self.root, Path::new(RUNTIME_PREFIX));
+        if self.runtime.is_empty() {
+            match fs::symlink_metadata(runtime_root) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) | Ok(_) => {
+                    return Err(ManagedRuntimeRemovalError::new(
+                        ManagedRuntimeRemovalErrorCode::IdentityChanged,
+                    ));
+                }
+            }
+        } else {
+            verify_tree_matches_captured(&runtime_root, &self.runtime)?;
+        }
         verify_captured(&self.runtime)?;
         verify_captured(&self.metadata)?;
         let mut incomplete = false;
@@ -1128,7 +1365,7 @@ mod tests {
 
     use crate::{
         NixVersion,
-        managed::ownership::{ManagedGroup, ManagedGroupBindings},
+        managed::ownership::{ManagedGroup, ManagedGroupBindings, verify_ownership_expectation},
     };
     use pkg_core::state::body_digest;
     use tempfile::TempDir;
@@ -1141,6 +1378,14 @@ mod tests {
 
     impl Fixture {
         fn new() -> Result<Self, Box<dyn std::error::Error>> {
+            Self::build(true)
+        }
+
+        fn new_interrupted() -> Result<Self, Box<dyn std::error::Error>> {
+            Self::build(false)
+        }
+
+        fn build(write_receipt: bool) -> Result<Self, Box<dyn std::error::Error>> {
             let temporary = tempfile::tempdir()?;
             let owner_uid = fs::metadata(temporary.path())?.uid();
             let version = NixVersion::new("2.34.8")?;
@@ -1210,24 +1455,40 @@ mod tests {
             let metadata_parent = rooted(temporary.path(), Path::new("/var/lib/pkg/managed-nix"));
             fs::create_dir_all(&metadata_parent)?;
             fs::set_permissions(&metadata_parent, fs::Permissions::from_mode(0o700))?;
-            let receipt = rooted(
-                temporary.path(),
-                ownership_receipt_path(System::Aarch64Linux),
-            );
-            write_private(&receipt, &encode_ownership_receipt(&expectation)?)?;
+            if write_receipt {
+                let receipt = rooted(
+                    temporary.path(),
+                    ownership_receipt_path(System::Aarch64Linux),
+                );
+                write_private(&receipt, &encode_ownership_receipt(&expectation)?)?;
+            }
             let manifest_path = rooted(temporary.path(), asset_manifest_path(System::Aarch64Linux));
             write_private(&manifest_path, &manifest)?;
             let state = rooted(temporary.path(), Path::new("/nix/var/nix"));
             fs::create_dir_all(&state)?;
             let gc_lock = rooted(temporary.path(), Path::new(GC_LOCK));
             write_private(&gc_lock, b"")?;
-            verify_with_owner_uid(temporary.path(), &expectation, owner_uid).map_err(|error| {
-                format!(
-                    "fixture ownership: {:?} at {:?}",
-                    error.code(),
-                    error.artifact_index()
-                )
-            })?;
+            if write_receipt {
+                verify_with_owner_uid(temporary.path(), &expectation, owner_uid).map_err(
+                    |error| {
+                        format!(
+                            "fixture ownership: {:?} at {:?}",
+                            error.code(),
+                            error.artifact_index()
+                        )
+                    },
+                )?;
+            } else {
+                verify_ownership_expectation(temporary.path(), &expectation, owner_uid).map_err(
+                    |error| {
+                        format!(
+                            "fixture artifacts: {:?} at {:?}",
+                            error.code(),
+                            error.artifact_index()
+                        )
+                    },
+                )?;
+            }
             Ok(Self {
                 temporary,
                 expectation,
@@ -1237,6 +1498,16 @@ mod tests {
 
         fn prepare(&self) -> Result<ManagedRuntimeRemoval, ManagedRuntimeRemovalError> {
             prepare_with_owner_uid(self.temporary.path(), &self.expectation, self.owner_uid)
+        }
+
+        fn prepare_without_receipt(
+            &self,
+        ) -> Result<Option<ManagedRuntimeRemoval>, ManagedRuntimeRemovalError> {
+            prepare_without_receipt_with_owner_uid(
+                self.temporary.path(),
+                &self.expectation,
+                self.owner_uid,
+            )
         }
     }
 
@@ -1290,6 +1561,209 @@ mod tests {
         assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
         assert!(!rooted(fixture.temporary.path(), Path::new("/nix/var/nix/db")).exists());
         assert!(rooted(fixture.temporary.path(), Path::new("/nix/store")).is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_captures_an_unreceipted_exact_runtime()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new_interrupted()?;
+        // An interrupted install published no ownership receipt.
+        assert!(
+            fs::symlink_metadata(rooted(
+                fixture.temporary.path(),
+                ownership_receipt_path(System::Aarch64Linux),
+            ))
+            .is_err()
+        );
+        // The receipt-gated path refuses without a receipt ...
+        assert!(fixture.prepare().is_err());
+        // ... while the receipt-free path captures the exact authenticated state.
+        assert!(fixture.prepare_without_receipt()?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_refuses_a_tampered_artifact() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new_interrupted()?;
+        let tampered = rooted(
+            fixture.temporary.path(),
+            Path::new("/opt/pkg/nix/2.34.8/nix"),
+        );
+        fs::set_permissions(&tampered, fs::Permissions::from_mode(0o777))?;
+
+        assert_eq!(
+            fixture
+                .prepare_without_receipt()
+                .err()
+                .map(ManagedRuntimeRemovalError::code),
+            Some(ManagedRuntimeRemovalErrorCode::OwnershipRefused)
+        );
+        // Nothing was deleted.
+        assert!(fs::symlink_metadata(&tampered).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_refuses_an_unexpected_runtime_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new_interrupted()?;
+        let foreign = rooted(fixture.temporary.path(), Path::new("/opt/pkg/nix/foreign"));
+        fs::write(&foreign, b"foreign")?;
+
+        assert_eq!(
+            fixture
+                .prepare_without_receipt()
+                .err()
+                .map(ManagedRuntimeRemovalError::code),
+            Some(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        );
+        assert!(fs::symlink_metadata(&foreign).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_succeeds_without_a_manifest() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new_interrupted()?;
+        fs::remove_file(rooted(
+            fixture.temporary.path(),
+            asset_manifest_path(System::Aarch64Linux),
+        ))?;
+        assert!(fixture.prepare_without_receipt()?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_noops_without_runtime_state() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new_interrupted()?;
+        fs::remove_dir_all(rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)))?;
+        collect_authenticated_store(&fixture)?;
+        fs::remove_file(rooted(
+            fixture.temporary.path(),
+            asset_manifest_path(System::Aarch64Linux),
+        ))?;
+
+        assert!(fixture.prepare_without_receipt()?.is_none());
+        assert!(rooted(fixture.temporary.path(), Path::new("/nix/store")).is_dir());
+        assert!(rooted(fixture.temporary.path(), Path::new("/opt/pkg")).is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_noops_when_the_nix_tree_is_absent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new_interrupted()?;
+        fs::remove_dir_all(rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)))?;
+        collect_authenticated_store(&fixture)?;
+        fs::remove_file(rooted(
+            fixture.temporary.path(),
+            asset_manifest_path(System::Aarch64Linux),
+        ))?;
+        fs::remove_dir_all(rooted(fixture.temporary.path(), Path::new("/nix")))?;
+
+        assert!(fixture.prepare_without_receipt()?.is_none());
+        assert!(rooted(fixture.temporary.path(), Path::new("/opt/pkg")).is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_partial_runtime_is_removed_but_outer_roots_remain()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new_interrupted()?;
+        fs::remove_file(rooted(
+            fixture.temporary.path(),
+            Path::new("/opt/pkg/nix/2.34.8/nix"),
+        ))?;
+        fs::remove_file(rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/store/22222222222222222222222222222222-runtime"),
+        ))?;
+
+        let removal = fixture
+            .prepare_without_receipt()?
+            .ok_or_else(|| std::io::Error::other("partial runtime was not captured"))?;
+        assert_eq!(removal.remove()?, ManagedRuntimeRemovalOutcome::Removed);
+        assert!(rooted(fixture.temporary.path(), Path::new("/nix/store")).is_dir());
+        assert!(rooted(fixture.temporary.path(), Path::new("/nix/var/nix")).is_dir());
+        assert!(rooted(fixture.temporary.path(), Path::new("/opt/pkg")).is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_removes_an_exact_late_receipt() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new()?;
+        let receipt = rooted(
+            fixture.temporary.path(),
+            ownership_receipt_path(System::Aarch64Linux),
+        );
+
+        let removal = fixture
+            .prepare_without_receipt()?
+            .ok_or_else(|| std::io::Error::other("late receipt was not captured"))?;
+        assert_eq!(removal.remove()?, ManagedRuntimeRemovalOutcome::Removed);
+        assert!(fs::symlink_metadata(receipt).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_refuses_mismatched_metadata() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new_interrupted()?;
+        let manifest = rooted(
+            fixture.temporary.path(),
+            asset_manifest_path(System::Aarch64Linux),
+        );
+        fs::write(&manifest, b"mismatched")?;
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o600))?;
+
+        assert_eq!(
+            fixture
+                .prepare_without_receipt()
+                .err()
+                .map(ManagedRuntimeRemovalError::code),
+            Some(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        );
+        assert!(fs::symlink_metadata(manifest).is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_free_prepare_refuses_a_symlinked_metadata_parent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new_interrupted()?;
+        let managed = rooted(
+            fixture.temporary.path(),
+            Path::new("/var/lib/pkg/managed-nix"),
+        );
+        let manifest = rooted(
+            fixture.temporary.path(),
+            asset_manifest_path(System::Aarch64Linux),
+        );
+        let expected = fs::read(&manifest)?;
+        fs::remove_file(&manifest)?;
+        fs::remove_dir(&managed)?;
+        let redirected = rooted(
+            fixture.temporary.path(),
+            Path::new("/var/lib/pkg/redirected"),
+        );
+        fs::create_dir(&redirected)?;
+        fs::set_permissions(&redirected, fs::Permissions::from_mode(0o700))?;
+        write_private(&redirected.join("assets-v1.json"), &expected)?;
+        symlink(&redirected, &managed)?;
+
+        assert_eq!(
+            fixture
+                .prepare_without_receipt()
+                .err()
+                .map(ManagedRuntimeRemovalError::code),
+            Some(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        );
         Ok(())
     }
 

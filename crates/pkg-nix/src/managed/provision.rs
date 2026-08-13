@@ -6,7 +6,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, chown, lchown, symlink};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use lzma_rust2::XzReader;
 use pkg_channel::{TrustedRoot, VerifiedChannel};
@@ -30,7 +29,8 @@ use crate::{Digest, NixVersion, System, render_managed_build_nix_conf};
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ASSET_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
+const PROVISION_WORKSPACE_NAME: &str = "pkg-provision";
+const MAX_PROVISION_WORKSPACE_ENTRIES: usize = MAX_ARCHIVE_ENTRIES + 8;
 
 /// An authenticated pair of TUF target identities needed for provisioning.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -765,7 +765,7 @@ fn provision_with_owner_policy(
         );
     }
 
-    let workspace = ScratchWorkspace::new(request.scratch_parent)?;
+    let workspace = ScratchWorkspace::new(request.scratch_parent, required_owner_uid)?;
     let archive_path = workspace.path.join("runtime.tar.xz");
     fetch_target(
         source,
@@ -1422,20 +1422,26 @@ impl<R: Read> Read for BoundedReader<R> {
 
 struct ScratchWorkspace {
     path: PathBuf,
+    parent: PathBuf,
+    owner_uid: u32,
 }
 
 impl ScratchWorkspace {
-    fn new(parent: &Path) -> Result<Self, ProvisionError> {
-        let serial = NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed);
-        let path = parent.join(format!("pkg-provision-{}-{serial}", std::process::id()));
+    fn new(parent: &Path, owner_uid: u32) -> Result<Self, ProvisionError> {
+        verify_provision_workspace_absent_with_owner(parent, owner_uid)?;
+        let path = parent.join(PROVISION_WORKSPACE_NAME);
         create_private_directory(&path)?;
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            parent: parent.to_path_buf(),
+            owner_uid,
+        })
     }
 }
 
 impl Drop for ScratchWorkspace {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        let _ = recover_interrupted_provision_workspace_with_owner(&self.parent, self.owner_uid);
     }
 }
 
@@ -1781,6 +1787,110 @@ fn validate_private_directory(path: &Path, owner_uid: u32) -> Result<(), Provisi
     Ok(())
 }
 
+/// Refuses when the fixed production provisioning workspace already exists.
+///
+/// Call this before a durable install journal records ownership of the next
+/// provisioning attempt.
+pub fn verify_provision_workspace_absent(scratch_parent: &Path) -> Result<(), ProvisionError> {
+    verify_provision_workspace_absent_with_owner(scratch_parent, 0)
+}
+
+fn verify_provision_workspace_absent_with_owner(
+    scratch_parent: &Path,
+    owner_uid: u32,
+) -> Result<(), ProvisionError> {
+    validate_private_directory(scratch_parent, owner_uid)?;
+    match fs::symlink_metadata(scratch_parent.join(PROVISION_WORKSPACE_NAME)) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(_) | Err(_) => Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination)),
+    }
+}
+
+/// Removes a fixed interrupted provisioning workspace after journal proof.
+///
+/// The caller must first authenticate durable proof that this product attempt
+/// observed the workspace as absent before it created the install intent.
+pub fn recover_interrupted_provision_workspace(
+    scratch_parent: &Path,
+) -> Result<bool, ProvisionError> {
+    recover_interrupted_provision_workspace_with_owner(scratch_parent, 0)
+}
+
+fn recover_interrupted_provision_workspace_with_owner(
+    scratch_parent: &Path,
+    owner_uid: u32,
+) -> Result<bool, ProvisionError> {
+    let Some(mut paths) = capture_provision_workspace(scratch_parent, owner_uid)? else {
+        return Ok(false);
+    };
+    if remove_attempt_paths(&mut paths) {
+        return Err(ProvisionError::new(ProvisionErrorCode::RollbackFailed));
+    }
+    sync_directory(scratch_parent)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::RollbackFailed))?;
+    Ok(true)
+}
+
+fn capture_provision_workspace(
+    scratch_parent: &Path,
+    owner_uid: u32,
+) -> Result<Option<Vec<AttemptPath>>, ProvisionError> {
+    validate_private_directory(scratch_parent, owner_uid)?;
+    let parent_metadata = fs::symlink_metadata(scratch_parent)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+    let workspace = scratch_parent.join(PROVISION_WORKSPACE_NAME);
+    let workspace_metadata = match fs::symlink_metadata(&workspace) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination)),
+    };
+    if !workspace_metadata.file_type().is_dir()
+        || workspace_metadata.uid() != owner_uid
+        || workspace_metadata.mode() & 0o7777 != 0o700
+        || workspace_metadata.dev() != parent_metadata.dev()
+    {
+        return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+    }
+
+    let mut paths = vec![AttemptPath {
+        path: workspace.clone(),
+        device: workspace_metadata.dev(),
+        inode: workspace_metadata.ino(),
+        directory: true,
+    }];
+    let mut directories = vec![workspace];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(directory)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?
+        {
+            let path = entry
+                .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?
+                .path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+            let file_type = metadata.file_type();
+            let directory = file_type.is_dir();
+            if metadata.dev() != workspace_metadata.dev()
+                || metadata.uid() != owner_uid
+                || !(directory || file_type.is_file() || file_type.is_symlink())
+                || paths.len() >= MAX_PROVISION_WORKSPACE_ENTRIES
+            {
+                return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+            }
+            paths.push(AttemptPath {
+                path: path.clone(),
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                directory,
+            });
+            if directory {
+                directories.push(path);
+            }
+        }
+    }
+    Ok(Some(paths))
+}
+
 fn ensure_safe_parent(
     root: &Path,
     destination: &Path,
@@ -1813,7 +1923,7 @@ fn ensure_safe_parent(
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
-    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use lzma_rust2::{XzOptions, XzWriter};
     use pkg_core::state::body_digest;
@@ -1861,6 +1971,81 @@ mod tests {
                 .map_err(ProvisionError::code),
             Err(ProvisionErrorCode::ReceiptFailed)
         );
+    }
+
+    #[test]
+    fn interrupted_workspace_recovery_preserves_siblings_and_symlink_targets() {
+        let temp = TempDir::new().unwrap();
+        let scratch = temp.path().join("scratch");
+        create_private_directory(&scratch).unwrap();
+        let owner_uid = fs::metadata(&scratch).unwrap().uid();
+        verify_provision_workspace_absent_with_owner(&scratch, owner_uid).unwrap();
+
+        let workspace = scratch.join(PROVISION_WORKSPACE_NAME);
+        let staging = workspace.join("staging");
+        create_private_directory(&workspace).unwrap();
+        create_private_directory(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o777)).unwrap();
+        fs::write(staging.join("runtime"), b"runtime").unwrap();
+        let external = temp.path().join("external");
+        fs::write(&external, b"keep").unwrap();
+        symlink(&external, staging.join("link")).unwrap();
+        let sibling = scratch.join("keep");
+        fs::write(&sibling, b"keep").unwrap();
+
+        assert!(recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid).unwrap());
+        assert!(!workspace.exists());
+        assert_eq!(fs::read(external).unwrap(), b"keep");
+        assert_eq!(fs::read(sibling).unwrap(), b"keep");
+        assert!(!recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid).unwrap());
+    }
+
+    #[test]
+    fn workspace_recovery_refuses_symlinks_and_unsafe_modes() {
+        let temp = TempDir::new().unwrap();
+        let scratch = temp.path().join("scratch");
+        create_private_directory(&scratch).unwrap();
+        let owner_uid = fs::metadata(&scratch).unwrap().uid();
+        let external = temp.path().join("external");
+        create_private_directory(&external).unwrap();
+        let workspace = scratch.join(PROVISION_WORKSPACE_NAME);
+
+        symlink(&external, &workspace).unwrap();
+        assert_eq!(
+            recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid)
+                .map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::UnsafeDestination)
+        );
+        fs::remove_file(&workspace).unwrap();
+        create_private_directory(&workspace).unwrap();
+        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid)
+                .map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::UnsafeDestination)
+        );
+        assert!(workspace.is_dir());
+        assert!(external.is_dir());
+    }
+
+    #[test]
+    fn workspace_recovery_refuses_more_than_the_fixed_entry_bound() {
+        let temp = TempDir::new().unwrap();
+        let scratch = temp.path().join("scratch");
+        create_private_directory(&scratch).unwrap();
+        let owner_uid = fs::metadata(&scratch).unwrap().uid();
+        let workspace = scratch.join(PROVISION_WORKSPACE_NAME);
+        create_private_directory(&workspace).unwrap();
+        for index in 0..MAX_PROVISION_WORKSPACE_ENTRIES {
+            fs::write(workspace.join(index.to_string()), []).unwrap();
+        }
+
+        assert_eq!(
+            recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid)
+                .map_err(ProvisionError::code),
+            Err(ProvisionErrorCode::UnsafeDestination)
+        );
+        assert!(workspace.is_dir());
     }
 
     struct FakeSource {

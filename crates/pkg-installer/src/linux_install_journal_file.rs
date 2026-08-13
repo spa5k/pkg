@@ -70,6 +70,7 @@ pub struct LinuxInstallJournalStorage {
     expected_group_id: u32,
     system: System,
     ownership_manifest_digest: Digest,
+    recovery_context_digest: Digest,
 }
 
 impl fmt::Debug for LinuxInstallJournalStorage {
@@ -89,6 +90,7 @@ impl LinuxInstallJournalStorage {
     pub fn open_existing(
         system: System,
         ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Option<Self>, LinuxInstallJournalFileError> {
         Self::open_existing_at(
             open_production_base()?,
@@ -96,6 +98,7 @@ impl LinuxInstallJournalStorage {
             0,
             system,
             ownership_manifest_digest,
+            recovery_context_digest,
         )
     }
 
@@ -109,6 +112,7 @@ impl LinuxInstallJournalStorage {
     pub fn prepare(
         system: System,
         ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Self, LinuxInstallJournalFileError> {
         Self::prepare_at(
             open_production_base()?,
@@ -116,6 +120,7 @@ impl LinuxInstallJournalStorage {
             0,
             system,
             ownership_manifest_digest,
+            recovery_context_digest,
         )
     }
 
@@ -180,6 +185,7 @@ impl LinuxInstallJournalStorage {
         expected_group_id: u32,
         system: System,
         ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Option<Self>, LinuxInstallJournalFileError> {
         Self::open_existing_at(
             open_trusted_base(base, expected_user_id)?,
@@ -187,6 +193,7 @@ impl LinuxInstallJournalStorage {
             expected_group_id,
             system,
             ownership_manifest_digest,
+            recovery_context_digest,
         )
     }
 
@@ -197,6 +204,7 @@ impl LinuxInstallJournalStorage {
         expected_group_id: u32,
         system: System,
         ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Self, LinuxInstallJournalFileError> {
         Self::prepare_at(
             open_trusted_base(base, expected_user_id)?,
@@ -204,6 +212,7 @@ impl LinuxInstallJournalStorage {
             expected_group_id,
             system,
             ownership_manifest_digest,
+            recovery_context_digest,
         )
     }
 
@@ -213,6 +222,7 @@ impl LinuxInstallJournalStorage {
         expected_group_id: u32,
         system: System,
         ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Option<Self>, LinuxInstallJournalFileError> {
         let directory = match open_private_directory(&base) {
             Ok(directory) => directory,
@@ -226,6 +236,7 @@ impl LinuxInstallJournalStorage {
             expected_group_id,
             system,
             ownership_manifest_digest,
+            recovery_context_digest,
         };
         storage.lock_and_validate()?;
         Ok(Some(storage))
@@ -237,6 +248,7 @@ impl LinuxInstallJournalStorage {
         expected_group_id: u32,
         system: System,
         ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Self, LinuxInstallJournalFileError> {
         let (directory, created) = match open_private_directory(&base) {
             Ok(directory) => (directory, false),
@@ -261,6 +273,7 @@ impl LinuxInstallJournalStorage {
             expected_group_id,
             system,
             ownership_manifest_digest,
+            recovery_context_digest,
         };
         if created {
             fchown(
@@ -316,7 +329,11 @@ impl LinuxInstallJournalStorage {
             self.expected_user_id,
             self.expected_group_id,
         )?;
-        if !journal.matches_binding(self.system, self.ownership_manifest_digest) {
+        if !journal.matches_binding(
+            self.system,
+            self.ownership_manifest_digest,
+            self.recovery_context_digest,
+        ) {
             return Err(invalid_state());
         }
         Ok(Some(journal))
@@ -327,7 +344,11 @@ impl LinuxInstallJournalStorage {
         journal: &LinuxInstallJournal,
         create: bool,
     ) -> Result<(), LinuxInstallJournalFileError> {
-        if !journal.matches_binding(self.system, self.ownership_manifest_digest) {
+        if !journal.matches_binding(
+            self.system,
+            self.ownership_manifest_digest,
+            self.recovery_context_digest,
+        ) {
             return Err(invalid_state());
         }
         self.validate_directory_binding()?;
@@ -541,7 +562,16 @@ mod tests {
     }
 
     fn journal(byte: u8) -> LinuxInstallJournal {
-        LinuxInstallJournal::new(System::X8664Linux, Digest::from_bytes([byte; 32])).unwrap()
+        LinuxInstallJournal::new(
+            System::X8664Linux,
+            Digest::from_bytes([byte; 32]),
+            recovery_context(byte),
+        )
+        .unwrap()
+    }
+
+    fn recovery_context(byte: u8) -> Digest {
+        Digest::from_bytes([byte.wrapping_add(1); 32])
     }
 
     fn temporary() -> TempDir {
@@ -561,6 +591,7 @@ mod tests {
                 gid,
                 System::X8664Linux,
                 Digest::from_bytes([1; 32]),
+                recovery_context(1),
             )
             .unwrap()
             .is_none()
@@ -571,6 +602,7 @@ mod tests {
             gid,
             System::X8664Linux,
             Digest::from_bytes([1; 32]),
+            recovery_context(1),
         )
         .unwrap();
         let first = journal(1);
@@ -604,6 +636,7 @@ mod tests {
             gid,
             System::X8664Linux,
             Digest::from_bytes([3; 32]),
+            recovery_context(3),
         )
         .unwrap();
         let first = journal(3);
@@ -636,6 +669,7 @@ mod tests {
                 gid,
                 System::X8664Linux,
                 Digest::from_bytes([7; 32]),
+                recovery_context(7),
             )
             .is_err()
         );
@@ -647,6 +681,7 @@ mod tests {
             gid,
             System::X8664Linux,
             Digest::from_bytes([7; 32]),
+            recovery_context(7),
         )
         .unwrap()
         .unwrap();

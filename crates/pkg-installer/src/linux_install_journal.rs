@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LinuxAssetKind, linux_install_assets};
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 const PRODUCT: &str = "pkg";
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 
@@ -85,6 +85,7 @@ pub struct LinuxInstallJournal {
     product: String,
     system: String,
     ownership_manifest_digest: String,
+    recovery_context_digest: String,
     committed: bool,
     entries: Vec<LinuxInstallJournalEntry>,
 }
@@ -107,6 +108,7 @@ impl LinuxInstallJournal {
     pub fn new(
         system: System,
         ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Self, LinuxInstallJournalError> {
         if !matches!(system, System::X8664Linux | System::Aarch64Linux) {
             return Err(invalid_journal());
@@ -116,6 +118,7 @@ impl LinuxInstallJournal {
             product: PRODUCT.to_owned(),
             system: system.to_string(),
             ownership_manifest_digest: ownership_manifest_digest.to_string(),
+            recovery_context_digest: recovery_context_digest.to_string(),
             committed: false,
             entries: Vec::new(),
         })
@@ -151,8 +154,15 @@ impl LinuxInstallJournal {
 
     /// Returns true when this journal belongs to the authenticated bundle.
     #[must_use]
-    pub fn matches_binding(&self, system: System, digest: Digest) -> bool {
-        self.system == system.as_str() && self.ownership_manifest_digest == digest.to_string()
+    pub fn matches_binding(
+        &self,
+        system: System,
+        ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
+    ) -> bool {
+        self.system == system.as_str()
+            && self.ownership_manifest_digest == ownership_manifest_digest.to_string()
+            && self.recovery_context_digest == recovery_context_digest.to_string()
     }
 
     /// Records the next fixed mutation intent after exact absence was verified.
@@ -295,6 +305,33 @@ impl LinuxInstallJournal {
             .collect()
     }
 
+    /// Removes one completed recovery action and later pre-existing entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidTransition` when the mutation is not the next action in
+    /// reverse order or the journal is committed.
+    pub(crate) fn complete_recovery_action(
+        &mut self,
+        mutation: &LinuxInstallMutation,
+    ) -> Result<(), LinuxInstallJournalError> {
+        if self.committed {
+            return Err(invalid_transition());
+        }
+        let Some(index) = self
+            .entries
+            .iter()
+            .rposition(|entry| entry.state != LinuxInstallMutationState::PreExisting)
+        else {
+            return Err(invalid_transition());
+        };
+        if self.entries[index].mutation != *mutation {
+            return Err(invalid_transition());
+        }
+        self.entries.truncate(index);
+        Ok(())
+    }
+
     fn validate(&self) -> Result<(), LinuxInstallJournalError> {
         if self.schema_version != SCHEMA_VERSION
             || self.product != PRODUCT
@@ -303,6 +340,7 @@ impl LinuxInstallJournal {
                 Ok(System::X8664Linux | System::Aarch64Linux)
             )
             || Digest::from_str(&self.ownership_manifest_digest).is_err()
+            || Digest::from_str(&self.recovery_context_digest).is_err()
             || self.entries.len() > install_sequence().len()
         {
             return Err(invalid_journal());
@@ -377,7 +415,12 @@ mod tests {
     use super::*;
 
     fn journal() -> LinuxInstallJournal {
-        LinuxInstallJournal::new(System::X8664Linux, Digest::from_bytes([0x5a; 32])).unwrap()
+        LinuxInstallJournal::new(
+            System::X8664Linux,
+            Digest::from_bytes([0x5a; 32]),
+            Digest::from_bytes([0x6a; 32]),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -389,8 +432,21 @@ mod tests {
 
         let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
         assert_eq!(decoded, journal);
-        assert!(decoded.matches_binding(System::X8664Linux, Digest::from_bytes([0x5a; 32])));
-        assert!(!decoded.matches_binding(System::Aarch64Linux, Digest::from_bytes([0x5a; 32])));
+        assert!(decoded.matches_binding(
+            System::X8664Linux,
+            Digest::from_bytes([0x5a; 32]),
+            Digest::from_bytes([0x6a; 32]),
+        ));
+        assert!(!decoded.matches_binding(
+            System::Aarch64Linux,
+            Digest::from_bytes([0x5a; 32]),
+            Digest::from_bytes([0x6a; 32]),
+        ));
+        assert!(!decoded.matches_binding(
+            System::X8664Linux,
+            Digest::from_bytes([0x5a; 32]),
+            Digest::from_bytes([0x6b; 32]),
+        ));
         assert_eq!(
             decoded.recovery_actions(),
             vec![LinuxInstallRecoveryAction::RevertCreated(&first)]
@@ -440,6 +496,29 @@ mod tests {
         assert_eq!(
             journal.recovery_actions(),
             vec![LinuxInstallRecoveryAction::RevalidateIntended(&sequence[1])]
+        );
+    }
+
+    #[test]
+    fn completed_recovery_action_discards_only_the_recovered_suffix() {
+        let mut journal = journal();
+        let sequence = install_sequence();
+        journal.record_preexisting(sequence[0].clone()).unwrap();
+        journal.intend(sequence[1].clone()).unwrap();
+        journal.complete_created().unwrap();
+        journal.record_preexisting(sequence[2].clone()).unwrap();
+
+        journal.complete_recovery_action(&sequence[1]).unwrap();
+
+        assert!(journal.recovery_actions().is_empty());
+        assert_eq!(
+            journal.mutation_state(&sequence[0]).unwrap(),
+            Some(LinuxInstallMutationState::PreExisting)
+        );
+        assert_eq!(journal.mutation_state(&sequence[1]).unwrap(), None);
+        assert_eq!(
+            journal.complete_recovery_action(&sequence[1]),
+            Err(invalid_transition())
         );
     }
 

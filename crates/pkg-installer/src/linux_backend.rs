@@ -23,6 +23,7 @@ pub struct ProductionLinuxInstallBackend {
     assets: LinuxPlatformAssetManager,
     services: LinuxSystemdManager,
     ownership_expectation: Option<OwnershipExpectation>,
+    existing_managed_install: bool,
 }
 
 impl ProductionLinuxInstallBackend {
@@ -45,6 +46,7 @@ impl ProductionLinuxInstallBackend {
             services: LinuxSystemdManager::production()
                 .map_err(|_| InstallError::backend_failure())?,
             ownership_expectation: None,
+            existing_managed_install: false,
         })
     }
 
@@ -109,6 +111,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         let environment_keys = env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
         let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
         if report.disposition() == DetectionDisposition::Clean {
+            self.existing_managed_install = false;
             return Ok(());
         }
         verify_authenticated_managed_install(
@@ -119,7 +122,9 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             &path_entries,
             &environment_keys,
         )
-        .map_err(|_| InstallError::backend_failure())
+        .map_err(|_| InstallError::backend_failure())?;
+        self.existing_managed_install = true;
+        Ok(())
     }
 
     fn classify_asset(
@@ -142,6 +147,27 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     fn recover_services(&mut self) -> Result<(), InstallError> {
         self.services
             .deactivate_for_uninstall()
+            .map_err(|_| InstallError::backend_failure())
+    }
+
+    fn classify_managed_runtime(&mut self) -> Result<LinuxAssetPresence, InstallError> {
+        Ok(if self.existing_managed_install {
+            LinuxAssetPresence::ExactPresent
+        } else {
+            LinuxAssetPresence::Absent
+        })
+    }
+
+    fn classify_services(&mut self) -> Result<LinuxAssetPresence, InstallError> {
+        self.services
+            .classify_activation()
+            .map(|active| {
+                if active {
+                    LinuxAssetPresence::ExactPresent
+                } else {
+                    LinuxAssetPresence::Absent
+                }
+            })
             .map_err(|_| InstallError::backend_failure())
     }
 

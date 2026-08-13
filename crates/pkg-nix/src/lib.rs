@@ -127,7 +127,8 @@ pub use managed::provision::{
     ProvisionedBootstrapTransaction, ProvisionedRuntime, authenticate_installer_bundle,
     authenticate_installer_bundle_blocking, provision_authenticated_installer_bundle,
     provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
-    provision_managed_nix_from_bundle_blocking, verify_authenticated_managed_install,
+    provision_managed_nix_from_bundle_blocking, recover_interrupted_provision_workspace,
+    verify_authenticated_managed_install, verify_provision_workspace_absent,
 };
 pub use managed::runtime_archive::{
     RuntimeManifestError, RuntimeManifestErrorCode, build_upstream_runtime_asset_manifest,
@@ -135,6 +136,7 @@ pub use managed::runtime_archive::{
 pub use managed::uninstall::{
     ExclusiveManagedRuntimeRemoval, ManagedRuntimeRemoval, ManagedRuntimeRemovalError,
     ManagedRuntimeRemovalErrorCode, ManagedRuntimeRemovalOutcome, prepare_managed_runtime_removal,
+    prepare_managed_runtime_removal_without_receipt,
 };
 pub use nixpkgs::{
     NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
