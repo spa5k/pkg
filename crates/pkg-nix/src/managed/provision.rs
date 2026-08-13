@@ -484,6 +484,29 @@ pub async fn authenticate_installer_bundle(
     trusted_root: TrustedRoot,
     request: &InstallerProvisionRequest<'_>,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    let bundle = load_authenticated_installer_bundle(trusted_root, request).await?;
+    let provision_request = ProvisionRequest {
+        installation_root: request.installation_root,
+        scratch_parent: request.scratch_parent,
+        spec: &bundle.spec,
+        groups: request.groups,
+    };
+    let (path_entries, environment_keys) = current_host_inputs();
+    require_host_state(
+        &provision_request,
+        &path_entries,
+        &environment_keys,
+        HostStatePolicy::Strict,
+        Some(&bundle.ownership_expectation),
+        0,
+    )?;
+    Ok(bundle)
+}
+
+async fn load_authenticated_installer_bundle(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     let source = load_installer_bundle(
         trusted_root,
         request.bundle_root,
@@ -514,21 +537,6 @@ pub async fn authenticate_installer_bundle(
         request.groups,
     )
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAssetManifest))?;
-    let provision_request = ProvisionRequest {
-        installation_root: request.installation_root,
-        scratch_parent: request.scratch_parent,
-        spec: &spec,
-        groups: request.groups,
-    };
-    let (path_entries, environment_keys) = current_host_inputs();
-    require_host_state(
-        &provision_request,
-        &path_entries,
-        &environment_keys,
-        HostStatePolicy::Strict,
-        Some(&ownership_expectation),
-        0,
-    )?;
     Ok(AuthenticatedInstallerBundle {
         source,
         spec,
@@ -538,6 +546,56 @@ pub async fn authenticate_installer_bundle(
         scratch_parent: request.scratch_parent.to_path_buf(),
         groups: request.groups,
     })
+}
+
+/// Reauthenticates the same installer bundle in a different private datastore.
+///
+/// The first strict authentication capability is consumed. Any change to its
+/// authenticated identity or fixed host request fails closed. This does not
+/// repeat the strict clean-host scan because the platform transaction has now
+/// created its fixed prerequisites. Provisioning reopens those prerequisites
+/// with [`HostStatePolicy::FixedPlatformPrerequisites`] before runtime mutation.
+pub async fn reauthenticate_installer_bundle(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+    authenticated: AuthenticatedInstallerBundle,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    if request.system != authenticated.spec.system
+        || request.installation_root != authenticated.installation_root
+        || request.scratch_parent != authenticated.scratch_parent
+        || request.groups != authenticated.groups
+    {
+        return Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ));
+    }
+    let replacement = load_authenticated_installer_bundle(trusted_root, request).await?;
+    if !authenticated_identity_matches(
+        &authenticated.spec,
+        &authenticated.managed_nix_config,
+        &authenticated.ownership_expectation,
+        &replacement.spec,
+        &replacement.managed_nix_config,
+        &replacement.ownership_expectation,
+    ) {
+        return Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ));
+    }
+    Ok(replacement)
+}
+
+fn authenticated_identity_matches(
+    expected_spec: &ProvisionSpec,
+    expected_config: &AuthenticatedManagedNixConfig,
+    expected_ownership: &OwnershipExpectation,
+    replacement_spec: &ProvisionSpec,
+    replacement_config: &AuthenticatedManagedNixConfig,
+    replacement_ownership: &OwnershipExpectation,
+) -> bool {
+    replacement_spec == expected_spec
+        && replacement_config == expected_config
+        && replacement_ownership == expected_ownership
 }
 
 /// Authenticates an installer bundle from a synchronous privileged entry point.
@@ -553,6 +611,23 @@ pub fn authenticate_installer_bundle_blocking(
         .build()
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
     runtime.block_on(authenticate_installer_bundle(trusted_root, request))
+}
+
+/// Reauthenticates a strictly authenticated bundle from a synchronous entry point.
+pub fn reauthenticate_installer_bundle_blocking(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+    authenticated: AuthenticatedInstallerBundle,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    refuse_nested_runtime()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    runtime.block_on(reauthenticate_installer_bundle(
+        trusted_root,
+        request,
+        authenticated,
+    ))
 }
 
 /// Consumes a previously authenticated private bundle and provisions it.
@@ -1953,6 +2028,63 @@ mod tests {
             refuse_nested_runtime().map_err(ProvisionError::code),
             Err(ProvisionErrorCode::InvalidAuthenticatedInput)
         );
+    }
+
+    #[test]
+    fn reauthentication_requires_the_exact_authenticated_identity() {
+        let fixture = Fixture::new();
+        let expected_spec = fixture.spec.clone();
+        let expected_config = AuthenticatedManagedNixConfig {
+            system: expected_spec.system,
+            contents: "fixed config".to_owned(),
+        };
+        let expected_ownership = fixture.expectation();
+
+        assert!(authenticated_identity_matches(
+            &expected_spec,
+            &expected_config,
+            &expected_ownership,
+            &expected_spec,
+            &expected_config,
+            &expected_ownership,
+        ));
+        let mut changed_spec = expected_spec.clone();
+        changed_spec.runtime_sha256 = Digest::from_bytes([9; 32]);
+        assert!(!authenticated_identity_matches(
+            &expected_spec,
+            &expected_config,
+            &expected_ownership,
+            &changed_spec,
+            &expected_config,
+            &expected_ownership,
+        ));
+        assert!(!authenticated_identity_matches(
+            &expected_spec,
+            &expected_config,
+            &expected_ownership,
+            &expected_spec,
+            &AuthenticatedManagedNixConfig {
+                system: expected_spec.system,
+                contents: "changed config".to_owned(),
+            },
+            &expected_ownership,
+        ));
+        let changed_ownership = OwnershipExpectation::new(
+            expected_ownership.system(),
+            expected_ownership.nix_version().clone(),
+            expected_ownership.asset_manifest_digest(),
+            ManagedGroupBindings::new(40_000, 40_001).unwrap(),
+            expected_ownership.artifacts().to_vec(),
+        )
+        .unwrap();
+        assert!(!authenticated_identity_matches(
+            &expected_spec,
+            &expected_config,
+            &expected_ownership,
+            &expected_spec,
+            &expected_config,
+            &changed_ownership,
+        ));
     }
 
     #[test]
