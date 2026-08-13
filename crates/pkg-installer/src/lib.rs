@@ -12,6 +12,8 @@ mod installer;
 mod linux_accounts;
 mod linux_backend;
 mod linux_filesystem;
+mod linux_install_journal;
+mod linux_install_journal_file;
 mod linux_platform_assets;
 mod linux_systemd;
 mod linux_uninstall;
@@ -65,6 +67,13 @@ pub use linux_accounts::{
 pub use linux_backend::ProductionLinuxInstallBackend;
 pub use linux_filesystem::{
     LinuxFilesystemError, LinuxFilesystemErrorCode, LinuxFilesystemManager, LinuxReleasePayloads,
+};
+pub use linux_install_journal::{
+    LinuxInstallJournal, LinuxInstallJournalError, LinuxInstallJournalErrorCode,
+    LinuxInstallMutation, LinuxInstallMutationState, LinuxInstallRecoveryAction,
+};
+pub use linux_install_journal_file::{
+    LinuxInstallJournalFileError, LinuxInstallJournalFileErrorCode, LinuxInstallJournalStorage,
 };
 pub use linux_platform_assets::LinuxPlatformAssetManager;
 pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode, LinuxSystemdManager};
