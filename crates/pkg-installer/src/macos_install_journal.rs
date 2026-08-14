@@ -258,6 +258,12 @@ impl MacOsInstallJournal {
         self.committed
     }
 
+    /// Returns true for the empty snapshot used as an uninstall-start marker.
+    #[must_use]
+    pub const fn is_empty_uncommitted(&self) -> bool {
+        !self.committed && self.entries.is_empty()
+    }
+
     /// Returns the durable state for one mutation at the current sequence point.
     ///
     /// # Errors
@@ -365,10 +371,10 @@ impl MacOsInstallJournal {
     }
 }
 
-pub(crate) fn install_sequence() -> Vec<MacOsInstallMutation> {
+pub fn install_sequence() -> Vec<MacOsInstallMutation> {
     let mut sequence = macos_install_assets()
         .iter()
-        .filter(|asset| store_prerequisite(asset.id()))
+        .filter(|asset| crate::platform::macos::store_volume_prerequisite(asset.id()))
         .map(asset_mutation)
         .collect::<Vec<_>>();
     sequence.push(MacOsInstallMutation::StoreVolume);
@@ -376,7 +382,8 @@ pub(crate) fn install_sequence() -> Vec<MacOsInstallMutation> {
         macos_install_assets()
             .iter()
             .filter(|asset| {
-                asset.kind() != MacOsAssetKind::File && !store_prerequisite(asset.id())
+                asset.kind() != MacOsAssetKind::File
+                    && !crate::platform::macos::store_volume_prerequisite(asset.id())
             })
             .map(asset_mutation),
     );
@@ -390,7 +397,8 @@ pub(crate) fn install_sequence() -> Vec<MacOsInstallMutation> {
             .filter(|asset| {
                 asset.kind() == MacOsAssetKind::File
                     && asset.id() != "nix-config"
-                    && !store_prerequisite(asset.id())
+                    && asset.id() != "uninstall-manifest"
+                    && !crate::platform::macos::store_volume_prerequisite(asset.id())
             })
             .map(asset_mutation),
     );
@@ -403,13 +411,6 @@ fn asset_mutation(asset: &crate::MacOsInstallAsset) -> MacOsInstallMutation {
     MacOsInstallMutation::Asset {
         id: asset.id().to_owned(),
     }
-}
-
-fn store_prerequisite(id: &str) -> bool {
-    matches!(
-        id,
-        "product-root" | "product-bin" | "service-root" | "managed-nix-state" | "helper-binary"
-    )
 }
 
 fn expected_mutation(index: usize) -> Option<MacOsInstallMutation> {

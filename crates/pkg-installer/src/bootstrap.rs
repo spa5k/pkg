@@ -13,11 +13,13 @@ use std::{
 use crate::{
     InstallError, LinuxAssetPresence, LinuxInstallAsset, LinuxInstallBackend, LinuxInstallJournal,
     LinuxInstallJournalStorage, LinuxInstallMutation, LinuxInstallReport, LinuxReleasePayloads,
-    MacOsBuildReadiness, MacOsError, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallReport,
-    ProductionLinuxUninstallBackend, UninstallError, UninstallErrorCode, execute_uninstall,
-    install_macos,
+    MacOsAssetPresence, MacOsBuildReadiness, MacOsError, MacOsInstallAsset, MacOsInstallBackend,
+    MacOsInstallJournal, MacOsInstallJournalStorage, MacOsInstallMutation, MacOsInstallReport,
+    ProductionLinuxUninstallBackend, ProductionMacOsUninstallBackend, UninstallError,
+    UninstallErrorCode, execute_uninstall, install_macos,
     installer::{install_linux_preflighted, recover_linux_install},
     linux_uninstall::verify_linux_install_absent,
+    macos_uninstall::verify_macos_install_absent,
     service::production_release_inputs,
     uninstall::preflight_uninstall,
 };
@@ -25,10 +27,11 @@ use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
 use pkg_channel::TrustedRoot;
 use pkg_core::{System, state::Digest};
 use pkg_nix::{
-    AuthenticatedInstallerBundle, AuthenticatedManagedNixConfig, InstallerProvisionRequest,
-    InstallerRepository, ManagedDaemon, ManagedRuntimeRemovalOutcome, OwnershipExpectation,
-    ProvisionErrorCode, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
-    authenticate_installer_bundle_blocking, prepare_managed_runtime_removal_without_receipt,
+    AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
+    InstallerProvisionRequest, InstallerRepository, ManagedDaemon, ManagedRuntimeRemovalOutcome,
+    OwnershipExpectation, ProvisionErrorCode, ProvisionedBootstrap,
+    ProvisionedBootstrapTransaction, authenticate_installer_bundle_blocking,
+    prepare_managed_runtime_removal_without_receipt,
     provision_authenticated_installer_bundle_transaction, reauthenticate_installer_bundle_blocking,
     recover_interrupted_provision_workspace, verify_provision_workspace_absent,
 };
@@ -37,6 +40,9 @@ use sha2::{Digest as _, Sha256};
 const LINUX_AUTH_DATASTORE: &str = "/run/pkg-install-auth";
 const LINUX_CHANNEL_DATASTORE: &str = "/var/lib/pkg/broker-home/channel";
 const LINUX_SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
+const MACOS_AUTH_DATASTORE: &str = "/private/var/db/pkg-install-auth";
+const MACOS_CHANNEL_DATASTORE: &str = "/Library/Application Support/pkg/broker-home/channel";
+const MACOS_SCRATCH_PARENT: &str = "/Library/Application Support/pkg/helper-home/tmp";
 
 /// Successful Linux installation and its authenticated runtime/index result.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,7 +75,7 @@ impl LinuxBundleInstallReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacOsBundleInstallReport {
     platform: MacOsInstallReport,
-    bootstrap: ProvisionedBootstrap,
+    bootstrap: Option<ProvisionedBootstrap>,
 }
 
 impl MacOsBundleInstallReport {
@@ -81,13 +87,13 @@ impl MacOsBundleInstallReport {
 
     /// Returns the authenticated runtime and host-index result.
     #[must_use]
-    pub const fn bootstrap(&self) -> &ProvisionedBootstrap {
-        &self.bootstrap
+    pub const fn bootstrap(&self) -> Option<&ProvisionedBootstrap> {
+        self.bootstrap.as_ref()
     }
 
     /// Consumes the report into its platform and bundle parts.
     #[must_use]
-    pub fn into_parts(self) -> (MacOsInstallReport, ProvisionedBootstrap) {
+    pub fn into_parts(self) -> (MacOsInstallReport, Option<ProvisionedBootstrap>) {
         (self.platform, self.bootstrap)
     }
 }
@@ -225,6 +231,59 @@ pub fn uninstall_linux_production(dry_run: bool) -> Result<usize, UninstallError
         bundle.managed_nix_config(),
         bundle.ownership_expectation(),
         payloads,
+    )?;
+    let manifest = backend
+        .installed_manifest()?
+        .ok_or_else(|| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let plan = crate::plan_uninstall(&manifest)?;
+    if dry_run {
+        preflight_uninstall(&manifest, &plan, &mut backend)?;
+        Ok(plan.actions().len())
+    } else {
+        execute_uninstall(&manifest, &plan, &mut backend)
+            .map(crate::UninstallReport::completed_actions)
+    }
+}
+
+/// Authenticates the fixed production release and uninstalls its macOS assets.
+///
+/// # Errors
+///
+/// Returns a stable refusal for insufficient privilege, invalid release data,
+/// changed ownership state, incomplete cleanup, or unsupported hosts.
+pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError> {
+    if !nix::unistd::Uid::effective().is_root() {
+        return Err(UninstallError::new(UninstallErrorCode::PrivilegeRequired));
+    }
+    let system = match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("x86_64", "macos") => System::X8664Darwin,
+        ("aarch64", "macos") => System::Aarch64Darwin,
+        (_, _) => return Err(UninstallError::backend_failure()),
+    };
+    if verify_macos_install_absent().is_ok() {
+        return Ok(0);
+    }
+    let groups = pkg_nix::ManagedGroupBindings::new(333, 300)
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let (trusted_root, metadata_url, targets_url) = production_release_inputs()
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let request = InstallerProvisionRequest {
+        repository: InstallerRepository::Remote {
+            metadata_url: &metadata_url,
+            targets_url: &targets_url,
+        },
+        datastore: Path::new(MACOS_CHANNEL_DATASTORE),
+        installation_root: Path::new("/"),
+        scratch_parent: Path::new(MACOS_SCRATCH_PARENT),
+        system,
+        groups,
+    };
+    let bundle = authenticate_macos_bundle(trusted_root, &request)
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let mut backend = ProductionMacOsUninstallBackend::new(
+        bundle.managed_nix_config(),
+        bundle.ownership_expectation(),
+        bundle.installer_payloads(),
     )?;
     let manifest = backend
         .installed_manifest()?
@@ -549,18 +608,173 @@ pub fn install_macos_from_bundle<'a>(
     if request.system != system {
         return Err(MacOsError::backend_failure());
     }
-    let bundle = authenticate_installer_bundle_blocking(trusted_root, request)
-        .map_err(|_| MacOsError::backend_failure())?;
+    backend.preflight_privilege()?;
+    let bundle = authenticate_macos_bundle(trusted_root.clone(), request)?;
+    backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
-    let mut provisioner = AuthenticatedProvisioner::new(bundle);
-    let (platform, outcome) =
-        install_macos_with_provisioner(system, request, daemon, backend, &mut provisioner)?;
+    let recovery_context_digest =
+        macos_recovery_context_digest(bundle.asset_manifest_digest(), request);
+    recover_macos_bundle_install(
+        system,
+        bundle.asset_manifest_digest(),
+        recovery_context_digest,
+        request,
+        daemon,
+        bundle.ownership_expectation(),
+        backend,
+    )?;
+    backend.preflight_clean_host(system)?;
+    verify_provision_workspace_absent(request.scratch_parent)
+        .map_err(|_| MacOsError::backend_failure())?;
+    let storage = MacOsInstallJournalStorage::prepare(
+        system,
+        bundle.asset_manifest_digest(),
+        recovery_context_digest,
+    )
+    .map_err(|_| MacOsError::backend_failure())?;
+    let journal = MacOsInstallJournal::new(
+        system,
+        bundle.asset_manifest_digest(),
+        recovery_context_digest,
+    )
+    .map_err(|_| MacOsError::backend_failure())?;
+    storage
+        .create(&journal)
+        .map_err(|_| MacOsError::backend_failure())?;
+    let mut provisioner = AuthenticatedProvisioner::with_reauthentication(trusted_root, bundle);
+    let installation = install_macos_with_provisioner_journaled(
+        system,
+        request,
+        daemon,
+        backend,
+        &mut provisioner,
+        &storage,
+        journal,
+    );
+    let (platform, outcome) = match installation {
+        Ok(success) => success,
+        Err(error) => {
+            if error.code() != crate::MacOsErrorCode::RollbackIncomplete {
+                storage
+                    .remove()
+                    .map_err(|_| MacOsError::backend_failure())?;
+            }
+            return Err(error);
+        }
+    };
+    storage
+        .remove()
+        .map_err(|_| MacOsError::backend_failure())?;
     let bootstrap = outcome.into_macos_bootstrap()?;
     Ok(MacOsBundleInstallReport {
         platform,
         bootstrap,
     })
+}
+
+fn authenticate_macos_bundle(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, MacOsError> {
+    let auth_datastore = prepare_macos_auth_datastore()?;
+    let auth_request = InstallerProvisionRequest {
+        repository: request.repository,
+        datastore: &auth_datastore,
+        installation_root: request.installation_root,
+        scratch_parent: request.scratch_parent,
+        system: request.system,
+        groups: request.groups,
+    };
+    let result = authenticate_installer_bundle_blocking(trusted_root, &auth_request)
+        .map_err(|_| MacOsError::backend_failure());
+    remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
+    result
+}
+
+fn prepare_macos_auth_datastore() -> Result<PathBuf, MacOsError> {
+    let uid = nix::unistd::Uid::effective().as_raw();
+    let gid = nix::unistd::Gid::effective().as_raw();
+    if uid != 0 || gid != 0 {
+        return Err(MacOsError::backend_failure());
+    }
+    let root = PathBuf::from(MACOS_AUTH_DATASTORE);
+    prepare_private_directory_at(&root, uid, gid).map_err(|_| MacOsError::backend_failure())?;
+    remove_legacy_linux_auth_datastore_files(&root, uid, gid)
+        .map_err(|_| MacOsError::backend_failure())?;
+    remove_stale_linux_auth_datastores(&root, uid, gid)
+        .map_err(|_| MacOsError::backend_failure())?;
+    let path = root.join(std::process::id().to_string());
+    prepare_linux_auth_datastore_at(&path, uid, gid).map_err(|_| MacOsError::backend_failure())?;
+    Ok(path)
+}
+
+fn recover_macos_bundle_install(
+    system: System,
+    digest: Digest,
+    recovery_context_digest: Digest,
+    request: &InstallerProvisionRequest<'_>,
+    daemon: &dyn ManagedDaemon,
+    expectation: &OwnershipExpectation,
+    backend: &mut dyn MacOsInstallBackend,
+) -> Result<(), MacOsError> {
+    let Some(storage) =
+        MacOsInstallJournalStorage::open_existing(system, digest, recovery_context_digest)
+            .map_err(|_| MacOsError::backend_failure())?
+    else {
+        return Ok(());
+    };
+    if let Some(mut journal) = storage.load().map_err(|_| MacOsError::backend_failure())?
+        && !journal.is_committed()
+    {
+        recover_interrupted_provision_workspace(request.scratch_parent)
+            .map_err(|_| MacOsError::backend_failure())?;
+        crate::recover_macos_install(
+            &mut journal,
+            backend,
+            &mut || {
+                if let Some(removal) = prepare_managed_runtime_removal_without_receipt(
+                    request.installation_root,
+                    expectation,
+                )
+                .map_err(|_| MacOsError::backend_failure())?
+                {
+                    daemon
+                        .rollback_runtime_registration()
+                        .map_err(|_| MacOsError::backend_failure())?;
+                    if removal
+                        .remove()
+                        .map_err(|_| MacOsError::backend_failure())?
+                        != ManagedRuntimeRemovalOutcome::Removed
+                    {
+                        return Err(MacOsError::backend_failure());
+                    }
+                }
+                Ok(())
+            },
+            &mut |journal| {
+                storage
+                    .replace(journal)
+                    .map_err(|_| MacOsError::backend_failure())
+            },
+        )?;
+    }
+    storage.remove().map_err(|_| MacOsError::backend_failure())
+}
+
+fn macos_recovery_context_digest(
+    ownership_manifest_digest: Digest,
+    request: &InstallerProvisionRequest<'_>,
+) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"pkg-macos-install-recovery-v1\0");
+    hasher.update(ownership_manifest_digest.as_bytes());
+    for path in [request.installation_root, request.scratch_parent] {
+        let bytes = path.as_os_str().as_bytes();
+        hasher.update(bytes.len().to_be_bytes());
+        hasher.update(bytes);
+    }
+    Digest::from_bytes(hasher.finalize().into())
 }
 
 enum BootstrapOutcome<'a> {
@@ -582,10 +796,10 @@ impl BootstrapOutcome<'_> {
         }
     }
 
-    fn into_macos_bootstrap(self) -> Result<ProvisionedBootstrap, MacOsError> {
+    fn into_macos_bootstrap(self) -> Result<Option<ProvisionedBootstrap>, MacOsError> {
         match self {
-            Self::Complete(bootstrap) => Ok(bootstrap),
-            Self::Existing => Err(MacOsError::backend_failure()),
+            Self::Complete(bootstrap) => Ok(Some(bootstrap)),
+            Self::Existing => Ok(None),
             Self::Pending(_) => Err(MacOsError::backend_failure()),
             #[cfg(test)]
             Self::Stub(_) => Err(MacOsError::backend_failure()),
@@ -636,6 +850,14 @@ trait BundleProvisioner {
         Ok(())
     }
 
+    fn reauthenticate_macos(
+        &mut self,
+        _request: &InstallerProvisionRequest<'_>,
+        _backend: &mut dyn MacOsInstallBackend,
+    ) -> Result<(), BundleProvisionError> {
+        Ok(())
+    }
+
     fn preflight_workspace(
         &self,
         _request: &InstallerProvisionRequest<'_>,
@@ -662,13 +884,6 @@ struct AuthenticatedProvisioner {
 }
 
 impl AuthenticatedProvisioner {
-    const fn new(bundle: AuthenticatedInstallerBundle) -> Self {
-        Self {
-            trusted_root: None,
-            bundle: Some(bundle),
-        }
-    }
-
     const fn with_reauthentication(
         trusted_root: TrustedRoot,
         bundle: AuthenticatedInstallerBundle,
@@ -690,6 +905,26 @@ impl BundleProvisioner for AuthenticatedProvisioner {
         &mut self,
         request: &InstallerProvisionRequest<'_>,
         backend: &mut dyn LinuxInstallBackend,
+    ) -> Result<(), BundleProvisionError> {
+        let trusted_root = self
+            .trusted_root
+            .take()
+            .ok_or(BundleProvisionError::Failed)?;
+        let bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
+        let broker_uid = backend
+            .broker_uid()
+            .map_err(|_| BundleProvisionError::Failed)?;
+        self.bundle = Some(
+            reauthenticate_installer_bundle_blocking(trusted_root, request, bundle, broker_uid)
+                .map_err(|_| BundleProvisionError::Failed)?,
+        );
+        Ok(())
+    }
+
+    fn reauthenticate_macos(
+        &mut self,
+        request: &InstallerProvisionRequest<'_>,
+        backend: &mut dyn MacOsInstallBackend,
     ) -> Result<(), BundleProvisionError> {
         let trusted_root = self
             .trusted_root
@@ -1067,15 +1302,89 @@ fn install_linux_with_provisioner<'a, P: BundleProvisioner>(
     Ok((report, outcome))
 }
 
-struct MacOsBundleBackend<'a, P> {
+struct MacOsBundleBackend<'a, 'j, P> {
     inner: &'a mut dyn MacOsInstallBackend,
     request: &'a InstallerProvisionRequest<'a>,
     daemon: &'a dyn ManagedDaemon,
     provisioner: &'a mut P,
     outcome: Option<BootstrapOutcome<'a>>,
+    journal: Option<MacOsJournalTransaction<'j>>,
+    store_created: bool,
 }
 
-impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
+struct MacOsJournalTransaction<'a> {
+    storage: &'a dyn MacOsJournalPersistence,
+    journal: MacOsInstallJournal,
+}
+
+trait MacOsJournalPersistence {
+    fn replace(&self, journal: &MacOsInstallJournal) -> Result<(), MacOsError>;
+}
+
+impl MacOsJournalPersistence for MacOsInstallJournalStorage {
+    fn replace(&self, journal: &MacOsInstallJournal) -> Result<(), MacOsError> {
+        Self::replace(self, journal).map_err(|_| MacOsError::backend_failure())
+    }
+}
+
+impl MacOsJournalTransaction<'_> {
+    fn begin(
+        &mut self,
+        mutation: MacOsInstallMutation,
+        presence: MacOsAssetPresence,
+    ) -> Result<(), MacOsError> {
+        if presence == MacOsAssetPresence::Absent {
+            self.journal
+                .intend(mutation)
+                .map_err(|_| MacOsError::backend_failure())?;
+            self.persist()?;
+        }
+        Ok(())
+    }
+
+    fn complete(
+        &mut self,
+        mutation: MacOsInstallMutation,
+        presence: MacOsAssetPresence,
+        changed: bool,
+    ) -> Result<(), MacOsError> {
+        if changed != (presence == MacOsAssetPresence::Absent) {
+            return Err(MacOsError::backend_failure());
+        }
+        if changed {
+            self.journal
+                .complete_created()
+                .map_err(|_| MacOsError::backend_failure())?;
+        } else {
+            self.journal
+                .record_preexisting(mutation)
+                .map_err(|_| MacOsError::backend_failure())?;
+        }
+        self.persist()
+    }
+
+    fn commit(&mut self) -> Result<(), MacOsError> {
+        self.journal
+            .commit()
+            .map_err(|_| MacOsError::rollback_incomplete())?;
+        self.storage
+            .replace(&self.journal)
+            .map_err(|_| MacOsError::rollback_incomplete())
+    }
+
+    fn persist(&self) -> Result<(), MacOsError> {
+        self.storage.replace(&self.journal)
+    }
+}
+
+impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P> {
+    fn bind_authenticated_installer_payloads(
+        &mut self,
+        payloads: &AuthenticatedInstallerPayloads,
+    ) -> Result<(), MacOsError> {
+        self.inner.bind_authenticated_installer_payloads(payloads)
+    }
+
     fn bind_authenticated_nix_config(
         &mut self,
         config: &AuthenticatedManagedNixConfig,
@@ -1097,35 +1406,119 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
     fn preflight_clean_host(&mut self, system: System) -> Result<(), MacOsError> {
         self.inner.preflight_clean_host(system)
     }
+    fn broker_uid(&mut self) -> Result<u32, MacOsError> {
+        self.inner.broker_uid()
+    }
+    fn classify_asset(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<MacOsAssetPresence, MacOsError> {
+        self.inner.classify_asset(asset)
+    }
+    fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+        self.inner.classify_store_volume()
+    }
+    fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+        self.inner.classify_managed_runtime()
+    }
+    fn classify_services(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+        self.inner.classify_services()
+    }
+    fn classify_ownership_receipt(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+        self.inner.classify_ownership_receipt()
+    }
+    fn recover_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        self.inner.recover_asset(asset)
+    }
+    fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
+        self.inner.recover_store_volume()
+    }
+    fn recover_services(&mut self) -> Result<(), MacOsError> {
+        self.inner.recover_services()
+    }
+    fn recover_ownership_receipt(&mut self) -> Result<(), MacOsError> {
+        self.inner.recover_ownership_receipt()
+    }
     fn verify_release_bundle(&mut self) -> Result<(), MacOsError> {
         self.inner.verify_release_bundle()
     }
     fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
-        self.inner.provision_store_volume()
+        let mutation = MacOsInstallMutation::StoreVolume;
+        let presence = self.inner.classify_store_volume()?;
+        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
+        let changed = self.inner.provision_store_volume()?;
+        complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+        self.store_created = changed;
+        Ok(changed)
     }
     fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
         self.inner.rollback_store_volume()
     }
     fn ensure_asset(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
-        self.inner.ensure_asset(asset)
+        let mutation = macos_asset_mutation(asset);
+        let observed = self.inner.classify_asset(asset)?;
+        let presence = if self.store_created && asset.id() == "nix-root" {
+            if observed != MacOsAssetPresence::ExactPresent {
+                return Err(MacOsError::backend_failure());
+            }
+            MacOsAssetPresence::Absent
+        } else {
+            observed
+        };
+        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
+        let changed = self.inner.ensure_asset(asset)?;
+        complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+        Ok(changed)
     }
     fn install_launchd_plist(
         &mut self,
         asset: MacOsInstallAsset,
         contents: &'static str,
     ) -> Result<bool, MacOsError> {
-        self.inner.install_launchd_plist(asset, contents)
+        let mutation = macos_asset_mutation(asset);
+        let presence = self.inner.classify_asset(asset)?;
+        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
+        let changed = self.inner.install_launchd_plist(asset, contents)?;
+        complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+        Ok(changed)
     }
     fn install_nix_config(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
-        self.inner.install_nix_config(asset)
+        let mutation = macos_asset_mutation(asset);
+        let presence = self.inner.classify_asset(asset)?;
+        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
+        let changed = self.inner.install_nix_config(asset)?;
+        complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+        Ok(changed)
     }
     fn provision_managed_runtime(&mut self) -> Result<bool, MacOsError> {
+        let mutation = MacOsInstallMutation::ManagedRuntime;
+        let presence = self.inner.classify_managed_runtime()?;
+        if presence == MacOsAssetPresence::ExactPresent
+            && self
+                .provisioner
+                .reuse_existing()
+                .map_err(macos_provision_error)?
+        {
+            self.outcome = Some(BootstrapOutcome::Existing);
+            begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
+            complete_macos_mutation(&mut self.journal, mutation, presence, false)?;
+            return Ok(false);
+        }
+        self.provisioner
+            .reauthenticate_macos(self.request, self.inner)
+            .map_err(macos_provision_error)?;
+        self.provisioner
+            .preflight_workspace(self.request)
+            .map_err(macos_provision_error)?;
+        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
         self.outcome = Some(
             self.provisioner
                 .provision(self.request, self.daemon)
                 .map_err(macos_provision_error)?,
         );
-        Ok(true)
+        let changed = presence == MacOsAssetPresence::Absent;
+        complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+        Ok(changed)
     }
     fn rollback_managed_runtime(&mut self) -> Result<(), MacOsError> {
         self.outcome
@@ -1141,7 +1534,12 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
                 .commit_channel()
                 .map_err(|_| MacOsError::backend_failure())?;
         }
-        self.inner.activate_services()
+        let mutation = MacOsInstallMutation::Services;
+        let presence = self.inner.classify_services()?;
+        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
+        let changed = self.inner.activate_services()?;
+        complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+        Ok(changed)
     }
     fn rollback_services(&mut self) -> Result<(), MacOsError> {
         self.inner.rollback_services()
@@ -1155,7 +1553,10 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
     ) -> Result<MacOsBuildReadiness, MacOsError> {
         self.inner.observe_build_readiness(system)
     }
-    fn publish_ownership_receipt(&mut self) -> Result<(), MacOsError> {
+    fn publish_ownership_receipt(&mut self) -> Result<bool, MacOsError> {
+        let mutation = MacOsInstallMutation::OwnershipReceipt;
+        let presence = self.inner.classify_ownership_receipt()?;
+        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
         let outcome = self
             .outcome
             .take()
@@ -1166,7 +1567,16 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
                     self.outcome = Some(BootstrapOutcome::Pending(transaction));
                     return Err(MacOsError::backend_failure());
                 }
-                if let Err(error) = self.inner.publish_ownership_receipt() {
+                let receipt_created = match self.inner.publish_ownership_receipt() {
+                    Ok(created) => created,
+                    Err(error) => {
+                        self.outcome = Some(BootstrapOutcome::Pending(transaction));
+                        return Err(error);
+                    }
+                };
+                if let Err(error) =
+                    complete_macos_mutation(&mut self.journal, mutation, presence, receipt_created)
+                {
                     self.outcome = Some(BootstrapOutcome::Pending(transaction));
                     return Err(error);
                 }
@@ -1174,21 +1584,55 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
                     .finalize()
                     .map_err(|_| MacOsError::backend_failure())?;
                 self.outcome = Some(BootstrapOutcome::Complete(bootstrap));
-                Ok(())
+                Ok(receipt_created)
             }
             #[cfg(test)]
             BootstrapOutcome::Stub(rolled_back) => {
                 let result = self.inner.publish_ownership_receipt();
                 self.outcome = Some(BootstrapOutcome::Stub(rolled_back));
-                result
+                let changed = result?;
+                complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+                Ok(changed)
             }
             BootstrapOutcome::Complete(_) => Err(MacOsError::backend_failure()),
-            BootstrapOutcome::Existing => Err(MacOsError::backend_failure()),
+            BootstrapOutcome::Existing => {
+                let changed = self.inner.publish_ownership_receipt()?;
+                self.outcome = Some(BootstrapOutcome::Existing);
+                complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
+                Ok(changed)
+            }
         }
     }
     fn rollback_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         self.inner.rollback_asset(asset)
     }
+}
+
+fn macos_asset_mutation(asset: MacOsInstallAsset) -> MacOsInstallMutation {
+    MacOsInstallMutation::Asset {
+        id: asset.id().to_owned(),
+    }
+}
+
+fn begin_macos_mutation(
+    journal: &mut Option<MacOsJournalTransaction<'_>>,
+    mutation: MacOsInstallMutation,
+    presence: MacOsAssetPresence,
+) -> Result<(), MacOsError> {
+    journal
+        .as_mut()
+        .map_or(Ok(()), |journal| journal.begin(mutation, presence))
+}
+
+fn complete_macos_mutation(
+    journal: &mut Option<MacOsJournalTransaction<'_>>,
+    mutation: MacOsInstallMutation,
+    presence: MacOsAssetPresence,
+    changed: bool,
+) -> Result<(), MacOsError> {
+    journal.as_mut().map_or(Ok(()), |journal| {
+        journal.complete(mutation, presence, changed)
+    })
 }
 
 const fn linux_provision_error(error: BundleProvisionError) -> InstallError {
@@ -1205,6 +1649,7 @@ const fn macos_provision_error(error: BundleProvisionError) -> MacOsError {
     }
 }
 
+#[cfg(test)]
 fn install_macos_with_provisioner<'a, P: BundleProvisioner>(
     system: System,
     request: &'a InstallerProvisionRequest<'a>,
@@ -1218,8 +1663,41 @@ fn install_macos_with_provisioner<'a, P: BundleProvisioner>(
         daemon,
         provisioner,
         outcome: None,
+        journal: None,
+        store_created: false,
     };
     let report = install_macos(system, &mut adapter)?;
+    let outcome = adapter
+        .outcome
+        .take()
+        .ok_or_else(MacOsError::backend_failure)?;
+    Ok((report, outcome))
+}
+
+fn install_macos_with_provisioner_journaled<'a, P: BundleProvisioner>(
+    system: System,
+    request: &'a InstallerProvisionRequest<'a>,
+    daemon: &'a dyn ManagedDaemon,
+    backend: &'a mut dyn MacOsInstallBackend,
+    provisioner: &'a mut P,
+    storage: &dyn MacOsJournalPersistence,
+    journal: MacOsInstallJournal,
+) -> Result<(MacOsInstallReport, BootstrapOutcome<'a>), MacOsError> {
+    let mut adapter = MacOsBundleBackend {
+        inner: backend,
+        request,
+        daemon,
+        provisioner,
+        outcome: None,
+        journal: Some(MacOsJournalTransaction { storage, journal }),
+        store_created: false,
+    };
+    let report = install_macos(system, &mut adapter)?;
+    adapter
+        .journal
+        .as_mut()
+        .ok_or_else(MacOsError::rollback_incomplete)?
+        .commit()?;
     let outcome = adapter
         .outcome
         .take()
@@ -1362,6 +1840,18 @@ mod tests {
 
     impl LinuxJournalPersistence for MemoryJournalPersistence {
         fn replace(&self, journal: &LinuxInstallJournal) -> Result<(), InstallError> {
+            self.snapshots.borrow_mut().push(journal.clone());
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MacMemoryJournalPersistence {
+        snapshots: RefCell<Vec<MacOsInstallJournal>>,
+    }
+
+    impl MacOsJournalPersistence for MacMemoryJournalPersistence {
+        fn replace(&self, journal: &MacOsInstallJournal) -> Result<(), MacOsError> {
             self.snapshots.borrow_mut().push(journal.clone());
             Ok(())
         }
@@ -1815,9 +2305,17 @@ mod tests {
     struct MacBackend {
         raw_provision_calls: usize,
         fail_health: bool,
+        create_store: bool,
     }
 
     impl MacOsInstallBackend for MacBackend {
+        fn bind_authenticated_installer_payloads(
+            &mut self,
+            _payloads: &AuthenticatedInstallerPayloads,
+        ) -> Result<(), MacOsError> {
+            Ok(())
+        }
+
         fn bind_authenticated_nix_config(
             &mut self,
             _config: &AuthenticatedManagedNixConfig,
@@ -1838,17 +2336,54 @@ mod tests {
         fn preflight_clean_host(&mut self, _system: System) -> Result<(), MacOsError> {
             Ok(())
         }
+        fn broker_uid(&mut self) -> Result<u32, MacOsError> {
+            Ok(333)
+        }
+        fn classify_asset(
+            &mut self,
+            _asset: MacOsInstallAsset,
+        ) -> Result<MacOsAssetPresence, MacOsError> {
+            Ok(MacOsAssetPresence::ExactPresent)
+        }
+        fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+            Ok(if self.create_store {
+                MacOsAssetPresence::Absent
+            } else {
+                MacOsAssetPresence::ExactPresent
+            })
+        }
+        fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+            Ok(MacOsAssetPresence::Absent)
+        }
+        fn classify_services(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+            Ok(MacOsAssetPresence::ExactPresent)
+        }
+        fn classify_ownership_receipt(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+            Ok(MacOsAssetPresence::Absent)
+        }
+        fn recover_asset(&mut self, _asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+            Ok(())
+        }
+        fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
+            Ok(())
+        }
+        fn recover_services(&mut self) -> Result<(), MacOsError> {
+            Ok(())
+        }
+        fn recover_ownership_receipt(&mut self) -> Result<(), MacOsError> {
+            Ok(())
+        }
         fn verify_release_bundle(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }
         fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
-            Ok(false)
+            Ok(self.create_store)
         }
         fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }
-        fn ensure_asset(&mut self, _asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
-            Ok(false)
+        fn ensure_asset(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
+            Ok(self.create_store && asset.id() == "nix-root")
         }
         fn install_launchd_plist(
             &mut self,
@@ -1894,8 +2429,8 @@ mod tests {
                 crate::MacOsToolchainReadiness::Ready,
             ))
         }
-        fn publish_ownership_receipt(&mut self) -> Result<(), MacOsError> {
-            Ok(())
+        fn publish_ownership_receipt(&mut self) -> Result<bool, MacOsError> {
+            Ok(true)
         }
         fn rollback_asset(&mut self, _asset: MacOsInstallAsset) -> Result<(), MacOsError> {
             Ok(())
@@ -2044,6 +2579,62 @@ mod tests {
         );
         assert!(rolled_back.get());
         assert_eq!(backend.raw_provision_calls, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn journaled_macos_install_persists_receipt_last_commit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::Aarch64Darwin,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let persistence = MacMemoryJournalPersistence::default();
+        let journal = MacOsInstallJournal::new(
+            request.system,
+            Digest::from_bytes([0x95; 32]),
+            Digest::from_bytes([0xa5; 32]),
+        )?;
+        let mut provisioner = StubProvisioner {
+            calls: 0,
+            rolled_back: std::rc::Rc::new(std::cell::Cell::new(false)),
+        };
+        let mut backend = MacBackend {
+            create_store: true,
+            ..MacBackend::default()
+        };
+
+        let (report, outcome) = install_macos_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            &persistence,
+            journal,
+        )?;
+
+        assert!(matches!(outcome, BootstrapOutcome::Stub(_)));
+        assert_eq!(report.created_artifacts(), 1);
+        let snapshots = persistence.snapshots.borrow();
+        let committed = snapshots
+            .last()
+            .ok_or_else(|| std::io::Error::other("missing committed snapshot"))?;
+        assert!(committed.is_committed());
+        assert_eq!(
+            committed.mutation_state(&MacOsInstallMutation::OwnershipReceipt)?,
+            Some(crate::MacOsInstallMutationState::Created)
+        );
+        assert_eq!(
+            committed.mutation_state(&MacOsInstallMutation::Asset {
+                id: "nix-root".to_owned(),
+            })?,
+            Some(crate::MacOsInstallMutationState::Created)
+        );
         Ok(())
     }
 }

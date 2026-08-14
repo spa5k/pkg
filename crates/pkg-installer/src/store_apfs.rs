@@ -191,6 +191,26 @@ impl<R: DiskutilRunner> MacOsApfsAdapter<R> {
         }
     }
 
+    pub(crate) fn verify_for_removal(&mut self, volume_uuid: &str) -> Result<(), MacOsApfsError> {
+        self.require_owned(volume_uuid)?;
+        let observation = self.inspect(volume_uuid)?;
+        if observation.volume_uuid == volume_uuid
+            && observation.volume_name == MacOsStoreVolumeContract::VOLUME_NAME
+            && observation.apfs_container_reference == self.root_container()?
+            && observation.file_vault
+            && observation.global_permissions_enabled
+            && !observation.locked
+            && matches!(
+                observation.mount_point.as_deref(),
+                None | Some(MacOsStoreVolumeContract::MOUNT_POINT)
+            )
+        {
+            Ok(())
+        } else {
+            Err(invalid_state())
+        }
+    }
+
     fn inspect(&mut self, volume_uuid: &str) -> Result<VolumeInfo, MacOsApfsError> {
         let bytes = self.runner.output(&["info", "-plist", volume_uuid])?;
         let info: VolumeInfo = plist::from_bytes(&bytes).map_err(|_| invalid_state())?;

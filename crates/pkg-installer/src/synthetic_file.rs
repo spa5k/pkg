@@ -84,6 +84,63 @@ impl MacOsSyntheticFileTransaction {
 pub struct MacOsSyntheticFileStorage;
 
 impl MacOsSyntheticFileStorage {
+    /// Requires the preview's reversible clean-host precondition.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for unsafe parents or existing configuration state.
+    pub fn require_preview_clean() -> Result<(), MacOsSyntheticFileError> {
+        validate_directory(Path::new(CONFIG_PARENT), 0, 0, 0o755)?;
+        validate_directory(Path::new(BACKUP_PARENT), 0, 0, 0o700)?;
+        if read_optional_file(Path::new(CONFIG_PATH), 0, 0, 0o644, MAX_CONFIG_BYTES)?.is_some()
+            || fs::symlink_metadata(BACKUP_PATH).is_ok()
+        {
+            return Err(MacOsSyntheticFileError::InvalidState);
+        }
+        Ok(())
+    }
+
+    /// Removes only the exact canonical preview-owned `nix` entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for changed state or incomplete durable removal.
+    pub fn remove_preview_owned() -> Result<(), MacOsSyntheticFileError> {
+        validate_directory(Path::new(CONFIG_PARENT), 0, 0, 0o755)?;
+        validate_directory(Path::new(BACKUP_PARENT), 0, 0, 0o700)?;
+        if fs::symlink_metadata(BACKUP_PATH).is_ok() {
+            return Err(MacOsSyntheticFileError::InvalidState);
+        }
+        let expected =
+            plan_macos_synthetic_entry(None).map_err(|_| MacOsSyntheticFileError::InvalidState)?;
+        match read_optional_file(Path::new(CONFIG_PATH), 0, 0, 0o644, MAX_CONFIG_BYTES)? {
+            None => Ok(()),
+            Some(bytes) if bytes == expected.bytes() => remove_expected_atomically(
+                Path::new(CONFIG_PARENT),
+                Path::new(CONFIG_PATH),
+                expected.bytes(),
+                0,
+                0,
+            ),
+            Some(_) => Err(MacOsSyntheticFileError::InvalidState),
+        }
+    }
+
+    /// Reports clean absence for idempotent preview removal.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for unsafe, unreadable, or ambiguous state.
+    pub fn preview_entry_absent() -> Result<bool, MacOsSyntheticFileError> {
+        validate_directory(Path::new(CONFIG_PARENT), 0, 0, 0o755)?;
+        validate_directory(Path::new(BACKUP_PARENT), 0, 0, 0o700)?;
+        Ok(
+            read_optional_file(Path::new(CONFIG_PATH), 0, 0, 0o644, MAX_CONFIG_BYTES)?.is_none()
+                && fs::symlink_metadata(BACKUP_PATH)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+        )
+    }
+
     /// Reads exact pre-state, creates a durable private backup when needed, and plans replacement.
     ///
     /// # Errors

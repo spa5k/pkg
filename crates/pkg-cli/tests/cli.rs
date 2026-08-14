@@ -195,7 +195,7 @@ fn semantic_usage_failure_uses_the_selected_machine_format() {
     assert_eq!(value["error"]["symbol"], "USAGE");
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[test]
 fn uninstall_refuses_an_unsupported_host_before_privilege() {
     let output = pkg()

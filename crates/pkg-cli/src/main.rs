@@ -16,7 +16,7 @@ use pkg_cli::log::{LogConfig, LogLevel, LogRecord, StructuredLog};
 use pkg_cli::path::{HostFamily, PathObservation, default_state_root};
 use pkg_cli::support::SupportBundle;
 use pkg_cli::ux::{CommandError, OutputMode, write_error};
-use pkg_installer::{UninstallErrorCode, uninstall_linux_production};
+use pkg_installer::{UninstallErrorCode, uninstall_linux_production, uninstall_macos_production};
 use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
 
 fn main() -> ProcessExitCode {
@@ -87,7 +87,7 @@ impl CommandEngine for UninstallEngine {
                 "run `pkg uninstall`",
             ));
         }
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", target_os = "macos")) {
             return Err(CommandError::new(
                 ExitCode::Config,
                 "uninstall is not available on this system",
@@ -102,8 +102,12 @@ impl CommandEngine for UninstallEngine {
         if !request.dry_run() {
             confirm_destructive(request.yes(), "Uninstall pkg?")?;
         }
-        let actions = uninstall_linux_production(request.dry_run())
-            .map_err(|error| uninstall_command_error(error.code()))?;
+        let result = if cfg!(target_os = "macos") {
+            uninstall_macos_production(request.dry_run())
+        } else {
+            uninstall_linux_production(request.dry_run())
+        };
+        let actions = result.map_err(|error| uninstall_command_error(error.code()))?;
         let (summary, status) = if actions == 0 {
             ("pkg is not installed.", "absent")
         } else if request.dry_run() {

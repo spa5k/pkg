@@ -3,12 +3,21 @@
 use crate::{
     MacOsStoreJournalPhase, MacOsStoreProvisionBackend, MacOsStoreProvisionError,
     MacOsStoreProvisionJournal, MacOsStoreProvisionOutcome, MacOsStoreRollbackAction,
-    MacOsSyntheticFileStorage, MacOsSyntheticFileTransaction, publish_macos_store_volume_record,
+    MacOsStoreVolumeContract, MacOsSyntheticFileStorage, MacOsSyntheticFileTransaction,
+    publish_macos_store_volume_record,
     store_apfs::MacOsApfsAdapter,
     store_journal_file::MacOsStoreJournalStorage,
-    store_mount::production::{receipt_matches, remove_receipt},
+    store_mount::production::{receipt_matches, receipt_volume_uuid, remove_receipt},
+};
+use nix::{
+    fcntl::{OFlag, open},
+    sys::stat::{Mode, fchmod},
+    unistd::{Gid, Uid, fchown, fsync},
 };
 use pkg_macos_security::{StoreVolumeSecret, SystemKeychainStore};
+use std::os::unix::fs::MetadataExt;
+
+const APFS_UTIL: &str = "/System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util";
 
 /// Provisions or verifies the exact product-owned APFS store as root.
 ///
@@ -21,21 +30,180 @@ pub fn provision_macos_store_volume_production()
     if nix::unistd::geteuid().as_raw() != 0 || nix::unistd::getegid().as_raw() != 0 {
         return Err(failure());
     }
-    crate::provision_macos_store_volume(&mut ProductionBackend::new())
+    crate::provision_macos_store_volume(&mut ProductionBackend::new(
+        crate::macos_accounts::BUILD_GID,
+    ))
+}
+
+/// Classifies the complete preview-owned APFS state without mutation.
+///
+/// # Errors
+///
+/// Returns a redacted error for non-root use or partial, foreign, or unreadable state.
+pub fn classify_macos_store_volume_production() -> Result<bool, MacOsStoreProvisionError> {
+    require_root()?;
+    let mut apfs = MacOsApfsAdapter::production();
+    let discovered = apfs.discover_volume().map_err(|_| failure())?;
+    let receipt_path = "/Library/Application Support/pkg/managed-nix/store-volume-v1.json";
+    let receipt = match std::fs::symlink_metadata(receipt_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(failure()),
+        Ok(_) => receipt_volume_uuid().map_err(|_| failure())?,
+    };
+    match (discovered, receipt) {
+        (None, None) => {
+            if SystemKeychainStore::exists().map_err(|_| failure())?
+                || !MacOsSyntheticFileStorage::preview_entry_absent().map_err(|_| failure())?
+            {
+                Err(failure())
+            } else {
+                Ok(false)
+            }
+        }
+        (Some(discovered), Some(receipt)) if discovered == receipt => {
+            apfs.verify_final(&receipt).map_err(|_| failure())?;
+            if !SystemKeychainStore::exists().map_err(|_| failure())?
+                || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
+            {
+                return Err(failure());
+            }
+            Ok(true)
+        }
+        _ => Err(failure()),
+    }
+}
+
+/// Removes only the exact preview-owned APFS state, with the receipt last.
+///
+/// # Errors
+///
+/// Returns a redacted error unless every ownership check and removal succeeds.
+pub fn remove_macos_store_volume_production() -> Result<(), MacOsStoreProvisionError> {
+    require_root()?;
+    let mut apfs = MacOsApfsAdapter::production();
+    let receipt = receipt_volume_uuid().map_err(|_| failure())?;
+    let discovered = apfs.discover_volume().map_err(|_| failure())?;
+    let Some(volume_uuid) = receipt else {
+        if discovered.is_some()
+            || SystemKeychainStore::exists().map_err(|_| failure())?
+            || !MacOsSyntheticFileStorage::preview_entry_absent().map_err(|_| failure())?
+        {
+            return Err(failure());
+        }
+        return Ok(());
+    };
+    match discovered {
+        Some(discovered) if discovered == volume_uuid => {
+            apfs.verify_for_removal(&volume_uuid)
+                .map_err(|_| failure())?;
+            if !SystemKeychainStore::exists().map_err(|_| failure())?
+                || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
+            {
+                return Err(failure());
+            }
+            apfs.unmount(&volume_uuid).map_err(|_| failure())?;
+            apfs.delete(&volume_uuid).map_err(|_| failure())?;
+        }
+        None => {}
+        Some(_) => return Err(failure()),
+    }
+    SystemKeychainStore::delete().map_err(|_| failure())?;
+    MacOsSyntheticFileStorage::remove_preview_owned().map_err(|_| failure())?;
+    remove_receipt(&volume_uuid).map_err(|_| failure())?;
+    if apfs.discover_volume().map_err(|_| failure())?.is_some()
+        || SystemKeychainStore::exists().map_err(|_| failure())?
+        || !MacOsSyntheticFileStorage::preview_entry_absent().map_err(|_| failure())?
+        || receipt_volume_uuid().map_err(|_| failure())?.is_some()
+    {
+        return Err(failure());
+    }
+    Ok(())
+}
+
+/// Verifies final absence without requiring product parent directories to remain.
+///
+/// # Errors
+///
+/// Returns a redacted error for non-root use, unreadable state, or product residue.
+pub fn verify_macos_store_volume_absent_production() -> Result<(), MacOsStoreProvisionError> {
+    require_root()?;
+    let mut apfs = MacOsApfsAdapter::production();
+    if apfs.discover_volume().map_err(|_| failure())?.is_some()
+        || SystemKeychainStore::exists().map_err(|_| failure())?
+        || [
+            "/private/etc/synthetic.conf",
+            "/Library/Application Support/pkg/managed-nix/store-volume-v1.json",
+            "/Library/Application Support/pkg/managed-nix/synthetic-conf-v1.backup",
+        ]
+        .iter()
+        .any(|path| std::fs::symlink_metadata(path).is_ok())
+    {
+        Err(failure())
+    } else {
+        Ok(())
+    }
+}
+
+/// Verifies a complete store or the exact receipt-last removal prefix.
+///
+/// # Errors
+///
+/// Returns a redacted error for foreign, ambiguous, or invalid recovery state.
+pub fn verify_macos_store_removal_state_production() -> Result<(), MacOsStoreProvisionError> {
+    require_root()?;
+    let mut apfs = MacOsApfsAdapter::production();
+    let discovered = apfs.discover_volume().map_err(|_| failure())?;
+    let receipt_path = "/Library/Application Support/pkg/managed-nix/store-volume-v1.json";
+    let receipt = match std::fs::symlink_metadata(receipt_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(failure()),
+        Ok(_) => receipt_volume_uuid().map_err(|_| failure())?,
+    };
+    match (discovered, receipt) {
+        (Some(discovered), Some(receipt)) if discovered == receipt => {
+            apfs.verify_for_removal(&receipt).map_err(|_| failure())?;
+            if !SystemKeychainStore::exists().map_err(|_| failure())?
+                || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
+            {
+                return Err(failure());
+            }
+        }
+        (None, Some(_)) => {
+            let config = std::fs::symlink_metadata("/private/etc/synthetic.conf");
+            if config.is_ok()
+                && !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
+            {
+                return Err(failure());
+            }
+        }
+        (None, None) => verify_macos_store_volume_absent_production()?,
+        _ => return Err(failure()),
+    }
+    Ok(())
+}
+
+fn require_root() -> Result<(), MacOsStoreProvisionError> {
+    if nix::unistd::geteuid().as_raw() == 0 && nix::unistd::getegid().as_raw() == 0 {
+        Ok(())
+    } else {
+        Err(failure())
+    }
 }
 
 struct ProductionBackend {
     journal: Option<MacOsStoreProvisionJournal>,
     synthetic: Option<MacOsSyntheticFileTransaction>,
     apfs: MacOsApfsAdapter,
+    build_gid: u32,
 }
 
 impl ProductionBackend {
-    const fn new() -> Self {
+    const fn new(build_gid: u32) -> Self {
         Self {
             journal: None,
             synthetic: None,
             apfs: MacOsApfsAdapter::production(),
+            build_gid,
         }
     }
 
@@ -141,6 +309,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
     }
 
     fn ensure_synthetic_entry(&mut self) -> Result<(), MacOsStoreProvisionError> {
+        MacOsSyntheticFileStorage::require_preview_clean().map_err(|_| failure())?;
         let transaction = MacOsSyntheticFileStorage::prepare().map_err(|_| failure())?;
         self.journal_mut()?
             .intend_synthetic(
@@ -150,6 +319,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
             .map_err(|_| failure())?;
         self.replace_journal()?;
         MacOsSyntheticFileStorage::apply(&transaction).map_err(|_| failure())?;
+        crate::linux_accounts::run_status(APFS_UTIL, &["-t"]).map_err(|_| failure())?;
         self.journal_mut()?
             .complete_synthetic()
             .map_err(|_| failure())?;
@@ -190,6 +360,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
         self.apfs
             .enable_ownership(volume_uuid)
             .map_err(|_| failure())?;
+        configure_mount_root(self.build_gid)?;
         self.journal_mut()?
             .complete_ownership()
             .map_err(|_| failure())?;
@@ -220,6 +391,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
 
     fn verify_final(&mut self, volume_uuid: &str) -> Result<(), MacOsStoreProvisionError> {
         self.apfs.verify_final(volume_uuid).map_err(|_| failure())?;
+        verify_mount_root(self.build_gid)?;
         if !SystemKeychainStore::exists().map_err(|_| failure())?
             || !receipt_matches(volume_uuid).map_err(|_| failure())?
             || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
@@ -247,6 +419,52 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
             return Err(failure());
         }
         self.rollback_loaded()
+    }
+}
+
+fn configure_mount_root(build_gid: u32) -> Result<(), MacOsStoreProvisionError> {
+    let root = open(
+        MacOsStoreVolumeContract::MOUNT_POINT,
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| failure())?;
+    let root = std::fs::File::from(root);
+    fchown(
+        &root,
+        Some(Uid::from_raw(0)),
+        Some(Gid::from_raw(build_gid)),
+    )
+    .map_err(|_| failure())?;
+    fchmod(&root, Mode::from_bits_truncate(0o755)).map_err(|_| failure())?;
+    fsync(&root).map_err(|_| failure())?;
+    verify_mount_root_file(&root, build_gid)
+}
+
+fn verify_mount_root(build_gid: u32) -> Result<(), MacOsStoreProvisionError> {
+    let root = open(
+        MacOsStoreVolumeContract::MOUNT_POINT,
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| failure())?;
+    let root = std::fs::File::from(root);
+    verify_mount_root_file(&root, build_gid)
+}
+
+fn verify_mount_root_file(
+    root: &std::fs::File,
+    build_gid: u32,
+) -> Result<(), MacOsStoreProvisionError> {
+    let metadata = root.metadata().map_err(|_| failure())?;
+    if metadata.is_dir()
+        && metadata.uid() == 0
+        && metadata.gid() == build_gid
+        && metadata.mode() & 0o7777 == 0o755
+    {
+        Ok(())
+    } else {
+        Err(failure())
     }
 }
 

@@ -23,8 +23,8 @@ use rustix::io::Errno;
 
 use crate::linux_user_cleanup::remove_owned_tree;
 use crate::{
-    LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets, UninstallManifest,
-    encode_uninstall_manifest,
+    LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets, MacOsLaunchdAssets,
+    UninstallManifest, encode_uninstall_manifest,
 };
 
 const MAX_RELEASE_BINARY_BYTES: usize = 128 * 1024 * 1024;
@@ -141,7 +141,7 @@ impl LinuxReleasePayloads {
 
     fn for_asset(&self, asset: LinuxInstallAsset) -> Option<Arc<[u8]>> {
         match asset.id() {
-            "root-helper-binary" => Some(Arc::clone(&self.root_helper)),
+            "root-helper-binary" | "helper-binary" => Some(Arc::clone(&self.root_helper)),
             "broker-binary" => Some(Arc::clone(&self.broker)),
             "product-cli" => Some(Arc::clone(&self.product_cli)),
             _ => None,
@@ -315,7 +315,10 @@ impl LinuxFilesystemManager {
     ) -> Result<(), LinuxFilesystemError> {
         if !matches!(
             system,
-            pkg_core::System::X8664Linux | pkg_core::System::Aarch64Linux
+            pkg_core::System::X8664Linux
+                | pkg_core::System::Aarch64Linux
+                | pkg_core::System::X8664Darwin
+                | pkg_core::System::Aarch64Darwin
         ) || contents.is_empty()
             || contents.len() > MAX_CONFIG_BYTES
         {
@@ -413,6 +416,16 @@ impl LinuxFilesystemManager {
             .copied()
             .find(|asset| asset.id() == "uninstall-manifest")
             .ok_or_else(unsupported)?;
+        self.existing_uninstall_manifest_for(asset)
+    }
+
+    pub(crate) fn existing_uninstall_manifest_for(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<Option<UninstallManifest>, LinuxFilesystemError> {
+        if asset.id() != "uninstall-manifest" || asset.kind() != LinuxAssetKind::File {
+            return Err(unsupported());
+        }
         let (parent, name) = self.open_parent(asset)?;
         let mut file = match open_child(&parent, &name, LinuxAssetKind::File) {
             Ok(file) => file,
@@ -917,6 +930,11 @@ fn static_payload(asset: LinuxInstallAsset) -> Option<&'static [u8]> {
         "broker-socket-unit" => Some(LinuxSystemdAssets::BROKER_SOCKET.as_bytes()),
         "broker-service-unit" => Some(LinuxSystemdAssets::BROKER_SERVICE.as_bytes()),
         "runtime-tmpfiles" => Some(LinuxSystemdAssets::TMPFILES.as_bytes()),
+        "store-volume-plist" => Some(MacOsLaunchdAssets::STORE_VOLUME.as_bytes()),
+        "daemon-plist" => Some(MacOsLaunchdAssets::NIX_DAEMON.as_bytes()),
+        "helper-plist" => Some(MacOsLaunchdAssets::ROOT_HELPER.as_bytes()),
+        "broker-plist" => Some(MacOsLaunchdAssets::BROKER.as_bytes()),
+        "path-file" => Some(b"/opt/pkg/bin\n"),
         _ => None,
     }
 }

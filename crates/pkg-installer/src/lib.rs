@@ -18,8 +18,14 @@ mod linux_platform_assets;
 mod linux_systemd;
 mod linux_uninstall;
 mod linux_user_cleanup;
+mod macos_accounts;
+mod macos_backend;
+mod macos_filesystem;
 mod macos_install_journal;
 mod macos_install_journal_file;
+mod macos_launchd;
+mod macos_platform_assets;
+mod macos_uninstall;
 pub mod platform;
 mod production_repair;
 mod repair;
@@ -47,7 +53,7 @@ pub use assets::{
 };
 pub use bootstrap::{
     LinuxBundleInstallReport, MacOsBundleInstallReport, install_linux_from_bundle,
-    install_macos_from_bundle, uninstall_linux_production,
+    install_macos_from_bundle, uninstall_linux_production, uninstall_macos_production,
 };
 pub use broker::{
     BrokerTransportError, BrokerTransportErrorCode, ChannelRefreshDispatch,
@@ -80,21 +86,24 @@ pub use linux_install_journal_file::{
 pub use linux_platform_assets::{LinuxAssetPresence, LinuxPlatformAssetManager};
 pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode, LinuxSystemdManager};
 pub use linux_uninstall::ProductionLinuxUninstallBackend;
+pub use macos_backend::ProductionMacOsInstallBackend;
 pub use macos_install_journal::{
     MacOsInstallJournal, MacOsInstallJournalError, MacOsInstallJournalErrorCode,
     MacOsInstallMutation, MacOsInstallMutationState, MacOsInstallRecoveryAction,
 };
 pub use macos_install_journal_file::{MacOsInstallJournalFileError, MacOsInstallJournalStorage};
+pub use macos_uninstall::{ProductionMacOsUninstallBackend, verify_macos_install_absent};
 pub use platform::linux::{
     LinuxPeerCredentials, LinuxPlatformError, LinuxPlatformErrorCode, LinuxRootSetStore,
     authenticate_broker_peer, peer_credentials,
 };
 pub use platform::macos::{
-    MacOsAssetKind, MacOsAssetPrincipal, MacOsBuildReadiness, MacOsBuildUsersReadiness, MacOsError,
-    MacOsErrorCode, MacOsHelperSession, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallReport,
-    MacOsLaunchdAssets, MacOsPeerCredentials, MacOsReleaseStep, MacOsReleaseTarget,
-    MacOsRootSetStore, MacOsSandboxReadiness, MacOsSocketContract, MacOsStoreVolumeContract,
-    MacOsToolchainReadiness, install_macos, macos_install_assets, macos_release_steps,
+    MacOsAssetKind, MacOsAssetPresence, MacOsAssetPrincipal, MacOsBuildReadiness,
+    MacOsBuildUsersReadiness, MacOsError, MacOsErrorCode, MacOsHelperSession, MacOsInstallAsset,
+    MacOsInstallBackend, MacOsInstallReport, MacOsLaunchdAssets, MacOsPeerCredentials,
+    MacOsReleaseStep, MacOsReleaseTarget, MacOsRootSetStore, MacOsSandboxReadiness,
+    MacOsSocketContract, MacOsStoreVolumeContract, MacOsToolchainReadiness, install_macos,
+    macos_install_assets, macos_release_steps, recover_macos_install,
 };
 pub use production_repair::ProductionRepairAuthority;
 pub use repair::{
@@ -124,7 +133,11 @@ pub use store_provision::{
     MacOsStoreProvisionOutcome, provision_macos_store_volume,
 };
 #[cfg(target_os = "macos")]
-pub use store_provision_macos::provision_macos_store_volume_production;
+pub use store_provision_macos::{
+    classify_macos_store_volume_production, provision_macos_store_volume_production,
+    remove_macos_store_volume_production, verify_macos_store_removal_state_production,
+    verify_macos_store_volume_absent_production,
+};
 pub use synthetic_conf::{
     MacOsSyntheticConfError, MacOsSyntheticConfErrorCode, MacOsSyntheticConfPlan,
     plan_macos_synthetic_entry,

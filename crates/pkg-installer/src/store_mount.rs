@@ -514,6 +514,16 @@ pub mod production {
         }
     }
 
+    pub fn receipt_volume_uuid() -> Result<Option<String>, MacOsStoreMountError> {
+        match fs::symlink_metadata(RECEIPT_PATH) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(MacOsStoreMountError::new(
+                MacOsStoreMountErrorCode::InvalidReceipt,
+            )),
+            Ok(_) => load_receipt().map(|receipt| Some(receipt.volume_uuid)),
+        }
+    }
+
     pub fn remove_receipt(volume_uuid: &str) -> Result<(), MacOsStoreMountError> {
         if !super::canonical_uuid(volume_uuid) {
             return Err(MacOsStoreMountError::new(

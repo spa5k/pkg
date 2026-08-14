@@ -43,7 +43,7 @@ impl fmt::Display for MacOsInstallJournalFileError {
 
 impl Error for MacOsInstallJournalFileError {}
 
-/// Locked access to `/var/db/pkg-install/macos-transaction-v1.json`.
+/// Locked access to `/private/var/db/pkg-install/macos-transaction-v1.json`.
 pub struct MacOsInstallJournalStorage {
     base: File,
     directory: File,
@@ -64,6 +64,10 @@ impl fmt::Debug for MacOsInstallJournalStorage {
 
 impl MacOsInstallJournalStorage {
     /// Opens and locks existing production recovery storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for unsafe paths, metadata, locks, or bindings.
     pub fn open_existing(
         system: System,
         ownership_manifest_digest: Digest,
@@ -80,6 +84,10 @@ impl MacOsInstallJournalStorage {
     }
 
     /// Creates or opens and locks production recovery storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for unsafe paths, metadata, locks, or bindings.
     pub fn prepare(
         system: System,
         ownership_manifest_digest: Digest,
@@ -96,6 +104,10 @@ impl MacOsInstallJournalStorage {
     }
 
     /// Loads and validates the current bound snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for invalid metadata, bytes, or identity bindings.
     pub fn load(&self) -> Result<Option<MacOsInstallJournal>, MacOsInstallJournalFileError> {
         self.validate_directory_binding()?;
         self.reconcile_temporary()?;
@@ -103,6 +115,10 @@ impl MacOsInstallJournalStorage {
     }
 
     /// Creates the first durable snapshot without replacement.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error if validation or durable publication fails.
     pub fn create(
         &self,
         journal: &MacOsInstallJournal,
@@ -111,6 +127,10 @@ impl MacOsInstallJournalStorage {
     }
 
     /// Atomically replaces the validated current snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error if validation or durable replacement fails.
     pub fn replace(
         &self,
         journal: &MacOsInstallJournal,
@@ -119,6 +139,10 @@ impl MacOsInstallJournalStorage {
     }
 
     /// Durably removes the snapshot and empty private directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable error for changed state or incomplete durable removal.
     pub fn remove(self) -> Result<(), MacOsInstallJournalFileError> {
         self.validate_directory_binding()?;
         self.reconcile_temporary()?;
@@ -378,7 +402,9 @@ fn decode_file(
 fn open_production_base() -> Result<File, MacOsInstallJournalFileError> {
     let root = open_directory(Path::new("/"))?;
     validate_trusted_directory(&root, 0)?;
-    let var = open_child_directory(&root, "var")?;
+    let private = open_child_directory(&root, "private")?;
+    validate_trusted_directory(&private, 0)?;
+    let var = open_child_directory(&private, "var")?;
     validate_trusted_directory(&var, 0)?;
     let db = open_child_directory(&var, "db")?;
     validate_trusted_directory(&db, 0)?;
