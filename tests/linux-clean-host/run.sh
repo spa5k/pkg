@@ -87,6 +87,14 @@ docker exec "$container" sh -eu -c '
     chmod 0755 /tmp/pkg-after-uninstall
 '
 
+echo "+ pkg install hello"
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --yes install hello"
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
+    | grep -F '"name":"hello"' >/dev/null
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/hello" \
+    | grep -F "Hello, world!" >/dev/null
+
 echo "+ pkg --yes uninstall"
 docker exec "$container" /usr/local/bin/pkg --yes uninstall
 

@@ -405,7 +405,7 @@ impl CoreOperations for LocalStateOperations {
             .begin(BrokerOperationKind::Repair)
             .map_err(broker_error)?;
         let result = (|| {
-            let lease = self.gc_lease(&layout, &handle)?;
+            let (lease, _) = self.gc_lease(&layout)?;
             let generation = match args.generation() {
                 Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
                     CommandError::new(
@@ -693,7 +693,7 @@ impl LocalStateOperations {
                 .collect::<Vec<_>>();
             let next = upgraded.into_state();
             let nonce = secure_nonce()?;
-            let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
+            let identity = LeaseIdentity::new(&public_operation_id, &nonce, &created_at)
                 .map_err(state_lease_error)?;
             let lease = StateLease::try_exclusive(&layout, &identity).map_err(state_lease_error)?;
             let history = load_retained_history(&layout, &lease).map_err(state_read_error)?;
@@ -710,7 +710,7 @@ impl LocalStateOperations {
                 StateEditMetadata::new(
                     &generation_id,
                     &created_at,
-                    handle.as_str(),
+                    &public_operation_id,
                     StateEditKind::Upgrade,
                 )
                 .with_collision_policy(state_collision_policy(args.collision_policy()))
@@ -771,7 +771,7 @@ impl LocalStateOperations {
         let result = (|| {
             emit_phase(progress, &public_operation_id, "stage", "started")?;
             let created_at = utc_now()?;
-            let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
+            let identity = LeaseIdentity::new(&public_operation_id, &nonce, &created_at)
                 .map_err(state_lease_error)?;
             let lease = StateLease::try_exclusive(&layout, &identity).map_err(state_lease_error)?;
             let current = load_active_snapshot(&layout, &lease).map_err(state_read_error)?;
@@ -794,7 +794,7 @@ impl LocalStateOperations {
                 InstallGenerationMetadata::new(
                     &generation_id,
                     &created_at,
-                    handle.as_str(),
+                    &public_operation_id,
                     build_approval,
                 ),
             )
@@ -897,7 +897,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
-            let lease = self.gc_lease(layout, &handle)?;
+            let (lease, _) = self.gc_lease(layout)?;
             let maintenance = BrokerGcMaintenance {
                 broker: Mutex::new(&mut *broker),
                 handle: handle.clone(),
@@ -947,7 +947,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
-            let lease = self.gc_lease(&layout, &handle)?;
+            let (lease, operation_id) = self.gc_lease(&layout)?;
             let active = load_active_snapshot(&layout, &lease)
                 .map_err(state_read_error)?
                 .ok_or_else(no_active_generation)?;
@@ -962,7 +962,7 @@ impl LocalStateOperations {
                 broker: Mutex::new(&mut broker),
                 handle: handle.clone(),
             };
-            prune_generation(&layout, &lease, &candidate, &maintenance, handle.as_str())
+            prune_generation(&layout, &lease, &candidate, &maintenance, &operation_id)
                 .map_err(gc_error)?;
             drop(maintenance);
             let _ = broker.complete(handle.clone());
@@ -1000,7 +1000,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
-            let lease = self.gc_lease(&layout, &handle)?;
+            let (lease, operation_id) = self.gc_lease(&layout)?;
             let active = load_active_snapshot(&layout, &lease)
                 .map_err(state_read_error)?
                 .ok_or_else(no_active_generation)?;
@@ -1015,7 +1015,7 @@ impl LocalStateOperations {
             };
             let mut pruned = Vec::new();
             for candidate in plan.candidates() {
-                if prune_generation(&layout, &lease, candidate, &maintenance, handle.as_str())
+                if prune_generation(&layout, &lease, candidate, &maintenance, &operation_id)
                     .map_err(gc_error)?
                     == PruneOutcome::Pruned
                 {
@@ -1033,16 +1033,14 @@ impl LocalStateOperations {
         result
     }
 
-    fn gc_lease(
-        &self,
-        layout: &StateLayout,
-        handle: &OperationHandle,
-    ) -> Result<StateLease, CommandError> {
+    fn gc_lease(&self, layout: &StateLayout) -> Result<(StateLease, String), CommandError> {
         let nonce = secure_nonce()?;
         let created_at = utc_now()?;
+        let operation_id = state_operation_id(&nonce);
         let identity =
-            LeaseIdentity::new(handle.as_str(), &nonce, &created_at).map_err(state_lease_error)?;
-        StateLease::try_exclusive(layout, &identity).map_err(state_lease_error)
+            LeaseIdentity::new(&operation_id, &nonce, &created_at).map_err(state_lease_error)?;
+        let lease = StateLease::try_exclusive(layout, &identity).map_err(state_lease_error)?;
+        Ok((lease, operation_id))
     }
 
     fn commit_rollback(&self, args: &RollbackArgs) -> Result<CommandResult, CommandError> {
@@ -1058,7 +1056,8 @@ impl LocalStateOperations {
         let result = (|| {
             let nonce = secure_nonce()?;
             let created_at = utc_now()?;
-            let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
+            let operation_id = state_operation_id(&nonce);
+            let identity = LeaseIdentity::new(&operation_id, &nonce, &created_at)
                 .map_err(state_lease_error)?;
             let lease = StateLease::try_exclusive(&layout, &identity).map_err(state_lease_error)?;
             let source = load_active_snapshot(&layout, &lease)
@@ -1082,7 +1081,7 @@ impl LocalStateOperations {
                 &plan,
                 &generation_id,
                 &created_at,
-                handle.as_str(),
+                &operation_id,
             )
             .map_err(|_| mutation_failed())?;
             let intent = prepared
@@ -1147,7 +1146,8 @@ impl LocalStateOperations {
         let result = (|| {
             let nonce = secure_nonce()?;
             let created_at = utc_now()?;
-            let identity = LeaseIdentity::new(handle.as_str(), &nonce, &created_at)
+            let operation_id = state_operation_id(&nonce);
+            let identity = LeaseIdentity::new(&operation_id, &nonce, &created_at)
                 .map_err(state_lease_error)?;
             let lease = StateLease::try_exclusive(&layout, &identity).map_err(state_lease_error)?;
             let source = load_active_snapshot(&layout, &lease)
@@ -1167,7 +1167,7 @@ impl LocalStateOperations {
                 lease,
                 &source,
                 next,
-                StateEditMetadata::new(&generation_id, &created_at, handle.as_str(), kind),
+                StateEditMetadata::new(&generation_id, &created_at, &operation_id, kind),
             )
             .map_err(|_| mutation_failed())?;
             let intent = prepared
@@ -1267,7 +1267,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
-            let lease = self.gc_lease(layout, &handle)?;
+            let (lease, _) = self.gc_lease(layout)?;
             let maintenance = BrokerGcMaintenance {
                 broker: Mutex::new(&mut *broker),
                 handle: handle.clone(),
@@ -1370,7 +1370,7 @@ fn acquire_install_evidence(
     let acquire_handle = broker
         .begin(BrokerOperationKind::Acquire)
         .map_err(broker_error)?;
-    let public_operation_id = acquire_handle.as_str().to_owned();
+    let public_operation_id = format!("op_{}", secure_nonce()?);
     if let Err(error) = emit_phase(progress, &public_operation_id, "acquire", "started") {
         let _ = broker.cancel(acquire_handle);
         return Err(error);
@@ -1970,6 +1970,10 @@ fn secure_nonce() -> Result<String, CommandError> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+fn state_operation_id(nonce: &str) -> String {
+    format!("op_{nonce}")
+}
+
 fn next_generation_id(active: &str) -> Result<String, CommandError> {
     let digits = active.strip_prefix("gen-").ok_or_else(mutation_failed)?;
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -2535,6 +2539,7 @@ mod tests {
         )
         .unwrap();
         assert!(!handle.as_str().is_empty());
+        assert_ne!(public_operation_id, handle.as_str());
         assert_eq!(actual, expected);
         assert_eq!(approval, "not_required");
         assert_eq!(events.len(), 4);

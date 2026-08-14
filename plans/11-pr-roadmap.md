@@ -1262,17 +1262,18 @@ flowchart TD
   one authenticated release publication with the pinned Nix 2.34.8 archive, installs the public CLI,
   broker, helper, daemon, fixed units, private channel state, and ownership receipt, and reuses an
   exact installation without reacquiring the broker's durable channel lease. A privileged clean
-  systemd container proves install, exact retry, service health, ordinary-user isolation, safe
-  uninstall, idempotent uninstall, and final absence. Uninstall removes only verified created state,
+  systemd container proves install, exact retry, service health, ordinary-user isolation, a cached
+  `hello` install and execution, safe uninstall, idempotent uninstall, and final absence. Uninstall
+  removes only verified created state,
   refuses linked or changed broker state, preserves the receipt until earlier cleanup succeeds, and
-  safely handles a missing Nix GC lock plus normal private-group removal. Package install, approved
-  cache-miss build, upgrade, rollback, and repair still need the same public-CLI clean-host lane.
+  safely handles a missing Nix GC lock plus normal private-group removal. Approved cache-miss build,
+  upgrade, rollback, and repair still need the same public-CLI clean-host lane.
   the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an
   ephemeral runner/store. This is deliberately adapter parity evidence only: the upstream action
-  is not product-installer evidence, and the clean-host product install, privileged repair,
-  full CLI self-hosting, and golden capture/replay lanes remain open.
+  is not product-installer evidence, and the CI clean-host product flow, privileged repair,
+  full package-operation flow, macOS product install, and golden capture/replay lanes remain open.
   the pinned Nix 2.34.8 adapter executes version/eval/substitute/path-info/verify/build/GC through
   the managed daemon with bounded process-group cancellation, strict JSON parsing, and provenance
   checks, and its isolated Linux daemon smoke covers both substitution and local build paths. The

@@ -24,6 +24,45 @@ const USER_STATE_COMPONENTS: &[&str] = &[".local", "share", "pkg"];
 const MAX_USERS: usize = 4_096;
 const MAX_ENTRIES: usize = 65_536;
 
+pub fn remove_owned_tree(
+    root: &Path,
+    target: &Path,
+    root_owner_uid: u32,
+    tree_owner_uid: u32,
+) -> Result<(), LinuxUserCleanupError> {
+    let relative = target.strip_prefix("/").map_err(|_| unsafe_state())?;
+    let parent_path = relative.parent().ok_or_else(unsafe_state)?;
+    let name = relative.file_name().ok_or_else(unsafe_state)?;
+    let mut parent = open(root, directory_flags(), Mode::empty()).map_err(|_| unsafe_state())?;
+    validate_directory(
+        &fstat(&parent).map_err(|_| operation_failed())?,
+        root_owner_uid,
+    )?;
+    for component in parent_path.components() {
+        let Component::Normal(component) = component else {
+            return Err(unsafe_state());
+        };
+        parent = match openat(&parent, component, directory_flags(), Mode::empty()) {
+            Ok(child) => child,
+            Err(Errno::NOENT) => return Ok(()),
+            Err(_) => return Err(unsafe_state()),
+        };
+        validate_directory(
+            &fstat(&parent).map_err(|_| operation_failed())?,
+            root_owner_uid,
+        )?;
+    }
+    let expected_mount = mount_boundary_fd(&parent)?;
+    match statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(_) => {}
+        Err(Errno::NOENT) => return Ok(()),
+        Err(_) => return Err(operation_failed()),
+    }
+    let mut count = 0;
+    remove_entry(&parent, name, tree_owner_uid, expected_mount, &mut count)?;
+    fsync(&parent).map_err(|_| operation_failed())
+}
+
 /// Stable failures for Linux per-user uninstall cleanup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinuxUserCleanupErrorCode {

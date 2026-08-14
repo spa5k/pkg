@@ -26,7 +26,8 @@ use super::ownership::{
 };
 
 const MAX_METADATA_BYTES: u64 = 1_048_576;
-const MAX_DYNAMIC_ENTRIES: usize = 16_384;
+// The authenticated Nixpkgs source alone can contain more than 65,000 entries.
+const MAX_DYNAMIC_ENTRIES: usize = 262_144;
 const RUNTIME_PREFIX: &str = "/opt/pkg/nix";
 const STORE_PREFIX: &str = "/nix/store";
 const STORE_LINKS: &str = "/nix/store/.links";
@@ -634,16 +635,28 @@ impl ExclusiveManagedRuntimeRemoval {
     pub fn capture_product_closure(
         &mut self,
         product_closure: &[StorePath],
+        registered_paths: &[StorePath],
     ) -> Result<(), ManagedRuntimeRemovalError> {
         let store = rooted(&self.removal.root, Path::new(STORE_PREFIX));
-        if !store_contains_only_authenticated_objects(&store, &self.removal.store, product_closure)?
+        let registered = registered_paths
+            .iter()
+            .map(StorePath::as_str)
+            .collect::<BTreeSet<_>>();
+        if product_closure
+            .iter()
+            .any(|path| !registered.contains(path.as_str()))
+            || !store_contains_only_authenticated_objects(
+                &store,
+                &self.removal.store,
+                registered_paths,
+            )?
         {
             return Err(ManagedRuntimeRemovalError::new(
                 ManagedRuntimeRemovalErrorCode::UnsafeState,
             ));
         }
         let device = capture(&store, self.removal.owner_uid, false)?.device;
-        for path in product_closure {
+        for path in registered_paths {
             let path = rooted(&self.removal.root, Path::new(path.as_str()));
             if !self.removal.store.iter().any(|entry| entry.path == path) {
                 capture_tree_on_device(
@@ -915,7 +928,7 @@ fn capture_dynamic_store_state(
         owner_uid,
         state.device,
     )?;
-    require_empty_directory(
+    let temporary_root_locks = lock_stale_temporary_roots(
         &rooted(root, Path::new("/nix/var/nix/temproots")),
         owner_uid,
         state.device,
@@ -934,6 +947,7 @@ fn capture_dynamic_store_state(
             &mut entries,
         )?;
     }
+    drop(temporary_root_locks);
     Ok(entries)
 }
 
@@ -1052,6 +1066,86 @@ fn require_empty_directory(
     Ok(())
 }
 
+fn lock_stale_temporary_roots(
+    path: &Path,
+    owner_uid: u32,
+    expected_device: u64,
+) -> Result<Vec<fs::File>, ManagedRuntimeRemovalError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+    };
+    if !metadata.file_type().is_dir()
+        || metadata.dev() != expected_device
+        || metadata.uid() != owner_uid
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(ManagedRuntimeRemovalError::new(
+            ManagedRuntimeRemovalErrorCode::UnsafeState,
+        ));
+    }
+
+    let mut locks = Vec::new();
+    for child in fs::read_dir(path)
+        .map_err(|_| ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState))?
+    {
+        let child = child.map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        if child
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+            .is_none()
+        {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        let child_path = child.path();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&child_path)
+            .map_err(|_| {
+                ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+            })?;
+        let file_metadata = file.metadata().map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        if !file_metadata.file_type().is_file()
+            || file_metadata.dev() != expected_device
+            || file_metadata.uid() != owner_uid
+            || file_metadata.nlink() != 1
+            || file_metadata.mode() & 0o022 != 0
+            || fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive).is_err()
+        {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        let path_metadata = fs::symlink_metadata(&child_path).map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        if path_metadata.dev() != file_metadata.dev()
+            || path_metadata.ino() != file_metadata.ino()
+            || !path_metadata.file_type().is_file()
+        {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        locks.push(file);
+    }
+    Ok(locks)
+}
+
 fn require_empty_profiles(
     path: &Path,
     owner_uid: u32,
@@ -1106,11 +1200,11 @@ fn capture_tree_on_device(
             ));
         }
     };
+    let is_symlink = metadata.file_type().is_symlink();
     if metadata.uid() != owner_uid
         || expected_device.is_some_and(|device| metadata.dev() != device)
-        || metadata.file_type().is_symlink()
-        || !(metadata.file_type().is_dir() || metadata.file_type().is_file())
-        || metadata.mode() & 0o022 != 0
+        || !(metadata.file_type().is_dir() || metadata.file_type().is_file() || is_symlink)
+        || !is_symlink && metadata.mode() & 0o022 != 0
         || entries.len() >= MAX_DYNAMIC_ENTRIES
     {
         return Err(ManagedRuntimeRemovalError::new(
@@ -1821,7 +1915,7 @@ mod tests {
     }
 
     #[test]
-    fn temporary_root_record_refuses_before_any_store_deletion()
+    fn non_pid_temporary_root_record_refuses_before_any_store_deletion()
     -> Result<(), Box<dyn std::error::Error>> {
         let fixture = Fixture::new()?;
         let temproots = rooted(
@@ -1844,6 +1938,75 @@ mod tests {
         assert_eq!(error.code(), ManagedRuntimeRemovalErrorCode::UnsafeState);
         assert!(store_object.is_file());
         assert!(runtime.is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_temporary_root_record_is_removed_with_the_store()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let temproots = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/var/nix/temproots"),
+        );
+        fs::create_dir_all(&temproots)?;
+        fs::set_permissions(&temproots, fs::Permissions::from_mode(0o700))?;
+        fs::write(temproots.join("424242"), b"signed store path")?;
+
+        assert_eq!(
+            fixture.prepare()?.remove()?,
+            ManagedRuntimeRemovalOutcome::Removed
+        );
+        assert!(!temproots.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn locked_temporary_root_record_refuses_before_any_store_deletion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let temproots = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/var/nix/temproots"),
+        );
+        fs::create_dir_all(&temproots)?;
+        fs::set_permissions(&temproots, fs::Permissions::from_mode(0o700))?;
+        let record = temproots.join("424242");
+        fs::write(&record, b"signed store path")?;
+        let ready = fixture.temporary.path().join("temporary-root-lock-ready");
+        let mut child = Command::new(std::env::current_exe()?)
+            .args([
+                "--ignored",
+                "--exact",
+                "managed::uninstall::tests::posix_record_lock_holder",
+                "--nocapture",
+            ])
+            .env("PKG_TEST_RECORD_LOCK_PATH", &record)
+            .env("PKG_TEST_RECORD_LOCK_READY", &ready)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        if !ready.exists() {
+            let _ = child.kill();
+            return Err("temporary-root lock helper did not become ready".into());
+        }
+        let store_object = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/store/22222222222222222222222222222222-runtime"),
+        );
+
+        let error = fixture
+            .prepare()?
+            .remove()
+            .expect_err("a live temporary root must refuse direct store deletion");
+        assert!(child.wait()?.success());
+        assert_eq!(error.code(), ManagedRuntimeRemovalErrorCode::UnsafeState);
+        assert!(store_object.is_file());
         Ok(())
     }
 
@@ -2108,8 +2271,13 @@ mod tests {
 
         let fixture = Fixture::new()?;
         let product = StorePath::new("/nix/store/44444444444444444444444444444444-product")?;
+        let source = StorePath::new("/nix/store/55555555555555555555555555555555-source")?;
         let product_path = rooted(fixture.temporary.path(), Path::new(product.as_str()));
+        let source_path = rooted(fixture.temporary.path(), Path::new(source.as_str()));
         fs::write(&product_path, b"product")?;
+        fs::create_dir(&source_path)?;
+        fs::write(source_path.join("source"), b"source")?;
+        symlink("source", source_path.join("source-link"))?;
         let users = rooted(
             fixture.temporary.path(),
             Path::new("/nix/var/nix/gcroots/pkg/users"),
@@ -2119,12 +2287,45 @@ mod tests {
         let root = users.join("1000");
         symlink(product.as_str(), &root)?;
         let mut authority = fixture.prepare()?.begin_exclusive_removal()?;
-        authority.capture_product_closure(std::slice::from_ref(&product))?;
+        authority
+            .capture_product_closure(std::slice::from_ref(&product), &[product.clone(), source])?;
         fs::remove_file(root)?;
 
         assert_eq!(authority.remove()?, ManagedRuntimeRemovalOutcome::Removed);
         assert!(!product_path.exists());
+        assert!(!source_path.exists());
         assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn exclusive_authority_refuses_an_unregistered_store_object()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let product = StorePath::new("/nix/store/44444444444444444444444444444444-product")?;
+        let foreign = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/store/55555555555555555555555555555555-foreign"),
+        );
+        fs::write(
+            rooted(fixture.temporary.path(), Path::new(product.as_str())),
+            b"product",
+        )?;
+        fs::write(&foreign, b"foreign")?;
+        let runtime = rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX));
+        let mut authority = fixture.prepare()?.begin_exclusive_removal()?;
+
+        assert_eq!(
+            authority
+                .capture_product_closure(
+                    std::slice::from_ref(&product),
+                    std::slice::from_ref(&product),
+                )
+                .map_err(ManagedRuntimeRemovalError::code),
+            Err(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        );
+        assert!(foreign.is_file());
+        assert!(runtime.is_dir());
         Ok(())
     }
 

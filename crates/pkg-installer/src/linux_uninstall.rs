@@ -233,6 +233,14 @@ impl ProductionRuntime {
         self.user_cleanup
             .capture_user_roots()
             .map_err(|_| UninstallError::backend_failure())?;
+        let closure = self
+            .gc
+            .closure_for_roots(self.user_cleanup.store_roots())
+            .map_err(|_| UninstallError::backend_failure())?;
+        let registered_paths = self
+            .gc
+            .registered_paths()
+            .map_err(|_| UninstallError::backend_failure())?;
         let removal = self
             .runtime_removal
             .take()
@@ -240,12 +248,8 @@ impl ProductionRuntime {
         let mut authority = removal
             .begin_exclusive_removal()
             .map_err(|_| UninstallError::backend_failure())?;
-        let closure = self
-            .gc
-            .closure_for_roots(self.user_cleanup.store_roots())
-            .map_err(|_| UninstallError::backend_failure())?;
         authority
-            .capture_product_closure(&closure)
+            .capture_product_closure(&closure, &registered_paths)
             .map_err(|_| UninstallError::backend_failure())?;
         if self.user_cleanup.remove_user_roots().is_err() {
             self.user_cleanup
@@ -260,7 +264,13 @@ impl ProductionRuntime {
                 self.store_preserved = false;
                 Ok(())
             }
-            Ok(ManagedRuntimeRemovalOutcome::StorePreserved) | Err(_) => {
+            Ok(ManagedRuntimeRemovalOutcome::StorePreserved) => {
+                self.user_cleanup
+                    .restore_user_roots()
+                    .map_err(|_| UninstallError::backend_failure())?;
+                Err(UninstallError::backend_failure())
+            }
+            Err(_) => {
                 self.user_cleanup
                     .restore_user_roots()
                     .map_err(|_| UninstallError::backend_failure())?;
@@ -318,6 +328,10 @@ impl ProductionRuntime {
         } else if asset.id() == "broker-channel-state" {
             self.filesystem
                 .remove_broker_channel_state(asset)
+                .map_err(|_| UninstallError::backend_failure())?;
+        } else if asset.id() == "broker-home" {
+            self.filesystem
+                .remove_broker_home(asset)
                 .map_err(|_| UninstallError::backend_failure())?;
         } else {
             self.filesystem

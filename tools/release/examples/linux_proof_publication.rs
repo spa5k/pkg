@@ -15,7 +15,7 @@ use aws_lc_rs::signature::Ed25519KeyPair;
 use jiff::Timestamp;
 use olpc_cjson::CanonicalFormatter;
 use pkg_core::{ChannelSequence, NixpkgsRevision, System};
-use pkg_index::{BuildMetadata, build_index};
+use pkg_index::{BuildMetadata, IndexCandidate, build_index};
 use pkg_nix::{NixVersion, build_upstream_runtime_asset_manifest};
 use pkg_release::{
     Approval, MetadataPolicy, ReleaseAuthority, ReleaseAuthorization, ReleaseManifest,
@@ -326,7 +326,27 @@ async fn main() -> Result<(), AnyError> {
         NixpkgsRevision::new(NIXPKGS_REVISION)?,
         "2026-08-14T00:00:00Z",
     )?;
-    let index = compress(build_index(metadata, Vec::new())?.bytes())?;
+    let index = compress(
+        build_index(
+            metadata,
+            vec![IndexCandidate {
+                attr_path: "hello".into(),
+                pname: Some("hello".into()),
+                version: None,
+                description: Some("Print a greeting".into()),
+                homepage: None,
+                licenses: Vec::new(),
+                platforms: vec![system.to_string()],
+                available_here: true,
+                broken: false,
+                position: None,
+                outputs: vec!["out".into()],
+                aliases: Vec::new(),
+                skipped: false,
+            }],
+        )?
+        .bytes(),
+    )?;
 
     let mut release_artifacts = Vec::new();
     let mut runtime_entries = BTreeMap::new();

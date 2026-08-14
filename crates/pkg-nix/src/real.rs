@@ -240,6 +240,48 @@ impl RootNixGcExecutor {
         closure.dedup_by(|left, right| left.as_str() == right.as_str());
         Ok(closure)
     }
+
+    /// Lists every valid path registered in the fixed local managed store.
+    ///
+    /// The command accepts no installable or caller-selected store.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed adapter error for malformed, missing, or excessive
+    /// local path information.
+    pub fn registered_paths(&self) -> Result<Vec<StorePath>, NixAdapterError> {
+        let mut args = base_args();
+        args.extend(os_args([
+            "path-info",
+            "--all",
+            "--json",
+            "--json-format",
+            "2",
+            "--store",
+            "local",
+        ]));
+        let outcome = execute_checked(
+            self.executor.as_ref(),
+            NixProgram::Modern,
+            args,
+            SHORT_TIMEOUT,
+        )?;
+        if outcome.code != Some(0) {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        let raw: RawPathInfoEnvelope = parse_json(&outcome.stdout)?;
+        validate_path_info_envelope(&raw)?;
+        let mut paths = Vec::with_capacity(raw.info.len());
+        for (path, info) in raw.info {
+            if info.is_none() {
+                return Err(malformed());
+            }
+            paths.push(store_path(&path)?);
+        }
+        paths.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        paths.dedup_by(|left, right| left.as_str() == right.as_str());
+        Ok(paths)
+    }
 }
 
 impl VerifiedRepairExecutor for RootNixRepairExecutor {
@@ -2291,6 +2333,40 @@ mod tests {
                 OsString::from("--store"),
                 OsString::from("local"),
                 OsString::from(root.as_str()),
+            ]]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_gc_lists_only_valid_registered_local_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let first = "/nix/store/22222222222222222222222222222222-product";
+        let second = "/nix/store/33333333333333333333333333333333-source";
+        let raw = br#"{"info":{"22222222222222222222222222222222-product":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":5,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2},"33333333333333333333333333333333-source":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":7,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":false,"url":null,"version":2}},"storeDir":"/nix/store","version":2}"#;
+        let scripted = Scripted::new(vec![success(raw.as_slice())]);
+        let calls = Arc::clone(&scripted.calls);
+        let paths = RootNixGcExecutor::scripted(scripted).registered_paths()?;
+
+        assert_eq!(
+            paths.iter().map(StorePath::as_str).collect::<Vec<_>>(),
+            [first, second]
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(
+            calls.as_slice(),
+            [vec![
+                OsString::from("--extra-experimental-features"),
+                OsString::from("nix-command flakes"),
+                OsString::from("--option"),
+                OsString::from("allow-import-from-derivation"),
+                OsString::from("false"),
+                OsString::from("path-info"),
+                OsString::from("--all"),
+                OsString::from("--json"),
+                OsString::from("--json-format"),
+                OsString::from("2"),
+                OsString::from("--store"),
+                OsString::from("local"),
             ]]
         );
         Ok(())

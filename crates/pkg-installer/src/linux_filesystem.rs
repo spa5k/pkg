@@ -21,6 +21,7 @@ use rustix::fs::{
 };
 use rustix::io::Errno;
 
+use crate::linux_user_cleanup::remove_owned_tree;
 use crate::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets, UninstallManifest,
     encode_uninstall_manifest,
@@ -578,6 +579,38 @@ impl LinuxFilesystemManager {
         }
         fsync(&target).map_err(|_| io_failure())?;
         Self::remove_if_owned(&parent, &name, target_identity)
+    }
+
+    /// Removes the verified private broker home without following links.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed filesystem error when the asset is not the broker
+    /// home or its ownership, identity, mount, or tree state is unsafe.
+    pub fn remove_broker_home(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.id() != "broker-home" {
+            return Err(unsupported());
+        }
+        let Some((parent, name)) = self.open_parent_optional(asset)? else {
+            return Ok(());
+        };
+        let target = match open_child(&parent, &name, LinuxAssetKind::Directory) {
+            Ok(target) => target,
+            Err(error) if error == Errno::NOENT => return Ok(()),
+            Err(error) => return Err(open_error(error)),
+        };
+        self.verify_metadata(asset, &target)?;
+        drop(target);
+        remove_owned_tree(
+            &self.root,
+            Path::new(asset.path_or_name()),
+            self.principals.root_uid,
+            self.principals.broker_uid,
+        )
+        .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::UnsafeFilesystemState))
     }
 
     /// Verifies that one fixed filesystem asset is absent without following links.
@@ -1279,6 +1312,22 @@ mod tests {
             .manager
             .remove_broker_channel_state(Fixture::asset("broker-channel-state"))?;
         assert!(!channel.exists());
+        let cache = fixture
+            .temporary
+            .path()
+            .join("var/lib/pkg/broker-home/.cache/nix");
+        fs::create_dir_all(&cache)?;
+        fs::write(cache.join("cache.sqlite"), b"cache")?;
+        fixture
+            .manager
+            .remove_broker_home(Fixture::asset("broker-home"))?;
+        assert!(
+            !fixture
+                .temporary
+                .path()
+                .join("var/lib/pkg/broker-home")
+                .exists()
+        );
 
         let mut fixture = Fixture::new()?;
         for id in ["service-root", "broker-home", "broker-channel-state"] {
