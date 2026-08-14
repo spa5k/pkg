@@ -127,14 +127,18 @@ stop_container
 echo "+ interrupted install recovery"
 start_container
 docker exec --detach "$container" sh -c \
-    "exec $shipping_installer > /tmp/pkg-install-interrupted.log 2>&1"
+    "echo \$\$ > /tmp/pkg-install.pid; exec $shipping_installer > /tmp/pkg-install-interrupted.log 2>&1"
 journal_ready=0
 attempt=0
 while [ "$attempt" -lt 600 ]; do
-    if docker exec "$container" sh -c \
-        'test -s /var/lib/pkg-install/transaction-v1.json && ! grep -Fq "\"entries\":[]" /var/lib/pkg-install/transaction-v1.json'; then
-        journal_ready=1
-        break
+    if docker exec "$container" sh -c 'test -s /var/lib/pkg-install/transaction-v1.json' \
+        && docker exec "$container" sh -c 'kill -STOP "$(cat /tmp/pkg-install.pid)"'; then
+        if docker exec "$container" python3 -c \
+            'import json,sys; entries=json.load(open("/var/lib/pkg-install/transaction-v1.json"))["entries"]; sys.exit(not entries or entries[-1].get("state") != "created")'; then
+            journal_ready=1
+            break
+        fi
+        docker exec "$container" sh -c 'kill -CONT "$(cat /tmp/pkg-install.pid)"'
     fi
     attempt=$((attempt + 1))
     sleep 0.05
