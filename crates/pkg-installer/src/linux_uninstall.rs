@@ -329,9 +329,9 @@ impl ProductionRuntime {
             self.filesystem
                 .remove_broker_channel_state(asset)
                 .map_err(|_| UninstallError::backend_failure())?;
-        } else if matches!(asset.id(), "broker-home" | "broker-log-dir") {
+        } else if matches!(asset.id(), "broker-home" | "broker-log-dir" | "helper-home") {
             self.filesystem
-                .remove_broker_private_tree(asset)
+                .remove_private_tree(asset)
                 .map_err(|_| UninstallError::backend_failure())?;
         } else {
             self.filesystem

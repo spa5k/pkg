@@ -32,8 +32,16 @@ use tough::sign::{Sign, parse_keypair};
 type AnyError = Box<dyn Error + Send + Sync>;
 
 const NIX_VERSION: &str = "2.34.8";
-const NIXPKGS_REVISION: &str = "a62e6edd6d5e1fa0329b8653c801147986f8d446";
-const NIXPKGS_NAR_HASH: &str = "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=";
+const NIXPKGS: [(&str, &str); 2] = [
+    (
+        "a62e6edd6d5e1fa0329b8653c801147986f8d446",
+        "sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=",
+    ),
+    (
+        "a50de1b7d8a586adc18d2395c19de7d6058e6030",
+        "sha256-uslt2pqShTIXDdAHRHv2QkYLsVdY8Oqwz0EA48/RSM8=",
+    ),
+];
 const SYSTEMS: [&str; 4] = [
     "aarch64-darwin",
     "aarch64-linux",
@@ -127,8 +135,8 @@ impl ReleaseAuthority for ProofAuthority {
     ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
         let evidence = approvals.iter().map(Approval::evidence).collect::<Vec<_>>();
         if digest.len() != 64
-            || sequence != 1
-            || timestamp_version != 1
+            || sequence != timestamp_version
+            || !(1..=2).contains(&sequence)
             || evidence != ["proof:release", "proof:security"]
         {
             return Err(ValidationError::InvalidPolicy);
@@ -300,15 +308,25 @@ async fn main() -> Result<(), AnyError> {
     let binaries = required_argument(&mut arguments)?;
     let system_name = arguments.next().ok_or("missing system")?;
     let signing_state = required_argument(&mut arguments)?;
-    if arguments.next().is_some() || output.exists() || !SYSTEMS.contains(&system_name.as_str()) {
+    let sequence = arguments
+        .next()
+        .ok_or("missing channel sequence")?
+        .parse::<u64>()?;
+    if arguments.next().is_some()
+        || output.exists()
+        || !SYSTEMS.contains(&system_name.as_str())
+        || !(1..=2).contains(&sequence)
+    {
         return Err(
-            "usage: linux_proof_publication OUTPUT ARCHIVE BIN_DIR SYSTEM STATE_DIR".into(),
+            "usage: linux_proof_publication OUTPUT ARCHIVE BIN_DIR SYSTEM STATE_DIR SEQUENCE"
+                .into(),
         );
     }
     let system = System::from_str(&system_name)?;
     if !matches!(system, System::Aarch64Linux | System::X8664Linux) {
         return Err("the proof system must be Linux".into());
     }
+    let (nixpkgs_revision, nixpkgs_nar_hash) = NIXPKGS[(sequence - 1) as usize];
 
     let artifacts = tempfile::tempdir()?;
     let artifact_root = artifacts.path();
@@ -321,9 +339,9 @@ async fn main() -> Result<(), AnyError> {
     let runtime_manifest =
         build_upstream_runtime_asset_manifest(&archive, system, &NixVersion::new(NIX_VERSION)?)?;
     let metadata = BuildMetadata::new(
-        ChannelSequence::from_u64(1).ok_or("invalid sequence")?,
+        ChannelSequence::from_u64(sequence).ok_or("invalid sequence")?,
         system,
-        NixpkgsRevision::new(NIXPKGS_REVISION)?,
+        NixpkgsRevision::new(nixpkgs_revision)?,
         "2026-08-14T00:00:00Z",
     )?;
     let index = compress(
@@ -335,6 +353,21 @@ async fn main() -> Result<(), AnyError> {
                     pname: Some("hello".into()),
                     version: None,
                     description: Some("Print a greeting".into()),
+                    homepage: None,
+                    licenses: Vec::new(),
+                    platforms: vec![system.to_string()],
+                    available_here: true,
+                    broken: false,
+                    position: None,
+                    outputs: vec!["out".into()],
+                    aliases: Vec::new(),
+                    skipped: false,
+                },
+                IndexCandidate {
+                    attr_path: "ripgrep".into(),
+                    pname: Some("ripgrep".into()),
+                    version: None,
+                    description: Some("Search text".into()),
                     homepage: None,
                     licenses: Vec::new(),
                     platforms: vec![system.to_string()],
@@ -371,7 +404,7 @@ async fn main() -> Result<(), AnyError> {
     for candidate in SYSTEMS {
         let runtime_target = format!("nix/{NIX_VERSION}/{candidate}.tar.xz");
         let manifest_target = format!("nix/{NIX_VERSION}/{candidate}.assets.json");
-        let index_target = format!("index/1/{candidate}.json.br");
+        let index_target = format!("index/{sequence}/{candidate}.json.br");
         let (runtime, manifest, index_record) = if candidate == system_name {
             (
                 copy_file(artifact_root, &runtime_target, &archive)?,
@@ -431,11 +464,11 @@ async fn main() -> Result<(), AnyError> {
         .map(|candidate| (candidate, serde_json::json!({"mode":"allow-with-gates"})))
         .collect::<BTreeMap<_, _>>();
     let descriptor = serde_json::to_vec_pretty(&serde_json::json!({
-        "schemaVersion":1, "channel":"pkg-linux-proof", "policyVersion":1, "sequence":1,
+        "schemaVersion":1, "channel":"pkg-linux-proof", "policyVersion":1, "sequence":sequence,
         "expiresAt":"2037-01-01T00:00:00Z", "supportedSystems":SYSTEMS,
         "buildPolicy":{"nativeLocalBuilds":build_policy},
         "nixRuntime":{"version":NIX_VERSION,"perSystem":runtime_entries},
-        "nixpkgs":{"owner":"NixOS","repo":"nixpkgs","rev":NIXPKGS_REVISION,"narHash":NIXPKGS_NAR_HASH},
+        "nixpkgs":{"owner":"NixOS","repo":"nixpkgs","rev":nixpkgs_revision,"narHash":nixpkgs_nar_hash},
         "index":{"source":"self-built","perSystem":index_entries},
         "substituters":{"urls":[CACHE_URL],"trustedPublicKeys":[CACHE_KEY]},
     }))?;
@@ -480,8 +513,9 @@ async fn main() -> Result<(), AnyError> {
         }));
     }
     let manifest = serde_json::json!({
-        "schemaVersion":1, "releaseId":"linux-proof-1", "channelSequence":1,
-        "timestampVersion":1, "trustedRootSha256":root_digest, "policyVersion":1,
+        "schemaVersion":1, "releaseId":format!("linux-proof-{sequence}"),
+        "channelSequence":sequence, "timestampVersion":sequence,
+        "trustedRootSha256":root_digest, "policyVersion":1,
         "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
         "approvals":[
             {"actor":"proof-release","role":"release","evidence":"proof:release"},
@@ -502,9 +536,9 @@ async fn main() -> Result<(), AnyError> {
         &root_path,
         &online_sources,
         MetadataPolicy {
-            targets_version: NonZeroU64::new(1).expect("nonzero targets version"),
-            snapshot_version: NonZeroU64::new(1).expect("nonzero snapshot version"),
-            timestamp_version: NonZeroU64::new(1).expect("nonzero timestamp version"),
+            targets_version: NonZeroU64::new(sequence).expect("nonzero targets version"),
+            snapshot_version: NonZeroU64::new(sequence).expect("nonzero snapshot version"),
+            timestamp_version: NonZeroU64::new(sequence).expect("nonzero timestamp version"),
             targets_expires: now + jiff::SignedDuration::from_hours(24 * 30),
             snapshot_expires: now + jiff::SignedDuration::from_hours(24 * 7),
             timestamp_expires: now + jiff::SignedDuration::from_hours(24),

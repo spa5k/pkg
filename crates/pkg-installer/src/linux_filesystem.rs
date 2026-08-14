@@ -585,13 +585,13 @@ impl LinuxFilesystemManager {
     ///
     /// # Errors
     ///
-    /// Returns a closed filesystem error when the asset is not the broker
-    /// home or its ownership, identity, mount, or tree state is unsafe.
-    pub fn remove_broker_private_tree(
+    /// Returns a closed filesystem error when the asset is not a supported
+    /// private tree or its ownership, identity, mount, or tree state is unsafe.
+    pub fn remove_private_tree(
         &mut self,
         asset: LinuxInstallAsset,
     ) -> Result<(), LinuxFilesystemError> {
-        if !matches!(asset.id(), "broker-home" | "broker-log-dir") {
+        if !matches!(asset.id(), "broker-home" | "broker-log-dir" | "helper-home") {
             return Err(unsupported());
         }
         let Some((parent, name)) = self.open_parent_optional(asset)? else {
@@ -604,11 +604,16 @@ impl LinuxFilesystemManager {
         };
         self.verify_metadata(asset, &target)?;
         drop(target);
+        let tree_owner_uid = if asset.id() == "helper-home" {
+            self.principals.root_uid
+        } else {
+            self.principals.broker_uid
+        };
         remove_owned_tree(
             &self.root,
             Path::new(asset.path_or_name()),
             self.principals.root_uid,
-            self.principals.broker_uid,
+            tree_owner_uid,
         )
         .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::UnsafeFilesystemState))
     }
@@ -1326,7 +1331,7 @@ mod tests {
         fs::write(cache.join("cache.sqlite"), b"cache")?;
         fixture
             .manager
-            .remove_broker_private_tree(Fixture::asset("broker-home"))?;
+            .remove_private_tree(Fixture::asset("broker-home"))?;
         assert!(
             !fixture
                 .temporary
@@ -1340,8 +1345,20 @@ mod tests {
         fs::set_permissions(&audit, fs::Permissions::from_mode(0o600))?;
         fixture
             .manager
-            .remove_broker_private_tree(Fixture::asset("broker-log-dir"))?;
+            .remove_private_tree(Fixture::asset("broker-log-dir"))?;
         assert!(!audit_directory.exists());
+
+        let helper_home = fixture.temporary.path().join("var/lib/pkg/helper-home");
+        fixture
+            .manager
+            .ensure_asset(Fixture::asset("helper-home"))?;
+        let helper_cache = helper_home.join(".cache/nix");
+        fs::create_dir_all(&helper_cache)?;
+        fs::write(helper_cache.join("binary-cache-v7.sqlite"), b"cache")?;
+        fixture
+            .manager
+            .remove_private_tree(Fixture::asset("helper-home"))?;
+        assert!(!helper_home.exists());
 
         let mut fixture = Fixture::new()?;
         for id in ["service-root", "broker-home", "broker-channel-state"] {

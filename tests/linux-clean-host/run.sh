@@ -95,6 +95,12 @@ docker exec "$container" su - proof-user -c \
     "/home/proof-user/.local/share/pkg/current/bin/hello" \
     | grep -F "Hello, world!" >/dev/null
 
+echo "+ pkg install ripgrep"
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --yes install ripgrep"
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/rg --version" \
+    | grep -F "ripgrep 13.0.0" >/dev/null
+
 echo "+ pkg install cxx-prettyprint with approved local build"
 if ! local_build_output=$(docker exec "$container" su - proof-user -c \
     "/usr/local/bin/pkg --yes --jsonl install cxx-prettyprint"); then
@@ -103,6 +109,64 @@ if ! local_build_output=$(docker exec "$container" su - proof-user -c \
 fi
 printf '%s\n' "$local_build_output" | grep -F '"type":"build_started"' >/dev/null
 printf '%s\n' "$local_build_output" | grep -F '"selector":"cxx-prettyprint"' >/dev/null
+
+echo "+ publish channel sequence 2"
+docker exec "$container" sh -eu -c '
+    ln -s /srv/pkg-releases/2 /srv/pkg-release.next
+    mv -Tf /srv/pkg-release.next /srv/pkg-release
+'
+
+echo "+ pkg update"
+channel_output=$(docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --json update")
+printf '%s\n' "$channel_output" | grep -F '"channelSequence":2' >/dev/null
+printf '%s\n' "$channel_output" | grep -F '"updated":true' >/dev/null
+printf '%s\n' "$channel_output" | grep -F '"stateUpdated":true' >/dev/null
+
+echo "+ pkg upgrade ripgrep"
+if ! upgrade_output=$(docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --yes --json upgrade ripgrep --no-build" 2>&1); then
+    printf '%s\n' "$upgrade_output" >&2
+    exit 1
+fi
+printf '%s\n' "$upgrade_output" | grep -F '"upgraded":["ripgrep"]' >/dev/null
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/rg --version" \
+    | grep -F "ripgrep 15.1.0" >/dev/null
+
+echo "+ pkg rollback"
+rollback_output=$(docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --json rollback")
+printf '%s\n' "$rollback_output" | grep -F '"sourceGeneration"' >/dev/null
+printf '%s\n' "$rollback_output" | grep -F '"targetGeneration"' >/dev/null
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/rg --version" \
+    | grep -F "ripgrep 13.0.0" >/dev/null
+
+echo "+ damage and repair the cached hello package"
+docker exec "$container" sh -eu -c '
+    hello_path=$(readlink -f /home/proof-user/.local/share/pkg/current/bin/hello)
+    case "$hello_path" in
+        /nix/store/*/bin/hello) ;;
+        *) exit 1 ;;
+    esac
+    chmod u+w "$hello_path"
+    printf "damaged\n" > "$hello_path"
+    chmod a-w "$hello_path"
+'
+if verify_output=$(docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --json repair --verify-only" 2>&1); then
+    echo "Repair verification did not detect the damaged package." >&2
+    exit 1
+fi
+printf '%s\n' "$verify_output" | grep -F '"symbol":"VERIFY_FAIL"' >/dev/null
+printf '%s\n' "$verify_output" | grep -F '"code":70' >/dev/null
+repair_output=$(docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --yes --json repair")
+printf '%s\n' "$repair_output" | grep -F '"status":"repaired-from-cache"' >/dev/null
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/hello" \
+    | grep -F "Hello, world!" >/dev/null
 
 echo "+ pkg --yes uninstall"
 docker exec "$container" /usr/local/bin/pkg --yes uninstall

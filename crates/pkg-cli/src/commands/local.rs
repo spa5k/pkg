@@ -1,6 +1,6 @@
 //! Production command adapter over the invoking user's verified local state.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -656,7 +656,17 @@ impl LocalStateOperations {
             .map(SelectorId::as_str)
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        let selectors = selection.selectors().to_vec();
+        let selector_names = selection
+            .selectors()
+            .iter()
+            .map(|selector| {
+                (
+                    selector.id().clone(),
+                    selector.selector().as_str().to_owned(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let selectors = broker_upgrade_selectors(selection.selectors());
         if selectors.is_empty() {
             return upgrade_noop_result(&skipped_pinned);
         }
@@ -685,12 +695,15 @@ impl LocalStateOperations {
                 let _ = broker.complete(handle.clone());
                 return upgrade_noop_result(&skipped_pinned);
             }
-            let upgraded_ids = upgraded
+            let upgraded_names = upgraded
                 .upgraded()
                 .iter()
-                .map(SelectorId::as_str)
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
+                .map(|id| {
+                    selector_names.get(id).cloned().ok_or_else(|| {
+                        upgrade_failed(pkg_core::upgrade::UpgradeError::InvalidState)
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let next = upgraded.into_state();
             let nonce = secure_nonce()?;
             let identity = LeaseIdentity::new(&public_operation_id, &nonce, &created_at)
@@ -741,7 +754,7 @@ impl LocalStateOperations {
             upgrade_result(
                 &public_operation_id,
                 &generation_id,
-                &upgraded_ids,
+                &upgraded_names,
                 &skipped_pinned,
                 build_approval,
             )
@@ -1659,6 +1672,21 @@ fn upgrade_scope(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(UpgradeScope::Named(ids))
+}
+
+fn broker_upgrade_selectors(selectors: &[PackageSelector]) -> Vec<PackageSelector> {
+    selectors
+        .iter()
+        .map(|selector| {
+            PackageSelector::new(
+                selector.id().clone(),
+                selector.selector().clone(),
+                selector.version_preference().clone(),
+                selector.outputs().clone(),
+                SourceRevision::CurrentChannel,
+            )
+        })
+        .collect()
 }
 
 fn require_supported_upgrade_options(args: &UpgradeArgs) -> Result<(), CommandError> {
@@ -3210,5 +3238,35 @@ mod tests {
         let error = engine.execute(&CommandRequest::from_cli(&cli)).unwrap_err();
         assert_eq!(error.exit_code(), ExitCode::Config);
         assert!(!state.join("journal/operations.jsonl").exists());
+    }
+
+    #[test]
+    fn upgrade_re_resolves_attributes_inside_the_broker() {
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        )
+        .with_attribute(AttributePath::new("hello").unwrap())
+        .unwrap();
+
+        let broker = broker_upgrade_selectors(std::slice::from_ref(&selector));
+
+        assert_eq!(broker.len(), 1);
+        assert_eq!(broker[0].id(), selector.id());
+        assert_eq!(broker[0].selector(), selector.selector());
+        assert_eq!(
+            broker[0].version_preference(),
+            selector.version_preference()
+        );
+        assert_eq!(broker[0].outputs(), selector.outputs());
+        assert!(selector.attribute().is_some());
+        assert!(broker[0].attribute().is_none());
+        assert!(matches!(
+            broker[0].source_revision(),
+            SourceRevision::CurrentChannel
+        ));
     }
 }

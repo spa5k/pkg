@@ -35,7 +35,12 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-target,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication /tmp/nix.tar.xz /binaries "${PKG_SYSTEM}" /proof-signing
+        /publication-1 /tmp/nix.tar.xz /binaries "${PKG_SYSTEM}" /proof-signing 1
+RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=pkg-linux-target,target=/target \
+    CARGO_TARGET_DIR=/target cargo run --locked --release \
+        -p pkg-release --example linux_proof_publication -- \
+        /publication-2 /tmp/nix.tar.xz /binaries "${PKG_SYSTEM}" /proof-signing 2
 
 FROM debian:bookworm-slim
 
@@ -71,11 +76,13 @@ RUN apt-get update \
         -out /etc/pkg-proof/server.crt \
     && update-ca-certificates
 
-COPY --from=builder /publication /srv/pkg-release
+COPY --from=builder /publication-1 /srv/pkg-releases/1
+COPY --from=builder /publication-2 /srv/pkg-releases/2
 COPY --from=builder /binaries/pkg-install /usr/local/sbin/pkg-install
 COPY tests/linux-clean-host/pkg-proof-server.py /usr/local/libexec/pkg-proof-server.py
 COPY tests/linux-clean-host/pkg-proof-release.service /etc/systemd/system/pkg-proof-release.service
-RUN systemctl enable pkg-proof-release.service
+RUN ln -s /srv/pkg-releases/1 /srv/pkg-release \
+    && systemctl enable pkg-proof-release.service
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

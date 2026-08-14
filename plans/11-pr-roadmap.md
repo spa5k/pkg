@@ -1157,7 +1157,7 @@ flowchart TD
 ### Milestone M7 — Technical Preview
 
 #### PR-36 — Technical-preview hardening + Real-Nix nightly CI + e2e parity
-- **Status (2026-08-12):** in progress. The first production Real-Nix connector slice is landed:
+- **Status (2026-08-14):** in progress. The first production Real-Nix connector slice is landed:
   the shipped `pkg doctor` now replaces its development-only runtime and channel deferrals with
   one fixed-endpoint private-broker health transaction. It requires a complete authenticated
   Doctor operation, pinned managed-Nix version response, and lifecycle completion before it marks
@@ -1237,7 +1237,7 @@ flowchart TD
   resume only cache repair after interruption, and force new approval after interrupted local build.
   The helper has one bounded execution lifetime, and post-repair store queries cannot extend it.
   Protocol, recovery, approval, policy-race, helper-lifetime, journal-isolation, compaction, redaction,
-  and unique-closure tests pass locally. Clean-host e2e coverage, Real-Nix Linux/macOS fault evidence,
+  and unique-closure tests pass locally. macOS clean-host evidence, Real-Nix Linux/macOS fault evidence,
   metadata freshness, live progress, and optional update modes remain open PR-36 work.
   The Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
@@ -1262,14 +1262,15 @@ flowchart TD
   one authenticated release publication with the pinned Nix 2.34.8 archive, installs the public CLI,
   broker, helper, daemon, fixed units, private channel state, and ownership receipt, and reuses an
   exact installation without reacquiring the broker's durable channel lease. A privileged clean
-  systemd container proves install, exact retry, service health, ordinary-user isolation, a cached
-  `hello` install and execution, one explicitly approved cache-miss local build, two-generation
-  activation, safe uninstall, idempotent uninstall, and final absence. Uninstall removes only
+  systemd container proves install, exact retry, service health, ordinary-user isolation, cached
+  package installs, one explicitly approved cache-miss local build, an authenticated channel update,
+  a real `ripgrep` 13.0.0 to 15.1.0 upgrade, rollback, cache repair, safe uninstall, idempotent
+  uninstall, and final absence. Uninstall removes only
   verified created state, including the broker approval audit and the fixed Nix 2.34.8 build-log,
   build-user-pool, build, and cgroup state,
   refuses linked or changed broker state, preserves the receipt until earlier cleanup succeeds, and
-  safely handles a missing Nix GC lock plus normal private-group removal. Upgrade, rollback, and
-  repair still need the same public-CLI clean-host lane.
+  safely handles a missing Nix GC lock plus normal private-group removal. It also removes the
+  root-owned fixed helper cache after repair through no-follow ownership revalidation.
   the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an
