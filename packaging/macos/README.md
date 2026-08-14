@@ -17,6 +17,9 @@ packaging/macos/build-preview.sh \
 The recipe ad-hoc signs a temporary copy of `pkg-install`.
 The result is for local technical-preview tests only.
 
+Use a shipping `pkg-install` binary that was compiled with the signed TUF root and the fixed HTTPS metadata and target URLs.
+The manual macOS proof workflow is the canonical preview build recipe.
+
 The package is not Developer ID signed.
 The package is not notarized.
 The package is not proven Gatekeeper-clean.

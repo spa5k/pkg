@@ -1,0 +1,131 @@
+name: macOS alpha clean-host proof
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-alpha-clean-host-proof
+  cancel-in-progress: false
+
+env:
+  RUSTUP_TOOLCHAIN: "1.96.1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build shipping preview artifacts
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+
+      - name: Compile and test the macOS installer surface
+        run: |
+          cargo check --locked -p pkg-installer -p pkg-cli
+          cargo test --locked -p pkg-installer macos
+
+      - name: Build the authenticated preview bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          signing="$RUNNER_TEMP/pkg-proof-signing"
+          binaries="$RUNNER_TEMP/pkg-proof-binaries"
+          bundle="$RUNNER_TEMP/pkg-macos-alpha-proof"
+          archive="$RUNNER_TEMP/pkg-macos-alpha-proof.tar.gz"
+          nix_archive="$RUNNER_TEMP/nix-2.34.8-aarch64-darwin.tar.xz"
+
+          cargo run --locked --release -p pkg-release \
+            --example linux_proof_publication -- --prepare "$signing"
+          PKG_RELEASE_TUF_ROOT_JSON="$(cat "$signing/root.json")" \
+          PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/ \
+          PKG_RELEASE_CHANNEL_TARGETS_URL=https://127.0.0.1:8443/targets/ \
+            cargo build --locked --release \
+              -p pkg-cli --bin pkg \
+              -p pkg-installer --bin pkg-nix-broker \
+              -p pkg-installer --bin pkg-root-helper \
+              -p pkg-installer --bin pkg-install
+
+          install -d -m 0700 "$binaries" "$bundle"
+          for name in pkg pkg-nix-broker pkg-root-helper pkg-install; do
+            install -m 0755 "target/release/$name" "$binaries/$name"
+            codesign --force --sign - --options runtime --timestamp=none "$binaries/$name"
+            codesign --verify --strict --verbose=2 "$binaries/$name"
+          done
+
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$nix_archive" \
+            https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-aarch64-darwin.tar.xz
+          printf '%s  %s\n' \
+            ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf \
+            "$nix_archive" | shasum -a 256 --check
+
+          cargo run --locked --release -p pkg-release \
+            --example linux_proof_publication -- \
+            "$bundle/publication-1" "$nix_archive" "$binaries" \
+            aarch64-darwin "$signing" 1
+          cargo run --locked --release -p pkg-release \
+            --example linux_proof_publication -- \
+            "$bundle/publication-2" "$nix_archive" "$binaries" \
+            aarch64-darwin "$signing" 2
+
+          packaging/macos/build-preview.sh \
+            "$binaries/pkg-install" \
+            "$bundle/pkg-0.1.0-alpha.1-preview.pkg"
+          install -m 0755 "$binaries/pkg-install" "$bundle/pkg-install"
+          install -m 0755 tests/macos-clean-host/prove.sh "$bundle/prove.sh"
+          install -m 0755 tests/macos-clean-host/pkg-proof-server.py \
+            "$bundle/pkg-proof-server.py"
+          install -m 0644 tests/macos-clean-host/openssl.cnf "$bundle/openssl.cnf"
+          install -m 0644 tests/macos-clean-host/README.md "$bundle/README.md"
+          tar -C "$bundle" -czf "$archive" .
+
+      - name: Upload the permission-preserving proof bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pkg-macos-alpha-proof
+          path: ${{ runner.temp }}/pkg-macos-alpha-proof.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  prove:
+    name: Destructive clean-host proof
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Download the shipping proof bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pkg-macos-alpha-proof
+          path: ${{ runner.temp }}/pkg-proof-download
+
+      - name: Extract without source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/pkg-proof"
+          mkdir -m 0700 "$proof"
+          tar -C "$proof" -xzf \
+            "$RUNNER_TEMP/pkg-proof-download/pkg-macos-alpha-proof.tar.gz"
+
+      - name: Run the destructive product proof
+        shell: bash
+        env:
+          PKG_DISPOSABLE_MACOS_PROOF: confirmed
+        run: |
+          set -euo pipefail
+          sudo install -m 0600 /dev/null /var/tmp/pkg-disposable-macos-proof
+          "$RUNNER_TEMP/pkg-proof/prove.sh"
+
+      - name: Remove the disposable marker
+        if: always()
+        run: sudo rm -f /var/tmp/pkg-disposable-macos-proof
