@@ -141,7 +141,19 @@ if [ "$journal_ready" -ne 1 ]; then
     echo "The install journal did not become durable before the installer exited." >&2
     exit 1
 fi
-docker exec "$container" sh -eu -c 'kill -KILL "$(cat /tmp/pkg-install.pid)"'
+docker exec "$container" sh -eu -c '
+    pid=$(cat /tmp/pkg-install.pid)
+    kill -KILL "$pid"
+    attempt=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ "$attempt" -ge 600 ]; then
+            echo "The interrupted installer did not stop." >&2
+            exit 1
+        fi
+        attempt=$((attempt + 1))
+        sleep 0.05
+    done
+'
 docker exec "$container" "$shipping_installer"
 docker exec "$container" sh -eu -c '
     test ! -e /var/lib/pkg-install/transaction-v1.json
