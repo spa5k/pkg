@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -5,6 +6,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use pkg_core::identity::StorePath;
 use pkg_core::state::{Digest, Generation, LockedState, Manifest, body_digest, canonical_digest};
 use pkg_core::{GenerationSnapshot, History, lifecycle::LifecycleState};
 use pkg_nix::{
@@ -781,6 +783,41 @@ impl PreparedGeneration {
             GenerationId::new(self.candidate.generation().id())
                 .map_err(|_| CommitError::InvalidCandidate)?,
             roots.request().entries().to_vec(),
+        )
+        .map(Some)
+        .map_err(|_| CommitError::InvalidCandidate)
+    }
+
+    /// Creates a complete root intent that retains unchanged mappings from a
+    /// durable source and marks only current acquisition outputs as new.
+    pub fn root_intent_from_source(
+        &self,
+        source_generation: GenerationId,
+        added_paths: &[StorePath],
+    ) -> Result<Option<RootSetIntent>, CommitError> {
+        let Some(roots) = self.roots.as_ref() else {
+            return Ok(None);
+        };
+        let added_paths = added_paths
+            .iter()
+            .map(StorePath::as_str)
+            .collect::<BTreeSet<_>>();
+        let added_names = roots
+            .request()
+            .entries()
+            .iter()
+            .filter(|entry| added_paths.contains(entry.target().as_str()))
+            .map(|entry| entry.name().clone())
+            .collect::<Vec<_>>();
+        if added_names.len() != added_paths.len() {
+            return Err(CommitError::InvalidCandidate);
+        }
+        RootSetIntent::from_source(
+            source_generation,
+            GenerationId::new(self.candidate.generation().id())
+                .map_err(|_| CommitError::InvalidCandidate)?,
+            roots.request().entries().to_vec(),
+            added_names,
         )
         .map(Some)
         .map_err(|_| CommitError::InvalidCandidate)
@@ -1845,6 +1882,15 @@ mod tests {
         let intent = prepared.root_intent().unwrap().unwrap();
         assert_eq!(intent.generation(), &fixture.generation_id);
         assert_eq!(intent.entries().len(), 1);
+        let extended = prepared
+            .root_intent_from_source(
+                GenerationId::new("gen-0000").unwrap(),
+                &[pkg_core::StorePath::new(STORE).unwrap()],
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(extended.source_generation().unwrap().as_str(), "gen-0000");
+        assert_eq!(extended.added_names().len(), 1);
         prepared
             .activate_published(Some(&report), "published1")
             .unwrap()

@@ -934,6 +934,10 @@ fn capture_dynamic_store_state(
         state.device,
     )?;
     for (path, device) in [
+        ("/nix/var/log", nix.device),
+        ("/nix/var/nix/builds", state.device),
+        ("/nix/var/nix/userpool", state.device),
+        ("/nix/var/nix/cgroups", state.device),
         ("/nix/var/nix/db", state.device),
         ("/nix/var/nix/profiles", state.device),
         ("/nix/var/nix/temproots", state.device),
@@ -1633,11 +1637,12 @@ mod tests {
         ))
     }
 
-    #[test]
-    fn exact_runtime_and_registration_state_are_removed() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let fixture = Fixture::new()?;
+    fn write_dynamic_build_state(fixture: &Fixture) -> Result<(), Box<dyn std::error::Error>> {
         for path in [
+            "/nix/var/log/nix/drvs/ab",
+            "/nix/var/nix/builds",
+            "/nix/var/nix/userpool",
+            "/nix/var/nix/cgroups",
             "/nix/var/nix/db",
             "/nix/var/nix/profiles/per-user",
             "/nix/var/nix/temproots",
@@ -1649,17 +1654,29 @@ mod tests {
             fs::create_dir_all(&path)?;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
         }
-        fs::write(
-            rooted(
-                fixture.temporary.path(),
-                Path::new("/nix/var/nix/db/db.sqlite"),
-            ),
-            b"db",
-        )?;
+        for (path, contents) in [
+            ("/nix/var/nix/db/db.sqlite", b"db".as_slice()),
+            ("/nix/var/log/nix/drvs/ab/build.drv.bz2", b"log".as_slice()),
+            ("/nix/var/nix/userpool/996", b"".as_slice()),
+            ("/nix/var/nix/cgroups/996", b"".as_slice()),
+        ] {
+            fs::write(rooted(fixture.temporary.path(), Path::new(path)), contents)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn exact_runtime_and_registration_state_are_removed() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let fixture = Fixture::new()?;
+        write_dynamic_build_state(&fixture)?;
         let removal = fixture.prepare()?;
         collect_authenticated_store(&fixture)?;
         assert_eq!(removal.remove()?, ManagedRuntimeRemovalOutcome::Removed);
         assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
+        assert!(!rooted(fixture.temporary.path(), Path::new("/nix/var/log")).exists());
+        assert!(!rooted(fixture.temporary.path(), Path::new("/nix/var/nix/userpool")).exists());
+        assert!(!rooted(fixture.temporary.path(), Path::new("/nix/var/nix/cgroups")).exists());
         assert!(!rooted(fixture.temporary.path(), Path::new("/nix/var/nix/db")).exists());
         assert!(rooted(fixture.temporary.path(), Path::new("/nix/store")).is_dir());
         Ok(())

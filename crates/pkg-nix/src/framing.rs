@@ -18,8 +18,9 @@ use crate::catalog::{
 use crate::maintenance::{
     GenerationId, MaintenanceCapability, RemoveRootSetRequest, RepairMode, RepairOutcomeKind,
     RepairPathOutcome, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
-    RootSetAttestationRequest, RootSetEntry, RootSetIntent, RootSetReport, RootSetTransitionIntent,
-    RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
+    RootSetAttestationRequest, RootSetEntry, RootSetIntent, RootSetPublicationRequest,
+    RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, RootSetTransitionRequest,
+    VerifiedRepairScope,
 };
 use crate::{
     ApprovalSource, BuildPreview, BuildProgressEstimate, BuildReport, DerivationPlanReport,
@@ -679,7 +680,7 @@ impl BuildApprovalRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrokerHelperRequest {
     /// Atomically publish a complete root set.
-    PublishRootSet(RootSet),
+    PublishRootSet(RootSetPublicationRequest),
     /// Remove exactly one generation root set.
     RemoveRootSet(RemoveRootSetRequest),
     /// Ask the helper to issue a capability for a verified scope.
@@ -817,6 +818,7 @@ impl ProductFrameCodec {
                 20,
                 encode_json(&BuildRootIntentWire {
                     handle: handle.as_str(),
+                    source_generation: intent.source_generation().map(GenerationId::as_str),
                     generation: intent.generation().as_str(),
                     entries: intent
                         .entries()
@@ -826,6 +828,7 @@ impl ProductFrameCodec {
                             target: entry.target().as_str(),
                         })
                         .collect(),
+                    added_names: intent.added_names().iter().map(RootName::as_str).collect(),
                 })?,
             ),
             CliBrokerRequest::TransitionGenerationRoots(handle, intent) => (
@@ -1532,9 +1535,10 @@ impl ProductFrameCodec {
         request: &BrokerHelperRequest,
     ) -> Result<Vec<u8>, FrameError> {
         let (method, payload) = match request {
-            BrokerHelperRequest::PublishRootSet(root_set) => {
-                (1, encode_json(&RootSetWire::from_root_set(root_set))?)
-            }
+            BrokerHelperRequest::PublishRootSet(request) => (
+                1,
+                encode_json(&RootSetPublicationWire::from_request(request))?,
+            ),
             BrokerHelperRequest::RemoveRootSet(request) => (
                 2,
                 encode_json(&RemoveRootSetWire {
@@ -1587,7 +1591,7 @@ impl ProductFrameCodec {
         let frame = decode_frame(bytes, CHANNEL_BROKER_HELPER)?;
         let request = match frame.method {
             1 => BrokerHelperRequest::PublishRootSet(
-                decode_json::<RootSetOwnedWire>(frame.payload)?.promote()?,
+                decode_json::<RootSetPublicationOwnedWire>(frame.payload)?.promote()?,
             ),
             2 => {
                 let wire: RemoveRootSetOwnedWire = decode_json(frame.payload)?;
@@ -2748,16 +2752,20 @@ struct BuildExecutionOwnedWire {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BuildRootIntentWire<'a> {
     handle: &'a str,
+    source_generation: Option<&'a str>,
     generation: &'a str,
     entries: Vec<RootSetEntryWire<'a>>,
+    added_names: Vec<&'a str>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BuildRootIntentOwnedWire {
     handle: String,
+    source_generation: Option<String>,
     generation: String,
     entries: Vec<RootSetEntryOwnedWire>,
+    added_names: Vec<String>,
 }
 
 impl BuildRootIntentOwnedWire {
@@ -2776,8 +2784,31 @@ impl BuildRootIntentOwnedWire {
                 ))
             })
             .collect::<Result<Vec<_>, FrameError>>()?;
-        RootSetIntent::new(generation, entries)
-            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+        let mut added_names = self
+            .added_names
+            .into_iter()
+            .map(|name| {
+                RootName::new(&name).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        added_names.sort();
+        match self.source_generation {
+            Some(source) => RootSetIntent::from_source(
+                GenerationId::new(&source)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                generation,
+                entries,
+                added_names,
+            ),
+            None => RootSetIntent::new(generation, entries).and_then(|intent| {
+                if intent.added_names() == added_names {
+                    Ok(intent)
+                } else {
+                    Err(crate::MaintenanceError::backend_failure())
+                }
+            }),
+        }
+        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
     }
 }
 
@@ -3076,6 +3107,36 @@ impl<'a> RootSetWire<'a> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootSetPublicationWire<'a> {
+    owner_uid: u32,
+    source_generation: Option<&'a str>,
+    generation: &'a str,
+    entries: Vec<RootSetEntryWire<'a>>,
+    added_names: Vec<&'a str>,
+}
+
+impl<'a> RootSetPublicationWire<'a> {
+    fn from_request(request: &'a RootSetPublicationRequest) -> Self {
+        let root_set = request.root_set();
+        Self {
+            owner_uid: root_set.owner_uid(),
+            source_generation: request.source_generation().map(GenerationId::as_str),
+            generation: root_set.generation().as_str(),
+            entries: root_set
+                .entries()
+                .iter()
+                .map(|entry| RootSetEntryWire {
+                    name: entry.name().as_str(),
+                    target: entry.target().as_str(),
+                })
+                .collect(),
+            added_names: request.added_names().iter().map(RootName::as_str).collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct RootSetEntryWire<'a> {
     name: &'a str,
@@ -3108,6 +3169,46 @@ impl RootSetOwnedWire {
             .collect::<Result<Vec<_>, FrameError>>()?;
         RootSet::new(self.owner_uid, generation, entries)
             .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootSetPublicationOwnedWire {
+    owner_uid: u32,
+    source_generation: Option<String>,
+    generation: String,
+    entries: Vec<RootSetEntryOwnedWire>,
+    added_names: Vec<String>,
+}
+
+impl RootSetPublicationOwnedWire {
+    fn promote(self) -> Result<RootSetPublicationRequest, FrameError> {
+        let source_generation = self
+            .source_generation
+            .map(|source| {
+                GenerationId::new(&source)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+            })
+            .transpose()?;
+        let added_names = self
+            .added_names
+            .into_iter()
+            .map(|name| {
+                RootName::new(&name).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        RootSetPublicationRequest::new(
+            RootSetOwnedWire {
+                owner_uid: self.owner_uid,
+                generation: self.generation,
+                entries: self.entries,
+            }
+            .promote()?,
+            source_generation,
+            added_names,
+        )
+        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
     }
 }
 
@@ -3437,6 +3538,16 @@ mod tests {
             )],
         )
         .unwrap()
+    }
+
+    fn root_publication() -> RootSetPublicationRequest {
+        let root_set = root_set();
+        let added_names = root_set
+            .entries()
+            .iter()
+            .map(|entry| entry.name().clone())
+            .collect();
+        RootSetPublicationRequest::new(root_set, None, added_names).unwrap()
     }
 
     #[test]
@@ -3879,7 +3990,7 @@ mod tests {
             Ok((19, CliBrokerResponse::Completed))
         );
 
-        let helper = BrokerHelperRequest::PublishRootSet(root_set());
+        let helper = BrokerHelperRequest::PublishRootSet(root_publication());
         let encoded = ProductFrameCodec::encode_helper_request(9, &helper).unwrap();
         assert_eq!(
             ProductFrameCodec::decode_helper_request(&encoded),

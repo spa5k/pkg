@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     BuildApprovalReceipt, BuildOutputProvenance, BuildProgressEstimate, BuildReport, BuildRequest,
     BuildStatus, DerivationPlanReport, DerivedOutputTarget, NarIntegrity, NixAdapter,
-    NixAdapterError, NixVersion, OperationId, PathInfoReport, Signature, TrustStatus, VerifyMode,
-    VerifyRequest,
+    NixAdapterError, NixVersion, OperationId, PathInfoReport, Signature, SubstituteOutcome,
+    TrustStatus, VerifyMode, VerifyRequest,
 };
 
 const MAX_TEXT: usize = 256;
@@ -348,6 +348,7 @@ struct ClosureDocumentIdentity {
 struct BuildExecution {
     targets: Vec<DerivedOutputTarget>,
     expected_outputs: BTreeSet<String>,
+    cache_inputs: Vec<StorePath>,
 }
 
 /// Private canonical approval subject retained only inside the managed engine.
@@ -734,6 +735,7 @@ impl BuildPlan {
         let mut canonical_targets = Vec::with_capacity(targets.len());
         let mut execution_targets = Vec::with_capacity(targets.len());
         let mut expected_outputs = BTreeSet::new();
+        let mut cache_inputs = BTreeMap::new();
         for target in &targets {
             let source_matches = match &target.source_revision {
                 SourceRevision::CurrentChannel => true,
@@ -766,6 +768,13 @@ impl BuildPlan {
                     .is_some_and(|previous| previous != identity)
                 {
                     return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
+                }
+                if !missing_derivation_names.contains(derivation.derivation().as_str()) {
+                    for path in derivation.outputs().values() {
+                        cache_inputs
+                            .entry(path.as_str().to_owned())
+                            .or_insert_with(|| path.clone());
+                    }
                 }
             }
             let root = target
@@ -868,6 +877,7 @@ impl BuildPlan {
             execution: BuildExecution {
                 targets: execution_targets,
                 expected_outputs,
+                cache_inputs: cache_inputs.into_values().collect(),
             },
             install_targets: targets,
         })
@@ -2655,6 +2665,15 @@ impl LocalBuildEngine {
                 BuildEngineErrorCode::ApprovalUnavailable,
             ));
         }
+        for path in &current.execution.cache_inputs {
+            let report = runtime
+                .adapter
+                .substitute(path)
+                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            if report.store_path() != path || report.outcome() != SubstituteOutcome::Fetched {
+                return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+            }
+        }
         let request = BuildRequest::new(
             current.execution.targets.clone(),
             current.system_identity,
@@ -2773,7 +2792,7 @@ mod tests {
     use crate::{
         BuildOutput, BuildOutputProvenance, BuildReport, BuildRequest, BuildStatus, DerivationPath,
         EvaluateDerivationRequest, EvaluatedDerivation, GcReport, NixAdapterError, PathInfoReport,
-        StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+        StorePath, SubstituteReceipt, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
     };
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
@@ -2786,6 +2805,14 @@ mod tests {
 
     fn output() -> StorePath {
         StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap()
+    }
+
+    fn dependency_derivation() -> DerivationPath {
+        DerivationPath::from_str(&format!("/nix/store/{STORE_HASH}-dependency-1.0.drv")).unwrap()
+    }
+
+    fn dependency_output() -> StorePath {
+        StorePath::new(&format!("/nix/store/{STORE_HASH}-dependency-1.0")).unwrap()
     }
 
     fn try_plan_with_mode(
@@ -2806,11 +2833,20 @@ mod tests {
             false,
         )
         .unwrap();
+        let dependency = EvaluatedDerivation::new(
+            dependency_derivation(),
+            "dependency-1.0".to_owned(),
+            system,
+            BTreeMap::from([(OutputName::new("out").unwrap(), dependency_output())]),
+            Digest::from_bytes([document_byte.wrapping_add(2); 32]),
+            false,
+        )
+        .unwrap();
         let report = DerivationPlanReport::new(
             4,
             derivation.clone(),
             vec![OutputName::new("out").unwrap()],
-            vec![evaluated],
+            vec![evaluated, dependency],
             Digest::from_bytes([document_byte.wrapping_add(1); 32]),
             "hello".to_owned(),
             PackageVersion::new("1.0"),
@@ -2836,7 +2872,7 @@ mod tests {
                 report,
             )],
             vec![derivation],
-            CacheClassification::new(Digest::from_bytes([4; 32]), 2, 1, 100, 200).unwrap(),
+            CacheClassification::new(Digest::from_bytes([4; 32]), 1, 1, 100, 200).unwrap(),
             readiness,
             4,
         )
@@ -2912,6 +2948,7 @@ mod tests {
     }
 
     struct BuildAdapter {
+        substitutions: Mutex<Vec<StorePath>>,
         calls: AtomicUsize,
         active: AtomicUsize,
         max_active: AtomicUsize,
@@ -2921,6 +2958,7 @@ mod tests {
     impl BuildAdapter {
         fn new() -> Self {
             Self {
+                substitutions: Mutex::new(Vec::new()),
                 calls: AtomicUsize::new(0),
                 active: AtomicUsize::new(0),
                 max_active: AtomicUsize::new(0),
@@ -2942,8 +2980,17 @@ mod tests {
         fn path_info(&self, _: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
             Err(NixAdapterError::Unavailable)
         }
-        fn substitute(&self, _: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
-            Err(NixAdapterError::Unavailable)
+        fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
+            lock_recover(&self.substitutions).push(path.clone());
+            Ok(SubstituteReport::fetched(
+                path.clone(),
+                SubstituteReceipt::new(
+                    "https://cache.nixos.org",
+                    NarHash::new(NAR_HASH).unwrap(),
+                    vec![Signature::new("cache.nixos.org-1:BBBBBBBB").unwrap()],
+                )
+                .unwrap(),
+            ))
         }
         fn build(&self, request: &BuildRequest) -> Result<BuildReport, NixAdapterError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -3244,6 +3291,10 @@ mod tests {
         );
         assert_eq!(requests[0].receipt(), &receipt);
         drop(requests);
+        assert_eq!(
+            lock_recover(&adapter.substitutions).as_slice(),
+            [dependency_output()]
+        );
 
         let error = engine
             .execute(

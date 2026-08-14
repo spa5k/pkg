@@ -141,6 +141,15 @@ pub struct RootSet {
     entries: Vec<RootSetEntry>,
 }
 
+/// Complete root publication bound to exact new outputs and an optional
+/// durable source generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootSetPublicationRequest {
+    root_set: RootSet,
+    source_generation: Option<GenerationId>,
+    added_names: Vec<RootName>,
+}
+
 /// Path-free request to derive one generation root set from a durable source.
 ///
 /// Only existing root names may be retained. Store targets are recovered by
@@ -296,8 +305,10 @@ impl RootSetTransitionRequest {
 /// from selecting another user's durable root namespace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RootSetIntent {
+    source_generation: Option<GenerationId>,
     generation: GenerationId,
     entries: Vec<RootSetEntry>,
+    added_names: Vec<RootName>,
 }
 
 impl RootSetIntent {
@@ -307,10 +318,44 @@ impl RootSetIntent {
         entries: Vec<RootSetEntry>,
     ) -> Result<Self, MaintenanceError> {
         let validated = RootSet::new(0, generation, entries)?;
+        let added_names = validated
+            .entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect();
         Ok(Self {
+            source_generation: None,
             generation: validated.generation,
             entries: validated.entries,
+            added_names,
         })
+    }
+
+    /// Validates a complete generation that retains roots from one durable
+    /// source and adds only the named outputs from the current acquisition.
+    pub fn from_source(
+        source_generation: GenerationId,
+        generation: GenerationId,
+        entries: Vec<RootSetEntry>,
+        added_names: Vec<RootName>,
+    ) -> Result<Self, MaintenanceError> {
+        let request = RootSetPublicationRequest::new(
+            RootSet::new(0, generation, entries)?,
+            Some(source_generation),
+            added_names,
+        )?;
+        Ok(Self {
+            source_generation: request.source_generation,
+            generation: request.root_set.generation,
+            entries: request.root_set.entries,
+            added_names: request.added_names,
+        })
+    }
+
+    /// Returns the durable source generation for retained roots, if any.
+    #[must_use]
+    pub const fn source_generation(&self) -> Option<&GenerationId> {
+        self.source_generation.as_ref()
     }
 
     /// Returns the validated generation identifier.
@@ -325,8 +370,104 @@ impl RootSetIntent {
         &self.entries
     }
 
-    pub(crate) fn into_root_set(self, owner_uid: u32) -> Result<RootSet, MaintenanceError> {
-        RootSet::new(owner_uid, self.generation, self.entries)
+    /// Returns the exact entries added by the current acquisition.
+    #[must_use]
+    pub fn added_names(&self) -> &[RootName] {
+        &self.added_names
+    }
+
+    pub(crate) fn into_publication_request(
+        self,
+        owner_uid: u32,
+    ) -> Result<RootSetPublicationRequest, MaintenanceError> {
+        RootSetPublicationRequest::new(
+            RootSet::new(owner_uid, self.generation, self.entries)?,
+            self.source_generation,
+            self.added_names,
+        )
+    }
+}
+
+impl RootSetPublicationRequest {
+    /// Validates and canonicalizes one complete protected publication.
+    pub fn new(
+        root_set: RootSet,
+        source_generation: Option<GenerationId>,
+        mut added_names: Vec<RootName>,
+    ) -> Result<Self, MaintenanceError> {
+        added_names.sort();
+        let entry_names = root_set
+            .entries
+            .iter()
+            .map(RootSetEntry::name)
+            .collect::<BTreeSet<_>>();
+        if added_names.is_empty()
+            || added_names.len() > root_set.entries.len()
+            || added_names.windows(2).any(|pair| pair[0] == pair[1])
+            || added_names.iter().any(|name| !entry_names.contains(name))
+            || source_generation
+                .as_ref()
+                .is_some_and(|source| source == &root_set.generation)
+            || (source_generation.is_none() && added_names.len() != root_set.entries.len())
+        {
+            return Err(MaintenanceError::new(
+                MaintenanceErrorCode::ValidationFailure,
+            ));
+        }
+        Ok(Self {
+            root_set,
+            source_generation,
+            added_names,
+        })
+    }
+
+    /// Returns the complete destination root set.
+    #[must_use]
+    pub const fn root_set(&self) -> &RootSet {
+        &self.root_set
+    }
+
+    /// Returns the durable source generation for retained roots, if any.
+    #[must_use]
+    pub const fn source_generation(&self) -> Option<&GenerationId> {
+        self.source_generation.as_ref()
+    }
+
+    /// Returns the exact names added by the current acquisition.
+    #[must_use]
+    pub fn added_names(&self) -> &[RootName] {
+        &self.added_names
+    }
+
+    /// Revalidates each retained mapping against the durable source loaded by
+    /// the privileged helper.
+    pub fn validate_source(&self, source: Option<&RootSet>) -> Result<(), MaintenanceError> {
+        let added = self.added_names.iter().collect::<BTreeSet<_>>();
+        match (&self.source_generation, source) {
+            (None, None) => Ok(()),
+            (Some(source_generation), Some(source))
+                if source.owner_uid == self.root_set.owner_uid
+                    && &source.generation == source_generation =>
+            {
+                let source_entries = source
+                    .entries
+                    .iter()
+                    .map(|entry| (entry.name(), entry.target()))
+                    .collect::<BTreeMap<_, _>>();
+                if self.root_set.entries.iter().any(|entry| {
+                    !added.contains(entry.name())
+                        && source_entries.get(entry.name()) != Some(&entry.target())
+                }) {
+                    return Err(MaintenanceError::new(
+                        MaintenanceErrorCode::ValidationFailure,
+                    ));
+                }
+                Ok(())
+            }
+            _ => Err(MaintenanceError::new(
+                MaintenanceErrorCode::ValidationFailure,
+            )),
+        }
     }
 }
 
@@ -1219,6 +1360,48 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(self.outcomes.clone())
         }
+    }
+
+    #[test]
+    fn publication_revalidates_retained_roots_against_durable_source() {
+        let source = root_set(1001);
+        let added_name = RootName::new("ripgrep-out").unwrap();
+        let destination = RootSet::new(
+            1001,
+            GenerationId::new("gen-0008").unwrap(),
+            vec![
+                source.entries()[0].clone(),
+                RootSetEntry::new(added_name.clone(), path("ripgrep-14.1")),
+            ],
+        )
+        .unwrap();
+        let request = RootSetPublicationRequest::new(
+            destination,
+            Some(source.generation().clone()),
+            vec![added_name.clone()],
+        )
+        .unwrap();
+        request.validate_source(Some(&source)).unwrap();
+
+        let tampered = RootSet::new(
+            1001,
+            GenerationId::new("gen-0008").unwrap(),
+            vec![
+                RootSetEntry::new(RootName::new("hello-out").unwrap(), path("other-1.0")),
+                RootSetEntry::new(added_name.clone(), path("ripgrep-14.1")),
+            ],
+        )
+        .unwrap();
+        let tampered = RootSetPublicationRequest::new(
+            tampered,
+            Some(source.generation().clone()),
+            vec![added_name],
+        )
+        .unwrap();
+        assert_eq!(
+            tampered.validate_source(Some(&source)).unwrap_err().code(),
+            MaintenanceErrorCode::ValidationFailure
+        );
     }
 
     #[test]

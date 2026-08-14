@@ -9,8 +9,8 @@ use nix::{
 use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance,
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
-    ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest, RootSet,
-    RootSetAttestationRequest, RootSetTransitionRequest, VerifiedRepairScope,
+    ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest, RootSetAttestationRequest,
+    RootSetPublicationRequest, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use pkg_store::{StateLayout, authorize_generation_root_removal};
 use std::{
@@ -125,8 +125,21 @@ impl LinuxHelperSession {
         self.authenticated.for_caller(uid)
     }
 
-    fn publish(&self, root_set: &RootSet) -> Result<pkg_nix::RootSetReport, MaintenanceError> {
+    fn publish(
+        &self,
+        request: &RootSetPublicationRequest,
+    ) -> Result<pkg_nix::RootSetReport, MaintenanceError> {
         let _transaction = lock_recover(&self.root_transactions);
+        let source = request
+            .source_generation()
+            .map(|generation| {
+                self.roots
+                    .load(request.root_set().owner_uid(), generation)
+                    .map_err(|_| platform_failure())
+            })
+            .transpose()?;
+        request.validate_source(source.as_ref())?;
+        let root_set = request.root_set();
         let caller = self.caller(root_set.owner_uid());
         let report = caller.publish_root_set(root_set)?;
         if self.roots.publish(root_set).is_err() {
@@ -268,8 +281,8 @@ impl BrokerHelperDispatch for LinuxHelperSession {
         request: BrokerHelperRequest,
     ) -> Result<BrokerHelperResponse, MaintenanceError> {
         match request {
-            BrokerHelperRequest::PublishRootSet(root_set) => self
-                .publish(&root_set)
+            BrokerHelperRequest::PublishRootSet(request) => self
+                .publish(&request)
                 .map(BrokerHelperResponse::RootSetPublished),
             BrokerHelperRequest::RemoveRootSet(request) => {
                 self.remove(&request)?;
@@ -461,7 +474,7 @@ mod tests {
     use crate::platform::linux::LinuxRootSetStore;
     use nix::unistd::Uid;
     use pkg_nix::{
-        GenerationId, InProcessHelper, InProcessPeer, PolicyVersion, RepairMode, RootName,
+        GenerationId, InProcessHelper, InProcessPeer, PolicyVersion, RepairMode, RootName, RootSet,
         RootSetEntry, StorePath, VerifiedRepairScope,
     };
     use std::{
@@ -509,6 +522,15 @@ mod tests {
         )?)
     }
 
+    fn publication(root_set: RootSet) -> Result<RootSetPublicationRequest, Box<dyn Error>> {
+        let added_names = root_set
+            .entries()
+            .iter()
+            .map(|entry| entry.name().clone())
+            .collect();
+        Ok(RootSetPublicationRequest::new(root_set, None, added_names)?)
+    }
+
     fn transition_source() -> Result<RootSet, Box<dyn Error>> {
         Ok(RootSet::new(
             501,
@@ -552,7 +574,7 @@ mod tests {
         let request_roots = roots()?;
         let encoded = ProductFrameCodec::encode_helper_request(
             7,
-            &BrokerHelperRequest::PublishRootSet(request_roots),
+            &BrokerHelperRequest::PublishRootSet(publication(request_roots)?),
         )?;
         let (server, mut client) = UnixStream::pair()?;
         let server_dispatcher = Arc::clone(&dispatcher);
@@ -676,7 +698,7 @@ mod tests {
         let broker_uid = Uid::current().as_raw();
         let encoded = ProductFrameCodec::encode_helper_request(
             11,
-            &BrokerHelperRequest::PublishRootSet(roots()?),
+            &BrokerHelperRequest::PublishRootSet(publication(roots()?)?),
         )?;
         let (server, mut client) = UnixStream::pair()?;
         let worker = thread::spawn(move || {
@@ -728,7 +750,9 @@ mod tests {
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
         let first = LinuxHelperSession::new_for_test(authenticated, root_store.clone());
         let roots = roots()?;
-        first.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
+        first.dispatch(BrokerHelperRequest::PublishRootSet(publication(
+            roots.clone(),
+        )?))?;
 
         let replacement = InProcessHelper::new(broker_uid)?;
         let authenticated = replacement.connect(InProcessPeer::authenticated_uid(broker_uid))?;
@@ -758,7 +782,9 @@ mod tests {
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
         let first = LinuxHelperSession::new_for_test(authenticated, root_store.clone());
         let roots = roots()?;
-        let published = first.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
+        let published = first.dispatch(BrokerHelperRequest::PublishRootSet(publication(
+            roots.clone(),
+        )?))?;
         let BrokerHelperResponse::RootSetPublished(published) = published else {
             return Err(io::Error::other("unexpected helper response").into());
         };
@@ -784,7 +810,9 @@ mod tests {
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
         let session = LinuxHelperSession::new_for_test(authenticated, root_store.clone());
         let source = transition_source()?;
-        session.dispatch(BrokerHelperRequest::PublishRootSet(source.clone()))?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(publication(
+            source.clone(),
+        )?))?;
 
         let request = RootSetTransitionRequest::new(
             source.owner_uid(),
@@ -823,7 +851,9 @@ mod tests {
                 StorePath::new(&format!("/nix/store/{STORE_HASH}-existing"))?,
             )],
         )?;
-        session.dispatch(BrokerHelperRequest::PublishRootSet(occupied.clone()))?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(publication(
+            occupied.clone(),
+        )?))?;
         let collision = RootSetTransitionRequest::new(
             source.owner_uid(),
             source.generation().clone(),
@@ -862,6 +892,72 @@ mod tests {
     }
 
     #[test]
+    fn root_publication_revalidates_retained_targets_from_durable_source()
+    -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new()?;
+        let broker_uid = Uid::current().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
+        let session = LinuxHelperSession::new_for_test(authenticated, root_store.clone());
+        let source = transition_source()?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(publication(
+            source.clone(),
+        )?))?;
+
+        let added_name = RootName::new("fd-out")?;
+        let extended = RootSet::new(
+            source.owner_uid(),
+            GenerationId::new("gen-0008")?,
+            vec![
+                source.entries()[0].clone(),
+                RootSetEntry::new(
+                    added_name.clone(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-fd"))?,
+                ),
+            ],
+        )?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(
+            RootSetPublicationRequest::new(
+                extended.clone(),
+                Some(source.generation().clone()),
+                vec![added_name.clone()],
+            )?,
+        ))?;
+        assert_eq!(
+            root_store.load(source.owner_uid(), extended.generation())?,
+            extended
+        );
+
+        let tampered = RootSet::new(
+            source.owner_uid(),
+            GenerationId::new("gen-0007")?,
+            vec![
+                RootSetEntry::new(
+                    source.entries()[0].name().clone(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-tampered"))?,
+                ),
+                RootSetEntry::new(
+                    added_name.clone(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-fd"))?,
+                ),
+            ],
+        )?;
+        let request = RootSetPublicationRequest::new(
+            tampered,
+            Some(source.generation().clone()),
+            vec![added_name],
+        )?;
+        assert_eq!(
+            session
+                .dispatch(BrokerHelperRequest::PublishRootSet(request))
+                .map_err(MaintenanceError::code),
+            Err(MaintenanceErrorCode::ValidationFailure)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn stale_logical_session_cannot_delete_the_durable_root() -> Result<(), Box<dyn Error>> {
         let scratch = Scratch::new()?;
         let broker_uid = Uid::current().as_raw();
@@ -870,7 +966,9 @@ mod tests {
         let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
         let session = LinuxHelperSession::new_for_test(authenticated, root_store);
         let roots = roots()?;
-        session.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(publication(
+            roots.clone(),
+        )?))?;
         helper.restart()?;
 
         let request = RemoveRootSetRequest::new(roots.owner_uid(), roots.generation().clone());
@@ -903,7 +1001,9 @@ mod tests {
             root_store.clone(),
         ));
         let roots = roots()?;
-        session.dispatch(BrokerHelperRequest::PublishRootSet(roots.clone()))?;
+        session.dispatch(BrokerHelperRequest::PublishRootSet(publication(
+            roots.clone(),
+        )?))?;
 
         let workers = 32_usize;
         let barrier = Arc::new(Barrier::new(workers));
@@ -915,7 +1015,10 @@ mod tests {
             handles.push(thread::spawn(move || {
                 worker_barrier.wait();
                 if index % 2 == 0 {
-                    worker_session.dispatch(BrokerHelperRequest::PublishRootSet(worker_roots))
+                    worker_session.dispatch(BrokerHelperRequest::PublishRootSet(
+                        publication(worker_roots)
+                            .map_err(|_| MaintenanceError::backend_failure())?,
+                    ))
                 } else {
                     worker_session.dispatch(BrokerHelperRequest::RemoveRootSet(
                         RemoveRootSetRequest::new(

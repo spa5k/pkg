@@ -39,11 +39,14 @@ impl PreparedRootSet {
     /// Returns the exact sorted output paths protected by this set.
     #[must_use]
     pub fn output_roots(&self) -> Vec<&StorePath> {
-        self.root_set
+        let mut roots = self
+            .root_set
             .entries()
             .iter()
             .map(RootSetEntry::target)
-            .collect()
+            .collect::<Vec<_>>();
+        roots.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        roots
     }
 
     /// Returns the underlying closed helper request.
@@ -165,6 +168,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(prepared.request().entries().len(), 2);
+        assert_eq!(
+            prepared
+                .output_roots()
+                .into_iter()
+                .map(StorePath::as_str)
+                .collect::<Vec<_>>(),
+            vec![
+                "/nix/store/00000000000000000000000000000000-a",
+                "/nix/store/00000000000000000000000000000000-b"
+            ]
+        );
         assert!(
             prepared.request().entries().iter().all(|entry| entry
                 .name()

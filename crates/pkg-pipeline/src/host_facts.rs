@@ -18,7 +18,8 @@ use crate::{BuildHostFacts, BuildHostFactsError, BuildHostFactsProbe};
 
 const MANAGED_NIX_CONF: &str = "/opt/pkg/etc/pkg/nix.conf";
 const LINUX_CGROUP_CONTROLLERS: &str = "/sys/fs/cgroup/cgroup.controllers";
-const LINUX_DAEMON_CGROUP: &str = "/sys/fs/cgroup/system.slice/pkg-nix-daemon.service/cgroup.procs";
+const LINUX_DAEMON_CGROUP: &str =
+    "/sys/fs/cgroup/system.slice/pkg-nix-daemon.service/nix-daemon/cgroup.procs";
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_CONFIG_ENTRIES: usize = 64;
 const LINUX_BUILD_USERS: usize = 16;
@@ -334,19 +335,13 @@ fn is_managed_daemon_process(pid: u32) -> Result<bool, BuildHostFactsError> {
     let executable_argument = arguments.next().ok_or(BuildHostFactsError)?;
     let daemon_argument = arguments.next().ok_or(BuildHostFactsError)?;
     let terminator = arguments.next().ok_or(BuildHostFactsError)?;
-    if executable_argument.is_empty()
-        || Path::new(OsStr::from_bytes(executable_argument)).file_name()
-            != Some(OsStr::new("nix-daemon"))
-        || daemon_argument != b"--daemon"
-        || !terminator.is_empty()
-        || arguments.next().is_some()
-    {
-        return Ok(false);
-    }
-    let executable = fs::read_link(process.join("exe")).map_err(|_| BuildHostFactsError)?;
-    Ok(executable.is_absolute()
-        && executable.starts_with("/opt/pkg/nix")
-        && executable.file_name() == Some(OsStr::new("nix-daemon")))
+    let command_valid = !executable_argument.is_empty()
+        && Path::new(OsStr::from_bytes(executable_argument)).file_name()
+            == Some(OsStr::new("nix-daemon"))
+        && daemon_argument == b"--daemon"
+        && terminator.is_empty()
+        && arguments.next().is_none();
+    Ok(command_valid)
 }
 
 fn read_bounded(path: &Path, max_bytes: u64) -> Result<Vec<u8>, BuildHostFactsError> {

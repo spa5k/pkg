@@ -31,11 +31,11 @@ docker build \
     --tag "$image" \
     .
 
-echo "+ docker run --privileged --cgroupns=host"
+echo "+ docker run --privileged --cgroupns=private"
 docker run \
     --detach \
     --privileged \
-    --cgroupns=host \
+    --cgroupns=private \
     --name "$container" \
     --tmpfs /run \
     --tmpfs /run/lock \
@@ -94,6 +94,15 @@ docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
 docker exec "$container" su - proof-user -c \
     "/home/proof-user/.local/share/pkg/current/bin/hello" \
     | grep -F "Hello, world!" >/dev/null
+
+echo "+ pkg install cxx-prettyprint with approved local build"
+if ! local_build_output=$(docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --yes --jsonl install cxx-prettyprint"); then
+    printf '%s\n' "$local_build_output" >&2
+    exit 1
+fi
+printf '%s\n' "$local_build_output" | grep -F '"type":"build_started"' >/dev/null
+printf '%s\n' "$local_build_output" | grep -F '"selector":"cxx-prettyprint"' >/dev/null
 
 echo "+ pkg --yes uninstall"
 docker exec "$container" /usr/local/bin/pkg --yes uninstall

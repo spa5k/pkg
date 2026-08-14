@@ -105,8 +105,8 @@ pub use maintenance::{
     MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
     RemoveRootSetRequest, RepairMode, RepairOutcomeKind, RepairPathOutcome, RepairStorePathsReport,
     RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetEntry, RootSetIntent,
-    RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, RootSetTransitionRequest,
-    VerifiedRepairExecutor, VerifiedRepairScope,
+    RootSetPublicationRequest, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport,
+    RootSetTransitionRequest, VerifiedRepairExecutor, VerifiedRepairScope,
 };
 pub use managed::accounts::{
     BuildAccount, BuildAccountDirectory, BuildAccountError, observe_build_accounts,

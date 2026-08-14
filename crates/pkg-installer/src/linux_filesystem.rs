@@ -587,11 +587,11 @@ impl LinuxFilesystemManager {
     ///
     /// Returns a closed filesystem error when the asset is not the broker
     /// home or its ownership, identity, mount, or tree state is unsafe.
-    pub fn remove_broker_home(
+    pub fn remove_broker_private_tree(
         &mut self,
         asset: LinuxInstallAsset,
     ) -> Result<(), LinuxFilesystemError> {
-        if asset.id() != "broker-home" {
+        if !matches!(asset.id(), "broker-home" | "broker-log-dir") {
             return Err(unsupported());
         }
         let Some((parent, name)) = self.open_parent_optional(asset)? else {
@@ -1297,7 +1297,13 @@ mod tests {
     fn broker_channel_cleanup_removes_private_files_and_refuses_links() -> Result<(), Box<dyn Error>>
     {
         let mut fixture = Fixture::new()?;
-        for id in ["service-root", "broker-home", "broker-channel-state"] {
+        for id in [
+            "service-root",
+            "broker-home",
+            "broker-channel-state",
+            "log-root",
+            "broker-log-dir",
+        ] {
             fixture.manager.ensure_asset(Fixture::asset(id))?;
         }
         let channel = fixture
@@ -1320,7 +1326,7 @@ mod tests {
         fs::write(cache.join("cache.sqlite"), b"cache")?;
         fixture
             .manager
-            .remove_broker_home(Fixture::asset("broker-home"))?;
+            .remove_broker_private_tree(Fixture::asset("broker-home"))?;
         assert!(
             !fixture
                 .temporary
@@ -1328,6 +1334,14 @@ mod tests {
                 .join("var/lib/pkg/broker-home")
                 .exists()
         );
+        let audit_directory = fixture.temporary.path().join("var/lib/pkg/log/broker");
+        let audit = audit_directory.join("approvals.ndjson");
+        fs::write(&audit, b"approved\n")?;
+        fs::set_permissions(&audit, fs::Permissions::from_mode(0o600))?;
+        fixture
+            .manager
+            .remove_broker_private_tree(Fixture::asset("broker-log-dir"))?;
+        assert!(!audit_directory.exists());
 
         let mut fixture = Fixture::new()?;
         for id in ["service-root", "broker-home", "broker-channel-state"] {

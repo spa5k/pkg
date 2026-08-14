@@ -32,10 +32,10 @@ use pkg_core::{
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome,
     CatalogInfoRequest, CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest,
-    GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter, MaintenanceError,
-    OperationHandle, RemoveRootSetRequest, RepairGenerationRequest, RepairGenerationStatus,
-    RepairStorePathsReport, RepairStorePathsRequest, RootSet, RootSetAttestationRequest,
-    RootSetReport,
+    GenerationId, GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter,
+    MaintenanceError, OperationHandle, RemoveRootSetRequest, RepairGenerationRequest,
+    RepairGenerationStatus, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
+    RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
@@ -717,8 +717,13 @@ impl LocalStateOperations {
                 .with_build_approval(build_approval),
             )
             .map_err(|_| mutation_failed())?;
+            let added_paths = install_output_paths(&evidence);
             let report = prepared
-                .root_intent()
+                .root_intent_from_source(
+                    GenerationId::new(source.generation().id())
+                        .map_err(|_| install_commit_failed())?,
+                    &added_paths,
+                )
                 .map_err(|_| install_commit_failed())?
                 .map(|intent| {
                     broker
@@ -801,9 +806,17 @@ impl LocalStateOperations {
             .map_err(map_install_generation_error)?;
             emit_phase(progress, &public_operation_id, "stage", "completed")?;
             emit_phase(progress, &public_operation_id, "activate", "started")?;
-            let report = prepared
-                .root_intent()
-                .map_err(|_| install_commit_failed())?
+            let added_paths = install_output_paths(&evidence);
+            let intent = match current.as_ref() {
+                Some(source) => prepared.root_intent_from_source(
+                    GenerationId::new(source.generation().id())
+                        .map_err(|_| install_commit_failed())?,
+                    &added_paths,
+                ),
+                None => prepared.root_intent(),
+            }
+            .map_err(|_| install_commit_failed())?;
+            let report = intent
                 .map(|intent| {
                     broker
                         .publish_build_roots(handle.clone(), intent)
@@ -1714,6 +1727,15 @@ fn upgrade_failed(error: pkg_core::upgrade::UpgradeError) -> CommandError {
         ),
     };
     CommandError::new(ExitCode::ResolveFailed, message, hint)
+}
+
+fn install_output_paths(evidence: &InstallEvidence) -> Vec<pkg_core::identity::StorePath> {
+    evidence
+        .targets()
+        .iter()
+        .flat_map(|target| target.acquired())
+        .map(|output| output.path_info().store_path().clone())
+        .collect()
 }
 
 fn install_result(

@@ -1263,11 +1263,13 @@ flowchart TD
   broker, helper, daemon, fixed units, private channel state, and ownership receipt, and reuses an
   exact installation without reacquiring the broker's durable channel lease. A privileged clean
   systemd container proves install, exact retry, service health, ordinary-user isolation, a cached
-  `hello` install and execution, safe uninstall, idempotent uninstall, and final absence. Uninstall
-  removes only verified created state,
+  `hello` install and execution, one explicitly approved cache-miss local build, two-generation
+  activation, safe uninstall, idempotent uninstall, and final absence. Uninstall removes only
+  verified created state, including the broker approval audit and the fixed Nix 2.34.8 build-log,
+  build-user-pool, build, and cgroup state,
   refuses linked or changed broker state, preserves the receipt until earlier cleanup succeeds, and
-  safely handles a missing Nix GC lock plus normal private-group removal. Approved cache-miss build,
-  upgrade, rollback, and repair still need the same public-CLI clean-host lane.
+  safely handles a missing Nix GC lock plus normal private-group removal. Upgrade, rollback, and
+  repair still need the same public-CLI clean-host lane.
   the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an

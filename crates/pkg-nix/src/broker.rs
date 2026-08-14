@@ -14,8 +14,9 @@ use crate::{
     ApprovalJournal, ApprovalSource, BuildApprovalReceipt, BuildEngineError, BuildEngineErrorCode,
     BuildPlan, BuildPreview, BuildProgressEstimate, BuildReport, CancellationToken, Digest,
     InstallEvidence, LocalBuildEngine, NixAdapter, NixAdapterError, OperationId, ResourceProbe,
-    RootSet, RootSetAttestationRequest, RootSetIntent, RootSetReport, RootSetTransitionIntent,
-    RootSetTransitionReport, RootSetTransitionRequest, VolatileBuildEstimate,
+    RootSet, RootSetAttestationRequest, RootSetIntent, RootSetPublicationRequest, RootSetReport,
+    RootSetTransitionIntent, RootSetTransitionReport, RootSetTransitionRequest,
+    VolatileBuildEstimate,
     maintenance::{MaintenanceError, random_secret},
 };
 
@@ -1156,6 +1157,26 @@ impl AuthenticatedCaller {
         root_set: &RootSet,
         publish: impl FnOnce(&RootSet) -> Result<RootSetReport, MaintenanceError>,
     ) -> Result<RootSetReport, BrokerError> {
+        let request = RootSetPublicationRequest::new(
+            root_set.clone(),
+            None,
+            root_set
+                .entries()
+                .iter()
+                .map(|entry| entry.name().clone())
+                .collect(),
+        )
+        .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
+        self.publish_built_root_request(handle, &request, |request| publish(request.root_set()))
+    }
+
+    fn publish_built_root_request(
+        &self,
+        handle: &OperationHandle,
+        request: &RootSetPublicationRequest,
+        publish: impl FnOnce(&RootSetPublicationRequest) -> Result<RootSetReport, MaintenanceError>,
+    ) -> Result<RootSetReport, BrokerError> {
+        let root_set = request.root_set();
         {
             let mut state = self.broker.lock();
             self.require_running_kind(
@@ -1168,8 +1189,13 @@ impl AuthenticatedCaller {
                     BrokerErrorCode::InvalidAdmissionTransition,
                 ));
             }
-            let root_targets = root_set
+            let added_names = request.added_names().iter().collect::<BTreeSet<_>>();
+            let added_entries = root_set
                 .entries()
+                .iter()
+                .filter(|entry| added_names.contains(entry.name()))
+                .collect::<Vec<_>>();
+            let added_targets = added_entries
                 .iter()
                 .map(|entry| entry.target().as_str().to_owned())
                 .collect::<BTreeSet<_>>();
@@ -1178,8 +1204,8 @@ impl AuthenticatedCaller {
                 .awaiting_root_outputs
                 .as_ref()
                 .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
-            if required != &root_targets
-                || root_set.entries().len() != required.len()
+            if required != &added_targets
+                || added_entries.len() != required.len()
                 || record.build_executing
                 || record.cache_acquiring
             {
@@ -1190,7 +1216,7 @@ impl AuthenticatedCaller {
             record.build_executing = true;
         }
 
-        let publication = publish(root_set).and_then(|report| {
+        let publication = publish(request).and_then(|report| {
             let expected = format!(
                 "/nix/var/nix/gcroots/pkg/users/{}/{}",
                 root_set.owner_uid(),
@@ -1216,12 +1242,12 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         intent: RootSetIntent,
-        publish: impl FnOnce(&RootSet) -> Result<RootSetReport, MaintenanceError>,
+        publish: impl FnOnce(&RootSetPublicationRequest) -> Result<RootSetReport, MaintenanceError>,
     ) -> Result<RootSetReport, BrokerError> {
-        let root_set = intent
-            .into_root_set(self.uid)
+        let request = intent
+            .into_publication_request(self.uid)
             .map_err(|_| BrokerError::new(BrokerErrorCode::InvalidAdmissionTransition))?;
-        self.publish_built_root_set(handle, &root_set, publish)
+        self.publish_built_root_request(handle, &request, publish)
     }
 
     /// Promotes an ownerless generation transition and executes it under Activate authority.
@@ -2938,9 +2964,27 @@ mod tests {
             .connect(InProcessPeer::authenticated_uid(991))
             .unwrap()
             .for_caller(1001);
+        let intent = RootSetIntent::from_source(
+            GenerationId::new("gen-0001").unwrap(),
+            GenerationId::new("gen-0002").unwrap(),
+            vec![
+                RootSetEntry::new(
+                    RootName::new("demo-out").unwrap(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
+                ),
+                RootSetEntry::new(
+                    RootName::new("retained-out").unwrap(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-retained-1.0")).unwrap(),
+                ),
+            ],
+            vec![RootName::new("demo-out").unwrap()],
+        )
+        .unwrap();
         caller
-            .publish_built_root_set(&handle, &built_root_set(1001), |roots| {
-                maintenance.publish_root_set(roots)
+            .publish_built_root_intent(&handle, intent, |request| {
+                assert_eq!(request.source_generation().unwrap().as_str(), "gen-0001");
+                assert_eq!(request.added_names().len(), 1);
+                maintenance.publish_root_set(request.root_set())
             })
             .unwrap();
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);

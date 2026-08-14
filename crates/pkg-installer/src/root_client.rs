@@ -11,8 +11,8 @@ use nix::{
 use pkg_nix::{
     BrokerHelperRequest, BrokerHelperResponse, MAX_REPAIR_EXECUTION_DURATION,
     MaintenanceCapability, ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
-    RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
+    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetPublicationRequest,
+    RootSetReport, RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
@@ -81,12 +81,12 @@ impl RootHelperClient {
     /// root-publication response for this request.
     pub fn publish_root_set(
         &self,
-        root_set: &RootSet,
+        request: &RootSetPublicationRequest,
     ) -> Result<RootSetReport, HelperTransportError> {
         let mut stream = self.connect()?;
         let request = ProductFrameCodec::encode_helper_request(
             REQUEST_ID,
-            &BrokerHelperRequest::PublishRootSet(root_set.clone()),
+            &BrokerHelperRequest::PublishRootSet(request.clone()),
         )
         .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
         let deadline = deadline_after(RESPONSE_TIMEOUT)?;
@@ -545,10 +545,10 @@ mod tests {
             request: BrokerHelperRequest,
         ) -> Result<BrokerHelperResponse, MaintenanceError> {
             match request {
-                BrokerHelperRequest::PublishRootSet(root_set) => self
+                BrokerHelperRequest::PublishRootSet(request) => self
                     .0
-                    .for_caller(root_set.owner_uid())
-                    .publish_root_set(&root_set)
+                    .for_caller(request.root_set().owner_uid())
+                    .publish_root_set(request.root_set())
                     .map(BrokerHelperResponse::RootSetPublished),
                 BrokerHelperRequest::TransitionRootSet(request) => {
                     let derived = request.derive_from(&root_set())?;
@@ -592,6 +592,16 @@ mod tests {
         .unwrap()
     }
 
+    fn publication() -> RootSetPublicationRequest {
+        let root_set = root_set();
+        let added_names = root_set
+            .entries()
+            .iter()
+            .map(|entry| entry.name().clone())
+            .collect();
+        RootSetPublicationRequest::new(root_set, None, added_names).unwrap()
+    }
+
     #[test]
     fn fixed_client_authenticates_peer_and_round_trips_only_root_publication()
     -> Result<(), Box<dyn Error>> {
@@ -609,7 +619,7 @@ mod tests {
         });
         let client = RootHelperClient::at(endpoint, broker_uid);
 
-        let report = client.publish_root_set(&root_set());
+        let report = client.publish_root_set(&publication());
         let served = worker
             .join()
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
@@ -724,7 +734,7 @@ mod tests {
         let endpoint = temporary.path().join("root-helper.sock");
         let listener = UnixListener::bind(&endpoint)?;
         let helper_uid = Uid::effective().as_raw();
-        let expected = root_set();
+        let expected = publication();
         let worker = thread::spawn(move || -> Result<(), HelperTransportError> {
             let (mut stream, _) = listener.accept().map_err(|_| {
                 HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
@@ -761,7 +771,7 @@ mod tests {
         let client = RootHelperClient::at(endpoint, helper_uid);
 
         let result = client
-            .publish_root_set(&root_set())
+            .publish_root_set(&publication())
             .map_err(HelperTransportError::code);
         let served = worker
             .join()
@@ -784,7 +794,7 @@ mod tests {
 
         assert_eq!(
             client
-                .publish_root_set(&root_set())
+                .publish_root_set(&publication())
                 .map_err(HelperTransportError::code),
             Err(HelperTransportErrorCode::UnauthenticatedPeer)
         );
