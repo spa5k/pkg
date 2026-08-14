@@ -104,6 +104,20 @@ start_container() {
 }
 
 shipping_installer=/srv/pkg-release/v0.1.0-alpha.1/pkg-installer-x86_64-linux
+print_redacted_journal() {
+    docker exec "$container" python3 -c '
+import json
+path = "/var/lib/pkg-install/transaction-v1.json"
+try:
+    entries = json.load(open(path))["entries"]
+    states = [entry["state"] for entry in entries]
+    if len(states) > 64 or any(state not in {"intended", "created", "preExisting"} for state in states):
+        raise ValueError
+    print(f"recovery journal: entries={len(states)} states={chr(44).join(states)}")
+except Exception:
+    print("recovery journal: invalid")
+'
+}
 
 echo "+ foreign Nix refusal before mutation"
 start_container
@@ -136,6 +150,7 @@ while [ "$attempt" -lt 600 ]; do
         if docker exec "$container" python3 -c \
             'import json,sys; entries=json.load(open("/var/lib/pkg-install/transaction-v1.json"))["entries"]; sys.exit(not entries or entries[-1].get("state") != "created")'; then
             journal_ready=1
+            print_redacted_journal
             break
         fi
         docker exec "$container" sh -c 'kill -CONT "$(cat /tmp/pkg-install.pid)"'
@@ -151,7 +166,11 @@ fi
 docker kill "$container" >/dev/null
 docker start "$container" >/dev/null
 wait_container_ready
-docker exec "$container" "$shipping_installer"
+if ! recovery_output=$(docker exec "$container" "$shipping_installer" 2>&1); then
+    test "$recovery_output" = "pkg installation failed."
+    print_redacted_journal
+    exit 1
+fi
 docker exec "$container" sh -eu -c '
     test ! -e /var/lib/pkg-install/transaction-v1.json
     test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.1"
