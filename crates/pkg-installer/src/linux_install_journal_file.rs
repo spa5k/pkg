@@ -304,8 +304,12 @@ impl LinuxInstallJournalStorage {
         let linked = statat(&self.base, DIRECTORY_NAME, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|_| invalid_state())?;
         let opened = self.directory.metadata().map_err(|_| invalid_state())?;
+        #[cfg(target_os = "linux")]
+        let same_device = linked.st_dev == opened.dev();
+        #[cfg(not(target_os = "linux"))]
+        let same_device = u64::try_from(linked.st_dev).ok() == Some(opened.dev());
         if FileType::from_raw_mode(linked.st_mode) != FileType::Directory
-            || u64::try_from(linked.st_dev).ok() != Some(opened.dev())
+            || !same_device
             || linked.st_ino != opened.ino()
         {
             return Err(invalid_state());

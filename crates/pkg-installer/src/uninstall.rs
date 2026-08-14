@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
 use std::str::FromStr;
 
 use pkg_core::{System, state::Digest};
@@ -402,11 +403,28 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
         .collect::<BTreeMap<_, _>>();
 
     let mut removable = platform
-        .into_iter()
+        .iter()
+        .copied()
         .filter(|asset| states.get(asset.id) == Some(&RecordedAssetState::Created))
-        .filter(|asset| !matches!(asset.id, "nix-root" | "uninstall-manifest"))
+        .filter(|asset| asset.id != "uninstall-manifest")
         .collect::<Vec<_>>();
     removable.sort_by(|left, right| removal_key(right).cmp(&removal_key(left)));
+    let manifest_asset = platform
+        .into_iter()
+        .find(|asset| asset.id == "uninstall-manifest");
+    let mut manifest_parents = Vec::new();
+    if states.get("uninstall-manifest") == Some(&RecordedAssetState::Created) {
+        let manifest_asset = manifest_asset
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        removable.retain(|asset| {
+            let defer = asset.kind == UninstallAssetKind::Directory
+                && Path::new(manifest_asset.target).starts_with(asset.target);
+            if defer {
+                manifest_parents.push(*asset);
+            }
+            !defer
+        });
+    }
 
     let nix_root_state = states
         .get("nix-root")
@@ -433,15 +451,22 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
             }),
     );
     if states.get("uninstall-manifest") == Some(&RecordedAssetState::Created) {
-        let manifest_asset = platform_assets(manifest.system)
-            .into_iter()
-            .find(|asset| asset.id == "uninstall-manifest")
+        let manifest_asset = manifest_asset
             .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
         actions.push(UninstallAction::RemoveAsset {
             id: manifest_asset.id,
             kind: manifest_asset.kind,
             target: manifest_asset.target,
         });
+        actions.extend(
+            manifest_parents
+                .into_iter()
+                .map(|asset| UninstallAction::RemoveAsset {
+                    id: asset.id,
+                    kind: asset.kind,
+                    target: asset.target,
+                }),
+        );
     }
     actions.push(UninstallAction::VerifyNoPrivilegedResidue);
 
@@ -761,20 +786,34 @@ mod tests {
                     }
                 )
             }) {
-                assert!(matches!(
-                    first.actions().iter().rev().nth(1),
-                    Some(UninstallAction::RemoveAsset {
-                        id: "uninstall-manifest",
-                        ..
+                let receipt = first
+                    .actions()
+                    .iter()
+                    .position(|action| {
+                        matches!(
+                            action,
+                            UninstallAction::RemoveAsset {
+                                id: "uninstall-manifest",
+                                ..
+                            }
+                        )
                     })
-                ));
+                    .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+                for id in ["uninstall-root", "product-root"] {
+                    let parent = first
+                        .actions()
+                        .iter()
+                        .position(|action| matches!(action, UninstallAction::RemoveAsset { id: actual, .. } if *actual == id))
+                        .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+                    assert!(receipt < parent);
+                }
             }
             assert!(
                 first
                     .actions()
                     .contains(&UninstallAction::RemoveManagedStoreIfExclusive)
             );
-            assert!(!first.actions().iter().any(|action| matches!(
+            assert!(first.actions().iter().any(|action| matches!(
                 action,
                 UninstallAction::RemoveAsset { target: "/nix", .. }
             )));

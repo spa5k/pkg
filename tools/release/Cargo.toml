@@ -21,5 +21,9 @@ tough = { version = "=0.24.0", default-features = false }
 url = "=2.5.8"
 
 [dev-dependencies]
+brotli = "=8.0.4"
 olpc-cjson = "=0.1.4"
+pkg-core = { path = "../../crates/pkg-core" }
+pkg-index = { path = "../../crates/pkg-index" }
+pkg-nix = { path = "../../crates/pkg-nix" }
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }

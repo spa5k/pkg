@@ -1510,9 +1510,13 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
+ "brotli",
  "hex",
  "jiff",
  "olpc-cjson",
+ "pkg-core",
+ "pkg-index",
+ "pkg-nix",
  "serde",
  "serde_json",
  "sha2 0.10.9",

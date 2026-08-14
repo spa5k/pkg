@@ -41,7 +41,7 @@
 //!
 //! The intentional public surface is re-exported at the crate root below.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod adapter;

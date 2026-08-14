@@ -1258,8 +1258,15 @@ flowchart TD
   and restores only attempt-owned state in reverse order. The complete production
   `LinuxInstallBackend` binds authenticated assets, repeats the root-only clean-host scan immediately
   before mutation, activates the fixed units, checks every unit plus the managed daemon store, and
-  reloads systemd after rollback removes a unit file. Clean-host install/re-run/uninstall evidence
-  on a real systemd VM remains the next Linux slice.
+  reloads systemd after rollback removes a unit file. The product `pkg-install` boundary now builds
+  one authenticated release publication with the pinned Nix 2.34.8 archive, installs the public CLI,
+  broker, helper, daemon, fixed units, private channel state, and ownership receipt, and reuses an
+  exact installation without reacquiring the broker's durable channel lease. A privileged clean
+  systemd container proves install, exact retry, service health, ordinary-user isolation, safe
+  uninstall, idempotent uninstall, and final absence. Uninstall removes only verified created state,
+  refuses linked or changed broker state, preserves the receipt until earlier cleanup succeeds, and
+  safely handles a missing Nix GC lock plus normal private-group removal. Package install, approved
+  cache-miss build, upgrade, rollback, and repair still need the same public-CLI clean-host lane.
   the nightly workflow now has named x86_64-linux and aarch64-darwin adapter-level Real-Nix
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an

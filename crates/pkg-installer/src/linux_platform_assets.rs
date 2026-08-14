@@ -262,6 +262,35 @@ impl LinuxPlatformAssetManager {
         Ok(true)
     }
 
+    /// Classifies the authenticated uninstall receipt without changing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the receipt binding is absent, unsafe, or changed.
+    pub fn classify_uninstall_manifest(&mut self) -> Result<LinuxAssetPresence, InstallError> {
+        let (system, digest) = self
+            .receipt_binding
+            .ok_or_else(InstallError::backend_failure)?;
+        let Some(existing) = self
+            .ensure_filesystem()?
+            .existing_uninstall_manifest()
+            .map_err(|_| InstallError::backend_failure())?
+        else {
+            return Ok(LinuxAssetPresence::Absent);
+        };
+        if existing.system() != system || existing.ownership_manifest_digest() != digest {
+            return Err(InstallError::backend_failure());
+        }
+        let filesystem = self.ensure_filesystem()?;
+        filesystem
+            .bind_uninstall_manifest(&existing)
+            .map_err(|_| InstallError::backend_failure())?;
+        filesystem
+            .verify_asset(uninstall_manifest_asset()?)
+            .map_err(|_| InstallError::backend_failure())?;
+        Ok(LinuxAssetPresence::ExactPresent)
+    }
+
     /// Removes one exact attempt-owned account or filesystem artifact.
     ///
     /// # Errors

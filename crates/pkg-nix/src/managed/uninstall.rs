@@ -156,11 +156,12 @@ fn prepare_with_owner_uid(
     let expected_receipt = encode_ownership_receipt(expectation).map_err(|_| {
         ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
     })?;
+    let receipt_path = ownership_receipt_path(expectation.system());
+    let metadata_root = receipt_path.parent().ok_or_else(|| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+    })?;
     let metadata_paths = [
-        (
-            ownership_receipt_path(expectation.system()),
-            expected_receipt,
-        ),
+        (receipt_path, expected_receipt),
         (asset_manifest_path(expectation.system()), expected_manifest),
     ];
     let mut metadata = Vec::with_capacity(metadata_paths.len());
@@ -173,6 +174,7 @@ fn prepare_with_owner_uid(
         }
         metadata.push(capture(&rooted_path, owner_uid, true)?);
     }
+    metadata.push(capture(&rooted(&root, metadata_root), owner_uid, false)?);
 
     capture_authenticated_state(&root, expectation, owner_uid, metadata)
 }
@@ -905,6 +907,9 @@ fn capture_dynamic_store_state(
             ));
         }
     }
+    if let Some(gcroots) = capture_optional(&gcroots, owner_uid)? {
+        entries.push(gcroots);
+    }
     require_empty_profiles(
         &rooted(root, Path::new("/nix/var/nix/profiles")),
         owner_uid,
@@ -1137,6 +1142,8 @@ fn acquire_gc_lock(path: &Path, owner_uid: u32) -> Result<fs::File, ManagedRunti
     let file = OpenOptions::new()
         .read(true)
         .write(true)
+        .create(true)
+        .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(path)
         .map_err(|_| {
@@ -2118,6 +2125,19 @@ mod tests {
         assert_eq!(authority.remove()?, ManagedRuntimeRemovalOutcome::Removed);
         assert!(!product_path.exists());
         assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn exclusive_authority_creates_a_missing_gc_lock() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        let lock = rooted(fixture.temporary.path(), Path::new(GC_LOCK));
+        fs::remove_file(&lock)?;
+
+        let authority = fixture.prepare()?.begin_exclusive_removal()?;
+
+        assert!(lock.is_file());
+        drop(authority);
         Ok(())
     }
 

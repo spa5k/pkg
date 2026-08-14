@@ -315,6 +315,10 @@ impl ProductionRuntime {
             self.accounts
                 .remove_verified_asset(asset)
                 .map_err(|_| UninstallError::backend_failure())?;
+        } else if asset.id() == "broker-channel-state" {
+            self.filesystem
+                .remove_broker_channel_state(asset)
+                .map_err(|_| UninstallError::backend_failure())?;
         } else {
             self.filesystem
                 .remove_verified_asset(asset)

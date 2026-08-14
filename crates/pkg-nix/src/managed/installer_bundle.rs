@@ -175,6 +175,7 @@ pub(super) async fn load_installer_bundle(
             fs::symlink_metadata(datastore).map_err(|_| ChannelError::DatastoreUnavailable)?;
         validate_owner(&metadata, owner, 0o700)?;
     }
+    validate_datastore_files(datastore, datastore_owner)?;
     let datastore_lease = open_datastore_lease(datastore, datastore_owner)?;
     let accepted = AcceptedChannelStore::new(datastore, datastore_owner);
     accepted.initialize()?;
@@ -212,6 +213,7 @@ pub(super) async fn load_installer_bundle(
         return Err(ChannelError::InstallerBundleUnavailable);
     }
     .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    handoff_datastore_files(datastore, datastore_owner)?;
     load_verified_repository(
         repository,
         accepted,
@@ -728,6 +730,63 @@ fn apply_owner(
         .map_err(|_| ChannelError::DatastoreUnavailable)
 }
 
+fn validate_datastore_files(
+    datastore: &Path,
+    owner: Option<DatastoreOwner>,
+) -> Result<(), ChannelError> {
+    for entry in fs::read_dir(datastore).map_err(|_| ChannelError::DatastoreUnavailable)? {
+        let entry = entry.map_err(|_| ChannelError::DatastoreUnavailable)?;
+        let metadata =
+            fs::symlink_metadata(entry.path()).map_err(|_| ChannelError::DatastoreUnavailable)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.nlink() != 1 {
+            return Err(ChannelError::DatastoreUnavailable);
+        }
+        if let Some(owner) = owner {
+            validate_owner(&metadata, owner, 0o600)?;
+        }
+    }
+    Ok(())
+}
+
+fn handoff_datastore_files(
+    datastore: &Path,
+    owner: Option<DatastoreOwner>,
+) -> Result<(), ChannelError> {
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+    for entry in fs::read_dir(datastore).map_err(|_| ChannelError::DatastoreUnavailable)? {
+        let path = entry
+            .map_err(|_| ChannelError::DatastoreUnavailable)?
+            .path();
+        let mut options = File::options();
+        options
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW);
+        let file = options
+            .open(&path)
+            .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(ChannelError::DatastoreUnavailable);
+        }
+        rustix::fs::fchown(
+            &file,
+            Some(rustix::fs::Uid::from_raw(owner.uid)),
+            Some(rustix::fs::Gid::from_raw(owner.gid)),
+        )
+        .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|_| ChannelError::DatastoreUnavailable)?;
+        file.sync_all()
+            .map_err(|_| ChannelError::DatastoreUnavailable)?;
+    }
+    sync_directory(datastore)
+}
+
 fn validate_owner(
     metadata: &fs::Metadata,
     owner: DatastoreOwner,
@@ -869,5 +928,32 @@ mod tests {
         drop(lease);
         fs::set_permissions(datastore.join(LOCK_FILE), fs::Permissions::from_mode(0o640)).unwrap();
         assert!(open_datastore_lease(&datastore, Some(owner)).is_err());
+    }
+
+    #[test]
+    fn datastore_handoff_is_private_and_rejects_links() {
+        let temporary = TempDir::new().unwrap();
+        let datastore = temporary.path().join("datastore");
+        fs::create_dir(&datastore).unwrap();
+        fs::set_permissions(&datastore, fs::Permissions::from_mode(0o700)).unwrap();
+        let metadata_path = datastore.join("root.json");
+        fs::write(&metadata_path, b"{}\n").unwrap();
+        fs::set_permissions(&metadata_path, fs::Permissions::from_mode(0o644)).unwrap();
+        let owner = DatastoreOwner {
+            uid: rustix::process::geteuid().as_raw(),
+            gid: rustix::process::getegid().as_raw(),
+        };
+
+        handoff_datastore_files(&datastore, Some(owner)).unwrap();
+        validate_owner(&fs::symlink_metadata(&metadata_path).unwrap(), owner, 0o600).unwrap();
+
+        let link = datastore.join("timestamp.json");
+        std::os::unix::fs::symlink(&metadata_path, &link).unwrap();
+        assert!(validate_datastore_files(&datastore, Some(owner)).is_err());
+        fs::remove_file(link).unwrap();
+
+        let link = datastore.join("snapshot.json");
+        fs::hard_link(&metadata_path, &link).unwrap();
+        assert!(validate_datastore_files(&datastore, Some(owner)).is_err());
     }
 }

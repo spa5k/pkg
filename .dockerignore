@@ -1,0 +1,6 @@
+.git
+.tracedecay
+AGENTS.md
+target
+**/target
+tests/linux-clean-host/evidence

@@ -728,9 +728,7 @@ pub fn authenticate_installer_bundle_blocking(
     request: &InstallerProvisionRequest<'_>,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     refuse_nested_runtime()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    let runtime = installer_runtime()?;
     runtime.block_on(authenticate_installer_bundle(trusted_root, request))
 }
 
@@ -742,9 +740,7 @@ pub fn reauthenticate_installer_bundle_blocking(
     broker_uid: u32,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     refuse_nested_runtime()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    let runtime = installer_runtime()?;
     runtime.block_on(reauthenticate_installer_bundle(
         trusted_root,
         request,
@@ -829,14 +825,20 @@ pub fn provision_managed_nix_from_bundle_blocking(
     daemon: &dyn ManagedDaemon,
 ) -> Result<ProvisionedBootstrap, ProvisionError> {
     refuse_nested_runtime()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    let runtime = installer_runtime()?;
     runtime.block_on(provision_managed_nix_from_bundle(
         trusted_root,
         request,
         daemon,
     ))
+}
+
+fn installer_runtime() -> Result<tokio::runtime::Runtime, ProvisionError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))
 }
 
 fn refuse_nested_runtime() -> Result<(), ProvisionError> {
@@ -1254,7 +1256,7 @@ fn read_target_bytes(
 }
 
 fn parse_raw_sha256(value: &str) -> Result<Digest, ProvisionError> {
-    format!("sha256:{value}")
+    format!("sha256-{value}")
         .parse()
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))
 }
@@ -2131,6 +2133,7 @@ fn ensure_safe_parent(
 
 #[cfg(test)]
 mod tests {
+    use std::future;
     use std::io::Cursor;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -2139,6 +2142,27 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn blocking_installer_runtime_enables_time() {
+        let runtime = installer_runtime().unwrap();
+        assert!(
+            runtime
+                .block_on(async {
+                    tokio::time::timeout(std::time::Duration::ZERO, future::pending::<()>()).await
+                })
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn raw_channel_sha256_uses_the_product_digest_prefix() {
+        let value = "b4e565fe4db5c352547b8146488cab81db06be89301a4c67b081c76f1e457760";
+        assert_eq!(
+            parse_raw_sha256(value).unwrap().to_string(),
+            format!("sha256-{value}")
+        );
+    }
     use crate::managed::daemon::{DaemonError, DaemonErrorCode};
     use crate::managed::ownership::{ManagedGroup, encode_ownership_asset_manifest};
 

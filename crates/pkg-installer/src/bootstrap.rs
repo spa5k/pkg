@@ -42,7 +42,7 @@ const LINUX_SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinuxBundleInstallReport {
     platform: LinuxInstallReport,
-    bootstrap: ProvisionedBootstrap,
+    bootstrap: Option<ProvisionedBootstrap>,
 }
 
 impl LinuxBundleInstallReport {
@@ -54,13 +54,13 @@ impl LinuxBundleInstallReport {
 
     /// Returns the authenticated runtime and host-index result.
     #[must_use]
-    pub const fn bootstrap(&self) -> &ProvisionedBootstrap {
-        &self.bootstrap
+    pub const fn bootstrap(&self) -> Option<&ProvisionedBootstrap> {
+        self.bootstrap.as_ref()
     }
 
     /// Consumes the report into its platform and bundle parts.
     #[must_use]
-    pub fn into_parts(self) -> (LinuxInstallReport, ProvisionedBootstrap) {
+    pub fn into_parts(self) -> (LinuxInstallReport, Option<ProvisionedBootstrap>) {
         (self.platform, self.bootstrap)
     }
 }
@@ -566,14 +566,16 @@ pub fn install_macos_from_bundle<'a>(
 enum BootstrapOutcome<'a> {
     Pending(Box<ProvisionedBootstrapTransaction<'a>>),
     Complete(ProvisionedBootstrap),
+    Existing,
     #[cfg(test)]
     Stub(std::rc::Rc<std::cell::Cell<bool>>),
 }
 
 impl BootstrapOutcome<'_> {
-    fn into_linux_bootstrap(self) -> Result<ProvisionedBootstrap, InstallError> {
+    fn into_linux_bootstrap(self) -> Result<Option<ProvisionedBootstrap>, InstallError> {
         match self {
-            Self::Complete(bootstrap) => Ok(bootstrap),
+            Self::Complete(bootstrap) => Ok(Some(bootstrap)),
+            Self::Existing => Ok(None),
             Self::Pending(_) => Err(InstallError::backend_failure()),
             #[cfg(test)]
             Self::Stub(_) => Err(InstallError::backend_failure()),
@@ -583,6 +585,7 @@ impl BootstrapOutcome<'_> {
     fn into_macos_bootstrap(self) -> Result<ProvisionedBootstrap, MacOsError> {
         match self {
             Self::Complete(bootstrap) => Ok(bootstrap),
+            Self::Existing => Err(MacOsError::backend_failure()),
             Self::Pending(_) => Err(MacOsError::backend_failure()),
             #[cfg(test)]
             Self::Stub(_) => Err(MacOsError::backend_failure()),
@@ -594,6 +597,7 @@ impl BootstrapOutcome<'_> {
             Self::Pending(transaction) => transaction
                 .rollback()
                 .map_err(|_| InstallError::backend_failure()),
+            Self::Existing => Ok(()),
             Self::Complete(_) => Err(InstallError::backend_failure()),
             #[cfg(test)]
             Self::Stub(rolled_back) => {
@@ -608,6 +612,7 @@ impl BootstrapOutcome<'_> {
             Self::Pending(transaction) => transaction
                 .rollback()
                 .map_err(|_| MacOsError::backend_failure()),
+            Self::Existing => Ok(()),
             Self::Complete(_) => Err(MacOsError::backend_failure()),
             #[cfg(test)]
             Self::Stub(rolled_back) => {
@@ -619,6 +624,10 @@ impl BootstrapOutcome<'_> {
 }
 
 trait BundleProvisioner {
+    fn reuse_existing(&mut self) -> Result<bool, BundleProvisionError> {
+        Ok(false)
+    }
+
     fn reauthenticate_linux(
         &mut self,
         _request: &InstallerProvisionRequest<'_>,
@@ -672,6 +681,11 @@ impl AuthenticatedProvisioner {
 }
 
 impl BundleProvisioner for AuthenticatedProvisioner {
+    fn reuse_existing(&mut self) -> Result<bool, BundleProvisionError> {
+        self.trusted_root = None;
+        Ok(self.bundle.take().is_some())
+    }
+
     fn reauthenticate_linux(
         &mut self,
         request: &InstallerProvisionRequest<'_>,
@@ -856,6 +870,17 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
     fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
         let mutation = LinuxInstallMutation::ManagedRuntime;
         let presence = self.inner.classify_managed_runtime()?;
+        if presence == LinuxAssetPresence::ExactPresent
+            && self
+                .provisioner
+                .reuse_existing()
+                .map_err(linux_provision_error)?
+        {
+            self.outcome = Some(BootstrapOutcome::Existing);
+            begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
+            complete_linux_mutation(&mut self.journal, mutation, presence, false)?;
+            return Ok(false);
+        }
         self.provisioner
             .reauthenticate_linux(self.request, self.inner)
             .map_err(linux_provision_error)?;
@@ -880,6 +905,11 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
             .map_or(Ok(()), BootstrapOutcome::rollback_linux)
     }
     fn activate_services(&mut self) -> Result<bool, InstallError> {
+        if let Some(BootstrapOutcome::Pending(transaction)) = self.outcome.as_mut() {
+            transaction
+                .commit_channel()
+                .map_err(|_| InstallError::backend_failure())?;
+        }
         let mutation = LinuxInstallMutation::Services;
         let presence = self.inner.classify_services()?;
         begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
@@ -900,7 +930,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
             .find(|asset| asset.id() == "uninstall-manifest")
             .ok_or_else(InstallError::backend_failure)?;
         let mutation = asset_mutation(asset);
-        let presence = self.inner.classify_asset(asset)?;
+        let presence = self.inner.classify_ownership_receipt(asset)?;
         // An exact receipt is verified and reused by the production backend.
         // It is not rewritten on reinstall.
         begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
@@ -942,6 +972,13 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 Ok(changed)
             }
             BootstrapOutcome::Complete(_) => Err(InstallError::backend_failure()),
+            BootstrapOutcome::Existing => {
+                let result = self.inner.publish_ownership_receipt();
+                self.outcome = Some(BootstrapOutcome::Existing);
+                let changed = result?;
+                complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
+                Ok(changed)
+            }
         }
     }
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
@@ -1099,6 +1136,11 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
         self.inner.verify_installed_code()
     }
     fn activate_services(&mut self) -> Result<bool, MacOsError> {
+        if let Some(BootstrapOutcome::Pending(transaction)) = self.outcome.as_mut() {
+            transaction
+                .commit_channel()
+                .map_err(|_| MacOsError::backend_failure())?;
+        }
         self.inner.activate_services()
     }
     fn rollback_services(&mut self) -> Result<(), MacOsError> {
@@ -1141,6 +1183,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, P> {
                 result
             }
             BootstrapOutcome::Complete(_) => Err(MacOsError::backend_failure()),
+            BootstrapOutcome::Existing => Err(MacOsError::backend_failure()),
         }
     }
     fn rollback_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
@@ -1377,9 +1420,14 @@ mod tests {
     struct ReauthProvisioner {
         calls: usize,
         reauthenticated: bool,
+        reuse_existing: bool,
     }
 
     impl BundleProvisioner for ReauthProvisioner {
+        fn reuse_existing(&mut self) -> Result<bool, BundleProvisionError> {
+            Ok(self.reuse_existing)
+        }
+
         fn reauthenticate_linux(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
@@ -1869,6 +1917,7 @@ mod tests {
         let mut provisioner = ReauthProvisioner {
             calls: 0,
             reauthenticated: false,
+            reuse_existing: false,
         };
         let (report, outcome) = install_linux_with_provisioner(
             request.system,
@@ -1883,6 +1932,40 @@ mod tests {
         assert_eq!(provisioner.calls, 1);
         assert!(provisioner.reauthenticated);
         assert_eq!(backend.raw_provision_calls, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn exact_linux_runtime_does_not_reacquire_the_broker_channel_lease()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let mut backend = LinuxBackend::default();
+        let mut provisioner = ReauthProvisioner {
+            calls: 0,
+            reauthenticated: false,
+            reuse_existing: true,
+        };
+
+        let (report, outcome) = install_linux_with_provisioner(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+        )?;
+
+        assert!(matches!(&outcome, BootstrapOutcome::Existing));
+        drop(outcome);
+        assert_eq!(report.created_artifacts(), 0);
+        assert_eq!(provisioner.calls, 0);
+        assert!(!provisioner.reauthenticated);
         Ok(())
     }
 

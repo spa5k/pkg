@@ -148,6 +148,13 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         self.assets.classify_asset(asset)
     }
 
+    fn classify_ownership_receipt(
+        &mut self,
+        _asset: LinuxInstallAsset,
+    ) -> Result<LinuxAssetPresence, InstallError> {
+        self.assets.classify_uninstall_manifest()
+    }
+
     fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
         self.assets.remove_verified_asset(asset)?;
         if Self::is_systemd_unit(asset) {

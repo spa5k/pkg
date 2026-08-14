@@ -333,12 +333,7 @@ impl ManagedDaemon for ProductionManagedDaemon {
         #[cfg(target_os = "linux")]
         {
             let installer_pid = std::process::id();
-            // SAFETY: `arm_parent_death_signal` only invokes async-signal-safe
-            // rustix syscall wrappers and allocates nothing, so it satisfies the
-            // `pre_exec` contract for code run after `fork` and before `exec`.
-            unsafe {
-                command.pre_exec(move || arm_parent_death_signal(installer_pid));
-            }
+            configure_parent_death_signal(&mut command, installer_pid);
         }
         let child = command
             .spawn()
@@ -431,6 +426,20 @@ impl ProductionManagedDaemon {
 #[cfg(any(target_os = "linux", test))]
 fn parent_death_race_lost(installer_pid: u32, observed_parent: Option<u32>) -> bool {
     observed_parent != Some(installer_pid)
+}
+
+#[cfg(target_os = "linux")]
+#[allow(
+    unsafe_code,
+    reason = "CommandExt::pre_exec requires unsafe for the audited parent-death hook"
+)]
+fn configure_parent_death_signal(command: &mut Command, installer_pid: u32) {
+    // SAFETY: `arm_parent_death_signal` only invokes async-signal-safe rustix
+    // syscall wrappers and allocates nothing. It is valid after fork and before
+    // exec. The parent check closes the fork-to-prctl race.
+    unsafe {
+        command.pre_exec(move || arm_parent_death_signal(installer_pid));
+    }
 }
 
 /// Arms the Linux parent-death signal on the daemon child before `exec`.

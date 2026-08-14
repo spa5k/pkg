@@ -370,7 +370,7 @@ impl LinuxInstallJournal {
 fn install_sequence() -> Vec<LinuxInstallMutation> {
     let mut sequence = linux_install_assets()
         .iter()
-        .filter(|asset| asset.kind() != LinuxAssetKind::File)
+        .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
         .map(|asset| LinuxInstallMutation::Asset {
             id: asset.id().to_owned(),
         })
@@ -383,8 +383,9 @@ fn install_sequence() -> Vec<LinuxInstallMutation> {
         linux_install_assets()
             .iter()
             .filter(|asset| {
-                asset.kind() == LinuxAssetKind::File
-                    && !matches!(asset.id(), "nix-config" | "uninstall-manifest")
+                asset.id() == "nix-gcroots"
+                    || (asset.kind() == LinuxAssetKind::File
+                        && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
             })
             .map(|asset| LinuxInstallMutation::Asset {
                 id: asset.id().to_owned(),
@@ -576,5 +577,19 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(actual, expected);
         assert_eq!(sequence.len(), linux_install_assets().len() + 2);
+        let runtime = sequence
+            .iter()
+            .position(|mutation| mutation == &LinuxInstallMutation::ManagedRuntime);
+        let gcroots = sequence.iter().position(|mutation| {
+            mutation
+                == &LinuxInstallMutation::Asset {
+                    id: "nix-gcroots".to_owned(),
+                }
+        });
+        assert!(
+            runtime
+                .zip(gcroots)
+                .is_some_and(|(runtime, gcroots)| runtime < gcroots)
+        );
     }
 }

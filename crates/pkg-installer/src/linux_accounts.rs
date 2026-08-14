@@ -430,6 +430,11 @@ impl LinuxAccountManager {
 
         let groups = self.system.groups()?;
         let users = self.system.users()?;
+        if let AccountSpec::User { name, .. } = spec
+            && users.iter().all(|user| user.name != name)
+        {
+            return Ok(());
+        }
         if verify_existing(&spec, &groups, &users)? {
             return Err(LinuxAccountError::new(
                 LinuxAccountErrorCode::VerificationFailure,
@@ -1261,6 +1266,17 @@ mod tests {
             for group in &mut state.groups {
                 group.members.remove(name);
             }
+            if state
+                .groups
+                .iter()
+                .find(|group| group.name == name)
+                .is_some_and(|group| {
+                    group.members.is_empty()
+                        && state.users.iter().all(|user| user.primary_gid != group.gid)
+                })
+            {
+                state.groups.retain(|group| group.name != name);
+            }
             state.deleted.push(format!("user:{name}"));
             drop(state);
             Ok(())
@@ -1679,10 +1695,7 @@ mod tests {
         manager.remove_verified_asset(group)?;
 
         let state = state.lock().map_err(|_| command_error())?;
-        assert_eq!(
-            state.deleted,
-            ["user:pkg-nix-broker", "group:pkg-nix-broker"]
-        );
+        assert_eq!(state.deleted, ["user:pkg-nix-broker"]);
         assert!(state.users.iter().all(|user| user.name != BROKER_NAME));
         assert!(state.groups.iter().all(|group| group.name != BROKER_NAME));
         drop(state);

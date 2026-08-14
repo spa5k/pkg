@@ -5,6 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
 use rustix::fs::{
-    AtFlags, Mode, OFlags, RenameFlags, fchmod, fsync, mkdirat, open, openat, renameat_with,
+    AtFlags, Dir, Mode, OFlags, RenameFlags, fchmod, fsync, mkdirat, open, openat, renameat_with,
     unlinkat,
 };
 use rustix::io::Errno;
@@ -28,6 +29,7 @@ use crate::{
 const MAX_RELEASE_BINARY_BYTES: usize = 128 * 1024 * 1024;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_UNINSTALL_MANIFEST_BYTES: u64 = 64 * 1024;
+const MAX_PRIVATE_STATE_FILES: usize = 1_024;
 const TEMP_ATTEMPTS: u8 = 16;
 const PROFILE_SNIPPET: &[u8] = b"# managed by pkg \xE2\x80\x94 do not edit\n\
 __pkg_state=\"${XDG_DATA_HOME:-$HOME/.local/share}/pkg\"\n\
@@ -511,6 +513,73 @@ impl LinuxFilesystemManager {
         Self::remove_if_owned(&parent, &name, target_identity)
     }
 
+    /// Removes the private, flat broker channel datastore and its verified files.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the directory or a child is unsafe or changed.
+    pub fn remove_broker_channel_state(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.id() != "broker-channel-state" {
+            return Err(unsupported());
+        }
+        let Some((parent, name)) = self.open_parent_optional(asset)? else {
+            return Ok(());
+        };
+        let target = match open_child(&parent, &name, LinuxAssetKind::Directory) {
+            Ok(target) => target,
+            Err(error) if error == Errno::NOENT => return Ok(()),
+            Err(error) => return Err(open_error(error)),
+        };
+        self.verify_metadata(asset, &target)?;
+        let target_identity = identity(&target, LinuxAssetKind::Directory)?;
+        let owner = self
+            .principals
+            .owner(asset.owner().ok_or_else(unsupported)?);
+        let group = self
+            .principals
+            .group(asset.group().ok_or_else(unsupported)?);
+        let mut names = Vec::new();
+        let mut entries = Dir::read_from(&target).map_err(|_| io_failure())?;
+        for entry in &mut entries {
+            let entry = entry.map_err(|_| io_failure())?;
+            let bytes = entry.file_name().to_bytes();
+            if bytes == b"." || bytes == b".." {
+                continue;
+            }
+            if bytes.is_empty() || bytes.contains(&b'/') || names.len() >= MAX_PRIVATE_STATE_FILES {
+                return Err(LinuxFilesystemError::new(
+                    LinuxFilesystemErrorCode::UnsafeFilesystemState,
+                ));
+            }
+            names.push(OsStr::from_bytes(bytes).to_os_string());
+        }
+        for child_name in names {
+            let child = open_child(&target, &child_name, LinuxAssetKind::File).map_err(|_| {
+                LinuxFilesystemError::new(LinuxFilesystemErrorCode::UnsafeFilesystemState)
+            })?;
+            let metadata = child.metadata().map_err(|_| io_failure())?;
+            if !metadata.is_file()
+                || metadata.uid() != owner
+                || metadata.gid() != group
+                || metadata.nlink() != 1
+                || metadata.mode() & 0o077 != 0
+                || metadata.dev() != target_identity.device
+            {
+                return Err(LinuxFilesystemError::new(
+                    LinuxFilesystemErrorCode::UnsafeFilesystemState,
+                ));
+            }
+            let child_identity = identity(&child, LinuxAssetKind::File)?;
+            drop(child);
+            Self::remove_if_owned(&target, &child_name, child_identity)?;
+        }
+        fsync(&target).map_err(|_| io_failure())?;
+        Self::remove_if_owned(&parent, &name, target_identity)
+    }
+
     /// Verifies that one fixed filesystem asset is absent without following links.
     ///
     /// # Errors
@@ -534,6 +603,9 @@ impl LinuxFilesystemManager {
     fn payload_for(&self, asset: LinuxInstallAsset) -> Result<Arc<[u8]>, LinuxFilesystemError> {
         if let Some(payload) = self.payloads.for_asset(asset) {
             return Ok(payload);
+        }
+        if let Some(payload) = static_payload(asset) {
+            return Ok(Arc::from(payload));
         }
         match asset.id() {
             "nix-config" => self
@@ -1060,6 +1132,9 @@ mod tests {
             Fixture::asset("daemon-service-unit"),
             LinuxSystemdAssets::DAEMON_SERVICE,
         )?);
+        fixture
+            .manager
+            .verify_asset(Fixture::asset("daemon-service-unit"))?;
         let records = linux_install_assets()
             .iter()
             .map(|asset| crate::RecordedAsset::new(asset.id(), crate::RecordedAssetState::Created))
@@ -1182,6 +1257,47 @@ mod tests {
             LinuxFilesystemErrorCode::RollbackConflict
         );
         assert!(fixture.temporary.path().join("opt/pkg/bin").is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn broker_channel_cleanup_removes_private_files_and_refuses_links() -> Result<(), Box<dyn Error>>
+    {
+        let mut fixture = Fixture::new()?;
+        for id in ["service-root", "broker-home", "broker-channel-state"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let channel = fixture
+            .temporary
+            .path()
+            .join("var/lib/pkg/broker-home/channel");
+        let metadata = channel.join("root.json");
+        fs::write(&metadata, b"authenticated")?;
+        fs::set_permissions(&metadata, fs::Permissions::from_mode(0o600))?;
+
+        fixture
+            .manager
+            .remove_broker_channel_state(Fixture::asset("broker-channel-state"))?;
+        assert!(!channel.exists());
+
+        let mut fixture = Fixture::new()?;
+        for id in ["service-root", "broker-home", "broker-channel-state"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let channel = fixture
+            .temporary
+            .path()
+            .join("var/lib/pkg/broker-home/channel");
+        symlink("/tmp", channel.join("root.json"))?;
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .remove_broker_channel_state(Fixture::asset("broker-channel-state")),
+            )?,
+            LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
+        assert!(channel.join("root.json").is_symlink());
         Ok(())
     }
 
