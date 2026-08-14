@@ -1,40 +1,79 @@
 #!/bin/sh
 set -eu
 
-case "$(uname -m)" in
-    arm64|aarch64)
-        docker_platform=linux/arm64
-        pkg_system=aarch64-linux
+case "${1-}" in
+    '') artifact_output= ;;
+    --keep-artifacts)
+        [ "$#" -eq 2 ] || { echo "usage: $0 [--keep-artifacts DIR]" >&2; exit 2; }
+        artifact_output=$2
         ;;
-    x86_64|amd64)
-        docker_platform=linux/amd64
-        pkg_system=x86_64-linux
-        ;;
-    *)
-        echo "This Linux proof does not support this host architecture." >&2
-        exit 1
-        ;;
+    *) echo "usage: $0 [--keep-artifacts DIR]" >&2; exit 2 ;;
 esac
+
+repo=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
+stage_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-linux-alpha.XXXXXXXX")
+raw_stage="$stage_root/raw"
+artifact_context="$stage_root/artifact"
+docker_platform=linux/amd64
+pkg_system=x86_64-linux
 
 image=pkg-linux-clean-host:local
 container="pkg-linux-clean-host-$$"
 cleanup() {
     docker rm --force "$container" >/dev/null 2>&1 || true
+    rm -rf "$stage_root"
 }
 trap cleanup EXIT INT TERM
 
-echo "+ docker build --platform $docker_platform --build-arg PKG_SYSTEM=$pkg_system"
+echo "+ proof host"
+uname -a
+docker version --format 'Docker server {{.Server.Version}} {{.Server.Os}}/{{.Server.Arch}}'
+
+echo "+ stage x86_64 Linux release inputs"
 docker build \
     --platform "$docker_platform" \
     --build-arg "PKG_SYSTEM=$pkg_system" \
-    --file tests/linux-clean-host/Dockerfile \
+    --file "$repo/tests/linux-clean-host/Dockerfile.stage" \
+    --output "type=local,dest=$raw_stage" \
+    "$repo"
+
+python3 "$repo/tools/release/stage_linux_alpha.py" \
+    "$raw_stage/binaries/pkg-install" \
+    "$repo/docs/install.sh" \
+    "$artifact_context" \
+    https://127.0.0.1:8443
+cp -a "$raw_stage/publication-1" "$raw_stage/publication-2" "$artifact_context/"
+cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
+    "$repo/tests/linux-clean-host/pkg-proof-release.service" \
+    "$artifact_context/"
+cp -a "$artifact_context/v0.1.0-alpha.1" "$artifact_context/publication-1/"
+cp -a "$artifact_context/v0.1.0-alpha.1" "$artifact_context/publication-2/"
+
+if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$artifact_context" && sha256sum --check --strict SHA256SUMS)
+else
+    (cd "$artifact_context" && shasum -a 256 --check SHA256SUMS)
+fi
+
+if [ -n "$artifact_output" ]; then
+    mkdir -p "$artifact_output"
+    tar -C "$artifact_context" -czf \
+        "$artifact_output/pkg-v0.1.0-alpha.1-x86_64-linux-proof.tar.gz" \
+        SHA256SUMS install.sh v0.1.0-alpha.1
+fi
+
+echo "+ build clean host from staged artifacts only"
+docker build \
+    --platform "$docker_platform" \
+    --file "$repo/tests/linux-clean-host/Dockerfile" \
     --tag "$image" \
-    .
+    "$artifact_context"
 
 echo "+ docker run --privileged --cgroupns=private"
 docker run \
     --detach \
     --privileged \
+    --platform "$docker_platform" \
     --cgroupns=private \
     --name "$container" \
     --tmpfs /run \
@@ -63,18 +102,21 @@ docker exec "$container" sh -eu -c '
     test ! -e /opt/pkg
 '
 
-echo "+ pkg-install"
-docker exec "$container" /usr/local/sbin/pkg-install
+echo "+ bootstrap verify-only"
+docker exec "$container" /usr/local/sbin/pkg-bootstrap --verify-only
 
-echo "+ pkg-install retry"
-docker exec "$container" /usr/local/sbin/pkg-install
+echo "+ bootstrap install"
+docker exec "$container" /usr/local/sbin/pkg-bootstrap
+
+echo "+ bootstrap retry"
+docker exec "$container" /usr/local/sbin/pkg-bootstrap
 
 echo "+ verify services and ordinary-user isolation"
 docker exec "$container" sh -eu -c '
     systemctl is-active --quiet pkg-nix-daemon.socket
     systemctl is-active --quiet pkg-root-helper.socket
     systemctl is-active --quiet pkg-nix-broker.socket
-    test "$(/usr/local/bin/pkg --version | cut -d" " -f1)" = pkg
+    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.1"
     ! su -s /bin/sh proof-user -c "command -v nix"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-root-helper"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-nix-broker"

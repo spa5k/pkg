@@ -1182,8 +1182,8 @@ flowchart TD
   Tokio runtime drives refresh I/O from broker connection workers. Framing,
   caller authorization, atomic publication, production wiring, focused package
   tests, workspace diagnostics, strict Clippy, secret scanning, and independent
-  P1 review pass. `pkg update --check`, `--force`, and `--dry-run` still refuse
-  explicitly as unsupported.
+  P1 review pass. `pkg update --check`, `--force`, and `--dry-run` now use the
+  same fixed broker refresh boundary and are complete.
   Production `pkg search` and default `pkg info` now query only the broker-owned
   authenticated native index. Closed methods 28 and 29 require one caller-bound
   live Resolve operation and accept only bounded display query or selector text,
@@ -1714,8 +1714,12 @@ flowchart TD
   invokes the authenticated Nix 2.34.8 `nix-store` facade only with `--store local`. The normal test
   suite and a privileged clean Linux arm64 container prove this path against the official runtime.
   This resolves plan 07 Q7.7 without claiming the still-missing macOS privileged production backend.
-  This does **not** yet claim the full PR: production release artifact publication, the authenticated
-  Linux/macOS Real-Nix lanes, Fake↔Real parity, and clean-host self-hosted e2e remain.
+  The x86_64 Linux alpha lane now stages a versioned `pkg-install` artifact and checksum-pinned
+  bootstrap before it builds the clean host. The clean host receives no source tree, compiler, or
+  build output other than that staged release bundle. Linux arm64 remains disabled until it has the
+  same proof. Production key ceremony, fixed hosting activation, license selection, and final
+  publication remain external gates. This does **not** yet claim the full PR: production publication,
+  the authenticated macOS Real-Nix lane, and Fake↔Real parity remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real
   parity, and self-host the product on Real Nix end-to-end (`09` §7).
 - **Owns:** `.github/workflows/nightly.yml` (Full), golden capture harness, parity diffing.

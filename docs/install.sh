@@ -6,8 +6,6 @@ set -eu
 PKG_RELEASE='@PKG_RELEASE@'
 PKG_RELEASE_BASE_URL='@PKG_RELEASE_BASE_URL@'
 PKG_SHA256_X86_64_LINUX='@PKG_SHA256_X86_64_LINUX@'
-PKG_SHA256_AARCH64_LINUX='@PKG_SHA256_AARCH64_LINUX@'
-PKG_SHA256_AARCH64_DARWIN='@PKG_SHA256_AARCH64_DARWIN@'
 
 pkg_install_mode='install'
 if [ "${1-}" = '--verify-only' ] && [ "$#" -eq 1 ]; then
@@ -17,7 +15,7 @@ elif [ "$#" -ne 0 ]; then
     exit 2
 fi
 
-case "$PKG_RELEASE $PKG_RELEASE_BASE_URL $PKG_SHA256_X86_64_LINUX $PKG_SHA256_AARCH64_LINUX $PKG_SHA256_AARCH64_DARWIN" in
+case "$PKG_RELEASE $PKG_RELEASE_BASE_URL $PKG_SHA256_X86_64_LINUX" in
     *'@PKG_'*)
         printf '%s\n' 'pkg: this installer template belongs to an unpublished release; no download was attempted' >&2
         exit 1
@@ -35,17 +33,6 @@ case "$pkg_kernel:$pkg_machine" in
     Linux:x86_64)
         pkg_artifact='pkg-installer-x86_64-linux'
         pkg_sha256=$PKG_SHA256_X86_64_LINUX
-        pkg_platform='linux'
-        ;;
-    Linux:aarch64|Linux:arm64)
-        pkg_artifact='pkg-installer-aarch64-linux'
-        pkg_sha256=$PKG_SHA256_AARCH64_LINUX
-        pkg_platform='linux'
-        ;;
-    Darwin:arm64)
-        pkg_artifact='pkg-installer-aarch64-darwin.pkg'
-        pkg_sha256=$PKG_SHA256_AARCH64_DARWIN
-        pkg_platform='macos'
         ;;
     *)
         printf 'pkg: unsupported platform %s %s\n' "$pkg_kernel" "$pkg_machine" >&2
@@ -87,11 +74,7 @@ fi
 printf 'pkg: verified %s (%s)\n' "$pkg_artifact" "$pkg_sha256"
 [ "$pkg_install_mode" = 'verify-only' ] && exit 0
 
-if [ "$pkg_platform" = 'linux' ]; then
-    chmod 0700 "$pkg_download"
-    sudo "$pkg_download"
-else
-    sudo /usr/sbin/installer -pkg "$pkg_download" -target /
-fi
+chmod 0700 "$pkg_download"
+sudo "$pkg_download"
 
 printf '%s\n' 'pkg: installation complete; run pkg doctor'

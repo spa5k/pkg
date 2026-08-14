@@ -25,6 +25,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("aws-actions", WORKFLOW)
         self.assertIn("in-memory Ed25519 test keys", (ROOT / "tools/release/README.md").read_text())
 
+    def test_linux_alpha_artifact_is_retained_but_not_published(self) -> None:
+        self.assertIn("tests/linux-clean-host/run.sh --keep-artifacts", WORKFLOW)
+        self.assertIn(
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            WORKFLOW,
+        )
+        self.assertIn("pkg-v0.1.0-alpha.1-x86_64-linux-proof", WORKFLOW)
+        self.assertIn("retention-days: 7", WORKFLOW)
+
 
 if __name__ == "__main__":
     unittest.main()

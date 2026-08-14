@@ -1,7 +1,8 @@
-# PR-33 release assurance. This workflow executes only test-key dry runs. Real
-# online signing keys remain in the selected KMS/HSM provider and are supplied
-# through pkg-release's KeySource boundary by the deployment, never as GitHub
-# secrets or repository files.
+# PR-33 release assurance. This workflow runs test-key signing and a retained
+# Linux proof artifact. It never publishes a release. Real online signing keys
+# remain in the selected KMS/HSM provider and are supplied through pkg-release's
+# KeySource boundary by the deployment, never as GitHub secrets or repository
+# files.
 
 name: release-assurance
 
@@ -9,6 +10,8 @@ on:
   pull_request:
     paths:
       - "tools/release/**"
+      - "docs/install.sh"
+      - "tests/linux-clean-host/**"
       - ".github/workflows/release.yml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -59,3 +62,24 @@ jobs:
             echo "::error::private key material found in release tooling" >&2
             exit 1
           fi
+
+  linux-alpha-proof:
+    name: staged x86_64 Linux alpha artifact and clean-host proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Prove the staged artifact on a host without build inputs
+        run: tests/linux-clean-host/run.sh --keep-artifacts proof-artifacts
+
+      - name: Retain the proof artifact without publishing it
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pkg-v0.1.0-alpha.1-x86_64-linux-proof
+          path: proof-artifacts/pkg-v0.1.0-alpha.1-x86_64-linux-proof.tar.gz
+          if-no-files-found: error
+          retention-days: 7
