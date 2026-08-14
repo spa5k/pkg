@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - "tools/release/**"
+      - "crates/**"
       - "docs/install.sh"
       - "tests/linux-clean-host/**"
       - ".github/workflows/release.yml"
