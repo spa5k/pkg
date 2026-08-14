@@ -18,6 +18,8 @@ mod linux_platform_assets;
 mod linux_systemd;
 mod linux_uninstall;
 mod linux_user_cleanup;
+mod macos_install_journal;
+mod macos_install_journal_file;
 pub mod platform;
 mod production_repair;
 mod repair;
@@ -78,6 +80,11 @@ pub use linux_install_journal_file::{
 pub use linux_platform_assets::{LinuxAssetPresence, LinuxPlatformAssetManager};
 pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode, LinuxSystemdManager};
 pub use linux_uninstall::ProductionLinuxUninstallBackend;
+pub use macos_install_journal::{
+    MacOsInstallJournal, MacOsInstallJournalError, MacOsInstallJournalErrorCode,
+    MacOsInstallMutation, MacOsInstallMutationState, MacOsInstallRecoveryAction,
+};
+pub use macos_install_journal_file::{MacOsInstallJournalFileError, MacOsInstallJournalStorage};
 pub use platform::linux::{
     LinuxPeerCredentials, LinuxPlatformError, LinuxPlatformErrorCode, LinuxRootSetStore,
     authenticate_broker_peer, peer_credentials,
