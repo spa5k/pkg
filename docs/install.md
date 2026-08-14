@@ -24,6 +24,9 @@ caller-provided URL, checksum, target, install path, or Nix setting.
 Linux arm64 remains unavailable until it has the same staged-artifact and clean-host proof. The
 macOS release path remains separate from this Linux alpha.
 
+This alpha has no managed installer-replacement flow. To move to a later alpha, run the safe
+uninstall below. Then install the exact new version. Do not install a new alpha over an older one.
+
 If an existing Nix installation is detected, installation refuses. Remove it only with that
 installation's own documented uninstaller, then rerun the installer. `pkg` never removes or adopts
 an installation it cannot authenticate as its own.
@@ -31,4 +34,6 @@ an installation it cannot authenticate as its own.
 ## Uninstall
 
 Use `pkg uninstall --dry-run` to preview the exact product-owned assets, then `pkg uninstall` to
-remove them. The uninstaller refuses unrecorded or unmanaged Nix state.
+remove them. The uninstaller removes authenticated per-user package state under
+`~/.local/share/pkg`. It refuses changed, unrecorded, or unmanaged state and preserves that state
+for manual review.
