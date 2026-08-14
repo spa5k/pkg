@@ -72,18 +72,7 @@ docker build \
     --tag "$image" \
     "$artifact_context"
 
-start_container() {
-    echo "+ docker run --privileged --cgroupns=private"
-    docker run \
-        --detach \
-        --privileged \
-        --platform "$docker_platform" \
-        --cgroupns=private \
-        --name "$container" \
-        --tmpfs /run \
-        --tmpfs /run/lock \
-        "$image" >/dev/null
-
+wait_container_ready() {
     ready=0
     attempt=0
     while [ "$attempt" -lt 60 ]; do
@@ -98,6 +87,20 @@ start_container() {
         docker logs "$container"
         exit 1
     fi
+}
+
+start_container() {
+    echo "+ docker run --privileged --cgroupns=private"
+    docker run \
+        --detach \
+        --privileged \
+        --platform "$docker_platform" \
+        --cgroupns=private \
+        --name "$container" \
+        --tmpfs /run \
+        --tmpfs /run/lock \
+        "$image" >/dev/null
+    wait_container_ready
 }
 
 shipping_installer=/srv/pkg-release/v0.1.0-alpha.1/pkg-installer-x86_64-linux
@@ -124,7 +127,7 @@ stop_container
 echo "+ interrupted install recovery"
 start_container
 docker exec --detach "$container" sh -c \
-    "echo \$\$ > /tmp/pkg-install.pid; exec $shipping_installer > /tmp/pkg-install-interrupted.log 2>&1"
+    "exec $shipping_installer > /tmp/pkg-install-interrupted.log 2>&1"
 journal_ready=0
 attempt=0
 while [ "$attempt" -lt 600 ]; do
@@ -141,19 +144,9 @@ if [ "$journal_ready" -ne 1 ]; then
     echo "The install journal did not become durable before the installer exited." >&2
     exit 1
 fi
-docker exec "$container" sh -eu -c '
-    pid=$(cat /tmp/pkg-install.pid)
-    kill -KILL "$pid"
-    attempt=0
-    while kill -0 "$pid" 2>/dev/null; do
-        if [ "$attempt" -ge 600 ]; then
-            echo "The interrupted installer did not stop." >&2
-            exit 1
-        fi
-        attempt=$((attempt + 1))
-        sleep 0.05
-    done
-'
+docker kill "$container" >/dev/null
+docker start "$container" >/dev/null
+wait_container_ready
 docker exec "$container" "$shipping_installer"
 docker exec "$container" sh -eu -c '
     test ! -e /var/lib/pkg-install/transaction-v1.json
