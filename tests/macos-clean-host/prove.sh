@@ -130,6 +130,18 @@ for directory in /Library/LaunchDaemons /Library/LaunchAgents; do
 done
 /usr/bin/dscl . -list /Users | /usr/bin/grep -E '^_?nixbld[0-9]+$' || true
 /usr/bin/dscl . -list /Groups | /usr/bin/grep -E '^_?nixbld$' || true
+echo "reserved account-ID occupants"
+/usr/bin/dscl . -list /Users UniqueID \
+    | /usr/bin/awk '$2 >= 300 && $2 <= 333'
+/usr/bin/dscl . -list /Groups PrimaryGroupID \
+    | /usr/bin/awk '$2 >= 300 && $2 <= 333'
+echo "duplicate directory IDs"
+/usr/bin/dscl . -list /Users UniqueID \
+    | /usr/bin/sort -k2,2n \
+    | /usr/bin/awk 'seen[$2]++ { print previous[$2]; print } { previous[$2] = $0 }'
+/usr/bin/dscl . -list /Groups PrimaryGroupID \
+    | /usr/bin/sort -k2,2n \
+    | /usr/bin/awk 'seen[$2]++ { print previous[$2]; print } { previous[$2] = $0 }'
 for home in /private/var/root /Users/*; do
     for name in .nix-profile .nix-defexpr .nix-channels; do
         [ -e "$home/$name" ] && echo "$home/$name"
