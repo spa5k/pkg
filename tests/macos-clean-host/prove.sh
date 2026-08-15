@@ -7,12 +7,32 @@ fail() {
 }
 
 [ "$(/usr/bin/uname -s)" = Darwin ] || fail "the host is not macOS"
-[ "${GITHUB_ACTIONS:-}" = true ] || fail "GitHub Actions did not identify this runner"
-[ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] || fail "the runner is not GitHub-hosted"
-[ "${PKG_DISPOSABLE_MACOS_PROOF:-}" = confirmed ] || fail "the disposable-host gate is absent"
+local_tart=false
+case "${PKG_DISPOSABLE_MACOS_PROOF:-}" in
+    confirmed)
+        [ "${GITHUB_ACTIONS:-}" = true ] || fail "GitHub Actions did not identify this runner"
+        [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] || fail "the runner is not GitHub-hosted"
+        ;;
+    local-tart)
+        local_tart=true
+        [ "$(/usr/bin/uname -m)" = arm64 ] || fail "the local virtual machine is not arm64"
+        [ "$(/usr/sbin/sysctl -n kern.hv_vmm_present 2>/dev/null)" = 1 ] \
+            || fail "the local host is not virtualized"
+        case "$(/usr/sbin/sysctl -n hw.model 2>/dev/null)" in
+            VirtualMac*) ;;
+            *) fail "the local host is not a macOS virtual machine" ;;
+        esac
+        ;;
+    *) fail "the disposable-host gate is absent" ;;
+esac
 [ -f /var/tmp/pkg-disposable-macos-proof ] || fail "the root-owned disposable marker is absent"
 [ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' /var/tmp/pkg-disposable-macos-proof)" = root:wheel:600 ] \
     || fail "the disposable marker is unsafe"
+if [ "$local_tart" = true ]; then
+    marker_age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f %m /var/tmp/pkg-disposable-macos-proof) ))
+    [ "$marker_age" -ge 0 ] && [ "$marker_age" -le 300 ] \
+        || fail "the local disposable marker is stale"
+fi
 /usr/bin/sudo -n /usr/bin/true || fail "passwordless administrative authority is unavailable"
 
 bundle=$(CDPATH= cd -- "$(/usr/bin/dirname "$0")" && /bin/pwd -P)

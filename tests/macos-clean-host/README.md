@@ -1,6 +1,6 @@
 # macOS alpha clean-host proof
 
-This proof runs only through the manual `macOS alpha clean-host proof` workflow.
+This proof runs through the manual `macOS alpha clean-host proof` workflow or an explicitly gated disposable local Tart VM.
 
 The build job creates an ad-hoc-signed technical-preview package.
 It also creates two ephemeral signed product publications.
@@ -13,6 +13,17 @@ It does not compile `pkg-install`.
 The proof uses the shipping package, the shipping `pkg-install` artifact, and the public `pkg` CLI.
 It performs real APFS, Keychain, Directory Services, launchd, and `/nix` mutations.
 Do not run `prove.sh` on a developer Mac.
+
+For a local Tart proof, copy only the staged proof bundle into a fresh macOS arm64 VM.
+Inside that VM, create and remove the disposable marker around the proof:
+
+```sh
+sudo install -m 0600 /dev/null /var/tmp/pkg-disposable-macos-proof
+trap 'sudo rm -f /var/tmp/pkg-disposable-macos-proof' EXIT
+PKG_DISPOSABLE_MACOS_PROOF=local-tart ./prove.sh
+```
+
+The local gate requires an arm64 `VirtualMac*` model, kernel hypervisor presence, and a root-owned marker that is not older than five minutes.
 
 macOS cannot remove a live synthetic root object before reboot.
 The proof therefore permits one empty and unmounted `/nix` virtual directory after uninstall.

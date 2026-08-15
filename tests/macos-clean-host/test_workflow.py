@@ -7,6 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text()
 NIGHTLY = (ROOT / ".github/workflows/nightly.yml").read_text()
+PROOF = (ROOT / "tests/macos-clean-host/prove.sh").read_text()
 
 
 class MacOsProofWorkflowTests(unittest.TestCase):
@@ -38,6 +39,18 @@ class MacOsProofWorkflowTests(unittest.TestCase):
                 revision = line.rsplit("@", 1)[-1]
                 self.assertEqual(len(revision), 40)
                 int(revision, 16)
+
+    def test_local_tart_gate_requires_kernel_vm_identity(self) -> None:
+        local_gate = PROOF.split("    local-tart)\n", 1)[1].split("        ;;\n", 1)[0]
+        self.assertIn('"$(/usr/bin/uname -m)" = arm64', local_gate)
+        self.assertIn("kern.hv_vmm_present", local_gate)
+        self.assertIn("VirtualMac*", local_gate)
+        self.assertIn("root:wheel:600", PROOF)
+        self.assertIn('"$marker_age" -le 300', PROOF)
+        self.assertIn('${GITHUB_ACTIONS:-}" = true', PROOF)
+        self.assertIn('${RUNNER_ENVIRONMENT:-}" = github-hosted', PROOF)
+        self.assertIn('*) fail "the disposable-host gate is absent"', PROOF)
+        self.assertLess(PROOF.index("case \"${PKG_DISPOSABLE_MACOS_PROOF:-}\""), PROOF.index("bundle="))
 
 
 if __name__ == "__main__":
