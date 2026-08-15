@@ -15,9 +15,13 @@ use nix::{
     unistd::{Gid, Uid, fchown, fsync},
 };
 use pkg_macos_security::{StoreVolumeSecret, SystemKeychainStore};
-use std::os::unix::fs::MetadataExt;
+use std::{
+    os::unix::{fs::MetadataExt, process::CommandExt},
+    process::{Command, ExitStatus, Stdio},
+};
 
 const APFS_UTIL: &str = "/System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util";
+const SEQUOIA_STITCHED_STATUS: i32 = 253;
 
 /// Provisions or verifies the exact product-owned APFS store as root.
 ///
@@ -319,7 +323,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
             .map_err(|_| failure())?;
         self.replace_journal()?;
         MacOsSyntheticFileStorage::apply(&transaction).map_err(|_| failure())?;
-        crate::linux_accounts::run_status(APFS_UTIL, &["-t"]).map_err(|_| failure())?;
+        stitch_synthetic_root()?;
         self.journal_mut()?
             .complete_synthetic()
             .map_err(|_| failure())?;
@@ -422,6 +426,45 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
     }
 }
 
+fn stitch_synthetic_root() -> Result<(), MacOsStoreProvisionError> {
+    let status = Command::new(APFS_UTIL)
+        .arg("-t")
+        .env_clear()
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|_| failure())?;
+    if !accepted_stitch_status(status)
+        || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
+    {
+        return Err(failure());
+    }
+
+    let flags = OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC;
+    let root = std::fs::File::from(open("/", flags, Mode::empty()).map_err(|_| failure())?);
+    let mount = std::fs::File::from(
+        open(MacOsStoreVolumeContract::MOUNT_POINT, flags, Mode::empty()).map_err(|_| failure())?,
+    );
+    let root = root.metadata().map_err(|_| failure())?;
+    let mount = mount.metadata().map_err(|_| failure())?;
+    if mount.is_dir()
+        && mount.uid() == 0
+        && mount.gid() == 0
+        && mount.mode() & 0o7777 == 0o755
+        && mount.dev() == root.dev()
+    {
+        Ok(())
+    } else {
+        Err(failure())
+    }
+}
+
+fn accepted_stitch_status(status: ExitStatus) -> bool {
+    status.success() || status.code() == Some(SEQUOIA_STITCHED_STATUS)
+}
+
 fn configure_mount_root(build_gid: u32) -> Result<(), MacOsStoreProvisionError> {
     let root = open(
         MacOsStoreVolumeContract::MOUNT_POINT,
@@ -514,4 +557,20 @@ fn receipt_exists() -> bool {
 
 const fn failure() -> MacOsStoreProvisionError {
     MacOsStoreProvisionError::backend_failure()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SEQUOIA_STITCHED_STATUS, accepted_stitch_status};
+    use std::{os::unix::process::ExitStatusExt, process::ExitStatus};
+
+    #[test]
+    fn stitch_status_accepts_only_success_and_sequoia_created_state() {
+        assert!(accepted_stitch_status(ExitStatus::from_raw(0)));
+        assert!(accepted_stitch_status(ExitStatus::from_raw(
+            SEQUOIA_STITCHED_STATUS << 8,
+        )));
+        assert!(!accepted_stitch_status(ExitStatus::from_raw(1 << 8)));
+        assert!(!accepted_stitch_status(ExitStatus::from_raw(9)));
+    }
 }
