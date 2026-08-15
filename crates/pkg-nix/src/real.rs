@@ -771,8 +771,27 @@ impl BuildCacheProbe for RealNixAdapter {
                 .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
             let mut remote_hits = Vec::new();
             for (index, path) in missing {
-                let entry = root_path_info_optional(&remote, path)
-                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                let exact_remote;
+                let entry = match root_path_info_optional(&remote, path)
+                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
+                {
+                    Some(entry) => Some(entry),
+                    None => {
+                        exact_remote = match self.raw_path_info(path, false, true) {
+                            Ok(exact) => Some(exact),
+                            Err(NixAdapterError::OperationFailed) => None,
+                            Err(_) => {
+                                return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+                            }
+                        };
+                        match &exact_remote {
+                            Some(exact) => root_path_info_optional(exact, path).map_err(|_| {
+                                BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)
+                            })?,
+                            None => None,
+                        }
+                    }
+                };
                 let Some(entry) = entry else {
                     observations[index] = Some(CachePathObservation::miss(path.clone()));
                     continue;
@@ -2674,12 +2693,15 @@ mod tests {
         let remote = StorePath::new("/nix/store/33333333333333333333333333333333-remote")?;
         let missing = StorePath::new("/nix/store/44444444444444444444444444444444-missing")?;
         let local_json = br#"{"info":{"22222222222222222222222222222222-local":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":true,"url":null,"version":2},"33333333333333333333333333333333-remote":null,"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
-        let remote_json = br#"{"info":{"33333333333333333333333333333333-remote":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/example.nar.xz","version":2},"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
+        let remote_json = br#"{"info":{"33333333333333333333333333333333-remote":null,"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
+        let exact_remote_json = br#"{"info":{"33333333333333333333333333333333-remote":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/example.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
         let executor = Scripted::new(vec![
             success(Vec::new()),
             success(local_json.as_slice()),
             success(Vec::new()),
             success(remote_json.as_slice()),
+            success(exact_remote_json.as_slice()),
+            failure(1),
             success(Vec::new()),
         ]);
         let calls = Arc::clone(&executor.calls);
@@ -2696,13 +2718,13 @@ mod tests {
             ]
         );
         let calls = calls.lock().map_err(|_| "poisoned call log")?;
-        assert_eq!(calls.len(), 5);
+        assert_eq!(calls.len(), 7);
         assert_eq!(
             calls
                 .iter()
                 .filter(|call| call.iter().any(|argument| argument == "--store"))
                 .count(),
-            3
+            5
         );
         assert!(calls.iter().any(|call| {
             [local.as_str(), remote.as_str(), missing.as_str()]
