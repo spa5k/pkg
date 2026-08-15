@@ -9,7 +9,8 @@
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::MetadataExt as _;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -633,6 +634,7 @@ impl Scanner<'_> {
         let home = self.root.join(relative);
         match path_state(&home) {
             PathState::Missing => return,
+            PathState::Symlink if self.safe_macos_home_alias(relative) => return,
             PathState::Symlink | PathState::Unreadable => {
                 self.record(
                     "HOME_UNINSPECTABLE",
@@ -663,6 +665,61 @@ impl Scanner<'_> {
                 "a user Nix profile or channel artifact is present",
             );
         }
+    }
+
+    fn safe_macos_home_alias(&self, relative: &Path) -> bool {
+        if !matches!(self.system, System::X8664Darwin | System::Aarch64Darwin) {
+            return false;
+        }
+        let Some(parent) = relative.parent() else {
+            return false;
+        };
+        let home = self.root.join(relative);
+        let Ok(target) = fs::read_link(&home) else {
+            return false;
+        };
+        let target = if target.is_absolute() {
+            let Ok(target) = target.strip_prefix(Path::new("/")) else {
+                return false;
+            };
+            target.to_path_buf()
+        } else {
+            parent.join(target)
+        };
+        if target == relative
+            || target.parent() != Some(parent)
+            || target
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            return false;
+        }
+        let Ok(parent_metadata) = fs::symlink_metadata(self.root.join(parent)) else {
+            return false;
+        };
+        let Ok(root_metadata) = fs::symlink_metadata(self.root) else {
+            return false;
+        };
+        let Ok(link_metadata) = fs::symlink_metadata(&home) else {
+            return false;
+        };
+        let Ok(target_metadata) = fs::symlink_metadata(self.root.join(&target)) else {
+            return false;
+        };
+        let Ok(followed_metadata) = fs::metadata(&home) else {
+            return false;
+        };
+        root_metadata.is_dir()
+            && root_metadata.mode() & 0o022 == 0
+            && parent_metadata.is_dir()
+            && parent_metadata.mode() & 0o022 == 0
+            && link_metadata.file_type().is_symlink()
+            && parent_metadata.uid() == root_metadata.uid()
+            && link_metadata.uid() == root_metadata.uid()
+            && target_metadata.is_dir()
+            && !target_metadata.file_type().is_symlink()
+            && followed_metadata.dev() == target_metadata.dev()
+            && followed_metadata.ino() == target_metadata.ino()
     }
 
     fn check_binaries(&mut self, path_entries: &[PathBuf]) {
@@ -964,7 +1021,16 @@ fn run_bounded_command(program: &Path, arguments: &[&str]) -> CommandOutput {
 
 #[cfg(test)]
 mod tests {
-    use super::{account_output_has_build_group, account_output_has_build_user};
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    use pkg_core::System;
+    use tempfile::TempDir;
+
+    use super::{
+        DetectionDisposition, account_output_has_build_group, account_output_has_build_user,
+        detect_unmanaged_nix,
+    };
 
     #[test]
     fn account_database_parsers_match_only_nix_build_identities() {
@@ -983,5 +1049,27 @@ mod tests {
             false
         ));
         assert!(!account_output_has_build_group(b"nixbld-helper\n", false));
+    }
+
+    #[test]
+    fn macos_scans_a_protected_sibling_home_alias_once() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        let users = root.path().join("Users");
+        let admin = users.join("admin");
+        fs::create_dir_all(&admin)?;
+        symlink("admin", users.join("runner"))?;
+
+        let clean = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert_eq!(clean.disposition(), DetectionDisposition::Clean);
+
+        fs::set_permissions(&users, fs::Permissions::from_mode(0o777))?;
+        let writable = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert_eq!(writable.disposition(), DetectionDisposition::Refuse);
+        fs::set_permissions(&users, fs::Permissions::from_mode(0o755))?;
+
+        symlink("/nix/var/nix/profiles/default", admin.join(".nix-profile"))?;
+        let managed = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert_eq!(managed.disposition(), DetectionDisposition::Refuse);
+        Ok(())
     }
 }
