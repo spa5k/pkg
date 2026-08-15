@@ -40,6 +40,15 @@ for path in \
     [ -e "$path" ] || fail "the proof artifact is incomplete"
 done
 
+echo "+ record clean-host and artifact identity"
+/usr/bin/sw_vers
+/usr/bin/uname -m
+/usr/bin/shasum -a 256 \
+    "$bundle/pkg-0.1.0-alpha.1-preview.pkg" \
+    "$bundle/pkg-install" \
+    "$bundle/publication-1/root.json" \
+    "$bundle/publication-2/root.json"
+
 /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
     -config "$bundle/openssl.cnf" \
     -keyout "$work/ca.key" \
@@ -79,6 +88,31 @@ while [ "$attempt" -lt 60 ]; do
     /bin/sleep 1
 done
 [ "$ready" = true ] || fail "the local signed-publication server did not start"
+/usr/bin/curl --fail --silent https://127.0.0.1:8443/root.json >/dev/null \
+    || fail "the installed proof CA is not trusted by the system"
+
+echo "+ record root preflight inputs"
+/usr/bin/sudo /usr/bin/printenv PATH
+/usr/bin/sudo /usr/bin/env | /usr/bin/cut -d= -f1 | /usr/bin/sort
+if command -v nix >/dev/null 2>&1; then
+    command -v nix
+else
+    echo "nix executable: absent"
+fi
+for path in \
+    /nix \
+    /private/etc/nix \
+    /private/etc/synthetic.conf \
+    /opt/pkg \
+    '/Library/Application Support/pkg' \
+    /private/var/db/pkg-install \
+    /private/var/db/pkg-install-auth; do
+    if [ -e "$path" ]; then
+        /usr/bin/stat -f '%N %HT %Su:%Sg %Sp' "$path"
+    else
+        echo "$path absent"
+    fi
+done
 
 product_volume_present() {
     /usr/sbin/diskutil apfs list 2>/dev/null | /usr/bin/grep -F 'pkg Nix Store' >/dev/null
@@ -131,6 +165,12 @@ while [ "$attempt" -lt 600 ]; do
 done
 if [ "$store_created" != true ]; then
     /usr/bin/tail -n 200 "$work/interrupted-install.log" >&2 || true
+    if /usr/bin/sudo /usr/bin/test -f \
+        /private/var/db/pkg-install/macos-transaction-v1.json; then
+        /usr/bin/sudo /bin/cat \
+            /private/var/db/pkg-install/macos-transaction-v1.json >&2
+    fi
+    /usr/bin/sudo /usr/sbin/diskutil apfs list >&2 || true
     fail "the APFS install checkpoint was not observed"
 fi
 install_pid=$(/bin/cat "$work/install.pid")
