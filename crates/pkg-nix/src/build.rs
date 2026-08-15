@@ -2665,11 +2665,14 @@ impl LocalBuildEngine {
                 BuildEngineErrorCode::ApprovalUnavailable,
             ));
         }
-        for path in &current.execution.cache_inputs {
-            let report = runtime
-                .adapter
-                .substitute(path)
-                .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+        let substitutions = runtime
+            .adapter
+            .substitute_many(&current.execution.cache_inputs)
+            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+        if substitutions.len() != current.execution.cache_inputs.len() {
+            return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+        }
+        for (path, report) in current.execution.cache_inputs.iter().zip(substitutions) {
             if report.store_path() != path {
                 return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
             }

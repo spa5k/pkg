@@ -103,6 +103,17 @@ pub trait NixAdapter: Send + Sync {
     /// [`NixAdapterError`], never a report outcome.
     fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError>;
 
+    /// Substitute a bounded set under the same fixed trust policy.
+    ///
+    /// The default preserves adapters that expose only the seven upstream
+    /// operations. Concrete adapters may batch the fixed operation.
+    fn substitute_many(
+        &self,
+        paths: &[StorePath],
+    ) -> Result<Vec<SubstituteReport>, NixAdapterError> {
+        paths.iter().map(|path| self.substitute(path)).collect()
+    }
+
     /// Approved, sandboxed local build. No per-call trust/flag toggles.
     fn build(&self, req: &BuildRequest) -> Result<BuildReport, NixAdapterError>;
 

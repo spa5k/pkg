@@ -1034,6 +1034,85 @@ impl NixAdapter for RealNixAdapter {
         Ok(SubstituteReport::fetched(path.clone(), receipt))
     }
 
+    fn substitute_many(
+        &self,
+        paths: &[StorePath],
+    ) -> Result<Vec<SubstituteReport>, NixAdapterError> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut ping = base_args();
+        ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
+        self.require_success(MethodKind::Substitute, ping, SHORT_TIMEOUT)
+            .map_err(|_| NixAdapterError::Unavailable)?;
+
+        let mut reports = Vec::with_capacity(paths.len());
+        for chunk in paths.chunks(PATH_INFO_BATCH_SIZE) {
+            let path_refs = chunk.iter().collect::<Vec<_>>();
+            let remote = match self.raw_path_infos(&path_refs, false, true) {
+                Ok(remote) => Some(remote),
+                Err(NixAdapterError::OperationFailed) => None,
+                Err(error) => return Err(error),
+            };
+            let mut chunk_reports = vec![None; chunk.len()];
+            let mut authenticated = Vec::new();
+            for (index, path) in chunk.iter().enumerate() {
+                let entry = match &remote {
+                    Some(remote) => root_path_info_optional(remote, path)?,
+                    None => None,
+                };
+                let Some(entry) = entry else {
+                    chunk_reports[index] = Some(SubstituteReport::miss(
+                        path.clone(),
+                        SubstituteOutcome::AbsentFromSubstituters,
+                    )?);
+                    continue;
+                };
+                let signatures = signatures(&entry.signatures)?;
+                if !has_approved_cache_signature(&signatures) {
+                    return Err(NixAdapterError::TrustFailure);
+                }
+                let nar_hash =
+                    NarHash::new(&entry.nar_hash).map_err(|_| NixAdapterError::IntegrityFailure)?;
+                authenticated.push((index, path, entry.nar_hash.clone(), nar_hash, signatures));
+            }
+
+            if !authenticated.is_empty() {
+                let authenticated_paths = authenticated
+                    .iter()
+                    .map(|(_, path, _, _, _)| *path)
+                    .collect::<Vec<_>>();
+                let mut copy = base_args();
+                copy.extend(os_args(["copy", "--from", CACHE_URL]));
+                copy.extend(
+                    authenticated_paths
+                        .iter()
+                        .map(|path| OsString::from(path.as_str())),
+                );
+                self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)
+                    .map_err(|_| NixAdapterError::TrustFailure)?;
+                let local = self.raw_path_infos(&authenticated_paths, false, false)?;
+                for (index, path, remote_hash, nar_hash, signatures) in authenticated {
+                    let local_entry = root_path_info(&local, path)?;
+                    if local_entry.nar_hash != remote_hash {
+                        return Err(NixAdapterError::IntegrityFailure);
+                    }
+                    chunk_reports[index] = Some(SubstituteReport::fetched(
+                        path.clone(),
+                        SubstituteReceipt::new(CACHE_URL, nar_hash, signatures)?,
+                    ));
+                }
+            }
+            reports.extend(
+                chunk_reports
+                    .into_iter()
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or(NixAdapterError::OperationFailed)?,
+            );
+        }
+        Ok(reports)
+    }
+
     fn build(&self, request: &BuildRequest) -> Result<BuildReport, NixAdapterError> {
         self.run_build_with_progress(request, &mut |_| Ok(()))
     }
@@ -2801,6 +2880,41 @@ mod tests {
                 .code(),
             crate::NixAdapterErrorCode::OperationFailed
         );
+    }
+
+    #[test]
+    fn substitution_batch_uses_one_remote_query_and_copy() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let first = StorePath::new("/nix/store/22222222222222222222222222222222-first")?;
+        let second = StorePath::new("/nix/store/33333333333333333333333333333333-second")?;
+        let path_info = br#"{"info":{"22222222222222222222222222222222-first":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/first.nar.xz","version":2},"33333333333333333333333333333333-second":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":5,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/second.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        let executor = Scripted::new(vec![
+            success(Vec::new()),
+            success(path_info.as_slice()),
+            success(Vec::new()),
+            success(path_info.as_slice()),
+        ]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+
+        let reports = adapter.substitute_many(&[first.clone(), second.clone()])?;
+
+        assert_eq!(reports.len(), 2);
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.outcome() == SubstituteOutcome::Fetched)
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 4);
+        for call in [&calls[1], &calls[2], &calls[3]] {
+            assert!(call.contains(&OsString::from(first.as_str())));
+            assert!(call.contains(&OsString::from(second.as_str())));
+        }
+        assert!(calls[1].iter().any(|argument| argument == "path-info"));
+        assert!(calls[2].iter().any(|argument| argument == "copy"));
+        assert!(!calls[3].iter().any(|argument| argument == "--store"));
+        Ok(())
     }
 
     #[cfg(unix)]
