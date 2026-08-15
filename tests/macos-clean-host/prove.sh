@@ -150,12 +150,24 @@ echo "+ interrupt install after real APFS creation"
     "$work/install.pid" "$bundle/pkg-install" >"$work/interrupted-install.log" 2>&1 &
 install_launcher=$!
 store_created=false
+auth_seen=false
+journal_seen=false
 attempt=0
 while [ "$attempt" -lt 600 ]; do
-    if /usr/bin/sudo /usr/bin/grep -F '"kind":"storeVolume","state":"created"' \
-        /private/var/db/pkg-install/macos-transaction-v1.json >/dev/null 2>&1; then
-        store_created=true
-        break
+    if /usr/bin/sudo /bin/test -e /private/var/db/pkg-install-auth; then
+        auth_seen=true
+    fi
+    if /usr/bin/sudo /bin/test -f \
+        /private/var/db/pkg-install/macos-transaction-v1.json; then
+        journal_seen=true
+        /usr/bin/sudo /bin/cat \
+            /private/var/db/pkg-install/macos-transaction-v1.json \
+            >"$work/last-install-journal.json" 2>/dev/null || true
+        if /usr/bin/grep -F '"kind":"storeVolume","state":"created"' \
+            "$work/last-install-journal.json" >/dev/null 2>&1; then
+            store_created=true
+            break
+        fi
     fi
     if ! /bin/kill -0 "$install_launcher" >/dev/null 2>&1; then
         break
@@ -164,8 +176,13 @@ while [ "$attempt" -lt 600 ]; do
     /bin/sleep 0.05
 done
 if [ "$store_created" != true ]; then
+    echo "authentication datastore observed: $auth_seen" >&2
+    echo "install journal observed: $journal_seen" >&2
     /usr/bin/tail -n 200 "$work/interrupted-install.log" >&2 || true
-    if /usr/bin/sudo /usr/bin/test -f \
+    if [ -f "$work/last-install-journal.json" ]; then
+        /bin/cat "$work/last-install-journal.json" >&2
+    fi
+    if /usr/bin/sudo /bin/test -f \
         /private/var/db/pkg-install/macos-transaction-v1.json; then
         /usr/bin/sudo /bin/cat \
             /private/var/db/pkg-install/macos-transaction-v1.json >&2
