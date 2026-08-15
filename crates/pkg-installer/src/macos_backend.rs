@@ -6,8 +6,8 @@ use nix::unistd::{Gid, Uid};
 use pkg_core::System;
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, DetectionDisposition,
-    ManagedGroupBindings, OwnershipExpectation, RealNixAdapter, detect_unmanaged_nix,
-    observe_build_accounts, verify_authenticated_managed_install,
+    DetectionReport, FindingKind, ManagedGroupBindings, OwnershipExpectation, RealNixAdapter,
+    detect_unmanaged_nix, observe_build_accounts, verify_authenticated_managed_install,
 };
 
 use crate::{
@@ -29,6 +29,7 @@ pub struct ProductionMacOsInstallBackend {
     ownership_expectation: Option<OwnershipExpectation>,
     config: Option<AuthenticatedManagedNixConfig>,
     existing_managed_install: bool,
+    authenticated_recovery: bool,
     store_created: bool,
 }
 
@@ -49,6 +50,7 @@ impl ProductionMacOsInstallBackend {
             ownership_expectation: None,
             config: None,
             existing_managed_install: false,
+            authenticated_recovery: false,
             store_created: false,
         })
     }
@@ -137,6 +139,16 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         Ok(())
     }
 
+    fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError> {
+        if self.ownership_expectation.is_none()
+            || !self.assets.authenticated_inputs_bound(self.system)
+        {
+            return Err(MacOsError::backend_failure());
+        }
+        self.authenticated_recovery = true;
+        Ok(())
+    }
+
     fn preflight_privilege(&mut self) -> Result<(), MacOsError> {
         if Uid::effective().is_root() && Gid::effective().as_raw() == 0 {
             Ok(())
@@ -161,6 +173,21 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         if report.disposition() == DetectionDisposition::Clean {
             self.existing_managed_install = false;
             return Ok(());
+        }
+        #[cfg(target_os = "macos")]
+        if self.authenticated_recovery && report_is_recovered_mountpoint_only(&report) {
+            let nix_root = macos_install_assets()
+                .iter()
+                .copied()
+                .find(|asset| store_volume_owns_rollback(*asset))
+                .ok_or_else(MacOsError::backend_failure)?;
+            if self.assets.classify_store_mountpoint(nix_root)? == MacOsAssetPresence::ExactPresent
+                && !crate::classify_macos_store_volume_production()
+                    .map_err(|_| MacOsError::backend_failure())?
+            {
+                self.existing_managed_install = false;
+                return Ok(());
+            }
         }
         verify_authenticated_managed_install(
             Path::new("/"),
@@ -240,14 +267,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
         #[cfg(target_os = "macos")]
         {
-            crate::remove_macos_store_volume_production()
-                .map_err(|_| MacOsError::backend_failure())?;
-            let nix_root = macos_install_assets()
-                .iter()
-                .copied()
-                .find(|asset| store_volume_owns_rollback(*asset))
-                .ok_or_else(MacOsError::backend_failure)?;
-            self.assets.remove_store_mountpoint(nix_root)
+            crate::remove_macos_store_volume_production().map_err(|_| MacOsError::backend_failure())
         }
         #[cfg(not(target_os = "macos"))]
         Err(MacOsError::backend_failure())
@@ -425,6 +445,10 @@ fn store_volume_owns_rollback(asset: MacOsInstallAsset) -> bool {
     asset.id() == "nix-root"
 }
 
+fn report_is_recovered_mountpoint_only(report: &DetectionReport) -> bool {
+    matches!(report.findings(), [finding] if finding.id() == "NIX_ROOT" && finding.kind() == FindingKind::Unmanaged)
+}
+
 fn valid_tool_path(bytes: &[u8]) -> bool {
     use std::os::unix::fs::MetadataExt;
 
@@ -485,6 +509,20 @@ mod tests {
             backend.classify_preview_presence(MacOsAssetPresence::ExactPresent),
             Ok(MacOsAssetPresence::ExactPresent)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn authenticated_recovery_allows_only_an_empty_nix_root_finding()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("nix"))?;
+        let report = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert!(report_is_recovered_mountpoint_only(&report));
+
+        std::fs::create_dir(root.path().join("nix/store"))?;
+        let report = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert!(!report_is_recovered_mountpoint_only(&report));
         Ok(())
     }
 }

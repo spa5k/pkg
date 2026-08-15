@@ -746,6 +746,7 @@ fn recover_macos_bundle_install(
     if let Some(mut journal) = storage.load().map_err(|_| MacOsError::backend_failure())?
         && !journal.is_committed()
     {
+        backend.begin_authenticated_recovery()?;
         recover_interrupted_provision_workspace(request.scratch_parent)
             .map_err(|_| MacOsError::backend_failure())?;
         crate::recover_macos_install(
@@ -1417,6 +1418,10 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     ) -> Result<(), MacOsError> {
         self.inner
             .bind_authenticated_ownership_expectation(expectation)
+    }
+
+    fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError> {
+        self.inner.begin_authenticated_recovery()
     }
 
     fn preflight_privilege(&mut self) -> Result<(), MacOsError> {
@@ -2346,6 +2351,10 @@ mod tests {
             &mut self,
             _expectation: &OwnershipExpectation,
         ) -> Result<(), MacOsError> {
+            Ok(())
+        }
+
+        fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }
 

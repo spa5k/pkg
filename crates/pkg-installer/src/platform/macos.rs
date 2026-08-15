@@ -1012,6 +1012,12 @@ pub trait MacOsInstallBackend {
         expectation: &OwnershipExpectation,
     ) -> Result<(), MacOsError>;
 
+    /// Records that an authenticated install journal will be recovered.
+    ///
+    /// # Errors
+    /// Returns a closed error when recovery state cannot be bound.
+    fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError>;
+
     /// Verifies AuthorizationServices/sudo authority.
     ///
     /// # Errors
@@ -1772,6 +1778,10 @@ mod tests {
             &mut self,
             _expectation: &OwnershipExpectation,
         ) -> Result<(), MacOsError> {
+            Ok(())
+        }
+
+        fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }
 
