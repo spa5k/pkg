@@ -261,6 +261,9 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
                 .then_some(())
                 .ok_or_else(MacOsError::backend_failure);
         }
+        if asset.id() == "broker-channel-state" {
+            return self.assets.remove_uninstall_asset(asset);
+        }
         self.assets.remove_verified_asset(asset)
     }
 
