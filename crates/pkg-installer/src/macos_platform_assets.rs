@@ -269,9 +269,32 @@ impl MacOsPlatformAssetManager {
         }
     }
 
+    pub(crate) fn remove_store_mountpoint(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        if asset.id() != "nix-root" {
+            return Err(MacOsError::backend_failure());
+        }
+        self.ensure_filesystem_with_broker_uid(self.groups.broker_gid())?
+            .remove_verified_asset(asset)
+    }
+
     fn ensure_filesystem(&mut self) -> Result<&mut MacOsFilesystemManager, MacOsError> {
         if self.filesystem.is_none() {
             let broker_uid = self.accounts.broker_uid()?;
+            return self.ensure_filesystem_with_broker_uid(broker_uid);
+        }
+        self.filesystem
+            .as_mut()
+            .ok_or_else(MacOsError::backend_failure)
+    }
+
+    fn ensure_filesystem_with_broker_uid(
+        &mut self,
+        broker_uid: u32,
+    ) -> Result<&mut MacOsFilesystemManager, MacOsError> {
+        if self.filesystem.is_none() {
             let payloads = self
                 .payloads
                 .as_ref()

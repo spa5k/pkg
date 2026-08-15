@@ -240,7 +240,14 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
         #[cfg(target_os = "macos")]
         {
-            crate::remove_macos_store_volume_production().map_err(|_| MacOsError::backend_failure())
+            crate::remove_macos_store_volume_production()
+                .map_err(|_| MacOsError::backend_failure())?;
+            let nix_root = macos_install_assets()
+                .iter()
+                .copied()
+                .find(|asset| store_volume_owns_rollback(*asset))
+                .ok_or_else(MacOsError::backend_failure)?;
+            self.assets.remove_store_mountpoint(nix_root)
         }
         #[cfg(not(target_os = "macos"))]
         Err(MacOsError::backend_failure())
