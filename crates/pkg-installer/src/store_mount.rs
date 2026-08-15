@@ -217,7 +217,7 @@ fn validate_static_observation(
     if observation.volume_uuid != receipt.volume_uuid
         || observation.volume_name != receipt.volume_name
         || !observation.encrypted
-        || !observation.ownership_enabled
+        || (!observation.locked && !observation.ownership_enabled)
     {
         return Err(MacOsStoreMountError::new(
             MacOsStoreMountErrorCode::VerificationFailed,
@@ -913,7 +913,13 @@ mod tests {
         assert_eq!((already.mounts, already.unlocks), (0, 0));
 
         let mut locked = FakeBackend {
-            observations: vec![observation(None, true), observation(Some("/nix"), false)],
+            observations: vec![
+                StoreVolumeObservation {
+                    ownership_enabled: false,
+                    ..observation(None, true)
+                },
+                observation(Some("/nix"), false),
+            ],
             mounts: 0,
             unlocks: 0,
         };
@@ -945,7 +951,7 @@ mod tests {
             },
             StoreVolumeObservation {
                 ownership_enabled: false,
-                ..observation(None, true)
+                ..observation(None, false)
             },
         ] {
             let mut backend = FakeBackend {
