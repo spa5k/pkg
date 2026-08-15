@@ -404,21 +404,31 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         let expected = (1..=32)
             .map(|number| format!("_nixbld{number}"))
             .collect::<std::collections::BTreeSet<_>>();
+        let accounts = directory.accounts();
         let accounts_exact = directory.group_gid() == crate::macos_accounts::BUILD_GID
             && directory.explicit_members() == &expected
-            && directory.accounts().len() == 32
-            && directory
-                .accounts()
+            && accounts
                 .iter()
-                .enumerate()
-                .all(|(index, account)| {
-                    let number = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
-                    account.name() == format!("_nixbld{number}")
-                        && account.uid() == crate::macos_accounts::BUILD_GID.saturating_add(number)
-                        && account.primary_gid() == crate::macos_accounts::BUILD_GID
-                        && account.home() == "/var/empty"
-                        && account.shell() == "/usr/bin/false"
-                });
+                .filter(|account| account.primary_gid() == crate::macos_accounts::BUILD_GID)
+                .count()
+                == 32
+            && (1..=32).all(|number| {
+                let name = format!("_nixbld{number}");
+                accounts
+                    .iter()
+                    .find(|account| account.name() == name)
+                    .is_some_and(|account| {
+                        account.uid() == crate::macos_accounts::BUILD_GID.saturating_add(number)
+                            && account.primary_gid() == crate::macos_accounts::BUILD_GID
+                            && account.home() == "/var/empty"
+                            && account.shell() == "/usr/bin/false"
+                            && accounts
+                                .iter()
+                                .filter(|candidate| candidate.uid() == account.uid())
+                                .count()
+                                == 1
+                    })
+            });
         let build_users = if accounts_exact {
             MacOsBuildUsersReadiness::Ready
         } else {
