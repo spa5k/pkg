@@ -2670,8 +2670,17 @@ impl LocalBuildEngine {
                 .adapter
                 .substitute(path)
                 .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
-            if report.store_path() != path || report.outcome() != SubstituteOutcome::Fetched {
+            if report.store_path() != path {
                 return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+            }
+            if report.outcome() != SubstituteOutcome::Fetched {
+                let local = runtime
+                    .adapter
+                    .path_info(path)
+                    .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+                if local.store_path() != path {
+                    return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
+                }
             }
         }
         let request = BuildRequest::new(
@@ -2951,6 +2960,7 @@ mod tests {
 
     struct BuildAdapter {
         substitutions: Mutex<Vec<StorePath>>,
+        local_cache_inputs: bool,
         calls: AtomicUsize,
         active: AtomicUsize,
         max_active: AtomicUsize,
@@ -2959,8 +2969,13 @@ mod tests {
 
     impl BuildAdapter {
         fn new() -> Self {
+            Self::with_local_cache_inputs(false)
+        }
+
+        fn with_local_cache_inputs(local_cache_inputs: bool) -> Self {
             Self {
                 substitutions: Mutex::new(Vec::new()),
+                local_cache_inputs,
                 calls: AtomicUsize::new(0),
                 active: AtomicUsize::new(0),
                 max_active: AtomicUsize::new(0),
@@ -2979,11 +2994,28 @@ mod tests {
         ) -> Result<DerivationPlanReport, NixAdapterError> {
             Err(NixAdapterError::Unavailable)
         }
-        fn path_info(&self, _: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
-            Err(NixAdapterError::Unavailable)
+        fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
+            if !self.local_cache_inputs {
+                return Err(NixAdapterError::Unavailable);
+            }
+            PathInfoReport::new(
+                path.clone(),
+                NarHash::new(NAR_HASH).unwrap(),
+                Vec::new(),
+                Vec::new(),
+                None,
+                1,
+                1,
+            )
         }
         fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
             lock_recover(&self.substitutions).push(path.clone());
+            if self.local_cache_inputs {
+                return SubstituteReport::miss(
+                    path.clone(),
+                    SubstituteOutcome::AbsentFromSubstituters,
+                );
+            }
             Ok(SubstituteReport::fetched(
                 path.clone(),
                 SubstituteReceipt::new(
@@ -3312,6 +3344,39 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code(), BuildEngineErrorCode::ApprovalRequired);
         assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn locally_present_cache_input_survives_remote_cache_miss() {
+        let engine = LocalBuildEngine::new();
+        let plan = plan(1, System::X8664Linux, linux_readiness());
+        let receipt = engine
+            .approve(
+                OperationId::new("op-local-input").unwrap(),
+                &plan,
+                ApprovalSource::AssumeYes,
+                "2026-08-10T00:00:00Z",
+                &Journal::default(),
+            )
+            .unwrap();
+        let adapter = BuildAdapter::with_local_cache_inputs(true);
+
+        engine
+            .execute(
+                receipt,
+                || Ok(plan),
+                VolatileBuildEstimate::new(100),
+                &Probe::new([good_snapshot()]),
+                &CancellationToken::default(),
+                &adapter,
+            )
+            .unwrap();
+
+        assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            lock_recover(&adapter.substitutions).as_slice(),
+            [dependency_output()]
+        );
     }
 
     #[test]
