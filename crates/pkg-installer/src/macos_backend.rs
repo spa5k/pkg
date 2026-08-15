@@ -361,7 +361,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         let expected = (1..=32)
             .map(|number| format!("_nixbld{number}"))
             .collect::<std::collections::BTreeSet<_>>();
-        let accounts_exact = directory.group_gid() == 300
+        let accounts_exact = directory.group_gid() == crate::macos_accounts::BUILD_GID
             && directory.explicit_members() == &expected
             && directory.accounts().len() == 32
             && directory
@@ -371,8 +371,8 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
                 .all(|(index, account)| {
                     let number = u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1);
                     account.name() == format!("_nixbld{number}")
-                        && account.uid() == 300_u32.saturating_add(number)
-                        && account.primary_gid() == 300
+                        && account.uid() == crate::macos_accounts::BUILD_GID.saturating_add(number)
+                        && account.primary_gid() == crate::macos_accounts::BUILD_GID
                         && account.home() == "/var/empty"
                         && account.shell() == "/usr/bin/false"
                 });
@@ -429,14 +429,14 @@ mod tests {
 
     #[test]
     fn production_backend_refuses_non_darwin_systems() -> Result<(), Box<dyn std::error::Error>> {
-        let groups = ManagedGroupBindings::new(333, 300)?;
+        let groups = ManagedGroupBindings::new(333, 350)?;
         assert!(ProductionMacOsInstallBackend::new(System::Aarch64Linux, groups).is_err());
         Ok(())
     }
 
     #[test]
     fn clean_preview_refuses_preexisting_assets() -> Result<(), Box<dyn std::error::Error>> {
-        let groups = ManagedGroupBindings::new(333, 300)?;
+        let groups = ManagedGroupBindings::new(333, 350)?;
         let mut backend = ProductionMacOsInstallBackend::new(System::Aarch64Darwin, groups)?;
         assert!(
             backend

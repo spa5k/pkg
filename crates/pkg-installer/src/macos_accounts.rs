@@ -17,7 +17,8 @@ const BROKER_NAME: &str = "pkg-nix-broker";
 const BUILD_GROUP: &str = "nixbld";
 const BROKER_UID: u32 = 333;
 const BROKER_GID: u32 = 333;
-pub const BUILD_GID: u32 = 300;
+// Nix 2.34.8 moved this range above IDs reserved by macOS Sequoia.
+pub const BUILD_GID: u32 = 350;
 const BROKER_HOME: &str = "/Library/Application Support/pkg/broker-home";
 const BUILD_HOME: &str = "/var/empty";
 const NOLOGIN: &str = "/usr/bin/false";
@@ -498,6 +499,13 @@ fn field<'a>(fields: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_ids_match_nix_2_34_8_on_sequoia() {
+        assert_eq!(BUILD_GID, 350);
+        assert_eq!(BUILD_GID + 1, 351);
+        assert_eq!(BUILD_GID + 32, 382);
+    }
 
     #[test]
     fn directory_service_parsers_reject_ambiguous_ids_and_fields() -> Result<(), MacOsError> {

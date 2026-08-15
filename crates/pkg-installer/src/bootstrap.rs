@@ -263,7 +263,7 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
     if verify_macos_install_absent().is_ok() {
         return Ok(0);
     }
-    let groups = pkg_nix::ManagedGroupBindings::new(333, 300)
+    let groups = pkg_nix::ManagedGroupBindings::new(333, crate::macos_accounts::BUILD_GID)
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
     let (trusted_root, metadata_url, targets_url) = production_release_inputs()
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;

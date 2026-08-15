@@ -46,7 +46,7 @@ fn run() -> Result<(), PublicInstallError> {
     let (groups, channel_datastore, scratch_parent) =
         if matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
             (
-                ManagedGroupBindings::new(333, 300)
+                ManagedGroupBindings::new(333, 350)
                     .map_err(|_| PublicInstallError::InstallFailed)?,
                 MACOS_CHANNEL_DATASTORE,
                 MACOS_SCRATCH_PARENT,
