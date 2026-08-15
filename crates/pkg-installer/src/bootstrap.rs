@@ -451,7 +451,7 @@ fn prepare_linux_auth_datastore_at(
     Ok(())
 }
 
-fn validate_linux_auth_datastore_file(
+pub fn validate_linux_auth_datastore_file(
     name: &OsStr,
     metadata: &fs::Metadata,
     expected_user: u32,

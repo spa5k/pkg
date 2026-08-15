@@ -21,6 +21,7 @@ use rustix::fs::{
 };
 use rustix::io::Errno;
 
+use crate::bootstrap::validate_linux_auth_datastore_file;
 use crate::linux_user_cleanup::remove_owned_tree;
 use crate::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets, MacOsLaunchdAssets,
@@ -575,13 +576,21 @@ impl LinuxFilesystemManager {
                 LinuxFilesystemError::new(LinuxFilesystemErrorCode::UnsafeFilesystemState)
             })?;
             let metadata = child.metadata().map_err(|_| io_failure())?;
-            if !metadata.is_file()
-                || metadata.uid() != owner
-                || metadata.gid() != group
-                || metadata.nlink() != 1
-                || metadata.mode() & 0o077 != 0
-                || metadata.dev() != target_identity.device
-            {
+            let common_identity = metadata.is_file()
+                && metadata.gid() == group
+                && metadata.nlink() == 1
+                && metadata.dev() == target_identity.device;
+            let private_broker_file =
+                metadata.uid() == owner && metadata.mode().trailing_zeros() >= 6;
+            let authenticated_root_metadata = metadata.uid() == self.principals.root_uid
+                && validate_linux_auth_datastore_file(
+                    &child_name,
+                    &metadata,
+                    self.principals.root_uid,
+                    group,
+                )
+                .unwrap_or(false);
+            if !common_identity || !(private_broker_file || authenticated_root_metadata) {
                 return Err(LinuxFilesystemError::new(
                     LinuxFilesystemErrorCode::UnsafeFilesystemState,
                 ));
@@ -1335,7 +1344,7 @@ mod tests {
             .join("var/lib/pkg/broker-home/channel");
         let metadata = channel.join("root.json");
         fs::write(&metadata, b"authenticated")?;
-        fs::set_permissions(&metadata, fs::Permissions::from_mode(0o600))?;
+        fs::set_permissions(&metadata, fs::Permissions::from_mode(0o644))?;
 
         fixture
             .manager
@@ -1396,6 +1405,27 @@ mod tests {
             LinuxFilesystemErrorCode::UnsafeFilesystemState
         );
         assert!(channel.join("root.json").is_symlink());
+
+        let mut fixture = Fixture::new()?;
+        for id in ["service-root", "broker-home", "broker-channel-state"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let channel = fixture
+            .temporary
+            .path()
+            .join("var/lib/pkg/broker-home/channel");
+        let foreign = channel.join("foreign.json");
+        fs::write(&foreign, b"{}")?;
+        fs::set_permissions(&foreign, fs::Permissions::from_mode(0o644))?;
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .remove_broker_channel_state(Fixture::asset("broker-channel-state")),
+            )?,
+            LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
+        assert_eq!(fs::read(foreign)?, b"{}");
         Ok(())
     }
 
