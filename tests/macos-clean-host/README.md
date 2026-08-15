@@ -26,3 +26,25 @@ It does not notarize the package.
 It does not claim Gatekeeper-clean or stable behavior.
 
 Developer ID signing and notarization remain explicit TODO items.
+
+## Deferred hosted rerun
+
+GitHub Actions was disabled at the repository level on 2026-08-15.
+Do not count local tests as macOS clean-host proof.
+
+Hosted run `31873974181` used macOS 15.7.7 arm64 image `20260727.0256.1`.
+It used artifact digest `12e854d8d05e5e050d8e6e2aedc57726f93e6b39ab43b529b585ff6abf81948c`.
+The shipping package hash was `da08f483100b03bf09cea679186a5f26cada7dc5f9e7df075d5a922354b65d34`.
+The shipping `pkg-install` hash was `b9dee3f83e9e87b4a74bffea5ddff51b1f3bbe51f4072bbc7b74383b3ee238ed`.
+The host had no detected Nix state.
+Authentication succeeded, but account preflight failed before the first journal entry.
+Commit `05d4509` fixes the signed Directory Services ID parser that caused this failure.
+
+After Kamran explicitly re-enables GitHub Actions, run this command once:
+
+```sh
+gh workflow run nightly.yml --ref agent/macos-alpha -f macos_alpha_proof=true
+```
+
+Save the run URL, runner image, artifact hashes, command log, assertion count, and retained-state report.
+Require every assertion in `prove.sh` to pass before claiming macOS clean-host proof.
