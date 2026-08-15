@@ -43,6 +43,7 @@ const PATH_INFO_FORMAT: u32 = 2;
 const STORE_DIRECTORY: &str = "/nix/store";
 const CACHE_URL: &str = "https://cache.nixos.org";
 const CACHE_SIGNING_KEY_NAME: &str = "cache.nixos.org-1";
+const PATH_INFO_BATCH_SIZE: usize = 256;
 const MAX_REPAIR_CLOSURE: usize = 4096;
 pub(crate) const MANAGED_NIX_CONFIG: &str = "include /opt/pkg/etc/pkg/nix.conf";
 pub(crate) const MANAGED_NIX_STATE: &str = "/nix/var/nix";
@@ -594,6 +595,18 @@ impl RealNixAdapter {
         recursive: bool,
         remote: bool,
     ) -> Result<RawPathInfoEnvelope, NixAdapterError> {
+        self.raw_path_infos(&[path], recursive, remote)
+    }
+
+    fn raw_path_infos(
+        &self,
+        paths: &[&StorePath],
+        recursive: bool,
+        remote: bool,
+    ) -> Result<RawPathInfoEnvelope, NixAdapterError> {
+        if paths.is_empty() {
+            return Err(NixAdapterError::OperationFailed);
+        }
         let mut args = base_args();
         args.extend(os_args(["path-info", "--json", "--json-format", "2"]));
         if recursive {
@@ -602,12 +615,19 @@ impl RealNixAdapter {
         if remote {
             args.extend(os_args(["--store", CACHE_URL]));
         }
-        args.push(path.as_str().into());
+        args.extend(paths.iter().map(|path| OsString::from(path.as_str())));
         let bytes = self.require_success(MethodKind::PathInfo, args, SHORT_TIMEOUT)?;
         parse_json(&bytes)
     }
 
     fn verify_remote_cache_trust(&self, path: &StorePath) -> Result<(), BuildCacheError> {
+        self.verify_remote_cache_trust_batch(&[path])
+    }
+
+    fn verify_remote_cache_trust_batch(&self, paths: &[&StorePath]) -> Result<(), BuildCacheError> {
+        if paths.is_empty() {
+            return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+        }
         let mut args = base_args();
         args.extend(os_args([
             "store",
@@ -618,7 +638,7 @@ impl RealNixAdapter {
             "--sigs-needed",
             "1",
         ]));
-        args.push(path.as_str().into());
+        args.extend(paths.iter().map(|path| OsString::from(path.as_str())));
         self.require_success(MethodKind::Verify, args, SHORT_TIMEOUT)
             .map(|_| ())
             .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))
@@ -712,26 +732,31 @@ impl BuildCacheProbe for RealNixAdapter {
         self.require_success(MethodKind::PathInfo, local_ping, SHORT_TIMEOUT)
             .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
 
-        let mut observations = Vec::with_capacity(paths.len());
+        let mut observations = (0..paths.len()).map(|_| None).collect::<Vec<_>>();
         let mut remote_ready = false;
-        for path in paths {
-            match self.raw_path_info(path, false, false) {
-                Ok(local) => {
-                    let entry = root_path_info_optional(&local, path)
+        for (chunk_index, chunk) in paths.chunks(PATH_INFO_BATCH_SIZE).enumerate() {
+            let chunk_start = chunk_index * PATH_INFO_BATCH_SIZE;
+            let path_refs = chunk.iter().collect::<Vec<_>>();
+            let local = match self.raw_path_infos(&path_refs, false, false) {
+                Ok(local) => Some(local),
+                Err(NixAdapterError::OperationFailed) => None,
+                Err(_) => return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)),
+            };
+            let mut missing = Vec::new();
+            for (offset, path) in chunk.iter().enumerate() {
+                if let Some(local) = &local {
+                    let entry = root_path_info_optional(local, path)
                         .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
                     if let Some(entry) = entry {
-                        observations.push(CachePathObservation::hit(
-                            path.clone(),
-                            0,
-                            entry.nar_size,
-                        ));
+                        observations[chunk_start + offset] =
+                            Some(CachePathObservation::hit(path.clone(), 0, entry.nar_size));
                         continue;
                     }
                 }
-                Err(NixAdapterError::OperationFailed) => {}
-                Err(_) => {
-                    return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                }
+                missing.push((chunk_start + offset, path));
+            }
+            if missing.is_empty() {
+                continue;
             }
             if !remote_ready {
                 let mut remote_ping = base_args();
@@ -740,35 +765,47 @@ impl BuildCacheProbe for RealNixAdapter {
                     .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
                 remote_ready = true;
             }
-            match self.raw_path_info(path, false, true) {
-                Ok(remote) => {
-                    let entry = root_path_info_optional(&remote, path)
-                        .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                    let Some(entry) = entry else {
-                        observations.push(CachePathObservation::miss(path.clone()));
-                        continue;
-                    };
-                    self.verify_remote_cache_trust(path)?;
-                    let signatures = signatures(&entry.signatures)
-                        .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                    let download_bytes = entry
-                        .download_size
-                        .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                    if !has_approved_cache_signature(&signatures) {
-                        return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                    }
-                    observations.push(CachePathObservation::hit(
-                        path.clone(),
-                        download_bytes,
-                        entry.nar_size,
-                    ));
-                }
-                Err(_) => {
+            let remote_paths = missing.iter().map(|(_, path)| *path).collect::<Vec<_>>();
+            let remote = self
+                .raw_path_infos(&remote_paths, false, true)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+            let mut remote_hits = Vec::new();
+            for (index, path) in missing {
+                let entry = root_path_info_optional(&remote, path)
+                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                let Some(entry) = entry else {
+                    observations[index] = Some(CachePathObservation::miss(path.clone()));
+                    continue;
+                };
+                let signatures = signatures(&entry.signatures)
+                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                let download_bytes = entry
+                    .download_size
+                    .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                if !has_approved_cache_signature(&signatures) {
                     return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
                 }
+                remote_hits.push((index, path, download_bytes, entry.nar_size));
+            }
+            let trusted_paths = remote_hits
+                .iter()
+                .map(|(_, path, _, _)| *path)
+                .collect::<Vec<_>>();
+            if !trusted_paths.is_empty() {
+                self.verify_remote_cache_trust_batch(&trusted_paths)?;
+            }
+            for (index, path, download_bytes, nar_size) in remote_hits {
+                observations[index] = Some(CachePathObservation::hit(
+                    path.clone(),
+                    download_bytes,
+                    nar_size,
+                ));
             }
         }
-        Ok(observations)
+        observations
+            .into_iter()
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))
     }
 
     fn inspect_download_closures(
@@ -2557,18 +2594,14 @@ mod tests {
         let local = StorePath::new("/nix/store/22222222222222222222222222222222-local")?;
         let remote = StorePath::new("/nix/store/33333333333333333333333333333333-remote")?;
         let missing = StorePath::new("/nix/store/44444444444444444444444444444444-missing")?;
-        let local_json = br#"{"info":{"22222222222222222222222222222222-local":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":true,"url":null,"version":2}},"storeDir":"/nix/store","version":2}"#;
-        let remote_json = br#"{"info":{"33333333333333333333333333333333-remote":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/example.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
-        let missing_json = br#"{"info":{"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
+        let local_json = br#"{"info":{"22222222222222222222222222222222-local":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":true,"url":null,"version":2},"33333333333333333333333333333333-remote":null,"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
+        let remote_json = br#"{"info":{"33333333333333333333333333333333-remote":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/example.nar.xz","version":2},"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
         let executor = Scripted::new(vec![
             success(Vec::new()),
             success(local_json.as_slice()),
-            failure(1),
             success(Vec::new()),
             success(remote_json.as_slice()),
             success(Vec::new()),
-            failure(1),
-            success(missing_json.as_slice()),
         ]);
         let calls = Arc::clone(&executor.calls);
         let adapter = RealNixAdapter::scripted(executor);
@@ -2578,20 +2611,31 @@ mod tests {
         assert_eq!(
             observations,
             vec![
-                CachePathObservation::hit(local, 0, 11),
-                CachePathObservation::hit(remote, 7, 13),
-                CachePathObservation::miss(missing),
+                CachePathObservation::hit(local.clone(), 0, 11),
+                CachePathObservation::hit(remote.clone(), 7, 13),
+                CachePathObservation::miss(missing.clone()),
             ]
         );
         let calls = calls.lock().map_err(|_| "poisoned call log")?;
-        assert_eq!(calls.len(), 8);
+        assert_eq!(calls.len(), 5);
         assert_eq!(
             calls
                 .iter()
                 .filter(|call| call.iter().any(|argument| argument == "--store"))
                 .count(),
-            4
+            3
         );
+        assert!(calls.iter().any(|call| {
+            [local.as_str(), remote.as_str(), missing.as_str()]
+                .iter()
+                .all(|path| call.iter().any(|argument| argument == path))
+        }));
+        assert!(calls.iter().any(|call| {
+            [remote.as_str(), missing.as_str()]
+                .iter()
+                .all(|path| call.iter().any(|argument| argument == path))
+                && !call.iter().any(|argument| argument == local.as_str())
+        }));
         assert!(calls.iter().any(|call| {
             call.windows(4).any(|arguments| {
                 arguments
