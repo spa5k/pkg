@@ -24,6 +24,13 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("macos_alpha_proof:", NIGHTLY)
         self.assertIn("if: ${{ inputs.macos_alpha_proof }}", NIGHTLY)
         self.assertIn("uses: ./.github/workflows/macos-alpha-proof.yml", NIGHTLY)
+        self.assertEqual(
+            NIGHTLY.count(
+                "if: ${{ github.event_name != 'workflow_dispatch' "
+                "|| !inputs.macos_alpha_proof }}"
+            ),
+            3,
+        )
 
     def test_third_party_actions_are_commit_pinned(self) -> None:
         for line in WORKFLOW.splitlines():

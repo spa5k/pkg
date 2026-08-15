@@ -33,9 +33,11 @@ jobs:
     uses: ./.github/workflows/macos-alpha-proof.yml
 
   security:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.macos_alpha_proof }}
     uses: ./.github/workflows/security.yml
 
   fault-harness:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.macos_alpha_proof }}
     name: G-FAULT harness (${{ matrix.os }})
     needs: security
     strategy:
@@ -65,6 +67,7 @@ jobs:
         run: cargo test --offline --locked --workspace --all-features -- --ignored
 
   real-nix-adapter:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.macos_alpha_proof }}
     name: G-E2E-REAL adapter (${{ matrix.system }})
     needs: security
     strategy:
