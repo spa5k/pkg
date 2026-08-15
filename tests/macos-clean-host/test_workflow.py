@@ -6,17 +6,24 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text()
+NIGHTLY = (ROOT / ".github/workflows/nightly.yml").read_text()
 
 
 class MacOsProofWorkflowTests(unittest.TestCase):
     def test_manual_read_only_proof_uses_a_source_free_second_host(self) -> None:
         self.assertIn("workflow_dispatch:", WORKFLOW)
+        self.assertIn("workflow_call:", WORKFLOW)
         self.assertIn("permissions:\n  contents: read", WORKFLOW)
         self.assertNotIn("secrets.", WORKFLOW)
         proof_job = WORKFLOW.split("\n  prove:\n", 1)[1]
         self.assertNotIn("actions/checkout", proof_job)
         self.assertNotIn("cargo ", proof_job)
         self.assertIn('PKG_DISPOSABLE_MACOS_PROOF: confirmed', proof_job)
+
+    def test_default_branch_workflow_can_dispatch_the_branch_proof(self) -> None:
+        self.assertIn("macos_alpha_proof:", NIGHTLY)
+        self.assertIn("if: ${{ inputs.macos_alpha_proof }}", NIGHTLY)
+        self.assertIn("uses: ./.github/workflows/macos-alpha-proof.yml", NIGHTLY)
 
     def test_third_party_actions_are_commit_pinned(self) -> None:
         for line in WORKFLOW.splitlines():

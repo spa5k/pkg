@@ -2,6 +2,7 @@ name: macOS alpha clean-host proof
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
