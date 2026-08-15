@@ -229,6 +229,11 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn recover_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        if store_volume_owns_rollback(asset) {
+            return (self.assets.classify_asset(asset)? == MacOsAssetPresence::ExactPresent)
+                .then_some(())
+                .ok_or_else(MacOsError::backend_failure);
+        }
         self.assets.remove_verified_asset(asset)
     }
 
@@ -401,8 +406,16 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn rollback_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
-        self.assets.rollback_asset(asset)
+        if store_volume_owns_rollback(asset) {
+            self.recover_asset(asset)
+        } else {
+            self.assets.rollback_asset(asset)
+        }
     }
+}
+
+fn store_volume_owns_rollback(asset: MacOsInstallAsset) -> bool {
+    asset.id() == "nix-root"
 }
 
 fn valid_tool_path(bytes: &[u8]) -> bool {
@@ -448,6 +461,7 @@ mod tests {
             .copied()
             .find(|asset| asset.id() == "nix-root")
             .ok_or("missing nix-root asset")?;
+        assert!(store_volume_owns_rollback(nix_root));
         backend.store_created = true;
         assert_eq!(
             backend.classify_asset_presence(nix_root, MacOsAssetPresence::ExactPresent),
