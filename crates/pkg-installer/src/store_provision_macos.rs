@@ -34,9 +34,7 @@ pub fn provision_macos_store_volume_production()
     if nix::unistd::geteuid().as_raw() != 0 || nix::unistd::getegid().as_raw() != 0 {
         return Err(failure());
     }
-    crate::provision_macos_store_volume(&mut ProductionBackend::new(
-        crate::macos_accounts::BUILD_GID,
-    ))
+    crate::provision_macos_store_volume(&mut ProductionBackend::new())
 }
 
 /// Classifies the complete preview-owned APFS state without mutation.
@@ -199,17 +197,15 @@ struct ProductionBackend {
     synthetic: Option<MacOsSyntheticFileTransaction>,
     apfs: MacOsApfsAdapter,
     volume_secret: Option<StoreVolumeSecret>,
-    build_gid: u32,
 }
 
 impl ProductionBackend {
-    const fn new(build_gid: u32) -> Self {
+    const fn new() -> Self {
         Self {
             journal: None,
             synthetic: None,
             apfs: MacOsApfsAdapter::production(),
             volume_secret: None,
-            build_gid,
         }
     }
 
@@ -367,7 +363,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
         self.apfs
             .enable_ownership(volume_uuid)
             .map_err(|_| failure())?;
-        configure_mount_root(self.build_gid)?;
+        configure_mount_root()?;
         self.journal_mut()?
             .complete_ownership()
             .map_err(|_| failure())?;
@@ -408,7 +404,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
 
     fn verify_final(&mut self, volume_uuid: &str) -> Result<(), MacOsStoreProvisionError> {
         self.apfs.verify_final(volume_uuid).map_err(|_| failure())?;
-        verify_mount_root(self.build_gid)?;
+        verify_mount_root()?;
         if !SystemKeychainStore::exists().map_err(|_| failure())?
             || !receipt_matches(volume_uuid).map_err(|_| failure())?
             || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
@@ -478,7 +474,7 @@ fn accepted_stitch_status(status: ExitStatus) -> bool {
     status.success() || status.code() == Some(SEQUOIA_STITCHED_STATUS)
 }
 
-fn configure_mount_root(build_gid: u32) -> Result<(), MacOsStoreProvisionError> {
+fn configure_mount_root() -> Result<(), MacOsStoreProvisionError> {
     let root = open(
         MacOsStoreVolumeContract::MOUNT_POINT,
         OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
@@ -486,18 +482,13 @@ fn configure_mount_root(build_gid: u32) -> Result<(), MacOsStoreProvisionError> 
     )
     .map_err(|_| failure())?;
     let root = std::fs::File::from(root);
-    fchown(
-        &root,
-        Some(Uid::from_raw(0)),
-        Some(Gid::from_raw(build_gid)),
-    )
-    .map_err(|_| failure())?;
+    fchown(&root, Some(Uid::from_raw(0)), Some(Gid::from_raw(0))).map_err(|_| failure())?;
     fchmod(&root, Mode::from_bits_truncate(0o755)).map_err(|_| failure())?;
     fsync(&root).map_err(|_| failure())?;
-    verify_mount_root_file(&root, build_gid)
+    verify_mount_root_file(&root)
 }
 
-fn verify_mount_root(build_gid: u32) -> Result<(), MacOsStoreProvisionError> {
+fn verify_mount_root() -> Result<(), MacOsStoreProvisionError> {
     let root = open(
         MacOsStoreVolumeContract::MOUNT_POINT,
         OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
@@ -505,17 +496,14 @@ fn verify_mount_root(build_gid: u32) -> Result<(), MacOsStoreProvisionError> {
     )
     .map_err(|_| failure())?;
     let root = std::fs::File::from(root);
-    verify_mount_root_file(&root, build_gid)
+    verify_mount_root_file(&root)
 }
 
-fn verify_mount_root_file(
-    root: &std::fs::File,
-    build_gid: u32,
-) -> Result<(), MacOsStoreProvisionError> {
+fn verify_mount_root_file(root: &std::fs::File) -> Result<(), MacOsStoreProvisionError> {
     let metadata = root.metadata().map_err(|_| failure())?;
     if metadata.is_dir()
         && metadata.uid() == 0
-        && metadata.gid() == build_gid
+        && metadata.gid() == 0
         && metadata.mode() & 0o7777 == 0o755
     {
         Ok(())

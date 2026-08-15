@@ -292,7 +292,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         "/nix",
         0o755,
         MacOsAssetPrincipal::Root,
-        MacOsAssetPrincipal::Build,
+        MacOsAssetPrincipal::Root,
     ),
     MacOsInstallAsset::path(
         "nix-store",
@@ -1553,6 +1553,16 @@ mod tests {
             assert_eq!(asset.path_or_name, path);
             assert_eq!(asset.owner, Some(owner));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn nix_root_matches_authenticated_runtime_ownership() -> Result<(), Box<dyn Error>> {
+        let nix_root = MACOS_ASSETS
+            .iter()
+            .find(|asset| asset.id == "nix-root")
+            .ok_or_else(|| std::io::Error::other("missing Nix root directory"))?;
+        assert_eq!(nix_root.group, Some(MacOsAssetPrincipal::Root));
         Ok(())
     }
 

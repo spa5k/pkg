@@ -2790,6 +2790,43 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "requires PKG_TEST_NIX_ARCHIVE with the official Nix 2.34.8 aarch64-darwin tarball"]
+    fn official_nix_darwin_archive_matches_the_shared_manifest_during_extraction() {
+        let archive = std::env::var_os("PKG_TEST_NIX_ARCHIVE")
+            .map(PathBuf::from)
+            .expect("PKG_TEST_NIX_ARCHIVE must be set");
+        let version = NixVersion::new("2.34.8").unwrap();
+        let system = System::Aarch64Darwin;
+        let manifest =
+            crate::build_upstream_runtime_asset_manifest(&archive, system, &version).unwrap();
+        let expectation = decode_ownership_asset_manifest(
+            &manifest,
+            system,
+            &version,
+            body_digest(&manifest),
+            ManagedGroupBindings::new(333, 350).unwrap(),
+        )
+        .unwrap();
+        let staging = TempDir::new().unwrap();
+        let registration =
+            extract_exact_archive(&archive, staging.path(), system, &version, &expectation)
+                .unwrap();
+        assert_eq!(registration, staging.path().join(".reginfo"));
+        for binary in ["nix", "nix-store", "nix-daemon"] {
+            assert!(
+                fs::symlink_metadata(
+                    staging
+                        .path()
+                        .join(format!("opt/pkg/nix/2.34.8/bin/{binary}"))
+                )
+                .unwrap()
+                .file_type()
+                .is_file()
+            );
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "mutates only an explicitly opted-in disposable clean Linux container"]
