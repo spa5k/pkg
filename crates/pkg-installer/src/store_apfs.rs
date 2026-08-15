@@ -21,6 +21,8 @@ const ROOT_VOLUME: &str = "/";
 const FILESYSTEM: &str = "Case-sensitive APFS";
 const MAX_PLIST_BYTES: u64 = 262_144;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const UNMOUNT_ATTEMPTS: usize = 3;
+const UNMOUNT_RETRY_DELAY: Duration = Duration::from_secs(1);
 const SECRET_BYTES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,18 +142,25 @@ impl<R: DiskutilRunner> MacOsApfsAdapter<R> {
         if !canonical_uuid(volume_uuid) {
             return Err(invalid_state());
         }
-        let container = self.root_container()?;
-        match self.discover_in(&container)? {
-            None => Ok(()),
-            Some(volume) if volume.uuid != volume_uuid => Err(invalid_state()),
-            Some(_) => match self.inspect(volume_uuid)?.mount_point.as_deref() {
-                None => Ok(()),
-                Some(MacOsStoreVolumeContract::MOUNT_POINT) => {
-                    self.runner.status(&unmount_arguments(volume_uuid))
-                }
-                Some(_) => Err(invalid_state()),
-            },
+        for attempt in 0..UNMOUNT_ATTEMPTS {
+            let container = self.root_container()?;
+            match self.discover_in(&container)? {
+                None => return Ok(()),
+                Some(volume) if volume.uuid != volume_uuid => return Err(invalid_state()),
+                Some(_) => match self.inspect(volume_uuid)?.mount_point.as_deref() {
+                    None => return Ok(()),
+                    Some(MacOsStoreVolumeContract::MOUNT_POINT) => {
+                        match self.runner.status(&unmount_arguments(volume_uuid)) {
+                            Ok(()) => return Ok(()),
+                            Err(error) if attempt + 1 == UNMOUNT_ATTEMPTS => return Err(error),
+                            Err(_) => thread::sleep(UNMOUNT_RETRY_DELAY),
+                        }
+                    }
+                    Some(_) => return Err(invalid_state()),
+                },
+            }
         }
+        Err(command_failed())
     }
 
     /// Deletes only the exact UUID/name/container/encryption identity.
@@ -519,7 +528,7 @@ mod tests {
     struct FakeRunner {
         outputs: VecDeque<Vec<u8>>,
         calls: Vec<(Vec<String>, Option<Vec<u8>>)>,
-        fail_status: bool,
+        status_failures: usize,
     }
 
     impl DiskutilRunner for FakeRunner {
@@ -538,7 +547,8 @@ mod tests {
                 arguments.iter().map(ToString::to_string).collect(),
                 Some(secret.to_vec()),
             ));
-            if self.fail_status {
+            if self.status_failures > 0 {
+                self.status_failures -= 1;
                 Err(command_failed())
             } else {
                 Ok(())
@@ -548,7 +558,8 @@ mod tests {
         fn status(&mut self, arguments: &[&str]) -> Result<(), MacOsApfsError> {
             self.calls
                 .push((arguments.iter().map(ToString::to_string).collect(), None));
-            if self.fail_status {
+            if self.status_failures > 0 {
+                self.status_failures -= 1;
                 Err(command_failed())
             } else {
                 Ok(())
@@ -651,6 +662,34 @@ mod tests {
                 "deleteVolume".to_owned(),
                 UUID.to_owned()
             ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unmount_retries_and_revalidates_a_transient_failure() -> Result<(), MacOsApfsError> {
+        let runner = FakeRunner {
+            outputs: VecDeque::from([
+                root_info(),
+                listing(&owned_volume()),
+                volume_info(false, Some("/nix")),
+                root_info(),
+                listing(&owned_volume()),
+                volume_info(false, Some("/nix")),
+            ]),
+            status_failures: 1,
+            ..FakeRunner::default()
+        };
+        let mut adapter = MacOsApfsAdapter { runner };
+        adapter.unmount(UUID)?;
+        assert_eq!(
+            adapter
+                .runner
+                .calls
+                .iter()
+                .filter(|call| call.0 == unmount_arguments(UUID))
+                .count(),
+            2
         );
         Ok(())
     }
