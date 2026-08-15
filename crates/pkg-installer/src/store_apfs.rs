@@ -298,12 +298,19 @@ struct VolumeInfo {
     #[serde(rename = "VolumeUUID")]
     volume_uuid: String,
     volume_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_mount_point")]
     mount_point: Option<String>,
     file_vault: bool,
     global_permissions_enabled: bool,
     #[serde(default)]
     locked: bool,
+}
+
+fn deserialize_mount_point<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.filter(|path| !path.is_empty()))
 }
 
 #[derive(Deserialize)]
@@ -654,7 +661,7 @@ mod tests {
             outputs: VecDeque::from([
                 root_info(),
                 listing(&owned_volume()),
-                volume_info(true, None),
+                volume_info(true, Some("")),
                 volume_info(false, Some("/nix")),
             ]),
             ..FakeRunner::default()
