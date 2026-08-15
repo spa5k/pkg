@@ -111,13 +111,27 @@ impl<R: DiskutilRunner> MacOsApfsAdapter<R> {
         self.runner.status(&enable_ownership_arguments(volume_uuid))
     }
 
-    /// Mounts the exact product volume at the compiled `/nix` mount point.
-    pub(crate) fn mount(&mut self, volume_uuid: &str) -> Result<(), MacOsApfsError> {
-        self.require_owned(volume_uuid)?;
-        match self.inspect(volume_uuid)?.mount_point.as_deref() {
-            Some(MacOsStoreVolumeContract::MOUNT_POINT) => Ok(()),
-            None => self.runner.status(&mount_arguments(volume_uuid)),
-            Some(_) => Err(invalid_state()),
+    /// Unlocks and mounts the exact product volume at the compiled `/nix` mount point.
+    pub(crate) fn mount(&mut self, volume_uuid: &str, secret: &[u8]) -> Result<(), MacOsApfsError> {
+        if !valid_secret(secret) {
+            return Err(invalid_state());
+        }
+        let volume = self.require_owned(volume_uuid)?;
+        let before = self.inspect(volume_uuid)?;
+        match (before.locked, before.mount_point.as_deref()) {
+            (false, Some(MacOsStoreVolumeContract::MOUNT_POINT)) => return Ok(()),
+            (true, None) => {}
+            _ => return Err(invalid_state()),
+        }
+        self.runner
+            .secret_status(&unlock_arguments(&volume.device_identifier), secret)?;
+        let after = self.inspect(volume_uuid)?;
+        if !after.locked
+            && after.mount_point.as_deref() == Some(MacOsStoreVolumeContract::MOUNT_POINT)
+        {
+            Ok(())
+        } else {
+            Err(invalid_state())
         }
     }
 
@@ -163,13 +177,13 @@ impl<R: DiskutilRunner> MacOsApfsAdapter<R> {
         Ok(())
     }
 
-    fn require_owned(&mut self, volume_uuid: &str) -> Result<(), MacOsApfsError> {
+    fn require_owned(&mut self, volume_uuid: &str) -> Result<OwnedVolume, MacOsApfsError> {
         if !canonical_uuid(volume_uuid) {
             return Err(invalid_state());
         }
         let container = self.root_container()?;
         match self.discover_in(&container)? {
-            Some(volume) if volume.uuid == volume_uuid => Ok(()),
+            Some(volume) if volume.uuid == volume_uuid => Ok(volume),
             Some(_) | None => Err(invalid_state()),
         }
     }
@@ -257,12 +271,16 @@ impl<R: DiskutilRunner> MacOsApfsAdapter<R> {
         {
             return Err(invalid_state());
         }
-        Ok(Some(OwnedVolume { uuid: volume.uuid }))
+        Ok(Some(OwnedVolume {
+            uuid: volume.uuid,
+            device_identifier: volume.device_identifier,
+        }))
     }
 }
 
 struct OwnedVolume {
     uuid: String,
+    device_identifier: String,
 }
 
 #[derive(Deserialize)]
@@ -357,12 +375,14 @@ const fn enable_ownership_arguments(volume_uuid: &str) -> [&str; 2] {
     ["enableOwnership", volume_uuid]
 }
 
-const fn mount_arguments(volume_uuid: &str) -> [&str; 4] {
+const fn unlock_arguments(volume_identifier: &str) -> [&str; 6] {
     [
-        "mount",
-        "-mountPoint",
+        "apfs",
+        "unlockVolume",
+        volume_identifier,
+        "-stdinpassphrase",
+        "-mountpoint",
         MacOsStoreVolumeContract::MOUNT_POINT,
-        volume_uuid,
     ]
 }
 
@@ -543,6 +563,17 @@ mod tests {
         )
     }
 
+    fn volume_info(locked: bool, mount_point: Option<&str>) -> Vec<u8> {
+        format!(
+            r#"<?xml version="1.0"?><plist version="1.0"><dict><key>APFSContainerReference</key><string>disk3</string><key>VolumeUUID</key><string>{UUID}</string><key>VolumeName</key><string>pkg Nix Store</string><key>FileVault</key><true/><key>GlobalPermissionsEnabled</key><true/><key>Locked</key><{locked}/>{mount}</dict></plist>"#,
+            locked = if locked { "true" } else { "false" },
+            mount = mount_point.map_or(String::new(), |path| format!(
+                "<key>MountPoint</key><string>{path}</string>"
+            )),
+        )
+        .into_bytes()
+    }
+
     #[test]
     fn creation_uses_stdin_and_discovers_uuid_from_plist() -> Result<(), MacOsApfsError> {
         let runner = FakeRunner {
@@ -618,6 +649,45 @@ mod tests {
     }
 
     #[test]
+    fn mount_unlocks_with_stdin_secret_and_verifies_the_result() -> Result<(), MacOsApfsError> {
+        let runner = FakeRunner {
+            outputs: VecDeque::from([
+                root_info(),
+                listing(&owned_volume()),
+                volume_info(true, None),
+                volume_info(false, Some("/nix")),
+            ]),
+            ..FakeRunner::default()
+        };
+        let mut adapter = MacOsApfsAdapter { runner };
+        adapter.mount(UUID, SECRET)?;
+        assert_eq!(
+            adapter.runner.calls[3],
+            (
+                vec![
+                    "apfs",
+                    "unlockVolume",
+                    "disk3s8",
+                    "-stdinpassphrase",
+                    "-mountpoint",
+                    "/nix",
+                ]
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
+                Some(SECRET.to_vec()),
+            )
+        );
+        assert!(
+            !adapter.runner.calls[3]
+                .0
+                .iter()
+                .any(|argument| argument.as_bytes() == SECRET)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn invalid_secret_is_rejected_before_any_command() {
         for secret in [b"short".as_slice(), &[b'g'; 64], &[b'0'; 65]] {
             let mut adapter = MacOsApfsAdapter {
@@ -650,8 +720,15 @@ mod tests {
         );
         assert_eq!(enable_ownership_arguments(UUID), ["enableOwnership", UUID]);
         assert_eq!(
-            mount_arguments(UUID),
-            ["mount", "-mountPoint", "/nix", UUID]
+            unlock_arguments("disk3s8"),
+            [
+                "apfs",
+                "unlockVolume",
+                "disk3s8",
+                "-stdinpassphrase",
+                "-mountpoint",
+                "/nix"
+            ]
         );
         assert_eq!(unmount_arguments(UUID), ["unmount", UUID]);
         assert_eq!(delete_arguments(UUID), ["apfs", "deleteVolume", UUID]);

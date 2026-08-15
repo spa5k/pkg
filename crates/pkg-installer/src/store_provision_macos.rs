@@ -198,6 +198,7 @@ struct ProductionBackend {
     journal: Option<MacOsStoreProvisionJournal>,
     synthetic: Option<MacOsSyntheticFileTransaction>,
     apfs: MacOsApfsAdapter,
+    volume_secret: Option<StoreVolumeSecret>,
     build_gid: u32,
 }
 
@@ -207,6 +208,7 @@ impl ProductionBackend {
             journal: None,
             synthetic: None,
             apfs: MacOsApfsAdapter::production(),
+            volume_secret: None,
             build_gid,
         }
     }
@@ -353,6 +355,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
             .complete_keychain()
             .map_err(|_| failure())?;
         self.replace_journal()?;
+        self.volume_secret = Some(secret);
         Ok(volume_uuid)
     }
 
@@ -374,7 +377,17 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
     fn mount_volume(&mut self, volume_uuid: &str) -> Result<(), MacOsStoreProvisionError> {
         self.journal_mut()?.intend_mount().map_err(|_| failure())?;
         self.replace_journal()?;
-        self.apfs.mount(volume_uuid).map_err(|_| failure())?;
+        let result = self
+            .volume_secret
+            .as_ref()
+            .ok_or_else(failure)
+            .and_then(|secret| {
+                self.apfs
+                    .mount(volume_uuid, secret.expose_for_stdin())
+                    .map_err(|_| failure())
+            });
+        self.volume_secret.take();
+        result?;
         self.journal_mut()?
             .complete_mount()
             .map_err(|_| failure())?;
