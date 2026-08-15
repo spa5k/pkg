@@ -303,6 +303,14 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Build,
     ),
     MacOsInstallAsset::path(
+        "nix-var",
+        MacOsAssetKind::Directory,
+        "/nix/var",
+        0o755,
+        MacOsAssetPrincipal::Root,
+        MacOsAssetPrincipal::Build,
+    ),
+    MacOsInstallAsset::path(
         "nix-state",
         MacOsAssetKind::Directory,
         "/nix/var/nix",
@@ -1484,6 +1492,14 @@ mod tests {
             .find(|asset| asset.id == "run-root")
             .ok_or_else(|| std::io::Error::other("missing run root fixture"))?;
         assert_eq!(run_root.mode, Some(0o751));
+        let nix_var = MACOS_ASSETS
+            .iter()
+            .find(|asset| asset.id == "nix-var")
+            .ok_or_else(|| std::io::Error::other("missing Nix var directory"))?;
+        assert_eq!(nix_var.path_or_name, "/nix/var");
+        assert_eq!(nix_var.mode, Some(0o755));
+        assert_eq!(nix_var.owner, Some(MacOsAssetPrincipal::Root));
+        assert_eq!(nix_var.group, Some(MacOsAssetPrincipal::Build));
         assert_eq!(MacOsSocketContract::BROKER_MODE, 0o666);
         assert_eq!(MacOsSocketContract::HELPER_MODE, 0o660);
         let helper = MACOS_ASSETS
