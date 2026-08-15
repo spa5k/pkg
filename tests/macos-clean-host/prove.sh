@@ -35,6 +35,42 @@ if [ "$local_tart" = true ]; then
 fi
 /usr/bin/sudo -n /usr/bin/true || fail "passwordless administrative authority is unavailable"
 
+if [ "$local_tart" = true ]; then
+    echo "+ wait for stable root APFS container"
+    stable_apfs_size=
+    stable_apfs_samples=0
+    attempt=0
+    while [ "$attempt" -lt 24 ]; do
+        current_apfs_size=$(
+            /usr/sbin/diskutil info -plist / 2>/dev/null \
+                | /usr/bin/plutil -extract APFSContainerSize raw - 2>/dev/null \
+                || true
+        )
+        case "$current_apfs_size" in
+            ''|*[!0-9]*)
+                stable_apfs_size=
+                stable_apfs_samples=0
+                ;;
+            *)
+                if /usr/bin/pgrep -x diskutil >/dev/null 2>&1; then
+                    stable_apfs_size=
+                    stable_apfs_samples=0
+                elif [ "$current_apfs_size" = "$stable_apfs_size" ]; then
+                    stable_apfs_samples=$((stable_apfs_samples + 1))
+                else
+                    stable_apfs_size=$current_apfs_size
+                    stable_apfs_samples=1
+                fi
+                ;;
+        esac
+        [ "$stable_apfs_samples" -ge 3 ] && break
+        attempt=$((attempt + 1))
+        /bin/sleep 5
+    done
+    [ "$stable_apfs_samples" -ge 3 ] \
+        || fail "the root APFS container did not become stable"
+fi
+
 bundle=$(CDPATH= cd -- "$(/usr/bin/dirname "$0")" && /bin/pwd -P)
 work=$(/usr/bin/mktemp -d "${RUNNER_TEMP:-/tmp}/pkg-macos-proof.XXXXXX")
 server_pid=

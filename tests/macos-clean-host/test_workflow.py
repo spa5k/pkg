@@ -52,6 +52,16 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn('*) fail "the disposable-host gate is absent"', PROOF)
         self.assertLess(PROOF.index("case \"${PKG_DISPOSABLE_MACOS_PROOF:-}\""), PROOF.index("bundle="))
 
+    def test_local_tart_gate_waits_for_apfs_resize(self) -> None:
+        self.assertIn('echo "+ wait for stable root APFS container"', PROOF)
+        self.assertIn("APFSContainerSize", PROOF)
+        self.assertIn("/usr/bin/pgrep -x diskutil", PROOF)
+        self.assertIn('"$stable_apfs_samples" -ge 3', PROOF)
+        self.assertLess(
+            PROOF.index("+ wait for stable root APFS container"),
+            PROOF.index("security add-trusted-cert"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
