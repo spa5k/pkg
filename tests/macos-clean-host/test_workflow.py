@@ -62,6 +62,10 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             PROOF.index("security add-trusted-cert"),
         )
 
+    def test_apfs_checkpoint_parses_the_nested_journal(self) -> None:
+        self.assertIn('e.get("mutation", {}).get("kind") == "storeVolume"', PROOF)
+        self.assertNotIn('"kind":"storeVolume","state":"created"', PROOF)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -256,7 +256,8 @@ while [ "$attempt" -lt 600 ]; do
         /usr/bin/sudo /bin/cat \
             /private/var/db/pkg-install/macos-transaction-v1.json \
             >"$work/last-install-journal.json" 2>/dev/null || true
-        if /usr/bin/grep -F '"kind":"storeVolume","state":"created"' \
+        if /usr/bin/python3 -c \
+            'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not any(e.get("mutation", {}).get("kind") == "storeVolume" and e.get("state") == "created" for e in d.get("entries", [])))' \
             "$work/last-install-journal.json" >/dev/null 2>&1; then
             store_created=true
             break
