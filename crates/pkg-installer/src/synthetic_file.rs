@@ -132,12 +132,13 @@ impl MacOsSyntheticFileStorage {
     ///
     /// Returns a stable error for unsafe, unreadable, or ambiguous state.
     pub fn preview_entry_absent() -> Result<bool, MacOsSyntheticFileError> {
-        validate_directory(Path::new(CONFIG_PARENT), 0, 0, 0o755)?;
-        validate_directory(Path::new(BACKUP_PARENT), 0, 0, 0o700)?;
-        Ok(
-            read_optional_file(Path::new(CONFIG_PATH), 0, 0, 0o644, MAX_CONFIG_BYTES)?.is_none()
-                && fs::symlink_metadata(BACKUP_PATH)
-                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+        preview_entry_absent_at(
+            Path::new(CONFIG_PARENT),
+            Path::new(CONFIG_PATH),
+            Path::new(BACKUP_PARENT),
+            Path::new(BACKUP_PATH),
+            0,
+            0,
         )
     }
 
@@ -233,6 +234,42 @@ impl MacOsSyntheticFileStorage {
             .map_err(|_| MacOsSyntheticFileError::InvalidState)?;
         Ok(!plan.changed())
     }
+}
+
+fn preview_entry_absent_at(
+    config_parent: &Path,
+    config: &Path,
+    backup_parent: &Path,
+    backup: &Path,
+    expected_owner: u32,
+    expected_group: u32,
+) -> Result<bool, MacOsSyntheticFileError> {
+    validate_directory(config_parent, expected_owner, expected_group, 0o755)?;
+    let backup_parent_missing = match fs::symlink_metadata(backup_parent) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => return Err(MacOsSyntheticFileError::InvalidState),
+        Ok(_) => {
+            validate_directory(backup_parent, expected_owner, expected_group, 0o700)?;
+            false
+        }
+    };
+    let absent = read_optional_file(
+        config,
+        expected_owner,
+        expected_group,
+        0o644,
+        MAX_CONFIG_BYTES,
+    )?
+    .is_none()
+        && fs::symlink_metadata(backup)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+    if backup_parent_missing
+        && !fs::symlink_metadata(backup_parent)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    {
+        return Err(MacOsSyntheticFileError::InvalidState);
+    }
+    Ok(absent)
 }
 
 fn prepare_at(
@@ -1032,6 +1069,34 @@ mod tests {
         assert_eq!(fs::read(&fixture.config)?, b"nix\n");
         fixture.restore(&transaction)?;
         assert!(!fixture.config.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn preview_absence_accepts_only_an_absent_backup_parent() -> Result<(), Box<dyn Error>> {
+        let fixture = Fixture::new()?;
+        let absent = || {
+            preview_entry_absent_at(
+                &fixture.config_parent,
+                &fixture.config,
+                &fixture.backup_parent,
+                &fixture.backup,
+                fixture.uid,
+                fixture.gid,
+            )
+        };
+        assert!(absent()?);
+
+        fs::remove_dir(&fixture.backup_parent)?;
+        assert!(absent()?);
+
+        fs::write(&fixture.config, b"foreign")?;
+        fs::set_permissions(&fixture.config, Permissions::from_mode(0o644))?;
+        assert!(!absent()?);
+
+        fs::remove_file(&fixture.config)?;
+        fs::write(&fixture.backup_parent, b"foreign")?;
+        assert_eq!(absent(), Err(MacOsSyntheticFileError::InvalidState));
         Ok(())
     }
 
