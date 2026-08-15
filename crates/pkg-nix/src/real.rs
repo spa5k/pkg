@@ -777,19 +777,11 @@ impl BuildCacheProbe for RealNixAdapter {
                 {
                     Some(entry) => Some(entry),
                     None => {
-                        exact_remote = match self.raw_path_info(path, false, true) {
-                            Ok(exact) => Some(exact),
-                            Err(NixAdapterError::OperationFailed) => None,
-                            Err(_) => {
-                                return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                            }
-                        };
-                        match &exact_remote {
-                            Some(exact) => root_path_info_optional(exact, path).map_err(|_| {
-                                BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)
-                            })?,
-                            None => None,
-                        }
+                        exact_remote = self
+                            .raw_path_info(path, false, true)
+                            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                        root_path_info_optional(&exact_remote, path)
+                            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
                     }
                 };
                 let Some(entry) = entry else {
@@ -2695,13 +2687,14 @@ mod tests {
         let local_json = br#"{"info":{"22222222222222222222222222222222-local":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":true,"url":null,"version":2},"33333333333333333333333333333333-remote":null,"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
         let remote_json = br#"{"info":{"33333333333333333333333333333333-remote":null,"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
         let exact_remote_json = br#"{"info":{"33333333333333333333333333333333-remote":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/example.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        let exact_missing_json = br#"{"info":{"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
         let executor = Scripted::new(vec![
             success(Vec::new()),
             success(local_json.as_slice()),
             success(Vec::new()),
             success(remote_json.as_slice()),
             success(exact_remote_json.as_slice()),
-            failure(1),
+            success(exact_missing_json.as_slice()),
             success(Vec::new()),
         ]);
         let calls = Arc::clone(&executor.calls);
@@ -3008,10 +3001,12 @@ mod tests {
     fn build_cache_probe_refuses_generic_remote_failure() -> Result<(), Box<dyn std::error::Error>>
     {
         let path = StorePath::new("/nix/store/44444444444444444444444444444444-missing")?;
+        let remote_json = br#"{"info":{"44444444444444444444444444444444-missing":null},"storeDir":"/nix/store","version":2}"#;
         let adapter = RealNixAdapter::scripted(Scripted::new(vec![
             success(Vec::new()),
             failure(1),
             success(Vec::new()),
+            success(remote_json.as_slice()),
             failure(1),
         ]));
 
