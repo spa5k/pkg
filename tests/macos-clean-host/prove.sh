@@ -129,7 +129,10 @@ while [ "$attempt" -lt 600 ]; do
     attempt=$((attempt + 1))
     /bin/sleep 0.05
 done
-[ "$store_created" = true ] || fail "the APFS install checkpoint was not observed"
+if [ "$store_created" != true ]; then
+    /usr/bin/tail -n 200 "$work/interrupted-install.log" >&2 || true
+    fail "the APFS install checkpoint was not observed"
+fi
 install_pid=$(/bin/cat "$work/install.pid")
 [ -n "$install_pid" ] || fail "the shipping pkg-install process was not found"
 /usr/bin/sudo /bin/kill -KILL "$install_pid"
