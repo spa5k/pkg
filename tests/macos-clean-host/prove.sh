@@ -114,6 +114,31 @@ for path in \
     fi
 done
 
+echo "+ record Nix preflight evidence"
+for file in /private/etc/synthetic.conf /private/etc/fstab; do
+    if [ -f "$file" ]; then
+        /usr/bin/grep -nE '(^|[[:space:]])/?nix([[:space:]]|$)' "$file" || true
+    fi
+done
+for directory in /Library/LaunchDaemons /Library/LaunchAgents; do
+    for path in "$directory"/*; do
+        [ -e "$path" ] || continue
+        case "$(/usr/bin/basename "$path" | /usr/bin/tr '[:upper:]' '[:lower:]')" in
+            *org.nixos.*|nix-*|nix.*|_nixbld*) echo "$path" ;;
+        esac
+    done
+done
+/usr/bin/dscl . -list /Users | /usr/bin/grep -E '^_?nixbld[0-9]+$' || true
+/usr/bin/dscl . -list /Groups | /usr/bin/grep -E '^_?nixbld$' || true
+for home in /private/var/root /Users/*; do
+    for name in .nix-profile .nix-defexpr .nix-channels; do
+        [ -e "$home/$name" ] && echo "$home/$name"
+    done
+done
+for name in nix nix-daemon nix-store nix-env nix-build; do
+    command -v "$name" 2>/dev/null || true
+done
+
 product_volume_present() {
     /usr/sbin/diskutil apfs list 2>/dev/null | /usr/bin/grep -F 'pkg Nix Store' >/dev/null
 }
