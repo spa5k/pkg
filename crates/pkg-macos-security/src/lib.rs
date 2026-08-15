@@ -20,7 +20,10 @@ mod macos {
         random::SecRandom,
     };
     use security_framework_sys::{
-        base::{SecAccessRef, SecKeychainItemRef},
+        base::{
+            SecAccessRef, SecKeychainAttribute, SecKeychainAttributeList, SecKeychainItemRef,
+            SecKeychainRef,
+        },
         keychain::SecKeychainFindGenericPassword,
         keychain_item::{SecKeychainItemDelete, SecKeychainItemFreeContent},
     };
@@ -32,6 +35,9 @@ mod macos {
     const SERVICE: &str = "org.pkg.store-volume";
     const ACCOUNT: &str = "pkg Nix Store";
     const DESCRIPTION: &str = "pkg encrypted Nix store";
+    const GENERIC_PASSWORD_ITEM_CLASS: u32 = u32::from_be_bytes(*b"genp");
+    const ACCOUNT_ITEM_ATTRIBUTE: u32 = u32::from_be_bytes(*b"acct");
+    const SERVICE_ITEM_ATTRIBUTE: u32 = u32::from_be_bytes(*b"svce");
     const RANDOM_BYTES: usize = 32;
     const HEX_BYTES: usize = RANDOM_BYTES * 2;
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25_300;
@@ -123,18 +129,7 @@ mod macos {
             if find_item(&keychain)?.is_some() {
                 return Err(invalid_state());
             }
-            keychain
-                .add_generic_password(SERVICE, ACCOUNT, secret.expose_for_stdin())
-                .map_err(|_| keychain_failure())?;
-            let Some(item) = find_item(&keychain)? else {
-                let _ = delete_item_if_present(&keychain);
-                return Err(keychain_failure());
-            };
-            if set_root_helper_access(&item).is_err() {
-                item.delete();
-                return Err(keychain_failure());
-            }
-            Ok(())
+            create_with_root_helper_access(&keychain, secret)
         }
 
         /// Returns whether the exact fixed selector exists in System.keychain.
@@ -196,6 +191,8 @@ mod macos {
 
     fn find_item(keychain: &SecKeychain) -> Result<Option<SecKeychainItem>, SystemKeychainError> {
         let mut item = ptr::null_mut();
+        // A later SecKeychainItemSetAccess call requires an interactive prompt.
+        // Create the item with its closed ACL in the same Security.framework call.
         let status = unsafe {
             SecKeychainFindGenericPassword(
                 keychain.as_CFTypeRef(),
@@ -268,7 +265,14 @@ mod macos {
         Ok(password)
     }
 
-    fn set_root_helper_access(item: &SecKeychainItem) -> Result<(), SystemKeychainError> {
+    fn create_with_root_helper_access(
+        keychain: &SecKeychain,
+        secret: &StoreVolumeSecret,
+    ) -> Result<(), SystemKeychainError> {
+        let service_length = u32::try_from(SERVICE.len()).map_err(|_| keychain_failure())?;
+        let account_length = u32::try_from(ACCOUNT.len()).map_err(|_| keychain_failure())?;
+        let secret = secret.expose_for_stdin();
+        let secret_length = u32::try_from(secret.len()).map_err(|_| keychain_failure())?;
         let mut trusted_application: CFTypeRef = ptr::null();
         let status = unsafe {
             SecTrustedApplicationCreateFromPath(
@@ -295,9 +299,47 @@ mod macos {
         if access.is_null() {
             return Err(keychain_failure());
         }
-        let status = unsafe { SecKeychainItemSetAccess(item.as_concrete_TypeRef(), access) };
+
+        let mut attributes = [
+            SecKeychainAttribute {
+                tag: SERVICE_ITEM_ATTRIBUTE,
+                length: service_length,
+                data: SERVICE.as_ptr().cast_mut().cast(),
+            },
+            SecKeychainAttribute {
+                tag: ACCOUNT_ITEM_ATTRIBUTE,
+                length: account_length,
+                data: ACCOUNT.as_ptr().cast_mut().cast(),
+            },
+        ];
+        let mut attribute_list = SecKeychainAttributeList {
+            count: 2,
+            attr: attributes.as_mut_ptr(),
+        };
+        let mut item = ptr::null_mut();
+        let status = unsafe {
+            SecKeychainItemCreateFromContent(
+                GENERIC_PASSWORD_ITEM_CLASS,
+                &raw mut attribute_list,
+                secret_length,
+                secret.as_ptr().cast(),
+                keychain.as_CFTypeRef().cast_mut().cast(),
+                access,
+                &raw mut item,
+            )
+        };
         unsafe { CFRelease(access.cast()) };
-        status_result(status)
+        status_result(status)?;
+        if item.is_null() {
+            let _ = delete_item_if_present(keychain);
+            return Err(keychain_failure());
+        }
+        let item = unsafe { SecKeychainItem::wrap_under_create_rule(item) };
+        if !matches!(find_item(keychain), Ok(Some(_))) {
+            item.delete();
+            return Err(keychain_failure());
+        }
+        Ok(())
     }
 
     const fn hex(nibble: u8) -> u8 {
@@ -338,7 +380,15 @@ mod macos {
             trusted_list: core_foundation::array::CFArrayRef,
             access: *mut SecAccessRef,
         ) -> i32;
-        fn SecKeychainItemSetAccess(item: SecKeychainItemRef, access: SecAccessRef) -> i32;
+        fn SecKeychainItemCreateFromContent(
+            item_class: u32,
+            attributes: *mut SecKeychainAttributeList,
+            length: u32,
+            data: *const c_void,
+            keychain: SecKeychainRef,
+            initial_access: SecAccessRef,
+            item: *mut SecKeychainItemRef,
+        ) -> i32;
     }
 
     #[cfg(test)]
@@ -359,6 +409,9 @@ mod macos {
             assert_eq!(SERVICE, "org.pkg.store-volume");
             assert_eq!(ACCOUNT, "pkg Nix Store");
             assert_eq!(ROOT_HELPER, b"/opt/pkg/bin/pkg-root-helper\0");
+            assert_eq!(GENERIC_PASSWORD_ITEM_CLASS, 0x6765_6e70);
+            assert_eq!(ACCOUNT_ITEM_ATTRIBUTE, 0x6163_6374);
+            assert_eq!(SERVICE_ITEM_ATTRIBUTE, 0x7376_6365);
         }
     }
 }
