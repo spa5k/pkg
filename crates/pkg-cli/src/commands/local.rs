@@ -821,12 +821,14 @@ impl LocalStateOperations {
             emit_phase(progress, &public_operation_id, "activate", "started")?;
             let added_paths = install_output_paths(&evidence);
             let intent = match current.as_ref() {
-                Some(source) => prepared.root_intent_from_source(
-                    GenerationId::new(source.generation().id())
-                        .map_err(|_| install_commit_failed())?,
-                    &added_paths,
-                ),
-                None => prepared.root_intent(),
+                Some(source) if !source.generation().activation().output_roots().is_empty() => {
+                    prepared.root_intent_from_source(
+                        GenerationId::new(source.generation().id())
+                            .map_err(|_| install_commit_failed())?,
+                        &added_paths,
+                    )
+                }
+                _ => prepared.root_intent(),
             }
             .map_err(|_| install_commit_failed())?;
             let report = intent
