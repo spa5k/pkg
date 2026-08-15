@@ -55,8 +55,6 @@ impl MacOsLaunchdManager {
         for (label, plist) in JOBS {
             run_status(&["bootstrap", "system", plist])?;
             self.activated.push(label);
-            let target = format!("system/{label}");
-            run_status(&["kickstart", "-k", &target])?;
         }
         Self::verify_active()?;
         Ok(true)
