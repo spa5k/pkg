@@ -54,6 +54,9 @@ jobs:
       - name: Run isolated release dry run
         run: cargo test --locked -p pkg-release
 
+      - name: Test release staging and workflow contracts
+        run: python3 -m unittest discover -s tools/release -p 'test_*.py' -v
+
       - name: Assert no reusable private key was committed
         shell: bash
         run: |

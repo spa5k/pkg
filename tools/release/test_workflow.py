@@ -17,6 +17,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertIn("persist-credentials: false", WORKFLOW)
         self.assertIn("cargo test --locked -p pkg-release", WORKFLOW)
+        self.assertIn(
+            "python3 -m unittest discover -s tools/release -p 'test_*.py' -v",
+            WORKFLOW,
+        )
 
     def test_workflow_never_loads_a_production_key_or_publishes(self) -> None:
         self.assertNotIn("secrets.", WORKFLOW)

@@ -26,6 +26,12 @@ def elf(machine: int) -> bytes:
 
 
 class StageLinuxAlphaTests(unittest.TestCase):
+    def test_release_matches_workspace_version(self) -> None:
+        workspace = (ROOT / "Cargo.toml").read_text()
+        version = re.search(r'^version = "([^"]+)"$', workspace, re.MULTILINE)
+        self.assertIsNotNone(version)
+        self.assertEqual(STAGER.RELEASE, f"v{version.group(1)}")
+
     def test_stages_exact_versioned_artifact_and_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
