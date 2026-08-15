@@ -31,7 +31,7 @@ use pkg_nix::{
     InstallerProvisionRequest, InstallerRepository, ManagedDaemon, ManagedRuntimeRemovalOutcome,
     OwnershipExpectation, ProvisionErrorCode, ProvisionedBootstrap,
     ProvisionedBootstrapTransaction, authenticate_installer_bundle_blocking,
-    prepare_managed_runtime_removal_without_receipt,
+    load_authenticated_installer_bundle_blocking, prepare_managed_runtime_removal_without_receipt,
     provision_authenticated_installer_bundle_transaction, reauthenticate_installer_bundle_blocking,
     recover_interrupted_provision_workspace, verify_provision_workspace_absent,
 };
@@ -609,7 +609,7 @@ pub fn install_macos_from_bundle<'a>(
         return Err(MacOsError::backend_failure());
     }
     backend.preflight_privilege()?;
-    let bundle = authenticate_macos_bundle(trusted_root.clone(), request)?;
+    let bundle = load_macos_bundle_for_recovery(trusted_root.clone(), request)?;
     backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
@@ -687,6 +687,25 @@ fn authenticate_macos_bundle(
         groups: request.groups,
     };
     let result = authenticate_installer_bundle_blocking(trusted_root, &auth_request)
+        .map_err(|_| MacOsError::backend_failure());
+    remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
+    result
+}
+
+fn load_macos_bundle_for_recovery(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, MacOsError> {
+    let auth_datastore = prepare_macos_auth_datastore()?;
+    let auth_request = InstallerProvisionRequest {
+        repository: request.repository,
+        datastore: &auth_datastore,
+        installation_root: request.installation_root,
+        scratch_parent: request.scratch_parent,
+        system: request.system,
+        groups: request.groups,
+    };
+    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request)
         .map_err(|_| MacOsError::backend_failure());
     remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
     result

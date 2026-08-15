@@ -732,6 +732,24 @@ pub fn authenticate_installer_bundle_blocking(
     runtime.block_on(authenticate_installer_bundle(trusted_root, request))
 }
 
+/// Loads authenticated release bytes without authorizing a host mutation.
+///
+/// This is for recovery code that must authenticate the identity bound into a
+/// durable journal before it can remove an interrupted transaction. The caller
+/// must perform a privileged host-state preflight before starting a new mutation.
+///
+/// # Errors
+///
+/// Returns a stable error for invalid release data or a nested Tokio runtime.
+pub fn load_authenticated_installer_bundle_blocking(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    refuse_nested_runtime()?;
+    let runtime = installer_runtime()?;
+    runtime.block_on(load_authenticated_installer_bundle(trusted_root, request))
+}
+
 /// Reauthenticates a strictly authenticated bundle from a synchronous entry point.
 pub fn reauthenticate_installer_bundle_blocking(
     trusted_root: TrustedRoot,
