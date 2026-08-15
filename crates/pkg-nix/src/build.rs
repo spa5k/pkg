@@ -2773,6 +2773,8 @@ fn render_managed_build_nix_conf_from_parts<'a>(
     ];
     if linux {
         lines.insert(7, "use-cgroups = true".to_owned());
+    } else {
+        lines.insert(7, "ssl-cert-file = /etc/ssl/cert.pem".to_owned());
     }
     Ok(format!("{}\n", lines.join("\n")))
 }
@@ -3227,7 +3229,7 @@ mod tests {
         assert_eq!(
             darwin,
             format!(
-                "build-users-group = nixbld\ntrusted-users = root\nallowed-users = pkg-nix-broker\nexperimental-features = nix-command flakes\nsandbox = true\nsandbox-fallback = false\nallow-import-from-derivation = false\nrequire-sigs = true\nbuilders =\nsubstituters = https://cache.nixos.org\ntrusted-public-keys = {key}\nconnect-timeout = 10\nmax-substitution-jobs = 4\nmax-jobs = 1\ncores = 0\nmax-silent-time = 3600\ntimeout = 86400\nmax-build-log-size = 268435456\n"
+                "build-users-group = nixbld\ntrusted-users = root\nallowed-users = pkg-nix-broker\nexperimental-features = nix-command flakes\nsandbox = true\nsandbox-fallback = false\nallow-import-from-derivation = false\nssl-cert-file = /etc/ssl/cert.pem\nrequire-sigs = true\nbuilders =\nsubstituters = https://cache.nixos.org\ntrusted-public-keys = {key}\nconnect-timeout = 10\nmax-substitution-jobs = 4\nmax-jobs = 1\ncores = 0\nmax-silent-time = 3600\ntimeout = 86400\nmax-build-log-size = 268435456\n"
             )
         );
         for required in [
@@ -3246,6 +3248,8 @@ mod tests {
         }
         assert!(linux.contains("use-cgroups = true"));
         assert!(linux.contains("nix-command flakes cgroups"));
+        assert!(!linux.contains("ssl-cert-file"));
+        assert!(darwin.contains("ssl-cert-file = /etc/ssl/cert.pem"));
         assert!(!darwin.contains("use-cgroups"));
         assert!(!darwin.contains("cgroups"));
     }
