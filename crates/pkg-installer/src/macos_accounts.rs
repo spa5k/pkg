@@ -442,10 +442,10 @@ fn parse_id_list(bytes: &[u8]) -> Result<BTreeMap<String, u32>, MacOsError> {
     for line in text.lines() {
         let mut parts = line.split_whitespace();
         let name = parts.next().ok_or_else(MacOsError::backend_failure)?;
-        let id = parts
-            .next()
-            .ok_or_else(MacOsError::backend_failure)?
-            .parse()
+        let id = parts.next().ok_or_else(MacOsError::backend_failure)?;
+        let id = id
+            .parse::<u32>()
+            .or_else(|_| id.parse::<i32>().map(i32::cast_unsigned))
             .map_err(|_| MacOsError::backend_failure())?;
         if parts.next().is_some() || values.insert(name.to_owned(), id).is_some() {
             return Err(MacOsError::backend_failure());
@@ -502,6 +502,8 @@ mod tests {
     #[test]
     fn directory_service_parsers_reject_ambiguous_ids_and_fields() -> Result<(), MacOsError> {
         assert_eq!(parse_id_list(b"root 0\nuser 501\n")?["user"], 501);
+        assert_eq!(parse_id_list(b"nobody -2\n")?["nobody"], u32::MAX - 1);
+        assert_eq!(parse_id_list(b"nogroup -1\n")?["nogroup"], u32::MAX);
         assert!(
             parse_id_list(b"first 501\nsecond 501\n")
                 .and_then(|values| validate_directory(&values))
