@@ -480,16 +480,50 @@ fn read_fields(path: &str, attributes: &[&str]) -> Result<BTreeMap<String, Strin
 fn parse_fields(bytes: &[u8]) -> Result<BTreeMap<String, String>, MacOsError> {
     let text = std::str::from_utf8(bytes).map_err(|_| MacOsError::backend_failure())?;
     let mut fields = BTreeMap::new();
+    let mut continued_key = None;
     for line in text.lines() {
-        let (key, value) = line
-            .split_once(':')
-            .ok_or_else(MacOsError::backend_failure)?;
-        let value = value.trim();
-        if key.is_empty() || fields.insert(key.to_owned(), value.to_owned()).is_some() {
+        if line.starts_with(char::is_whitespace) {
+            let key = continued_key
+                .take()
+                .ok_or_else(MacOsError::backend_failure)?;
+            insert_field(&mut fields, key, line.trim())?;
+            continue;
+        }
+        if continued_key.is_some() {
             return Err(MacOsError::backend_failure());
         }
+        let (key, value) = line
+            .rsplit_once(':')
+            .ok_or_else(MacOsError::backend_failure)?;
+        let key = match key {
+            "dsAttrTypeNative:IsHidden" => "IsHidden",
+            key => key,
+        };
+        if key.is_empty() || key.contains(':') {
+            return Err(MacOsError::backend_failure());
+        }
+        let value = value.trim();
+        if value.is_empty() {
+            continued_key = Some(key);
+        } else {
+            insert_field(&mut fields, key, value)?;
+        }
+    }
+    if continued_key.is_some() {
+        return Err(MacOsError::backend_failure());
     }
     Ok(fields)
+}
+
+fn insert_field(
+    fields: &mut BTreeMap<String, String>,
+    key: &str,
+    value: &str,
+) -> Result<(), MacOsError> {
+    if value.is_empty() || fields.insert(key.to_owned(), value.to_owned()).is_some() {
+        return Err(MacOsError::backend_failure());
+    }
+    Ok(())
 }
 
 fn field<'a>(fields: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
@@ -521,7 +555,19 @@ mod tests {
             parse_fields(b"UniqueID: 333\nUserShell: /usr/bin/false\n")?["UserShell"],
             "/usr/bin/false"
         );
+        let fields = parse_fields(
+            b"dsAttrTypeNative:IsHidden: 1\nNFSHomeDirectory:\n /Library/Application Support/pkg/broker-home\nPrimaryGroupID: 333\nUniqueID: 333\nUserShell: /usr/bin/false\n",
+        )?;
+        assert_eq!(fields["IsHidden"], "1");
+        assert_eq!(
+            fields["NFSHomeDirectory"],
+            "/Library/Application Support/pkg/broker-home"
+        );
         assert!(parse_fields(b"UniqueID: 333\nUniqueID: 334\n").is_err());
+        assert!(parse_fields(b"IsHidden: 1\ndsAttrTypeNative:IsHidden: 1\n").is_err());
+        assert!(parse_fields(b"dsAttrTypeNative:UniqueID: 333\n").is_err());
+        assert!(parse_fields(b"NFSHomeDirectory:\nnext: value\n").is_err());
+        assert!(parse_fields(b" unexpected\n").is_err());
         Ok(())
     }
 }
