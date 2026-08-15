@@ -364,9 +364,17 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
 
     fn check_managed_daemon(&mut self) -> Result<(), MacOsError> {
         MacOsLaunchdManager::verify_active()?;
-        RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(BROKER_HOME))
-            .and_then(|adapter| adapter.ping_managed_store())
-            .map_err(|_| MacOsError::backend_failure())
+        let adapter = RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(BROKER_HOME))
+            .map_err(|_| MacOsError::backend_failure())?;
+        for attempt in 0..20 {
+            if adapter.ping_managed_store().is_ok() {
+                return Ok(());
+            }
+            if attempt < 19 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        Err(MacOsError::backend_failure())
     }
 
     fn observe_build_readiness(
