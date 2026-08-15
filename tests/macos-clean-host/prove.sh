@@ -311,7 +311,7 @@ echo "+ verify ordinary-user isolation"
 [ ! -x /opt/pkg/bin/pkg-root-helper ]
 [ ! -x /opt/pkg/bin/pkg-nix-broker ]
 [ ! -x /opt/pkg/nix/current/bin/nix ]
-[ ! -r /opt/pkg/etc/pkg/nix.conf ]
+[ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' /opt/pkg/etc/pkg/nix.conf)" = root:wheel:644 ]
 /bin/cp /usr/local/bin/pkg "$work/pkg-after-uninstall"
 /bin/chmod 0755 "$work/pkg-after-uninstall"
 
