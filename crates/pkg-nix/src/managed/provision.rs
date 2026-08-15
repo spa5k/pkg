@@ -675,9 +675,25 @@ pub async fn reauthenticate_installer_bundle(
     }
     let owner = DatastoreOwner::new(broker_uid, request.groups.broker_gid())
         .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    let AuthenticatedInstallerBundle {
+        source,
+        spec,
+        managed_nix_config,
+        installer_payloads,
+        ownership_expectation,
+        ..
+    } = authenticated;
+    // Release the original datastore lease before reopening it for the broker.
+    drop(source);
     let replacement =
         load_authenticated_installer_bundle_with_owner(trusted_root, request, Some(owner)).await?;
-    if authenticated.identity() != replacement.identity() {
+    let original_identity = AuthenticatedInstallerIdentity {
+        spec: &spec,
+        config: &managed_nix_config,
+        payloads: &installer_payloads,
+        ownership: &ownership_expectation,
+    };
+    if original_identity != replacement.identity() {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
         ));
