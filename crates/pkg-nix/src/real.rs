@@ -777,9 +777,17 @@ impl BuildCacheProbe for RealNixAdapter {
                 {
                     Some(entry) => Some(entry),
                     None => {
-                        exact_remote = self
-                            .raw_path_info(path, false, true)
-                            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                        exact_remote = match self.raw_path_info(path, false, true) {
+                            Ok(exact) => exact,
+                            Err(NixAdapterError::OperationFailed) => {
+                                self.raw_path_info(path, false, true).map_err(|_| {
+                                    BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)
+                                })?
+                            }
+                            Err(_) => {
+                                return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+                            }
+                        };
                         root_path_info_optional(&exact_remote, path)
                             .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
                     }
@@ -2693,6 +2701,7 @@ mod tests {
             success(local_json.as_slice()),
             success(Vec::new()),
             success(remote_json.as_slice()),
+            failure(1),
             success(exact_remote_json.as_slice()),
             success(exact_missing_json.as_slice()),
             success(Vec::new()),
@@ -2711,13 +2720,13 @@ mod tests {
             ]
         );
         let calls = calls.lock().map_err(|_| "poisoned call log")?;
-        assert_eq!(calls.len(), 7);
+        assert_eq!(calls.len(), 8);
         assert_eq!(
             calls
                 .iter()
                 .filter(|call| call.iter().any(|argument| argument == "--store"))
                 .count(),
-            5
+            6
         );
         assert!(calls.iter().any(|call| {
             [local.as_str(), remote.as_str(), missing.as_str()]
@@ -3007,6 +3016,7 @@ mod tests {
             failure(1),
             success(Vec::new()),
             success(remote_json.as_slice()),
+            failure(1),
             failure(1),
         ]));
 
