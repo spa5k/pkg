@@ -278,7 +278,7 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
         system,
         groups,
     };
-    let bundle = authenticate_macos_bundle(trusted_root, &request)
+    let bundle = load_macos_bundle_for_recovery(trusted_root, &request)
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
     let mut backend = ProductionMacOsUninstallBackend::new(
         bundle.managed_nix_config(),
@@ -671,25 +671,6 @@ pub fn install_macos_from_bundle<'a>(
         platform,
         bootstrap,
     })
-}
-
-fn authenticate_macos_bundle(
-    trusted_root: TrustedRoot,
-    request: &InstallerProvisionRequest<'_>,
-) -> Result<AuthenticatedInstallerBundle, MacOsError> {
-    let auth_datastore = prepare_macos_auth_datastore()?;
-    let auth_request = InstallerProvisionRequest {
-        repository: request.repository,
-        datastore: &auth_datastore,
-        installation_root: request.installation_root,
-        scratch_parent: request.scratch_parent,
-        system: request.system,
-        groups: request.groups,
-    };
-    let result = authenticate_installer_bundle_blocking(trusted_root, &auth_request)
-        .map_err(|_| MacOsError::backend_failure());
-    remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
-    result
 }
 
 fn load_macos_bundle_for_recovery(

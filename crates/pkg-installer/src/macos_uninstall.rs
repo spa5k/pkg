@@ -182,25 +182,22 @@ impl ProductionMacOsUninstallBackend {
         Ok(())
     }
 
-    fn verify_broker_absent_recovery(&self) -> Result<(), UninstallError> {
+    fn verify_broker_absent_recovery(
+        &mut self,
+        manifest: &UninstallManifest,
+    ) -> Result<(), UninstallError> {
         crate::macos_launchd::verify_macos_services_absent()
             .map_err(|_| UninstallError::backend_failure())?;
         crate::macos_accounts::verify_macos_accounts_after_broker_removal(
             self.expectation.groups(),
         )
         .map_err(|_| UninstallError::backend_failure())?;
-        for asset in macos_install_assets().iter().filter(|asset| {
-            matches!(
-                asset.kind(),
-                MacOsAssetKind::Directory | MacOsAssetKind::File
-            )
-        }) {
-            if !path_is_absent(Path::new(asset.path_or_name()))? {
-                return Err(UninstallError::backend_failure());
-            }
-        }
+        self.assets
+            .bind_filesystem_after_broker_removal()
+            .map_err(|_| UninstallError::backend_failure())?;
+        self.verify_interrupted_assets(manifest)?;
         #[cfg(target_os = "macos")]
-        crate::verify_macos_store_volume_absent_production()
+        crate::verify_macos_store_removal_state_production()
             .map_err(|_| UninstallError::backend_failure())?;
         #[cfg(not(target_os = "macos"))]
         return Err(UninstallError::backend_failure());
@@ -497,7 +494,7 @@ impl UninstallBackend for ProductionMacOsUninstallBackend {
                 self.recovery_mode = true;
             }
             (true, MacOsAssetPresence::Absent) => {
-                self.verify_broker_absent_recovery()?;
+                self.verify_broker_absent_recovery(manifest)?;
                 self.recovery_mode = true;
             }
             (false, MacOsAssetPresence::Absent) => {

@@ -281,6 +281,11 @@ impl MacOsPlatformAssetManager {
             .map(|()| MacOsAssetPresence::ExactPresent)
     }
 
+    pub(crate) fn bind_filesystem_after_broker_removal(&mut self) -> Result<(), MacOsError> {
+        self.ensure_filesystem_with_broker_uid(self.groups.broker_gid())?;
+        Ok(())
+    }
+
     fn ensure_filesystem(&mut self) -> Result<&mut MacOsFilesystemManager, MacOsError> {
         if self.filesystem.is_none() {
             let broker_uid = self.accounts.broker_uid()?;
