@@ -277,6 +277,16 @@ impl ProductionMacOsUninstallBackend {
 
     fn remove_user_roots(&mut self) -> Result<(), UninstallError> {
         self.user_cleanup
+            .capture_user_roots()
+            .map_err(|_| UninstallError::backend_failure())?;
+        self.remove_captured_user_state_and_roots()
+    }
+
+    fn remove_captured_user_state_and_roots(&mut self) -> Result<(), UninstallError> {
+        self.user_cleanup
+            .remove_registered_user_state()
+            .map_err(|_| UninstallError::backend_failure())?;
+        self.user_cleanup
             .remove_user_roots()
             .map_err(|_| UninstallError::backend_failure())?;
         self.user_roots_removed = true;
@@ -330,10 +340,7 @@ impl ProductionMacOsUninstallBackend {
         authority
             .capture_product_closure(&closure, &registered)
             .map_err(|_| UninstallError::backend_failure())?;
-        self.user_cleanup
-            .remove_user_roots()
-            .map_err(|_| UninstallError::backend_failure())?;
-        self.user_roots_removed = true;
+        self.remove_captured_user_state_and_roots()?;
         self.store_preserved = true;
         if authority
             .remove()

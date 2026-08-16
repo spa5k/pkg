@@ -20,6 +20,9 @@ use rustix::fs::{StatxFlags, statx};
 use rustix::io::Errno;
 
 const USER_ROOTS: &str = "/nix/var/nix/gcroots/pkg/users";
+#[cfg(target_os = "macos")]
+const USER_STATE_COMPONENTS: &[&str] = &["Library", "Application Support", "pkg"];
+#[cfg(not(target_os = "macos"))]
 const USER_STATE_COMPONENTS: &[&str] = &[".local", "share", "pkg"];
 const MAX_USERS: usize = 4_096;
 const MAX_ENTRIES: usize = 65_536;
@@ -167,8 +170,8 @@ impl LinuxUserCleanup {
 
     /// Removes only roots below the fixed product user-root directory.
     ///
-    /// UIDs and store targets are captured before mutation. User state remains
-    /// untouched until every product root has been removed successfully.
+    /// UIDs and store targets are captured before mutation. This method never
+    /// removes the registered users' state directories.
     ///
     /// # Errors
     ///
@@ -880,7 +883,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
         let home = temp.path().join("home");
-        let state = home.join(".local/share/pkg");
+        let state = home.join(USER_STATE_COMPONENTS.join("/"));
         let roots = rooted(temp.path(), Path::new(USER_ROOTS));
         fs::create_dir_all(&state)?;
         fs::create_dir_all(&roots)?;
@@ -948,7 +951,7 @@ mod tests {
     fn refuses_unmarked_user_state_without_deleting_it() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
         let home = temp.path().join("home");
-        let state = home.join(".local/share/pkg");
+        let state = home.join(USER_STATE_COMPONENTS.join("/"));
         let roots = rooted(temp.path(), Path::new(USER_ROOTS));
         fs::create_dir_all(&state)?;
         fs::create_dir_all(&roots)?;
@@ -972,7 +975,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
         let home_path = temp.path().join("home");
-        let state_path = home_path.join(".local/share/pkg");
+        let state_path = home_path.join(USER_STATE_COMPONENTS.join("/"));
         fs::create_dir_all(&state_path)?;
         fs::write(
             state_path.join(STATE_OWNERSHIP_MARKER_NAME),
@@ -992,7 +995,7 @@ mod tests {
         let state = openat(&parent, name, directory_flags(), Mode::empty())?;
         verify_state_ownership_marker(&state, uid, boundary)?;
 
-        let displaced = home_path.join(".local/share/pkg.displaced");
+        let displaced = state_path.with_file_name("pkg.displaced");
         fs::rename(&state_path, &displaced)?;
         fs::create_dir(&state_path)?;
         fs::write(state_path.join("foreign"), b"keep")?;
@@ -1044,7 +1047,7 @@ mod tests {
             "/nix/store/22222222222222222222222222222222-example",
             roots.join(uid.to_string()),
         )?;
-        symlink(&outside, home.join(".local"))?;
+        symlink(&outside, home.join(USER_STATE_COMPONENTS[0]))?;
         let mut cleaner = cleaner(&temp, &home)?;
         cleaner.remove_user_roots()?;
         assert!(cleaner.remove_registered_user_state().is_err());
@@ -1057,7 +1060,7 @@ mod tests {
     fn rejects_writable_state_tree() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
         let home = temp.path().join("home");
-        let state = home.join(".local/share/pkg");
+        let state = home.join(USER_STATE_COMPONENTS.join("/"));
         let roots = rooted(temp.path(), Path::new(USER_ROOTS));
         fs::create_dir_all(&state)?;
         fs::create_dir_all(&roots)?;
