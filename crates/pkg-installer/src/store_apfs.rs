@@ -214,21 +214,22 @@ impl<R: DiskutilRunner> MacOsApfsAdapter<R> {
         }
     }
 
-    pub(crate) fn verify_for_removal(&mut self, volume_uuid: &str) -> Result<(), MacOsApfsError> {
+    pub(crate) fn verify_for_removal(&mut self, volume_uuid: &str) -> Result<bool, MacOsApfsError> {
         self.require_owned(volume_uuid)?;
         let observation = self.inspect(volume_uuid)?;
+        let mounted = match observation.mount_point.as_deref() {
+            None => false,
+            Some(MacOsStoreVolumeContract::MOUNT_POINT) => true,
+            Some(_) => return Err(invalid_state()),
+        };
         if observation.volume_uuid == volume_uuid
             && observation.volume_name == MacOsStoreVolumeContract::VOLUME_NAME
             && observation.apfs_container_reference == self.root_container()?
             && observation.file_vault
             && observation.global_permissions_enabled
             && !observation.locked
-            && matches!(
-                observation.mount_point.as_deref(),
-                None | Some(MacOsStoreVolumeContract::MOUNT_POINT)
-            )
         {
-            Ok(())
+            Ok(mounted)
         } else {
             Err(invalid_state())
         }
@@ -692,6 +693,32 @@ mod tests {
             2
         );
         Ok(())
+    }
+
+    #[test]
+    fn removal_verification_reports_only_the_exact_mount_state() {
+        for (mount_point, expected) in [
+            (Some("/nix"), Ok(true)),
+            (None, Ok(false)),
+            (Some("/tmp/foreign"), Err(MacOsApfsErrorCode::InvalidState)),
+        ] {
+            let runner = FakeRunner {
+                outputs: VecDeque::from([
+                    root_info(),
+                    listing(&owned_volume()),
+                    volume_info(false, mount_point),
+                    root_info(),
+                ]),
+                ..FakeRunner::default()
+            };
+            let mut adapter = MacOsApfsAdapter { runner };
+            assert_eq!(
+                adapter
+                    .verify_for_removal(UUID)
+                    .map_err(MacOsApfsError::code),
+                expected
+            );
+        }
     }
 
     #[test]

@@ -97,15 +97,18 @@ pub fn remove_macos_store_volume_production() -> Result<(), MacOsStoreProvisionE
     };
     match discovered {
         Some(discovered) if discovered == volume_uuid => {
-            apfs.verify_for_removal(&volume_uuid)
+            let mounted = apfs
+                .verify_for_removal(&volume_uuid)
                 .map_err(|_| failure())?;
             if !SystemKeychainStore::exists().map_err(|_| failure())?
                 || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
             {
                 return Err(failure());
             }
-            disable_spotlight_indexing()?;
-            remove_spotlight_index()?;
+            if mounted {
+                disable_spotlight_activity()?;
+                remove_spotlight_index()?;
+            }
             apfs.unmount(&volume_uuid).map_err(|_| failure())?;
             apfs.delete(&volume_uuid).map_err(|_| failure())?;
         }
@@ -479,25 +482,20 @@ fn accepted_stitch_status(status: ExitStatus) -> bool {
 }
 
 fn disable_spotlight_indexing() -> Result<(), MacOsStoreProvisionError> {
-    let status = Command::new(MDUTIL)
-        .args(["-i", "off", MacOsStoreVolumeContract::MOUNT_POINT])
-        .env_clear()
-        .process_group(0)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|_| failure())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(failure())
-    }
+    run_mdutil(&["-i", "off", MacOsStoreVolumeContract::MOUNT_POINT])
+}
+
+fn disable_spotlight_activity() -> Result<(), MacOsStoreProvisionError> {
+    run_mdutil(&["-d", MacOsStoreVolumeContract::MOUNT_POINT])
 }
 
 fn remove_spotlight_index() -> Result<(), MacOsStoreProvisionError> {
+    run_mdutil(&["-X", MacOsStoreVolumeContract::MOUNT_POINT])
+}
+
+fn run_mdutil(arguments: &[&str]) -> Result<(), MacOsStoreProvisionError> {
     let status = Command::new(MDUTIL)
-        .args(["-X", MacOsStoreVolumeContract::MOUNT_POINT])
+        .args(arguments)
         .env_clear()
         .process_group(0)
         .stdin(Stdio::null())
