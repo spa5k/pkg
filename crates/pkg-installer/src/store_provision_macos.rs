@@ -21,6 +21,7 @@ use std::{
 };
 
 const APFS_UTIL: &str = "/System/Library/Filesystems/apfs.fs/Contents/Resources/apfs.util";
+const MDUTIL: &str = "/usr/bin/mdutil";
 const SEQUOIA_STITCHED_STATUS: i32 = 253;
 
 /// Provisions or verifies the exact product-owned APFS store as root.
@@ -364,6 +365,7 @@ impl MacOsStoreProvisionBackend for ProductionBackend {
             .enable_ownership(volume_uuid)
             .map_err(|_| failure())?;
         configure_mount_root()?;
+        disable_spotlight_indexing()?;
         self.journal_mut()?
             .complete_ownership()
             .map_err(|_| failure())?;
@@ -472,6 +474,23 @@ fn stitch_synthetic_root() -> Result<(), MacOsStoreProvisionError> {
 
 fn accepted_stitch_status(status: ExitStatus) -> bool {
     status.success() || status.code() == Some(SEQUOIA_STITCHED_STATUS)
+}
+
+fn disable_spotlight_indexing() -> Result<(), MacOsStoreProvisionError> {
+    let status = Command::new(MDUTIL)
+        .args(["-i", "off", MacOsStoreVolumeContract::MOUNT_POINT])
+        .env_clear()
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|_| failure())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(failure())
+    }
 }
 
 fn configure_mount_root() -> Result<(), MacOsStoreProvisionError> {

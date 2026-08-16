@@ -304,6 +304,7 @@ echo "+ install the technical-preview package and retry pkg-install"
     -target /
 /usr/bin/sudo "$bundle/pkg-install"
 assert_services_ready
+/usr/bin/mdutil -s /nix | /usr/bin/grep -F 'Indexing disabled.' >/dev/null
 
 echo "+ verify ordinary-user isolation"
 [ "$(/usr/local/bin/pkg --version | /usr/bin/cut -d' ' -f1)" = pkg ]
@@ -409,7 +410,16 @@ while [ "$attempt" -lt 600 ]; do
     attempt=$((attempt + 1))
     /bin/sleep 0.05
 done
-[ "$uninstall_checkpoint" = true ] || fail "the uninstall recovery checkpoint was not observed"
+if [ "$uninstall_checkpoint" != true ]; then
+    /bin/cat "$work/interrupted-uninstall.log" >&2 || true
+    if /usr/bin/sudo /usr/bin/test -f \
+        /private/var/db/pkg-install/macos-transaction-v1.json; then
+        /usr/bin/sudo /bin/cat \
+            /private/var/db/pkg-install/macos-transaction-v1.json >&2 || true
+    fi
+    /usr/bin/sudo /usr/sbin/diskutil apfs list >&2 || true
+    fail "the uninstall recovery checkpoint was not observed"
+fi
 uninstall_pid=$(/bin/cat "$work/uninstall.pid")
 [ -n "$uninstall_pid" ] || fail "the public pkg uninstall process was not found"
 /usr/bin/sudo /bin/kill -KILL "$uninstall_pid"

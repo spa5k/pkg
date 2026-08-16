@@ -66,6 +66,10 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn('e.get("mutation", {}).get("kind") == "storeVolume"', PROOF)
         self.assertNotIn('"kind":"storeVolume","state":"created"', PROOF)
 
+    def test_product_volume_disables_spotlight_and_preserves_uninstall_failure(self) -> None:
+        self.assertIn("/usr/bin/mdutil -s /nix", PROOF)
+        self.assertIn('/bin/cat "$work/interrupted-uninstall.log" >&2', PROOF)
+
 
 if __name__ == "__main__":
     unittest.main()
