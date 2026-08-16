@@ -334,7 +334,15 @@ echo "+ pkg install ripgrep"
 "$state_root/current/bin/rg" --version | /usr/bin/grep -F 'ripgrep 13.0.0' >/dev/null
 
 echo "+ explicit one-shot local build"
-local_build_output=$(/usr/local/bin/pkg --yes --jsonl install cxx-prettyprint)
+if ! local_build_output=$(/usr/local/bin/pkg --yes --jsonl install cxx-prettyprint 2>&1); then
+    printf '%s\n' "$local_build_output"
+    echo "+ read-only local-build preview after failure"
+    post_failure_preview=$(
+        /usr/local/bin/pkg --json --dry-run install cxx-prettyprint 2>&1 || true
+    )
+    printf '%s\n' "$post_failure_preview"
+    fail "the explicit local build failed"
+fi
 printf '%s\n' "$local_build_output" | /usr/bin/grep -F '"type":"build_started"' >/dev/null
 printf '%s\n' "$local_build_output" | /usr/bin/grep -F '"selector":"cxx-prettyprint"' >/dev/null
 
