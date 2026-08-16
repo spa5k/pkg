@@ -620,6 +620,17 @@ impl RealNixAdapter {
         parse_json(&bytes)
     }
 
+    fn raw_remote_path_info_with_retry(
+        &self,
+        path: &StorePath,
+    ) -> Result<RawPathInfoEnvelope, NixAdapterError> {
+        match self.raw_path_info(path, false, true) {
+            Ok(exact) => Ok(exact),
+            Err(NixAdapterError::OperationFailed) => self.raw_path_info(path, false, true),
+            Err(error) => Err(error),
+        }
+    }
+
     fn verify_remote_cache_trust(&self, path: &StorePath) -> Result<(), BuildCacheError> {
         self.verify_remote_cache_trust_batch(&[path])
     }
@@ -772,22 +783,14 @@ impl BuildCacheProbe for RealNixAdapter {
             let mut remote_hits = Vec::new();
             for (index, path) in missing {
                 let exact_remote;
-                let entry = match root_path_info_optional(&remote, path)
+                let entry = match batch_path_info_optional(&remote, path)
                     .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
                 {
                     Some(entry) => Some(entry),
                     None => {
-                        exact_remote = match self.raw_path_info(path, false, true) {
-                            Ok(exact) => exact,
-                            Err(NixAdapterError::OperationFailed) => {
-                                self.raw_path_info(path, false, true).map_err(|_| {
-                                    BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)
-                                })?
-                            }
-                            Err(_) => {
-                                return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                            }
-                        };
+                        exact_remote = self
+                            .raw_remote_path_info_with_retry(path)
+                            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
                         root_path_info_optional(&exact_remote, path)
                             .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
                     }
@@ -1076,9 +1079,19 @@ impl NixAdapter for RealNixAdapter {
             let mut chunk_reports = vec![None; chunk.len()];
             let mut authenticated = Vec::new();
             for (index, path) in chunk.iter().enumerate() {
+                let exact_remote;
                 let entry = match &remote {
-                    Some(remote) => root_path_info_optional(remote, path)?,
-                    None => None,
+                    Some(remote) => match batch_path_info_optional(remote, path)? {
+                        Some(entry) => Some(entry),
+                        None => {
+                            exact_remote = self.raw_remote_path_info_with_retry(path)?;
+                            root_path_info_optional(&exact_remote, path)?
+                        }
+                    },
+                    None => {
+                        exact_remote = self.raw_remote_path_info_with_retry(path)?;
+                        root_path_info_optional(&exact_remote, path)?
+                    }
                 };
                 let Some(entry) = entry else {
                     chunk_reports[index] = Some(SubstituteReport::miss(
@@ -2030,6 +2043,18 @@ fn root_path_info_optional<'a>(
         .ok_or(NixAdapterError::OperationFailed)
 }
 
+fn batch_path_info_optional<'a>(
+    raw: &'a RawPathInfoEnvelope,
+    requested: &StorePath,
+) -> Result<Option<&'a RawPathInfo>, NixAdapterError> {
+    validate_path_info_envelope(raw)?;
+    let name = requested
+        .as_str()
+        .strip_prefix("/nix/store/")
+        .ok_or(NixAdapterError::OperationFailed)?;
+    Ok(raw.info.get(name).and_then(Option::as_ref))
+}
+
 fn signatures(values: &[String]) -> Result<Vec<Signature>, NixAdapterError> {
     values
         .iter()
@@ -2938,6 +2963,38 @@ mod tests {
         assert!(calls[1].iter().any(|argument| argument == "path-info"));
         assert!(calls[2].iter().any(|argument| argument == "copy"));
         assert!(!calls[3].iter().any(|argument| argument == "--store"));
+        Ok(())
+    }
+
+    #[test]
+    fn substitution_batch_confirms_an_omitted_remote_path() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let first = StorePath::new("/nix/store/22222222222222222222222222222222-first")?;
+        let second = StorePath::new("/nix/store/33333333333333333333333333333333-second")?;
+        let first_only = br#"{"info":{"22222222222222222222222222222222-first":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/first.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        let second_only = br#"{"info":{"33333333333333333333333333333333-second":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":5,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/second.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        let both = br#"{"info":{"22222222222222222222222222222222-first":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":true,"url":null,"version":2},"33333333333333333333333333333333-second":{"ca":null,"compression":null,"deriver":null,"downloadHash":null,"downloadSize":null,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":[],"storeDir":"/nix/store","ultimate":true,"url":null,"version":2}},"storeDir":"/nix/store","version":2}"#;
+        let executor = Scripted::new(vec![
+            success(Vec::new()),
+            success(first_only.as_slice()),
+            success(second_only.as_slice()),
+            success(Vec::new()),
+            success(both.as_slice()),
+        ]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+
+        let reports = adapter.substitute_many(&[first.clone(), second.clone()])?;
+
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.outcome() == SubstituteOutcome::Fetched)
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 5);
+        assert!(calls[2].contains(&OsString::from(second.as_str())));
+        assert!(!calls[2].contains(&OsString::from(first.as_str())));
         Ok(())
     }
 
