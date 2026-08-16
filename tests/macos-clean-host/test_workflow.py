@@ -69,6 +69,8 @@ class MacOsProofWorkflowTests(unittest.TestCase):
     def test_product_volume_disables_spotlight_and_preserves_uninstall_failure(self) -> None:
         self.assertIn("/usr/bin/mdutil -s /nix", PROOF)
         self.assertIn('/bin/cat "$work/interrupted-uninstall.log" >&2', PROOF)
+        self.assertIn("/usr/bin/sudo /bin/test -f", PROOF)
+        self.assertNotIn("/usr/bin/sudo /usr/bin/test -f", PROOF)
 
 
 if __name__ == "__main__":

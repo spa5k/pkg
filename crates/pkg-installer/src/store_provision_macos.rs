@@ -104,6 +104,7 @@ pub fn remove_macos_store_volume_production() -> Result<(), MacOsStoreProvisionE
             {
                 return Err(failure());
             }
+            disable_spotlight_indexing()?;
             apfs.unmount(&volume_uuid).map_err(|_| failure())?;
             apfs.delete(&volume_uuid).map_err(|_| failure())?;
         }

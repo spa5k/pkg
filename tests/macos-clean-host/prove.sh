@@ -399,7 +399,7 @@ uninstall_checkpoint=false
 attempt=0
 while [ "$attempt" -lt 600 ]; do
     if ! product_volume_present \
-        && /usr/bin/sudo /usr/bin/test -f \
+        && /usr/bin/sudo /bin/test -f \
             /private/var/db/pkg-install/macos-transaction-v1.json; then
         uninstall_checkpoint=true
         break
@@ -412,7 +412,7 @@ while [ "$attempt" -lt 600 ]; do
 done
 if [ "$uninstall_checkpoint" != true ]; then
     /bin/cat "$work/interrupted-uninstall.log" >&2 || true
-    if /usr/bin/sudo /usr/bin/test -f \
+    if /usr/bin/sudo /bin/test -f \
         /private/var/db/pkg-install/macos-transaction-v1.json; then
         /usr/bin/sudo /bin/cat \
             /private/var/db/pkg-install/macos-transaction-v1.json >&2 || true
