@@ -16,8 +16,8 @@ use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
 use rustix::fs::{
-    AtFlags, Dir, Mode, OFlags, RenameFlags, fchmod, fsync, mkdirat, open, openat, renameat_with,
-    unlinkat,
+    AtFlags, Dir, FileType, Mode, OFlags, RenameFlags, fchmod, fsync, mkdirat, open, openat,
+    renameat_with, statat, unlinkat,
 };
 use rustix::io::Errno;
 
@@ -468,6 +468,28 @@ impl LinuxFilesystemManager {
         }
     }
 
+    pub(crate) fn verify_empty_directory(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.kind() != LinuxAssetKind::Directory {
+            return Err(unsupported());
+        }
+        let (parent, name) = self.open_parent(asset)?;
+        let target = open_child(&parent, &name, LinuxAssetKind::Directory).map_err(open_error)?;
+        self.verify_metadata(asset, &target)?;
+        let mut entries = Dir::read_from(&target).map_err(|_| io_failure())?;
+        for entry in &mut entries {
+            let entry = entry.map_err(|_| io_failure())?;
+            if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
+                return Err(LinuxFilesystemError::new(
+                    LinuxFilesystemErrorCode::UnsafeFilesystemState,
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Removes one artifact only when this exact attempt recorded its inode.
     ///
     /// # Errors
@@ -638,6 +660,107 @@ impl LinuxFilesystemManager {
             tree_owner_uid,
         )
         .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::UnsafeFilesystemState))
+    }
+
+    pub(crate) fn remove_runtime_state(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if !matches!(
+            asset.id(),
+            "broker-socket-dir" | "helper-socket-dir" | "helper-log-dir" | "log-root"
+        ) {
+            return Err(unsupported());
+        }
+        let Some((parent, name)) = self.open_parent_optional(asset)? else {
+            return Ok(());
+        };
+        let target = match open_child(&parent, &name, LinuxAssetKind::Directory) {
+            Ok(target) => target,
+            Err(error) if error == Errno::NOENT => return Ok(()),
+            Err(error) => return Err(open_error(error)),
+        };
+        self.verify_metadata(asset, &target)?;
+        let target_identity = identity(&target, LinuxAssetKind::Directory)?;
+        let mut names = Vec::new();
+        let mut entries = Dir::read_from(&target).map_err(|_| io_failure())?;
+        for entry in &mut entries {
+            let entry = entry.map_err(|_| io_failure())?;
+            let bytes = entry.file_name().to_bytes();
+            if bytes == b"." || bytes == b".." {
+                continue;
+            }
+            if bytes.is_empty() || bytes.contains(&b'/') || names.len() >= MAX_PRIVATE_STATE_FILES {
+                return Err(LinuxFilesystemError::new(
+                    LinuxFilesystemErrorCode::UnsafeFilesystemState,
+                ));
+            }
+            names.push(OsStr::from_bytes(bytes).to_os_string());
+        }
+        for child_name in names {
+            let child = statat(&target, &child_name, AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(|_| io_failure())?;
+            let expected = match (asset.id(), child_name.as_bytes()) {
+                ("broker-socket-dir", b"broker.sock") => (
+                    FileType::Socket,
+                    self.principals.broker_uid,
+                    self.principals.broker_gid,
+                    0o666,
+                ),
+                ("helper-socket-dir", b"root-helper.sock") => (
+                    FileType::Socket,
+                    self.principals.root_uid,
+                    self.principals.broker_gid,
+                    0o660,
+                ),
+                ("helper-log-dir", b"root-helper.log") => (
+                    FileType::RegularFile,
+                    self.principals.root_uid,
+                    self.principals.root_gid,
+                    0o600,
+                ),
+                ("log-root", b"nix-daemon.log" | b"store-volume.log") => (
+                    FileType::RegularFile,
+                    self.principals.root_uid,
+                    self.principals.broker_gid,
+                    0o600,
+                ),
+                _ => {
+                    return Err(LinuxFilesystemError::new(
+                        LinuxFilesystemErrorCode::UnsafeFilesystemState,
+                    ));
+                }
+            };
+            if FileType::from_raw_mode(child.st_mode) != expected.0
+                || child.st_uid != expected.1
+                || child.st_gid != expected.2
+                || child.st_mode & 0o777 != expected.3
+                || child.st_nlink != 1
+                || u64::try_from(child.st_dev) != Ok(target_identity.device)
+            {
+                return Err(LinuxFilesystemError::new(
+                    LinuxFilesystemErrorCode::UnsafeFilesystemState,
+                ));
+            }
+            let current = statat(&target, &child_name, AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(|_| io_failure())?;
+            if child.st_dev != current.st_dev
+                || child.st_ino != current.st_ino
+                || child.st_mode != current.st_mode
+                || child.st_uid != current.st_uid
+                || child.st_gid != current.st_gid
+                || child.st_nlink != current.st_nlink
+            {
+                return Err(LinuxFilesystemError::new(
+                    LinuxFilesystemErrorCode::RollbackConflict,
+                ));
+            }
+            unlinkat(&target, &child_name, AtFlags::empty()).map_err(|_| {
+                LinuxFilesystemError::new(LinuxFilesystemErrorCode::RollbackConflict)
+            })?;
+        }
+        fsync(&target).map_err(|_| io_failure())?;
+        Self::remove_if_owned(&parent, &name, target_identity)
     }
 
     /// Verifies that one fixed filesystem asset is absent without following links.
@@ -1048,6 +1171,7 @@ mod tests {
     use std::error::Error;
     use std::fs;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::net::UnixListener;
 
     use pkg_core::{System, state::Digest};
     use tempfile::TempDir;
@@ -1426,6 +1550,66 @@ mod tests {
             LinuxFilesystemErrorCode::UnsafeFilesystemState
         );
         assert_eq!(fs::read(foreign)?, b"{}");
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_cleanup_accepts_only_exact_socket_and_log_residue() -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
+        for id in [
+            "service-root",
+            "helper-socket-dir",
+            "broker-socket-dir",
+            "log-root",
+        ] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let helper_socket = fixture
+            .temporary
+            .path()
+            .join("run/pkg-helper/root-helper.sock");
+        let _helper = UnixListener::bind(&helper_socket)?;
+        fs::set_permissions(&helper_socket, fs::Permissions::from_mode(0o660))?;
+        let broker_socket = fixture.temporary.path().join("run/pkg/broker.sock");
+        let _broker = UnixListener::bind(&broker_socket)?;
+        fs::set_permissions(&broker_socket, fs::Permissions::from_mode(0o666))?;
+        let log_root = fixture.temporary.path().join("var/lib/pkg/log");
+        for name in ["nix-daemon.log", "store-volume.log"] {
+            let path = log_root.join(name);
+            fs::write(&path, b"runtime output")?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .verify_empty_directory(Fixture::asset("log-root")),
+            )?,
+            LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
+        for id in ["helper-socket-dir", "broker-socket-dir", "log-root"] {
+            fixture.manager.remove_runtime_state(Fixture::asset(id))?;
+        }
+        assert!(!helper_socket.exists());
+        assert!(!broker_socket.exists());
+        assert!(!log_root.exists());
+
+        let mut fixture = Fixture::new()?;
+        for id in ["service-root", "log-root"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let foreign = fixture.temporary.path().join("var/lib/pkg/log/foreign.log");
+        fs::write(&foreign, b"preserve")?;
+        fs::set_permissions(&foreign, fs::Permissions::from_mode(0o600))?;
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .remove_runtime_state(Fixture::asset("log-root")),
+            )?,
+            LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
+        assert_eq!(fs::read(foreign)?, b"preserve");
         Ok(())
     }
 

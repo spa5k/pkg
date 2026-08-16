@@ -262,6 +262,9 @@ impl MacOsPlatformAssetManager {
         }
         match asset.id() {
             "broker-channel-state" => self.ensure_filesystem()?.remove_broker_channel_state(asset),
+            "broker-socket-dir" | "helper-socket-dir" | "helper-log-dir" | "log-root" => {
+                self.ensure_filesystem()?.remove_runtime_state(asset)
+            }
             "broker-home" | "broker-log-dir" | "helper-home" => {
                 self.ensure_filesystem()?.remove_private_tree(asset)
             }
@@ -284,6 +287,17 @@ impl MacOsPlatformAssetManager {
     pub(crate) fn bind_filesystem_after_broker_removal(&mut self) -> Result<(), MacOsError> {
         self.ensure_filesystem_with_broker_uid(self.groups.broker_gid())?;
         Ok(())
+    }
+
+    pub(crate) fn verify_empty_store_mountpoint(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        if asset.id() != "nix-root" {
+            return Err(MacOsError::backend_failure());
+        }
+        self.ensure_filesystem_with_broker_uid(self.groups.broker_gid())?
+            .verify_empty_directory(asset)
     }
 
     fn ensure_filesystem(&mut self) -> Result<&mut MacOsFilesystemManager, MacOsError> {

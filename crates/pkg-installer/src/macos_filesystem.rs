@@ -3,6 +3,7 @@
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
+use rustix::fs::{Dir, FileType, Mode, OFlags, fstat, open, openat};
 
 use crate::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxFilesystemManager, LinuxInstallAsset,
@@ -77,6 +78,15 @@ impl MacOsFilesystemManager {
             .map_err(|_| MacOsError::backend_failure())
     }
 
+    pub(crate) fn verify_empty_directory(
+        &self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        self.inner
+            .verify_empty_directory(map(asset)?)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
     pub(crate) fn verify_asset_absent(&self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         self.inner
             .verify_asset_absent(map(asset)?)
@@ -115,6 +125,37 @@ impl MacOsFilesystemManager {
             .remove_private_tree(map(asset)?)
             .map_err(|_| MacOsError::backend_failure())
     }
+
+    pub(crate) fn remove_runtime_state(&self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        self.inner
+            .remove_runtime_state(map(asset)?)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+}
+
+pub fn verify_inert_nix_mountpoint() -> Result<(), MacOsError> {
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let root = open("/", flags, Mode::empty()).map_err(|_| MacOsError::backend_failure())?;
+    let root_metadata = fstat(&root).map_err(|_| MacOsError::backend_failure())?;
+    let nix =
+        openat(&root, "nix", flags, Mode::empty()).map_err(|_| MacOsError::backend_failure())?;
+    let metadata = fstat(&nix).map_err(|_| MacOsError::backend_failure())?;
+    if FileType::from_raw_mode(metadata.st_mode) != FileType::Directory
+        || metadata.st_uid != 0
+        || metadata.st_gid != 0
+        || metadata.st_mode & 0o7777 != 0o755
+        || metadata.st_dev != root_metadata.st_dev
+    {
+        return Err(MacOsError::backend_failure());
+    }
+    let mut entries = Dir::read_from(&nix).map_err(|_| MacOsError::backend_failure())?;
+    for entry in &mut entries {
+        let entry = entry.map_err(|_| MacOsError::backend_failure())?;
+        if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
+            return Err(MacOsError::backend_failure());
+        }
+    }
+    Ok(())
 }
 
 fn map(asset: MacOsInstallAsset) -> Result<LinuxInstallAsset, MacOsError> {

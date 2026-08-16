@@ -374,9 +374,28 @@ impl ProductionMacOsUninstallBackend {
         if (self.preserve_nix == Some(true) || self.store_preserved) && is_nix_asset(asset) {
             return Ok(());
         }
+        if asset.id() == "nix-root" {
+            return self.verify_removed_store_mountpoint(asset);
+        }
         self.assets
             .remove_uninstall_asset(asset)
             .map_err(|_| UninstallError::backend_failure())
+    }
+
+    fn verify_removed_store_mountpoint(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), UninstallError> {
+        if !path_is_absent(Path::new(asset.path_or_name()))? {
+            self.assets
+                .verify_empty_store_mountpoint(asset)
+                .map_err(|_| UninstallError::backend_failure())?;
+        }
+        #[cfg(target_os = "macos")]
+        return crate::verify_macos_store_volume_absent_production()
+            .map_err(|_| UninstallError::backend_failure());
+        #[cfg(not(target_os = "macos"))]
+        Err(UninstallError::backend_failure())
     }
 
     fn verify_residue(&mut self) -> Result<(), UninstallError> {
@@ -387,6 +406,10 @@ impl ProductionMacOsUninstallBackend {
             .map_err(|_| UninstallError::backend_failure())?;
         crate::macos_accounts::verify_macos_accounts_absent()
             .map_err(|_| UninstallError::backend_failure())?;
+        if self.preserve_nix != Some(true) && !self.store_preserved {
+            let nix_root = macos_asset("nix-root").ok_or_else(UninstallError::backend_failure)?;
+            self.verify_removed_store_mountpoint(nix_root)?;
+        }
         let manifest = self
             .manifest
             .as_ref()
@@ -398,6 +421,9 @@ impl ProductionMacOsUninstallBackend {
         {
             let asset = macos_asset(record.id()).ok_or_else(UninstallError::backend_failure)?;
             if (self.preserve_nix == Some(true) || self.store_preserved) && is_nix_asset(asset) {
+                continue;
+            }
+            if asset.id() == "nix-root" {
                 continue;
             }
             if matches!(
@@ -636,6 +662,13 @@ pub fn verify_macos_install_absent() -> Result<(), UninstallError> {
             MacOsAssetKind::Directory | MacOsAssetKind::File
         )
     }) {
+        if asset.id() == "nix-root" {
+            if !path_is_absent(Path::new(asset.path_or_name()))? {
+                crate::macos_filesystem::verify_inert_nix_mountpoint()
+                    .map_err(|_| UninstallError::backend_failure())?;
+            }
+            continue;
+        }
         if !path_is_absent(Path::new(asset.path_or_name()))? {
             return Err(UninstallError::backend_failure());
         }
