@@ -21,7 +21,7 @@ const ROOT_VOLUME: &str = "/";
 const FILESYSTEM: &str = "Case-sensitive APFS";
 const MAX_PLIST_BYTES: u64 = 262_144;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-const UNMOUNT_ATTEMPTS: usize = 60;
+const UNMOUNT_ATTEMPTS: usize = 3;
 const UNMOUNT_RETRY_DELAY: Duration = Duration::from_secs(1);
 const SECRET_BYTES: usize = 64;
 

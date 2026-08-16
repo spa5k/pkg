@@ -105,6 +105,7 @@ pub fn remove_macos_store_volume_production() -> Result<(), MacOsStoreProvisionE
                 return Err(failure());
             }
             disable_spotlight_indexing()?;
+            remove_spotlight_index()?;
             apfs.unmount(&volume_uuid).map_err(|_| failure())?;
             apfs.delete(&volume_uuid).map_err(|_| failure())?;
         }
@@ -480,6 +481,23 @@ fn accepted_stitch_status(status: ExitStatus) -> bool {
 fn disable_spotlight_indexing() -> Result<(), MacOsStoreProvisionError> {
     let status = Command::new(MDUTIL)
         .args(["-i", "off", MacOsStoreVolumeContract::MOUNT_POINT])
+        .env_clear()
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|_| failure())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(failure())
+    }
+}
+
+fn remove_spotlight_index() -> Result<(), MacOsStoreProvisionError> {
+    let status = Command::new(MDUTIL)
+        .args(["-X", MacOsStoreVolumeContract::MOUNT_POINT])
         .env_clear()
         .process_group(0)
         .stdin(Stdio::null())

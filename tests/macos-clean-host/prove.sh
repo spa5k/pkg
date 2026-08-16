@@ -397,7 +397,7 @@ echo "+ interrupt uninstall after APFS removal"
 uninstall_launcher=$!
 uninstall_checkpoint=false
 attempt=0
-while [ "$attempt" -lt 1800 ]; do
+while [ "$attempt" -lt 600 ]; do
     if ! product_volume_present \
         && /usr/bin/sudo /bin/test -f \
             /private/var/db/pkg-install/macos-transaction-v1.json; then
