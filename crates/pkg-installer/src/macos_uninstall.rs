@@ -200,7 +200,7 @@ impl ProductionMacOsUninstallBackend {
             }
         }
         #[cfg(target_os = "macos")]
-        crate::verify_macos_store_removal_state_production()
+        crate::verify_macos_store_volume_absent_production()
             .map_err(|_| UninstallError::backend_failure())?;
         #[cfg(not(target_os = "macos"))]
         return Err(UninstallError::backend_failure());

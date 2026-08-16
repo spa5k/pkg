@@ -391,27 +391,54 @@ fi
 /usr/bin/sudo "$bundle/pkg-install"
 
 echo "+ interrupt uninstall after APFS removal"
+wait_for_uninstall_checkpoint() {
+    attempt=0
+    while [ "$attempt" -lt 18000 ]; do
+        if ! product_volume_present \
+            && /usr/bin/sudo /bin/test -f \
+                /private/var/db/pkg-install/macos-transaction-v1.json; then
+            return 0
+        fi
+        if ! /bin/kill -0 "$uninstall_launcher" >/dev/null 2>&1; then
+            return 1
+        fi
+        attempt=$((attempt + 1))
+        /bin/sleep 0.05
+    done
+    return 1
+}
+
 /usr/bin/sudo /bin/sh -c 'echo $$ > "$1"; shift; exec "$@"' sh \
     "$work/uninstall.pid" /usr/local/bin/pkg --yes uninstall \
     >"$work/interrupted-uninstall.log" 2>&1 &
 uninstall_launcher=$!
 uninstall_checkpoint=false
-attempt=0
-while [ "$attempt" -lt 18000 ]; do
-    if ! product_volume_present \
-        && /usr/bin/sudo /bin/test -f \
-            /private/var/db/pkg-install/macos-transaction-v1.json; then
-        uninstall_checkpoint=true
-        break
-    fi
+if wait_for_uninstall_checkpoint; then
+    uninstall_checkpoint=true
+else
     if ! /bin/kill -0 "$uninstall_launcher" >/dev/null 2>&1; then
-        break
+        wait "$uninstall_launcher" >/dev/null 2>&1 || true
+        if product_volume_present \
+            && /usr/bin/sudo /bin/test -f \
+                /private/var/db/pkg-install/macos-transaction-v1.json; then
+            echo "+ exact retry after transient APFS refusal"
+            /usr/bin/sudo /bin/sh -c 'echo $$ > "$1"; shift; exec "$@"' sh \
+                "$work/uninstall.pid" "$work/pkg-after-uninstall" --yes uninstall \
+                >"$work/retried-uninstall.log" 2>&1 &
+            uninstall_launcher=$!
+            if wait_for_uninstall_checkpoint; then
+                uninstall_checkpoint=true
+            fi
+        fi
     fi
-    attempt=$((attempt + 1))
-    /bin/sleep 0.05
-done
+fi
 if [ "$uninstall_checkpoint" != true ]; then
+    if /bin/kill -0 "$uninstall_launcher" >/dev/null 2>&1; then
+        /usr/bin/sudo /bin/kill -KILL "$uninstall_launcher" >/dev/null 2>&1 || true
+    fi
+    wait "$uninstall_launcher" >/dev/null 2>&1 || true
     /bin/cat "$work/interrupted-uninstall.log" >&2 || true
+    /bin/cat "$work/retried-uninstall.log" >&2 2>/dev/null || true
     if /usr/bin/sudo /bin/test -f \
         /private/var/db/pkg-install/macos-transaction-v1.json; then
         /usr/bin/sudo /bin/cat \

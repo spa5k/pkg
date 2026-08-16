@@ -72,6 +72,14 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("/usr/bin/sudo /bin/test -f", PROOF)
         self.assertNotIn("/usr/bin/sudo /usr/bin/test -f", PROOF)
 
+    def test_transient_apfs_refusal_gets_one_exact_public_retry(self) -> None:
+        uninstall = PROOF.split('echo "+ interrupt uninstall after APFS removal"', 1)[1]
+        uninstall = uninstall.split('echo "+ recover uninstall', 1)[0]
+        self.assertEqual(uninstall.count("+ exact retry after transient APFS refusal"), 1)
+        self.assertIn('"$work/pkg-after-uninstall" --yes uninstall', uninstall)
+        self.assertIn("product_volume_present", uninstall)
+        self.assertIn("macos-transaction-v1.json", uninstall)
+
 
 if __name__ == "__main__":
     unittest.main()
