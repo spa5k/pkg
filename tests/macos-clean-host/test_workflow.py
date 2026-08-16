@@ -71,6 +71,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn('/bin/cat "$work/interrupted-uninstall.log" >&2', PROOF)
         self.assertIn("/usr/bin/sudo /bin/test -f", PROOF)
         self.assertNotIn("/usr/bin/sudo /usr/bin/test -f", PROOF)
+        self.assertIn('while [ "$attempt" -lt 1800 ]; do', PROOF)
 
 
 if __name__ == "__main__":
