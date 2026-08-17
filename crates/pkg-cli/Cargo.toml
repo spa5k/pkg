@@ -3,13 +3,12 @@
 # PR-23 owns parsing, presentation envelopes, progress records, TTY policy, and
 # exit codes. Command execution is intentionally wired later by PR-24.
 #
-# License: intentionally ABSENT (DR-015, plans/12-open-decisions-and-risks.md).
-
 [package]
 name = "pkg-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [[bin]]

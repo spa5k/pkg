@@ -48,10 +48,5 @@ sequenced entry points.
 
 ## License
 
-The project license is **not yet chosen**. Until
-[DR-015](plans/12-open-decisions-and-risks.md) is superseded by an Accepted decision, all
-source in this repository is **all rights reserved** — no public license is granted, no
-`license` field is set in the manifests, and no `SPDX-License-Identifier` headers are present.
-(The `deny.toml` permissive license allowlist is a *dependency* policy, not a project
-license.) Until then, treat everything here as unreleased material belonging to the project
-authors.
+Licensed under the [Apache License 2.0](LICENSE). See
+[DR-015](plans/12-open-decisions-and-risks.md) for the decision record.

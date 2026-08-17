@@ -7,16 +7,16 @@
 # and is excluded from the root `cargo build/clippy/test/doc` lanes.
 #
 # The spike validates DR-002 (channel signing via real TUF) only. It is not
-# production code, is `publish = false`, and (per DR-015) carries NO `license`
-# field and NO SPDX headers. All signing keys are generated Ed25519 test keys
-# created in temporary directories at test time; no reusable/real secrets exist
-# in this directory. See README.md / findings.md.
+# production code and is `publish = false`. All signing keys are generated
+# Ed25519 test keys created in temporary directories at test time; no
+# reusable/real secrets exist in this directory. See README.md / findings.md.
 
 [package]
 name = "pkg-spike-s2-tough"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.96"
+license = "Apache-2.0"
 publish = false
 description = "Spike S2: prove pkg's channel/TUF requirements against the real `tough` crate (awslabs)."
 

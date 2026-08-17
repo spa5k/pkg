@@ -6,13 +6,12 @@
 # types/logic/tests. PR-10 adds strict JSON wire DTOs for persisted state while
 # keeping serialization traits off the existing domain vocabulary.
 #
-# License: intentionally ABSENT (DR-015, plans/12-open-decisions-and-risks.md).
-
 [package]
 name = "pkg-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

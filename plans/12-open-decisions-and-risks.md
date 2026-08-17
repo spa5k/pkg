@@ -266,23 +266,15 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
 - **Owner:** F. **Source:** `[NIX-MANUAL]`.
 
 ### DR-015 — Project license and source-header policy
-- **Status:** Deferred.
-- **Context:** The project has not yet chosen an open-source license. Until the human owner
-  explicitly selects one and records it as a superseding Accepted DR, no public license grant
-  exists, no `license` field is set in any `Cargo.toml`, and no `SPDX-License-Identifier`
-  headers are added to source files. This is a *project* licensing decision and is deliberately
-  independent of which licenses the project permits in its *dependencies* (the `cargo-deny`
-  allowlist in `deny.toml`). (`11` PR-1/PR-2)
-- **Decision:** All rights reserved by default. The workspace and `pkg-core` manifests carry
-  **no** `license` field and `publish = false`; source files carry **no** `SPDX-License-Identifier`
-  headers. The `cargo-deny` permissive license allowlist in `deny.toml` is a **dependency**
-  policy only — it is not a project license and grants no rights to `pkg` itself. This
-  deferral is lifted only by a later Accepted DR that supersedes DR-015.
-- **Consequences:** The project is unambiguously "all rights reserved" until then; nobody may
-  redistribute or reuse `pkg` source under any license. The build/lint toolchain (PR-1)
-  remains fully operable with no `license` field. Contributors must not add SPDX headers or a
-  `license` field until DR-015 is superseded.
-- **Owner:** project owner (human). **Source:** PR-1 correction.
+- **Status:** **Accepted** (2026-08-17; supersedes the deferred, all-rights-reserved state).
+- **Context:** A public release needs a clear project license. The project license is independent
+  of the dependency allowlist in `deny.toml` and the licenses of bundled third-party software.
+- **Decision:** License `pkg` under Apache-2.0. Put the canonical terms in the root `LICENSE`
+  file and declare `Apache-2.0` in every Cargo package manifest. Do not add repetitive per-file
+  SPDX headers. Release archives must include the root license and separate third-party notices.
+- **Consequences:** Users can use, modify, and redistribute `pkg` under Apache-2.0. Bundled Nix
+  and other third-party components keep their own licenses and distribution duties.
+- **Owner:** project owner (human). **Source:** explicit release decision on 2026-08-17.
 
 ### DR-016 — Activation is a Rust-owned symlink forest outside the store; activation invokes no Nix
 - **Status:** **Accepted** (V1 architecture decision; supersedes the former "activation = Nix `buildEnv` store object" framing captured in `04` Q4.1 and referenced across `01`/`04`/`05`/`06`/`07`).
@@ -413,7 +405,7 @@ AC-D2.)
 | Telemetry | opt-in, minimal | richer usage analytics → later | DR-012 |
 | Windows | ❌ | not in v1 | — |
 | Threshold root signing | 1-of-1 v1, 2-of-3 GA | higher thresholds → post-GA | DR-002 |
-| Project license (source) | ❌ none (all rights reserved) | chosen license + SPDX headers → when DR-015 is superseded | DR-015 |
+| Project license (source) | ✅ Apache-2.0 | include license and third-party notices in release archives | DR-015 |
 | aarch64-linux CI | nightly (runner TBD) | native runners → when justified | RISK-19 |
 | Store repair | ✅ two-phase (read-only verify via broker; cache-only repair via helper; approved local repair via helper) | (none — single fixed helper maintenance op) | D-19, DR-017 |
 | Repair atomicity | ❌ verified non-atomic (user-initiated; warns; per-path journal; final read-only verify) | atomic / generation-switched repair → v2+ | INV-12, RISK-22 |

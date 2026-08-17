@@ -8,8 +8,8 @@
 # same isolation model as `spikes/s2-tough/`).
 #
 # It is a benchmark/evidence harness, NOT production pkg code. It is
-# `publish = false`, carries NO `license` field and NO SPDX headers (DR-015), and
-# FORBIDS unsafe code (`#![forbid(unsafe_code)]` in `src/lib.rs`/`src/main.rs`).
+# `publish = false` and FORBIDS unsafe code
+# (`#![forbid(unsafe_code)]` in `src/lib.rs`/`src/main.rs`).
 # Dependencies are intentionally minimal and locked (`serde`, `serde_json`, and
 # `rustix`): `serde`/`serde_json` drive the report schema and JSON I/O, while
 # `rustix` provides safe process-group signaling. See `README.md` / `FINDINGS.md`.
@@ -19,6 +19,7 @@ name = "pkg-spike-s4-reeval-cost"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.96"
+license = "Apache-2.0"
 publish = false
 description = "Spike S4: measure single-attribute + index-meta reevaluation cost at a pinned Nixpkgs rev (Fake vs Real)."
 

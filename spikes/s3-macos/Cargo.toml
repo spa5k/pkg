@@ -8,8 +8,8 @@
 # same isolation model as `spikes/s2-tough/` and `spikes/s4-reeval-cost/`).
 #
 # It is an EVIDENCE/DATA-CONTRACT harness, NOT production pkg code. It is
-# `publish = false`, carries NO `license` field and NO SPDX headers (DR-015),
-# and FORBIDS unsafe code (`#![forbid(unsafe_code)]` in `src/lib.rs`). This
+# `publish = false` and FORBIDS unsafe code (`#![forbid(unsafe_code)]` in
+# `src/lib.rs`). This
 # spike performs NO package build, profile activation, signing/notarization, or
 # Apple submission, and no shell/PATH lookup. Fake mode never touches the
 # network or Nix; Preflight mode DOES execute the caller-supplied absolute
@@ -42,6 +42,7 @@ name = "pkg-spike-s3-macos"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.96"
+license = "Apache-2.0"
 publish = false
 description = "Spike S3: closed evidence model for macOS binary coverage + signing/notarization lanes (Fake/Detect/Preflight/BuildProbe/SignPlan)."
 

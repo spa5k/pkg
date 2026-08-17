@@ -208,8 +208,7 @@ flowchart TD
   `rustfmt.toml`, `clippy.toml`, `.github/workflows/ci-fast.yml` (G-LINT job: `fmt`,
   `clippy -D warnings`, `doc`, `build`, `cargo deny check`, `cargo audit`), and the
   `crates/pkg-core/` scaffold (manifest + empty `lib.rs` only — **no** domain logic). The
-  project license is **deferred** per DR-015: no `license` field, no `SPDX-License-Identifier`
-  headers anywhere.
+  project license was deferred at this checkpoint; DR-015 now records Apache-2.0.
 - **Depends:** PR-0.
 - **Migration/compat:** pins MSRV (`1.96`) and the exact repo toolchain (`1.96.1`);
   documented in `CONTRIBUTING`.
@@ -1717,7 +1716,7 @@ flowchart TD
   The x86_64 Linux alpha lane now stages a versioned `pkg-install` artifact and checksum-pinned
   bootstrap before it builds the clean host. The clean host receives no source tree, compiler, or
   build output other than that staged release bundle. Linux arm64 remains disabled until it has the
-  same proof. Production key ceremony, fixed hosting activation, license selection, and final
+  same proof. Production key ceremony, fixed hosting activation, and final
   publication remain external gates. This does **not** yet claim the full PR: production publication,
   the authenticated macOS Real-Nix lane, and Fake↔Real parity remain.
 - **Purpose:** turn the nightly Real-Nix lane on, capture/refresh goldens, prove Fake↔Real

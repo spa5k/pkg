@@ -11,13 +11,12 @@
 # `pkg-core` stays serde-free; all (de)serialization in this crate goes through
 # crate-private wire DTOs with explicit conversion (`plans/09` §4.2).
 #
-# License: intentionally ABSENT (DR-015, plans/12-open-decisions-and-risks.md).
-
 [package]
 name = "pkg-nix"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]

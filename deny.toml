@@ -3,13 +3,9 @@
 # Targeted at cargo-deny 0.20.2 (the version pinned in
 # .github/workflows/ci-fast.yml via `cargo install --locked cargo-deny@0.20.2`).
 #
-# IMPORTANT — licensing: the permissive allowlist below is a DEPENDENCY policy
-# (which upstream licenses we accept as transitive build/runtime inputs). It is
-# NOT a project license for `pkg` itself. The project license is unresolved and
-# intentionally not declared anywhere (no `license` manifest field, no SPDX
-# source headers); see DR-015 in plans/12-open-decisions-and-risks.md. Because
-# `pkg-core` is unpublished and the project license is undecided, private
-# workspace crates are ignored by the license check ([licenses.private]).
+# IMPORTANT — the allowlist below is a dependency policy. `pkg` itself uses
+# Apache-2.0 as recorded in DR-015. Private workspace crates remain ignored by
+# this dependency check because they are not published.
 
 # Dependency graph to check: all features, across all four planned v1 hosts.
 [graph]
@@ -31,8 +27,7 @@ unmaintained = "workspace"
 
 [licenses]
 version = 2
-# Permissive DEPENDENCY allowlist. This is a dependency policy, NOT a project
-# license — see the note at the top of this file and DR-015.
+# Permissive dependency allowlist. See the note above.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -44,8 +39,7 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
-# `pkg-core` is unpublished and the project license is undecided, so private
-# workspace crates are ignored by the license check.
+# Private workspace crates are ignored because they are not published.
 include-dev = true
 include-build = true
 # An allowed license with no current consumer should not fail the skeleton.

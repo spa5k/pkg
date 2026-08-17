@@ -4,9 +4,7 @@
 # crates here. Keeping every production crate in the root member list makes the
 # standard build, lint, documentation, and dependency gates cover it by default.
 #
-# License: intentionally ABSENT. The project license is deferred (DR-015 in
-# plans/12-open-decisions-and-risks.md). No `license` key is set here or in any
-# member manifest, `publish = false`, and no source files carry SPDX headers.
+# Licensed under Apache-2.0. See LICENSE and DR-015.
 
 [workspace]
 resolver = "3"
@@ -29,4 +27,5 @@ members = [
 version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.96"
+license = "Apache-2.0"
 publish = false

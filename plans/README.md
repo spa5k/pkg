@@ -470,7 +470,7 @@ dependency**, so they can begin immediately:
    `rustfmt.toml`, `clippy.toml`, `.github/workflows/ci-fast.yml` (G-LINT: `fmt`,
    `clippy -D warnings`, `doc`, `build`, `cargo deny check`, `cargo audit`), and the
    `crates/pkg-core/` scaffold (manifest + empty `lib.rs` only — no domain logic). The
-   project license is **deferred** (DR-015): no `license` field, no SPDX headers.
+   project license was deferred at this checkpoint; DR-015 now records Apache-2.0.
 3. **PR-2 — `pkg-core` domain types & logic.** `identity`, `selector`, `realization`,
    `channel`, `version`, `system` — the intent-vs-realization vocabulary (D-13) and the
    display-only `pname@version` distinction, plus property tests for version compare +

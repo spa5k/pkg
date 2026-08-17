@@ -11,13 +11,12 @@
 # (`plans/09` §4.4). The PR-36 parity harness uses pinned serde only for its
 # closed, versioned golden envelope.
 #
-# License: intentionally ABSENT (DR-015, plans/12-open-decisions-and-risks.md).
-
 [package]
 name = "pkg-testkit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [dependencies]
