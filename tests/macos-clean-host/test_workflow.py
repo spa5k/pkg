@@ -79,6 +79,8 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn('"$work/pkg-after-uninstall" --yes uninstall', uninstall)
         self.assertIn("product_volume_present", uninstall)
         self.assertIn("macos-transaction-v1.json", uninstall)
+        self.assertIn("/bin/sleep 1", uninstall)
+        self.assertNotIn("/bin/sleep 0.05", uninstall)
 
 
 if __name__ == "__main__":

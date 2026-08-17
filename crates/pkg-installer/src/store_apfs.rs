@@ -222,13 +222,21 @@ impl<R: DiskutilRunner> MacOsApfsAdapter<R> {
             Some(MacOsStoreVolumeContract::MOUNT_POINT) => true,
             Some(_) => return Err(invalid_state()),
         };
-        if observation.volume_uuid == volume_uuid
-            && observation.volume_name == MacOsStoreVolumeContract::VOLUME_NAME
-            && observation.apfs_container_reference == self.root_container()?
-            && observation.file_vault
-            && observation.global_permissions_enabled
-            && !observation.locked
+        if observation.volume_uuid != volume_uuid
+            || observation.volume_name != MacOsStoreVolumeContract::VOLUME_NAME
+            || observation.apfs_container_reference != self.root_container()?
+            || !observation.file_vault
         {
+            return Err(invalid_state());
+        }
+        if observation.locked {
+            return if mounted {
+                Err(invalid_state())
+            } else {
+                Ok(false)
+            };
+        }
+        if observation.global_permissions_enabled {
             Ok(mounted)
         } else {
             Err(invalid_state())
@@ -697,16 +705,22 @@ mod tests {
 
     #[test]
     fn removal_verification_reports_only_the_exact_mount_state() {
-        for (mount_point, expected) in [
-            (Some("/nix"), Ok(true)),
-            (None, Ok(false)),
-            (Some("/tmp/foreign"), Err(MacOsApfsErrorCode::InvalidState)),
+        for (locked, mount_point, expected) in [
+            (false, Some("/nix"), Ok(true)),
+            (false, None, Ok(false)),
+            (
+                false,
+                Some("/tmp/foreign"),
+                Err(MacOsApfsErrorCode::InvalidState),
+            ),
+            (true, None, Ok(false)),
+            (true, Some("/nix"), Err(MacOsApfsErrorCode::InvalidState)),
         ] {
             let runner = FakeRunner {
                 outputs: VecDeque::from([
                     root_info(),
                     listing(&owned_volume()),
-                    volume_info(false, mount_point),
+                    volume_info(locked, mount_point),
                     root_info(),
                 ]),
                 ..FakeRunner::default()

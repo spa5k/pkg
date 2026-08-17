@@ -393,7 +393,7 @@ fi
 echo "+ interrupt uninstall after APFS removal"
 wait_for_uninstall_checkpoint() {
     attempt=0
-    while [ "$attempt" -lt 18000 ]; do
+    while [ "$attempt" -lt 900 ]; do
         if ! product_volume_present \
             && /usr/bin/sudo /bin/test -f \
                 /private/var/db/pkg-install/macos-transaction-v1.json; then
@@ -403,7 +403,7 @@ wait_for_uninstall_checkpoint() {
             return 1
         fi
         attempt=$((attempt + 1))
-        /bin/sleep 0.05
+        /bin/sleep 1
     done
     return 1
 }
