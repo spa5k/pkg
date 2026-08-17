@@ -44,6 +44,52 @@ bootstrap template with one fixed HTTPS release path. It does not build, sign,
 or publish. The retained CI artifact uses an ephemeral test root. Production
 staging waits for the external key ceremony and hosting activation.
 
+`package_alpha_candidate.py` builds deterministic Linux x86-64 and macOS arm64
+archives from prepared proof files. Each archive contains checksums, the
+Apache-2.0 license, Rust dependency licenses, the Nix 2.34.8 LGPL-2.1 text,
+exact Nix source information, and fixed release notes. It rejects the wrong
+binary format, symlinks, a changed Nix source archive, and existing output.
+
+The candidate archives stay outside TUF. They contain no TUF metadata, proof
+keys, proof certificates, or proof service files. Their release notes say
+`TEST KEYS. LOOPBACK SERVICE. NOT FOR PUBLICATION.` Production signing and
+fixed hosting remain required.
+
+Install cargo-about 0.9.1. The candidate packager runs it with the fixed
+configuration and the locked workspace:
+
+```sh
+cargo install --locked cargo-about --version 0.9.1 --features cli \
+  --root target/release-tools
+```
+
+Download the exact Nix source archive before candidate packaging:
+
+```sh
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --output nix-2.34.8.tar.gz \
+  https://github.com/NixOS/nix/archive/refs/tags/2.34.8.tar.gz
+printf '%s  %s\n' \
+  ecc2f226a1ba27ad56eb85f42af8f078067fe5a219fceb82cb3fda9ba24387a5 \
+  nix-2.34.8.tar.gz | shasum -a 256 --check
+```
+
+Build, package, and prove the exact Linux candidate with this command:
+
+```sh
+PKG_CARGO_ABOUT=target/release-tools/bin/cargo-about \
+PKG_NIX_SOURCE_ARCHIVE=$PWD/nix-2.34.8.tar.gz \
+tests/linux-clean-host/run.sh --keep-artifacts \
+  target/release-candidates/linux
+```
+
+The proof extracts the new archive. It runs only with those extracted payload
+files. The two environment variables are required with `--keep-artifacts`.
+
+Use `macos-aarch64` with a prepared macOS payload. The macOS payload must
+contain `v0.1.0-alpha.1/pkg-install` and
+`v0.1.0-alpha.1/pkg-0.1.0-alpha.1-preview.pkg`.
+
 Production deployment must provide KMS/HSM-backed `KeySource`, `ReleaseAuthority`,
 and `Publisher` adapters. The authority must verify approval attestations,
 exclusively reserve the authoritative sequence, expose the authenticated

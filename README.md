@@ -1,52 +1,58 @@
 # `pkg`
 
-> **Status: implementation is just beginning.** Nothing here ships yet — there is no
-> runnable `pkg` binary, no channel, and no installer. This repository currently contains
-> **plans only**. Every binding design decision, invariant, and open question lives in
-> [`plans/`](plans/), which is the **source of truth**. This README orients you there and
-> makes no product claims beyond what those plans commit to.
+`pkg` is a pre-launch Rust package manager for Linux and macOS.
 
-`pkg` (working codename) is a **planned** single **Rust** binary that aims to provide a
-brew-/paru-style imperative package workflow — `search`, `info`, `install`, `remove`,
-`list`, `outdated`, `update`, `upgrade`, `pin`/`unpin`, `history`, `rollback`, `gc`,
-`repair`, `doctor`, `completion` — on top of a **fully hidden, bundled, product-managed
-Nix** that the user never types or configures directly. Whether and how each of these lands
-is decided by the plan set and its open go/no-go spikes — not announced here.
-
-## Read the plans first
-
-The navigator and index for the reconciled plan set (`00`–`12`) is
-[`plans/README.md`](plans/README.md) — **start there**. It owns no new decisions; it
-summarizes and links to the documents that do.
-
-| If you want… | go to |
-| --- | --- |
-| The navigator + system summary | [`plans/README.md`](plans/README.md) |
-| Decisions, invariants, glossary, scope | [`plans/00-overview-and-decisions.md`](plans/00-overview-and-decisions.md) |
-| The threat model & trust boundaries | [`plans/08-security-model.md`](plans/08-security-model.md) |
-| The PR roadmap & build DAG (PR-0 … PR-38) | [`plans/11-pr-roadmap.md`](plans/11-pr-roadmap.md) |
-| Open decisions, spikes, risks | [`plans/12-open-decisions-and-risks.md`](plans/12-open-decisions-and-risks.md) |
-| How to contribute & review rules | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| A clickable day-to-day UX prototype (HTML) | [`artifacts/pkg-day-to-day-prototype.html`](artifacts/pkg-day-to-day-prototype.html) |
-
-> Five go/no-go **spikes (S1–S5)** are still open, and several high-severity residuals are
-> disclosed rather than hidden. No irreversible architecture is committed until the
-> corresponding spike's Decision Record is accepted. See `plans/12` and the roadmap
-> guardrails in [`plans/11`](plans/11-pr-roadmap.md).
+The command interface is similar to Homebrew and paru. Nix is the private build
+and package engine. Users do not run Nix commands or manage Nix settings.
 
 ## Current state
 
-This is **PR-1** of the roadmap: the Cargo workspace and the permanent `pkg-core` crate
-scaffold now exist, along with the toolchain (`rust-toolchain.toml`, pinned exactly to
-`1.96.1`), the lint/format/deny config (`clippy.toml`, `rustfmt.toml`, `deny.toml`), and the
-Fast-CI **G-LINT** job ([`ci-fast.yml`](.github/workflows/ci-fast.yml): `fmt`,
-`clippy -D warnings`, `doc`, `build`, `cargo deny check`, `cargo audit`). The `pkg-core`
-crate is an **empty scaffold** — its domain types/logic/tests arrive in
-[PR-2](plans/11-pr-roadmap.md); the product binary and every other crate arrive later. See
-the roadmap's ["Initial implementation starting instructions"](plans/README.md) for the
-sequenced entry points.
+The main product flows are implemented. They include search, package details,
+install, remove, list, update, upgrade, rollback, repair, doctor, garbage
+collection, and safe uninstall.
+
+The product has these local clean-host proofs:
+
+- Linux x86-64 uses a privileged Docker host.
+- macOS arm64 uses a disposable Tart virtual machine.
+
+The proofs cover cached installs, one approved local build, upgrade, rollback,
+repair, safe retry, ownership drift, and uninstall. They also verify that a
+normal user cannot use the private runtime, helper, daemon, or trust controls.
+
+No public release exists yet. Current release candidates use test signing keys
+and a loopback service. Do not publish them.
+
+Linux arm64 is not in the first preview. The macOS package is not Developer ID
+signed or notarized. These items remain TODO items.
+
+## Security boundary
+
+The product uses this fixed boundary:
+
+```text
+pkg CLI -> local broker -> non-root runtime broker -> privileged helper -> managed runtime
+```
+
+The installer refuses foreign or changed Nix state. The uninstaller removes
+only authenticated `pkg` state. Product commands do not accept raw Nix
+commands, expressions, installables, store paths, trust roots, or arbitrary
+Nix options.
+
+## Install
+
+See [the install guide](docs/install.md). A public install command will be
+added after production TUF signing and fixed HTTPS hosting are ready.
+
+## Project documents
+
+- [Plan index](plans/README.md)
+- [Architecture decisions](plans/00-overview-and-decisions.md)
+- [Security model](plans/08-security-model.md)
+- [PR roadmap](plans/11-pr-roadmap.md)
+- [Open decisions and risks](plans/12-open-decisions-and-risks.md)
+- [Contributor guide](CONTRIBUTING.md)
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE). See
-[DR-015](plans/12-open-decisions-and-risks.md) for the decision record.
+Licensed under the [Apache License 2.0](LICENSE).

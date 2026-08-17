@@ -77,13 +77,29 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Prepare fixed license inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked cargo-about --version 0.9.1 --features cli \
+            --root target/release-tools
+          curl --fail --location --proto '=https' --proto-redir '=https' \
+            --output nix-2.34.8.tar.gz \
+            https://github.com/NixOS/nix/archive/refs/tags/2.34.8.tar.gz
+          printf '%s  %s\n' \
+            ecc2f226a1ba27ad56eb85f42af8f078067fe5a219fceb82cb3fda9ba24387a5 \
+            nix-2.34.8.tar.gz | sha256sum --check --strict
+
       - name: Prove the staged artifact on a host without build inputs
+        env:
+          PKG_CARGO_ABOUT: ${{ github.workspace }}/target/release-tools/bin/cargo-about
+          PKG_NIX_SOURCE_ARCHIVE: ${{ github.workspace }}/nix-2.34.8.tar.gz
         run: tests/linux-clean-host/run.sh --keep-artifacts proof-artifacts
 
       - name: Retain the proof artifact without publishing it
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pkg-v0.1.0-alpha.1-x86_64-linux-proof
-          path: proof-artifacts/pkg-v0.1.0-alpha.1-x86_64-linux-proof.tar.gz
+          name: pkg-v0.1.0-alpha.1-x86_64-linux-candidate
+          path: proof-artifacts/pkg-v0.1.0-alpha.1-x86_64-linux.tar.gz
           if-no-files-found: error
           retention-days: 7

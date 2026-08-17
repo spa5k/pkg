@@ -36,7 +36,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
             WORKFLOW,
         )
-        self.assertIn("pkg-v0.1.0-alpha.1-x86_64-linux-proof", WORKFLOW)
+        self.assertIn("PKG_CARGO_ABOUT:", WORKFLOW)
+        self.assertIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.1-x86_64-linux-candidate", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.1-x86_64-linux.tar.gz", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
 
 

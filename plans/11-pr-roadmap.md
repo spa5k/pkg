@@ -1156,7 +1156,15 @@ flowchart TD
 ### Milestone M7 — Technical Preview
 
 #### PR-36 — Technical-preview hardening + Real-Nix nightly CI + e2e parity
-- **Status (2026-08-14):** in progress. The first production Real-Nix connector slice is landed:
+- **Status (2026-08-18):** in progress. The local alpha candidate boundary is complete for
+  Linux x86-64 and macOS arm64. Deterministic archives stay outside TUF and include exact
+  payload checksums, Apache-2.0 and dependency notices, and the pinned Nix 2.34.8 source and
+  license information. Linux proof mode extracts and tests the candidate payload. macOS
+  packaging uses native `pkgutil` and `codesign` checks, including a byte-for-byte check of
+  the embedded installer. The archives use test keys and loopback URLs and are not for
+  publication. An exact-candidate Tart rerun, production signing, and fixed HTTPS hosting
+  remain open.
+  The first production Real-Nix connector slice is landed:
   the shipped `pkg doctor` now replaces its development-only runtime and channel deferrals with
   one fixed-endpoint private-broker health transaction. It requires a complete authenticated
   Doctor operation, pinned managed-Nix version response, and lifecycle completion before it marks
@@ -1236,8 +1244,9 @@ flowchart TD
   resume only cache repair after interruption, and force new approval after interrupted local build.
   The helper has one bounded execution lifetime, and post-repair store queries cannot extend it.
   Protocol, recovery, approval, policy-race, helper-lifetime, journal-isolation, compaction, redaction,
-  and unique-closure tests pass locally. macOS clean-host evidence, Real-Nix Linux/macOS fault evidence,
-  metadata freshness, live progress, and optional update modes remain open PR-36 work.
+  and unique-closure tests pass locally. Native Linux and macOS clean-host product proofs now pass.
+  Metadata freshness, live progress, optional update modes, full Fake-to-Real parity, and golden
+  capture/replay remain open PR-36 work.
   The Linux account slice now plans collision-free host GIDs, creates the fixed broker and sixteen
   build identities through closed shadow-utils commands, verifies password locks plus exact primary
   and supplementary memberships, serializes product installers with a root-only runtime lock, and
@@ -1274,8 +1283,8 @@ flowchart TD
   jobs. Each job provisions exact upstream Nix 2.34.8 with a commit-pinned installer action,
   verifies the native system, and runs the ignored normalized adapter contract against an
   ephemeral runner/store. This is deliberately adapter parity evidence only: the upstream action
-  is not product-installer evidence, and the CI clean-host product flow, privileged repair,
-  full package-operation flow, macOS product install, and golden capture/replay lanes remain open.
+  is not product-installer evidence. Native local product-installer proofs now cover Linux and
+  macOS. The hosted clean-host lane, deeper fault parity, and golden capture/replay remain open.
   the pinned Nix 2.34.8 adapter executes version/eval/substitute/path-info/verify/build/GC through
   the managed daemon with bounded process-group cancellation, strict JSON parsing, and provenance
   checks, and its isolated Linux daemon smoke covers both substitution and local build paths. The

@@ -655,7 +655,7 @@ async fn load_authenticated_installer_bundle_with_owner(
 /// authenticated identity or fixed host request fails closed. This does not
 /// repeat the strict clean-host scan because the platform transaction has now
 /// created its fixed prerequisites. Provisioning reopens those prerequisites
-/// with [`HostStatePolicy::FixedPlatformPrerequisites`] before runtime mutation.
+/// with `HostStatePolicy::FixedPlatformPrerequisites` before runtime mutation.
 /// The final datastore and every state file must have the verified non-root
 /// broker owner before they can be used or published.
 pub async fn reauthenticate_installer_bundle(

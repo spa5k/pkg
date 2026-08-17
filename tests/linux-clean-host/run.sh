@@ -43,12 +43,6 @@ python3 "$repo/tools/release/stage_linux_alpha.py" \
     "$repo/docs/install.sh" \
     "$artifact_context" \
     https://127.0.0.1:8443
-cp -a "$raw_stage/publication-1" "$raw_stage/publication-2" "$artifact_context/"
-cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
-    "$repo/tests/linux-clean-host/pkg-proof-release.service" \
-    "$artifact_context/"
-cp -a "$artifact_context/v0.1.0-alpha.1" "$artifact_context/publication-1/"
-cp -a "$artifact_context/v0.1.0-alpha.1" "$artifact_context/publication-2/"
 
 if command -v sha256sum >/dev/null 2>&1; then
     (cd "$artifact_context" && sha256sum --check --strict SHA256SUMS)
@@ -57,11 +51,34 @@ else
 fi
 
 if [ -n "$artifact_output" ]; then
+    : "${PKG_CARGO_ABOUT:?set PKG_CARGO_ABOUT for a candidate archive}"
+    : "${PKG_NIX_SOURCE_ARCHIVE:?set PKG_NIX_SOURCE_ARCHIVE for a candidate archive}"
     mkdir -p "$artifact_output"
-    tar -C "$artifact_context" -czf \
-        "$artifact_output/pkg-v0.1.0-alpha.1-x86_64-linux-proof.tar.gz" \
-        SHA256SUMS install.sh v0.1.0-alpha.1
+    candidate="$artifact_output/pkg-v0.1.0-alpha.1-x86_64-linux.tar.gz"
+    python3 "$repo/tools/release/package_alpha_candidate.py" \
+        linux-x86_64 \
+        "$artifact_context" \
+        "$repo/LICENSE" \
+        "$PKG_CARGO_ABOUT" \
+        "$PKG_NIX_SOURCE_ARCHIVE" \
+        "$candidate"
+    candidate_context="$stage_root/candidate"
+    mkdir "$candidate_context"
+    tar -xzf "$candidate" -C "$candidate_context"
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$candidate_context" && sha256sum --check --strict SHA256SUMS)
+    else
+        (cd "$candidate_context" && shasum -a 256 --check SHA256SUMS)
+    fi
+    artifact_context=$candidate_context
 fi
+
+cp -a "$raw_stage/publication-1" "$raw_stage/publication-2" "$artifact_context/"
+cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
+    "$repo/tests/linux-clean-host/pkg-proof-release.service" \
+    "$artifact_context/"
+cp -a "$artifact_context/v0.1.0-alpha.1" "$artifact_context/publication-1/"
+cp -a "$artifact_context/v0.1.0-alpha.1" "$artifact_context/publication-2/"
 
 echo "+ build clean host from staged artifacts only"
 docker build \

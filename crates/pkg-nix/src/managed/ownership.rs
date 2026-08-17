@@ -668,7 +668,7 @@ pub(super) fn verify_with_owner_uid(
 /// Recovery uses this when no root-owned receipt is available or trusted. It
 /// accepts only an authenticated [`OwnershipExpectation`], a fixed host root,
 /// and the required owner uid. It reuses the same per-artifact verification as
-/// [`verify_with_owner_uid`] but never reads, trusts, or publishes a receipt,
+/// `verify_with_owner_uid` but never reads, trusts, or publishes a receipt,
 /// and it inspects only paths rooted in the authenticated artifact set.
 ///
 /// # Errors
