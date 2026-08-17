@@ -1,10 +1,8 @@
 FROM rust:1.96-bookworm AS builder
 
-ARG PKG_SYSTEM=x86_64-linux
 WORKDIR /workspace
 COPY . .
 
-RUN test "$PKG_SYSTEM" = x86_64-linux
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-target,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
@@ -34,12 +32,12 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-target,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-1 /tmp/nix.tar.xz /binaries "$PKG_SYSTEM" /proof-signing 1
+        /publication-1 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 1
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-target,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-2 /tmp/nix.tar.xz /binaries "$PKG_SYSTEM" /proof-signing 2
+        /publication-2 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 2
 RUN mkdir /out \
     && cp -a /publication-1 /publication-2 /out/ \
     && mkdir /out/binaries \

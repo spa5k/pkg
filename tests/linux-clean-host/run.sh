@@ -15,7 +15,6 @@ stage_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-linux-alpha.XXXXXXXX")
 raw_stage="$stage_root/raw"
 artifact_context="$stage_root/artifact"
 docker_platform=linux/amd64
-pkg_system=x86_64-linux
 
 image=pkg-linux-clean-host:local
 container="pkg-linux-clean-host-$$"
@@ -35,7 +34,6 @@ docker version --format 'Docker server {{.Server.Version}} {{.Server.Os}}/{{.Ser
 echo "+ stage x86_64 Linux release inputs"
 docker build \
     --platform "$docker_platform" \
-    --build-arg "PKG_SYSTEM=$pkg_system" \
     --file "$repo/tests/linux-clean-host/Dockerfile.stage" \
     --output "type=local,dest=$raw_stage" \
     "$repo"
