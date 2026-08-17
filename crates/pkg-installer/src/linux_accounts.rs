@@ -1044,15 +1044,37 @@ fn parse_shadow_lock(name: &str, bytes: &[u8]) -> Result<bool, LinuxAccountError
     Ok(fields[1].starts_with('!') || fields[1].starts_with('*'))
 }
 
-fn run_capture(program: &str, arguments: &[&str]) -> Result<Vec<u8>, LinuxAccountError> {
-    run_capture_allow_absent(program, arguments)?
-        .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))
+pub fn run_capture(program: &str, arguments: &[&str]) -> Result<Vec<u8>, LinuxAccountError> {
+    let (code, bytes) = run_capture_status(program, arguments)?;
+    if code == Some(0) {
+        Ok(bytes)
+    } else {
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
 }
 
 fn run_capture_allow_absent(
     program: &str,
     arguments: &[&str],
 ) -> Result<Option<Vec<u8>>, LinuxAccountError> {
+    let (code, bytes) = run_capture_status(program, arguments)?;
+    if code == Some(0) {
+        Ok(Some(bytes))
+    } else if code == Some(2) {
+        Ok(None)
+    } else {
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
+}
+
+pub fn run_capture_status(
+    program: &str,
+    arguments: &[&str],
+) -> Result<(Option<i32>, Vec<u8>), LinuxAccountError> {
     require_program(program)?;
     let mut child = base_command(program)
         .args(arguments)
@@ -1079,18 +1101,10 @@ fn run_capture_allow_absent(
             LinuxAccountErrorCode::CommandFailure,
         ));
     }
-    if status.success() {
-        Ok(Some(bytes))
-    } else if status.code() == Some(2) {
-        Ok(None)
-    } else {
-        Err(LinuxAccountError::new(
-            LinuxAccountErrorCode::CommandFailure,
-        ))
-    }
+    Ok((status.code(), bytes))
 }
 
-fn run_status(program: &str, arguments: &[&str]) -> Result<(), LinuxAccountError> {
+pub fn run_status(program: &str, arguments: &[&str]) -> Result<(), LinuxAccountError> {
     require_program(program)?;
     let mut child = base_command(program)
         .args(arguments)
@@ -1108,13 +1122,17 @@ fn run_status(program: &str, arguments: &[&str]) -> Result<(), LinuxAccountError
 }
 
 fn acquire_install_lock() -> Result<File, LinuxAccountError> {
+    acquire_root_lock(Path::new(INSTALL_LOCK))
+}
+
+pub fn acquire_root_lock(path: &Path) -> Result<File, LinuxAccountError> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .mode(0o600)
         .custom_flags(nix::libc::O_CLOEXEC | nix::libc::O_NOFOLLOW)
-        .open(INSTALL_LOCK)
+        .open(path)
         .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?;
     let metadata = file
         .metadata()
@@ -1142,7 +1160,7 @@ fn acquire_install_lock() -> Result<File, LinuxAccountError> {
     }
 }
 
-fn run_status_allow_absent(program: &str, arguments: &[&str]) -> Result<(), LinuxAccountError> {
+pub fn run_status_allow_absent(program: &str, arguments: &[&str]) -> Result<(), LinuxAccountError> {
     require_program(program)?;
     let mut child = base_command(program)
         .args(arguments)

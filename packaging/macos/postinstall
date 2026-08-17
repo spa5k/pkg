@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(/usr/bin/dirname "$0")
+case "$script_dir" in /*) ;; *) exit 1 ;; esac
+
+/usr/bin/codesign --verify --strict --verbose=2 "$script_dir/pkg-install"
+exec /usr/bin/env -i \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    "$script_dir/pkg-install"

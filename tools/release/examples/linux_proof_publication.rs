@@ -1,4 +1,4 @@
-//! Build an ephemeral signed publication for the Linux product proof.
+//! Build an ephemeral signed publication for clean-host product proofs.
 
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
@@ -323,9 +323,6 @@ async fn main() -> Result<(), AnyError> {
         );
     }
     let system = System::from_str(&system_name)?;
-    if !matches!(system, System::Aarch64Linux | System::X8664Linux) {
-        return Err("the proof system must be Linux".into());
-    }
     let (nixpkgs_revision, nixpkgs_nar_hash) = NIXPKGS[(sequence - 1) as usize];
 
     let artifacts = tempfile::tempdir()?;

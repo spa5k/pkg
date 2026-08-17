@@ -675,9 +675,25 @@ pub async fn reauthenticate_installer_bundle(
     }
     let owner = DatastoreOwner::new(broker_uid, request.groups.broker_gid())
         .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    let AuthenticatedInstallerBundle {
+        source,
+        spec,
+        managed_nix_config,
+        installer_payloads,
+        ownership_expectation,
+        ..
+    } = authenticated;
+    // Release the original datastore lease before reopening it for the broker.
+    drop(source);
     let replacement =
         load_authenticated_installer_bundle_with_owner(trusted_root, request, Some(owner)).await?;
-    if authenticated.identity() != replacement.identity() {
+    let original_identity = AuthenticatedInstallerIdentity {
+        spec: &spec,
+        config: &managed_nix_config,
+        payloads: &installer_payloads,
+        ownership: &ownership_expectation,
+    };
+    if original_identity != replacement.identity() {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
         ));
@@ -730,6 +746,24 @@ pub fn authenticate_installer_bundle_blocking(
     refuse_nested_runtime()?;
     let runtime = installer_runtime()?;
     runtime.block_on(authenticate_installer_bundle(trusted_root, request))
+}
+
+/// Loads authenticated release bytes without authorizing a host mutation.
+///
+/// This is for recovery code that must authenticate the identity bound into a
+/// durable journal before it can remove an interrupted transaction. The caller
+/// must perform a privileged host-state preflight before starting a new mutation.
+///
+/// # Errors
+///
+/// Returns a stable error for invalid release data or a nested Tokio runtime.
+pub fn load_authenticated_installer_bundle_blocking(
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
+    refuse_nested_runtime()?;
+    let runtime = installer_runtime()?;
+    runtime.block_on(load_authenticated_installer_bundle(trusted_root, request))
 }
 
 /// Reauthenticates a strictly authenticated bundle from a synchronous entry point.
@@ -2784,6 +2818,43 @@ mod tests {
         .unwrap();
         assert_eq!(registration, staging.path().join(".reginfo"));
         assert!(registration.is_file());
+        for binary in ["nix", "nix-store", "nix-daemon"] {
+            assert!(
+                fs::symlink_metadata(
+                    staging
+                        .path()
+                        .join(format!("opt/pkg/nix/2.34.8/bin/{binary}"))
+                )
+                .unwrap()
+                .file_type()
+                .is_file()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires PKG_TEST_NIX_ARCHIVE with the official Nix 2.34.8 aarch64-darwin tarball"]
+    fn official_nix_darwin_archive_matches_the_shared_manifest_during_extraction() {
+        let archive = std::env::var_os("PKG_TEST_NIX_ARCHIVE")
+            .map(PathBuf::from)
+            .expect("PKG_TEST_NIX_ARCHIVE must be set");
+        let version = NixVersion::new("2.34.8").unwrap();
+        let system = System::Aarch64Darwin;
+        let manifest =
+            crate::build_upstream_runtime_asset_manifest(&archive, system, &version).unwrap();
+        let expectation = decode_ownership_asset_manifest(
+            &manifest,
+            system,
+            &version,
+            body_digest(&manifest),
+            ManagedGroupBindings::new(333, 350).unwrap(),
+        )
+        .unwrap();
+        let staging = TempDir::new().unwrap();
+        let registration =
+            extract_exact_archive(&archive, staging.path(), system, &version, &expectation)
+                .unwrap();
+        assert_eq!(registration, staging.path().join(".reginfo"));
         for binary in ["nix", "nix-store", "nix-daemon"] {
             assert!(
                 fs::symlink_metadata(

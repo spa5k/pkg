@@ -396,6 +396,7 @@ impl UninstallPlan {
 /// cannot be resolved to the exact compiled platform allowlist.
 pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, UninstallError> {
     let platform = platform_assets(manifest.system);
+    let receipt_last = matches!(manifest.system, System::X8664Linux | System::Aarch64Linux);
     let states = manifest
         .assets
         .iter()
@@ -406,14 +407,14 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
         .iter()
         .copied()
         .filter(|asset| states.get(asset.id) == Some(&RecordedAssetState::Created))
-        .filter(|asset| asset.id != "uninstall-manifest")
+        .filter(|asset| !receipt_last || asset.id != "uninstall-manifest")
         .collect::<Vec<_>>();
     removable.sort_by(|left, right| removal_key(right).cmp(&removal_key(left)));
     let manifest_asset = platform
         .into_iter()
         .find(|asset| asset.id == "uninstall-manifest");
     let mut manifest_parents = Vec::new();
-    if states.get("uninstall-manifest") == Some(&RecordedAssetState::Created) {
+    if receipt_last && states.get("uninstall-manifest") == Some(&RecordedAssetState::Created) {
         let manifest_asset = manifest_asset
             .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
         removable.retain(|asset| {
@@ -450,7 +451,7 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
                 target: asset.target,
             }),
     );
-    if states.get("uninstall-manifest") == Some(&RecordedAssetState::Created) {
+    if receipt_last && states.get("uninstall-manifest") == Some(&RecordedAssetState::Created) {
         let manifest_asset = manifest_asset
             .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
         actions.push(UninstallAction::RemoveAsset {
@@ -601,7 +602,12 @@ fn removal_key(asset: &PlatformAsset) -> (u8, usize, &'static str) {
         UninstallAssetKind::File => 4,
         UninstallAssetKind::Directory => 3,
         UninstallAssetKind::User => 2,
-        UninstallAssetKind::Group => 1,
+        UninstallAssetKind::Group => 0,
+    };
+    let phase = if asset.kind == UninstallAssetKind::User && asset.target == "pkg-nix-broker" {
+        1
+    } else {
+        phase
     };
     (phase, asset.target.matches('/').count(), asset.target)
 }
@@ -841,6 +847,28 @@ mod tests {
                 .actions()
                 .contains(&UninstallAction::RemoveManagedStoreIfExclusive)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn macos_removes_receipt_and_directories_before_broker_account() -> Result<(), UninstallError> {
+        let plan = plan_uninstall(&manifest(
+            System::Aarch64Darwin,
+            RecordedAssetState::Created,
+        )?)?;
+        let position = |id| {
+            plan.actions()
+                .iter()
+                .position(|action| matches!(action, UninstallAction::RemoveAsset { id: actual, .. } if *actual == id))
+                .ok_or_else(UninstallError::backend_failure)
+        };
+        let broker = position("broker-user")?;
+        assert!(position("uninstall-manifest")? < broker);
+        assert!(position("uninstall-root")? < broker);
+        assert!(position("product-root")? < broker);
+        assert!(position("build-user-32")? < broker);
+        assert!(broker < position("broker-group")?);
+        assert!(broker < position("build-group")?);
         Ok(())
     }
 

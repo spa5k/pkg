@@ -36,6 +36,24 @@ pub struct LinuxInstallAsset {
 }
 
 impl LinuxInstallAsset {
+    pub(crate) const fn platform_filesystem(
+        id: &'static str,
+        kind: LinuxAssetKind,
+        path: &'static str,
+        mode: u32,
+        owner: LinuxAssetPrincipal,
+        group: LinuxAssetPrincipal,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            path_or_name: path,
+            mode: Some(mode),
+            owner: Some(owner),
+            group: Some(group),
+        }
+    }
+
     const fn new(
         id: &'static str,
         kind: LinuxAssetKind,

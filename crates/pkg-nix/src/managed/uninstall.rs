@@ -26,8 +26,8 @@ use super::ownership::{
 };
 
 const MAX_METADATA_BYTES: u64 = 1_048_576;
-// The authenticated Nixpkgs source alone can contain more than 65,000 entries.
-const MAX_DYNAMIC_ENTRIES: usize = 262_144;
+// ponytail: measured preview closure bound; raise only with new clean-host evidence.
+const MAX_DYNAMIC_ENTRIES: usize = 2_097_152;
 const RUNTIME_PREFIX: &str = "/opt/pkg/nix";
 const STORE_PREFIX: &str = "/nix/store";
 const STORE_LINKS: &str = "/nix/store/.links";

@@ -256,10 +256,10 @@ fn parse_dscl_pairs(bytes: &[u8]) -> Result<BTreeMap<String, u32>, BuildAccountE
     for line in text.lines() {
         let mut fields = line.split_whitespace();
         let name = fields.next().ok_or(BuildAccountError)?;
-        let value = fields
-            .next()
-            .ok_or(BuildAccountError)?
-            .parse()
+        let value = fields.next().ok_or(BuildAccountError)?;
+        let value = value
+            .parse::<u32>()
+            .or_else(|_| value.parse::<i32>().map(i32::cast_unsigned))
             .map_err(|_| BuildAccountError)?;
         if fields.next().is_some() || values.insert(name.to_owned(), value).is_some() {
             return Err(BuildAccountError);
@@ -389,6 +389,10 @@ mod tests {
 
     #[test]
     fn malformed_duplicate_and_mismatched_directories_refuse() {
+        assert_eq!(
+            parse_dscl_pairs(b"nobody -2\n").unwrap()["nobody"],
+            u32::MAX - 1
+        );
         assert!(parse_linux_passwd(b"nixbld1:x:1:2\n").is_err());
         assert!(parse_linux_group(b"wheel:x:0:root\n").is_err());
         assert!(

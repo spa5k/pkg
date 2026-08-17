@@ -9,6 +9,12 @@ on:
   schedule:
     - cron: "17 2 * * *"
   workflow_dispatch:
+    inputs:
+      macos_alpha_proof:
+        description: Run the destructive macOS alpha proof on fresh hosted runners
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,10 +28,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  macos-alpha-proof:
+    if: ${{ inputs.macos_alpha_proof }}
+    uses: ./.github/workflows/macos-alpha-proof.yml
+
   security:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.macos_alpha_proof }}
     uses: ./.github/workflows/security.yml
 
   fault-harness:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.macos_alpha_proof }}
     name: G-FAULT harness (${{ matrix.os }})
     needs: security
     strategy:
@@ -55,6 +67,7 @@ jobs:
         run: cargo test --offline --locked --workspace --all-features -- --ignored
 
   real-nix-adapter:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.macos_alpha_proof }}
     name: G-E2E-REAL adapter (${{ matrix.system }})
     needs: security
     strategy:
