@@ -86,9 +86,12 @@ pub fn remove_macos_store_volume_production() -> Result<(), MacOsStoreProvisionE
     let mut apfs = MacOsApfsAdapter::production();
     let receipt = receipt_volume_uuid().map_err(|_| failure())?;
     let discovered = apfs.discover_volume().map_err(|_| failure())?;
-    let Some(volume_uuid) = receipt else {
-        if discovered.is_some()
-            || SystemKeychainStore::exists().map_err(|_| failure())?
+    let volume_uuid = if let Some(volume_uuid) = receipt {
+        volume_uuid
+    } else if let Some(volume_uuid) = discovered.as_ref() {
+        volume_uuid.clone()
+    } else {
+        if SystemKeychainStore::exists().map_err(|_| failure())?
             || !MacOsSyntheticFileStorage::preview_entry_absent().map_err(|_| failure())?
         {
             return Err(failure());
@@ -170,6 +173,15 @@ pub fn verify_macos_store_removal_state_production() -> Result<(), MacOsStorePro
     match (discovered, receipt) {
         (Some(discovered), Some(receipt)) if discovered == receipt => {
             apfs.verify_for_removal(&receipt).map_err(|_| failure())?;
+            if !SystemKeychainStore::exists().map_err(|_| failure())?
+                || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
+            {
+                return Err(failure());
+            }
+        }
+        (Some(discovered), None) => {
+            apfs.verify_for_removal(&discovered)
+                .map_err(|_| failure())?;
             if !SystemKeychainStore::exists().map_err(|_| failure())?
                 || !MacOsSyntheticFileStorage::entry_present().map_err(|_| failure())?
             {

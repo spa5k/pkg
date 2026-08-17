@@ -433,7 +433,10 @@ else
     fi
 fi
 if [ "$uninstall_checkpoint" != true ]; then
-    if /bin/kill -0 "$uninstall_launcher" >/dev/null 2>&1; then
+    if [ -s "$work/uninstall.pid" ]; then
+        uninstall_pid=$(/bin/cat "$work/uninstall.pid")
+        /usr/bin/sudo /bin/kill -KILL "$uninstall_pid" >/dev/null 2>&1 || true
+    elif /bin/kill -0 "$uninstall_launcher" >/dev/null 2>&1; then
         /usr/bin/sudo /bin/kill -KILL "$uninstall_launcher" >/dev/null 2>&1 || true
     fi
     wait "$uninstall_launcher" >/dev/null 2>&1 || true

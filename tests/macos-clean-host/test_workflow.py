@@ -82,6 +82,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn('while [ "$attempt" -lt 1800 ]', uninstall)
         self.assertIn("/bin/sleep 1", uninstall)
         self.assertNotIn("/bin/sleep 0.05", uninstall)
+        self.assertIn('/bin/kill -KILL "$uninstall_pid"', uninstall)
 
 
 if __name__ == "__main__":
