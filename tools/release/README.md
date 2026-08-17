@@ -38,6 +38,12 @@ metadata and target directory URLs. The release build sets
 `PKG_RELEASE_CHANNEL_TARGETS_URL`. The public installer accepts no replacement
 values.
 
+`stage_linux_alpha.py` accepts one already-built x86-64 Linux `pkg-install`,
+places it under `v0.1.0-alpha.1/`, computes its SHA-256, and renders the small
+bootstrap template with one fixed HTTPS release path. It does not build, sign,
+or publish. The retained CI artifact uses an ephemeral test root. Production
+staging waits for the external key ceremony and hosting activation.
+
 Production deployment must provide KMS/HSM-backed `KeySource`, `ReleaseAuthority`,
 and `Publisher` adapters. The authority must verify approval attestations,
 exclusively reserve the authoritative sequence, expose the authenticated

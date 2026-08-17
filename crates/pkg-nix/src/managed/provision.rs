@@ -2031,6 +2031,12 @@ fn recover_interrupted_provision_workspace_with_owner(
     scratch_parent: &Path,
     owner_uid: u32,
 ) -> Result<bool, ProvisionError> {
+    if matches!(
+        fs::symlink_metadata(scratch_parent),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ) {
+        return Ok(false);
+    }
     let Some(mut paths) = capture_provision_workspace(scratch_parent, owner_uid)? else {
         return Ok(false);
     };
@@ -2314,6 +2320,8 @@ mod tests {
         let owner_uid = fs::metadata(temp.path()).unwrap().uid();
 
         verify_provision_workspace_absent_with_owner(&scratch, owner_uid).unwrap();
+        assert!(!recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid).unwrap());
+        assert!(!scratch.exists());
 
         symlink(temp.path(), &scratch).unwrap();
         assert_eq!(
