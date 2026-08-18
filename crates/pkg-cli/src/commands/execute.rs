@@ -75,6 +75,9 @@ impl CommandResult {
         records: Vec<Map<String, Value>>,
     ) -> Result<Self, PublicResultError> {
         let summary = summary.into();
+        if summary.is_empty() {
+            return Err(PublicResultError::PrivateValue);
+        }
         validate_public_string(&summary)?;
         validate_map(&fields, 0)?;
         for record in &records {
@@ -636,8 +639,7 @@ fn validate_key(key: &str) -> Result<(), PublicResultError> {
 }
 
 fn validate_public_string(value: &str) -> Result<(), PublicResultError> {
-    if value.is_empty()
-        || value.chars().any(char::is_control)
+    if value.chars().any(char::is_control)
         || value.contains("/nix/")
         || value.contains(".drv")
         || value.contains("github:")
@@ -855,6 +857,22 @@ mod tests {
                 Err(PublicResultError::PrivateValue)
             );
         }
+    }
+
+    #[test]
+    fn public_result_allows_empty_optional_values_but_not_an_empty_summary() {
+        assert!(
+            CommandResult::new(
+                "done",
+                Map::from_iter([("description".into(), json!(""))]),
+                vec![],
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            CommandResult::new("", Map::new(), vec![]),
+            Err(PublicResultError::PrivateValue)
+        );
     }
 
     #[test]

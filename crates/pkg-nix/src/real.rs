@@ -1821,16 +1821,42 @@ fn normalize_derivation(
         .get(root_name)
         .ok_or(NixAdapterError::OperationFailed)?;
     let root = derivation_path(root_name)?;
+    let structured_attr = |name: &str| {
+        root_raw
+            .structured_attrs
+            .as_ref()
+            .and_then(|attrs| attrs.get(name))
+    };
+    let string_attr = |name: &str| {
+        root_raw
+            .env
+            .get(name)
+            .map(String::as_str)
+            .or_else(|| structured_attr(name).and_then(serde_json::Value::as_str))
+    };
     let outputs_to_install = match request.outputs().explicit_outputs() {
         Some(outputs) => outputs.to_vec(),
-        None => root_raw
-            .env
-            .get("outputsToInstall")
-            .or_else(|| root_raw.env.get("outputs"))
-            .ok_or(NixAdapterError::OperationFailed)?
-            .split_whitespace()
-            .map(|name| OutputName::new(name).map_err(|_| NixAdapterError::OperationFailed))
-            .collect::<Result<Vec<_>, _>>()?,
+        None => {
+            if let Some(outputs) =
+                string_attr("outputsToInstall").or_else(|| string_attr("outputs"))
+            {
+                outputs
+                    .split_whitespace()
+                    .map(|name| OutputName::new(name).map_err(|_| NixAdapterError::OperationFailed))
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                structured_attr("outputsToInstall")
+                    .or_else(|| structured_attr("outputs"))
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or(NixAdapterError::OperationFailed)?
+                    .iter()
+                    .map(|name| {
+                        OutputName::new(name.as_str().ok_or(NixAdapterError::OperationFailed)?)
+                            .map_err(|_| NixAdapterError::OperationFailed)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+        }
     };
     let mut derivations = Vec::with_capacity(raw.derivations.len());
     for (raw_path, item) in &raw.derivations {
@@ -1868,15 +1894,11 @@ fn normalize_derivation(
         )?);
     }
     let closure = serde_json::to_vec(&raw.derivations).map_err(|_| malformed())?;
-    let pname = root_raw
-        .env
-        .get("pname")
-        .cloned()
+    let pname = string_attr("pname")
+        .map(str::to_owned)
         .ok_or(NixAdapterError::OperationFailed)?;
-    let version = root_raw
-        .env
-        .get("version")
-        .cloned()
+    let version = string_attr("version")
+        .map(str::to_owned)
         .ok_or(NixAdapterError::OperationFailed)?;
     DerivationPlanReport::new(
         raw.version,
@@ -2726,7 +2748,7 @@ mod tests {
     #[test]
     fn derivation_v4_normalizes_relative_paths_and_closed_fields()
     -> Result<(), Box<dyn std::error::Error>> {
-        let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/nix/store/11111111111111111111111111111111-bash","env":{"outputs":"out","out":"/nix/store/22222222222222222222222222222222-demo","pname":"demo","version":"1.0"},"inputs":{"drvs":{"33333333333333333333333333333333-dep.drv":["out"]},"srcs":[]},"name":"demo-1.0","outputs":{"out":{"path":"22222222222222222222222222222222-demo"}},"structuredAttrs":{"__structuredAttrs":true},"system":"aarch64-linux","version":4}}}"#;
+        let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/nix/store/11111111111111111111111111111111-bash","env":{"out":"/nix/store/22222222222222222222222222222222-demo"},"inputs":{"drvs":{"33333333333333333333333333333333-dep.drv":["out"]},"srcs":[]},"name":"demo-1.0","outputs":{"out":{"path":"22222222222222222222222222222222-demo"}},"structuredAttrs":{"__structuredAttrs":true,"outputs":["out"],"pname":"demo","version":"1.0"},"system":"aarch64-linux","version":4}}}"#;
         let executor = Scripted::new(vec![success(raw.as_slice()), success(raw.as_slice())]);
         let calls = Arc::clone(&executor.calls);
         let adapter = RealNixAdapter::scripted(executor);
