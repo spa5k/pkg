@@ -510,8 +510,8 @@ flowchart TD
 #### PR-13 — Fetch + verify pinned Nixpkgs (rev/narHash)
 - **Status:** **Completed 2026-08-09.** The closed fetch-spec/metadata-runner contract,
   top-level identity promotion, adversarial tests, and FakeNix hook are implemented in
-  `pkg-nix::nixpkgs` / `pkg-testkit::FakeNixpkgsRunner`. Real contained subprocess execution
-  remains PR-36.
+  `pkg-nix::nixpkgs` / `pkg-testkit::FakeNixpkgsRunner`. PR-36 connects the contained
+  subprocess runner and the exact release-pin path.
 - **Purpose:** materialize the pinned Nixpkgs rev and verify `narHash` from signed channel.
 - **Owns:** `crates/pkg-nix/src/nixpkgs.rs` + tests + FakeNix hooks.
 - **Depends:** PR-11, PR-12.
@@ -1162,8 +1162,11 @@ flowchart TD
   license information. Linux proof mode extracts and tests the candidate payload. macOS
   packaging uses native `pkgutil` and `codesign` checks, including a byte-for-byte check of
   the embedded installer. The archives use test keys and loopback URLs and are not for
-  publication. An exact-candidate Tart rerun, production signing, and fixed HTTPS hosting
-  remain open.
+  publication. Exact-candidate Linux and Tart proofs now pass. Production signing and fixed
+  HTTPS hosting remain open. The release-side native-index command now authenticates an exact
+  Nixpkgs revision and NAR hash, runs only the maintained fixed projection through the contained
+  managed-Nix adapter, validates the canonical index, and creates a new output file without
+  replacement. Full four-system index and artifact assembly remains open before signing.
   The first production Real-Nix connector slice is landed:
   the shipped `pkg doctor` now replaces its development-only runtime and channel deferrals with
   one fixed-endpoint private-broker health transaction. It requires a complete authenticated

@@ -32,10 +32,11 @@ use crate::{
     DerivationSystem, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport,
     GcStatus, MaintenanceError, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
     NixVersion, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError, OutputName,
-    PathInfoReport, PathVerifyResult, RepairBuildPlan, RepairMode, RepairOutcomeKind,
-    RepairPlanDerivation, RepairPlanTarget, Signature, StorePath, SubstituteOutcome,
-    SubstituteReceipt, SubstituteReport, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope,
-    VerifyMode, VerifyReport, VerifyRequest, VersionInfo,
+    PathInfoReport, PathVerifyResult, PinnedNixpkgsSource, RepairBuildPlan, RepairMode,
+    RepairOutcomeKind, RepairPlanDerivation, RepairPlanTarget, Signature, StorePath,
+    SubstituteOutcome, SubstituteReceipt, SubstituteReport, System, TrustStatus,
+    VerifiedRepairExecutor, VerifiedRepairScope, VerifyMode, VerifyReport, VerifyRequest,
+    VersionInfo,
 };
 
 pub(crate) const PINNED_NIX_VERSION: &str = "2.34.8";
@@ -56,6 +57,7 @@ const MAX_UNINSTALL_ROOTS: usize = 4_096;
 const MAX_UNINSTALL_ROOT_BYTES: usize = 1024 * 1024;
 const MAX_STDERR_CHUNKS_PER_TICK: usize = 64;
 const INTERNAL_JSON_PREFIX: &[u8] = b"@nix ";
+const INDEX_META_EXPR: &str = include_str!("../../pkg-index/nix/index-meta.nix");
 const ACT_BUILDS: u64 = 104;
 const RESULT_PROGRESS: u64 = 105;
 const SHORT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -404,6 +406,29 @@ impl RealNixAdapter {
             Duration::from_secs(2),
         )
         .map(|_| ())
+    }
+
+    /// Projects the fixed native package index from an exact verified source.
+    ///
+    /// This accepts no caller-selected expression, installable, option, store,
+    /// registry, network mode, or environment.
+    pub fn project_nixpkgs_index(
+        &self,
+        source: &PinnedNixpkgsSource,
+        system: System,
+    ) -> Result<Vec<u8>, NixAdapterError> {
+        let mut args = base_args();
+        args.extend(os_args(["--offline", "eval", "--json", "--apply"]));
+        args.push(INDEX_META_EXPR.into());
+        args.push(
+            format!(
+                "{}#legacyPackages.{}",
+                source.private_store_path().as_str(),
+                system.as_str()
+            )
+            .into(),
+        );
+        self.require_success(MethodKind::EvaluateDerivation, args, EVALUATE_TIMEOUT)
     }
 
     /// Resolves the exact recursive closure of authenticated generation roots.
@@ -2628,6 +2653,39 @@ mod tests {
         for forbidden in ["--impure", "--override-input", "--registry"] {
             assert!(!calls[0].iter().any(|argument| argument == forbidden));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn nixpkgs_index_projection_uses_only_the_fixed_expression_and_source()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let store_path = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-source";
+        let source = PinnedNixpkgsSource::for_test(
+            "0123456789abcdef0123456789abcdef01234567",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            store_path,
+        )?;
+        let executor = Scripted::new(vec![success("[]")]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+
+        assert_eq!(
+            adapter.project_nixpkgs_index(&source, System::Aarch64Darwin)?,
+            b"[]"
+        );
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        let mut expected = base_args();
+        expected.extend(os_args(["--offline", "eval", "--json", "--apply"]));
+        expected.push(INDEX_META_EXPR.into());
+        expected.push(format!("{store_path}#legacyPackages.aarch64-darwin").into());
+        assert_eq!(calls.as_slice(), [expected]);
+        assert_eq!(
+            calls[0]
+                .iter()
+                .filter(|argument| argument.as_os_str() == INDEX_META_EXPR)
+                .count(),
+            1
+        );
         Ok(())
     }
 

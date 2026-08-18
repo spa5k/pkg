@@ -322,15 +322,15 @@ The miss becomes an **error** (`ACQUIRE_NO_BINARY`, doc 04/06) only when there i
 
 ## 16. Implementation checkpoints (foundation; feeds doc 11)
 
-- ✅ CP-03.1 Implement Nixpkgs source fetch+verify via `nix flake metadata <direct-locked-ref>`: build the ref from the descriptor's `owner`/`repo`/`rev`+`narHash`, read top-level `locked.rev`/`locked.narHash`, cross-check `revision` if present, fail-closed against the descriptor before any eval/index use (CAT-INV-01; §6.2). Contract/reference completed by PR-13; Real-Nix runner binding remains PR-36.
+- ✅ CP-03.1 Implement Nixpkgs source fetch+verify via `nix flake metadata <direct-locked-ref>`: build the ref from the descriptor's `owner`/`repo`/`rev`+`narHash`, read top-level `locked.rev`/`locked.narHash`, cross-check `revision` if present, fail-closed against the descriptor before any eval/index use (CAT-INV-01; §6.2). Contract/reference completed by PR-13. The contained Real-Nix runner and release-pin path are complete in PR-36.
 - ✅ CP-03.2 Define & serialize the index record schema (§7) with stable hashing.
   Completed by PR-14 with bounded closed projection input, deterministic sorting,
   RFC 8785 bytes, and channel-compatible exact-byte SHA-256.
 - CP-03.3 Implement index loader/verifier (download TUF target → verify sha256 → load; else Option B self-build).
 - ✅ CP-03.4 Implement Option B meta-eval expression with `tryEval` per-attr tolerance
   (SPK-04). The maintained expression is
-  `crates/pkg-index/nix/index-meta.nix`; the Real-Nix child-process binding remains
-  PR-36.
+  `crates/pkg-index/nix/index-meta.nix`. PR-36 connects it to the contained
+  Real-Nix adapter and the canonical native-index builder.
 - CP-03.5 Implement the install-evaluation contract (§9) → normalized derivation plan (BuildPlan input; feeds doc 04 §5.2.1). Realized store-path identity is recorded **post-acquire** (§9.2.1 / doc 05 lock), never here.
 - 🟡 CP-03.6 Implement read-only query paths against the schema. PR-15 completes
   pure offline `search`, `info`, and bounded derived-catalog enumeration with

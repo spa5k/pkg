@@ -141,8 +141,9 @@ pub use managed::uninstall::{
     prepare_managed_runtime_removal_without_receipt,
 };
 pub use nixpkgs::{
-    NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError,
-    NixpkgsSourceErrorCode, VerifiedNixpkgsSource, fetch_verified_nixpkgs,
+    NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsPin,
+    NixpkgsSourceError, NixpkgsSourceErrorCode, PinnedNixpkgsSource, VerifiedNixpkgsSource,
+    fetch_pinned_nixpkgs, fetch_verified_nixpkgs,
 };
 pub use real::{
     MAX_REPAIR_EXECUTION_DURATION, RealNixAdapter, RootNixGcExecutor, RootNixRepairExecutor,
