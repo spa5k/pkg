@@ -4,11 +4,12 @@ use std::{env, path::Path};
 
 use nix::unistd::{Gid, Uid};
 use pkg_core::{System, state::Digest};
+#[cfg(target_os = "macos")]
+use pkg_nix::prepare_managed_runtime_removal_without_receipt;
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedRuntimeRemoval,
     ManagedRuntimeRemovalOutcome, OwnershipExpectation, RootNixGcExecutor,
-    prepare_managed_runtime_removal, prepare_managed_runtime_removal_without_receipt,
-    verify_authenticated_managed_install,
+    prepare_managed_runtime_removal, verify_authenticated_managed_install,
 };
 use sha2::{Digest as _, Sha256};
 

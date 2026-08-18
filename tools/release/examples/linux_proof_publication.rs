@@ -480,8 +480,13 @@ async fn main() -> Result<(), AnyError> {
             "cli/pkg-installer-x86_64-linux",
         ),
     ] {
-        let record = if kind == "pkg" && candidate == system_name {
-            copy_file(artifact_root, source, &binaries.join("pkg"))?
+        let release_binary = match (kind, candidate == system_name) {
+            ("pkg", true) => Some("pkg"),
+            ("pkg-install", true) => Some("pkg-install"),
+            _ => None,
+        };
+        let record = if let Some(binary) = release_binary {
+            copy_file(artifact_root, source, &binaries.join(binary))?
         } else {
             write_file(
                 artifact_root,
