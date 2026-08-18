@@ -4,38 +4,46 @@ title: Install pkg
 
 # Install pkg
 
-No public release exists yet. `docs/install.sh` is a release template. It exits
-before network access until the release process replaces every fixed token.
+The current public release is
+[`v0.1.0-alpha.1`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.1).
+`docs/install.sh` is the source template for its fixed Linux installer. An
+unrendered template exits before network access.
 
 The first preview targets Linux x86-64 and macOS arm64. Linux arm64 is deferred.
 
-## Public release process
+## Linux x86-64
 
-For Linux:
+Download and read the release installer. Then run it.
 
-1. Download `install.sh` and `SHA256SUMS` from the exact signed release.
-2. Verify `SHA256SUMS`.
-3. Read `install.sh`.
-4. Run `sh install.sh`.
-5. Run `pkg doctor`.
+```sh
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.1/install.sh
+less install.sh
+sh install.sh
+pkg doctor
+```
 
 The script accepts `--verify-only`. It does not accept a caller URL, checksum,
 target, install path, or Nix setting.
 
-For macOS:
+## macOS Apple silicon
 
-1. Download the exact signed package and `SHA256SUMS`.
-2. Verify `SHA256SUMS`.
-3. Run `sudo installer -pkg v0.1.0-alpha.1/pkg-0.1.0-alpha.1-preview.pkg -target /`.
-4. Run `pkg doctor`.
+Download the package and its checksums. Then install it.
 
-The embedded `pkg-install` uses an ad-hoc signature. The package is not notarized.
-Do not publish it. Developer ID signing and notarization remain TODO items.
+```sh
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.1/pkg-0.1.0-alpha.1-preview.pkg
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.1/SHA256SUMS
+grep '  pkg-0.1.0-alpha.1-preview.pkg$' SHA256SUMS | shasum -a 256 --check
+sudo installer -pkg ./pkg-0.1.0-alpha.1-preview.pkg -target /
+pkg doctor
+```
+
+The embedded `pkg-install` uses an ad-hoc signature. The package is not
+Developer ID signed or notarized. These items remain TODO items.
 
 ## Local candidate proof
 
-Local candidate archives contain test-key installers and fixed loopback URLs.
-They are not public releases. Each archive includes:
+Local candidate archives are separate test artifacts. They contain test-key
+installers and fixed loopback URLs. Each archive includes:
 
 - the prepared platform installer;
 - checksums for every other archive file;

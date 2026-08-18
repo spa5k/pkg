@@ -92,11 +92,9 @@ DR is accepted (roadmap §9 guardrails).
   ```
   The final G-LINT gate must run on exactly `1.96.1`; an older toolchain (below the MSRV
   of `1.96`) is **not** acceptable for final validation, even temporarily.
-- **License deferral (DR-015).** The project license is undecided. Until
-  [DR-015](plans/12-open-decisions-and-risks.md) is superseded by an Accepted DR, do **not**
-  add a `license` field to any `Cargo.toml` and do **not** add `SPDX-License-Identifier`
-  headers to source files. The `deny.toml` license allowlist is a *dependency* policy, not a
-  project license.
+- **Project license (DR-015).** The project uses Apache-2.0. Keep the workspace
+  package metadata, release archives, and notices consistent with the accepted
+  [decision](plans/12-open-decisions-and-risks.md#dr-015--project-license-and-source-header-policy).
 
 ## 4. Rollback evidence
 
