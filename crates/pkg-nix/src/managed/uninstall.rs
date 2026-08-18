@@ -9,7 +9,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -768,17 +768,24 @@ fn verify_authenticated_store_trees(
     store: &Path,
     authenticated: &[CapturedEntry],
 ) -> Result<(), ManagedRuntimeRemovalError> {
-    for root in authenticated
-        .iter()
-        .filter(|entry| entry.path.parent() == Some(store))
-    {
-        match fs::symlink_metadata(&root.path) {
-            Ok(_) => verify_tree_matches_captured(&root.path, authenticated)?,
+    let mut trees = BTreeMap::<PathBuf, Vec<&CapturedEntry>>::new();
+    for entry in authenticated {
+        let relative = entry.path.strip_prefix(store).map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        let Some(Component::Normal(name)) = relative.components().next() else {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        };
+        trees.entry(store.join(name)).or_default().push(entry);
+    }
+
+    for (root, entries) in trees {
+        match fs::symlink_metadata(&root) {
+            Ok(_) => verify_tree_matches_captured(&root, entries)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                for entry in authenticated
-                    .iter()
-                    .filter(|entry| entry.path.starts_with(&root.path))
-                {
+                for entry in entries {
                     match fs::symlink_metadata(&entry.path) {
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         _ => {
@@ -799,12 +806,12 @@ fn verify_authenticated_store_trees(
     Ok(())
 }
 
-fn verify_tree_matches_captured(
+fn verify_tree_matches_captured<'a>(
     tree_root: &Path,
-    captured: &[CapturedEntry],
+    captured: impl IntoIterator<Item = &'a CapturedEntry>,
 ) -> Result<(), ManagedRuntimeRemovalError> {
     let allowed = captured
-        .iter()
+        .into_iter()
         .filter(|entry| entry.path == tree_root || entry.path.starts_with(tree_root))
         .map(|entry| (entry.path.as_path(), entry))
         .collect::<BTreeMap<_, _>>();

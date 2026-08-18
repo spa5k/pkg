@@ -1169,7 +1169,9 @@ flowchart TD
   replacement. A clean macOS arm64 VM produced byte-validated indexes for all four V1 systems
   with 24,496 to 24,564 records. The release command now emits the fixed Brotli channel target,
   and a repeated compressed build was byte-identical. Full artifact assembly remains open before
-  signing.
+  signing. The same clean VM exposed repeated full scans during managed-store uninstall
+  verification. The verifier now groups store trees once. A forced-interruption retry completed
+  the real uninstall in 14.60 seconds and removed the tested product paths.
   The first production Real-Nix connector slice is landed:
   the shipped `pkg doctor` now replaces its development-only runtime and channel deferrals with
   one fixed-endpoint private-broker health transaction. It requires a complete authenticated
