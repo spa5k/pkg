@@ -16,6 +16,12 @@ let
         (builtins.map cap
           (builtins.filter builtins.isString values))
     else [];
+  supportedSystems = [
+    "aarch64-darwin"
+    "aarch64-linux"
+    "x86_64-darwin"
+    "x86_64-linux"
+  ];
   outputNames = raw:
     if builtins.isList raw then sortedStrings raw
     else if builtins.isAttrs raw then sortedStrings (builtins.attrNames raw)
@@ -40,7 +46,10 @@ builtins.map
           drv = pkgs.${name};
           meta = drv.meta or {};
           broken = (meta.broken or false) == true;
-          platforms = sortedStrings (meta.platforms or []);
+          sourcePlatforms = sortedStrings (meta.platforms or []);
+          platforms = builtins.filter
+            (system: builtins.elem system supportedSystems)
+            sourcePlatforms;
         in if (drv.type or null) != "derivation" then
           throw "not a derivation"
         else {
@@ -52,7 +61,7 @@ builtins.map
           licenses = licenseNames (meta.license or []);
           inherit platforms broken;
           availableHere = !broken
-            && (platforms == [] || builtins.elem hostSystem platforms);
+            && (sourcePlatforms == [] || builtins.elem hostSystem sourcePlatforms);
           position = null;
           outputs = outputNames (drv.outputs or []);
           aliases = [];

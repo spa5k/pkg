@@ -1166,7 +1166,9 @@ flowchart TD
   HTTPS hosting remain open. The release-side native-index command now authenticates an exact
   Nixpkgs revision and NAR hash, runs only the maintained fixed projection through the contained
   managed-Nix adapter, validates the canonical index, and creates a new output file without
-  replacement. Full four-system index and artifact assembly remains open before signing.
+  replacement. A clean macOS arm64 VM produced byte-validated indexes for all four V1 systems
+  with 24,496 to 24,564 records, and a repeated build was byte-identical. Full artifact assembly
+  remains open before signing.
   The first production Real-Nix connector slice is landed:
   the shipped `pkg doctor` now replaces its development-only runtime and channel deferrals with
   one fixed-endpoint private-broker health transaction. It requires a complete authenticated
