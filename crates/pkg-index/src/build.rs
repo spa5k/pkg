@@ -522,6 +522,18 @@ pub fn build_index_from_json(
     build_index(metadata, candidates)
 }
 
+/// Compresses canonical index bytes with the fixed release Brotli settings.
+///
+/// # Errors
+///
+/// Returns an I/O error if Brotli compression fails.
+pub fn compress_index(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
+    let mut encoder = brotli::CompressorReader::new(Cursor::new(bytes), 4 * 1024, 5, 22);
+    let mut compressed = Vec::new();
+    encoder.read_to_end(&mut compressed)?;
+    Ok(compressed)
+}
+
 fn check_projection_len(length: usize) -> Result<(), IndexBuildError> {
     if length > MAX_PROJECTION_BYTES {
         Err(IndexBuildError::LimitExceeded("projection-byte"))
@@ -666,13 +678,6 @@ pub(crate) fn test_record(candidate: IndexCandidate) -> IndexRecord {
 mod tests {
     use super::*;
 
-    fn compress(bytes: &[u8]) -> Vec<u8> {
-        let mut encoder = brotli::CompressorReader::new(Cursor::new(bytes), 4 * 1024, 5, 22);
-        let mut compressed = Vec::new();
-        encoder.read_to_end(&mut compressed).unwrap();
-        compressed
-    }
-
     fn metadata(at: &str) -> BuildMetadata {
         BuildMetadata::new(
             ChannelSequence::from_u64(42).unwrap(),
@@ -718,7 +723,7 @@ mod tests {
         let built =
             build_index(metadata("2025-01-01T00:00:00Z"), vec![candidate("ripgrep")]).unwrap();
         let revision = "0123456789abcdef0123456789abcdef01234567";
-        let compressed = compress(built.bytes());
+        let compressed = compress_index(built.bytes()).unwrap();
         let compressed_hash = digest_hex(body_digest(&compressed));
         let verified = verify_index_bytes(
             &compressed,
@@ -745,7 +750,7 @@ mod tests {
 
         let mut noncanonical = built.bytes().to_vec();
         noncanonical.push(b'\n');
-        let noncanonical = compress(&noncanonical);
+        let noncanonical = compress_index(&noncanonical).unwrap();
         let noncanonical_hash = digest_hex(body_digest(&noncanonical));
         assert_eq!(
             verify_index_bytes(

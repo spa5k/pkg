@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use pkg_core::{ChannelSequence, System};
-use pkg_index::{BuildMetadata, build_index_from_json};
+use pkg_index::{BuildMetadata, build_index_from_json, compress_index};
 use pkg_nix::{NixpkgsPin, RealNixAdapter, fetch_pinned_nixpkgs};
+use sha2::{Digest as _, Sha256};
 use tempfile::NamedTempFile;
 
 const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
@@ -41,8 +42,10 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), &'static str
         .map_err(|_| "pkg release index refused: fixed projection failed")?;
     let index = build_index_from_json(input.metadata, &projection)
         .map_err(|_| "pkg release index refused: index validation failed")?;
-    write_exclusive(&input.output, index.bytes())?;
-    println!("index sha256 {}", index.sha256_hex());
+    let compressed = compress_index(index.bytes())
+        .map_err(|_| "pkg release index refused: index compression failed")?;
+    write_exclusive(&input.output, &compressed)?;
+    println!("index sha256 {}", hex::encode(Sha256::digest(&compressed)));
     Ok(())
 }
 
@@ -126,11 +129,11 @@ mod tests {
 
     #[test]
     fn parser_accepts_only_the_closed_release_inputs() {
-        let input = parse(arguments(Path::new("index.json"))).unwrap();
+        let input = parse(arguments(Path::new("index.json.br"))).unwrap();
         assert_eq!(input.system, System::Aarch64Darwin);
         assert_eq!(input.pin.revision().as_str(), REVISION);
 
-        let mut extra = arguments(Path::new("index.json"));
+        let mut extra = arguments(Path::new("index.json.br"));
         extra.push("--option".into());
         assert!(parse(extra).is_err());
     }
@@ -138,7 +141,7 @@ mod tests {
     #[test]
     fn output_must_not_exist() {
         let directory = tempfile::tempdir().unwrap();
-        let output = directory.path().join("index.json");
+        let output = directory.path().join("index.json.br");
         write_exclusive(&output, b"first").unwrap();
         assert_eq!(
             write_exclusive(&output, b"second"),

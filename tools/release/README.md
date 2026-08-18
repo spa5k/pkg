@@ -60,12 +60,13 @@ Build one native index on a release host that has the managed pkg runtime:
 ```sh
 cargo run -p pkg-release --bin pkg-release-index -- \
   1 aarch64-darwin <nixpkgs-revision> <nixpkgs-nar-hash> \
-  2026-08-18T00:00:00Z index.aarch64-darwin.json
+  2026-08-18T00:00:00Z index.aarch64-darwin.json.br
 ```
 
 The command uses the fixed managed Nix binary, home, daemon, and projection.
 It accepts no Nix command, expression, installable, store path, option, URL,
 or trust root. The output file must not exist.
+The output is the deterministic Brotli target used by the signed channel.
 
 Install cargo-about 0.9.1. The candidate packager runs it with the fixed
 configuration and the locked workspace:
