@@ -229,7 +229,26 @@ def require_nix_copying(source: pathlib.Path) -> bytes:
     return copying
 
 
-def release_notes(platform: str) -> bytes:
+def release_notes(platform: str, published_preview: bool = False) -> bytes:
+    if published_preview:
+        install = (
+            "Run `sh install.sh`."
+            if platform == "linux-x86_64"
+            else f"Run `sudo installer -pkg {RELEASE}/{MACOS_PACKAGE} -target /`."
+        )
+        macos_limit = (
+            "\nThe macOS package has an ad-hoc signature.\n"
+            "Developer ID signing and notarization are TODO items.\n"
+            if platform == "macos-aarch64"
+            else "\n"
+        )
+        return (
+            f"# pkg {RELEASE} technical preview\n\n"
+            "This preview uses signed TUF metadata and fixed HTTPS hosting.\n"
+            f"{install}\n"
+            f"{macos_limit}"
+            "This is a preview release. It is not the v1 release.\n"
+        ).encode()
     install = (
         "Run `sh install.sh` only while the local proof service is active."
         if platform == "linux-x86_64"
@@ -346,6 +365,7 @@ def package_candidate(
     cargo_about: pathlib.Path,
     nix_source: pathlib.Path,
     output: pathlib.Path,
+    published_preview: bool = False,
 ) -> None:
     payload: dict[str, tuple[bytes, int]] = {}
     for name in PLATFORM_FILES[platform]:
@@ -369,7 +389,7 @@ def package_candidate(
             "LICENSE": (license_text, 0o644),
             "NIX-LICENSE": (require_nix_copying(nix_source), 0o644),
             "NIX-SOURCE.md": (nix_source_notice(), 0o644),
-            "RELEASE_NOTES.md": (release_notes(platform), 0o644),
+            "RELEASE_NOTES.md": (release_notes(platform, published_preview), 0o644),
             "THIRD_PARTY_LICENSES.html": (notices, 0o644),
         }
     )
@@ -388,6 +408,7 @@ def main() -> int:
     parser.add_argument("cargo_about", type=pathlib.Path)
     parser.add_argument("nix_source", type=pathlib.Path)
     parser.add_argument("output", type=pathlib.Path)
+    parser.add_argument("--published-preview", action="store_true")
     args = parser.parse_args()
     try:
         package_candidate(
@@ -397,6 +418,7 @@ def main() -> int:
             args.cargo_about,
             args.nix_source,
             args.output,
+            args.published_preview,
         )
     except (OSError, subprocess.CalledProcessError, tarfile.TarError, ValueError) as error:
         print(f"package-alpha-candidate: {error}", file=sys.stderr)

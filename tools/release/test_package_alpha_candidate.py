@@ -158,6 +158,12 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         self.assertIsNotNone(version)
         self.assertEqual(PACKAGER.RELEASE, f"v{version.group(1)}")
 
+    def test_published_preview_notes_do_not_claim_local_proof(self) -> None:
+        notes = PACKAGER.release_notes("linux-x86_64", published_preview=True)
+        self.assertIn(b"signed TUF metadata", notes)
+        self.assertNotIn(b"NOT FOR PUBLICATION", notes)
+        self.assertNotIn(b"loopback", notes)
+
     def test_linux_archive_has_exact_checked_contents(self) -> None:
         staged = self.root / "linux"
         (staged / PACKAGER.RELEASE).mkdir(parents=True)

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::num::NonZeroU64;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
@@ -127,6 +127,7 @@ pub async fn sign_channel(
     if !root_metadata.is_file() || root_metadata.file_type().is_symlink() || output.exists() {
         return Err(SignError::Filesystem);
     }
+    let output = absolute_output_path(output)?;
     let root_path = fs::canonicalize(root_path).map_err(|_| SignError::Filesystem)?;
     let root_bytes = fs::read(&root_path).map_err(|_| SignError::Filesystem)?;
     if hex::encode(Sha256::digest(&root_bytes)) != release.trusted_root_sha256() {
@@ -141,9 +142,9 @@ pub async fn sign_channel(
     let root_version = root.signed.version.get();
     let metadata_dir = output.join("metadata");
     let targets_dir = output.join("targets");
-    fs::create_dir(output).map_err(|_| SignError::Filesystem)?;
+    fs::create_dir(&output).map_err(|_| SignError::Filesystem)?;
     let mut output_guard = OutputGuard {
-        path: output,
+        path: &output,
         committed: false,
     };
     fs::create_dir(&metadata_dir).map_err(|_| SignError::Filesystem)?;
@@ -203,10 +204,21 @@ pub async fn sign_channel(
     )
     .map_err(|_| SignError::Filesystem)?;
     verify_repository(&root_bytes, &release, &metadata_dir, &targets_dir).await?;
-    let objects = crate::publish::seal_objects(&release, output, root_version)
+    let objects = crate::publish::seal_objects(&release, &output, root_version)
         .map_err(SignError::Publication)?;
     output_guard.committed = true;
     Ok(SignedRelease { release, objects })
+}
+
+fn absolute_output_path(output: &Path) -> Result<PathBuf, SignError> {
+    let name = output.file_name().ok_or(SignError::Filesystem)?;
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(fs::canonicalize(parent)
+        .map_err(|_| SignError::Filesystem)?
+        .join(name))
 }
 
 async fn verify_repository(
@@ -311,7 +323,7 @@ mod tests {
     };
     use url::Url;
 
-    use super::{MetadataPolicy, sign_channel};
+    use super::{MetadataPolicy, absolute_output_path, sign_channel};
     use crate::{
         Approval, DurableRelease, ReleaseAuthority, ReleaseAuthorization, ReleaseManifest,
         TimestampAuthority, TimestampAuthorization, ValidationError, refresh_timestamp,
@@ -319,6 +331,16 @@ mod tests {
 
     struct TestAuthority;
     struct TestAuthorization;
+
+    #[test]
+    fn relative_output_path_is_made_absolute() {
+        let output = absolute_output_path(Path::new("preview-output")).expect("absolute output");
+        assert!(output.is_absolute());
+        assert_eq!(
+            output.file_name().and_then(|name| name.to_str()),
+            Some("preview-output")
+        );
+    }
     struct TestTimestampAuthority {
         trusted_root_sha256: String,
     }
