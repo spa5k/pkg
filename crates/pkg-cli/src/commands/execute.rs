@@ -518,6 +518,7 @@ fn write_success_lines(
     jsonl_lines: &[Vec<u8>],
 ) -> io::Result<()> {
     match mode {
+        OutputMode::Human if command == "search" => write_search_result(&mut writer, result),
         OutputMode::Human => writeln!(writer, "{}", result.summary()),
         OutputMode::Json => {
             let mut value = result.fields().clone();
@@ -534,6 +535,70 @@ fn write_success_lines(
             Ok(())
         }
     }
+}
+
+fn write_search_result(mut writer: impl Write, result: &CommandResult) -> io::Result<()> {
+    if !result.records().is_empty() {
+        let package_width = result
+            .records()
+            .iter()
+            .filter_map(|record| record.get("package").and_then(Value::as_str))
+            .map(str::len)
+            .max()
+            .unwrap_or(7)
+            .max(7);
+        let version_width = result
+            .records()
+            .iter()
+            .filter_map(|record| record.get("version").and_then(Value::as_str))
+            .map(str::len)
+            .max()
+            .unwrap_or(7)
+            .max(7);
+        writeln!(
+            writer,
+            "{:<package_width$}  {:<version_width$}  {:<11}  DESCRIPTION",
+            "PACKAGE", "VERSION", "STATUS"
+        )?;
+        for record in result.records() {
+            let package = record.get("package").and_then(Value::as_str).unwrap_or("-");
+            let version = record
+                .get("version")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("-");
+            let description = record
+                .get("description")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("-");
+            let status = match (
+                record.get("broken").and_then(Value::as_bool),
+                record.get("available").and_then(Value::as_bool),
+            ) {
+                (Some(true), _) => "broken",
+                (Some(false), Some(true)) => "ready",
+                _ => "unsupported",
+            };
+            writeln!(
+                writer,
+                "{package:<package_width$}  {version:<version_width$}  {status:<11}  {description}"
+            )?;
+        }
+        writeln!(writer)?;
+    }
+    writeln!(writer, "{}", result.summary())?;
+    if let Some(generated_at) = result
+        .fields()
+        .get("catalogGeneratedAt")
+        .and_then(Value::as_str)
+    {
+        writeln!(writer, "Catalog updated: {generated_at}")?;
+    }
+    if result.fields().get("stale").and_then(Value::as_bool) == Some(true) {
+        writeln!(writer, "Catalog data is stale.")?;
+    }
+    Ok(())
 }
 
 fn success_jsonl_lines(
@@ -639,7 +704,8 @@ fn validate_key(key: &str) -> Result<(), PublicResultError> {
 }
 
 fn validate_public_string(value: &str) -> Result<(), PublicResultError> {
-    if value.chars().any(char::is_control)
+    if value.is_empty()
+        || value.chars().any(char::is_control)
         || value.contains("/nix/")
         || value.contains(".drv")
         || value.contains("github:")
@@ -860,11 +926,19 @@ mod tests {
     }
 
     #[test]
-    fn public_result_allows_empty_optional_values_but_not_an_empty_summary() {
-        assert!(
+    fn public_result_requires_null_for_absent_optional_values() {
+        assert_eq!(
             CommandResult::new(
                 "done",
                 Map::from_iter([("description".into(), json!(""))]),
+                vec![],
+            ),
+            Err(PublicResultError::PrivateValue)
+        );
+        assert!(
+            CommandResult::new(
+                "done",
+                Map::from_iter([("description".into(), Value::Null)]),
                 vec![],
             )
             .is_ok()
@@ -873,6 +947,43 @@ mod tests {
             CommandResult::new("", Map::new(), vec![]),
             Err(PublicResultError::PrivateValue)
         );
+    }
+
+    #[test]
+    fn human_search_lists_packages_and_catalog_time() {
+        let result = CommandResult::new(
+            "2 package(s) found",
+            Map::from_iter([
+                ("catalogGeneratedAt".into(), json!("2026-08-19T00:00:00Z")),
+                ("stale".into(), json!(false)),
+            ]),
+            vec![
+                Map::from_iter([
+                    ("type".into(), json!("package")),
+                    ("package".into(), json!("python3Packages.requests")),
+                    ("version".into(), json!("2.32.4")),
+                    ("available".into(), json!(true)),
+                    ("broken".into(), json!(false)),
+                    ("description".into(), json!("Python HTTP library")),
+                ]),
+                Map::from_iter([
+                    ("type".into(), json!("package")),
+                    ("package".into(), json!("pythonPackages.requests")),
+                    ("version".into(), Value::Null),
+                    ("available".into(), json!(false)),
+                    ("broken".into(), json!(false)),
+                    ("description".into(), Value::Null),
+                ]),
+            ],
+        )
+        .unwrap();
+        let mut output = Vec::new();
+        write_success(&mut output, OutputMode::Human, "search", &result).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("PACKAGE                   VERSION  STATUS"));
+        assert!(output.contains("python3Packages.requests  2.32.4   ready"));
+        assert!(output.contains("pythonPackages.requests   -        unsupported"));
+        assert!(output.contains("Catalog updated: 2026-08-19T00:00:00Z"));
     }
 
     #[test]

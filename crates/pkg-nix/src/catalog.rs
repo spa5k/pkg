@@ -111,7 +111,10 @@ impl CatalogPackageSummary {
         available: bool,
         broken: bool,
     ) -> Option<Self> {
-        if licenses.len() > MAX_LIST_ITEMS || licenses.iter().any(|value| !bounded_metadata(value))
+        if package.is_empty()
+            || name.is_empty()
+            || licenses.len() > MAX_LIST_ITEMS
+            || licenses.iter().any(|value| !bounded_metadata(value))
         {
             return None;
         }
@@ -185,25 +188,41 @@ impl CatalogPackageSummary {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogSearchReport {
     sequence: ChannelSequence,
+    generated_at: String,
     results: Vec<CatalogPackageSummary>,
 }
 
 impl CatalogSearchReport {
     /// Constructs a bounded report tied to one authenticated channel sequence.
     #[must_use]
-    pub fn new(sequence: ChannelSequence, results: Vec<CatalogPackageSummary>) -> Option<Self> {
+    pub fn new(
+        sequence: ChannelSequence,
+        generated_at: &str,
+        results: Vec<CatalogPackageSummary>,
+    ) -> Option<Self> {
         if results.len() > MAX_SEARCH_RESULTS
-            || report_text_bytes(&results)? > MAX_REPORT_TEXT_BYTES
+            || generated_at.is_empty()
+            || report_text_bytes(&results)?.checked_add(generated_at.len())? > MAX_REPORT_TEXT_BYTES
         {
             return None;
         }
-        Some(Self { sequence, results })
+        Some(Self {
+            sequence,
+            generated_at: checked_metadata(generated_at)?,
+            results,
+        })
     }
 
     /// Returns the authenticated channel sequence.
     #[must_use]
     pub const fn sequence(&self) -> ChannelSequence {
         self.sequence
+    }
+
+    /// Returns the authenticated catalog generation time.
+    #[must_use]
+    pub fn generated_at(&self) -> &str {
+        &self.generated_at
     }
 
     /// Returns ranked product summaries.
@@ -398,8 +417,12 @@ mod tests {
         )
         .unwrap();
         assert!(
-            CatalogSearchReport::new(ChannelSequence::from_u64(42).unwrap(), vec![summary])
-                .is_some()
+            CatalogSearchReport::new(
+                ChannelSequence::from_u64(42).unwrap(),
+                "2026-08-19T00:00:00Z",
+                vec![summary]
+            )
+            .is_some()
         );
     }
 }

@@ -562,8 +562,9 @@ fn run_catalog_info(
                     .map_err(catalog_broker_error)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let result = info_catalog_reports(&reports)?;
         broker.complete(handle.clone()).map_err(broker_error)?;
-        info_catalog_reports(&reports)
+        Ok(result)
     })();
     if result.is_err() {
         let _ = broker.cancel(handle);
@@ -1436,7 +1437,18 @@ fn acquire_install_evidence(
             if let Some(error) = progress_error {
                 return Err(error);
             }
-            return Err(install_broker_error(error));
+            let cache_code = error.cache_install_code();
+            let fallback = install_broker_error(error);
+            if matches!(
+                cache_code,
+                Some(
+                    CacheInstallErrorCode::InvalidIntent | CacheInstallErrorCode::AcquisitionFailed
+                )
+            ) && let Some(diagnostic) = diagnose_install_selector_error(broker, &selectors)
+            {
+                return Err(diagnostic);
+            }
+            return Err(fallback);
         }
     };
     if outcome == CacheInstallOutcome::Acquired {
@@ -1556,6 +1568,19 @@ fn acquire_install_evidence(
         let _ = broker.cancel(build_handle);
     }
     result
+}
+
+fn diagnose_install_selector_error(
+    broker: &mut BrokerLifecycleClient,
+    selectors: &[PackageSelector],
+) -> Option<CommandError> {
+    let requests = selectors
+        .iter()
+        .map(|selector| CatalogInfoRequest::new(selector.selector().as_str()))
+        .collect::<Option<Vec<_>>>()?;
+    run_catalog_info(broker, requests)
+        .err()
+        .filter(|error| error.exit_code() == ExitCode::ResolveFailed)
 }
 
 fn parse_build_plan_digest(value: &str) -> Result<Digest, CommandError> {
@@ -3082,8 +3107,12 @@ mod tests {
                 &mut server,
                 request_id,
                 CliBrokerResponse::CatalogSearch(
-                    CatalogSearchReport::new(ChannelSequence::from_u64(42).unwrap(), vec![summary])
-                        .unwrap(),
+                    CatalogSearchReport::new(
+                        ChannelSequence::from_u64(42).unwrap(),
+                        "2026-08-19T00:00:00Z",
+                        vec![summary],
+                    )
+                    .unwrap(),
                 ),
             );
             let (request_id, request) = read_request(&mut server);
@@ -3102,6 +3131,86 @@ mod tests {
         let result = result.unwrap();
         assert_eq!(result.fields()["stale"], Value::Bool(false));
         assert_eq!(result.fields()["entries"][0]["package"], "ripgrep");
+    }
+
+    #[test]
+    fn install_failure_diagnosis_lists_ambiguous_catalog_ids() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let handle = InProcessBroker::new()
+            .unwrap()
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap()
+            .begin(BrokerOperationKind::Resolve)
+            .unwrap();
+        let server_handle = handle.clone();
+        let (release_tx, release_rx) = mpsc::sync_channel(0);
+        let worker = thread::spawn(move || {
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Resolve)
+            );
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(server_handle.clone()),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::InfoCatalog(
+                    server_handle.clone(),
+                    CatalogInfoRequest::new("requests").unwrap(),
+                )
+            );
+            let candidates = ["python3Packages.requests", "pythonPackages.requests"]
+                .map(|package| {
+                    CatalogPackageSummary::new(
+                        package,
+                        "requests",
+                        "2.32.4",
+                        "Python HTTP library",
+                        vec![String::from("Apache-2.0")],
+                        true,
+                        false,
+                    )
+                    .unwrap()
+                })
+                .to_vec();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::CatalogInfo(
+                    CatalogInfoReport::new(
+                        ChannelSequence::from_u64(42).unwrap(),
+                        CatalogInfoLookup::Ambiguous(candidates),
+                    )
+                    .unwrap(),
+                ),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Cancel(server_handle));
+            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+            release_rx.recv().unwrap();
+        });
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_test_0").unwrap(),
+            SelectorInput::new("requests").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+
+        let error = diagnose_install_selector_error(&mut broker, &[selector]);
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        let error = error.unwrap();
+        assert_eq!(error.exit_code(), ExitCode::ResolveFailed);
+        assert_eq!(
+            error.hint(),
+            "choose one: python3Packages.requests, pythonPackages.requests"
+        );
     }
 
     #[test]

@@ -222,7 +222,7 @@ impl AuthenticatedBuildAuthority {
             .iter()
             .map(catalog_summary)
             .collect::<Result<Vec<_>, _>>()?;
-        CatalogSearchReport::new(sequence, results)
+        CatalogSearchReport::new(sequence, index.document().generated_at(), results)
             .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))
     }
 

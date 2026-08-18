@@ -88,6 +88,7 @@ pub fn search_index(
         format!("{} package(s) found", entries.len()),
         Map::from_iter([
             ("channelSequence".into(), json!(response.channel_seq())),
+            ("catalogGeneratedAt".into(), json!(document.generated_at())),
             ("stale".into(), json!(response.stale())),
             ("entries".into(), Value::Array(entries)),
         ]),
@@ -128,9 +129,9 @@ pub fn info_index(
             InfoLookup::Found { package } => entries.push(json!({
                 "package": package.package(),
                 "name": package.name(),
-                "version": package.version(),
-                "description": package.description(),
-                "homepage": package.homepage(),
+                "version": optional_text(package.version()),
+                "description": optional_text(package.description()),
+                "homepage": optional_text(package.homepage()),
                 "licenses": package.licenses(),
                 "outputs": package.outputs(),
                 "outputsToInstall": null,
@@ -145,13 +146,9 @@ pub fn info_index(
                 "pinned": null
             })),
             InfoLookup::Ambiguous { candidates } => {
-                return Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    format!(
-                        "package selector is ambiguous across {} candidates",
-                        candidates.len()
-                    ),
-                    "use a canonical package id from `pkg search`",
+                return Err(ambiguous_package_error(
+                    candidates.len(),
+                    candidates.iter().map(pkg_index::PackageSummary::package),
                 ));
             }
             InfoLookup::NotFound { .. } => {
@@ -210,6 +207,7 @@ pub fn search_catalog_report(report: &CatalogSearchReport) -> Result<CommandResu
                 "channelSequence".into(),
                 json!(report.sequence().get().get()),
             ),
+            ("catalogGeneratedAt".into(), json!(report.generated_at())),
             ("stale".into(), json!(false)),
             ("entries".into(), Value::Array(entries)),
         ]),
@@ -237,9 +235,9 @@ pub fn info_catalog_reports(reports: &[CatalogInfoReport]) -> Result<CommandResu
                 entries.push(json!({
                     "package": summary.package(),
                     "name": summary.name(),
-                    "version": summary.version(),
-                    "description": summary.description(),
-                    "homepage": package.homepage(),
+                    "version": optional_text(summary.version()),
+                    "description": optional_text(summary.description()),
+                    "homepage": optional_text(package.homepage()),
                     "licenses": summary.licenses(),
                     "outputs": package.outputs(),
                     "outputsToInstall": null,
@@ -255,13 +253,9 @@ pub fn info_catalog_reports(reports: &[CatalogInfoReport]) -> Result<CommandResu
                 }));
             }
             CatalogInfoLookup::Ambiguous(candidates) => {
-                return Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    format!(
-                        "package selector is ambiguous across {} candidates",
-                        candidates.len()
-                    ),
-                    "use a canonical package id from `pkg search`",
+                return Err(ambiguous_package_error(
+                    candidates.len(),
+                    candidates.iter().map(CatalogPackageSummary::package),
                 ));
             }
             CatalogInfoLookup::NotFound => {
@@ -419,8 +413,8 @@ fn summary_value(summary: &pkg_index::PackageSummary) -> Value {
     json!({
         "package": summary.package(),
         "name": summary.name(),
-        "version": summary.version(),
-        "description": summary.description(),
+        "version": optional_text(summary.version()),
+        "description": optional_text(summary.description()),
         "licenses": summary.licenses(),
         "available": summary.available(),
         "broken": summary.broken()
@@ -431,12 +425,39 @@ fn catalog_summary_value(summary: &CatalogPackageSummary) -> Value {
     json!({
         "package": summary.package(),
         "name": summary.name(),
-        "version": summary.version(),
-        "description": summary.description(),
+        "version": optional_text(summary.version()),
+        "description": optional_text(summary.description()),
         "licenses": summary.licenses(),
         "available": summary.available(),
         "broken": summary.broken()
     })
+}
+
+fn optional_text(value: &str) -> Value {
+    if value.is_empty() {
+        Value::Null
+    } else {
+        json!(value)
+    }
+}
+
+pub(crate) fn ambiguous_package_error<'a>(
+    count: usize,
+    packages: impl Iterator<Item = &'a str>,
+) -> CommandError {
+    let choices = packages.take(3).collect::<Vec<_>>().join(", ");
+    let hint = if choices.is_empty() {
+        "run `pkg search` to find a package id".to_owned()
+    } else if count > 3 {
+        format!("choose one: {choices}; run `pkg search` for more matches")
+    } else {
+        format!("choose one: {choices}")
+    };
+    CommandError::new(
+        ExitCode::ResolveFailed,
+        format!("package name matches {count} packages"),
+        hint,
+    )
 }
 
 fn query_error(_: pkg_index::QueryError) -> CommandError {
@@ -534,11 +555,48 @@ mod tests {
         let index = index();
         let result = search_index(index.document(), true, args).unwrap();
         assert_eq!(result.fields()["stale"], true);
+        assert_eq!(
+            result.fields()["catalogGeneratedAt"],
+            "2026-08-09T00:00:00Z"
+        );
         assert_eq!(result.fields()["entries"][0]["package"], "ripgrep");
         assert_eq!(result.records()[0]["type"], "package");
         let encoded = serde_json::to_string(result.fields()).unwrap();
         assert!(!encoded.contains("aarch64-darwin"));
         assert!(!encoded.contains("/nix/store/"));
+    }
+
+    #[test]
+    fn absent_catalog_text_is_null_and_ambiguity_lists_safe_ids() {
+        let summary = CatalogPackageSummary::new(
+            "python3Packages.requests",
+            "requests",
+            "",
+            "",
+            Vec::new(),
+            true,
+            false,
+        )
+        .unwrap();
+        let report = CatalogSearchReport::new(
+            ChannelSequence::from_u64(42).unwrap(),
+            "2026-08-19T00:00:00Z",
+            vec![summary.clone()],
+        )
+        .unwrap();
+        let result = search_catalog_report(&report).unwrap();
+        assert_eq!(result.fields()["entries"][0]["version"], Value::Null);
+        assert_eq!(result.fields()["entries"][0]["description"], Value::Null);
+
+        let error = ambiguous_package_error(
+            2,
+            ["python3Packages.requests", "pythonPackages.requests"].into_iter(),
+        );
+        assert_eq!(error.exit_code(), ExitCode::ResolveFailed);
+        assert_eq!(
+            error.hint(),
+            "choose one: python3Packages.requests, pythonPackages.requests"
+        );
     }
 
     #[test]

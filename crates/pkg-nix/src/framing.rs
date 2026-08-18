@@ -2383,6 +2383,7 @@ impl CatalogSummaryOwnedWire {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CatalogSearchResponseWire<'a> {
     sequence: u64,
+    generated_at: &'a str,
     results: Vec<CatalogSummaryWire<'a>>,
 }
 
@@ -2390,6 +2391,7 @@ impl<'a> CatalogSearchResponseWire<'a> {
     fn from_report(report: &'a CatalogSearchReport) -> Self {
         Self {
             sequence: report.sequence().get().get(),
+            generated_at: report.generated_at(),
             results: report
                 .results()
                 .iter()
@@ -2403,6 +2405,7 @@ impl<'a> CatalogSearchResponseWire<'a> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CatalogSearchResponseOwnedWire {
     sequence: u64,
+    generated_at: String,
     results: Vec<CatalogSummaryOwnedWire>,
 }
 
@@ -2415,7 +2418,7 @@ impl CatalogSearchResponseOwnedWire {
             .into_iter()
             .map(CatalogSummaryOwnedWire::promote)
             .collect::<Result<Vec<_>, _>>()?;
-        CatalogSearchReport::new(sequence, results)
+        CatalogSearchReport::new(sequence, &self.generated_at, results)
             .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))
     }
 }
@@ -4376,6 +4379,7 @@ mod tests {
         let search = CliBrokerResponse::CatalogSearch(
             CatalogSearchReport::new(
                 ChannelSequence::from_u64(42).unwrap(),
+                "2026-08-19T00:00:00Z",
                 vec![summary.clone()],
             )
             .unwrap(),

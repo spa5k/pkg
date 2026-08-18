@@ -1827,36 +1827,58 @@ fn normalize_derivation(
             .as_ref()
             .and_then(|attrs| attrs.get(name))
     };
-    let string_attr = |name: &str| {
+    let string_attr = |name: &str| -> Result<Option<&str>, NixAdapterError> {
+        match structured_attr(name) {
+            Some(serde_json::Value::String(value)) => Ok(Some(value)),
+            Some(_) => Err(NixAdapterError::OperationFailed),
+            None => Ok(root_raw.env.get(name).map(String::as_str)),
+        }
+    };
+    let structured_outputs =
+        |value: &serde_json::Value| -> Result<Vec<OutputName>, NixAdapterError> {
+            value
+                .as_array()
+                .ok_or(NixAdapterError::OperationFailed)?
+                .iter()
+                .map(|name| {
+                    OutputName::new(name.as_str().ok_or(NixAdapterError::OperationFailed)?)
+                        .map_err(|_| NixAdapterError::OperationFailed)
+                })
+                .collect()
+        };
+    let named_structured_outputs =
+        |name: &str| -> Result<Option<Vec<OutputName>>, NixAdapterError> {
+            structured_attr(name).map(structured_outputs).transpose()
+        };
+    let legacy_outputs = |name: &str| -> Result<Option<Vec<OutputName>>, NixAdapterError> {
         root_raw
             .env
             .get(name)
-            .map(String::as_str)
-            .or_else(|| structured_attr(name).and_then(serde_json::Value::as_str))
-    };
-    let outputs_to_install = match request.outputs().explicit_outputs() {
-        Some(outputs) => outputs.to_vec(),
-        None => {
-            if let Some(outputs) =
-                string_attr("outputsToInstall").or_else(|| string_attr("outputs"))
-            {
+            .map(|outputs| {
                 outputs
                     .split_whitespace()
                     .map(|name| OutputName::new(name).map_err(|_| NixAdapterError::OperationFailed))
-                    .collect::<Result<Vec<_>, _>>()?
-            } else {
-                structured_attr("outputsToInstall")
-                    .or_else(|| structured_attr("outputs"))
-                    .and_then(serde_json::Value::as_array)
-                    .ok_or(NixAdapterError::OperationFailed)?
-                    .iter()
-                    .map(|name| {
-                        OutputName::new(name.as_str().ok_or(NixAdapterError::OperationFailed)?)
-                            .map_err(|_| NixAdapterError::OperationFailed)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            }
-        }
+                    .collect()
+            })
+            .transpose()
+    };
+    let meta_outputs = || -> Result<Option<Vec<OutputName>>, NixAdapterError> {
+        let Some(meta) = structured_attr("meta") else {
+            return Ok(None);
+        };
+        let meta = meta.as_object().ok_or(NixAdapterError::OperationFailed)?;
+        meta.get("outputsToInstall")
+            .map(structured_outputs)
+            .transpose()
+    };
+    let outputs_to_install = match request.outputs().explicit_outputs() {
+        Some(outputs) => outputs.to_vec(),
+        None => meta_outputs()?
+            .or(named_structured_outputs("outputsToInstall")?)
+            .or(legacy_outputs("outputsToInstall")?)
+            .or(named_structured_outputs("outputs")?)
+            .or(legacy_outputs("outputs")?)
+            .ok_or(NixAdapterError::OperationFailed)?,
     };
     let mut derivations = Vec::with_capacity(raw.derivations.len());
     for (raw_path, item) in &raw.derivations {
@@ -1894,12 +1916,12 @@ fn normalize_derivation(
         )?);
     }
     let closure = serde_json::to_vec(&raw.derivations).map_err(|_| malformed())?;
-    let pname = string_attr("pname")
+    let pname = string_attr("pname")?
         .map(str::to_owned)
         .ok_or(NixAdapterError::OperationFailed)?;
-    let version = string_attr("version")
+    let version = string_attr("version")?
         .map(str::to_owned)
-        .ok_or(NixAdapterError::OperationFailed)?;
+        .unwrap_or_default();
     DerivationPlanReport::new(
         raw.version,
         root,
@@ -2748,7 +2770,7 @@ mod tests {
     #[test]
     fn derivation_v4_normalizes_relative_paths_and_closed_fields()
     -> Result<(), Box<dyn std::error::Error>> {
-        let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/nix/store/11111111111111111111111111111111-bash","env":{"out":"/nix/store/22222222222222222222222222222222-demo"},"inputs":{"drvs":{"33333333333333333333333333333333-dep.drv":["out"]},"srcs":[]},"name":"demo-1.0","outputs":{"out":{"path":"22222222222222222222222222222222-demo"}},"structuredAttrs":{"__structuredAttrs":true,"outputs":["out"],"pname":"demo","version":"1.0"},"system":"aarch64-linux","version":4}}}"#;
+        let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/nix/store/11111111111111111111111111111111-bash","env":{"dev":"/nix/store/44444444444444444444444444444444-demo-dev","out":"/nix/store/22222222222222222222222222222222-demo","outputs":"dev","pname":"legacy","version":"0.9"},"inputs":{"drvs":{"33333333333333333333333333333333-dep.drv":["out"]},"srcs":[]},"name":"demo-1.0","outputs":{"dev":{"path":"44444444444444444444444444444444-demo-dev"},"out":{"path":"22222222222222222222222222222222-demo"}},"structuredAttrs":{"__structuredAttrs":true,"meta":{"outputsToInstall":["out"]},"outputs":["dev","out"],"pname":"demo","version":"1.0"},"system":"aarch64-linux","version":4}}}"#;
         let executor = Scripted::new(vec![success(raw.as_slice()), success(raw.as_slice())]);
         let calls = Arc::clone(&executor.calls);
         let adapter = RealNixAdapter::scripted(executor);
@@ -2762,6 +2784,8 @@ mod tests {
         let report = adapter.evaluate_derivation(&request)?;
         assert_eq!(report.json_version(), 4);
         assert_eq!(report.pname(), "demo");
+        assert_eq!(report.version().as_str(), "1.0");
+        assert_eq!(report.outputs_to_install().len(), 1);
         assert_eq!(report.outputs_to_install()[0].as_str(), "out");
         let calls = calls.lock().map_err(|_| "poisoned call log")?;
         assert_eq!(calls.len(), 2);
@@ -2775,6 +2799,28 @@ mod tests {
                     ]
             }));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn derivation_v4_rejects_malformed_structured_output_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = "00000000000000000000000000000000-demo.drv";
+        let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/nix/store/11111111111111111111111111111111-bash","env":{"out":"/nix/store/22222222222222222222222222222222-demo"},"inputs":{"drvs":{},"srcs":[]},"name":"demo-1.0","outputs":{"out":{"path":"22222222222222222222222222222222-demo"}},"structuredAttrs":{"meta":{"outputsToInstall":"out"},"outputs":["out"],"pname":"demo","version":"1.0"},"system":"aarch64-linux","version":4}}}"#;
+        let request = EvaluateDerivationRequest::new(
+            AttributePath::new("demo")?,
+            System::Aarch64Linux,
+            NixpkgsRevision::new("a62e6edd6d5e1fa0329b8653c801147986f8d446")?,
+            NarHash::new("sha256-oamiKNfr2MS6yH64rUn99mIZjc45nGJlj9eGth/3Xuw=")?,
+            OutputSelection::default_selection(),
+        )?;
+
+        assert_eq!(
+            normalize_derivation(raw, &request, root)
+                .unwrap_err()
+                .code(),
+            crate::NixAdapterErrorCode::OperationFailed
+        );
         Ok(())
     }
 

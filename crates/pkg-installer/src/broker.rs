@@ -1408,6 +1408,7 @@ mod tests {
             }
             CatalogSearchReport::new(
                 ChannelSequence::from_u64(42).unwrap(),
+                "2026-08-19T00:00:00Z",
                 vec![
                     pkg_nix::CatalogPackageSummary::new(
                         "ripgrep",
