@@ -9,12 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tough::TargetName;
 
-const SYSTEMS: [&str; 4] = [
-    "aarch64-darwin",
-    "aarch64-linux",
-    "x86_64-darwin",
-    "x86_64-linux",
-];
+const SYSTEMS: [&str; 2] = ["aarch64-darwin", "x86_64-linux"];
 
 /// One TUF-authenticated release-artifact category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -42,11 +37,9 @@ pub enum CliArtifactKind {
     PkgInstall,
 }
 
-const CLI_ARTIFACTS: [(CliArtifactKind, &str); 5] = [
+const CLI_ARTIFACTS: [(CliArtifactKind, &str); 3] = [
     (CliArtifactKind::Pkg, "aarch64-darwin"),
-    (CliArtifactKind::Pkg, "aarch64-linux"),
     (CliArtifactKind::Pkg, "x86_64-linux"),
-    (CliArtifactKind::PkgInstall, "aarch64-linux"),
     (CliArtifactKind::PkgInstall, "x86_64-linux"),
 ];
 
@@ -479,7 +472,7 @@ fn validate_sets(
         }
     }
     if counts.get(&(ArtifactKind::Descriptor, None)) != Some(&1)
-        || artifacts.len() != 25
+        || artifacts.len() != 1 + SYSTEMS.len() * 6
         || runtime_versions.len() != 1
         || [
             ArtifactKind::ManagedNix,

@@ -5,9 +5,9 @@ release:
 
 - parse a closed release manifest and ask an external authority to authenticate
   distinct release/security attestations while reserving the next sequence;
-- require exactly the descriptor, four managed-Nix archives, four privileged
-  asset manifests, and four per-system indexes as TUF targets;
-- keep the three `pkg` binaries and two Linux `pkg-install` binaries with their
+- require exactly the descriptor, two managed-Nix archives, two privileged
+  asset manifests, and two per-system indexes as TUF targets;
+- keep the two `pkg` binaries and one Linux `pkg-install` binary with their
   Sigstore bundles outside TUF while
   checking every committed checksum and length;
 - accept an already-signed offline root and sign only targets, snapshot, and

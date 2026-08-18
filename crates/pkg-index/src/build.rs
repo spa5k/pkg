@@ -794,7 +794,7 @@ mod tests {
             .join("../../fixtures/channel-v1/targets");
         let revision = "0123456789abcdef0123456789abcdef01234567";
 
-        for system in System::ALL {
+        for system in [System::Aarch64Darwin, System::X8664Linux] {
             let artifact = std::fs::read_dir(&targets)
                 .unwrap()
                 .filter_map(Result::ok)

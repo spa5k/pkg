@@ -14,14 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The four pkg-supported Nix systems (`plans/00` D-14). Every system-specific
-/// map in the canonical descriptor carries exactly these four keys.
-pub const SUPPORTED_SYSTEMS: [&str; 4] = [
-    "x86_64-linux",
-    "aarch64-linux",
-    "x86_64-darwin",
-    "aarch64-darwin",
-];
+/// The two systems shipped by the technical preview.
+pub const SUPPORTED_SYSTEMS: [&str; 2] = ["x86_64-linux", "aarch64-darwin"];
 
 /// The well-known, single v1 binary-cache substituter and its public key
 /// (`plans/02` §6.5, DR-006). These are PUBLIC values pinned in the descriptor.
@@ -91,7 +85,7 @@ pub struct Substituters {
 
 /// A local-build mode for a host system (`buildPolicy.nativeLocalBuilds[system].mode`).
 ///
-/// Implements D-11. The v1 mode for all four native systems is
+/// Implements D-11. The preview mode for both release systems is
 /// `AllowWithGates` (`"allow-with-gates"`). A system with no entry is
 /// implicitly `Deny`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,7 +94,7 @@ pub enum BuildMode {
     /// `"allow-with-gates"`: substitution first; on a cache miss a build is
     /// permitted only after a deterministic preview + explicit single-operation
     /// approval AND verified `sandbox=true`/`sandbox-fallback=false` + build-user
-    /// readiness + resource limits. The v1 mode for all four native systems.
+    /// readiness + resource limits. This is the preview mode for both systems.
     AllowWithGates,
     /// `"prompt"`: preview + explicit single-operation approval required.
     Prompt,
@@ -123,7 +117,7 @@ pub struct BuildPolicy {
 }
 
 impl BuildPolicy {
-    /// The canonical v1 policy: every one of the four supported systems is
+    /// The canonical preview policy: both supported systems are
     /// `allow-with-gates` (plans/02 §7, D-11).
     pub fn canonical_v1() -> Self {
         let mut native_local_builds = std::collections::BTreeMap::new();
@@ -178,7 +172,7 @@ impl ChannelDescriptor {
         serde_json::to_vec_pretty(self).expect("serialize descriptor")
     }
 
-    /// The canonical plans/02 §7 sample descriptor, with all four systems
+    /// The canonical plans/02 §7 sample descriptor, with both preview systems
     /// populated and dummy-but-well-formed sha256 values. Used by the strict
     /// shape test and as a starting point for fixtures.
     ///
@@ -315,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn build_policy_native_local_builds_covers_all_four_systems() {
+    fn build_policy_native_local_builds_covers_preview_systems() {
         let v = serialized();
         let modes = &v["buildPolicy"]["nativeLocalBuilds"];
         let modes_obj = modes.as_object().expect("nativeLocalBuilds is an object");
@@ -323,13 +317,8 @@ mod tests {
         seen.sort();
         assert_eq!(
             seen,
-            &[
-                "aarch64-darwin",
-                "aarch64-linux",
-                "x86_64-darwin",
-                "x86_64-linux"
-            ],
-            "nativeLocalBuilds must cover exactly the four supported systems"
+            &["aarch64-darwin", "x86_64-linux"],
+            "nativeLocalBuilds must cover exactly the preview systems"
         );
         for sys in SUPPORTED_SYSTEMS {
             assert_eq!(
@@ -354,8 +343,8 @@ mod tests {
         // nixpkgs.sourceTarget (camelCase) + narHash
         assert!(v["nixpkgs"]["narHash"].is_string());
         // index.perSystem.<sys>.{target,sha256}
-        assert!(v["index"]["perSystem"]["aarch64-linux"]["target"].is_string());
-        assert!(v["index"]["perSystem"]["aarch64-linux"]["sha256"].is_string());
+        assert!(v["index"]["perSystem"]["aarch64-darwin"]["target"].is_string());
+        assert!(v["index"]["perSystem"]["aarch64-darwin"]["sha256"].is_string());
         // substituters.{urls,trustedPublicKeys}
         assert_eq!(v["substituters"]["urls"][0], CACHE_NIXOS_ORG_URL);
         assert_eq!(

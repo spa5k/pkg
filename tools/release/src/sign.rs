@@ -551,12 +551,7 @@ mod tests {
     }
 
     fn release_fixture_json_with_root(root: &Path, trusted_root_sha256: &str) -> serde_json::Value {
-        let systems = [
-            "aarch64-darwin",
-            "aarch64-linux",
-            "x86_64-darwin",
-            "x86_64-linux",
-        ];
+        let systems = ["aarch64-darwin", "x86_64-linux"];
         let mut artifacts = Vec::new();
         let (digest, length) = write_file(root, "descriptor.json", b"fixture descriptor\n");
         artifacts.push(serde_json::json!({"kind":"descriptor","system":null,"target":"descriptor.json","source":"descriptor.json","sha256":digest,"length":length}));
@@ -583,7 +578,7 @@ mod tests {
             }
         }
         let mut cli = Vec::new();
-        for system in ["aarch64-darwin", "aarch64-linux", "x86_64-linux"] {
+        for system in ["aarch64-darwin", "x86_64-linux"] {
             let source = format!("cli/pkg-{system}");
             let bundle = format!("cli/pkg-{system}.sigstore.json");
             let (digest, length) = write_file(root, &source, system.as_bytes());
@@ -591,7 +586,8 @@ mod tests {
                 write_file(root, &bundle, b"fixture sigstore bundle\n");
             cli.push(serde_json::json!({"kind":"pkg","system":system,"source":source,"sha256":digest,"length":length,"sigstoreBundle":bundle,"sigstoreBundleSha256":bundle_digest,"sigstoreBundleLength":bundle_length}));
         }
-        for system in ["aarch64-linux", "x86_64-linux"] {
+        {
+            let system = "x86_64-linux";
             let source = format!("cli/pkg-installer-{system}");
             let bundle = format!("cli/pkg-installer-{system}.sigstore.json");
             let (digest, length) = write_file(root, &source, system.as_bytes());

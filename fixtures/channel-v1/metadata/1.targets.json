@@ -3,90 +3,12 @@
     "_type": "targets",
     "spec_version": "1.0.0",
     "version": 1,
-    "expires": "2036-08-10T18:45:12.536883Z",
+    "expires": "2036-08-15T09:15:55.721677Z",
     "targets": {
-      "nix/2.24.10/x86_64-linux.assets.json": {
-        "length": 429,
+      "installer/x86_64-linux/pkg-nix-broker": {
+        "length": 46,
         "hashes": {
-          "sha256": "9906b990559e25b7bc6cb5ebbf05680bb473ca81787d94754d9df715f707a0ee"
-        }
-      },
-      "installer/aarch64-darwin/pkg": {
-        "length": 37,
-        "hashes": {
-          "sha256": "a4e2bb3949ded597b46a1bc8a8f8faf1b849abb61b01f093ef1da39275c9e000"
-        }
-      },
-      "installer/aarch64-linux/pkg": {
-        "length": 36,
-        "hashes": {
-          "sha256": "9cecfe51b74f56e76d38675528aabbeba08dbfd6372d52ddc02be5e7b2cb7f82"
-        }
-      },
-      "nix/2.24.10/aarch64-linux.assets.json": {
-        "length": 430,
-        "hashes": {
-          "sha256": "8bd1bd1db4d67177e480499db87bcb82a8ad5f22ecae1646afdac35665980a3b"
-        }
-      },
-      "nix/2.24.10/x86_64-darwin.assets.json": {
-        "length": 430,
-        "hashes": {
-          "sha256": "7a99411dd5b037c1aaef4bbef8e6a4db349dfd42a21bd7c9fe6e480503b35215"
-        }
-      },
-      "nix/2.24.10/aarch64-darwin.assets.json": {
-        "length": 431,
-        "hashes": {
-          "sha256": "ee9d3425387cf96fdea2b7d0aca5b55223b3c5f77c34721f43feaf40c7faf84e"
-        }
-      },
-      "nix/2.24.10/x86_64-darwin.tar.xz": {
-        "length": 52,
-        "hashes": {
-          "sha256": "f05a8bc7adb5def2c406070d8fb3c3391ddfff07dd627a8c508c5d0a0a211186"
-        }
-      },
-      "installer/x86_64-darwin/pkg-nix-broker": {
-        "length": 47,
-        "hashes": {
-          "sha256": "4f9dcdb745395b19e8c07ab50ce5fc1e3c79ef47a5c019b802c0f592841ddaf3"
-        }
-      },
-      "nix/2.24.10/x86_64-linux.tar.xz": {
-        "length": 51,
-        "hashes": {
-          "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3"
-        }
-      },
-      "installer/x86_64-darwin/pkg": {
-        "length": 36,
-        "hashes": {
-          "sha256": "0de147b91c8805f0ba603181aabfa0f2ec26c530acb2c310e2995b8a7714de5b"
-        }
-      },
-      "descriptor.json": {
-        "length": 3310,
-        "hashes": {
-          "sha256": "3f7ee8a37fc4b7184bca2a40ae3cec839ce800e393f6a3e35a5a97d7e05f67fe"
-        }
-      },
-      "installer/aarch64-darwin/pkg-root-helper": {
-        "length": 49,
-        "hashes": {
-          "sha256": "9532ab960ab5ed159cd84b3f88b1cca37655c23592d81c3c555909651cd6bb9d"
-        }
-      },
-      "installer/aarch64-linux/pkg-root-helper": {
-        "length": 48,
-        "hashes": {
-          "sha256": "07d48e6263adf160e2d2cc7e764a2ff9c5de76bd93e8f9cbfdf9457d87ca599a"
-        }
-      },
-      "nix/2.24.10/aarch64-linux.tar.xz": {
-        "length": 52,
-        "hashes": {
-          "sha256": "946dc216b68668a024e61387bc21102ae68ae9b9df2bc5f49ac211d4551b79b2"
+          "sha256": "3d50ea9b860f60e3b63dfdf97189c2ff7589d7e425fd0e7d151e634651f9393b"
         }
       },
       "installer/x86_64-linux/pkg-root-helper": {
@@ -95,16 +17,22 @@
           "sha256": "a0a433e767b793a5b639ceefc5ddfb877785f6bffcc8517f777e2465d2c015ee"
         }
       },
+      "nix/2.24.10/aarch64-darwin.assets.json": {
+        "length": 431,
+        "hashes": {
+          "sha256": "ee9d3425387cf96fdea2b7d0aca5b55223b3c5f77c34721f43feaf40c7faf84e"
+        }
+      },
+      "installer/aarch64-darwin/pkg": {
+        "length": 37,
+        "hashes": {
+          "sha256": "a4e2bb3949ded597b46a1bc8a8f8faf1b849abb61b01f093ef1da39275c9e000"
+        }
+      },
       "installer/aarch64-darwin/pkg-nix-broker": {
         "length": 48,
         "hashes": {
           "sha256": "d3032f3e5e990d6a3731ff0105ced191d0e2afe344f1dfc530438c8c53bd4cb8"
-        }
-      },
-      "installer/aarch64-linux/pkg-nix-broker": {
-        "length": 47,
-        "hashes": {
-          "sha256": "a7cb1b111933f8813d4a71dac591d3e3fb537d04dc72868d5de1ea3172333e88"
         }
       },
       "nix/2.24.10/aarch64-darwin.tar.xz": {
@@ -113,31 +41,43 @@
           "sha256": "1c5cabe15a6ec3610869acd20981b9ec74f2388eb91014b7cf2fb3f7f26d5b7f"
         }
       },
-      "installer/x86_64-darwin/pkg-root-helper": {
-        "length": 48,
-        "hashes": {
-          "sha256": "527d787ef06b951d1f2eeaaf16e7432194828ffa040abcd942da085b72c9d529"
-        }
-      },
       "installer/x86_64-linux/pkg": {
         "length": 35,
         "hashes": {
           "sha256": "84560315e0072603319a0be589d8f877890c49ab13f785c5f375b8f8e6be2231"
         }
       },
-      "installer/x86_64-linux/pkg-nix-broker": {
-        "length": 46,
+      "installer/aarch64-darwin/pkg-root-helper": {
+        "length": 49,
         "hashes": {
-          "sha256": "3d50ea9b860f60e3b63dfdf97189c2ff7589d7e425fd0e7d151e634651f9393b"
+          "sha256": "9532ab960ab5ed159cd84b3f88b1cca37655c23592d81c3c555909651cd6bb9d"
+        }
+      },
+      "nix/2.24.10/x86_64-linux.assets.json": {
+        "length": 429,
+        "hashes": {
+          "sha256": "9906b990559e25b7bc6cb5ebbf05680bb473ca81787d94754d9df715f707a0ee"
+        }
+      },
+      "nix/2.24.10/x86_64-linux.tar.xz": {
+        "length": 51,
+        "hashes": {
+          "sha256": "20c284782e5bbd212ec1a2f4d0a600bc6efa57ef2cf2d283ef9d1971a7e5c3d3"
+        }
+      },
+      "descriptor.json": {
+        "length": 2020,
+        "hashes": {
+          "sha256": "42d23d0ee7889e5a87c3615fb95be75ba939e51e6907f8b17795a0ea0965626b"
         }
       }
     },
     "delegations": {
       "keys": {
-        "e8612f33cd91c98713d798189680fa65778569a2a07c9827a03b70437c572fbc": {
+        "46231411c9d2e5d6aa7e8fca10daed558d336d669fece0d99e5b7afb43f145a5": {
           "keytype": "ed25519",
           "keyval": {
-            "public": "23d7d0ddca7d6c85647b47db22df78c756b065e542274d8677360162bbc6911d"
+            "public": "2125fe1cb1c85aa286d3e08e1747ea5bbb7230236fbc63043e9dc3f149cc394d"
           },
           "scheme": "ed25519"
         }
@@ -146,7 +86,7 @@
         {
           "name": "index",
           "keyids": [
-            "e8612f33cd91c98713d798189680fa65778569a2a07c9827a03b70437c572fbc"
+            "46231411c9d2e5d6aa7e8fca10daed558d336d669fece0d99e5b7afb43f145a5"
           ],
           "threshold": 1,
           "paths": [
@@ -159,8 +99,8 @@
   },
   "signatures": [
     {
-      "keyid": "c9c1859eabbf132c07e061810f9362e8f0ff5330d791c155f44edaa06a301ffc",
-      "sig": "0813528cd5ae3546a70d58ba185d9b8479b0be30e4318c7a1b9e2525198208cfdf99a169f95169e3e94463e24f06a59606dd2fa9d115f9d5835a78e346307207"
+      "keyid": "2dcb5c94ac93500283c168d29d8cb5204dc3bf91116c2c4211d04a4b082b4aed",
+      "sig": "452820c2fb545afc17dfe5d10db8e0d3d672904d67a9eec9ef7cd3ad5f9232385a8c0073b996831849101a6740f9748024c586f1c0d588a5755fb58ab402d807"
     }
   ]
 }

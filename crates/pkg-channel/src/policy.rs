@@ -153,7 +153,7 @@ pub enum ChannelError {
     ExpiredDescriptor,
     /// The display channel name violates the domain contract.
     InvalidChannelName,
-    /// The V1 supported-system set is incomplete, duplicated, or extended.
+    /// The supported-system set is empty, duplicated, or unknown.
     InvalidSystems,
     /// The native host is absent from the channel.
     HostSystemMissing,
@@ -308,17 +308,19 @@ pub fn validate_descriptor(
     }
     let channel = ChannelName::new(&wire.channel).map_err(|_| ChannelError::InvalidChannelName)?;
 
-    let expected_systems: BTreeSet<&str> = System::ALL.map(System::as_str).into_iter().collect();
+    let known_systems: BTreeSet<&str> = System::ALL.map(System::as_str).into_iter().collect();
     let actual_systems: BTreeSet<&str> =
         wire.supported_systems.iter().map(String::as_str).collect();
-    if wire.supported_systems.len() != expected_systems.len() || actual_systems != expected_systems
+    if actual_systems.is_empty()
+        || wire.supported_systems.len() != actual_systems.len()
+        || !actual_systems.is_subset(&known_systems)
     {
         return Err(ChannelError::InvalidSystems);
     }
     if !actual_systems.contains(host.as_str()) {
         return Err(ChannelError::HostSystemMissing);
     }
-    validate_map_keys(&wire.build_policy.native_local_builds, &expected_systems)
+    validate_map_keys(&wire.build_policy.native_local_builds, &actual_systems)
         .map_err(|()| ChannelError::InvalidBuildPolicy)?;
     if wire
         .build_policy
@@ -332,9 +334,12 @@ pub fn validate_descriptor(
     if !valid_version(&wire.nix_runtime.version) {
         return Err(ChannelError::InvalidNixVersion);
     }
-    validate_map_keys(&wire.nix_runtime.per_system, &expected_systems)
+    validate_map_keys(&wire.nix_runtime.per_system, &actual_systems)
         .map_err(|()| ChannelError::InvalidRuntimeArtifact)?;
-    for system in System::ALL {
+    for system in System::ALL
+        .into_iter()
+        .filter(|system| actual_systems.contains(system.as_str()))
+    {
         let artifact = &wire.nix_runtime.per_system[system.as_str()];
         validate_runtime(
             artifact.url.as_str(),
@@ -371,9 +376,12 @@ pub fn validate_descriptor(
     ) {
         return Err(ChannelError::InvalidIndexArtifact);
     }
-    validate_map_keys(&wire.index.per_system, &expected_systems)
+    validate_map_keys(&wire.index.per_system, &actual_systems)
         .map_err(|()| ChannelError::InvalidIndexArtifact)?;
-    for system in System::ALL {
+    for system in System::ALL
+        .into_iter()
+        .filter(|system| actual_systems.contains(system.as_str()))
+    {
         let artifact = &wire.index.per_system[system.as_str()];
         let expected_prefix = format!("index/{}/{system}.json", wire.sequence);
         if !(artifact.target == expected_prefix

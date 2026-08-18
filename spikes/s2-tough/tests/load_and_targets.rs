@@ -129,11 +129,11 @@ async fn read_delegated_index_target() {
     let verifier = verifier(&f);
     let repo = verifier.load(&f.datastore).await.expect("load ok");
 
-    // All four per-system index targets live under the delegated "index" role.
+    // Both preview index targets live under the delegated "index" role.
     assert_eq!(
         f.index_targets.len(),
-        4,
-        "fixture carries four index targets"
+        2,
+        "fixture carries two index targets"
     );
     for (name, bytes) in &f.index_targets {
         let got = read_target_fully(&repo, &TargetName::new(name).unwrap())
@@ -167,28 +167,28 @@ async fn missing_target_is_none() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Regression: descriptor per-system maps carry exactly the four supported
+// 6. Regression: descriptor per-system maps carry exactly the preview
 //    systems, and every descriptor target name/hash matches the fixture bytes.
 // ---------------------------------------------------------------------------
 
 /// Regression for the slice-1 fixture bug: `descriptor.nixRuntime.perSystem`
 /// and `descriptor.index.perSystem` were built by parsing path segment 1 of the
 /// target name. For `nix/<ver>/<sys>.tar.xz` that segment is the Nix VERSION,
-/// and for `index/<seq>/<sys>.json.br` it is the sequence number — so all four
+/// and for `index/<seq>/<sys>.json.br` it is the sequence number — so both
 /// systems collapsed onto a single map key (every iteration inserted under
 /// `2.24.10` / `42`). The fixture now keys both maps straight from
-/// SUPPORTED_SYSTEMS, so each must carry exactly the four keys x86_64-linux,
-/// aarch64-linux, x86_64-darwin, aarch64-darwin.
+/// SUPPORTED_SYSTEMS, so each must carry exactly x86_64-linux and
+/// aarch64-darwin.
 ///
 /// This test loads the repo through `Verifier`, fully drains `descriptor.json`
 /// (so its TUF hash check completes before any bytes are consumed), parses a
-/// `ChannelDescriptor`, asserts the four-key invariant on BOTH per-system maps,
+/// `ChannelDescriptor`, asserts the exact-key invariant on both per-system maps,
 /// and cross-checks every descriptor target name/hash against the corresponding
 /// actual fixture bytes (the bytes that were signed into the repo). Semantic
 /// policy validation stays TEST-ONLY here; this adds NO production policy
 /// validation.
 #[tokio::test]
-async fn descriptor_per_system_maps_have_all_four_systems_and_match_fixture_bytes() {
+async fn descriptor_per_system_maps_have_preview_systems_and_match_fixture_bytes() {
     use pkg_spike_s2_tough::descriptor::SUPPORTED_SYSTEMS;
     use pkg_spike_s2_tough::repo::sha256_hex;
     use std::collections::BTreeSet;
@@ -212,7 +212,7 @@ async fn descriptor_per_system_maps_have_all_four_systems_and_match_fixture_byte
     let descriptor: ChannelDescriptor =
         serde_json::from_slice(&bytes).expect("parse ChannelDescriptor");
 
-    // 3. EXACT four-key invariant on BOTH per-system maps.
+    // 3. Exact preview-system invariant on both per-system maps.
     let expected: BTreeSet<&str> = SUPPORTED_SYSTEMS.iter().copied().collect();
     let nix_keys: BTreeSet<&str> = descriptor
         .nix_runtime
@@ -228,11 +228,11 @@ async fn descriptor_per_system_maps_have_all_four_systems_and_match_fixture_byte
         .collect();
     assert_eq!(
         nix_keys, expected,
-        "nixRuntime.perSystem must have exactly the four supported system keys"
+        "nixRuntime.perSystem must have exactly the preview system keys"
     );
     assert_eq!(
         index_keys, expected,
-        "index.perSystem must have exactly the four supported system keys"
+        "index.perSystem must have exactly the preview system keys"
     );
 
     // 4. Cross-check every descriptor target against the corresponding actual

@@ -15,7 +15,7 @@
 //
 //   delegated "index" role (1-of-1, paths = "index/**") signs:
 //     * index/<seq>/<sys>.json.br — the disposable per-system catalog index
-//                                   (all four systems)
+//                                   (both preview systems)
 //
 // The descriptor's runtime/index sha256 values are computed from actual target
 // bytes so they agree with TUF metadata (defense in depth, plans/02 §11); its
@@ -241,11 +241,10 @@ pub async fn build_fixture() -> Fixture {
     // Do NOT parse the system name out of the target path: those paths carry
     // the Nix version (`nix/<ver>/<sys>.tar.xz`) or the sequence
     // (`index/<seq>/<sys>.json.br`) in path segment 1, so segment-1 parsing
-    // would collapse all four systems onto a single map key. The system is the
+    // would collapse both systems onto a single map key. The system is the
     // SUPPORTED_SYSTEMS iteration variable; `nix_targets` and `index_targets`
     // are built in that same order, so the zip pairs each system with its exact
-    // target tuple and yields exactly the four keys x86_64-linux, aarch64-linux,
-    // x86_64-darwin, aarch64-darwin.
+    // target tuple and yields exactly the keys x86_64-linux and aarch64-darwin.
     let mut nix_per_system: BTreeMap<String, SystemEntry> = BTreeMap::new();
     for ((sys, (_, bytes)), (manifest_name, manifest_bytes)) in SUPPORTED_SYSTEMS
         .iter()

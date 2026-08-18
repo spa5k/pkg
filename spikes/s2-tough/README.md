@@ -322,9 +322,9 @@ All 20 tests pass (5 unit in [`src/descriptor.rs`](src/descriptor.rs), 6 in
 | 1 | `pinned_root_loads_happy_path` | Pinned trusted root + `FilesystemTransport` + `Safe` + `CONSERVATIVE_LIMITS` + persistent datastore loads the fixture through tough's full client verification (root → timestamp → snapshot → targets → delegated targets). |
 | 2 | `persistent_timestamp_and_snapshot_after_load` | `tough` persists `timestamp.json` + `snapshot.json` into the **persistent** datastore during load — the cross-run rollback memory (§8). |
 | 3 | `read_top_level_targets_after_drain` | Top-level targets (`descriptor.json` and a Nix runtime target) read back byte-for-byte **after full drain** (TRU-INV-01). Nixpkgs is intentionally fetched separately as a pinned flake. |
-| 4 | `read_delegated_index_target` | Delegated `index` role is walked + verified; all four per-system index targets read back byte-for-byte (§7). |
+| 4 | `read_delegated_index_target` | Delegated `index` role is walked + verified; both preview index targets read back byte-for-byte (§7). |
 | 5 | `missing_target_is_none` | An unadvertised target returns `Ok(None)` — the contract PR-11 uses to distinguish "missing" from "tampered". |
-| 6 | `descriptor_per_system_maps_have_all_four_systems_and_match_fixture_bytes` | Both descriptor per-system maps carry exactly the four supported systems, and every descriptor target name/hash matches the actual signed fixture bytes. |
+| 6 | `descriptor_per_system_maps_have_preview_systems_and_match_fixture_bytes` | Both descriptor per-system maps carry exactly the preview systems, and every descriptor target name/hash matches the actual signed fixture bytes. |
 
 ### Adversarial — the security guarantees pkg relies on (`tests/adversarial.rs`)
 
@@ -345,7 +345,7 @@ All 20 tests pass (5 unit in [`src/descriptor.rs`](src/descriptor.rs), 6 in
 | # | Test | Proves |
 |---|------|--------|
 | 16 | `top_level_keys_are_exactly_canonical_and_ordered` | The descriptor top-level key **set** and **order** match `plans/02` §7 byte-for-byte. |
-| 17 | `build_policy_native_local_builds_covers_all_four_systems` | `buildPolicy.nativeLocalBuilds` covers exactly the four supported systems, all `allow-with-gates`. |
+| 17 | `build_policy_native_local_builds_covers_preview_systems` | `buildPolicy.nativeLocalBuilds` covers exactly the preview systems, both `allow-with-gates`. |
 | 18 | `camel_case_required_paths_exist` | Every required camelCase JSON path exists in the serialized descriptor. |
 | 19 | `no_snake_case_drift_in_serialized_bytes` | No snake_case Rust field name leaks into the JSON (regression for a dropped `#[serde(rename)]`). |
 | 20 | `round_trip_sample_is_equal` | The canonical sample round-trips through serialize/deserialize to an equal descriptor. |

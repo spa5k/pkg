@@ -1163,7 +1163,9 @@ flowchart TD
   packaging uses native `pkgutil` and `codesign` checks, including a byte-for-byte check of
   the embedded installer. The archives use test keys and loopback URLs and are not for
   publication. Exact-candidate Linux and Tart proofs now pass. Production signing and fixed
-  HTTPS hosting remain open. The release-side native-index command now authenticates an exact
+  HTTPS hosting remain open. The technical-preview publication is fixed to macOS arm64 and
+  Linux x86-64. Other known hosts fail before artifact selection. The internal four-system
+  model remains available for a later release expansion. The release-side native-index command now authenticates an exact
   Nixpkgs revision and NAR hash, runs only the maintained fixed projection through the contained
   managed-Nix adapter, validates the canonical index, and creates a new output file without
   replacement. A clean macOS arm64 VM produced byte-validated indexes for all four V1 systems

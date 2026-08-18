@@ -321,22 +321,22 @@ key is provably absent from v2's and v3's key maps and root-role keyids. Test:
    managed-Nix runtime) read back byte-for-byte after full drain. Nixpkgs is intentionally
    fetched separately as a pinned flake and is not a product TUF target.
 4. `read_delegated_index_target` — **delegated** `index` role (1-of-1, `paths=["index/**"]`)
-   walked + verified; all four per-system index targets read back byte-for-byte through
+   walked + verified; both preview index targets read back byte-for-byte through
    the same hash check as a top-level target. (Delegated targets ARE supported and proven —
    see [`README.md`](README.md) §7.)
 5. `missing_target_is_none` — an unadvertised target returns `Ok(None)`, the contract
    PR-11 uses to distinguish "missing" from "tampered".
-6. `descriptor_per_system_maps_have_all_four_systems_and_match_fixture_bytes` — both
-   descriptor per-system maps carry exactly the four supported systems, and every
+6. `descriptor_per_system_maps_have_preview_systems_and_match_fixture_bytes` — both
+   descriptor per-system maps carry exactly the preview systems, and every
    descriptor target name/hash matches the actual signed fixture bytes.
 
 ### 6.2 Serialization-shape guards (`src/descriptor.rs`, 5 unit tests)
 
 `top_level_keys_are_exactly_canonical_and_ordered`,
-`build_policy_native_local_builds_covers_all_four_systems`,
+`build_policy_native_local_builds_covers_preview_systems`,
 `camel_case_required_paths_exist`, `no_snake_case_drift_in_serialized_bytes`,
 `round_trip_sample_is_equal`. These are **strict serialization-shape guards only**
-(camelCase key set/order, four-system coverage, round-trip) plus an end-to-end read-back
+(camelCase key set/order, preview-system coverage, round-trip) plus an end-to-end read-back
 that cross-checks declared hashes against fixture bytes — they add **no** production
 policy validation (deferred to PR-11; [`README.md`](README.md) §10).
 

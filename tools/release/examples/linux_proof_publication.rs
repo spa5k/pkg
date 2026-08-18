@@ -42,12 +42,7 @@ const NIXPKGS: [(&str, &str); 2] = [
         "sha256-uslt2pqShTIXDdAHRHv2QkYLsVdY8Oqwz0EA48/RSM8=",
     ),
 ];
-const SYSTEMS: [&str; 4] = [
-    "aarch64-darwin",
-    "aarch64-linux",
-    "x86_64-darwin",
-    "x86_64-linux",
-];
+const SYSTEMS: [&str; 2] = ["aarch64-darwin", "x86_64-linux"];
 const CACHE_URL: &str = "https://cache.nixos.org";
 const CACHE_KEY: &str = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
 
@@ -478,13 +473,7 @@ async fn main() -> Result<(), AnyError> {
     let mut cli_artifacts = Vec::new();
     for (kind, candidate, source) in [
         ("pkg", "aarch64-darwin", "cli/pkg-aarch64-darwin"),
-        ("pkg", "aarch64-linux", "cli/pkg-aarch64-linux"),
         ("pkg", "x86_64-linux", "cli/pkg-x86_64-linux"),
-        (
-            "pkg-install",
-            "aarch64-linux",
-            "cli/pkg-installer-aarch64-linux",
-        ),
         (
             "pkg-install",
             "x86_64-linux",
