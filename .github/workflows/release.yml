@@ -83,6 +83,7 @@ jobs:
           set -euo pipefail
           cargo install --locked cargo-about --version 0.9.1 --features cli \
             --root target/release-tools
+          cargo fetch --locked
           curl --fail --location --proto '=https' --proto-redir '=https' \
             --output nix-2.34.8.tar.gz \
             https://github.com/NixOS/nix/archive/refs/tags/2.34.8.tar.gz
