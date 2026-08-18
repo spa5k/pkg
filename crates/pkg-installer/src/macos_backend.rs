@@ -6,14 +6,19 @@ use nix::unistd::{Gid, Uid};
 use pkg_core::System;
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, DetectionDisposition,
-    DetectionReport, FindingKind, ManagedGroupBindings, OwnershipExpectation, RealNixAdapter,
-    detect_unmanaged_nix, observe_build_accounts, verify_authenticated_managed_install,
+    ManagedGroupBindings, OwnershipExpectation, RealNixAdapter, detect_unmanaged_nix,
+    observe_build_accounts, verify_authenticated_managed_install,
 };
+
+#[cfg(target_os = "macos")]
+use crate::MacOsStoreProvisionOutcome;
+#[cfg(any(target_os = "macos", test))]
+use pkg_nix::{DetectionReport, FindingKind};
 
 use crate::{
     MacOsAssetPresence, MacOsBuildReadiness, MacOsBuildUsersReadiness, MacOsError,
-    MacOsInstallAsset, MacOsInstallBackend, MacOsSandboxReadiness, MacOsStoreProvisionOutcome,
-    MacOsToolchainReadiness, macos_install_assets, macos_launchd::MacOsLaunchdManager,
+    MacOsInstallAsset, MacOsInstallBackend, MacOsSandboxReadiness, MacOsToolchainReadiness,
+    macos_install_assets, macos_launchd::MacOsLaunchdManager,
     macos_platform_assets::MacOsPlatformAssetManager,
 };
 
@@ -466,6 +471,7 @@ fn store_volume_owns_rollback(asset: MacOsInstallAsset) -> bool {
     asset.id() == "nix-root"
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn report_is_recovered_mountpoint_only(report: &DetectionReport) -> bool {
     matches!(report.findings(), [finding] if finding.id() == "NIX_ROOT" && finding.kind() == FindingKind::Unmanaged)
 }

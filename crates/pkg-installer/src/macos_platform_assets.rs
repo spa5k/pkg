@@ -272,6 +272,7 @@ impl MacOsPlatformAssetManager {
         }
     }
 
+    #[cfg(target_os = "macos")]
     pub(crate) fn classify_store_mountpoint(
         &mut self,
         asset: MacOsInstallAsset,

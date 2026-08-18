@@ -197,11 +197,15 @@ impl ProductionMacOsUninstallBackend {
             .map_err(|_| UninstallError::backend_failure())?;
         self.verify_interrupted_assets(manifest)?;
         #[cfg(target_os = "macos")]
-        crate::verify_macos_store_removal_state_production()
-            .map_err(|_| UninstallError::backend_failure())?;
+        {
+            crate::verify_macos_store_removal_state_production()
+                .map_err(|_| UninstallError::backend_failure())?;
+            Ok(())
+        }
         #[cfg(not(target_os = "macos"))]
-        return Err(UninstallError::backend_failure());
-        Ok(())
+        {
+            Err(UninstallError::backend_failure())
+        }
     }
 
     fn bind_recovery_marker(
@@ -308,12 +312,16 @@ impl ProductionMacOsUninstallBackend {
             }
             self.remove_user_roots()?;
             #[cfg(target_os = "macos")]
-            crate::remove_macos_store_volume_production()
-                .map_err(|_| UninstallError::backend_failure())?;
+            {
+                crate::remove_macos_store_volume_production()
+                    .map_err(|_| UninstallError::backend_failure())?;
+                self.store_preserved = false;
+                return Ok(());
+            }
             #[cfg(not(target_os = "macos"))]
-            return Err(UninstallError::backend_failure());
-            self.store_preserved = false;
-            return Ok(());
+            {
+                return Err(UninstallError::backend_failure());
+            }
         }
         self.user_cleanup
             .capture_user_roots()
@@ -350,12 +358,16 @@ impl ProductionMacOsUninstallBackend {
             return Err(UninstallError::backend_failure());
         }
         #[cfg(target_os = "macos")]
-        crate::remove_macos_store_volume_production()
-            .map_err(|_| UninstallError::backend_failure())?;
+        {
+            crate::remove_macos_store_volume_production()
+                .map_err(|_| UninstallError::backend_failure())?;
+            self.store_preserved = false;
+            Ok(())
+        }
         #[cfg(not(target_os = "macos"))]
-        return Err(UninstallError::backend_failure());
-        self.store_preserved = false;
-        Ok(())
+        {
+            Err(UninstallError::backend_failure())
+        }
     }
 
     fn remove_asset(&mut self, action: UninstallAction) -> Result<(), UninstallError> {
@@ -515,16 +527,18 @@ impl UninstallBackend for ProductionMacOsUninstallBackend {
                     .map_err(|_| UninstallError::backend_failure())?;
                 self.verify_interrupted_assets(manifest)?;
                 #[cfg(target_os = "macos")]
-                crate::verify_macos_store_removal_state_production()
+                {
+                    crate::verify_macos_store_removal_state_production()
+                        .map_err(|_| UninstallError::backend_failure())?;
+                    self.runtime_removal = prepare_managed_runtime_removal_without_receipt(
+                        Path::new("/"),
+                        &self.expectation,
+                    )
                     .map_err(|_| UninstallError::backend_failure())?;
+                    self.recovery_mode = true;
+                }
                 #[cfg(not(target_os = "macos"))]
                 return Err(UninstallError::backend_failure());
-                self.runtime_removal = prepare_managed_runtime_removal_without_receipt(
-                    Path::new("/"),
-                    &self.expectation,
-                )
-                .map_err(|_| UninstallError::backend_failure())?;
-                self.recovery_mode = true;
             }
             (true, MacOsAssetPresence::Absent) => {
                 self.verify_broker_absent_recovery(manifest)?;
