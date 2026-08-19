@@ -38,8 +38,8 @@ use pkg_nix::{
     RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
-    CommitError, InstallGenerationError, InstallGenerationMetadata, StateEditKind,
-    StateEditMetadata, assemble_upgrade_evidence_state, discard_unprepared_installs,
+    CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
+    StateEditKind, StateEditMetadata, assemble_upgrade_evidence_state, discard_unprepared_installs,
     discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
     pending_install_generation, pending_state_edit_generation, pending_state_transition_source,
     prepare_install_generation, prepare_rollback, prepare_state_edit, recover_generation,
@@ -1872,6 +1872,13 @@ fn map_install_generation_error(error: InstallGenerationError) -> CommandError {
             "package commands collide under the abort policy",
             "remove one conflicting package or select different outputs",
         ),
+        InstallGenerationError::InvalidEvidence(InstallStateError::AlreadyInstalled) => {
+            CommandError::new(
+                ExitCode::PreflightFail,
+                "one or more requested packages are already installed",
+                "run `pkg upgrade`, or remove the package before you install it again",
+            )
+        }
         _ => install_commit_failed(),
     }
 }
@@ -2855,6 +2862,19 @@ mod tests {
         assert_eq!(
             String::from_utf8(output).unwrap(),
             include_str!("../../../../fixtures/cli-v1/install-success.json")
+        );
+    }
+
+    #[test]
+    fn repeated_install_is_not_reported_as_state_corruption() {
+        let error = map_install_generation_error(InstallGenerationError::InvalidEvidence(
+            InstallStateError::AlreadyInstalled,
+        ));
+
+        assert_eq!(error.exit_code(), ExitCode::PreflightFail);
+        assert_eq!(
+            error.message(),
+            "one or more requested packages are already installed"
         );
     }
 

@@ -6,7 +6,9 @@ use std::fmt;
 use pkg_core::lifecycle::LifecycleState;
 use pkg_core::state::LockEntry;
 use pkg_core::upgrade::{RemovedUpstreamPolicy, UpgradeOutcome, UpgradePlan, UpgradeResult};
-use pkg_core::{InstallPackage, InstallResult, PackageSelector, Realization, install_packages};
+use pkg_core::{
+    InstallEditError, InstallPackage, InstallResult, PackageSelector, Realization, install_packages,
+};
 use pkg_nix::{BuildOutputProvenance, InstallEvidence};
 
 use crate::{ResolvedInstall, VerifiedInstall};
@@ -18,6 +20,8 @@ pub enum InstallStateError {
     IncompleteEvidence,
     /// Exact realization construction rejected inconsistent output identity.
     InvalidRealization,
+    /// A requested package is already present in the active lifecycle state.
+    AlreadyInstalled,
     /// Desired/locked lifecycle editing refused the requested addition.
     InvalidLifecycle,
 }
@@ -180,7 +184,10 @@ pub fn assemble_install_evidence_state(
         uid,
         packages,
     )
-    .map_err(|_| InstallStateError::InvalidLifecycle)
+    .map_err(|error| match error {
+        InstallEditError::AlreadyInstalled => InstallStateError::AlreadyInstalled,
+        _ => InstallStateError::InvalidLifecycle,
+    })
 }
 
 fn lock_entry_from_evidence(
@@ -256,7 +263,9 @@ mod tests {
     use pkg_nix::InstallEvidence;
     use serde_json::json;
 
-    use super::{assemble_install_evidence_state, assemble_upgrade_evidence_state};
+    use super::{
+        InstallStateError, assemble_install_evidence_state, assemble_upgrade_evidence_state,
+    };
 
     const STORE: &str = "/nix/store/00000000000000000000000000000000-demo";
     const DRV: &str = "/nix/store/11111111111111111111111111111111-demo.drv";
@@ -330,6 +339,19 @@ mod tests {
         assert_eq!(entry.realization().deriver().as_str(), DRV);
         assert_eq!(entry.provenance(), "cache:authenticated");
         assert_eq!(state.manifest().uid(), 501);
+    }
+
+    #[test]
+    fn repeated_install_evidence_reports_already_installed() {
+        let evidence = evidence("cacheSigned", &["cache.nixos.org-1:AAAA"]);
+        let current = assemble_install_evidence_state(None, &evidence, 501, "2026-08-11T00:00:00Z")
+            .unwrap()
+            .into_state();
+
+        assert_eq!(
+            assemble_install_evidence_state(Some(current), &evidence, 501, "2026-08-12T00:00:00Z",),
+            Err(InstallStateError::AlreadyInstalled)
+        );
     }
 
     #[test]

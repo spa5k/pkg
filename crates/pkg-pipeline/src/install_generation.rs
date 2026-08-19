@@ -11,7 +11,8 @@ use serde_json::json;
 
 use crate::activation_metadata::{activation_inputs, collision_policy_name, collision_resolutions};
 use crate::{
-    CandidateGeneration, CommitError, PreparedGeneration, assemble_install_evidence_state,
+    CandidateGeneration, CommitError, InstallStateError, PreparedGeneration,
+    assemble_install_evidence_state,
 };
 
 /// Immutable metadata assigned to one install generation.
@@ -51,7 +52,7 @@ pub enum InstallGenerationError {
     /// Destination files already exist.
     GenerationExists,
     /// Broker evidence could not form coherent lifecycle state.
-    InvalidEvidence,
+    InvalidEvidence(InstallStateError),
     /// The activation forest could not be staged.
     Stage,
     /// The immutable candidate or journal transition failed.
@@ -112,7 +113,7 @@ pub fn prepare_install_generation(
         uid,
         metadata.created_at,
     )
-    .map_err(|_| InstallGenerationError::InvalidEvidence)?
+    .map_err(InstallGenerationError::InvalidEvidence)?
     .into_state();
     let root = layout.state_root();
     let staging = root
