@@ -46,6 +46,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
         self.assertIn("production-linux:", WORKFLOW)
         self.assertIn("inputs.production-linux", WORKFLOW)
+        self.assertIn("runs-on: ubuntu-22.04", WORKFLOW)
         self.assertIn("https://releases.happytoolin.com/metadata/1.root.json", WORKFLOW)
         self.assertIn(
             "52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2",
