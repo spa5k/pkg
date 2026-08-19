@@ -39,8 +39,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("PKG_CARGO_ABOUT:", WORKFLOW)
         self.assertIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
         self.assertIn("cargo fetch --locked", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.1-x86_64-linux-candidate", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.1-x86_64-linux.tar.gz", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.2-x86_64-linux-candidate", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.2-x86_64-linux.tar.gz", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
 
 
