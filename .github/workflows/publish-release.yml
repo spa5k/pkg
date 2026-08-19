@@ -87,16 +87,27 @@ jobs:
             gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
               --jq '.assets[].name'
           )
+          generated_count=0
           for actual in "${actual_assets[@]}"; do
             allowed=false
-            for expected in "${base_assets[@]}" "${generated_assets[@]}"; do
+            for expected in "${base_assets[@]}"; do
               if [[ "$actual" == "$expected" ]]; then
                 allowed=true
                 break
               fi
             done
+            for expected in "${generated_assets[@]}"; do
+              if [[ "$actual" == "$expected" ]]; then
+                allowed=true
+                generated_count=$((generated_count + 1))
+                break
+              fi
+            done
             test "$allowed" = true
           done
+          if ((generated_count != 0 && generated_count != ${#generated_assets[@]})); then
+            exit 1
+          fi
 
           mkdir release-assets
           for asset in "${base_assets[@]}"; do
@@ -105,6 +116,14 @@ jobs:
               --pattern "$asset" \
               --dir release-assets
           done
+          if ((generated_count > 0)); then
+            for asset in "${generated_assets[@]}"; do
+              gh release download "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --pattern "$asset" \
+                --dir release-assets
+            done
+          fi
 
           : >release-assets/BASE_SHA256SUMS
           for asset in "${base_assets[@]}"; do
@@ -132,16 +151,23 @@ jobs:
             pkg-x86_64-linux
           )
           for asset in "${signable_assets[@]}"; do
-            cosign sign-blob \
-              --yes \
-              --bundle "release-assets/${asset}.sigstore.json" \
-              "release-assets/${asset}"
+            bundle="release-assets/${asset}.sigstore.json"
+            if [[ ! -f "$bundle" ]]; then
+              cosign sign-blob \
+                --yes \
+                --bundle "$bundle" \
+                "release-assets/${asset}"
+            fi
             cosign verify-blob \
-              --bundle "release-assets/${asset}.sigstore.json" \
+              --bundle "$bundle" \
               --certificate-identity "$COSIGN_CERTIFICATE_IDENTITY" \
               --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
               "release-assets/${asset}"
           done
+          if [[ -f release-assets/COSIGN_IDENTITY.txt ]]; then
+            test "$(cat release-assets/COSIGN_IDENTITY.txt)" = "$COSIGN_CERTIFICATE_IDENTITY"
+            test "$(cat release-assets/COSIGN_ISSUER.txt)" = "$COSIGN_CERTIFICATE_OIDC_ISSUER"
+          fi
           printf '%s\n' "$COSIGN_CERTIFICATE_IDENTITY" >release-assets/COSIGN_IDENTITY.txt
           printf '%s\n' "$COSIGN_CERTIFICATE_OIDC_ISSUER" >release-assets/COSIGN_ISSUER.txt
 

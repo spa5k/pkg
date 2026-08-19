@@ -42,8 +42,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("PKG_CARGO_ABOUT:", WORKFLOW)
         self.assertIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
         self.assertIn("cargo fetch --locked", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.3-x86_64-linux-candidate", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.3-x86_64-linux.tar.gz", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.4-x86_64-linux-candidate", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.4-x86_64-linux.tar.gz", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
 
     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
@@ -55,7 +55,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2",
             WORKFLOW,
         )
-        self.assertIn("pkg-v0.1.0-alpha.3-production-linux-input", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.4-production-linux-input", WORKFLOW)
         self.assertIn("pkg-release-index", WORKFLOW)
 
     def test_production_signing_is_keyless_protected_and_closed(self) -> None:
@@ -70,6 +70,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("test \"$draft\" = true", PUBLISH_WORKFLOW)
         self.assertIn("releases/${RELEASE_ID}", PUBLISH_WORKFLOW)
         self.assertNotIn("releases/tags/${RELEASE_TAG}", PUBLISH_WORKFLOW)
+        self.assertIn("generated_count != 0 && generated_count", PUBLISH_WORKFLOW)
+        self.assertIn('if [[ ! -f "$bundle" ]]', PUBLISH_WORKFLOW)
         self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 1)
         self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 1)
         self.assertIn("--yes", PUBLISH_WORKFLOW)

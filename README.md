@@ -1,6 +1,6 @@
 # `pkg`
 
-[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.3)
+[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.4)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 `pkg` is a package manager for Linux and macOS. It has a simple command
@@ -19,7 +19,7 @@ configure, or operate Nix.
 Download and read the fixed release installer. Then run it.
 
 ```sh
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.3/install.sh
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.4/install.sh
 less install.sh
 sh install.sh
 pkg doctor
@@ -33,16 +33,16 @@ requests administrator access.
 Download the package and its checksums. Then install it.
 
 ```sh
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.3/pkg-0.1.0-alpha.3-preview.pkg
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.3/SHA256SUMS
-grep '  pkg-0.1.0-alpha.3-preview.pkg$' SHA256SUMS | shasum -a 256 --check
-sudo installer -pkg ./pkg-0.1.0-alpha.3-preview.pkg -target /
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.4/pkg-0.1.0-alpha.4-preview.pkg
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.4/SHA256SUMS
+grep '  pkg-0.1.0-alpha.4-preview.pkg$' SHA256SUMS | shasum -a 256 --check
+sudo installer -pkg ./pkg-0.1.0-alpha.4-preview.pkg -target /
 pkg doctor
 ```
 
 The macOS preview is not Developer ID signed or notarized. See the
 [install guide](docs/install.md) and the
-[latest release](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.3)
+[latest release](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.4)
 for verification details.
 
 ## Use `pkg`
