@@ -19,6 +19,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      production-linux:
+        description: Build the fixed production Linux release input
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,8 +38,62 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  production-linux:
+    name: fixed production x86_64 Linux release input
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.production-linux }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install and verify pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' rust-toolchain.toml)"
+          test "$channel" = "$RUSTUP_TOOLCHAIN"
+          rustup toolchain install "$channel" --profile minimal
+          rustc --version
+
+      - name: Build the fixed production input
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --proto-redir '=https' \
+            --output root.json \
+            https://releases.happytoolin.com/metadata/1.root.json
+          printf '%s  %s\n' \
+            52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2 \
+            root.json | sha256sum --check --strict
+          export PKG_RELEASE_TUF_ROOT_JSON="$(cat root.json)"
+          export PKG_RELEASE_CHANNEL_METADATA_URL=https://releases.happytoolin.com/metadata/
+          export PKG_RELEASE_CHANNEL_TARGETS_URL=https://releases.happytoolin.com/targets/
+          cargo build --locked --release \
+            -p pkg-cli --bin pkg \
+            -p pkg-installer --bin pkg-nix-broker \
+            -p pkg-installer --bin pkg-root-helper \
+            -p pkg-installer --bin pkg-install
+          mkdir production-linux
+          install -m 755 target/release/pkg target/release/pkg-nix-broker \
+            target/release/pkg-root-helper target/release/pkg-install \
+            production-linux/
+          test "$(production-linux/pkg --version)" = "pkg 0.1.0-alpha.2"
+          file production-linux/*
+
+      - name: Retain the production input without publishing it
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pkg-v0.1.0-alpha.2-production-linux-input
+          path: production-linux/
+          if-no-files-found: error
+          retention-days: 1
+
   dry-run-sign:
     name: test-key TUF sign, verify, publish transaction
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.production-linux }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -69,6 +129,7 @@ jobs:
 
   linux-alpha-proof:
     name: staged x86_64 Linux alpha artifact and clean-host proof
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.production-linux }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

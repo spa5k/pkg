@@ -43,6 +43,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("pkg-v0.1.0-alpha.2-x86_64-linux.tar.gz", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
 
+    def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
+        self.assertIn("production-linux:", WORKFLOW)
+        self.assertIn("inputs.production-linux", WORKFLOW)
+        self.assertIn("https://releases.happytoolin.com/metadata/1.root.json", WORKFLOW)
+        self.assertIn(
+            "52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2",
+            WORKFLOW,
+        )
+        self.assertIn("pkg-v0.1.0-alpha.2-production-linux-input", WORKFLOW)
+        self.assertNotIn("gh release", WORKFLOW)
+
 
 if __name__ == "__main__":
     unittest.main()
