@@ -6,6 +6,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+PUBLISH_WORKFLOW = (ROOT / ".github/workflows/publish-release.yml").read_text(
+    encoding="utf-8"
+)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -54,6 +57,27 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertIn("pkg-v0.1.0-alpha.3-production-linux-input", WORKFLOW)
         self.assertIn("pkg-release-index", WORKFLOW)
+
+    def test_production_signing_is_keyless_protected_and_closed(self) -> None:
+        self.assertIn("environment: release", PUBLISH_WORKFLOW)
+        self.assertIn("contents: write", PUBLISH_WORKFLOW)
+        self.assertIn("id-token: write", PUBLISH_WORKFLOW)
+        self.assertNotIn("secrets.", PUBLISH_WORKFLOW)
+        self.assertIn(
+            "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+            PUBLISH_WORKFLOW,
+        )
+        self.assertIn("test \"$draft\" = true", PUBLISH_WORKFLOW)
+        self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 1)
+        self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 1)
+        self.assertIn("--yes", PUBLISH_WORKFLOW)
+        self.assertIn("--certificate-identity", PUBLISH_WORKFLOW)
+        self.assertIn("--certificate-oidc-issuer", PUBLISH_WORKFLOW)
+        self.assertIn("sha256sum --check --strict", PUBLISH_WORKFLOW)
+        self.assertIn("diff -u expected-assets actual-assets", PUBLISH_WORKFLOW)
+        self.assertIn("final-assets", PUBLISH_WORKFLOW)
+        self.assertIn("gh release upload", PUBLISH_WORKFLOW)
+        self.assertIn("gh release edit", PUBLISH_WORKFLOW)
         self.assertNotIn("gh release", WORKFLOW)
 
 
