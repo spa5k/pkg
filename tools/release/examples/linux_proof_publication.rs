@@ -185,8 +185,8 @@ impl ReleaseAuthority for LocalPreviewAuthority {
     ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
         let evidence = approvals.iter().map(Approval::evidence).collect::<Vec<_>>();
         if digest.len() != 64
-            || sequence != 3
-            || timestamp_version != 3
+            || sequence != 4
+            || timestamp_version != 4
             || evidence != ["local-preview:release", "local-preview:security"]
         {
             return Err(ValidationError::InvalidPolicy);
@@ -352,8 +352,8 @@ async fn build_preview_publication(
     signing_state: PathBuf,
     sequence: u64,
 ) -> Result<(), AnyError> {
-    if output.exists() || sequence != 3 {
-        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 3".into());
+    if output.exists() || sequence != 4 {
+        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 4".into());
     }
 
     let online = read_keys(&signing_state, "online")?;
@@ -524,7 +524,7 @@ async fn main() -> Result<(), AnyError> {
             .ok_or("missing channel sequence")?
             .parse::<u64>()?;
         if arguments.next().is_some() {
-            return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 3".into());
+            return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 4".into());
         }
         return build_preview_publication(output, input, signing_state, sequence).await;
     }
