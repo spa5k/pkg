@@ -48,7 +48,15 @@ jobs:
           test "$COSIGN_CERTIFICATE_IDENTITY" = "$expected_identity"
           test "$COSIGN_CERTIFICATE_OIDC_ISSUER" = "https://token.actions.githubusercontent.com"
 
-          draft=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .draft)
+          release_id=$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+              --jq '.[] | [.tag_name, .id] | @tsv' |
+              awk -F '\t' -v tag="$RELEASE_TAG" '$1 == tag { print $2 }'
+          )
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+          export RELEASE_ID="$release_id"
+          printf 'RELEASE_ID=%s\n' "$release_id" >>"$GITHUB_ENV"
+          draft=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq .draft)
           test "$draft" = true
           gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null
 
@@ -76,7 +84,7 @@ jobs:
             pkg-x86_64-linux.sigstore.json
           )
           mapfile -t actual_assets < <(
-            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
               --jq '.assets[].name'
           )
           for actual in "${actual_assets[@]}"; do
@@ -196,7 +204,7 @@ jobs:
             awk '{ print $2 }' release-assets/SHA256SUMS
             printf '%s\n' SHA256SUMS
           } | LC_ALL=C sort >expected-assets
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
             --jq '.assets[].name' | LC_ALL=C sort >actual-assets
           diff -u expected-assets actual-assets
 
@@ -211,4 +219,4 @@ jobs:
             --draft=false \
             --prerelease \
             --verify-tag
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .draft)" = false
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq .draft)" = false

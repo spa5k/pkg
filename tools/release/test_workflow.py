@@ -68,6 +68,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             PUBLISH_WORKFLOW,
         )
         self.assertIn("test \"$draft\" = true", PUBLISH_WORKFLOW)
+        self.assertIn("releases/${RELEASE_ID}", PUBLISH_WORKFLOW)
+        self.assertNotIn("releases/tags/${RELEASE_TAG}", PUBLISH_WORKFLOW)
         self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 1)
         self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 1)
         self.assertIn("--yes", PUBLISH_WORKFLOW)
