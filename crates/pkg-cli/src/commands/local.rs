@@ -554,14 +554,9 @@ fn run_catalog_info(
         .begin(BrokerOperationKind::Resolve)
         .map_err(broker_error)?;
     let result = (|| {
-        let reports = requests
-            .into_iter()
-            .map(|request| {
-                broker
-                    .info_catalog(handle.clone(), request)
-                    .map_err(catalog_broker_error)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let reports = broker
+            .info_catalog(handle.clone(), requests)
+            .map_err(catalog_broker_error)?;
         let result = info_catalog_reports(&reports)?;
         broker.complete(handle.clone()).map_err(broker_error)?;
         Ok(result)
@@ -577,6 +572,9 @@ fn run_catalog_outdated(
     installed_sequence: pkg_core::ChannelSequence,
     installed: Vec<InstalledCatalogPackage>,
 ) -> Result<CommandResult, CommandError> {
+    if installed.is_empty() {
+        return outdated_catalog_reports(installed_sequence, &[], &[]);
+    }
     let requests = installed
         .iter()
         .map(|package| CatalogInfoRequest::new(package.package()).ok_or_else(catalog_query_invalid))
@@ -585,14 +583,9 @@ fn run_catalog_outdated(
         .begin(BrokerOperationKind::Resolve)
         .map_err(broker_error)?;
     let result = (|| {
-        let reports = requests
-            .into_iter()
-            .map(|request| {
-                broker
-                    .info_catalog(handle.clone(), request)
-                    .map_err(catalog_broker_error)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let reports = broker
+            .info_catalog(handle.clone(), requests)
+            .map_err(catalog_broker_error)?;
         broker.complete(handle.clone()).map_err(broker_error)?;
         outdated_catalog_reports(installed_sequence, &installed, &reports)
     })();
@@ -3180,7 +3173,7 @@ mod tests {
                 request,
                 CliBrokerRequest::InfoCatalog(
                     server_handle.clone(),
-                    CatalogInfoRequest::new("requests").unwrap(),
+                    vec![CatalogInfoRequest::new("requests").unwrap()],
                 )
             );
             let candidates = ["python3Packages.requests", "pythonPackages.requests"]
@@ -3200,13 +3193,13 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::CatalogInfo(
+                CliBrokerResponse::CatalogInfo(vec![
                     CatalogInfoReport::new(
                         ChannelSequence::from_u64(42).unwrap(),
                         CatalogInfoLookup::Ambiguous(candidates),
                     )
                     .unwrap(),
-                ),
+                ]),
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Cancel(server_handle));
@@ -3296,7 +3289,7 @@ mod tests {
                 request,
                 CliBrokerRequest::InfoCatalog(
                     server_handle.clone(),
-                    CatalogInfoRequest::new("ripgrep").unwrap(),
+                    vec![CatalogInfoRequest::new("ripgrep").unwrap()],
                 )
             );
             let summary = CatalogPackageSummary::new(
@@ -3321,13 +3314,13 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::CatalogInfo(
+                CliBrokerResponse::CatalogInfo(vec![
                     CatalogInfoReport::new(
                         ChannelSequence::from_u64(43).unwrap(),
                         CatalogInfoLookup::Found(Box::new(info)),
                     )
                     .unwrap(),
-                ),
+                ]),
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Complete(server_handle));
@@ -3354,6 +3347,20 @@ mod tests {
         assert_eq!(result.fields()["channelSequence"], 43);
         assert_eq!(result.fields()["entries"][0]["kind"], "major");
         assert_eq!(result.fields()["entries"][0]["pinned"], true);
+    }
+
+    #[test]
+    fn empty_catalog_outdated_skips_broker_access() {
+        let (_server, client) = UnixStream::pair().unwrap();
+        let mut broker = BrokerLifecycleClient::from_stream(client);
+        let result = run_catalog_outdated(
+            &mut broker,
+            ChannelSequence::from_u64(42).unwrap(),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(result.fields()["channelSequence"], 42);
+        assert_eq!(result.fields()["entries"], serde_json::json!([]));
     }
 
     #[test]

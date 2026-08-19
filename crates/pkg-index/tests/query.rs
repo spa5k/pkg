@@ -86,6 +86,24 @@ fn exact_search_license_filter_and_not_found_are_stable() {
 }
 
 #[test]
+fn search_reports_unavailable_and_broken_matches() {
+    let mut candidates: Vec<IndexCandidate> = serde_json::from_slice(FIXTURE).unwrap();
+    let candidate = candidates
+        .iter_mut()
+        .find(|candidate| candidate.attr_path == "ripgrep")
+        .unwrap();
+    candidate.available_here = false;
+    candidate.broken = true;
+    let built = build_index(metadata(), candidates).unwrap();
+    let response = IndexQuery::new(built.document(), false)
+        .search(&SearchOptions::new("ripgrep", 25, false, None).unwrap())
+        .unwrap();
+    assert_eq!(response.results().len(), 1);
+    assert!(!response.results()[0].available());
+    assert!(response.results()[0].broken());
+}
+
+#[test]
 fn display_name_collision_is_ambiguous_not_guessed() {
     let mut candidates: Vec<IndexCandidate> = serde_json::from_slice(FIXTURE).unwrap();
     let requests = candidates

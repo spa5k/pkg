@@ -260,7 +260,7 @@ pub trait RepairAuthorityDispatch: Send + Sync {
 trait BuildAuthorityDispatch: Send + Sync {
     fn search(&self, request: &CatalogSearchRequest) -> Result<CatalogSearchReport, ()>;
 
-    fn info(&self, request: &CatalogInfoRequest) -> Result<CatalogInfoReport, ()>;
+    fn info(&self, requests: &[CatalogInfoRequest]) -> Result<Vec<CatalogInfoReport>, ()>;
 
     fn acquire(
         &self,
@@ -399,8 +399,8 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         self.search_catalog(request).map_err(|_| ())
     }
 
-    fn info(&self, request: &CatalogInfoRequest) -> Result<CatalogInfoReport, ()> {
-        self.info_catalog(request).map_err(|_| ())
+    fn info(&self, requests: &[CatalogInfoRequest]) -> Result<Vec<CatalogInfoReport>, ()> {
+        self.info_catalog(requests).map_err(|_| ())
     }
 
     fn acquire(
@@ -641,8 +641,8 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::SearchCatalog(handle, request) => {
             dispatch_catalog_search(caller, authorities.build, &handle, &request)
         }
-        CliBrokerRequest::InfoCatalog(handle, request) => {
-            dispatch_catalog_info(caller, authorities.build, &handle, &request)
+        CliBrokerRequest::InfoCatalog(handle, requests) => {
+            dispatch_catalog_info(caller, authorities.build, &handle, &requests)
         }
         CliBrokerRequest::RepairGeneration(handle, request) => Ok(repair_generation_response(
             authorities.repair,
@@ -759,14 +759,14 @@ fn dispatch_catalog_info(
     caller: &AuthenticatedCaller,
     authority: Option<&dyn BuildAuthorityDispatch>,
     handle: &OperationHandle,
-    request: &CatalogInfoRequest,
+    requests: &[CatalogInfoRequest],
 ) -> Result<CliBrokerResponse, ()> {
     caller.authorize_catalog_query(handle).map_err(|_| ())?;
     Ok(authority
         .ok_or(())?
-        .info(request)
-        .map_or(CliBrokerResponse::CatalogInfoRefused, |report| {
-            CliBrokerResponse::CatalogInfo(report)
+        .info(requests)
+        .map_or(CliBrokerResponse::CatalogInfoRefused, |reports| {
+            CliBrokerResponse::CatalogInfo(reports)
         }))
 }
 
@@ -1425,32 +1425,37 @@ mod tests {
             .ok_or(())
         }
 
-        fn info(&self, request: &CatalogInfoRequest) -> Result<CatalogInfoReport, ()> {
-            let lookup = if request.selector() == "ripgrep" {
-                let summary = pkg_nix::CatalogPackageSummary::new(
-                    "ripgrep",
-                    "ripgrep",
-                    "14.1.1",
-                    "fast search",
-                    vec![String::from("MIT")],
-                    true,
-                    false,
-                )
-                .unwrap();
-                let package = pkg_nix::CatalogPackageInfo::new(
-                    summary,
-                    "https://example.invalid/ripgrep",
-                    vec![String::from("out")],
-                    vec![String::from("linux-x86-64")],
-                    REVISION,
-                    "2026-08-12T00:00:00Z",
-                )
-                .unwrap();
-                pkg_nix::CatalogInfoLookup::Found(Box::new(package))
-            } else {
-                pkg_nix::CatalogInfoLookup::NotFound
-            };
-            CatalogInfoReport::new(ChannelSequence::from_u64(42).unwrap(), lookup).ok_or(())
+        fn info(&self, requests: &[CatalogInfoRequest]) -> Result<Vec<CatalogInfoReport>, ()> {
+            requests
+                .iter()
+                .map(|request| {
+                    let lookup = if request.selector() == "ripgrep" {
+                        let summary = pkg_nix::CatalogPackageSummary::new(
+                            "ripgrep",
+                            "ripgrep",
+                            "14.1.1",
+                            "fast search",
+                            vec![String::from("MIT")],
+                            true,
+                            false,
+                        )
+                        .unwrap();
+                        let package = pkg_nix::CatalogPackageInfo::new(
+                            summary,
+                            "https://example.invalid/ripgrep",
+                            vec![String::from("out")],
+                            vec![String::from("linux-x86-64")],
+                            REVISION,
+                            "2026-08-12T00:00:00Z",
+                        )
+                        .unwrap();
+                        pkg_nix::CatalogInfoLookup::Found(Box::new(package))
+                    } else {
+                        pkg_nix::CatalogInfoLookup::NotFound
+                    };
+                    CatalogInfoReport::new(ChannelSequence::from_u64(42).unwrap(), lookup).ok_or(())
+                })
+                .collect()
         }
 
         fn acquire(
@@ -1697,7 +1702,10 @@ mod tests {
             &caller,
             CliBrokerRequest::InfoCatalog(
                 handle.clone(),
-                CatalogInfoRequest::new("ripgrep").unwrap(),
+                vec![
+                    CatalogInfoRequest::new("ripgrep").unwrap(),
+                    CatalogInfoRequest::new("missing").unwrap(),
+                ],
             ),
             None,
             None,
@@ -1707,8 +1715,10 @@ mod tests {
         .unwrap();
         assert!(matches!(
             response,
-            CliBrokerResponse::CatalogInfo(ref report)
-                if matches!(report.lookup(), pkg_nix::CatalogInfoLookup::Found(_))
+            CliBrokerResponse::CatalogInfo(ref reports)
+                if reports.len() == 2
+                    && matches!(reports[0].lookup(), pkg_nix::CatalogInfoLookup::Found(_))
+                    && matches!(reports[1].lookup(), pkg_nix::CatalogInfoLookup::NotFound)
         ));
 
         let doctor = caller.begin(BrokerOperationKind::Doctor).unwrap();
@@ -1717,7 +1727,7 @@ mod tests {
                 &caller,
                 CliBrokerRequest::InfoCatalog(
                     doctor.clone(),
-                    CatalogInfoRequest::new("ripgrep").unwrap(),
+                    vec![CatalogInfoRequest::new("ripgrep").unwrap()],
                 ),
                 None,
                 None,

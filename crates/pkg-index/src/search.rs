@@ -97,9 +97,6 @@ pub(crate) fn search(
     let terms: Vec<_> = query.split_whitespace().collect();
     let mut hits = Vec::new();
     for record in document.records() {
-        if record.broken() || !record.available_here() {
-            continue;
-        }
         if let Some(license) = &options.license
             && !record
                 .licenses()

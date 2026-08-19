@@ -936,14 +936,14 @@ impl BrokerLifecycleClient {
         }
     }
 
-    /// Inspects one selector through the broker-owned authenticated native catalog.
+    /// Inspects selectors through one broker-owned authenticated catalog snapshot.
     pub fn info_catalog(
         &mut self,
         handle: OperationHandle,
-        request: pkg_nix::CatalogInfoRequest,
-    ) -> Result<pkg_nix::CatalogInfoReport, BrokerClientError> {
-        match self.transact(&CliBrokerRequest::InfoCatalog(handle, request))? {
-            CliBrokerResponse::CatalogInfo(report) => Ok(report),
+        requests: Vec<pkg_nix::CatalogInfoRequest>,
+    ) -> Result<Vec<pkg_nix::CatalogInfoReport>, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::InfoCatalog(handle, requests))? {
+            CliBrokerResponse::CatalogInfo(reports) => Ok(reports),
             CliBrokerResponse::CatalogInfoRefused => Err(BrokerClientError::new(
                 BrokerClientErrorCode::CatalogQueryRefused,
             )),

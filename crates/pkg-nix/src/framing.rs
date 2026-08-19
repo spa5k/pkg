@@ -36,6 +36,7 @@ const HEADER_BYTES: usize = 20;
 const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 const MAX_ROOT_SET_WIRE_ENTRIES: usize = 4096;
 const MAX_BUILD_SELECTOR_WIRE_ENTRIES: usize = 4096;
+const MAX_CATALOG_INFO_WIRE_ENTRIES: usize = 256;
 
 const CHANNEL_CLI_BROKER: u8 = 1;
 const CHANNEL_BROKER_HELPER: u8 = 2;
@@ -132,8 +133,8 @@ pub enum CliBrokerRequest {
     RefreshChannel(OperationHandle, ChannelRefreshMode),
     /// Search the broker-owned verified native index.
     SearchCatalog(OperationHandle, CatalogSearchRequest),
-    /// Inspect one package in the broker-owned verified native index.
-    InfoCatalog(OperationHandle, CatalogInfoRequest),
+    /// Inspect packages from one broker-owned verified native index snapshot.
+    InfoCatalog(OperationHandle, Vec<CatalogInfoRequest>),
     /// Verify or cache-repair one caller-owned rooted generation.
     RepairGeneration(OperationHandle, RepairGenerationRequest),
 }
@@ -249,8 +250,8 @@ pub enum CliBrokerResponse {
     ChannelRefreshRefused(ChannelRefreshErrorCode),
     /// Ranked product metadata from the broker-owned verified index.
     CatalogSearch(CatalogSearchReport),
-    /// One product metadata lookup from the broker-owned verified index.
-    CatalogInfo(CatalogInfoReport),
+    /// Product metadata lookups from one broker-owned verified index snapshot.
+    CatalogInfo(Vec<CatalogInfoReport>),
     /// The authenticated native index was unavailable or refused search.
     CatalogSearchRefused,
     /// The authenticated native index was unavailable or refused info lookup.
@@ -897,13 +898,18 @@ impl ProductFrameCodec {
                     license: request.license(),
                 })?,
             ),
-            CliBrokerRequest::InfoCatalog(handle, request) => (
-                29,
-                encode_json(&CatalogInfoRequestWire {
-                    handle: handle.as_str(),
-                    selector: request.selector(),
-                })?,
-            ),
+            CliBrokerRequest::InfoCatalog(handle, requests) => {
+                if requests.is_empty() || requests.len() > MAX_CATALOG_INFO_WIRE_ENTRIES {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
+                (
+                    29,
+                    encode_json(&CatalogInfoRequestWire {
+                        handle: handle.as_str(),
+                        selectors: requests.iter().map(CatalogInfoRequest::selector).collect(),
+                    })?,
+                )
+            }
             CliBrokerRequest::RepairGeneration(handle, request) => (
                 30,
                 encode_json(&RepairGenerationRequestWire {
@@ -1059,10 +1065,19 @@ impl ProductFrameCodec {
             }
             29 => {
                 let wire: CatalogInfoRequestOwnedWire = decode_json(frame.payload)?;
+                if wire.selectors.is_empty() || wire.selectors.len() > MAX_CATALOG_INFO_WIRE_ENTRIES
+                {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
                 CliBrokerRequest::InfoCatalog(
                     parse_handle(&wire.handle)?,
-                    CatalogInfoRequest::new(&wire.selector)
-                        .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?,
+                    wire.selectors
+                        .into_iter()
+                        .map(|selector| {
+                            CatalogInfoRequest::new(&selector)
+                                .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
                 )
             }
             30 => {
@@ -1257,10 +1272,20 @@ impl ProductFrameCodec {
                 28,
                 encode_json(&CatalogSearchResponseWire::from_report(report))?,
             ),
-            CliBrokerResponse::CatalogInfo(report) => (
-                29,
-                encode_json(&CatalogInfoResponseWire::from_report(report))?,
-            ),
+            CliBrokerResponse::CatalogInfo(reports) => {
+                if reports.is_empty() || reports.len() > MAX_CATALOG_INFO_WIRE_ENTRIES {
+                    return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                }
+                (
+                    29,
+                    encode_json(
+                        &reports
+                            .iter()
+                            .map(CatalogInfoResponseWire::from_report)
+                            .collect::<Vec<_>>(),
+                    )?,
+                )
+            }
             CliBrokerResponse::CatalogSearchRefused => (
                 28,
                 encode_json(&CatalogQueryFailureWire {
@@ -1502,8 +1527,15 @@ impl ProductFrameCodec {
                 if decode_catalog_query_failure(frame.payload)? {
                     CliBrokerResponse::CatalogInfoRefused
                 } else {
+                    let wires = decode_json::<Vec<CatalogInfoResponseOwnedWire>>(frame.payload)?;
+                    if wires.is_empty() || wires.len() > MAX_CATALOG_INFO_WIRE_ENTRIES {
+                        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+                    }
                     CliBrokerResponse::CatalogInfo(
-                        decode_json::<CatalogInfoResponseOwnedWire>(frame.payload)?.promote()?,
+                        wires
+                            .into_iter()
+                            .map(CatalogInfoResponseOwnedWire::promote)
+                            .collect::<Result<Vec<_>, _>>()?,
                     )
                 }
             }
@@ -2316,14 +2348,14 @@ struct CatalogSearchRequestOwnedWire {
 #[serde(deny_unknown_fields)]
 struct CatalogInfoRequestWire<'a> {
     handle: &'a str,
-    selector: &'a str,
+    selectors: Vec<&'a str>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CatalogInfoRequestOwnedWire {
     handle: String,
-    selector: String,
+    selectors: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -4399,13 +4431,13 @@ mod tests {
             "2026-08-12T00:00:00Z",
         )
         .unwrap();
-        let response = CliBrokerResponse::CatalogInfo(
+        let response = CliBrokerResponse::CatalogInfo(vec![
             CatalogInfoReport::new(
                 ChannelSequence::from_u64(42).unwrap(),
                 CatalogInfoLookup::Found(Box::new(info)),
             )
             .unwrap(),
-        );
+        ]);
         let encoded = ProductFrameCodec::encode_cli_response(29, &response).unwrap();
         assert_eq!(
             ProductFrameCodec::decode_cli_response(&encoded),
@@ -4420,12 +4452,12 @@ mod tests {
             ),
             (
                 29,
-                br#"{"handle":"bad","selector":"bad\nselector"}"#.as_slice(),
+                br#"{"handle":"bad","selectors":["bad\nselector"]}"#.as_slice(),
             ),
             (28, br#"{"sequence":0,"results":[]}"#.as_slice()),
             (
                 29,
-                br#"{"sequence":42,"status":"found","package":null,"candidates":[]}"#.as_slice(),
+                br#"[{"sequence":42,"status":"found","package":null,"candidates":[]}]"#.as_slice(),
             ),
         ] {
             let encoded = encode_frame(CHANNEL_CLI_BROKER, method, 30, payload).unwrap();
@@ -4434,6 +4466,20 @@ mod tests {
                     || ProductFrameCodec::decode_cli_response(&encoded).is_err()
             );
         }
+        assert!(
+            ProductFrameCodec::encode_cli_request(
+                31,
+                &CliBrokerRequest::InfoCatalog(handle, Vec::new()),
+            )
+            .is_err()
+        );
+        assert!(
+            ProductFrameCodec::encode_cli_response(
+                31,
+                &CliBrokerResponse::CatalogInfo(Vec::new()),
+            )
+            .is_err()
+        );
     }
 
     #[test]

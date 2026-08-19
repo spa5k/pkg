@@ -234,32 +234,41 @@ impl AuthenticatedBuildAuthority {
     /// fit the closed product response contract.
     pub fn info_catalog(
         &self,
-        request: &CatalogInfoRequest,
-    ) -> Result<CatalogInfoReport, BuildAuthorityError> {
+        requests: &[CatalogInfoRequest],
+    ) -> Result<Vec<CatalogInfoReport>, BuildAuthorityError> {
         let state = self.lock_state()?;
         let index = state
             .index
             .as_ref()
             .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
-        let response = IndexQuery::new(index.document(), false)
-            .info(request.selector())
-            .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
-        let sequence = ChannelSequence::from_u64(response.channel_seq())
-            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))?;
-        let lookup = match response.lookup() {
-            InfoLookup::Found { package } => {
-                CatalogInfoLookup::Found(Box::new(catalog_info(package)?))
-            }
-            InfoLookup::Ambiguous { candidates } => CatalogInfoLookup::Ambiguous(
-                candidates
-                    .iter()
-                    .map(catalog_summary)
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-            InfoLookup::NotFound { .. } => CatalogInfoLookup::NotFound,
-        };
-        CatalogInfoReport::new(sequence, lookup)
-            .ok_or_else(|| BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable))
+        let query = IndexQuery::new(index.document(), false);
+        requests
+            .iter()
+            .map(|request| {
+                let response = query.info(request.selector()).map_err(|_| {
+                    BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable)
+                })?;
+                let sequence =
+                    ChannelSequence::from_u64(response.channel_seq()).ok_or_else(|| {
+                        BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable)
+                    })?;
+                let lookup = match response.lookup() {
+                    InfoLookup::Found { package } => {
+                        CatalogInfoLookup::Found(Box::new(catalog_info(package)?))
+                    }
+                    InfoLookup::Ambiguous { candidates } => CatalogInfoLookup::Ambiguous(
+                        candidates
+                            .iter()
+                            .map(catalog_summary)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                    InfoLookup::NotFound { .. } => CatalogInfoLookup::NotFound,
+                };
+                CatalogInfoReport::new(sequence, lookup).ok_or_else(|| {
+                    BuildAuthorityError::new(BuildAuthorityErrorCode::CatalogUnavailable)
+                })
+            })
+            .collect()
     }
 
     /// Prepares and installs a build using a short broker-owned authority snapshot.
