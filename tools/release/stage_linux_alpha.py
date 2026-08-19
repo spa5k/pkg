@@ -13,7 +13,7 @@ import sys
 from urllib.parse import urlsplit
 
 
-RELEASE = "v0.1.0-alpha.2"
+RELEASE = "v0.1.0-alpha.3"
 ARTIFACT = "pkg-installer-x86_64-linux"
 
 
