@@ -226,6 +226,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          manifest=release-assets/release-manifest.json
+          test "$(jq -er .releaseId "$manifest")" = "$RELEASE_TAG"
+          root_sha256=$(sha256sum release-assets/1.root.json | awk '{ print $1 }')
+          test "$(jq -er .trustedRootSha256 "$manifest")" = "$root_sha256"
+          mapfile -t cli_artifacts < <(
+            jq -er '.cliArtifacts[] | [
+              .kind, .system, .source, .sha256, .length,
+              .sigstoreBundle, .sigstoreBundleSha256, .sigstoreBundleLength
+            ] | @tsv' "$manifest"
+          )
+          test "${#cli_artifacts[@]}" = 3
+          for record in "${cli_artifacts[@]}"; do
+            IFS=$'\t' read -r kind system source digest length \
+              bundle bundle_digest bundle_length <<<"$record"
+            case "$kind:$system:$source:$bundle" in
+              pkg:aarch64-darwin:cli/pkg-aarch64-darwin:cli/pkg-aarch64-darwin.sigstore.json | \
+              pkg:x86_64-linux:cli/pkg-x86_64-linux:cli/pkg-x86_64-linux.sigstore.json | \
+              pkg-install:x86_64-linux:cli/pkg-installer-x86_64-linux:cli/pkg-installer-x86_64-linux.sigstore.json)
+                ;;
+              *) exit 1 ;;
+            esac
+            source_path="release-assets/${source#cli/}"
+            bundle_path="release-assets/${bundle#cli/}"
+            test "$(sha256sum "$source_path" | awk '{ print $1 }')" = "$digest"
+            test "$(stat -c %s "$source_path")" = "$length"
+            test "$(sha256sum "$bundle_path" | awk '{ print $1 }')" = "$bundle_digest"
+            test "$(stat -c %s "$bundle_path")" = "$bundle_length"
+          done
+
           {
             awk '{ print $2 }' release-assets/SHA256SUMS
             printf '%s\n' SHA256SUMS
