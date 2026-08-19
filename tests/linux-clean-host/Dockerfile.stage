@@ -1,26 +1,41 @@
-FROM rust:1.96-bookworm AS builder
+# syntax=docker/dockerfile:1
+ARG BUILDPLATFORM
+FROM --platform=$BUILDPLATFORM rust:1.96-bookworm AS builder
 
 WORKDIR /workspace
-COPY . .
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
+        gcc-x86-64-linux-gnu libc6-dev-amd64-cross \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add x86_64-unknown-linux-gnu
+
+COPY . /workspace
+
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+    CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc
 
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=pkg-linux-target,target=/target \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
         --prepare /proof-signing
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=pkg-linux-target,target=/target \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     PKG_RELEASE_TUF_ROOT_JSON="$(cat /proof-signing/root.json)" \
     PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/ \
     PKG_RELEASE_CHANNEL_TARGETS_URL=https://127.0.0.1:8443/targets/ \
     CARGO_TARGET_DIR=/target cargo build --locked --release \
+        --target x86_64-unknown-linux-gnu \
         -p pkg-cli --bin pkg \
         -p pkg-installer --bin pkg-nix-broker \
         -p pkg-installer --bin pkg-root-helper \
         -p pkg-installer --bin pkg-install \
     && mkdir /binaries \
-    && cp /target/release/pkg /target/release/pkg-nix-broker \
-        /target/release/pkg-root-helper /target/release/pkg-install /binaries/
+    && cp /target/x86_64-unknown-linux-gnu/release/pkg \
+        /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
+        /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
+        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries/
 RUN curl -fL --retry 3 \
     --output /tmp/nix.tar.xz \
     https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-x86_64-linux.tar.xz \
@@ -29,12 +44,12 @@ RUN curl -fL --retry 3 \
         /tmp/nix.tar.xz \
         | sha256sum --check --strict
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=pkg-linux-target,target=/target \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
         /publication-1 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 1
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=pkg-linux-target,target=/target \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
         /publication-2 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 2

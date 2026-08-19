@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Read;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -32,6 +32,7 @@ const RUNTIME_PREFIX: &str = "/opt/pkg/nix";
 const STORE_PREFIX: &str = "/nix/store";
 const STORE_LINKS: &str = "/nix/store/.links";
 const GC_LOCK: &str = "/nix/var/nix/gc.lock";
+const GC_SOCKET_DIR: &str = "/nix/var/nix/gc-socket";
 const LOCK_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCK_POLL: Duration = Duration::from_millis(25);
 
@@ -96,6 +97,7 @@ enum CapturedKind {
     File,
     Directory,
     Symlink,
+    Socket,
 }
 
 /// Single-use removal authority prepared from authenticated release state.
@@ -430,20 +432,16 @@ fn capture_authenticated_state(
             ManagedRuntimeRemovalErrorCode::UnsafeState,
         ));
     }
-    let store = expectation
-        .artifacts()
-        .iter()
-        .filter(|artifact| {
+    let store = capture_present_artifacts(
+        root,
+        expectation,
+        owner_uid,
+        |artifact| {
             artifact.path() != Path::new(STORE_PREFIX)
                 && artifact.path().starts_with(Path::new(STORE_PREFIX))
-        })
-        .map(|artifact| capture_artifact(root, artifact, owner_uid, Some(store_root.device)))
-        .collect::<Result<Vec<_>, _>>()?;
-    if store.is_empty() {
-        return Err(ManagedRuntimeRemovalError::new(
-            ManagedRuntimeRemovalErrorCode::UnsafeState,
-        ));
-    }
+        },
+        Some(store_root.device),
+    )?;
     verify_tree_matches_captured(&runtime_root, &runtime)?;
 
     Ok(ManagedRuntimeRemoval {
@@ -940,6 +938,7 @@ fn capture_dynamic_store_state(
         owner_uid,
         state.device,
     )?;
+    capture_gc_socket_directory(root, owner_uid, state.device, &mut entries)?;
     for (path, device) in [
         ("/nix/var/log", nix.device),
         ("/nix/var/nix/builds", state.device),
@@ -960,6 +959,66 @@ fn capture_dynamic_store_state(
     }
     drop(temporary_root_locks);
     Ok(entries)
+}
+
+fn capture_gc_socket_directory(
+    root: &Path,
+    owner_uid: u32,
+    expected_device: u64,
+    entries: &mut Vec<CapturedEntry>,
+) -> Result<(), ManagedRuntimeRemovalError> {
+    let directory = rooted(root, Path::new(GC_SOCKET_DIR));
+    let metadata = match fs::symlink_metadata(&directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+    };
+    if !metadata.file_type().is_dir()
+        || metadata.dev() != expected_device
+        || metadata.uid() != owner_uid
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(ManagedRuntimeRemovalError::new(
+            ManagedRuntimeRemovalErrorCode::UnsafeState,
+        ));
+    }
+    let mut children = fs::read_dir(&directory).map_err(|_| {
+        ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+    })?;
+    if let Some(child) = children.next() {
+        let child = child.map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        if child.file_name() != "socket" || children.next().is_some() {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        let socket = child.metadata().map_err(|_| {
+            ManagedRuntimeRemovalError::new(ManagedRuntimeRemovalErrorCode::UnsafeState)
+        })?;
+        if !socket.file_type().is_socket()
+            || socket.dev() != expected_device
+            || socket.uid() != owner_uid
+            || socket.mode() & 0o777 != 0o666
+        {
+            return Err(ManagedRuntimeRemovalError::new(
+                ManagedRuntimeRemovalErrorCode::UnsafeState,
+            ));
+        }
+        entries.push(CapturedEntry {
+            path: child.path(),
+            device: socket.dev(),
+            inode: socket.ino(),
+            kind: CapturedKind::Socket,
+        });
+    }
+    entries.push(capture_from_metadata(&directory, &metadata)?);
+    Ok(())
 }
 
 fn capture_empty_directory(
@@ -1413,6 +1472,8 @@ fn observed_kind(metadata: &fs::Metadata) -> Option<CapturedKind> {
         Some(CapturedKind::Directory)
     } else if metadata.file_type().is_symlink() {
         Some(CapturedKind::Symlink)
+    } else if metadata.file_type().is_socket() {
+        Some(CapturedKind::Socket)
     } else {
         None
     }
@@ -2116,6 +2177,18 @@ mod tests {
     }
 
     #[test]
+    fn complete_store_objects_collected_before_preparation_are_accepted()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = Fixture::new()?;
+        collect_authenticated_store(&fixture)?;
+
+        let removal = fixture.prepare()?;
+        assert_eq!(removal.remove()?, ManagedRuntimeRemovalOutcome::Removed);
+        assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
+        Ok(())
+    }
+
+    #[test]
     fn partially_collected_store_tree_refuses_before_runtime_deletion()
     -> Result<(), Box<dyn std::error::Error>> {
         let fixture = Fixture::new()?;
@@ -2302,6 +2375,13 @@ mod tests {
         fs::create_dir(&source_path)?;
         fs::write(source_path.join("source"), b"source")?;
         symlink("source", source_path.join("source-link"))?;
+        let gc_socket = rooted(
+            fixture.temporary.path(),
+            Path::new("/nix/var/nix/gc-socket/socket"),
+        );
+        fs::create_dir_all(gc_socket.parent().ok_or("gc socket has no parent")?)?;
+        drop(std::os::unix::net::UnixListener::bind(&gc_socket)?);
+        fs::set_permissions(&gc_socket, fs::Permissions::from_mode(0o666))?;
         let users = rooted(
             fixture.temporary.path(),
             Path::new("/nix/var/nix/gcroots/pkg/users"),
@@ -2319,6 +2399,7 @@ mod tests {
         assert!(!product_path.exists());
         assert!(!source_path.exists());
         assert!(!rooted(fixture.temporary.path(), Path::new(RUNTIME_PREFIX)).exists());
+        assert!(!rooted(fixture.temporary.path(), Path::new(GC_SOCKET_DIR)).exists());
         Ok(())
     }
 

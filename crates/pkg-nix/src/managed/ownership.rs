@@ -13,6 +13,7 @@
 //! inventory here would make every later package installation invalidate the
 //! ownership receipt.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Read;
@@ -697,9 +698,33 @@ pub(super) fn verify_artifacts(
         .map(|artifact| expectation.groups.gid_for(artifact.group))
         .ok_or_else(|| OwnershipError::new(OwnershipErrorCode::ExpectationInvalid))?;
 
-    // Dynamic store objects are authenticated by Nix and tracked by the Nix DB
-    // plus pkg state; this corroborates all static privileged assets.
+    let mut store_objects = BTreeMap::new();
     for (index, artifact) in expectation.artifacts.iter().enumerate() {
+        let Some(object) = store_object_name(artifact.path()) else {
+            continue;
+        };
+        let present = match fs::symlink_metadata(rooted(root, artifact.path())) {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(_) => {
+                return Err(OwnershipError::artifact(
+                    OwnershipErrorCode::ArtifactUnsafe,
+                    index,
+                ));
+            }
+        };
+        *store_objects.entry(object).or_insert(false) |= present;
+    }
+
+    // Dynamic store objects are authenticated by Nix and tracked by the Nix DB
+    // plus pkg state. Nix GC can remove a complete static runtime store object;
+    // partial presence still fails exact verification below.
+    for (index, artifact) in expectation.artifacts.iter().enumerate() {
+        if store_object_name(artifact.path())
+            .is_some_and(|object| store_objects.get(object) == Some(&false))
+        {
+            continue;
+        }
         verify_artifact(
             root,
             artifact,
@@ -716,6 +741,14 @@ pub(super) fn verify_artifacts(
         asset_manifest_digest: expectation.asset_manifest_digest,
         artifact_count: expectation.artifacts.len(),
     })
+}
+
+fn store_object_name(path: &Path) -> Option<&str> {
+    path.to_str()?
+        .strip_prefix("/nix/store/")?
+        .split('/')
+        .next()
+        .filter(|name| !name.is_empty())
 }
 
 /// Verifies that every authenticated static artifact beneath `root` is absent or
@@ -1373,6 +1406,34 @@ mod tests {
         assert_eq!(verified.system(), System::Aarch64Darwin);
         assert_eq!(verified.nix_version().as_str(), "2.34.8");
         assert_eq!(verified.artifact_count(), 5);
+    }
+
+    #[test]
+    fn complete_store_object_collected_by_gc_still_verifies() {
+        let fixture = Fixture::new();
+        let store_object = fixture
+            .root
+            .join("nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nix");
+        fs::set_permissions(&store_object, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(store_object).unwrap();
+
+        assert!(fixture.verify().is_ok());
+    }
+
+    #[test]
+    fn partially_collected_store_object_is_rejected() {
+        let fixture = Fixture::new();
+        let store_object = fixture
+            .root
+            .join("nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nix");
+        fs::set_permissions(&store_object, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_file(store_object.join("nix")).unwrap();
+        fs::set_permissions(&store_object, fs::Permissions::from_mode(0o555)).unwrap();
+
+        assert_eq!(
+            fixture.verify().unwrap_err().code(),
+            OwnershipErrorCode::ArtifactMissing
+        );
     }
 
     #[test]

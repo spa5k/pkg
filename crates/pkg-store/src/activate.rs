@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::symlink;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
 use pkg_core::state::{CollisionPolicy, Digest};
@@ -336,8 +336,8 @@ fn stage_ordered_sources(
     for entry in &entries {
         let destination = staging.join(&entry.relative_path);
         if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700).create(parent)?;
         }
         symlink(&entry.target, &destination)?;
     }
@@ -584,6 +584,42 @@ mod tests {
                 .iter()
                 .any(|entry| entry.relative_path() == Path::new("bin/only-b"))
         );
+    }
+
+    #[test]
+    fn nested_activation_directories_are_private() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir_all(source.join("share/locale/en/LC_MESSAGES")).unwrap();
+        fs::write(
+            source.join("share/locale/en/LC_MESSAGES/app.mo"),
+            b"catalog",
+        )
+        .unwrap();
+        let staging = temp.path().join("stage");
+
+        stage_from_sources(
+            &staging,
+            &[(store("source"), source)],
+            CollisionPolicy::Abort,
+        )
+        .unwrap();
+
+        for relative in [
+            "share",
+            "share/locale",
+            "share/locale/en",
+            "share/locale/en/LC_MESSAGES",
+        ] {
+            assert_eq!(
+                fs::metadata(staging.join(relative))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
     }
 
     #[test]
