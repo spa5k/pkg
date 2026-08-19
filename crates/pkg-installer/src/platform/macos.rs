@@ -346,9 +346,9 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         "product-config-dir",
         MacOsAssetKind::Directory,
         "/opt/pkg/etc/pkg",
-        0o755,
+        0o750,
         MacOsAssetPrincipal::Root,
-        MacOsAssetPrincipal::Wheel,
+        MacOsAssetPrincipal::Broker,
     ),
     MacOsInstallAsset::path(
         "product-bin",
@@ -506,9 +506,9 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         "nix-config",
         MacOsAssetKind::File,
         "/opt/pkg/etc/pkg/nix.conf",
-        0o644,
+        0o640,
         MacOsAssetPrincipal::Root,
-        MacOsAssetPrincipal::Wheel,
+        MacOsAssetPrincipal::Broker,
     ),
     MacOsInstallAsset::path(
         "store-volume-plist",
@@ -1460,6 +1460,7 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn asset_manifest_is_closed_unique_and_has_exact_build_users() -> Result<(), Box<dyn Error>> {
         let mut ids = HashSet::new();
         let mut paths = HashSet::new();
@@ -1515,12 +1516,20 @@ mod tests {
         assert_eq!(helper.mode, Some(0o700));
         assert_eq!(helper.owner, Some(MacOsAssetPrincipal::Root));
         assert_eq!(helper.group, Some(MacOsAssetPrincipal::Wheel));
+        for (id, path, mode) in [
+            ("product-config-dir", "/opt/pkg/etc/pkg", 0o750),
+            ("nix-config", "/opt/pkg/etc/pkg/nix.conf", 0o640),
+        ] {
+            let asset = MACOS_ASSETS
+                .iter()
+                .find(|asset| asset.id == id)
+                .ok_or_else(|| std::io::Error::other("missing private config asset"))?;
+            assert_eq!(asset.path_or_name, path);
+            assert_eq!(asset.mode, Some(mode));
+            assert_eq!(asset.owner, Some(MacOsAssetPrincipal::Root));
+            assert_eq!(asset.group, Some(MacOsAssetPrincipal::Broker));
+        }
         for (id, path, owner) in [
-            (
-                "nix-config",
-                "/opt/pkg/etc/pkg/nix.conf",
-                MacOsAssetPrincipal::Root,
-            ),
             (
                 "broker-home",
                 "/Library/Application Support/pkg/broker-home",

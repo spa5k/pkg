@@ -225,9 +225,9 @@ pub fn acquire_cache_only_with_progress(
             .map_err(|_| AcquireError::Refused)?
             {
                 SubstituteResult::Fetched(substitute) => substitute,
-                SubstituteResult::Miss(_) => return Err(AcquireError::Refused),
+                SubstituteResult::Miss(_) => return Err(AcquireError::BuildRequired),
             };
-            if *selector_total > 0 {
+            if total > 0 {
                 let completed = selector_completed
                     .get_mut(owner)
                     .ok_or(AcquireError::Refused)?;

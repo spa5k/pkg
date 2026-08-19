@@ -610,7 +610,7 @@ impl BrokerLifecycleClient {
                     }
                     return Ok(CliBrokerResponse::InstallAcquired);
                 }
-                CliBrokerResponse::InstallBuildRequired if counters.is_empty() => {
+                CliBrokerResponse::InstallBuildRequired => {
                     return Ok(CliBrokerResponse::InstallBuildRequired);
                 }
                 CliBrokerResponse::InstallAcquisitionRefused(code) => {

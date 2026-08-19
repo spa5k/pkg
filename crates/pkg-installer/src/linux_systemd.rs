@@ -339,11 +339,11 @@ impl ProductionSystemdSystem {
     fn systemctl_status(
         &self,
         arguments: &[&str],
-        false_code: i32,
+        false_codes: &[i32],
     ) -> Result<bool, LinuxSystemdError> {
         match run_status_code(&self.systemctl, arguments)? {
             0 => Ok(true),
-            code if code == false_code => Ok(false),
+            code if false_codes.contains(&code) => Ok(false),
             _ => Err(LinuxSystemdError::new(
                 LinuxSystemdErrorCode::StateQueryFailed,
             )),
@@ -362,8 +362,8 @@ impl SystemdSystem for ProductionSystemdSystem {
 
     fn unit_state(&mut self, unit: &'static str) -> Result<UnitState, LinuxSystemdError> {
         Ok(UnitState {
-            enabled: self.systemctl_status(&["is-enabled", "--quiet", unit], 1)?,
-            active: self.systemctl_status(&["is-active", "--quiet", unit], 3)?,
+            enabled: self.systemctl_status(&["is-enabled", "--quiet", unit], &[1, 4])?,
+            active: self.systemctl_status(&["is-active", "--quiet", unit], &[3, 4])?,
         })
     }
 
@@ -560,6 +560,17 @@ mod tests {
 
     fn all(state: UnitState) -> Vec<(&'static str, UnitState)> {
         UNITS.into_iter().map(|unit| (unit, state)).collect()
+    }
+
+    #[test]
+    fn absent_systemd_unit_status_is_false() -> Result<(), Box<dyn Error>> {
+        let system = ProductionSystemdSystem {
+            systemctl: PathBuf::from("/bin/sh"),
+            tmpfiles: PathBuf::from("/bin/true"),
+        };
+        assert!(!system.systemctl_status(&["-c", "exit 4"], &[1, 4])?);
+        assert!(system.systemctl_status(&["-c", "exit 5"], &[1, 4]).is_err());
+        Ok(())
     }
 
     #[test]

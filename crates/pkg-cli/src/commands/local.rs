@@ -2669,6 +2669,18 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
+                CliBrokerResponse::InstallDownloadProgress(
+                    pkg_nix::InstallDownloadProgress::new(
+                        SelectorInput::new("hello").unwrap(),
+                        0,
+                        17_072,
+                    )
+                    .unwrap(),
+                ),
+            );
+            write_response(
+                &mut server,
+                request_id,
                 CliBrokerResponse::InstallBuildRequired,
             );
 
@@ -2772,6 +2784,7 @@ mod tests {
             events,
             vec![
                 PublicEvent::phase(&public_operation_id, "acquire", "started").unwrap(),
+                PublicEvent::download_started(&public_operation_id, "hello", 17_072).unwrap(),
                 PublicEvent::phase(&public_operation_id, "acquire", "completed").unwrap(),
                 PublicEvent::phase(&public_operation_id, "build", "started").unwrap(),
                 PublicEvent::build_started(&public_operation_id, "hello", "hello", "1.0",).unwrap(),

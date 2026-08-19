@@ -193,8 +193,9 @@ const ASSETS: &[LinuxInstallAsset] = &[
         "product-config-dir",
         LinuxAssetKind::Directory,
         "/opt/pkg/etc/pkg",
-        Some(0o755),
-    ),
+        Some(0o750),
+    )
+    .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
     LinuxInstallAsset::new(
         "uninstall-root",
         LinuxAssetKind::Directory,
@@ -306,8 +307,9 @@ const ASSETS: &[LinuxInstallAsset] = &[
         "nix-config",
         LinuxAssetKind::File,
         "/opt/pkg/etc/pkg/nix.conf",
-        Some(0o644),
-    ),
+        Some(0o640),
+    )
+    .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
     LinuxInstallAsset::new(
         "daemon-socket-unit",
         LinuxAssetKind::File,
@@ -450,6 +452,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn socket_and_service_security_contract_is_exact() {
         assert!(
             LinuxSystemdAssets::DAEMON_SOCKET
@@ -523,7 +526,6 @@ mod tests {
             ))
         );
         for (id, path) in [
-            ("nix-config", "/opt/pkg/etc/pkg/nix.conf"),
             ("broker-home", "/var/lib/pkg/broker-home"),
             ("broker-tmp", "/var/lib/pkg/broker-home/tmp"),
             ("helper-home", "/var/lib/pkg/helper-home"),
@@ -531,9 +533,19 @@ mod tests {
             ("helper-log-dir", "/var/lib/pkg/log/helper"),
         ] {
             assert!(linux_install_assets().iter().any(|asset| {
+                asset.id() == id && asset.path_or_name() == path && asset.mode() == Some(0o700)
+            }));
+        }
+        for (id, path, mode) in [
+            ("product-config-dir", "/opt/pkg/etc/pkg", 0o750),
+            ("nix-config", "/opt/pkg/etc/pkg/nix.conf", 0o640),
+        ] {
+            assert!(linux_install_assets().iter().any(|asset| {
                 asset.id() == id
                     && asset.path_or_name() == path
-                    && asset.mode() == Some(if id == "nix-config" { 0o644 } else { 0o700 })
+                    && asset.mode() == Some(mode)
+                    && asset.owner() == Some(LinuxAssetPrincipal::Root)
+                    && asset.group() == Some(LinuxAssetPrincipal::Broker)
             }));
         }
         let service_root = linux_install_assets()

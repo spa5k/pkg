@@ -236,6 +236,16 @@ docker exec "$container" su - proof-user -c \
     "/home/proof-user/.local/share/pkg/current/bin/rg --version" \
     | grep -F "ripgrep 13.0.0" >/dev/null
 
+for package in fd bat tree wget git tmux zoxide fzf; do
+    echo "+ pkg install $package"
+    docker exec "$container" su - proof-user -c \
+        "/usr/local/bin/pkg --yes install $package"
+done
+package_list=$(docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list")
+for package in hello ripgrep fd bat tree wget git tmux zoxide fzf; do
+    printf '%s\n' "$package_list" | grep -F "\"name\":\"$package\"" >/dev/null
+done
+
 echo "+ pkg install cxx-prettyprint with approved local build"
 if ! local_build_output=$(docker exec "$container" su - proof-user -c \
     "/usr/local/bin/pkg --yes --jsonl install cxx-prettyprint"); then
@@ -302,6 +312,13 @@ printf '%s\n' "$repair_output" | grep -F '"status":"repaired-from-cache"' >/dev/
 docker exec "$container" su - proof-user -c \
     "/home/proof-user/.local/share/pkg/current/bin/hello" \
     | grep -F "Hello, world!" >/dev/null
+
+echo "+ pkg remove all installed packages"
+docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --yes remove hello ripgrep fd bat tree wget git tmux zoxide fzf cxx-prettyprint"
+docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --json list" \
+    | grep -F '"entries":[]' >/dev/null
 
 echo "+ pkg --yes uninstall"
 docker exec "$container" /usr/local/bin/pkg --yes uninstall

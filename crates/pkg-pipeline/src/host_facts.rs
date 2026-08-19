@@ -103,7 +103,7 @@ impl HostSource for ProductionHostSource {
         if !metadata.file_type().is_file()
             || metadata.file_type().is_symlink()
             || metadata.uid() != 0
-            || metadata.permissions().mode() & 0o777 != 0o644
+            || metadata.permissions().mode() & 0o777 != 0o640
             || metadata.len() > MAX_CONFIG_BYTES
         {
             return Err(BuildHostFactsError);
