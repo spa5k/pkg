@@ -75,10 +75,12 @@ jobs:
             -p pkg-cli --bin pkg \
             -p pkg-installer --bin pkg-nix-broker \
             -p pkg-installer --bin pkg-root-helper \
-            -p pkg-installer --bin pkg-install
+            -p pkg-installer --bin pkg-install \
+            -p pkg-release --bin pkg-release-index
           mkdir production-linux
           install -m 755 target/release/pkg target/release/pkg-nix-broker \
             target/release/pkg-root-helper target/release/pkg-install \
+            target/release/pkg-release-index \
             production-linux/
           test "$(production-linux/pkg --version)" = "pkg 0.1.0-alpha.3"
           file production-linux/*

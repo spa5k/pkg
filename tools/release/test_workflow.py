@@ -53,6 +53,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             WORKFLOW,
         )
         self.assertIn("pkg-v0.1.0-alpha.3-production-linux-input", WORKFLOW)
+        self.assertIn("pkg-release-index", WORKFLOW)
         self.assertNotIn("gh release", WORKFLOW)
 
 
