@@ -352,8 +352,8 @@ async fn build_preview_publication(
     signing_state: PathBuf,
     sequence: u64,
 ) -> Result<(), AnyError> {
-    if output.exists() || sequence != 8 {
-        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 8".into());
+    if output.exists() || sequence != 9 {
+        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 9".into());
     }
 
     let online = read_keys(&signing_state, "online")?;
@@ -528,7 +528,7 @@ async fn main() -> Result<(), AnyError> {
             .ok_or("missing channel sequence")?
             .parse::<u64>()?;
         if arguments.next().is_some() {
-            return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 8".into());
+            return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 9".into());
         }
         return build_preview_publication(output, input, signing_state, sequence).await;
     }
