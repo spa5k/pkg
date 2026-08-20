@@ -233,6 +233,8 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             .map_err(|_| InstallError::backend_failure())?;
         RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(BROKER_HOME))
             .and_then(|adapter| adapter.ping_managed_store())
+            .map_err(|_| InstallError::backend_failure())?;
+        crate::broker::probe_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))
             .map_err(|_| InstallError::backend_failure())
     }
 

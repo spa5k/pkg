@@ -406,6 +406,22 @@ impl BrokerLifecycleClient {
         }
     }
 
+    /// Requests a privileged exact-ownership check under one live handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted connector error for framing, transport, correlation,
+    /// authorization, or response-kind failures.
+    pub fn verify_managed_ownership(
+        &mut self,
+        handle: OperationHandle,
+    ) -> Result<bool, BrokerClientError> {
+        match self.transact(&CliBrokerRequest::VerifyManagedOwnership(handle))? {
+            CliBrokerResponse::ManagedOwnership(verified) => Ok(verified),
+            _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
+        }
+    }
+
     /// Evaluates one closed derivation request under a live resolve handle.
     pub fn evaluate_derivation(
         &mut self,

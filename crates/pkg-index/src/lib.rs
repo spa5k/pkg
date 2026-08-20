@@ -16,7 +16,7 @@ pub mod search;
 pub use build::{
     BuildMetadata, BuiltIndex, IndexBuildError, IndexCandidate, IndexDocument, IndexRecord,
     IndexSource, IndexVerifyError, VerifiedIndex, build_index, build_index_from_json,
-    compress_index, verify_index_artifact,
+    compress_index, verify_index_artifact, verify_index_release_input,
 };
 pub use info::{AdvisoryStatus, InfoLookup, InfoResponse, PackageInfo};
 pub use list::{CatalogListOptions, CatalogListResponse};

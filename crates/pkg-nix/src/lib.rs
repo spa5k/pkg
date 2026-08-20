@@ -120,6 +120,7 @@ pub use managed::ownership::{
     OwnershipErrorCode, OwnershipExpectation, VerifiedOwnership, decode_ownership_asset_manifest,
     encode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
     verify_ownership_expectation, verify_ownership_receipt,
+    verify_ownership_receipt_against_manifest,
 };
 pub use managed::provision::{
     AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
@@ -130,7 +131,8 @@ pub use managed::provision::{
     provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
     provision_managed_nix_from_bundle_blocking, reauthenticate_installer_bundle,
     reauthenticate_installer_bundle_blocking, recover_interrupted_provision_workspace,
-    verify_authenticated_managed_install, verify_provision_workspace_absent,
+    verify_authenticated_managed_install, verify_authenticated_managed_install_from_receipt,
+    verify_provision_workspace_absent,
 };
 pub use managed::runtime_archive::{
     RuntimeManifestError, RuntimeManifestErrorCode, build_upstream_runtime_asset_manifest,
@@ -146,7 +148,8 @@ pub use nixpkgs::{
     fetch_pinned_nixpkgs, fetch_verified_nixpkgs,
 };
 pub use real::{
-    MAX_REPAIR_EXECUTION_DURATION, RealNixAdapter, RootNixGcExecutor, RootNixRepairExecutor,
+    MAX_REPAIR_EXECUTION_DURATION, PINNED_NIX_VERSION, RealNixAdapter, RootNixGcExecutor,
+    RootNixRepairExecutor,
 };
 pub use substitute::{
     CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,

@@ -9,7 +9,7 @@ use nix::{
     poll::{PollFd, PollFlags, PollTimeout, poll},
 };
 use pkg_nix::{
-    BrokerHelperRequest, BrokerHelperResponse, MAX_REPAIR_EXECUTION_DURATION,
+    BrokerHelperRequest, BrokerHelperResponse, Digest, MAX_REPAIR_EXECUTION_DURATION,
     MaintenanceCapability, ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsReport,
     RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetPublicationRequest,
     RootSetReport, RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
@@ -255,6 +255,40 @@ impl RootHelperClient {
         }
         match response {
             BrokerHelperResponse::RepairRootSetLoaded(root_set) => Ok(root_set),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    /// Verifies the managed runtime against one authenticated manifest digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted transport error unless the root helper returns the
+    /// exact correlated ownership response.
+    pub fn verify_managed_ownership(&self, digest: Digest) -> Result<bool, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let frame = ProductFrameCodec::encode_helper_request(
+            REQUEST_ID,
+            &BrokerHelperRequest::VerifyManagedOwnership(digest),
+        )
+        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
+        write_all_until(&mut stream, &frame, deadline)?;
+        stream
+            .shutdown(Shutdown::Write)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        let response = read_frame(&mut stream, deadline)?;
+        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        if response_id != REQUEST_ID {
+            return Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            ));
+        }
+        match response {
+            BrokerHelperResponse::ManagedOwnership(verified) => Ok(verified),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
             )),

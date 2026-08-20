@@ -173,21 +173,30 @@ impl DoctorInputs {
 /// Failures are returned as closed subsystem observations. Transport, frame,
 /// adapter, and host details never cross into the public doctor report.
 #[must_use]
-pub fn observe_production_subsystems() -> (SubsystemObservation, SubsystemObservation) {
-    production_subsystems_from_health(probe_production_broker())
+pub fn observe_production_subsystems() -> (SubsystemObservation, SubsystemObservation, bool) {
+    let health = probe_production_broker();
+    let ownership = health.as_ref().is_some_and(|(_, ownership)| *ownership);
+    let (runtime, channel) = production_subsystems_from_health(health.map(|(version, _)| version));
+    (runtime, channel, ownership)
 }
 
-fn probe_production_broker() -> Option<String> {
+fn probe_production_broker() -> Option<(String, bool)> {
     let mut broker = BrokerLifecycleClient::connect_default().ok()?;
     let handle = broker.begin(BrokerOperationKind::Doctor).ok()?;
-    let result = broker.version(handle.clone());
-    match result {
-        Ok(version) => {
-            if broker.complete(handle).is_err() {
-                return None;
+    let version = broker.version(handle.clone());
+    match version {
+        Ok(version) => match broker.verify_managed_ownership(handle.clone()) {
+            Ok(ownership) => {
+                if broker.complete(handle).is_err() {
+                    return None;
+                }
+                Some((version.nix_version().as_str().to_owned(), ownership))
             }
-            Some(version.nix_version().as_str().to_owned())
-        }
+            Err(_) => {
+                let _ = broker.cancel(handle);
+                None
+            }
+        },
         Err(_) => {
             let _ = broker.cancel(handle);
             None

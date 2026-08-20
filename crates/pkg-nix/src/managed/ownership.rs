@@ -633,6 +633,65 @@ pub fn verify_ownership_receipt(
     verify_with_owner_uid(root, expectation, 0)
 }
 
+/// Verifies a root-owned receipt against independently authenticated manifest facts.
+///
+/// The receipt supplies only the candidate artifact list. The authenticated
+/// digest, fixed runtime identity, and host-local group bindings remain the
+/// authority. Every artifact is reopened and verified before success.
+pub fn verify_ownership_receipt_against_manifest(
+    root: &Path,
+    system: System,
+    nix_version: &NixVersion,
+    asset_manifest_digest: Digest,
+    groups: ManagedGroupBindings,
+) -> Result<VerifiedOwnership, OwnershipError> {
+    verify_receipt_against_manifest_with_owner_uid(
+        root,
+        system,
+        nix_version,
+        asset_manifest_digest,
+        groups,
+        0,
+    )
+}
+
+fn verify_receipt_against_manifest_with_owner_uid(
+    root: &Path,
+    system: System,
+    nix_version: &NixVersion,
+    asset_manifest_digest: Digest,
+    groups: ManagedGroupBindings,
+    required_owner_uid: u32,
+) -> Result<VerifiedOwnership, OwnershipError> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|_| OwnershipError::new(OwnershipErrorCode::IoFailure))?;
+    let receipt_path = rooted(&canonical_root, ownership_receipt_path(system));
+    let receipt = read_safe_receipt(&canonical_root, &receipt_path, required_owner_uid)?;
+    let wire: WireReceipt = serde_json::from_slice(&receipt)
+        .map_err(|_| OwnershipError::new(OwnershipErrorCode::ReceiptMalformed))?;
+    if wire.schema_version != SCHEMA_VERSION
+        || wire.product != PRODUCT
+        || wire.artifacts.is_empty()
+        || wire.artifacts.len() > MAX_ARTIFACTS
+    {
+        return Err(OwnershipError::new(OwnershipErrorCode::ReceiptMalformed));
+    }
+    let artifacts = wire
+        .artifacts
+        .into_iter()
+        .map(WireArtifact::into_artifact)
+        .collect::<Result<Vec<_>, _>>()?;
+    let expectation = OwnershipExpectation::new(
+        system,
+        nix_version.clone(),
+        asset_manifest_digest,
+        groups,
+        artifacts,
+    )?;
+    verify_with_owner_uid(&canonical_root, &expectation, required_owner_uid)
+}
+
 pub(super) fn verify_with_owner_uid(
     root: &Path,
     expectation: &OwnershipExpectation,
@@ -1406,6 +1465,17 @@ mod tests {
         assert_eq!(verified.system(), System::Aarch64Darwin);
         assert_eq!(verified.nix_version().as_str(), "2.34.8");
         assert_eq!(verified.artifact_count(), 5);
+        assert!(
+            verify_receipt_against_manifest_with_owner_uid(
+                &fixture.root,
+                fixture.expectation.system(),
+                fixture.expectation.nix_version(),
+                fixture.expectation.asset_manifest_digest(),
+                fixture.expectation.groups(),
+                fixture.owner_uid,
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -1891,6 +1961,17 @@ mod tests {
         assert_eq!(
             fixture.verify().unwrap_err().code(),
             OwnershipErrorCode::ReceiptMismatch
+        );
+        assert!(
+            verify_receipt_against_manifest_with_owner_uid(
+                &fixture.root,
+                fixture.expectation.system(),
+                fixture.expectation.nix_version(),
+                fixture.expectation.asset_manifest_digest(),
+                fixture.expectation.groups(),
+                fixture.owner_uid,
+            )
+            .is_err()
         );
         // The receipt-free verifier never inspects the receipt.
         assert!(

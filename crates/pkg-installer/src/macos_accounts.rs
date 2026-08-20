@@ -23,6 +23,11 @@ const BROKER_HOME: &str = "/Library/Application Support/pkg/broker-home";
 const BUILD_HOME: &str = "/var/empty";
 const NOLOGIN: &str = "/usr/bin/false";
 
+/// Returns the fixed macOS group bindings for ownership verification.
+pub fn macos_group_bindings() -> Result<ManagedGroupBindings, MacOsError> {
+    ManagedGroupBindings::new(BROKER_GID, BUILD_GID).map_err(|_| MacOsError::backend_failure())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AttemptOwnership {
     Uncertain,

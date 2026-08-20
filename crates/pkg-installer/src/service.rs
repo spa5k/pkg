@@ -50,8 +50,8 @@ use url::Url;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const BROKER_ACCOUNT: &str = "pkg-nix-broker";
-#[cfg(target_os = "linux")]
-const LINUX_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
+/// Fixed Linux CLI-to-broker endpoint installed by pkg.
+pub const LINUX_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
 #[cfg(any(target_os = "linux", target_os = "macos"))]

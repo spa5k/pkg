@@ -27,6 +27,7 @@ use std::{
     io::{self, Read, Write},
     os::fd::AsFd,
     os::unix::net::UnixStream,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -35,6 +36,7 @@ const FRAME_HEADER_BYTES: usize = 20;
 const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 const FRAME_READ_TIMEOUT: Duration = Duration::from_mins(5);
 const FRAME_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+const BROKER_READINESS_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Stable CLI-to-broker transport failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +76,60 @@ impl fmt::Display for BrokerTransportError {
 }
 
 impl Error for BrokerTransportError {}
+
+/// Completes one fixed doctor lifecycle against the installed broker endpoint.
+pub fn probe_broker_readiness(path: &Path) -> Result<(), BrokerTransportError> {
+    let mut stream = UnixStream::connect(path)
+        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+    probe_broker_stream(&mut stream)
+}
+
+fn probe_broker_stream(stream: &mut UnixStream) -> Result<(), BrokerTransportError> {
+    let CliBrokerResponse::Started(handle) = readiness_transaction(
+        stream,
+        1,
+        &CliBrokerRequest::Begin(pkg_nix::BrokerOperationKind::Doctor),
+    )?
+    else {
+        return Err(BrokerTransportError::new(
+            BrokerTransportErrorCode::BrokerFailure,
+        ));
+    };
+    match readiness_transaction(stream, 2, &CliBrokerRequest::Version(handle.clone()))? {
+        CliBrokerResponse::Version(_) => {}
+        _ => {
+            return Err(BrokerTransportError::new(
+                BrokerTransportErrorCode::BrokerFailure,
+            ));
+        }
+    }
+    match readiness_transaction(stream, 3, &CliBrokerRequest::Complete(handle))? {
+        CliBrokerResponse::Completed => Ok(()),
+        _ => Err(BrokerTransportError::new(
+            BrokerTransportErrorCode::BrokerFailure,
+        )),
+    }
+}
+
+fn readiness_transaction(
+    stream: &mut UnixStream,
+    request_id: u64,
+    request: &CliBrokerRequest,
+) -> Result<CliBrokerResponse, BrokerTransportError> {
+    let frame = ProductFrameCodec::encode_cli_request(request_id, request)
+        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
+    write_all_until(stream, &frame, deadline_after(FRAME_WRITE_TIMEOUT)?)?;
+    let frame = read_frame_with_timeout(stream, BROKER_READINESS_TIMEOUT)?
+        .ok_or_else(|| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
+    let (response_id, response) = ProductFrameCodec::decode_cli_response(&frame)
+        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::InvalidFrame))?;
+    if response_id != request_id {
+        return Err(BrokerTransportError::new(
+            BrokerTransportErrorCode::InvalidFrame,
+        ));
+    }
+    Ok(response)
+}
 
 /// Authenticates one connection and serves lifecycle frames until disconnect.
 ///
@@ -258,6 +314,10 @@ pub trait RepairAuthorityDispatch: Send + Sync {
 }
 
 trait BuildAuthorityDispatch: Send + Sync {
+    fn runtime_asset_manifest_digest(&self) -> Result<Digest, ()> {
+        Err(())
+    }
+
     fn search(&self, request: &CatalogSearchRequest) -> Result<CatalogSearchReport, ()>;
 
     fn info(&self, requests: &[CatalogInfoRequest]) -> Result<Vec<CatalogInfoReport>, ()>;
@@ -287,6 +347,10 @@ trait BuildAuthorityDispatch: Send + Sync {
 }
 
 trait RootAuthorityDispatch: Send + Sync {
+    fn verify_managed_ownership(&self, _digest: Digest) -> Result<bool, ()> {
+        Err(())
+    }
+
     fn publish(
         &self,
         caller: &AuthenticatedCaller,
@@ -337,6 +401,10 @@ struct ConnectionAuthorities<'a> {
 }
 
 impl RootAuthorityDispatch for RootHelperClient {
+    fn verify_managed_ownership(&self, digest: Digest) -> Result<bool, ()> {
+        self.verify_managed_ownership(digest).map_err(|_| ())
+    }
+
     fn publish(
         &self,
         caller: &AuthenticatedCaller,
@@ -395,6 +463,10 @@ impl RootAuthorityDispatch for RootHelperClient {
 }
 
 impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
+    fn runtime_asset_manifest_digest(&self) -> Result<Digest, ()> {
+        self.runtime_asset_manifest_digest().map_err(|_| ())
+    }
+
     fn search(&self, request: &CatalogSearchRequest) -> Result<CatalogSearchReport, ()> {
         self.search_catalog(request).map_err(|_| ())
     }
@@ -560,6 +632,18 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::Cancel(handle) => cancel_response(caller, &handle),
         CliBrokerRequest::Complete(handle) => complete_response(caller, &handle),
         CliBrokerRequest::Version(handle) => dispatch_version(caller, authorities.adapter, &handle),
+        CliBrokerRequest::VerifyManagedOwnership(handle) => {
+            caller.poll(&handle).map_err(|_| ())?;
+            let digest = authorities
+                .build
+                .ok_or(())?
+                .runtime_asset_manifest_digest()?;
+            authorities
+                .roots
+                .ok_or(())?
+                .verify_managed_ownership(digest)
+                .map(CliBrokerResponse::ManagedOwnership)
+        }
         CliBrokerRequest::EvaluateDerivation(handle, request) => {
             dispatch_evaluation(caller, authorities.adapter, &handle, &request)
         }
@@ -1324,12 +1408,13 @@ mod tests {
         version::VersionPreference,
     };
     use pkg_nix::{
-        ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPlan, BuildPlanTarget,
-        BuildReadiness, CacheClassification, DerivationPath, DerivationPlanReport, Digest,
-        EvaluatedDerivation, GenerationId, NarHash, NixVersion, NixpkgsRevision, OperationStatus,
-        OutputName, PackageVersion, PolicyVersion, RootName, RootSetEntry, StorePath, System,
-        TrustedBuildReplanner, TrustedReplanError,
+        AcceptedFormats, ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildPlan,
+        BuildPlanTarget, BuildReadiness, CacheClassification, DerivationPath, DerivationPlanReport,
+        Digest, EvaluatedDerivation, FormatVersion, GenerationId, NarHash, NixVersion,
+        NixpkgsRevision, OperationStatus, OutputName, PackageVersion, PolicyVersion, RootName,
+        RootSetEntry, StorePath, System, TrustedBuildReplanner, TrustedReplanError, VersionInfo,
     };
+    use pkg_testkit::FakeNix;
     use std::{
         collections::BTreeMap, io, net::Shutdown, os::unix::fs::PermissionsExt, str::FromStr,
         thread,
@@ -1339,6 +1424,25 @@ mod tests {
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
     const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
     const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+
+    #[test]
+    fn readiness_probe_completes_a_real_broker_lifecycle() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let broker = Arc::new(InProcessBroker::new().unwrap());
+        let fake = Arc::new(FakeNix::new());
+        fake.expect_version(Ok(VersionInfo::new(
+            NixVersion::new("2.34.8").unwrap(),
+            AcceptedFormats::new(FormatVersion::new(1).unwrap()),
+        )));
+        let adapter: Arc<dyn NixAdapter> = fake.clone();
+        let worker =
+            thread::spawn(move || serve_broker_connection_with_nix(server, &broker, &adapter));
+
+        assert_eq!(probe_broker_stream(&mut client), Ok(()));
+        client.shutdown(Shutdown::Both).unwrap();
+        assert_eq!(worker.join().unwrap(), Ok(()));
+        assert_eq!(fake.assert_exhausted(), Ok(()));
+    }
 
     fn build_plan() -> BuildPlan {
         let derivation =
@@ -1402,6 +1506,10 @@ mod tests {
     struct TestAuthority(BuildPlan);
 
     impl BuildAuthorityDispatch for TestAuthority {
+        fn runtime_asset_manifest_digest(&self) -> Result<Digest, ()> {
+            Ok(Digest::from_bytes([0x5a; 32]))
+        }
+
         fn search(&self, request: &CatalogSearchRequest) -> Result<CatalogSearchReport, ()> {
             if request.query() != "ripgrep" {
                 return Err(());
@@ -1921,6 +2029,10 @@ mod tests {
     struct AcceptingRootRemoval;
 
     impl RootAuthorityDispatch for AcceptingRootRemoval {
+        fn verify_managed_ownership(&self, digest: Digest) -> Result<bool, ()> {
+            Ok(digest == Digest::from_bytes([0x5a; 32]))
+        }
+
         fn publish(
             &self,
             _caller: &AuthenticatedCaller,
@@ -1973,6 +2085,29 @@ mod tests {
             )],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn managed_ownership_uses_signed_digest_and_privileged_verifier() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let authority = TestAuthority(build_plan());
+        let roots = AcceptingRootRemoval;
+        let handle = caller.begin(BrokerOperationKind::Doctor).unwrap();
+
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::VerifyManagedOwnership(handle),
+                None,
+                None,
+                Some(&authority),
+                Some(&roots),
+            ),
+            Ok(CliBrokerResponse::ManagedOwnership(true))
+        );
     }
 
     fn read_response(stream: &mut UnixStream) -> io::Result<Vec<u8>> {

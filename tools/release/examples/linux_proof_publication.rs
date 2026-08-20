@@ -15,7 +15,7 @@ use aws_lc_rs::signature::Ed25519KeyPair;
 use jiff::Timestamp;
 use olpc_cjson::CanonicalFormatter;
 use pkg_core::{ChannelSequence, NixpkgsRevision, System};
-use pkg_index::{BuildMetadata, IndexCandidate, build_index};
+use pkg_index::{BuildMetadata, IndexCandidate, build_index, verify_index_release_input};
 use pkg_nix::{NixVersion, build_upstream_runtime_asset_manifest};
 use pkg_release::{
     Approval, MetadataPolicy, ReleaseAuthority, ReleaseAuthorization, ReleaseManifest,
@@ -362,6 +362,7 @@ async fn build_preview_publication(
     let root_bytes = fs::read(&root_path)?;
     let root_digest = hex::encode(Sha256::digest(&root_bytes));
     let (nixpkgs_revision, nixpkgs_nar_hash) = NIXPKGS[1];
+    let channel_sequence = ChannelSequence::from_u64(sequence).ok_or("invalid channel sequence")?;
     let artifacts = tempfile::tempdir()?;
     let artifact_root = artifacts.path();
     let mut release_artifacts = Vec::new();
@@ -383,11 +384,14 @@ async fn build_preview_publication(
         )?;
         eprintln!("Prepare {candidate} index and binaries.");
         let manifest = write_file(artifact_root, &manifest_target, &runtime_manifest)?;
-        let index = copy_file(
-            artifact_root,
-            &index_target,
-            &input.join("index").join(format!("{candidate}.json.br")),
+        let index_source = input.join("index").join(format!("{candidate}.json.br"));
+        verify_index_release_input(
+            &fs::read(&index_source)?,
+            channel_sequence,
+            system,
+            nixpkgs_revision,
         )?;
+        let index = copy_file(artifact_root, &index_target, &index_source)?;
         runtime_entries.insert(
             candidate,
             serde_json::json!({

@@ -391,6 +391,30 @@ pub fn verify_index_artifact(
     )
 }
 
+/// Verifies that a publisher-side index is canonical and bound to the release inputs.
+///
+/// # Errors
+///
+/// Returns an index verification error for invalid compression, schema, source
+/// identity, bounds, or canonical bytes.
+pub fn verify_index_release_input(
+    bytes: &[u8],
+    sequence: ChannelSequence,
+    system: System,
+    nixpkgs_rev: &str,
+) -> Result<(), IndexVerifyError> {
+    let digest = digest_hex(body_digest(bytes));
+    verify_index_bytes(
+        bytes,
+        sequence.get().get(),
+        system,
+        nixpkgs_rev,
+        &digest,
+        [0; 32],
+    )
+    .map(drop)
+}
+
 fn verify_index_bytes(
     compressed_bytes: &[u8],
     channel_seq: u64,
@@ -736,6 +760,24 @@ mod tests {
         .unwrap();
         assert_eq!(verified.document(), built.document());
         assert_eq!(verified.channel_descriptor_sha256, [0x42; 32]);
+        assert_eq!(
+            verify_index_release_input(
+                &compressed,
+                ChannelSequence::from_u64(42).unwrap(),
+                System::Aarch64Darwin,
+                revision,
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            verify_index_release_input(
+                &compressed,
+                ChannelSequence::from_u64(43).unwrap(),
+                System::Aarch64Darwin,
+                revision,
+            ),
+            Err(IndexVerifyError::SourceMismatch)
+        );
         assert_eq!(
             verify_index_bytes(
                 &compressed,

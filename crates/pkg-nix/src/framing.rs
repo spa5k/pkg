@@ -97,6 +97,8 @@ pub enum CliBrokerRequest {
     Complete(OperationHandle),
     /// Query the pinned managed runtime under an authorized operation.
     Version(OperationHandle),
+    /// Verify exact pkg ownership through the privileged helper.
+    VerifyManagedOwnership(OperationHandle),
     /// Evaluate one validated derivation request under a resolve operation.
     EvaluateDerivation(OperationHandle, EvaluateDerivationRequest),
     /// Query validated metadata for one promoted store path.
@@ -194,6 +196,8 @@ pub enum CliBrokerResponse {
     Completed,
     /// Validated pinned managed-runtime version information.
     Version(VersionInfo),
+    /// Whether the privileged helper authenticated every managed runtime asset.
+    ManagedOwnership(bool),
     /// Validated derivation evaluation result.
     DerivationPlan(DerivationPlanReport),
     /// Validated path metadata result.
@@ -694,6 +698,8 @@ pub enum BrokerHelperRequest {
     AttestRootSet(RootSetAttestationRequest),
     /// Load durable generation roots only for authenticated broker repair planning.
     LoadRepairRootSet(RootSetAttestationRequest),
+    /// Verify exact managed-runtime ownership against an authenticated manifest digest.
+    VerifyManagedOwnership(Digest),
 }
 
 /// Closed privileged responses on the helper-to-broker channel.
@@ -713,6 +719,8 @@ pub enum BrokerHelperResponse {
     RootSetAttested(RootSetReport),
     /// Exact durable roots returned only to the authenticated broker.
     RepairRootSetLoaded(RootSet),
+    /// Whether every managed runtime asset was authenticated.
+    ManagedOwnership(bool),
 }
 
 /// Exact V1 product frame codec.
@@ -924,6 +932,12 @@ impl ProductFrameCodec {
                         .map(|approval| approval_source_name(approval.source())),
                 })?,
             ),
+            CliBrokerRequest::VerifyManagedOwnership(handle) => (
+                31,
+                encode_json(&HandleWire {
+                    handle: handle.as_str(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_CLI_BROKER, method, request_id, &payload)
     }
@@ -936,7 +950,7 @@ impl ProductFrameCodec {
                 let wire: BeginOwnedWire = decode_json(frame.payload)?;
                 CliBrokerRequest::Begin(parse_operation(&wire.operation)?)
             }
-            2 | 3 | 4 | 10 | 16 | 17 | 23 | 24 => {
+            2 | 3 | 4 | 10 | 16 | 17 | 23 | 24 | 31 => {
                 let wire: HandleOwnedWire = decode_json(frame.payload)?;
                 let handle = parse_handle(&wire.handle)?;
                 match frame.method {
@@ -948,6 +962,7 @@ impl ProductFrameCodec {
                     17 => CliBrokerRequest::GetBuildPreview(handle),
                     23 => CliBrokerRequest::AcquireGc(handle),
                     24 => CliBrokerRequest::GetInstallEvidence(handle),
+                    31 => CliBrokerRequest::VerifyManagedOwnership(handle),
                     _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
                 }
             }
@@ -1130,6 +1145,12 @@ impl ProductFrameCodec {
                 report
                     .encode()
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ),
+            CliBrokerResponse::ManagedOwnership(verified) => (
+                31,
+                encode_json(&ManagedOwnershipWire {
+                    verified: *verified,
+                })?,
             ),
             CliBrokerResponse::DerivationPlan(report) => {
                 (11, report.encode().map_err(adapter_payload)?)
@@ -1411,6 +1432,10 @@ impl ProductFrameCodec {
                 VersionInfo::decode(&JsonCodec::default(), frame.payload)
                     .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
             ),
+            31 => {
+                let wire: ManagedOwnershipWire = decode_json(frame.payload)?;
+                CliBrokerResponse::ManagedOwnership(wire.verified)
+            }
             11 => CliBrokerResponse::DerivationPlan(
                 DerivationPlanReport::decode(&JsonCodec::default(), frame.payload)
                     .map_err(adapter_payload)?,
@@ -1614,6 +1639,12 @@ impl ProductFrameCodec {
                     generation: request.generation().as_str(),
                 })?,
             ),
+            BrokerHelperRequest::VerifyManagedOwnership(digest) => (
+                8,
+                encode_json(&ManifestDigestWire {
+                    asset_manifest_digest: digest.to_string(),
+                })?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -1660,6 +1691,12 @@ impl ProductFrameCodec {
                     GenerationId::new(&wire.generation)
                         .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
                 ))
+            }
+            8 => {
+                let wire: ManifestDigestWire = decode_json(frame.payload)?;
+                BrokerHelperRequest::VerifyManagedOwnership(parse_mapping_digest(
+                    &wire.asset_manifest_digest,
+                )?)
             }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
@@ -1714,6 +1751,12 @@ impl ProductFrameCodec {
             BrokerHelperResponse::RepairRootSetLoaded(root_set) => {
                 (7, encode_json(&RootSetWire::from_root_set(root_set))?)
             }
+            BrokerHelperResponse::ManagedOwnership(verified) => (
+                8,
+                encode_json(&ManagedOwnershipWire {
+                    verified: *verified,
+                })?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -1765,6 +1808,10 @@ impl ProductFrameCodec {
             7 => BrokerHelperResponse::RepairRootSetLoaded(
                 decode_json::<RootSetOwnedWire>(frame.payload)?.promote()?,
             ),
+            8 => {
+                let wire: ManagedOwnershipWire = decode_json(frame.payload)?;
+                BrokerHelperResponse::ManagedOwnership(wire.verified)
+            }
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
@@ -3104,6 +3151,18 @@ impl VersionBoundOwnedWire {
 #[serde(deny_unknown_fields)]
 struct EmptyWire {}
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManagedOwnershipWire {
+    verified: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManifestDigestWire {
+    asset_manifest_digest: String,
+}
+
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct StatusWire<'a> {
@@ -4140,6 +4199,43 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_helper_response(&encoded),
             Ok((12, issued))
+        );
+    }
+
+    #[test]
+    fn managed_ownership_frames_are_path_free_and_strict() {
+        let request = CliBrokerRequest::VerifyManagedOwnership(OperationHandle(format!(
+            "op_{}",
+            "7".repeat(64)
+        )));
+        let encoded = ProductFrameCodec::encode_cli_request(41, &request).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_request(&encoded),
+            Ok((41, request))
+        );
+        let response = CliBrokerResponse::ManagedOwnership(true);
+        let encoded = ProductFrameCodec::encode_cli_response(41, &response).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((41, response))
+        );
+
+        let digest = Digest::from_bytes([0x5a; 32]);
+        let request = BrokerHelperRequest::VerifyManagedOwnership(digest);
+        let encoded = ProductFrameCodec::encode_helper_request(42, &request).unwrap();
+        let wire = String::from_utf8_lossy(&encoded);
+        for forbidden in ["path", "url", "command", "option", "trust"] {
+            assert!(!wire.contains(forbidden));
+        }
+        assert_eq!(
+            ProductFrameCodec::decode_helper_request(&encoded),
+            Ok((42, request))
+        );
+        let response = BrokerHelperResponse::ManagedOwnership(false);
+        let encoded = ProductFrameCodec::encode_helper_response(42, &response).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_helper_response(&encoded),
+            Ok((42, response))
         );
     }
 

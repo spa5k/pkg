@@ -7,10 +7,11 @@ use nix::{
     poll::{PollFd, PollFlags, PollTimeout, poll},
 };
 use pkg_nix::{
-    AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance,
-    MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode,
-    ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest, RootSetAttestationRequest,
-    RootSetPublicationRequest, RootSetTransitionRequest, VerifiedRepairScope,
+    AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance, Digest,
+    MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode, NixVersion,
+    PINNED_NIX_VERSION, ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest,
+    RootSetAttestationRequest, RootSetPublicationRequest, RootSetTransitionRequest, System,
+    VerifiedRepairScope, verify_authenticated_managed_install_from_receipt,
 };
 use pkg_store::{StateLayout, authorize_generation_root_removal};
 use std::{
@@ -255,6 +256,51 @@ impl LinuxHelperSession {
             .ok_or_else(platform_failure)?;
         self.caller(owner_uid).repair_store_paths(request)
     }
+
+    fn verify_managed_ownership(digest: Digest) -> bool {
+        let Ok(version) = NixVersion::new(PINNED_NIX_VERSION) else {
+            return false;
+        };
+        let Ok((system, groups)) = native_ownership_inputs() else {
+            return false;
+        };
+        verify_authenticated_managed_install_from_receipt(
+            std::path::Path::new("/"),
+            system,
+            &version,
+            digest,
+            groups,
+        )
+        .is_ok()
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
+    crate::linux_accounts::plan_linux_group_bindings()
+        .map(|groups| (System::X8664Linux, groups))
+        .map_err(|_| platform_failure())
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
+    crate::linux_accounts::plan_linux_group_bindings()
+        .map(|groups| (System::Aarch64Linux, groups))
+        .map_err(|_| platform_failure())
+}
+
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
+    crate::macos_accounts::macos_group_bindings()
+        .map(|groups| (System::X8664Darwin, groups))
+        .map_err(|_| platform_failure())
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
+    crate::macos_accounts::macos_group_bindings()
+        .map(|groups| (System::Aarch64Darwin, groups))
+        .map_err(|_| platform_failure())
 }
 
 fn authorize_production_removal(request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {
@@ -303,6 +349,9 @@ impl BrokerHelperDispatch for LinuxHelperSession {
             BrokerHelperRequest::LoadRepairRootSet(request) => self
                 .load_repair_roots(&request)
                 .map(BrokerHelperResponse::RepairRootSetLoaded),
+            BrokerHelperRequest::VerifyManagedOwnership(digest) => Ok(
+                BrokerHelperResponse::ManagedOwnership(Self::verify_managed_ownership(digest)),
+            ),
         }
     }
 }

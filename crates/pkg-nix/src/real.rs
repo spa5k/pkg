@@ -39,7 +39,8 @@ use crate::{
     VersionInfo,
 };
 
-pub(crate) const PINNED_NIX_VERSION: &str = "2.34.8";
+/// Exact managed Nix version embedded in the V1 runtime contract.
+pub const PINNED_NIX_VERSION: &str = "2.34.8";
 const PATH_INFO_FORMAT: u32 = 2;
 const STORE_DIRECTORY: &str = "/nix/store";
 const CACHE_URL: &str = "https://cache.nixos.org";

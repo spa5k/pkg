@@ -20,7 +20,7 @@ use super::installer_bundle::{DatastoreOwner, VerifiedRuntimeBundle, load_instal
 use super::ownership::{
     ManagedArtifact, ManagedArtifactKind, ManagedGroupBindings, OwnershipExpectation,
     decode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
-    verify_with_owner_uid,
+    verify_ownership_receipt_against_manifest, verify_with_owner_uid,
 };
 use super::runtime_archive::{
     MAX_ARCHIVE_ENTRIES, MAX_REGISTRATION_BYTES, UpstreamArchiveMember,
@@ -1154,6 +1154,35 @@ pub fn verify_authenticated_managed_install(
 ) -> Result<(), ProvisionError> {
     let report = detect_unmanaged_nix(root, expectation.system(), path_entries, environment_keys);
     if authenticated_managed_install_matches(root, &report, expectation, 0) {
+        Ok(())
+    } else {
+        Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused))
+    }
+}
+
+/// Verifies the installed runtime from a root-owned receipt and authenticated manifest facts.
+///
+/// This entry point is for the privileged helper. It does not accept user
+/// paths or environment values, and it refuses all foreign or ambiguous host
+/// evidence before it authenticates the receipt and every declared artifact.
+pub fn verify_authenticated_managed_install_from_receipt(
+    root: &Path,
+    system: System,
+    nix_version: &NixVersion,
+    asset_manifest_digest: Digest,
+    groups: ManagedGroupBindings,
+) -> Result<(), ProvisionError> {
+    let report = detect_unmanaged_nix(root, system, &[], &[]);
+    if has_only_authenticated_managed_install_evidence(&report, system)
+        && verify_ownership_receipt_against_manifest(
+            root,
+            system,
+            nix_version,
+            asset_manifest_digest,
+            groups,
+        )
+        .is_ok()
+    {
         Ok(())
     } else {
         Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused))

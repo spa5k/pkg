@@ -3,6 +3,7 @@
 use std::{
     error::Error,
     fmt,
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 
@@ -12,8 +13,8 @@ use pkg_index::{IndexQuery, InfoLookup, SearchOptions, VerifiedIndex};
 use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildPreview, CacheInstallAttempt, CacheInstallOutcome,
     CatalogInfoLookup, CatalogInfoReport, CatalogInfoRequest, CatalogPackageInfo,
-    CatalogPackageSummary, CatalogSearchReport, CatalogSearchRequest, InstallDownloadProgress,
-    NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
+    CatalogPackageSummary, CatalogSearchReport, CatalogSearchRequest, Digest,
+    InstallDownloadProgress, NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
 };
 
 use crate::{
@@ -62,6 +63,20 @@ impl AuthenticatedBuildAuthority {
             }),
             adapter,
         }
+    }
+
+    /// Returns the signed static-runtime manifest digest for privileged ownership checks.
+    ///
+    /// # Errors
+    ///
+    /// Returns `StateUnavailable` if current authenticated authority cannot be read.
+    pub fn runtime_asset_manifest_digest(&self) -> Result<Digest, BuildAuthorityError> {
+        let state = self.lock_state()?;
+        Digest::from_str(&format!(
+            "sha256-{}",
+            state.channel.descriptor().runtime().asset_manifest_sha256()
+        ))
+        .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::StateUnavailable))
     }
 
     /// Starts broker authority from one exact verified channel/index pair.
