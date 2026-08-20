@@ -185,8 +185,8 @@ impl ReleaseAuthority for LocalPreviewAuthority {
     ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
         let evidence = approvals.iter().map(Approval::evidence).collect::<Vec<_>>();
         if digest.len() != 64
-            || sequence != 8
-            || timestamp_version != 8
+            || sequence != 9
+            || timestamp_version != 9
             || evidence != ["local-preview:release", "local-preview:security"]
         {
             return Err(ValidationError::InvalidPolicy);
