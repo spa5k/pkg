@@ -185,8 +185,8 @@ impl ReleaseAuthority for LocalPreviewAuthority {
     ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
         let evidence = approvals.iter().map(Approval::evidence).collect::<Vec<_>>();
         if digest.len() != 64
-            || sequence != 9
-            || timestamp_version != 9
+            || sequence != 10
+            || timestamp_version != 10
             || evidence != ["local-preview:release", "local-preview:security"]
         {
             return Err(ValidationError::InvalidPolicy);
@@ -352,8 +352,8 @@ async fn build_preview_publication(
     signing_state: PathBuf,
     sequence: u64,
 ) -> Result<(), AnyError> {
-    if output.exists() || sequence != 9 {
-        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 9".into());
+    if output.exists() || sequence != 10 {
+        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 10".into());
     }
 
     let online = read_keys(&signing_state, "online")?;
@@ -467,7 +467,7 @@ async fn build_preview_publication(
     }
 
     let manifest = serde_json::json!({
-        "schemaVersion":1, "releaseId":"v0.1.0-alpha.5", "channelSequence":sequence,
+        "schemaVersion":1, "releaseId":"v0.1.0-alpha.6", "channelSequence":sequence,
         "timestampVersion":sequence, "trustedRootSha256":root_digest, "policyVersion":1,
         "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
         "approvals":[
@@ -528,7 +528,9 @@ async fn main() -> Result<(), AnyError> {
             .ok_or("missing channel sequence")?
             .parse::<u64>()?;
         if arguments.next().is_some() {
-            return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 9".into());
+            return Err(
+                "usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 10".into(),
+            );
         }
         return build_preview_publication(output, input, signing_state, sequence).await;
     }

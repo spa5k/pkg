@@ -42,8 +42,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("PKG_CARGO_ABOUT:", WORKFLOW)
         self.assertIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
         self.assertIn("cargo fetch --locked", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.5-x86_64-linux-candidate", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.5-x86_64-linux.tar.gz", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.6-x86_64-linux-candidate", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.6-x86_64-linux.tar.gz", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
 
     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
@@ -55,7 +55,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "52523a9bf76dee8e364efc302b733140f850fe377c1cc73a7675b842d28b94e2",
             WORKFLOW,
         )
-        self.assertIn("pkg-v0.1.0-alpha.5-production-linux-input", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.6-production-linux-input", WORKFLOW)
         self.assertIn("pkg-release-index", WORKFLOW)
 
     def test_production_signing_is_keyless_protected_and_closed(self) -> None:

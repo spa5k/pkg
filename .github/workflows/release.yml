@@ -82,13 +82,13 @@ jobs:
             target/release/pkg-root-helper target/release/pkg-install \
             target/release/pkg-release-index \
             production-linux/
-          test "$(production-linux/pkg --version)" = "pkg 0.1.0-alpha.5"
+          test "$(production-linux/pkg --version)" = "pkg 0.1.0-alpha.6"
           file production-linux/*
 
       - name: Retain the production input without publishing it
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pkg-v0.1.0-alpha.5-production-linux-input
+          name: pkg-v0.1.0-alpha.6-production-linux-input
           path: production-linux/
           if-no-files-found: error
           retention-days: 1
@@ -163,7 +163,7 @@ jobs:
       - name: Retain the proof artifact without publishing it
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pkg-v0.1.0-alpha.5-x86_64-linux-candidate
-          path: proof-artifacts/pkg-v0.1.0-alpha.5-x86_64-linux.tar.gz
+          name: pkg-v0.1.0-alpha.6-x86_64-linux-candidate
+          path: proof-artifacts/pkg-v0.1.0-alpha.6-x86_64-linux.tar.gz
           if-no-files-found: error
           retention-days: 7
