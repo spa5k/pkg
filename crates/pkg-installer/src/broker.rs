@@ -535,11 +535,7 @@ fn serve_broker_connection_inner(
     let caller = broker
         .connect(InProcessCallerPeer::authenticated(uid))
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
-    let approval_journal = authorities
-        .approval_audit
-        .map(|audit| audit.for_caller(uid))
-        .transpose()
-        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))?;
+    let approval_journal = approval_journal_for_peer(authorities.approval_audit, uid)?;
     stream
         .set_nonblocking(true)
         .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::TransportFailure))?;
@@ -566,6 +562,19 @@ fn serve_broker_connection_inner(
         )),
         (Ok(()), Ok(())) => Ok(()),
     }
+}
+
+fn approval_journal_for_peer(
+    audit: Option<&BrokerApprovalAudit>,
+    uid: u32,
+) -> Result<Option<BrokerCallerApprovalJournal>, BrokerTransportError> {
+    if uid == 0 {
+        return Ok(None);
+    }
+    audit
+        .map(|audit| audit.for_caller(uid))
+        .transpose()
+        .map_err(|_| BrokerTransportError::new(BrokerTransportErrorCode::BrokerFailure))
 }
 
 #[cfg(test)]
@@ -1442,6 +1451,26 @@ mod tests {
         client.shutdown(Shutdown::Both).unwrap();
         assert_eq!(worker.join().unwrap(), Ok(()));
         assert_eq!(fake.assert_exhausted(), Ok(()));
+    }
+
+    #[test]
+    fn root_readiness_has_no_build_approval_journal() {
+        let temporary = TempDir::new().unwrap();
+        std::fs::set_permissions(temporary.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let audit =
+            BrokerApprovalAudit::open(temporary.path(), nix::unistd::Uid::effective().as_raw())
+                .unwrap();
+
+        assert!(
+            approval_journal_for_peer(Some(&audit), 0)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            approval_journal_for_peer(Some(&audit), 1001)
+                .unwrap()
+                .is_some()
+        );
     }
 
     fn build_plan() -> BuildPlan {
