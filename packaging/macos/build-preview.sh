@@ -14,7 +14,7 @@ usage() {
 
 installer=$1
 output=$2
-version=${3:-0.1.0-alpha.4}
+version=${3:-0.1.0-alpha.5}
 
 case "$installer" in /*) ;; *) usage ;; esac
 case "$output" in /*.pkg) ;; *) usage ;; esac

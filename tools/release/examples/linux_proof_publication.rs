@@ -467,7 +467,7 @@ async fn build_preview_publication(
     }
 
     let manifest = serde_json::json!({
-        "schemaVersion":1, "releaseId":"v0.1.0-alpha.4", "channelSequence":sequence,
+        "schemaVersion":1, "releaseId":"v0.1.0-alpha.5", "channelSequence":sequence,
         "timestampVersion":sequence, "trustedRootSha256":root_digest, "policyVersion":1,
         "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
         "approvals":[

@@ -18,10 +18,10 @@ import tempfile
 import xml.etree.ElementTree as etree
 
 
-RELEASE = "v0.1.0-alpha.4"
+RELEASE = "v0.1.0-alpha.5"
 LINUX_ARTIFACT = "pkg-installer-x86_64-linux"
 MACOS_INSTALLER = "pkg-install"
-MACOS_PACKAGE = "pkg-0.1.0-alpha.4-preview.pkg"
+MACOS_PACKAGE = "pkg-0.1.0-alpha.5-preview.pkg"
 NIX_SOURCE_SHA256 = "ecc2f226a1ba27ad56eb85f42af8f078067fe5a219fceb82cb3fda9ba24387a5"
 NIX_SOURCE_MEMBER = "nix-2.34.8/COPYING"
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -150,7 +150,7 @@ def validate_expanded_macos_package(expanded: pathlib.Path, installer: bytes) ->
     if (
         package_info.tag != "pkg-info"
         or package_info.get("identifier") != "org.pkg.installer.preview"
-        or package_info.get("version") != "0.1.0-alpha.4"
+        or package_info.get("version") != "0.1.0-alpha.5"
         or package_info.get("auth") != "root"
         or postinstall is None
         or postinstall.get("file") != "./postinstall"
