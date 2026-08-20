@@ -8,12 +8,14 @@ use pkg_channel::VerifiedChannel;
 use pkg_core::{PackageSelector, System};
 use pkg_index::IndexDocument;
 use pkg_nix::{
-    BuildCacheErrorCode, BuildCacheProbe, BuildPlan, BuildReadiness, NixAdapter, NixpkgsFetchSpec,
-    NixpkgsMetadataRunner, TrustedBuildReplanner, TrustedReplanError, classify_build_cache,
-    fetch_verified_nixpkgs,
+    BuildCacheErrorCode, BuildCacheProbe, BuildCacheTarget, BuildPlan, BuildReadiness, NixAdapter,
+    NixpkgsFetchSpec, NixpkgsMetadataRunner, TrustedBuildReplanner, TrustedReplanError,
+    classify_build_cache, fetch_verified_nixpkgs,
 };
 
-use crate::{AuthenticatedBuildPolicy, prepare_local_build_plan, resolve_install};
+use crate::{
+    AuthenticatedBuildPolicy, preflight_cache_only, prepare_local_build_plan, resolve_install,
+};
 
 const MAX_BUILD_SELECTORS: usize = 4_096;
 
@@ -95,10 +97,27 @@ impl AuthenticatedBuildIntent {
             adapter,
         )
         .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::ResolutionFailed))?;
-        let subjects = resolved
-            .build_cache_subjects()
-            .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::ResolutionFailed))?;
-        let evidence = classify_build_cache(&subjects, adapter).map_err(BuildIntentError::cache)?;
+        let preflight = preflight_cache_only(&resolved)
+            .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::ResolutionFailed))?
+            .outputs()
+            .to_vec();
+        let cache_targets = resolved
+            .targets()
+            .iter()
+            .map(|target| {
+                let subjects = target
+                    .build_cache_subjects()
+                    .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::ResolutionFailed))?;
+                let selected_outputs = preflight
+                    .iter()
+                    .filter(|output| output.selector_id() == target.selector().id())
+                    .map(|output| output.store_path().clone())
+                    .collect();
+                BuildCacheTarget::new(subjects, selected_outputs).map_err(BuildIntentError::cache)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let evidence =
+            classify_build_cache(&cache_targets, adapter).map_err(BuildIntentError::cache)?;
         prepare_local_build_plan(
             &policy,
             &resolved,

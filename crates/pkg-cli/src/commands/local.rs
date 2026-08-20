@@ -30,7 +30,7 @@ use pkg_core::{
     SourceRevision, VersionPreference, advance_channel,
 };
 use pkg_nix::{
-    ApprovalSource, BrokerOperationKind, CacheInstallErrorCode, CacheInstallOutcome,
+    ApprovalSource, BrokerOperationKind, BuildPreview, CacheInstallErrorCode, CacheInstallOutcome,
     CatalogInfoRequest, CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest,
     GenerationId, GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter,
     MaintenanceError, OperationHandle, RemoveRootSetRequest, RepairGenerationRequest,
@@ -49,7 +49,7 @@ use pkg_store::{
     GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
     plan_generation_prune, prune_generation, recover_prunes,
 };
-use serde_json::{Map, json};
+use serde_json::{Map, Value, json};
 
 const DEFAULT_KEEP_GENERATIONS: usize = 10;
 const DEFAULT_MAX_AGE_DAYS: u64 = 30;
@@ -265,7 +265,7 @@ impl CoreOperations for LocalStateOperations {
 
     fn outdated(&mut self) -> Result<CommandResult, CommandError> {
         let active = self.active()?;
-        let installed = installed_catalog_packages(active.state())?;
+        let installed = installed_catalog_packages(active.state(), None)?;
         if installed.is_empty() {
             return outdated_catalog_reports(
                 active.state().manifest().channel_seq(),
@@ -597,11 +597,13 @@ fn run_catalog_outdated(
 
 fn installed_catalog_packages(
     state: &pkg_core::lifecycle::LifecycleState,
+    selected: Option<&BTreeSet<SelectorId>>,
 ) -> Result<Vec<InstalledCatalogPackage>, CommandError> {
     state
         .manifest()
         .entries()
         .iter()
+        .filter(|desired| selected.is_none_or(|ids| ids.contains(desired.id())))
         .map(|desired| {
             let locked = state
                 .locked()
@@ -638,7 +640,7 @@ impl LocalStateOperations {
         require_supported_upgrade_options(args)?;
         let layout = self.layout()?.clone();
         let source = self.active()?;
-        let selection = select_upgrade(
+        let mut selection = select_upgrade(
             source.state().clone(),
             upgrade_scope(source.state(), args)?,
             args.bump_pinned(),
@@ -650,6 +652,50 @@ impl LocalStateOperations {
             .map(SelectorId::as_str)
             .map(str::to_owned)
             .collect::<Vec<_>>();
+        let selected_ids = selection
+            .selectors()
+            .iter()
+            .map(|selector| selector.id().clone())
+            .collect::<BTreeSet<_>>();
+        if selected_ids.is_empty() {
+            return upgrade_noop_result(&skipped_pinned);
+        }
+        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+        let has_local_build = selected_ids.iter().any(|id| {
+            source
+                .state()
+                .locked()
+                .entries()
+                .get(id)
+                .is_some_and(|entry| entry.provenance() == "build:local")
+        });
+        if has_local_build && !policy.dry_run() && !args.bump_pinned() {
+            let installed = installed_catalog_packages(source.state(), Some(&selected_ids))?;
+            let currency = run_catalog_outdated(
+                &mut broker,
+                source.state().manifest().channel_seq(),
+                installed,
+            )?;
+            let outdated = outdated_attributes(&currency)?;
+            if outdated.is_empty() {
+                return upgrade_noop_result(&skipped_pinned);
+            }
+            let ids = selection
+                .selectors()
+                .iter()
+                .filter(|selector| {
+                    selector
+                        .attribute()
+                        .is_some_and(|attribute| outdated.contains(attribute.as_str()))
+                })
+                .map(|selector| selector.id().clone())
+                .collect::<Vec<_>>();
+            if ids.len() != outdated.len() {
+                return Err(invalid_active_state());
+            }
+            selection = select_upgrade(source.state().clone(), UpgradeScope::Named(ids), false)
+                .map_err(upgrade_failed)?;
+        }
         let selector_names = selection
             .selectors()
             .iter()
@@ -661,10 +707,6 @@ impl LocalStateOperations {
             })
             .collect::<BTreeMap<_, _>>();
         let selectors = broker_upgrade_selectors(selection.selectors());
-        if selectors.is_empty() {
-            return upgrade_noop_result(&skipped_pinned);
-        }
-        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         if policy.dry_run() {
             return preview_upgrade(&mut broker, selectors, &skipped_pinned);
         }
@@ -1306,6 +1348,23 @@ impl LocalStateOperations {
     }
 }
 
+fn outdated_attributes(result: &CommandResult) -> Result<BTreeSet<String>, CommandError> {
+    result
+        .fields()
+        .get("entries")
+        .and_then(Value::as_array)
+        .ok_or_else(invalid_active_state)?
+        .iter()
+        .map(|entry| {
+            entry
+                .get("package")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(invalid_active_state)
+        })
+        .collect()
+}
+
 fn require_gc_confirmation(
     policy: OperationPolicy,
     plan: &pkg_store::GcPlan,
@@ -1614,9 +1673,7 @@ fn preview_install(
         .prepare_build(handle.clone(), selectors)
         .map_err(install_broker_error)
         .and_then(|preview| {
-            let value = preview
-                .to_json_value()
-                .map_err(|_| install_commit_failed())?;
+            let value = public_build_preview(preview)?;
             CommandResult::new(
                 "Install preview is ready. No package was downloaded or activated.",
                 Map::from_iter([("dryRun".into(), json!(true)), ("preflight".into(), value)]),
@@ -1640,9 +1697,7 @@ fn preview_upgrade(
         .prepare_build(handle.clone(), selectors)
         .map_err(install_broker_error)
         .and_then(|preview| {
-            let value = preview
-                .to_json_value()
-                .map_err(|_| install_commit_failed())?;
+            let value = public_build_preview(preview)?;
             CommandResult::new(
                 "Upgrade preview is ready. No package was downloaded or activated.",
                 Map::from_iter([
@@ -1656,6 +1711,17 @@ fn preview_upgrade(
         });
     let _ = broker.cancel(handle);
     result
+}
+
+fn public_build_preview(preview: BuildPreview) -> Result<Value, CommandError> {
+    let mut value = preview
+        .to_json_value()
+        .map_err(|_| install_commit_failed())?;
+    value
+        .as_object_mut()
+        .and_then(|fields| fields.remove("schemaVersion"))
+        .ok_or_else(install_commit_failed)?;
+    Ok(value)
 }
 
 fn upgrade_scope(
@@ -2531,6 +2597,50 @@ mod tests {
             panic!("expected install command");
         };
         install_selectors(args, "00112233445566778899aabbccddeeff").unwrap()
+    }
+
+    #[test]
+    fn install_preview_uses_the_outer_public_schema() {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let preview = build_preview();
+        let worker = thread::spawn(move || {
+            let caller = InProcessBroker::new()
+                .unwrap()
+                .connect(InProcessCallerPeer::authenticated(501))
+                .unwrap();
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Build));
+            let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+            let (request_id, request) = read_request(&mut server);
+            let CliBrokerRequest::PrepareBuild(actual, selectors) = request else {
+                panic!("expected build preparation");
+            };
+            assert_eq!(actual, handle);
+            assert_eq!(selectors[0].selector().as_str(), "hello");
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::BuildPrepared(preview),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Cancel(handle));
+            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+        });
+
+        let result = preview_install(
+            &mut BrokerLifecycleClient::from_stream(client),
+            hello_selectors(),
+        )
+        .unwrap();
+        worker.join().unwrap();
+        assert_eq!(result.fields()["dryRun"], true);
+        assert!(result.fields()["preflight"].get("schemaVersion").is_none());
+        assert_eq!(result.fields()["preflight"]["approvalRequired"], true);
     }
 
     #[test]
@@ -3419,5 +3529,27 @@ mod tests {
             broker[0].source_revision(),
             SourceRevision::CurrentChannel
         ));
+    }
+
+    #[test]
+    fn outdated_attributes_are_exact_and_fail_closed() {
+        let result = CommandResult::new(
+            "1 package(s) outdated",
+            Map::from_iter([("entries".into(), json!([{"package": "hello"}]))]),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            outdated_attributes(&result).unwrap(),
+            BTreeSet::from(["hello".to_owned()])
+        );
+
+        let malformed = CommandResult::new(
+            "invalid",
+            Map::from_iter([("entries".into(), json!([{}]))]),
+            Vec::new(),
+        )
+        .unwrap();
+        assert!(outdated_attributes(&malformed).is_err());
     }
 }

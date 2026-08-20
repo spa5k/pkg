@@ -1,4 +1,5 @@
 .git
+.pkg-release-private
 .tracedecay
 AGENTS.md
 target

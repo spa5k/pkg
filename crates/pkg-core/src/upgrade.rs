@@ -179,6 +179,39 @@ impl UpgradePlan {
                 }
             }
         }
+        let changed_ids = self
+            .selection
+            .target_ids
+            .iter()
+            .filter(|id| {
+                let Some(UpgradeOutcome::Resolved { entry, .. }) = by_id.get(*id) else {
+                    return false;
+                };
+                let clears_pin = self.selection.bump_pinned
+                    && self
+                        .selection
+                        .state
+                        .manifest()
+                        .entries()
+                        .iter()
+                        .any(|manifest| manifest.id() == *id && manifest.is_pinned());
+                clears_pin
+                    || !same_resolved_package(&self.selection.state.locked().entries()[*id], entry)
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if changed_ids.is_empty() {
+            return Ok(UpgradeResult {
+                state: original,
+                upgraded: Vec::new(),
+                skipped_pinned: self.selection.skipped_pinned,
+                removed_upstream: removed_ids,
+                changed: false,
+            });
+        }
+        by_id.retain(|id, outcome| {
+            changed_ids.contains(id) || matches!(outcome, UpgradeOutcome::RemovedUpstream { .. })
+        });
         let (manifest, locked) = self.selection.state.into_parts();
         let manifest_entries = manifest
             .into_lifecycle_entries()
@@ -203,13 +236,7 @@ impl UpgradePlan {
         let locked =
             LockedState::from_lifecycle_parts(self.target_sequence, system, uid, locked_entries);
         let state = LifecycleState::new(manifest, locked).map_err(map_lifecycle_error)?;
-        let upgraded = self
-            .selection
-            .target_ids
-            .iter()
-            .filter(|id| !removed_ids.contains(id))
-            .cloned()
-            .collect();
+        let upgraded = changed_ids.into_iter().collect();
         let changed = state != original;
         Ok(UpgradeResult {
             state,
@@ -219,6 +246,22 @@ impl UpgradePlan {
             changed,
         })
     }
+}
+
+fn same_resolved_package(left: &LockEntry, right: &LockEntry) -> bool {
+    let left_realization = left.realization();
+    let right_realization = right.realization();
+    left.attribute() == right.attribute()
+        && left_realization.store_path() == right_realization.store_path()
+        && left_realization.deriver() == right_realization.deriver()
+        && left_realization.outputs() == right_realization.outputs()
+        && left_realization.outputs_to_install() == right_realization.outputs_to_install()
+        && left_realization.system() == right_realization.system()
+        && left_realization.nixpkgs_revision() == right_realization.nixpkgs_revision()
+        && left_realization.nar_hash() == right_realization.nar_hash()
+        && left_realization.closure_nar_size() == right_realization.closure_nar_size()
+        && left_realization.pname() == right_realization.pname()
+        && left_realization.version() == right_realization.version()
 }
 
 /// Successful upgrade editing result.
@@ -498,8 +541,18 @@ mod tests {
 
     #[test]
     fn exact_outcome_coverage_and_noop_detection_are_closed() {
+        let original = state();
+        let old = &original.locked().entries()[&id("sel_a")];
+        let reobserved = LockEntry::new(
+            old.attribute().clone(),
+            old.realization().clone(),
+            "2026-08-20T00:00:00Z".into(),
+            "cache:refreshed".into(),
+            vec!["official-1:refreshed".into()],
+        )
+        .unwrap();
         let plan = plan_upgrade(
-            state(),
+            original.clone(),
             UpgradeScope::Named(vec![id("sel_a")]),
             false,
             NixpkgsRevision::new(REV1).unwrap(),
@@ -511,14 +564,42 @@ mod tests {
         );
         let unchanged = plan
             .apply(
-                vec![UpgradeOutcome::resolved(
-                    id("sel_a"),
-                    state().locked().entries()[&id("sel_a")].clone(),
-                )],
+                vec![UpgradeOutcome::resolved(id("sel_a"), reobserved)],
                 RemovedUpstreamPolicy::Refuse,
             )
             .unwrap();
         assert!(!unchanged.changed());
+        assert!(unchanged.upgraded().is_empty());
+        assert_eq!(unchanged.state(), &original);
+    }
+
+    #[test]
+    fn bump_pinned_is_a_change_when_the_package_is_current() {
+        let original = state();
+        let old = &original.locked().entries()[&id("sel_c")];
+        let reobserved = LockEntry::new(
+            old.attribute().clone(),
+            old.realization().clone(),
+            "2026-08-20T00:00:00Z".into(),
+            "cache:refreshed".into(),
+            Vec::new(),
+        )
+        .unwrap();
+        let result = plan_upgrade(
+            original,
+            UpgradeScope::Named(vec![id("sel_c")]),
+            true,
+            NixpkgsRevision::new(REV1).unwrap(),
+        )
+        .unwrap()
+        .apply(
+            vec![UpgradeOutcome::resolved(id("sel_c"), reobserved)],
+            RemovedUpstreamPolicy::Refuse,
+        )
+        .unwrap();
+        assert!(result.changed());
+        assert_eq!(result.upgraded(), [id("sel_c")]);
+        assert!(!result.state().manifest().entries()[2].is_pinned());
     }
 
     #[test]

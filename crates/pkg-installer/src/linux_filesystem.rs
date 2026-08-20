@@ -662,6 +662,7 @@ impl LinuxFilesystemManager {
         .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::UnsafeFilesystemState))
     }
 
+    #[cfg_attr(target_os = "linux", allow(clippy::useless_conversion))]
     pub(crate) fn remove_runtime_state(
         &self,
         asset: LinuxInstallAsset,

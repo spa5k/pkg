@@ -24,6 +24,7 @@ const BUILD_HOME: &str = "/var/empty";
 const NOLOGIN: &str = "/usr/bin/false";
 
 /// Returns the fixed macOS group bindings for ownership verification.
+#[cfg(target_os = "macos")]
 pub fn macos_group_bindings() -> Result<ManagedGroupBindings, MacOsError> {
     ManagedGroupBindings::new(BROKER_GID, BUILD_GID).map_err(|_| MacOsError::backend_failure())
 }

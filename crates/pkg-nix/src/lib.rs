@@ -76,7 +76,7 @@ pub use build::{
 };
 pub use build_cache::{
     BuildCacheError, BuildCacheErrorCode, BuildCacheEvidence, BuildCacheProbe, BuildCacheSubject,
-    CacheDownloadClosure, CachePathObservation, classify_build_cache,
+    BuildCacheTarget, CacheDownloadClosure, CachePathObservation, classify_build_cache,
 };
 pub use catalog::{
     CatalogInfoLookup, CatalogInfoReport, CatalogInfoRequest, CatalogPackageInfo,

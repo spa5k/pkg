@@ -255,6 +255,7 @@ impl MacOsInstallJournalStorage {
         self.validate_directory_binding()
     }
 
+    #[cfg_attr(target_os = "linux", allow(clippy::useless_conversion))]
     fn validate_directory_binding(&self) -> Result<(), MacOsInstallJournalFileError> {
         validate_private_directory(
             &self.directory,

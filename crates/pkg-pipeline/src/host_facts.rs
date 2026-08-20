@@ -331,17 +331,27 @@ fn daemon_cgroup_has_managed_daemon(path: &Path) -> Result<bool, BuildHostFactsE
 fn is_managed_daemon_process(pid: u32) -> Result<bool, BuildHostFactsError> {
     let process = Path::new("/proc").join(pid.to_string());
     let command = read_bounded(&process.join("cmdline"), MAX_PROC_BYTES)?;
+    Ok(is_managed_daemon_command(&command))
+}
+
+fn is_managed_daemon_command(command: &[u8]) -> bool {
     let mut arguments = command.split(|byte| *byte == 0);
-    let executable_argument = arguments.next().ok_or(BuildHostFactsError)?;
-    let daemon_argument = arguments.next().ok_or(BuildHostFactsError)?;
-    let terminator = arguments.next().ok_or(BuildHostFactsError)?;
-    let command_valid = !executable_argument.is_empty()
+    let Some(executable_argument) = arguments.next() else {
+        return false;
+    };
+    if executable_argument == b"/run/rosetta/rosetta" {
+        return arguments.next() == Some(&b"/opt/pkg/nix/current/bin/nix-daemon"[..])
+            && arguments.next() == Some(&b"nix-daemon"[..])
+            && arguments.next() == Some(&b"--daemon"[..])
+            && arguments.next() == Some(&b""[..])
+            && arguments.next().is_none();
+    }
+    !executable_argument.is_empty()
         && Path::new(OsStr::from_bytes(executable_argument)).file_name()
             == Some(OsStr::new("nix-daemon"))
-        && daemon_argument == b"--daemon"
-        && terminator.is_empty()
-        && arguments.next().is_none();
-    Ok(command_valid)
+        && arguments.next() == Some(&b"--daemon"[..])
+        && arguments.next() == Some(&b""[..])
+        && arguments.next().is_none()
 }
 
 fn read_bounded(path: &Path, max_bytes: u64) -> Result<Vec<u8>, BuildHostFactsError> {
@@ -468,6 +478,22 @@ mod tests {
     fn exact_linux_and_darwin_observations_are_accepted() {
         assert!(observe(&source(System::X8664Linux), System::X8664Linux).is_ok());
         assert!(observe(&source(System::Aarch64Darwin), System::Aarch64Darwin).is_ok());
+    }
+
+    #[test]
+    fn managed_daemon_command_accepts_only_direct_or_exact_rosetta_execution() {
+        assert!(is_managed_daemon_command(
+            b"/opt/pkg/nix/current/bin/nix-daemon\0--daemon\0"
+        ));
+        assert!(is_managed_daemon_command(
+            b"/run/rosetta/rosetta\0/opt/pkg/nix/current/bin/nix-daemon\0nix-daemon\0--daemon\0"
+        ));
+        assert!(!is_managed_daemon_command(
+            b"/run/rosetta/rosetta\0/tmp/nix-daemon\0nix-daemon\0--daemon\0"
+        ));
+        assert!(!is_managed_daemon_command(
+            b"/run/rosetta/rosetta\0/opt/pkg/nix/current/bin/nix-daemon\0nix-daemon\0--daemon\0--extra\0"
+        ));
     }
 
     #[test]

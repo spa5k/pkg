@@ -158,7 +158,7 @@ impl CacheClassification {
         download_bytes: u64,
         nar_bytes: u64,
     ) -> Result<Self, BuildEngineError> {
-        if misses == 0 || hits.checked_add(misses).is_none() {
+        if hits.checked_add(misses).is_none() || hits + misses == 0 {
             return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
         }
         Ok(Self {
@@ -709,7 +709,7 @@ impl BuildPlan {
             return Err(BuildEngineError::new(BuildEngineErrorCode::BuildDenied));
         }
         readiness.validate(system)?;
-        if targets.is_empty() || missing_derivations.is_empty() {
+        if targets.is_empty() {
             return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
         }
         missing_derivations.sort_by(|left, right| left.as_str().cmp(right.as_str()));
@@ -985,7 +985,7 @@ impl BuildPlan {
                     notice: RESOURCE_NOTICE.to_owned(),
                 },
             },
-            approval_required: true,
+            approval_required: !self.builds.is_empty(),
         })
     }
 }
@@ -1973,20 +1973,29 @@ impl BuildPreview {
     }
 
     pub(crate) fn validate(&self) -> Result<(), BuildEngineError> {
+        let build_required = self.build.count > 0
+            && self.build.count == self.build.names.len()
+            && self.unknown_local_outputs > 0
+            && self
+                .targets
+                .iter()
+                .any(|target| target.local_build_required)
+            && self.approval_required;
+        let cache_only = self.build.count == 0
+            && self.build.names.is_empty()
+            && self.unknown_local_outputs == 0
+            && self
+                .targets
+                .iter()
+                .all(|target| !target.local_build_required)
+            && !self.approval_required;
         if self.schema_version != 1
             || self.policy_version == 0
             || !is_public_digest(&self.build_plan_digest)
             || self.targets.is_empty()
             || self.targets.len() > MAX_PREVIEW_ITEMS
-            || self.build.count == 0
-            || self.build.count != self.build.names.len()
             || self.build.count > MAX_PREVIEW_ITEMS
-            || self.unknown_local_outputs == 0
-            || !self
-                .targets
-                .iter()
-                .any(|target| target.local_build_required)
-            || !self.approval_required
+            || (!build_required && !cache_only)
             || !matches!(
                 (self.platform.os.as_str(), self.platform.arch.as_str()),
                 ("linux" | "macos", "x86_64" | "arm64")
@@ -2834,6 +2843,7 @@ mod tests {
         system: System,
         readiness: BuildReadiness,
         build_mode: BuildMode,
+        local_build_required: bool,
     ) -> Result<BuildPlan, BuildEngineError> {
         let derivation = derivation();
         let mut outputs = BTreeMap::new();
@@ -2885,8 +2895,19 @@ mod tests {
                 SourceRevision::CurrentChannel,
                 report,
             )],
-            vec![derivation],
-            CacheClassification::new(Digest::from_bytes([4; 32]), 1, 1, 100, 200).unwrap(),
+            if local_build_required {
+                vec![derivation]
+            } else {
+                Vec::new()
+            },
+            CacheClassification::new(
+                Digest::from_bytes([4; 32]),
+                if local_build_required { 1 } else { 2 },
+                u64::from(local_build_required),
+                100,
+                200,
+            )
+            .unwrap(),
             readiness,
             4,
         )
@@ -2897,7 +2918,13 @@ mod tests {
         system: System,
         readiness: BuildReadiness,
     ) -> Result<BuildPlan, BuildEngineError> {
-        try_plan_with_mode(document_byte, system, readiness, BuildMode::AllowWithGates)
+        try_plan_with_mode(
+            document_byte,
+            system,
+            readiness,
+            BuildMode::AllowWithGates,
+            true,
+        )
     }
 
     fn plan(document_byte: u8, system: System, readiness: BuildReadiness) -> BuildPlan {
@@ -3219,6 +3246,25 @@ mod tests {
     }
 
     #[test]
+    fn cache_only_preview_needs_no_build_approval() {
+        let plan = try_plan_with_mode(
+            1,
+            System::X8664Linux,
+            linux_readiness(),
+            BuildMode::AllowWithGates,
+            false,
+        )
+        .unwrap();
+        let preview = plan.preview().unwrap();
+        let json = preview.to_json_value().unwrap();
+        assert_eq!(preview.local_build_targets().count(), 0);
+        assert_eq!(json["build"]["count"], 0);
+        assert_eq!(json["unknownLocalOutputs"], 0);
+        assert_eq!(json["approvalRequired"], false);
+        assert!(BuildPreview::from_json_bytes(&preview.to_json_bytes().unwrap()).is_ok());
+    }
+
+    #[test]
     fn policy_and_readiness_refuse_before_approval() {
         let bad = BuildReadiness::new(true, false, true, false, false);
         assert_eq!(
@@ -3226,9 +3272,15 @@ mod tests {
             BuildEngineErrorCode::ReadinessFailed
         );
         assert_eq!(
-            try_plan_with_mode(1, System::X8664Linux, linux_readiness(), BuildMode::Deny,)
-                .unwrap_err()
-                .code(),
+            try_plan_with_mode(
+                1,
+                System::X8664Linux,
+                linux_readiness(),
+                BuildMode::Deny,
+                true,
+            )
+            .unwrap_err()
+            .code(),
             BuildEngineErrorCode::BuildDenied
         );
 
