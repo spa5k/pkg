@@ -914,7 +914,9 @@ fn parse_groups(bytes: &[u8], gshadow_bytes: &[u8]) -> Result<Vec<GroupRecord>, 
             .map(ToOwned::to_owned)
             .collect::<BTreeSet<_>>();
         let shadow = gshadow.get(fields[0]);
-        if shadow.is_some_and(|shadow| shadow.members != members) {
+        if shadow.is_some_and(|shadow| shadow.members != members)
+            && !gshadow_lags_build_group(fields[0], &members, shadow)
+        {
             return Err(LinuxAccountError::new(
                 LinuxAccountErrorCode::CommandFailure,
             ));
@@ -937,6 +939,30 @@ fn parse_groups(bytes: &[u8], gshadow_bytes: &[u8]) -> Result<Vec<GroupRecord>, 
         ));
     }
     Ok(groups)
+}
+
+/// Accepts the exact account-database crash signature of interrupted build-user
+/// creation: `useradd` appends the supplementary member to `/etc/group` before
+/// `/etc/gshadow`, so a power loss in that window leaves gshadow lagging by
+/// managed build users only. The group-side list stays authoritative because
+/// every managed contract check still compares exact member sets, and any other
+/// mismatch (foreign groups, gshadow ahead, non-managed differences) keeps
+/// failing closed.
+fn gshadow_lags_build_group(
+    name: &str,
+    members: &BTreeSet<String>,
+    shadow: Option<&ShadowGroupRecord>,
+) -> bool {
+    let Some(shadow) = shadow else {
+        return false;
+    };
+    if name != BUILD_GROUP_NAME || !shadow.members.is_subset(members) {
+        return false;
+    }
+    let managed = managed_build_users();
+    members
+        .difference(&shadow.members)
+        .all(|member| managed.contains(member))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1776,6 +1802,27 @@ mod tests {
             "nixbld1",
             b"nixbld1:$6$hash:1:2:3:4:5:6:7\n"
         )?);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_groups_accepts_only_the_build_group_gshadow_crash_lag() -> Result<(), LinuxAccountError>
+    {
+        // Power loss between useradd's /etc/group and /etc/gshadow member
+        // writes leaves gshadow lagging by managed build users. The group-side
+        // list stays authoritative so recovery can reconcile the account.
+        let groups = parse_groups(b"nixbld:x:30001:nixbld1,nixbld2\n", b"nixbld:!::nixbld1\n")?;
+        assert_eq!(
+            groups[0].members,
+            BTreeSet::from(["nixbld1".to_owned(), "nixbld2".to_owned()])
+        );
+
+        // A foreign group with any mismatch still fails closed.
+        assert!(parse_groups(b"devs:x:1001:alice\n", b"devs:!::\n").is_err());
+        // A non-managed extra member on the build group still fails closed.
+        assert!(parse_groups(b"nixbld:x:30001:nixbld1,root\n", b"nixbld:!::nixbld1\n").is_err());
+        // Gshadow ahead of the group file still fails closed.
+        assert!(parse_groups(b"nixbld:x:30001:nixbld1\n", b"nixbld:!::nixbld1,nixbld2\n").is_err());
         Ok(())
     }
 }

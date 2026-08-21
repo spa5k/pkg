@@ -148,8 +148,16 @@ attempt=0
 while [ "$attempt" -lt 600 ]; do
     if docker exec "$container" sh -c 'test -s /var/lib/pkg-install/transaction-v1.json' \
         && docker exec "$container" sh -c 'kill -STOP "$(cat /tmp/pkg-install.pid)"'; then
-        if docker exec "$container" python3 -c \
-            'import json,sys; entries=json.load(open("/var/lib/pkg-install/transaction-v1.json"))["entries"]; sys.exit(not entries or entries[-1].get("state") != "created")'; then
+        if docker exec "$container" python3 -c '
+import json, sys
+entries = json.load(open("/var/lib/pkg-install/transaction-v1.json"))["entries"]
+build_users = [
+    entry for entry in entries
+    if entry.get("mutation", {}).get("kind") == "asset"
+    and entry["mutation"].get("id", "").startswith("build-user-")
+]
+sys.exit(not build_users)
+'; then
             journal_ready=1
             break
         fi
@@ -160,12 +168,16 @@ while [ "$attempt" -lt 600 ]; do
 done
 if [ "$journal_ready" -ne 1 ]; then
     docker exec "$container" cat /tmp/pkg-install-interrupted.log >&2 || true
-    echo "The install journal did not become durable before the installer exited." >&2
+    echo "The install journal never recorded a durable build-user creation." >&2
     exit 1
 fi
 docker kill "$container" >/dev/null
 docker start "$container" >/dev/null
 wait_container_ready
+docker exec "$container" sh -eu -c '
+    grep -Eq "^nixbld[0-9]+:" /etc/passwd
+    test -s /var/lib/pkg-install/transaction-v1.json
+'
 docker exec "$container" "$shipping_installer"
 docker exec "$container" sh -eu -c '
     test ! -e /var/lib/pkg-install/transaction-v1.json

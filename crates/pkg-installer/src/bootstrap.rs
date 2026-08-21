@@ -30,8 +30,8 @@ use pkg_nix::{
     AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
     InstallerProvisionRequest, InstallerRepository, ManagedDaemon, ManagedRuntimeRemovalOutcome,
     OwnershipExpectation, ProvisionErrorCode, ProvisionedBootstrap,
-    ProvisionedBootstrapTransaction, authenticate_installer_bundle_blocking,
-    load_authenticated_installer_bundle_blocking, prepare_managed_runtime_removal_without_receipt,
+    ProvisionedBootstrapTransaction, load_authenticated_installer_bundle_blocking,
+    prepare_managed_runtime_removal_without_receipt,
     provision_authenticated_installer_bundle_transaction, reauthenticate_installer_bundle_blocking,
     recover_interrupted_provision_workspace, verify_provision_workspace_absent,
 };
@@ -115,7 +115,7 @@ pub fn install_linux_from_bundle<'a>(
         return Err(InstallError::backend_failure());
     }
     backend.preflight_privilege()?;
-    let bundle = authenticate_linux_bundle(trusted_root.clone(), request)?;
+    let bundle = load_linux_bundle_for_recovery(trusted_root.clone(), request)?;
     backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
@@ -223,7 +223,7 @@ pub fn uninstall_linux_production(dry_run: bool) -> Result<usize, UninstallError
         system,
         groups,
     };
-    let bundle = authenticate_linux_bundle(trusted_root, &request)
+    let bundle = load_linux_bundle_for_recovery(trusted_root, &request)
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
     let payloads = LinuxReleasePayloads::from_authenticated_bundle(bundle.installer_payloads())
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
@@ -298,7 +298,15 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
     }
 }
 
-fn authenticate_linux_bundle(
+/// Loads the authenticated Linux release without a clean-host authorization scan.
+///
+/// Journal recovery must authenticate the signed release identity before it
+/// can reconcile an interrupted transaction, and an interrupted attempt may
+/// have already created fixed platform prerequisites such as build users that
+/// a strict pre-mutation scan must refuse to treat as clean. The strict
+/// privileged clean-host scan still runs in the caller after recovery and
+/// before any new mutation, matching the reviewed macOS flow.
+fn load_linux_bundle_for_recovery(
     trusted_root: TrustedRoot,
     request: &InstallerProvisionRequest<'_>,
 ) -> Result<AuthenticatedInstallerBundle, InstallError> {
@@ -311,7 +319,7 @@ fn authenticate_linux_bundle(
         system: request.system,
         groups: request.groups,
     };
-    let result = authenticate_installer_bundle_blocking(trusted_root, &auth_request)
+    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request)
         .map_err(|_| InstallError::backend_failure());
     remove_linux_auth_datastore(&auth_datastore)?;
     result
