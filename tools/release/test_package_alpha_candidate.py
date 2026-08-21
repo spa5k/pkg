@@ -145,7 +145,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         )
         (root / "PackageInfo").write_text(
             '<pkg-info identifier="org.pkg.installer.preview" '
-            'version="0.1.0-alpha.6" auth="root">'
+            'version="0.1.0-alpha.7" auth="root">'
             '<scripts><postinstall file="./postinstall"/></scripts></pkg-info>'
         )
 

@@ -80,7 +80,7 @@ jobs:
 
           packaging/macos/build-preview.sh \
             "$binaries/pkg-install" \
-            "$bundle/pkg-0.1.0-alpha.6-preview.pkg"
+            "$bundle/pkg-0.1.0-alpha.7-preview.pkg"
           install -m 0755 "$binaries/pkg-install" "$bundle/pkg-install"
           install -m 0755 tests/macos-clean-host/prove.sh "$bundle/prove.sh"
           install -m 0755 tests/macos-clean-host/pkg-proof-server.py \

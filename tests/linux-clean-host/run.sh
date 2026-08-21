@@ -54,7 +54,7 @@ if [ -n "$artifact_output" ]; then
     : "${PKG_CARGO_ABOUT:?set PKG_CARGO_ABOUT for a candidate archive}"
     : "${PKG_NIX_SOURCE_ARCHIVE:?set PKG_NIX_SOURCE_ARCHIVE for a candidate archive}"
     mkdir -p "$artifact_output"
-    candidate="$artifact_output/pkg-v0.1.0-alpha.6-x86_64-linux.tar.gz"
+    candidate="$artifact_output/pkg-v0.1.0-alpha.7-x86_64-linux.tar.gz"
     python3 "$repo/tools/release/package_alpha_candidate.py" \
         linux-x86_64 \
         "$artifact_context" \
@@ -77,8 +77,8 @@ cp -a "$raw_stage/publication-1" "$raw_stage/publication-2" "$artifact_context/"
 cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
     "$repo/tests/linux-clean-host/pkg-proof-release.service" \
     "$artifact_context/"
-cp -a "$artifact_context/v0.1.0-alpha.6" "$artifact_context/publication-1/"
-cp -a "$artifact_context/v0.1.0-alpha.6" "$artifact_context/publication-2/"
+cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-1/"
+cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-2/"
 
 echo "+ build clean host from staged artifacts only"
 docker build \
@@ -118,7 +118,7 @@ start_container() {
     wait_container_ready
 }
 
-shipping_installer=/srv/pkg-release/v0.1.0-alpha.6/pkg-installer-x86_64-linux
+shipping_installer=/srv/pkg-release/v0.1.0-alpha.7/pkg-installer-x86_64-linux
 
 echo "+ foreign Nix refusal before mutation"
 start_container
@@ -181,7 +181,7 @@ docker exec "$container" sh -eu -c '
 docker exec "$container" "$shipping_installer"
 docker exec "$container" sh -eu -c '
     test ! -e /var/lib/pkg-install/transaction-v1.json
-    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.6"
+    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.7"
     systemctl is-active --quiet pkg-nix-broker.socket
 '
 stop_container
@@ -221,7 +221,7 @@ docker exec "$container" sh -eu -c '
     systemctl is-active --quiet pkg-nix-daemon.socket
     systemctl is-active --quiet pkg-root-helper.socket
     systemctl is-active --quiet pkg-nix-broker.socket
-    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.6"
+    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.7"
     ! su -s /bin/sh proof-user -c "command -v nix"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-root-helper"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-nix-broker"

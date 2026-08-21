@@ -89,7 +89,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 for path in \
-    "$bundle/pkg-0.1.0-alpha.6-preview.pkg" \
+    "$bundle/pkg-0.1.0-alpha.7-preview.pkg" \
     "$bundle/pkg-install" \
     "$bundle/publication-1/root.json" \
     "$bundle/publication-2/root.json"; do
@@ -100,7 +100,7 @@ echo "+ record clean-host and artifact identity"
 /usr/bin/sw_vers
 /usr/bin/uname -m
 /usr/bin/shasum -a 256 \
-    "$bundle/pkg-0.1.0-alpha.6-preview.pkg" \
+    "$bundle/pkg-0.1.0-alpha.7-preview.pkg" \
     "$bundle/pkg-install" \
     "$bundle/publication-1/root.json" \
     "$bundle/publication-2/root.json"
@@ -300,7 +300,7 @@ second_volume_uuid=$(volume_uuid)
 
 echo "+ install the technical-preview package and retry pkg-install"
 /usr/bin/sudo /usr/sbin/installer \
-    -pkg "$bundle/pkg-0.1.0-alpha.6-preview.pkg" \
+    -pkg "$bundle/pkg-0.1.0-alpha.7-preview.pkg" \
     -target /
 /usr/bin/sudo "$bundle/pkg-install"
 assert_services_ready
