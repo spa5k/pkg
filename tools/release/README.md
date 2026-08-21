@@ -39,7 +39,7 @@ metadata and target directory URLs. The release build sets
 values.
 
 `stage_linux_alpha.py` accepts one already-built x86-64 Linux `pkg-install`,
-places it under `v0.1.0-alpha.4/`, computes its SHA-256, and renders the small
+places it under `v0.1.0-alpha.7/`, computes its SHA-256, and renders the small
 bootstrap template with one fixed HTTPS release path. It does not build, sign,
 or publish. The retained CI artifact uses an ephemeral test root. Production
 staging waits for the external key ceremony and hosting activation.
@@ -100,8 +100,8 @@ The proof extracts the new archive. It runs only with those extracted payload
 files. The two environment variables are required with `--keep-artifacts`.
 
 Use `macos-aarch64` with a prepared macOS payload. The macOS payload must
-contain `v0.1.0-alpha.4/pkg-install` and
-`v0.1.0-alpha.4/pkg-0.1.0-alpha.4-preview.pkg`.
+contain `v0.1.0-alpha.7/pkg-install` and
+`v0.1.0-alpha.7/pkg-0.1.0-alpha.7-preview.pkg`.
 
 Production deployment must provide KMS/HSM-backed `KeySource`, `ReleaseAuthority`,
 and `Publisher` adapters. The authority must verify approval attestations,

@@ -231,22 +231,30 @@ def require_nix_copying(source: pathlib.Path) -> bytes:
 
 def release_notes(platform: str, published_preview: bool = False) -> bytes:
     if published_preview:
-        install = (
-            "Run `sh install.sh`."
-            if platform == "linux-x86_64"
-            else f"Run `sudo installer -pkg {RELEASE}/{MACOS_PACKAGE} -target /`."
-        )
-        macos_limit = (
-            "\nThe macOS package has an ad-hoc signature.\n"
-            "Developer ID signing and notarization are TODO items.\n"
-            if platform == "macos-aarch64"
-            else "\n"
-        )
+        release_url = f"https://github.com/spa5k/pkg/releases/download/{RELEASE}"
         return (
             f"# pkg {RELEASE} technical preview\n\n"
-            "This preview uses signed TUF metadata and fixed HTTPS hosting.\n"
-            f"{install}\n"
-            f"{macos_limit}"
+            "This preview uses signed release metadata.\n\n"
+            "## Linux x86-64\n\n"
+            "```sh\n"
+            f"curl -fsSLO {release_url}/install.sh\n"
+            "less install.sh\n"
+            "sh install.sh\n"
+            "```\n\n"
+            "## macOS Apple silicon\n\n"
+            "The package has an ad-hoc signature. It is not notarized.\n\n"
+            "```sh\n"
+            f"curl -fsSLO {release_url}/{MACOS_PACKAGE}\n"
+            f"curl -fsSLO {release_url}/SHA256SUMS\n"
+            f"grep '  {MACOS_PACKAGE}$' SHA256SUMS | shasum -a 256 --check\n"
+            f"sudo installer -pkg ./{MACOS_PACKAGE} -target /\n"
+            "```\n\n"
+            "## Downloads\n\n"
+            f"- [Linux installer]({release_url}/install.sh)\n"
+            f"- [Linux archive]({release_url}/pkg-{RELEASE}-linux-x86_64.tar.gz)\n"
+            f"- [macOS package]({release_url}/{MACOS_PACKAGE})\n"
+            f"- [macOS archive]({release_url}/pkg-{RELEASE}-macos-aarch64.tar.gz)\n"
+            f"- [Checksums]({release_url}/SHA256SUMS)\n\n"
             "This is a preview release. It is not the v1 release.\n"
         ).encode()
     install = (

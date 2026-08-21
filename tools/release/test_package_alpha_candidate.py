@@ -160,7 +160,19 @@ class PackageAlphaCandidateTests(unittest.TestCase):
 
     def test_published_preview_notes_do_not_claim_local_proof(self) -> None:
         notes = PACKAGER.release_notes("linux-x86_64", published_preview=True)
-        self.assertIn(b"signed TUF metadata", notes)
+        self.assertEqual(
+            notes,
+            PACKAGER.release_notes("macos-aarch64", published_preview=True),
+        )
+        self.assertIn(
+            f"releases/download/{PACKAGER.RELEASE}/install.sh".encode(),
+            notes,
+        )
+        self.assertIn(
+            f"releases/download/{PACKAGER.RELEASE}/{PACKAGER.MACOS_PACKAGE}".encode(),
+            notes,
+        )
+        self.assertIn(b"## Downloads", notes)
         self.assertNotIn(b"NOT FOR PUBLICATION", notes)
         self.assertNotIn(b"loopback", notes)
 

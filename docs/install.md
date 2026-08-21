@@ -5,7 +5,7 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.4`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.4).
+[`v0.1.0-alpha.7`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.7).
 `docs/install.sh` is the source template for its fixed Linux installer. An
 unrendered template exits before network access.
 
@@ -16,7 +16,7 @@ The first preview targets Linux x86-64 and macOS arm64. Linux arm64 is deferred.
 Download and read the release installer. Then run it.
 
 ```sh
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.4/install.sh
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.7/install.sh
 less install.sh
 sh install.sh
 pkg doctor
@@ -30,10 +30,10 @@ target, install path, or Nix setting.
 Download the package and its checksums. Then install it.
 
 ```sh
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.4/pkg-0.1.0-alpha.4-preview.pkg
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.4/SHA256SUMS
-grep '  pkg-0.1.0-alpha.4-preview.pkg$' SHA256SUMS | shasum -a 256 --check
-sudo installer -pkg ./pkg-0.1.0-alpha.4-preview.pkg -target /
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.7/pkg-0.1.0-alpha.7-preview.pkg
+curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.7/SHA256SUMS
+grep '  pkg-0.1.0-alpha.7-preview.pkg$' SHA256SUMS | shasum -a 256 --check
+sudo installer -pkg ./pkg-0.1.0-alpha.7-preview.pkg -target /
 pkg doctor
 ```
 
