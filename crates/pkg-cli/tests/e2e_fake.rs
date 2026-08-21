@@ -12,58 +12,12 @@ use pkg_cli::ux::CommandError;
 use pkg_nix::{
     AcceptedFormats, FormatVersion, GcReport, GcStatus, NixAdapter, NixVersion, VersionInfo,
 };
-use pkg_pipeline::{InstallBackend, InstallPhase, PipelineError, run_install};
 use pkg_testkit::FakeNix;
 use serde_json::{Map, json};
-
-struct PhaseBackend {
-    phases: Vec<InstallPhase>,
-}
-
-impl PhaseBackend {
-    fn phase(&mut self, phase: InstallPhase) -> Result<(), PipelineError> {
-        self.phases.push(phase);
-        Ok(())
-    }
-}
-
-impl InstallBackend for PhaseBackend {
-    type Resolved = ();
-    type Preflighted = ();
-    type Acquired = ();
-    type Verified = ();
-    type Staged = ();
-    type Activated = ();
-    type Committed = ();
-
-    fn resolve(&mut self) -> Result<(), PipelineError> {
-        self.phase(InstallPhase::Resolve)
-    }
-    fn preflight(&mut self, (): ()) -> Result<(), PipelineError> {
-        self.phase(InstallPhase::Preflight)
-    }
-    fn acquire(&mut self, (): ()) -> Result<(), PipelineError> {
-        self.phase(InstallPhase::Acquire)
-    }
-    fn verify(&mut self, (): ()) -> Result<(), PipelineError> {
-        self.phase(InstallPhase::Verify)
-    }
-    fn stage(&mut self, (): ()) -> Result<(), PipelineError> {
-        self.phase(InstallPhase::Stage)
-    }
-    fn activate(&mut self, (): ()) -> Result<(), PipelineError> {
-        self.phase(InstallPhase::Activate)
-    }
-    fn commit(&mut self, (): ()) -> Result<(), PipelineError> {
-        self.phase(InstallPhase::Commit)
-    }
-    fn rollback_unactivated(&mut self, _: InstallPhase) {}
-}
 
 struct FakeOperations {
     nix: Arc<FakeNix>,
     calls: Vec<&'static str>,
-    install_phases: Vec<InstallPhase>,
 }
 
 impl FakeOperations {
@@ -98,10 +52,6 @@ impl CoreOperations for FakeOperations {
                 "run `pkg doctor`",
             )
         })?;
-        let mut backend = PhaseBackend { phases: Vec::new() };
-        run_install(&mut backend)
-            .map_err(|_| CommandError::new(ExitCode::VerifyFail, "install failed", "retry"))?;
-        self.install_phases = backend.phases;
         self.ok("install")
     }
     fn remove(
@@ -204,7 +154,6 @@ fn every_command_routes_through_typed_fake_core_and_engine_calls_are_exact() {
     let operations = FakeOperations {
         nix: nix.clone(),
         calls: Vec::new(),
-        install_phases: Vec::new(),
     };
     let mut engine = CoreEngine::new(operations);
     let commands = [
@@ -235,18 +184,6 @@ fn every_command_routes_through_typed_fake_core_and_engine_calls_are_exact() {
         [
             "search", "info", "install", "remove", "list", "outdated", "update", "upgrade", "pin",
             "unpin", "history", "rollback", "gc", "repair"
-        ]
-    );
-    assert_eq!(
-        operations.install_phases,
-        [
-            InstallPhase::Resolve,
-            InstallPhase::Preflight,
-            InstallPhase::Acquire,
-            InstallPhase::Verify,
-            InstallPhase::Stage,
-            InstallPhase::Activate,
-            InstallPhase::Commit
         ]
     );
     nix.assert_exhausted().unwrap();

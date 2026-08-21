@@ -324,14 +324,12 @@ External-Nix residual roots remain a sole-manager concern (§11).
   across this publication. The Nix collector scans `/nix/var/nix/gcroots`
   [^gc-roots]. Detail & topology in plan 05 §8.3.
 - **Product state split (D-17/INV-10; canonical layout plan 01 §9.2/§9.3):**
-  - **Machine-global SERVICE state** (root-owned, shared, read-only to users)
+  - **Machine-global SERVICE state** (split root/broker ownership; inaccessible to users)
     under `/var/lib/pkg/` (Linux) / `/Library/Application Support/pkg/`
-    (macOS): `channel/` (TUF + descriptor), `index/<seq>/`, `nixpkgs/<rev>/`,
-    `cache/`, `log/`. This is the runtime/channel/index/source service —
-    **not** package environment state. **One deliberate exception:** the raw
-    adapter/Nix log and authority-audit dir `log/broker/` (i.e. `/var/lib/pkg/log/broker` on Linux,
-    `/Library/Application Support/pkg/log/broker` on macOS) is **not** part of
-    the root-owned service tree — it is **owned and writable only by the
+    (macOS): root owns immutable runtime/config/trust assets and the service
+    ancestors. The broker owns two distinct private domains: its `0700`
+    `broker-home/` and mutable authenticated channel/index/source datastore beneath it,
+    and the separate raw adapter/Nix log and authority-audit leaf `log/broker/`. The latter is **owned and writable only by the
     unprivileged `pkg-nix-broker` account** (directory `0700`, files `0600`,
     **no access to any user**, including other service accounts; its allowlisted
     hash-chained `approvals.ndjson` is service-private authority evidence, while raw adapter logs
@@ -344,12 +342,13 @@ External-Nix residual roots remain a sole-manager concern (§11).
     `activations/gen-<id>/` (the **symlink forest** `pkg` materializes outside
     `/nix/store` — entries point at `/nix/store` targets or approved sources;
     activation invokes no Nix and is bound by `treeDigest`), `journal/`,
-    `cache/`, `log/`. Linux: `$XDG_DATA_HOME/pkg/`
-    (default `~/.local/share/pkg/`); macOS: `~/Library/Application Support/pkg/`.
-    A root-owned fallback `/var/lib/pkg/users/<uid>/` is used for accounts
-    without a usable HOME (plan 01 §9.3, plan 05 §4). `<user-state>` is **not**
-    created by the installer; each user's CLI lazily creates their own on first
-    run (§7.2).
+    `cache/`, `log/`. Linux: `$HOME/.local/share/pkg/`; macOS:
+    `~/Library/Application Support/pkg/`, where HOME is the authenticated uid's
+    system/passwd home. `XDG_DATA_HOME` is not authoritative in this alpha because
+    the broker, helper, root authorization, and uninstall bind the per-uid namespace
+    to that home. There is no fallback root. Explicit alternate roots are read-only
+    inspection origins (plan 01 §9.3, plan 05 §4). `<user-state>` is **not** created
+    by the installer; each user's CLI lazily creates their own on first run (§7.2).
 
 ### 6.2 Required spike — store prefix & relocatability
 
@@ -416,13 +415,14 @@ obtained via an explicit `sudo`/polkit prompt for the install steps only.
    02) — installer ships an initial descriptor+signature for bootstrapping.
 6. Enable + start the daemon; `nix ping-store` health check [^ping-store].
 7. Install the `pkg` binary to `/usr/local/bin/pkg` (or `/opt/pkg/bin`) and
-   create the **root-owned service root** `/var/lib/pkg` (channel/index/source/cache/log).
+   create the **root-owned service root** `/var/lib/pkg`, then the broker-owned
+   private `0700` `broker-home/` and authenticated channel datastore beneath it.
    The root and `log/` ancestor are `root:pkg-nix-broker` mode `0710`: the broker
    receives search-only traversal to its daemon socket and private log leaf, but
    cannot list either ancestor. All other root-owned subtrees remain inaccessible;
    carve out the **broker-owned** raw-log dir `/var/lib/pkg/log/broker` owned
    `pkg-nix-broker:pkg-nix-broker` mode `0700` (files `0600`) — the **only**
-   non-root-owned path in the service tree (§6.1/§7.4). **Per-user authoritative
+   other broker-owned service leaf (§6.1/§7.4). **Per-user authoritative
    state** `<user-state>` (D-17) is **not** created by the installer; each user's
    CLI lazily creates their own `<user-state>` (owned by that uid, mode 0700) on
    first run.
@@ -562,9 +562,10 @@ AuthorizationServices prompt (or `sudo`) for the privileged steps.
    socket is `0666`; callers can traverse/connect but cannot list or replace
    the endpoint. The private `run/helper/` leaf remains
    `root:pkg-nix-broker` `0750` with a `0660` helper socket. Carve out
-   the **broker-owned** raw-log dir `/Library/Application Support/pkg/log/broker`
+   the broker-owned private `0700` `broker-home/` and authenticated channel
+   datastore beneath it. The **broker-owned** raw-log dir `/Library/Application Support/pkg/log/broker`
    owned `pkg-nix-broker:pkg-nix-broker` mode `0700` (files `0600`) — the
-   **only** non-root-owned path in the service tree (§6.1/§7.4).
+   other broker-owned service leaf (§6.1/§7.4).
 7. PATH integration (§10); uninstall manifest (including the exact APFS volume,
    System-keychain item, synthetic entry, mount record, and mount job); then, only after the complete artifact set
    verifies against authenticated release/channel metadata, atomically install
@@ -840,7 +841,7 @@ activations.
   dir:
   ```sh
   # managed by pkg — do not edit
-  __pkg_state="${XDG_DATA_HOME:-$HOME/.local/share}/pkg"
+  __pkg_state="$HOME/.local/share/pkg"
   case ":$PATH:" in
     *":$__pkg_state/current/bin:"*) ;;
     *) PATH="$__pkg_state/current/bin:$PATH" ;;
@@ -996,7 +997,7 @@ snippets, or any foreign `/nix`.
 - **plan 02** — channel descriptor supplies Nix version/hash, substituters,
   keys; installer bootstrap descriptor.
 - **plan 03** — index cached under the machine-global service state
-  `/var/lib/pkg/index/<seq>/` (root-owned, shared; plan 01 §9.2, plan 03 §7) —
+  `/var/lib/pkg/broker-home/index/<seq>/` (broker-owned, private; plan 01 §9.2, plan 03 §7) —
   **not** per-user.
 - **plan 04** — pipeline uses the daemon socket, `nix.conf`, build resources
   defined here.
@@ -1274,7 +1275,8 @@ snippets, or any foreign `/nix`.
   *(Default: rely on Nix's macOS sandbox; never claim parity.)*
 - **Q7.5 Per-user vs shared profile.** **RESOLVED → multi-user per-user
   authoritative state (D-17/INV-10).** The managed
-  runtime/channel/index/source/store service is root-owned and shared;
+  immutable service/trust assets and machine-global ancestors are root-owned;
+  the broker owns its private home/datastore and separate private raw-log leaf;
   manifest/lock/generations/activation/journal/current/PATH are per-user keyed
   by uid (plan 01 §9, plan 05 §4, §10). Affects installer group membership and
   the per-user PATH snippet (§10).

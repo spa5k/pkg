@@ -1488,7 +1488,8 @@ and are defined once here; plan 06 maps each command's outcomes to them.
   the source fixture and parser contract before the runtime pin can move.
 - **Q4.4 Multi-user authoritative state (RESOLVED → D-17).** Package environment
   state (manifest/lock/generations/activation/journal) is **per-user, keyed by uid**;
-  only the runtime/channel/index/source/store service is root-owned and shared. This
+  root owns immutable service/trust assets and machine-global ancestors, while the
+  broker owns its private home/datastore and separate private raw-log leaf. This
   plan operates on `<user-state>` (doc 01 §9.3). Mixed Nixpkgs revisions remain
   per-selector within a user's lock.
 - **Q4.5 Partial substitution races.** If a narInfo appears between preflight

@@ -364,7 +364,7 @@ impl VerifiedNixpkgsSource {
     }
 
     /// Returns the non-sensitive revision key used by the machine-global
-    /// `/var/lib/pkg/nixpkgs/<rev>/` marker directory.
+    /// `/var/lib/pkg/broker-home/nixpkgs/<rev>/` marker directory.
     #[must_use]
     pub fn marker_key(&self) -> &str {
         self.revision().as_str()

@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,6 +20,7 @@ use crate::commands::state::{
     LifecycleEdit, edit_pin_state, list_state, read_history, remove_state, rollback_state,
 };
 use crate::exit::ExitCode;
+use crate::path::StateLocation;
 use crate::progress::PublicEvent;
 use crate::ux::CommandError;
 use pkg_core::state::CollisionPolicy as StateCollisionPolicy;
@@ -124,35 +124,37 @@ impl MaintenanceAdapter for BrokerGcMaintenance<'_> {
 /// Nix access.
 #[derive(Debug)]
 pub struct LocalStateOperations {
-    source: Result<StateLayout, CommandError>,
+    source: StateLayout,
     broker_state_compatible: bool,
 }
 
 impl LocalStateOperations {
-    /// Opens a state root beneath the caller's trusted home boundary.
-    #[must_use]
-    pub fn open(trusted_home: &Path, state_root: &Path, owner_uid: u32) -> Self {
-        let broker_state_compatible =
-            production_state_root(trusted_home).is_some_and(|production| production == state_root);
-        let source = StateLayout::initialize(trusted_home, state_root, owner_uid).map_err(|_| {
+    /// Opens the resolved state location beneath its trusted ownership boundary.
+    pub fn open(location: &StateLocation, owner_uid: u32) -> Result<Self, CommandError> {
+        let source = StateLayout::initialize(
+            location.trusted_boundary(),
+            location.state_root(),
+            owner_uid,
+        )
+        .map_err(|_| {
             CommandError::new(
                 ExitCode::StateCorrupt,
                 "the per-user package state is missing or unsafe",
                 "run `pkg doctor` before managing packages",
             )
-        });
-        Self {
+        })?;
+        Ok(Self {
             source,
-            broker_state_compatible,
-        }
+            broker_state_compatible: location.is_production(),
+        })
     }
 
-    fn layout(&self) -> Result<&StateLayout, CommandError> {
-        self.source.as_ref().map_err(Clone::clone)
+    const fn layout(&self) -> &StateLayout {
+        &self.source
     }
 
     fn active(&self) -> Result<pkg_core::GenerationSnapshot, CommandError> {
-        let layout = self.layout()?;
+        let layout = self.layout();
         let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
         load_active_snapshot(layout, &lease)
             .map_err(state_read_error)?
@@ -166,7 +168,7 @@ impl LocalStateOperations {
     }
 
     fn history_view(&self) -> Result<History, CommandError> {
-        let layout = self.layout()?;
+        let layout = self.layout();
         let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
         load_retained_history(layout, &lease).map_err(state_read_error)
     }
@@ -299,7 +301,7 @@ impl CoreOperations for LocalStateOperations {
         if mode == ChannelRefreshMode::Check {
             return channel_refresh_result(report, mode, false);
         }
-        let layout = self.layout()?;
+        let layout = self.layout();
         if layout
             .current_generation()
             .map_err(|_| mutation_failed())?
@@ -363,7 +365,7 @@ impl CoreOperations for LocalStateOperations {
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
         if policy.dry_run() {
-            let layout = self.layout()?;
+            let layout = self.layout();
             let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
             let active = load_active_snapshot(layout, &lease)
                 .map_err(state_read_error)?
@@ -399,7 +401,7 @@ impl CoreOperations for LocalStateOperations {
                 "omit --from-manifest and --from-lock to verify or repair a generation",
             ));
         }
-        let layout = self.layout()?.clone();
+        let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         let mut handle = broker
             .begin(BrokerOperationKind::Repair)
@@ -638,7 +640,7 @@ impl LocalStateOperations {
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
         require_supported_upgrade_options(args)?;
-        let layout = self.layout()?.clone();
+        let layout = self.layout().clone();
         let source = self.active()?;
         let mut selection = select_upgrade(
             source.state().clone(),
@@ -809,7 +811,7 @@ impl LocalStateOperations {
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
         require_supported_install_options(args)?;
-        let layout = self.layout()?.clone();
+        let layout = self.layout().clone();
         let nonce = secure_nonce()?;
         let selectors = install_selectors(args, &nonce)?;
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
@@ -961,6 +963,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
+            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, _) = self.gc_lease(layout)?;
             let maintenance = BrokerGcMaintenance {
                 broker: Mutex::new(&mut *broker),
@@ -980,7 +983,7 @@ impl LocalStateOperations {
 
     fn preview_history_delete(&self, args: &HistoryArgs) -> Result<CommandResult, CommandError> {
         let generation = args.delete().ok_or_else(mutation_failed)?;
-        let layout = self.layout()?;
+        let layout = self.layout();
         let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
         let active = load_active_snapshot(layout, &lease)
             .map_err(state_read_error)?
@@ -1000,7 +1003,7 @@ impl LocalStateOperations {
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
         let generation = args.delete().ok_or_else(mutation_failed)?;
-        let layout = self.layout()?.clone();
+        let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
         self.recover_pending_state_edit(&layout, &mut broker)?;
@@ -1011,6 +1014,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
+            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, operation_id) = self.gc_lease(&layout)?;
             let active = load_active_snapshot(&layout, &lease)
                 .map_err(state_read_error)?
@@ -1021,7 +1025,6 @@ impl LocalStateOperations {
                 plan_generation_prune(&active, history.snapshots(), generation, unix_now()?)
                     .map_err(|_| gc_failed())?;
             confirm_destructive(policy.yes(), &format!("Prune generation {generation}?"))?;
-            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let maintenance = BrokerGcMaintenance {
                 broker: Mutex::new(&mut broker),
                 handle: handle.clone(),
@@ -1039,7 +1042,7 @@ impl LocalStateOperations {
     }
 
     fn preview_gc(&self, args: &GcArgs) -> Result<CommandResult, CommandError> {
-        let layout = self.layout()?;
+        let layout = self.layout();
         let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
         let active = load_active_snapshot(layout, &lease)
             .map_err(state_read_error)?
@@ -1056,7 +1059,7 @@ impl LocalStateOperations {
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
-        let layout = self.layout()?.clone();
+        let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         let recovered = self.recover_pending_prunes(&layout, &mut broker)?;
         self.recover_pending_state_edit(&layout, &mut broker)?;
@@ -1064,6 +1067,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
+            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, operation_id) = self.gc_lease(&layout)?;
             let active = load_active_snapshot(&layout, &lease)
                 .map_err(state_read_error)?
@@ -1072,7 +1076,6 @@ impl LocalStateOperations {
             let plan = plan_gc(&active, history.snapshots(), gc_policy(args)?, unix_now()?)
                 .map_err(|_| gc_failed())?;
             require_gc_confirmation(policy, &plan)?;
-            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let maintenance = BrokerGcMaintenance {
                 broker: Mutex::new(&mut broker),
                 handle: handle.clone(),
@@ -1109,7 +1112,7 @@ impl LocalStateOperations {
 
     fn commit_rollback(&self, args: &RollbackArgs) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
-        let layout = self.layout()?.clone();
+        let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         let _ = self.recover_pending_prunes(&layout, &mut broker)?;
         self.recover_pending_state_edit(&layout, &mut broker)?;
@@ -1199,7 +1202,7 @@ impl LocalStateOperations {
         edit: impl FnOnce(pkg_core::lifecycle::LifecycleState) -> Result<LifecycleEdit, CommandError>,
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
-        let layout = self.layout()?.clone();
+        let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         let _ = self.recover_pending_prunes(&layout, &mut broker)?;
         self.recover_pending_state_edit(&layout, &mut broker)?;
@@ -1331,6 +1334,7 @@ impl LocalStateOperations {
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
         let result = (|| {
+            broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, _) = self.gc_lease(layout)?;
             let maintenance = BrokerGcMaintenance {
                 broker: Mutex::new(&mut *broker),
@@ -2097,14 +2101,6 @@ fn unix_now() -> Result<u64, CommandError> {
         .map_err(|_| mutation_failed())
 }
 
-fn production_state_root(home: &Path) -> Option<PathBuf> {
-    match std::env::consts::OS {
-        "linux" => Some(home.join(".local/share/pkg")),
-        "macos" => Some(home.join("Library/Application Support/pkg")),
-        _ => None,
-    }
-}
-
 fn secure_nonce() -> Result<String, CommandError> {
     let mut bytes = [0_u8; 16];
     File::open("/dev/urandom")
@@ -2466,6 +2462,7 @@ mod tests {
     use std::os::unix::net::UnixStream;
     use std::sync::mpsc;
     use std::thread;
+    use std::time::Duration;
 
     use serde_json::Value;
     use tempfile::TempDir;
@@ -2597,6 +2594,80 @@ mod tests {
             panic!("expected install command");
         };
         install_selectors(args, "00112233445566778899aabbccddeeff").unwrap()
+    }
+
+    #[test]
+    fn gc_wait_does_not_hold_the_local_state_lease() {
+        let home = TempDir::new().unwrap();
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
+        let layout = StateLayout::initialize(home.path(), &home.path().join("pkg"), uid).unwrap();
+        let operations = LocalStateOperations {
+            source: layout.clone(),
+            broker_state_compatible: true,
+        };
+
+        let broker = InProcessBroker::new().unwrap();
+        let build_caller = broker
+            .connect(InProcessCallerPeer::authenticated(uid))
+            .unwrap();
+        let build = build_caller.begin(BrokerOperationKind::Build).unwrap();
+        build_caller.acquire_build(&build).unwrap();
+        build_caller.acquire_gc_inhibit(&build).unwrap();
+
+        let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let server_broker = broker.clone();
+        let server = thread::spawn(move || {
+            let gc_caller = server_broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap();
+            let (request_id, request) = read_request(&mut server_stream);
+            assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Gc));
+            let gc = gc_caller.begin(BrokerOperationKind::Gc).unwrap();
+            write_response(
+                &mut server_stream,
+                request_id,
+                CliBrokerResponse::Started(gc.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server_stream);
+            assert_eq!(request, CliBrokerRequest::AcquireGc(gc.clone()));
+            waiting_tx.send(()).unwrap();
+            gc_caller.acquire_gc_wait(&gc).unwrap();
+            write_response(
+                &mut server_stream,
+                request_id,
+                CliBrokerResponse::GcAdmissionAcquired,
+            );
+
+            let (request_id, request) = read_request(&mut server_stream);
+            assert_eq!(request, CliBrokerRequest::Complete(gc.clone()));
+            gc_caller.complete(&gc).unwrap();
+            write_response(&mut server_stream, request_id, CliBrokerResponse::Completed);
+        });
+
+        let recovery_layout = layout.clone();
+        let recovery = thread::spawn(move || {
+            let mut client = BrokerLifecycleClient::from_stream(client_stream);
+            operations.recover_pending_prunes(&recovery_layout, &mut client)
+        });
+
+        waiting_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let identity =
+            LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap();
+        let probe = StateLease::try_exclusive(&layout, &identity);
+        let lease_was_available = probe.is_ok();
+        drop(probe);
+        build_caller.cancel(&build).unwrap();
+
+        assert!(lease_was_available, "GC admission wait held StateLease");
+        assert_eq!(recovery.join().unwrap().unwrap(), Vec::<String>::new());
+        server.join().unwrap();
+        let admissions = broker.admission_snapshot();
+        assert!(!admissions.build_held());
+        assert!(!admissions.gc_held());
+        assert_eq!(admissions.gc_inhibitor_count(), 0);
     }
 
     #[test]
@@ -3000,11 +3071,8 @@ mod tests {
         fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let uid = fs::symlink_metadata(home.path()).unwrap().uid();
         let cli = Cli::try_parse(["pkg", "history"]).unwrap();
-        let mut engine = CoreEngine::new(LocalStateOperations::open(
-            home.path(),
-            &home.path().join("pkg"),
-            uid,
-        ));
+        let location = StateLocation::alternate(home.path().join("pkg"), home.path().to_path_buf());
+        let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
         let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
         assert_eq!(result.fields()["entries"], Value::Array(vec![]));
         assert_eq!(
@@ -3030,7 +3098,8 @@ mod tests {
         drop(StateLease::try_exclusive(&layout, &identity).unwrap());
 
         let cli = Cli::try_parse(["pkg", "history"]).unwrap();
-        let mut engine = CoreEngine::new(LocalStateOperations::open(home.path(), &state, uid));
+        let location = StateLocation::alternate(state.clone(), home.path().to_path_buf());
+        let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
         let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
         assert_eq!(result.fields()["entries"], Value::Array(vec![]));
     }
@@ -3494,7 +3563,8 @@ mod tests {
         let state = home.path().join("alternate");
         let cli =
             Cli::try_parse(["pkg", "gc", "--yes", "--state", state.to_str().unwrap()]).unwrap();
-        let mut engine = CoreEngine::new(LocalStateOperations::open(home.path(), &state, uid));
+        let location = StateLocation::alternate(state.clone(), home.path().to_path_buf());
+        let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
 
         let error = engine.execute(&CommandRequest::from_cli(&cli)).unwrap_err();
         assert_eq!(error.exit_code(), ExitCode::Config);

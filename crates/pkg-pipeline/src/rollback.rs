@@ -10,6 +10,7 @@ use pkg_store::{ActivationInput, ActivationPlan, StateLayout, stage_activation};
 use serde_json::{Value, json};
 
 use crate::activation_metadata::{activation_inputs, collision_policy_name, collision_resolutions};
+use crate::commit::{discard_staging, strictly_newer};
 use crate::{CandidateGeneration, CommitError, PreparedGeneration};
 
 /// Stable failures while turning a verified rollback target into a fresh generation.
@@ -71,7 +72,7 @@ pub(crate) fn prepare_rollback_with<E>(
 ) -> Result<PreparedGeneration, RollbackPrepareError> {
     let generation =
         GenerationId::new(generation_id).map_err(|_| RollbackPrepareError::InvalidGeneration)?;
-    if !is_strictly_newer(generation.as_str(), rollback.active_generation()) {
+    if !strictly_newer(generation.as_str(), rollback.active_generation()) {
         return Err(RollbackPrepareError::InvalidGeneration);
     }
     layout
@@ -226,31 +227,6 @@ fn build_candidate(
         .map_err(RollbackPrepareError::Commit)
 }
 
-fn is_strictly_newer(candidate: &str, active: &str) -> bool {
-    let Some(candidate) = candidate.strip_prefix("gen-") else {
-        return false;
-    };
-    let Some(active) = active.strip_prefix("gen-") else {
-        return false;
-    };
-    let candidate = candidate.trim_start_matches('0');
-    let active = active.trim_start_matches('0');
-    let candidate = if candidate.is_empty() { "0" } else { candidate };
-    let active = if active.is_empty() { "0" } else { active };
-    candidate.len() > active.len() || (candidate.len() == active.len() && candidate > active)
-}
-
-fn discard_staging(staging: &Path) {
-    let Ok(metadata) = fs::symlink_metadata(staging) else {
-        return;
-    };
-    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-        let _ = fs::remove_dir_all(staging);
-    } else {
-        let _ = fs::remove_file(staging);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,8 +373,8 @@ mod tests {
             |_, _, _| -> Result<ActivationPlan, ()> { panic!("staging must not run") },
         );
         assert_eq!(result.unwrap_err(), RollbackPrepareError::InvalidGeneration);
-        assert!(!is_strictly_newer("gen-00002", "gen-0002"));
-        assert!(is_strictly_newer("gen-0010", "gen-0009"));
+        assert!(!strictly_newer("gen-00002", "gen-0002"));
+        assert!(strictly_newer("gen-0010", "gen-0009"));
     }
 
     fn snapshot(uid: u32, id: &str, parent: Option<&str>) -> GenerationSnapshot {

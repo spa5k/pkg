@@ -52,8 +52,10 @@ machine-global local-build admission lease (distinct from per-user state leases)
 approved local builds across users. No
 Rosetta, cross-compilation, emulation, or remote builders in v1 (**D-11**, **INV-08**).
 
-**Multi-user ownership split (D-17 / INV-10):** the immutable runtime, channel, index, source,
-and store *service* are **root-owned and machine-global (shared, read-only to users)**; the
+**Multi-user ownership split (D-17 / INV-10):** immutable service/trust assets and
+machine-global ancestors are **root-owned and shared**; the broker owns two private domains:
+its `0700` home and mutable authenticated channel/index/source datastore leaves, and the separate
+`0700` raw-log leaf (`/var/lib/pkg/log/broker` on Linux and `/Library/Application Support/pkg/log/broker` on macOS); the
 **authoritative package environment state** (manifest, lock, generations, activation, journal)
 is **per-user, keyed by OS uid**, owned by that user. Two narrow, distinct privilege boundaries exist (D-19): an **unprivileged singleton broker**
 (authenticates the caller, is the **sole general Nix daemon client and sole spawner of the bundled `nix` CLI for all normal operations**, and the sole
@@ -224,10 +226,11 @@ SIGTERM-to-subprocess-group + lease release + staging cleanup (doc 04 §9, doc 0
 |---|---|---|---|
 | `/nix/store` + `/nix/var/nix/*` | machine-global | root (exclusive, INV-02) | Fixed store prefix; cache.nixos.org path hashing. |
 | `/opt/pkg/{bin,nix/<ver>}` runtime | machine-global | root (read-only to users) | Bundled pinned `nix`; `nix/current` atomic swap (doc 02 §10). |
-| `/var/lib/pkg/channel/{tuf,descriptor.json}` | machine-global | root (shared, read-only) | Single trust root per host (TRU-INV-01). |
-| `/var/lib/pkg/index/<seq>/` | machine-global | root (shared, read-only) | Disposable derived index; verified per-host. |
-| `/var/lib/pkg/nixpkgs/<rev>/` | machine-global | root (shared, read-only) | Pinned catalog source; shared cache. |
-| `/var/lib/pkg/{cache,log}` | machine-global | root | Service downloads + service logs. |
+| `/var/lib/pkg/` service ancestor and immutable trust/config assets | machine-global | root | Protects service and trust boundaries; users cannot list private state. |
+| `/var/lib/pkg/broker-home/channel/{tuf,descriptor.json}` | machine-global | broker, private `0700` | Mutable authenticated channel state; embedded trust bootstrap remains root-owned. |
+| `/var/lib/pkg/broker-home/{index/<seq>,nixpkgs/<rev>}` | machine-global | broker, private `0700` | Disposable authenticated index and verified pinned source data. |
+| `/var/lib/pkg/log/broker` | machine-global | broker, private `0700` | Separate raw adapter/Nix log and authority-audit leaf. |
+| `/var/lib/pkg/cache` and `/var/lib/pkg/log` ancestor | machine-global | root | Service downloads and protected log ancestry. |
 | `/nix/var/nix/gcroots/pkg/users/<uid>/*` (one per selected output) | **per-user (uid)** | root-owned symlinks, uid-scoped dir | One GC root per selected output, atomically published by the privileged root-helper/service (broker-mediated) before the `current` swap (D-18, ARCH-INV-06). |
 | `<user-state>/manifest.json` | **per-user (uid)** | that uid, 0700 | Desired state — authoritative. |
 | `<user-state>/lock.json` | **per-user (uid)** | that uid, 0700 | Realized state — authoritative. |
@@ -235,9 +238,12 @@ SIGTERM-to-subprocess-group + lease release + staging cleanup (doc 04 §9, doc 0
 | `<user-state>/activations/gen-<id>/` (+ `current` → it) | **per-user (uid)** | that uid, 0700 | Rust-materialized symlink forest (entries point into `/nix/store`/sources); activation invokes no Nix; `treeDigest`-bound (D-18). |
 | `$XDG_CONFIG_HOME/pkg/config.toml` | **per-user (uid)** | that uid | Prefs **only** — cannot override trust/substituters/store (INV-03). |
 
-`<user-state>` = `$XDG_DATA_HOME/pkg/` (Linux) or `~/Library/Application Support/pkg/` (macOS),
-with a root-owned fallback `/var/lib/pkg/users/<uid>/` for accounts without a usable HOME
-(doc 01 §9.3, doc 05 §4).
+`<user-state>` = `$HOME/.local/share/pkg/` (Linux) or
+`~/Library/Application Support/pkg/` (macOS), where HOME is the authenticated uid's
+system/passwd home. `XDG_DATA_HOME` is not authoritative in this alpha because the
+broker, helper, root authorization, and uninstall bind the per-uid namespace to that
+home. There is no fallback root. Explicit alternate roots are read-only inspection
+origins (doc 01 §9.3, doc 05 §4).
 
 ---
 
@@ -501,8 +507,8 @@ The non-obvious corrections encoded across `00`–`12`:
   (doc 05 §7, PR-20).
 - **UID-scoped authoritative state (D-17 / INV-10).** Manifest/lock/generations/activation/
   journal are **per-user keyed by OS uid**, *not* a single shared profile. This supersedes the
-  earlier single-shared-profile assumption (former UD-00.4). Only the immutable runtime/channel/
-  index/source/store *service* is root-owned and shared. GC roots are scoped to
+  earlier single-shared-profile assumption (former UD-00.4). Root owns immutable service/trust
+  assets and machine-global ancestors; the broker owns its private home/datastore and separate raw-log leaf. GC roots are scoped to
   `/nix/var/nix/gcroots/pkg/users/<uid>/` (doc 01 §9, doc 05 §4, PR-18, RISK-21).
 - **Generation schema / per-output-GC-root-before-swap ordering.** The per-output GC roots are
   created **before** the atomic `current` swap (the **rooted** step precedes the **activated**

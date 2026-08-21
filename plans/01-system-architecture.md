@@ -104,7 +104,7 @@ flowchart TB
 | `broker` | **Private, unprivileged product-owned managed service (D-18/INV-11):** sole **general** client of the private daemon socket for all normal operations — evaluate/build/substitute/path-info/read-only `nix store verify`/liveness-respecting GC — (a daemon `allowed-user`, **never** a Nix `trusted-user`; root is the only `trusted-user`, and `trusted-users` are root-equivalent; the two-phase `nix store repair` maintenance op is delegated to the root helper, §12.4); owns `nix-driver`; spawns the bundled `nix` CLI (argv + JSON stdout/stderr; ARCH-INV-01); **sole mediator/requester** of per-output GC-root operations (root helper is the sole writer); mediates machine-global channel/index/source refresh; authenticates caller uid | `/var/lib/pkg` machine-global service state (channel/index/source) | daemon (via bundled CLI), root-helper (GC roots), store-fs | this doc §8/§11 |
 | `nix-driver` | Spawn bundled `nix` CLI subprocess with controlled env (argv); parse its JSON stdout/structured stderr where supported (§11); timeouts (**broker-owned; never invoked from the user CLI**). The bundled CLI→`nix-daemon` link is Nix's private native protocol, not JSON | none | daemon (via bundled CLI) | this doc §8/§11 |
 | `resolver` | Map selector → attr path → evaluate-only derivation plan on this host | none | broker (evaluate-only), index reads | 04 |
-| `updater` (TUF client) | Verify & apply signed metadata; pin artifacts. **Refresh of machine-global channel is broker-mediated** (writes `/var/lib/pkg/channel`); user-side does verified reads only | `channel/tuf/`, `channel/descriptor.json` (broker-owned, machine-global) | store-fs, broker | 02 |
+| `updater` (TUF client) | Verify & apply signed metadata; pin artifacts. **Refresh of machine-global channel is broker-mediated** (writes `/var/lib/pkg/broker-home/channel`); user-side does verified reads only | `broker-home/channel/tuf/`, `broker-home/channel/descriptor.json` (broker-owned, machine-global) | store-fs, broker | 02 |
 | `index-service` | Load/derive/refresh disposable catalog index. **Refresh is broker-mediated**; verified reads may be user-side | `index/<seq>/` (broker-owned, machine-global) | updater, broker | 03 |
 | `store-fs` | Atomic writes (temp→fsync→rename), migrations, integrity | per-user managed tree (user side) + machine-global tree (broker side) | — | 05 |
 | `journal` | Operation intent/progress/leases for restart recovery | `journal/` (per-user) | store-fs | 05 |
@@ -136,7 +136,7 @@ flowchart LR
 - 🛠 The **root helper** is a separate, narrow privileged boundary reserved for: first-run bootstrap, runtime upgrades, daemon/broker lifecycle (service-control), `/nix` ownership, and **atomically publishing/removing GC-root sets under `/nix/var/nix/gcroots/pkg` as the sole filesystem writer** (on a closed validated request from the broker only). It is **not** a `setuid` binary in V1 (sudo/polkit/AuthorizationServices or a narrow root service), carries **no normal Nix JSON traffic** — its single Nix-touching exception is the **two-phase `nix store repair` maintenance operation** (the modern mutating command; there is no `nix store verify --repair`) run as root against a broker-chosen validated set of registered StorePath targets within the FULL computed closure reachable from the generation's selected output roots (incl. missing-on-disk targets), invoked only by a closed opaque/typed broker request after the broker's read-only `nix store verify` confirms corruption (§11/§12.4): **Phase A** per-path cache-only repair (managed pinned substituters/keys, `max-jobs = 0`, `builders` empty; auto-repairs a signed cache hit, stops before any local/remote build on an unavailable substitute); **Phase B** the ordinary build preview/approval flow with a `RepairBuildPlan`/digest over **every output Nix may rebuild**, holding the broker machine-wide build mutex + shared GC-inhibit permit, run locally with bounded nonzero `max-jobs`, `builders` empty; it resolves an opaque expiring single-use maintenance capability bound server-side to caller UID, an existing pkg-owned rooted generation, the exact typed corrupt targets within the FULL computed closure reachable from the generation's selected output roots (incl. missing-on-disk targets), the `RepairBuildPlan`/target digest, `policyVersion`, and mode (stale/replayed/mismatched/cross-UID fail closed), accepts no public/raw path, installable, derivation, expression, flake ref, argv, option, substituter/key, environment override, output selection, or arbitrary verb, and returns only sanitized per-path outcome (raw Nix logs service-private) — and is never called directly by the user CLI. Detail/units in doc 07.
 - ✅ In Nix's multi-user model, unprivileged clients talk to a root-owned `nix-daemon` over a socket; the daemon performs store writes. — *Nix Reference Manual, "Multi-user mode".*
 - 🛠 `pkg` selects multi-user mode on all V1 platforms (even single-user hosts get a daemon) so the privilege boundary is uniform.
-- 🛠 **Per-user authoritative state (D-17):** manifest/lock/generations/activation/journal are owned by the invoking uid under `<user-state>` (§9.3); the user CLI writes **only** here (ARCH-INV-08). The root-owned, shared layer is limited to the immutable runtime/channel/index/source/store service (§9.2), whose **refresh is broker-mediated**. The broker mediates per-output GC-root operations; the root helper is the sole writer that publishes/removes a user's root sets under `/nix/var/nix/gcroots/pkg/users/<uid>/` (D-18/INV-11) — and the broker manages the shared service without ever reading or mutating another user's authoritative package state.
+- 🛠 **Per-user authoritative state (D-17):** manifest/lock/generations/activation/journal are owned by the invoking uid under `<user-state>` (§9.3); the user CLI writes **only** here (ARCH-INV-08). Root owns immutable service/trust assets and machine-global ancestors; the broker owns its private `0700` home and mutable authenticated channel/index/source datastore leaves, plus the separate private `log/broker` leaf (§9.2). The broker mediates per-output GC-root operations; the root helper is the sole writer that publishes/removes a user's root sets under `/nix/var/nix/gcroots/pkg/users/<uid>/` (D-18/INV-11) — and the broker manages the shared service without ever reading or mutating another user's authoritative package state.
 
 ## 9. Canonical state-directory layout
 
@@ -156,7 +156,7 @@ flowchart LR
 /nix/var/nix/profiles/                       # UNUSED by pkg (we do not use nix profile; D-12)
 ```
 
-### 9.2 Managed runtime + machine-global service state (root-owned, shared; D-17)
+### 9.2 Managed runtime + machine-global service state (split root/broker ownership; D-17)
 
 ```
 /opt/pkg/                           # product install root (root-owned, read-only to users)
@@ -167,19 +167,21 @@ flowchart LR
     nix.conf                        # generated, channel-locked trust config (doc 07)
   share/pkg/                        # bundled assets (completions, embedded TUF root.json)
 
-/var/lib/pkg/                       # machine-global SERVICE state (root-owned; shared,
-                                    # read-only to users; D-17/INV-10)
-  channel/
+/var/lib/pkg/                       # root-owned machine-global service ancestor; users cannot list
+  broker-home/                     # broker-owned private 0700 home
+   channel/                        # broker-owned mutable authenticated datastore
     tuf/{root,timestamp,snapshot,targets}*.json   # TUF metadata cache (doc 02)
     descriptor.json                 # the accepted channel descriptor (doc 02)
-  index/<channelSeq>/               # disposable derived index (doc 03); shared, read-only
-  nixpkgs/<rev>/                    # fetched, pinned catalog source (doc 03); shared
+   index/<channelSeq>/              # disposable authenticated index (doc 03)
+   nixpkgs/<rev>/                   # fetched, verified catalog source (doc 03)
   cache/                            # service downloads (Nix runtime tarballs) — root-owned
-  log/                              # service-level logs (daemon/helper; rotated)
+  log/                              # root-owned service log ancestor
+   broker/                          # broker-owned private 0700 raw logs
 
 # NOTE: manifest.json, lock.json, generations/, current, activation, and the per-user
 # journal are NOT machine-global — they are per-user authoritative state (§9.3). Only the
-# immutable runtime/channel/index/source/store SERVICE is root-owned and shared.
+# immutable service/trust assets and machine-global ancestors are root-owned;
+# private mutable authenticated channel/index/source data is broker-owned.
 # The user CLI NEVER writes here (ARCH-INV-08); channel/index/source REFRESH is performed
 # by the broker/service, and the CLI performs only verified READS (§9.3 cache).
 ```
@@ -190,10 +192,12 @@ flowchart LR
 
 ```
 # Canonical per-user state root <user-state>:
-#   Linux : $XDG_DATA_HOME/pkg/   (default ~/.local/share/pkg/)
+#   Linux : $HOME/.local/share/pkg/
 #   macOS : ~/Library/Application Support/pkg/
-# A root-owned fallback /var/lib/pkg/users/<uid>/ is used for accounts whose HOME /
-# XDG_DATA_HOME is unsuitable (e.g. system service accounts). Owned by that uid, mode 0700.
+# Here HOME is the authenticated uid's system/passwd home. XDG_DATA_HOME is not
+# authoritative in this alpha because the broker, helper, root authorization, and
+# uninstall all bind the per-uid namespace to that home. There is no fallback root.
+# Explicit alternate roots are read-only inspection origins.
 
 <user-state>/
   manifest.json                     # CURRENT desired state (doc 05) — authoritative, per-user
@@ -310,11 +314,11 @@ Field names below are referenced verbatim by docs 02, 03, 04, 05, 06. Full versi
 
 ### 10.4 Channel descriptor (name reference only)
 
-The **canonical schema** for `descriptor.json` is defined in **doc 02 §7**. Doc 01 only fixes the *file location* (`/var/lib/pkg/channel/descriptor.json`) and that it is referenced from the generation via `channelSeq`.
+The **canonical schema** for `descriptor.json` is defined in **doc 02 §7**. Doc 01 only fixes the *file location* (`/var/lib/pkg/broker-home/channel/descriptor.json`) and that it is referenced from the generation via `channelSeq`.
 
 ### 10.5 Index record (name reference only)
 
-The **canonical schema** for index records is defined in **doc 03 §7**. Doc 01 only fixes the *directory* (`/var/lib/pkg/index/<channelSeq>/`).
+The **canonical schema** for index records is defined in **doc 03 §7**. Doc 01 only fixes the *directory* (`/var/lib/pkg/broker-home/index/<channelSeq>/`).
 
 ## 11. Nix subprocess contract (ARCH-INV-01)
 
@@ -433,7 +437,7 @@ sequenceDiagram
   UP->>UP: fetch timestamp+snapshot+targets (TUF)
   UP->>UP: verify chain + freshness (doc 02)
   alt new descriptor (channelSeq' > currentSeq)
-    UP->>FS: stage descriptor.json (tmp) under /var/lib/pkg/channel
+    UP->>FS: stage descriptor.json (tmp) under /var/lib/pkg/broker-home/channel
     UP->>FS: atomic replace
     BRK-->>CLI: new channelSeq (CLI records it in per-user state ONLY)
     Note over CLI: (Nixpkgs/index fetched lazily by doc 03, via broker)

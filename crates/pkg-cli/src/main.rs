@@ -13,7 +13,7 @@ use pkg_cli::completion::write_completion;
 use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
 use pkg_cli::exit::ExitCode;
 use pkg_cli::log::{LogConfig, LogLevel, LogRecord, StructuredLog};
-use pkg_cli::path::{HostFamily, PathObservation, default_state_root};
+use pkg_cli::path::{self, HostFamily, PathObservation, StateLocation, StateLocationError};
 use pkg_cli::support::SupportBundle;
 use pkg_cli::ux::{CommandError, OutputMode, write_error};
 use pkg_installer::{UninstallErrorCode, uninstall_linux_production, uninstall_macos_production};
@@ -23,19 +23,7 @@ fn main() -> ProcessExitCode {
     let cli = Cli::parse();
     if let Err(error) = cli.validate() {
         let command_error = CommandError::new(error.exit_code(), error.to_string(), error.hint());
-        let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
-        if write_error(
-            std::io::stdout(),
-            std::io::stderr(),
-            mode,
-            cli.command_name(),
-            &command_error,
-        )
-        .is_err()
-        {
-            return ProcessExitCode::FAILURE;
-        }
-        return error.exit_code().into();
+        return write_command_error(&cli, &command_error);
     }
 
     match cli.parsed_command() {
@@ -50,29 +38,29 @@ fn main() -> ProcessExitCode {
         _ => {}
     }
 
-    install_crash_reporter(&cli);
+    let location = match resolve_cli_state_location(&cli) {
+        Ok(location) => location,
+        Err(error) => return write_state_location_error(&cli, error),
+    };
 
-    let trusted_home = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_default();
-    let state_root = observability_root(&cli).unwrap_or_default();
-    let mut engine = CoreEngine::new(LocalStateOperations::open(
-        &trusted_home,
-        &state_root,
-        Uid::effective().as_raw(),
-    ));
+    let operations = match LocalStateOperations::open(&location, Uid::effective().as_raw()) {
+        Ok(operations) => operations,
+        Err(error) => return write_command_error(&cli, &error),
+    };
+    install_crash_reporter(&location);
+    let mut engine = CoreEngine::new(operations);
 
     let exit = match execute_command_with_operation_log(
         &cli,
         &mut engine,
-        &state_root.join("logs"),
+        &location.state_root().join("logs"),
         std::io::stdout(),
         std::io::stderr(),
     ) {
         Ok(exit) => exit,
         Err(_) => return ProcessExitCode::FAILURE,
     };
-    write_command_log(&cli, exit);
+    write_command_log(&location, cli.command_name(), exit);
     exit.into()
 }
 
@@ -176,27 +164,58 @@ fn uninstall_command_error(code: UninstallErrorCode) -> CommandError {
     CommandError::new(exit, message, hint)
 }
 
-fn observability_root(cli: &Cli) -> Option<std::path::PathBuf> {
-    cli.state()
-        .map(std::path::Path::to_owned)
-        .or_else(|| HostFamily::detect().and_then(default_state_root))
+fn resolve_cli_state_location(cli: &Cli) -> Result<StateLocation, StateLocationError> {
+    let host = HostFamily::detect().ok_or(StateLocationError::UnsupportedHost)?;
+    path::resolve_state_location(host, cli.state())
 }
 
-fn install_crash_reporter(cli: &Cli) {
-    let Some(root) = observability_root(cli) else {
-        return;
+fn write_state_location_error(cli: &Cli, error: StateLocationError) -> ProcessExitCode {
+    let command_error = match error {
+        StateLocationError::RelativeAlternateRoot => CommandError::new(
+            ExitCode::Config,
+            "the alternate state root must be an absolute path",
+            "use an absolute path for --state or PKG_STATE_DIR",
+        ),
+        StateLocationError::SystemHomeUnavailable => CommandError::new(
+            ExitCode::Config,
+            "the invoking user's system home directory is unavailable",
+            "repair the effective user's system account and retry",
+        ),
+        StateLocationError::UnsupportedHost => CommandError::new(
+            ExitCode::Config,
+            "this operating system is not supported",
+            "run pkg on Linux or macOS",
+        ),
     };
+    write_command_error(cli, &command_error)
+}
+
+fn write_command_error(cli: &Cli, error: &CommandError) -> ProcessExitCode {
+    let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
+    if write_error(
+        std::io::stdout(),
+        std::io::stderr(),
+        mode,
+        cli.command_name(),
+        error,
+    )
+    .is_err()
+    {
+        return ProcessExitCode::FAILURE;
+    }
+    error.exit_code().into()
+}
+
+fn install_crash_reporter(location: &StateLocation) {
     let Ok(context) = CrashContext::new(CrashPhase::Cli, None, None) else {
         return;
     };
-    CrashReporter::new(root.join("crash/latest.json"), context).install();
+    CrashReporter::new(location.state_root().join("crash/latest.json"), context).install();
 }
 
-fn write_command_log(cli: &Cli, exit_code: ExitCode) {
-    let Some(root) = observability_root(cli) else {
-        return;
-    };
-    let Ok(log) = StructuredLog::open(root.join("logs"), LogConfig::default()) else {
+fn write_command_log(location: &StateLocation, command_name: &'static str, exit_code: ExitCode) {
+    let Ok(log) = StructuredLog::open(location.state_root().join("logs"), LogConfig::default())
+    else {
         return;
     };
     let level = if exit_code == ExitCode::Ok {
@@ -207,22 +226,17 @@ fn write_command_log(cli: &Cli, exit_code: ExitCode) {
     let _ = log.append(&LogRecord::command(
         level,
         "command_finished",
-        cli.command_name(),
+        command_name,
         Some(exit_code.as_u8()),
     ));
 }
 
 fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
-    let Some(host) = HostFamily::detect() else {
-        return ExitCode::Config.into();
+    let location = match resolve_cli_state_location(cli) {
+        Ok(location) => location,
+        Err(error) => return write_state_location_error(cli, error),
     };
-    let state_root = cli
-        .state()
-        .map(std::path::Path::to_owned)
-        .or_else(|| default_state_root(host));
-    let Some(state_root) = state_root else {
-        return ExitCode::Config.into();
-    };
+    let state_root = location.state_root().to_owned();
     let expected_bin = state_root.join("current/bin");
     let path_entries = std::env::var_os("PATH")
         .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
@@ -280,6 +294,11 @@ fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+    use tempfile::TempDir;
+
     use super::*;
 
     #[test]
@@ -299,5 +318,26 @@ mod tests {
                 assert!(!public.to_ascii_lowercase().contains(forbidden));
             }
         }
+    }
+
+    #[test]
+    fn invalid_alternates_create_no_state_or_observability_files() {
+        let home = TempDir::new().unwrap();
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let outside = TempDir::new().unwrap();
+        fs::set_permissions(outside.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
+
+        let outside_state = outside.path().join("outside-state");
+        let location = StateLocation::alternate(outside_state.clone(), home.path().to_path_buf());
+        assert!(LocalStateOperations::open(&location, uid).is_err());
+        assert!(!outside_state.exists());
+
+        let link = home.path().join("linked");
+        symlink(outside.path(), &link).unwrap();
+        let linked_state = link.join("linked-state");
+        let location = StateLocation::alternate(linked_state, home.path().to_path_buf());
+        assert!(LocalStateOperations::open(&location, uid).is_err());
+        assert!(!outside.path().join("linked-state").exists());
     }
 }

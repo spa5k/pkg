@@ -1,7 +1,6 @@
 //! Fresh-generation preparation for state-only lifecycle edits.
 
 use std::fs;
-use std::path::Path;
 
 use pkg_core::state::{CollisionPolicy, body_digest, canonical_digest};
 use pkg_core::{GenerationSnapshot, lifecycle::LifecycleState};
@@ -10,6 +9,7 @@ use pkg_store::{StateLayout, StateLease, stage_activation};
 use serde_json::{Value, json};
 
 use crate::activation_metadata::{activation_inputs, collision_resolutions};
+use crate::commit::{discard_staging, strictly_newer};
 use crate::{CandidateGeneration, CommitError, PreparedGeneration};
 
 /// Product provenance recorded for a state-only generation.
@@ -271,29 +271,4 @@ fn invalid_candidate<E>(_: E) -> StateEditPrepareError {
 
 fn invalid_candidate_unit() -> StateEditPrepareError {
     StateEditPrepareError::Commit(CommitError::InvalidCandidate)
-}
-
-fn strictly_newer(candidate: &str, active: &str) -> bool {
-    let Some(candidate) = candidate.strip_prefix("gen-") else {
-        return false;
-    };
-    let Some(active) = active.strip_prefix("gen-") else {
-        return false;
-    };
-    let candidate = candidate.trim_start_matches('0');
-    let active = active.trim_start_matches('0');
-    let candidate = if candidate.is_empty() { "0" } else { candidate };
-    let active = if active.is_empty() { "0" } else { active };
-    candidate.len() > active.len() || (candidate.len() == active.len() && candidate > active)
-}
-
-fn discard_staging(staging: &Path) {
-    let Ok(metadata) = fs::symlink_metadata(staging) else {
-        return;
-    };
-    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
-        let _ = fs::remove_dir_all(staging);
-    } else {
-        let _ = fs::remove_file(staging);
-    }
 }

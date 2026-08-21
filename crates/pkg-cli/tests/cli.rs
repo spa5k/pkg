@@ -35,22 +35,14 @@ fn clap_usage_failures_exit_two() {
 }
 
 #[test]
-fn development_stub_obeys_json_and_jsonl_terminal_contracts() {
-    let home = std::env::temp_dir().join(format!(
-        "pkg-cli-engine-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    std::fs::create_dir_all(&home).unwrap();
+fn configuration_failure_obeys_json_and_jsonl_terminal_contracts() {
     for (flag, expected_type) in [("--json", None), ("--jsonl", Some("result"))] {
         let output = pkg()
-            .args([flag, "install", "ripgrep"])
-            .env("HOME", &home)
-            .env_remove("XDG_DATA_HOME")
+            .args([flag, "--state", "relative", "install", "ripgrep"])
             .env_remove("PKG_STATE_DIR")
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(79));
+        assert_eq!(output.status.code(), Some(78));
         assert!(output.stderr.is_empty());
         assert_eq!(
             output.stdout.iter().filter(|byte| **byte == b'\n').count(),
@@ -60,13 +52,35 @@ fn development_stub_obeys_json_and_jsonl_terminal_contracts() {
         assert_eq!(value["schemaVersion"], 1);
         assert_eq!(value["ok"], false);
         assert_eq!(value["command"], "install");
-        assert_eq!(value["error"]["symbol"], "ENGINE_UNAVAILABLE");
+        assert_eq!(value["error"]["symbol"], "CONFIG");
         assert_eq!(
             value.get("type").and_then(|value| value.as_str()),
             expected_type
         );
     }
-    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn home_environment_is_not_a_state_identity_input() {
+    for home in [Some("/spoofed-home"), None] {
+        let mut command = pkg();
+        command.args(["--json", "--state", "relative", "history"]);
+        match home {
+            Some(home) => {
+                command.env("HOME", home);
+            }
+            None => {
+                command.env_remove("HOME");
+            }
+        }
+        let output = command.output().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.code(), Some(78));
+        assert_eq!(
+            value["error"]["message"],
+            "the alternate state root must be an absolute path"
+        );
+    }
 }
 
 #[test]
@@ -156,11 +170,11 @@ fn doctor_support_refuses_competing_machine_output_modes() {
 
 #[test]
 fn command_logging_records_only_the_command_not_package_arguments() {
-    let state = std::env::temp_dir().join(format!(
-        "pkg-cli-log-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
+    let user = nix::unistd::User::from_uid(nix::unistd::Uid::effective())
+        .unwrap()
+        .unwrap();
+    let temporary = tempfile::tempdir_in(user.dir).unwrap();
+    let state = temporary.path().join("state");
     let output = pkg()
         .args([
             "install",
@@ -179,7 +193,6 @@ fn command_logging_records_only_the_command_not_package_arguments() {
     assert!(!text.contains("super-secret-package-name"));
     assert!(!text.contains("argv"));
     assert!(!text.contains("environment"));
-    std::fs::remove_dir_all(state).unwrap();
 }
 
 #[test]

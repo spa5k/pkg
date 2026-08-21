@@ -302,20 +302,6 @@ impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
     }
 }
 
-/// Fail-closed connector used until the private broker transport lands.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct UnavailableEngine;
-
-impl CommandEngine for UnavailableEngine {
-    fn execute(&mut self, _request: &CommandRequest) -> Result<CommandResult, CommandError> {
-        Err(CommandError::new(
-            ExitCode::EngineUnavailable,
-            "the private package engine is not available",
-            "run `pkg doctor` to inspect managed runtime readiness",
-        ))
-    }
-}
-
 /// Stable refusal while constructing a public success result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PublicResultError {

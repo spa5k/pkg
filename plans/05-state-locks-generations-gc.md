@@ -59,28 +59,31 @@ rebuildable from this state. This document specifies:
 
 ## 4. Directory layout
 
-> **Two roots (D-17/INV-10).** (a) A **root-owned, machine-global service root**
-> `/var/lib/pkg/` holds the immutable runtime/channel/index/source/cache/log service
-> (shared, read-only to users). (b) A **per-user authoritative root** `<user-state>`,
+> **Two roots (D-17/INV-10).** (a) A machine-global service domain has root-owned
+> immutable service/trust assets and ancestors, plus broker-owned private `0700`
+> mutable authenticated channel/index/source datastore leaves and a separate private
+> raw-log leaf. (b) A **per-user authoritative root** `<user-state>`,
 > keyed by OS uid, holds manifest/lock/generations/current/journal/cache/logs and is
 > owned by that uid (mode `0700`):
->   Linux `$XDG_DATA_HOME/pkg/` (default `~/.local/share/pkg/`);
+>   Linux `$HOME/.local/share/pkg/`;
 >   macOS `~/Library/Application Support/pkg/`;
->   root-owned fallback `/var/lib/pkg/users/<uid>/` for accounts without a usable HOME.
+>   where HOME is the authenticated uid's system/passwd home. `XDG_DATA_HOME` is not
+>   authoritative in this alpha because the broker, helper, root authorization, and
+>   uninstall bind the per-uid namespace to that home. There is no fallback root.
+>   Explicit alternate roots are read-only inspection origins.
 > Concrete OS paths/permissions are finalized in **plan 07**. Authoritative package
 > state is **never** globally shared across users.
 
 ```
-# (a) machine-global service root — root-owned, shared (D-17)
+# (a) machine-global service domain — split root/broker ownership (D-17)
 /var/lib/pkg/
-  channel/
-    tuf/{root,timestamp,snapshot,targets}*.json  # TUF metadata cache (plan 02)
-    descriptor.json           # the currently-trusted channel descriptor; its
-                              #   integrity is a TUF TARGET (plan 02 §7) — there
-                              #   is NO separate .asc sidecar
-    previous/                 # retained previous descriptor(s) for rollback
-  index/<channelSeq>/         # disposable search index (plan 03); shared, read-only
-  nixpkgs/<rev>/              # pinned catalog source (plan 03); shared
+  broker-home/                # broker-owned private 0700 home
+    channel/
+      tuf/{root,timestamp,snapshot,targets}*.json  # authenticated TUF metadata (plan 02)
+      descriptor.json         # accepted channel descriptor (plan 02 §7)
+      previous/               # retained previous descriptor(s) for rollback
+    index/<channelSeq>/       # disposable authenticated search index (plan 03)
+    nixpkgs/<rev>/            # verified pinned catalog source (plan 03)
   cache/                      # service downloads (root-owned)
   log/                        # service logs (daemon/helper)
     broker/                   # broker-PRIVATE raw adapter/Nix subprocess logs — parent 0700, files 0600,
@@ -1644,8 +1647,8 @@ post-crash views.
   semantics auto-retry only Phase A and require fresh preview/approval/capability
   for Phase B (ARCH-INV-10). No reconciliation between the two docs is pending.
 - **plan 02** — channel descriptor consumed as `channelSeq`; signing.
-- **plan 03** — disposable index lives under `/var/lib/pkg/index/<channelSeq>/`
-  (root-owned, shared, read-only; doc 03 §7), **not** under per-user `<user-state>`.
+- **plan 03** — disposable index lives under `/var/lib/pkg/broker-home/index/<channelSeq>/`
+  (broker-owned, private, authenticated; doc 03 §7), **not** under per-user `<user-state>`.
 - **plan 04** — the pipeline that writes generations/lock/journal; §5–10 here
   are its storage contract. The **shared GC-inhibit permit** (§8.5) is taken on
   the op handle in plan 04's acquire phase **before** the broker dispatches the
@@ -1934,7 +1937,7 @@ post-crash views.
   accepts the longest sequence-contiguous, hash-valid prefix and fails closed
   on interior corruption/reorder/deletion. State hashes are corruption/crash
   detection, **not** same-uid authentication.
-- **Q5.3 Per-user vs shared profile (RESOLVED → D-17).** Authoritative package state is per-user, keyed by uid (`<user-state>`); the runtime/channel/index/store service is root-owned and shared. The schema carries a `uid` dimension; each user has an independent `current`/generations tree.
+- **Q5.3 Per-user vs shared profile (RESOLVED → D-17).** Authoritative package state is per-user, keyed by uid (`<user-state>`); root owns immutable service/trust assets and ancestors, while the broker owns its private home/datastore and separate private raw-log leaf. The schema carries a `uid` dimension; each user has an independent `current`/generations tree.
 - **Q5.4 Retention defaults.** `keep_generations=10`, `max_age_days=30` are
   guesses; confirm with UX (plan 06) and disk-budget reality.
 - **Q5.5 `repair --from-lock`** rebuild manifest from lock+store when the

@@ -3,12 +3,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use nix::unistd::{Uid, User};
+
 const MAX_MANAGED_COMMANDS: usize = 4_096;
 
 /// Host family whose per-user state convention determines the activation path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostFamily {
-    /// Linux/XDG per-user state convention.
+    /// Linux fixed per-user state convention.
     Linux,
     /// macOS Application Support per-user state convention.
     MacOs,
@@ -26,22 +28,116 @@ impl HostFamily {
     }
 }
 
-/// Resolve the invoking user's default product state root without creating it.
+/// Resolve the one production state root for the invoking user.
 #[must_use]
-pub fn default_state_root(host: HostFamily) -> Option<PathBuf> {
-    if let Some(override_root) = std::env::var_os("PKG_STATE_DIR") {
-        return Some(PathBuf::from(override_root));
-    }
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+pub fn production_state_root(host: HostFamily, home: &Path) -> PathBuf {
     match host {
-        HostFamily::Linux => Some(
-            std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".local/share"))
-                .join("pkg"),
-        ),
-        HostFamily::MacOs => Some(home.join("Library/Application Support/pkg")),
+        HostFamily::Linux => home.join(".local/share/pkg"),
+        HostFamily::MacOs => home.join("Library/Application Support/pkg"),
     }
+}
+
+/// One resolved state location beneath the invoking user's home directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateLocation {
+    state_root: PathBuf,
+    home: PathBuf,
+    kind: StateLocationKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StateLocationKind {
+    Production,
+    Alternate,
+}
+
+impl StateLocation {
+    /// Builds an alternate location. Filesystem validation remains mandatory.
+    #[must_use]
+    pub fn alternate(state_root: PathBuf, home: PathBuf) -> Self {
+        Self {
+            state_root,
+            home,
+            kind: StateLocationKind::Alternate,
+        }
+    }
+
+    /// The root where pkg reads and writes its private per-user state.
+    #[must_use]
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
+
+    /// The home boundary that the state root is validated beneath.
+    #[must_use]
+    pub fn trusted_boundary(&self) -> &Path {
+        &self.home
+    }
+
+    /// Whether this is the fixed production root.
+    #[must_use]
+    pub const fn is_production(&self) -> bool {
+        matches!(self.kind, StateLocationKind::Production)
+    }
+}
+
+/// Why no usable state location could be resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateLocationError {
+    /// An explicit alternate state root was not absolute.
+    RelativeAlternateRoot,
+    /// The effective uid has no safe system/passwd home.
+    SystemHomeUnavailable,
+    /// The operating system is not a supported host family.
+    UnsupportedHost,
+}
+
+/// Resolve the invoking user's state root and trusted boundary together.
+///
+/// `--state` and non-empty `PKG_STATE_DIR` select alternate roots. They remain
+/// bounded by the effective uid's system home and cannot be used for
+/// broker-backed mutations.
+pub fn resolve_state_location(
+    host: HostFamily,
+    state_override: Option<&Path>,
+) -> Result<StateLocation, StateLocationError> {
+    let uid = Uid::effective();
+    let home = User::from_uid(uid)
+        .map_err(|_| StateLocationError::SystemHomeUnavailable)?
+        .filter(|user| user.uid == uid)
+        .map(|user| user.dir);
+    let override_root = std::env::var_os("PKG_STATE_DIR").map(PathBuf::from);
+    resolve_state_location_from(host, state_override, home, override_root)
+}
+
+/// Environment-free resolution core, kept pure so tests can exercise the
+/// trusted-boundary decision without mutating process state.
+fn resolve_state_location_from(
+    host: HostFamily,
+    state_override: Option<&Path>,
+    home: Option<PathBuf>,
+    override_root: Option<PathBuf>,
+) -> Result<StateLocation, StateLocationError> {
+    let home = home_dir(home)?;
+    let alternate = state_override
+        .map(Path::to_owned)
+        .or_else(|| override_root.filter(|root| !root.as_os_str().is_empty()));
+    if let Some(state_root) = alternate {
+        if !state_root.is_absolute() {
+            return Err(StateLocationError::RelativeAlternateRoot);
+        }
+        return Ok(StateLocation::alternate(state_root, home));
+    }
+    Ok(StateLocation {
+        state_root: production_state_root(host, &home),
+        home,
+        kind: StateLocationKind::Production,
+    })
+}
+
+fn home_dir(home: Option<PathBuf>) -> Result<PathBuf, StateLocationError> {
+    home.filter(|home| home.is_absolute() && home != Path::new("/"))
+        .ok_or(StateLocationError::SystemHomeUnavailable)
 }
 
 /// Render a shell snippet that prepends the invoking user's active generation exactly once.
@@ -50,7 +146,7 @@ pub const fn shell_init(host: HostFamily) -> &'static str {
     match host {
         HostFamily::Linux => {
             r#"# managed by pkg — do not edit
-__pkg_state="${XDG_DATA_HOME:-$HOME/.local/share}/pkg"
+__pkg_state="$HOME/.local/share/pkg"
 case ":$PATH:" in
   *":$__pkg_state/current/bin:"*) ;;
   *) PATH="$__pkg_state/current/bin:$PATH" ;;
@@ -209,9 +305,63 @@ mod tests {
             assert!(snippet.contains("current/bin"));
             assert!(snippet.contains("case \":$PATH:\""));
             assert!(snippet.contains("$HOME"));
+            assert!(!snippet.contains("XDG_DATA_HOME"));
             assert!(!snippet.contains("/nix/store"));
             assert!(!snippet.contains("/opt/pkg/nix"));
         }
+    }
+
+    #[test]
+    fn production_uses_system_home_not_a_spoofed_environment_home() {
+        let spoofed_environment_home = Path::new("/spoofed");
+        let location = resolve_state_location_from(
+            HostFamily::Linux,
+            None,
+            Some(PathBuf::from("/home/u")),
+            Some(PathBuf::new()),
+        )
+        .unwrap();
+        assert!(location.is_production());
+        assert_eq!(location.state_root(), Path::new("/home/u/.local/share/pkg"));
+        assert_ne!(
+            location.state_root(),
+            production_state_root(HostFamily::Linux, spoofed_environment_home)
+        );
+        assert_eq!(
+            production_state_root(HostFamily::MacOs, Path::new("/Users/u")),
+            Path::new("/Users/u/Library/Application Support/pkg")
+        );
+        assert_eq!(location.trusted_boundary(), Path::new("/home/u"));
+    }
+
+    #[test]
+    fn explicit_roots_are_absolute_alternates() {
+        let location = resolve_state_location_from(
+            HostFamily::Linux,
+            None,
+            Some(PathBuf::from("/home/u")),
+            Some(PathBuf::from("/custom/pkg")),
+        )
+        .unwrap();
+        assert!(!location.is_production());
+        assert_eq!(location.state_root(), Path::new("/custom/pkg"));
+        assert_eq!(location.trusted_boundary(), Path::new("/home/u"));
+
+        let relative = resolve_state_location_from(
+            HostFamily::Linux,
+            Some(Path::new("relative")),
+            Some(PathBuf::from("/home/u")),
+            None,
+        );
+        assert_eq!(relative, Err(StateLocationError::RelativeAlternateRoot));
+    }
+
+    #[test]
+    fn missing_system_home_fails_without_an_environment_fallback() {
+        assert_eq!(
+            resolve_state_location_from(HostFamily::Linux, None, None, None),
+            Err(StateLocationError::SystemHomeUnavailable)
+        );
     }
 
     #[test]

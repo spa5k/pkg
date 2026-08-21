@@ -34,7 +34,7 @@ const MAX_UNINSTALL_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_PRIVATE_STATE_FILES: usize = 1_024;
 const TEMP_ATTEMPTS: u8 = 16;
 const PROFILE_SNIPPET: &[u8] = b"# managed by pkg \xE2\x80\x94 do not edit\n\
-__pkg_state=\"${XDG_DATA_HOME:-$HOME/.local/share}/pkg\"\n\
+__pkg_state=\"$HOME/.local/share/pkg\"\n\
 case \":$PATH:\" in\n\
   *\":$__pkg_state/current/bin:\"*) ;;\n\
   *) PATH=\"$__pkg_state/current/bin:$PATH\" ;;\n\
@@ -1318,6 +1318,9 @@ mod tests {
                 .manager
                 .ensure_asset(Fixture::asset("profile-snippet"))?
         );
+        let profile = fs::read_to_string(fixture.temporary.path().join("etc/profile.d/pkg.sh"))?;
+        assert!(profile.contains("__pkg_state=\"$HOME/.local/share/pkg\""));
+        assert!(!profile.contains("XDG_DATA_HOME"));
         assert!(fixture.manager.install_static_asset(
             Fixture::asset("daemon-service-unit"),
             LinuxSystemdAssets::DAEMON_SERVICE,

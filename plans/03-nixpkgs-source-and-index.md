@@ -60,7 +60,7 @@ The descriptor (doc 02 §7) provides:
 1. **Build the direct locked ref** from the signed descriptor's exact `owner`/`repo`/`rev` (taken verbatim from the verified descriptor — no caller-supplied URL), and include the descriptor `narHash` in the ref query — `github:<owner>/<repo>/<rev>?narHash=<sri>` — so **Nix's own fetcher enforces** content identity during the fetch.
 2. Invoke `nix flake metadata <that-ref> --json` with **fixed argv** and a **scrubbed `pkg`-controlled environment** (ARCH-INV-02): no `NIX_PATH`/`NIXPKGS_*`/user flake config, canonical Nix 2.34.8 `--no-use-registries` so the literal direct ref is resolved rather than a registry mapping (the legacy `--no-registries` alias is deprecated), **no mutable channel**, and **no lockfile write** (`metadata` against a direct ref performs no `flake.lock` write). Run inside the adapter only.
 3. **Compare before any use.** Read the top-level `locked.rev` and `locked.narHash`; if a top-level `revision` is also present, assert `revision == locked.rev`. Then independently assert `locked.rev == descriptor.nixpkgs.rev` **and** `locked.narHash == descriptor.nixpkgs.narHash`. (CAT-INV-01; any mismatch → abort and surface as a **trust event** — **no** evaluation or index build runs on an unverified source.)
-4. **Only after identity comparison succeeds**, treat the top-level `path` as a **private typed `StorePath`** (held inside the adapter, never echoed to public output or logs). Nix materializes the source under `/nix/store`; `pkg` caches a private reference at `/var/lib/pkg/nixpkgs/<rev>/` (a **marker**, not a raw flake-ref or store path) for index derivation. The authoritative copy is Nix-managed in `/nix/store`.
+4. **Only after identity comparison succeeds**, treat the top-level `path` as a **private typed `StorePath`** (held inside the adapter, never echoed to public output or logs). Nix materializes the source under `/nix/store`; the broker caches a private reference at `/var/lib/pkg/broker-home/nixpkgs/<rev>/` (a **marker**, not a raw flake-ref or store path) for index derivation. The authoritative copy is Nix-managed in `/nix/store`.
 
 **PR-13 implementation (2026-08-09).** `pkg-nix::nixpkgs` implements this as a separate
 closed `NixpkgsMetadataRunner`, preserving the seven-method general `NixAdapter` contract.
@@ -77,7 +77,7 @@ boundary.
 
 ## 7. Index: definition & data contract (canonical)
 
-The index is a **disposable, derived** catalog. Stored per system at `/var/lib/pkg/index/<channelSeq>/<system>.json` (optionally `.br` on disk). Its bytes are verified against `descriptor.index.perSystem.<system>.sha256` (CAT-INV-02).
+The index is a **disposable, derived** catalog. Stored per system at `/var/lib/pkg/broker-home/index/<channelSeq>/<system>.json` (optionally `.br` on disk). Its bytes are verified against `descriptor.index.perSystem.<system>.sha256` (CAT-INV-02).
 
 ### 7.1 Envelope
 

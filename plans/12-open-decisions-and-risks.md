@@ -49,7 +49,7 @@ Owner · Source.** Statuses: `Proposed` · `Accepted` · `Superseded` · `Deferr
   live **outside** `/nix` (e.g. `/usr/local/bin/pkg`, `/var/lib/pkg/` (Linux) / macOS
   machine-global **`/Library/Application Support/pkg`** — the leading slash = the machine-global
   `/Library`, distinct from per-user `~/Library/Application Support/pkg` — / per-user
-  `$XDG_DATA_HOME/pkg`). **Multi-user with daemon** on both Linux and macOS (single-user is
+  `$HOME/.local/share/pkg` on Linux). **Multi-user with daemon** on both Linux and macOS (single-user is
   unsupported on macOS). The daemon uses the standard socket `/nix/var/nix/daemon-socket/socket`
   (safe *only because* preflight first proves exclusive ownership); a product-specific socket is
   a v2 defense-in-depth option, not a substitute for exclusive ownership. **Go/no-go on

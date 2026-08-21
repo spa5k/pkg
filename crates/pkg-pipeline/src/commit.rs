@@ -575,7 +575,7 @@ pub fn recover_transitioned_state_edit(
 }
 
 fn is_resumable_state_operation(kind: &str) -> bool {
-    matches!(kind, "remove" | "pin" | "unpin" | "rollback")
+    matches!(kind, "remove" | "pin" | "unpin" | "rollback" | "update")
 }
 
 fn is_install_operation(kind: &str) -> bool {
@@ -633,6 +633,23 @@ fn generation_companion_id(name: &str) -> Option<GenerationId> {
         name.strip_suffix(suffix)
             .and_then(|stem| GenerationId::new(stem).ok())
     })
+}
+
+/// Numeric `gen-NNNN` ordering: true only when `candidate` is a newer
+/// generation id than `active`. Length-then-lexicographic comparison of the
+/// zero-stripped numbers prevents text order such as `gen-0009` > `gen-0010`.
+pub(crate) fn strictly_newer(candidate: &str, active: &str) -> bool {
+    let Some(candidate) = candidate.strip_prefix("gen-") else {
+        return false;
+    };
+    let Some(active) = active.strip_prefix("gen-") else {
+        return false;
+    };
+    let candidate = candidate.trim_start_matches('0');
+    let active = active.trim_start_matches('0');
+    let candidate = if candidate.is_empty() { "0" } else { candidate };
+    let active = if active.is_empty() { "0" } else { active };
+    candidate.len() > active.len() || (candidate.len() == active.len() && candidate > active)
 }
 
 impl PreparedGeneration {
@@ -1303,6 +1320,21 @@ fn discard_generation_paths(root: &Path, generation: &Generation) -> Result<(), 
     sync_dir(&root.join("activations"))
 }
 
+/// Best-effort removal of a failed prepare's staging path, ignoring all
+/// errors. Unlike install preparation, the state-edit and rollback staging
+/// trees are only ever written by this process, so no permission repair is
+/// needed before deletion.
+pub(crate) fn discard_staging(staging: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(staging) else {
+        return;
+    };
+    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+        let _ = fs::remove_dir_all(staging);
+    } else {
+        let _ = fs::remove_file(staging);
+    }
+}
+
 fn discard_unprepared(root: &Path, generation_id: &GenerationId) -> Result<bool, CommitError> {
     let mut found = false;
     for relative in [
@@ -1657,6 +1689,29 @@ mod tests {
                 .join("activations/gen-0001.staging")
                 .exists()
         );
+    }
+
+    #[test]
+    fn generation_order_is_numeric_and_discard_staging_removes_debris() {
+        assert!(strictly_newer("gen-0010", "gen-0009"));
+        assert!(!strictly_newer("gen-0009", "gen-0010"));
+        assert!(!strictly_newer("gen-00002", "gen-0002"));
+        assert!(!strictly_newer("generation-11", "gen-0010"));
+        assert!(!strictly_newer("gen-0010", "generation-11"));
+        let temp = Builder::new()
+            .prefix("pkg-discard-staging-")
+            .tempdir_in(".")
+            .unwrap();
+        let staging = temp.path().join("gen-0009.staging");
+        fs::create_dir(&staging).unwrap();
+        symlink(STORE, staging.join("demo")).unwrap();
+        discard_staging(&staging);
+        assert!(!staging.exists());
+        let file = temp.path().join("gen-0010.staging");
+        fs::write(&file, b"staging debris").unwrap();
+        discard_staging(&file);
+        assert!(!file.exists());
+        discard_staging(&temp.path().join("missing.staging"));
     }
 
     #[test]
@@ -2333,6 +2388,101 @@ mod tests {
                 .entries()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn interrupted_update_resumes_before_and_after_the_current_switch() {
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap()
+        .activate(&fixture.maintenance, "updsource1")
+        .unwrap()
+        .finish()
+        .unwrap();
+
+        let edit_lease = mutation_lease(&fixture.layout);
+        let source = load_active_snapshot(&fixture.layout, &edit_lease)
+            .unwrap()
+            .unwrap();
+        let next = pkg_core::advance_channel(
+            source.state().clone(),
+            pkg_core::ChannelSequence::from_u64(2).unwrap(),
+        )
+        .unwrap();
+        let staging = fixture
+            .layout
+            .state_root()
+            .join("activations/gen-0002.staging");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(format!("{STORE}/bin/demo"), staging.join("demo")).unwrap();
+        let plan =
+            inspect_staged_activation(&staging, vec![pkg_core::StorePath::new(STORE).unwrap()])
+                .unwrap();
+        let metadata = crate::StateEditMetadata::new(
+            "gen-0002",
+            "2026-08-11T00:00:00Z",
+            "op_update",
+            crate::StateEditKind::Update,
+        );
+        let candidate = crate::state_edit::build_candidate(
+            &source,
+            next,
+            &metadata,
+            pkg_core::state::CollisionPolicy::Abort,
+            &plan,
+        )
+        .unwrap();
+        let prepared =
+            PreparedGeneration::prepare(fixture.layout.clone(), candidate, plan, edit_lease)
+                .unwrap();
+        drop(prepared);
+
+        let resume_lease = mutation_lease(&fixture.layout);
+        let pending = pending_state_edit_generation(&fixture.layout, &resume_lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.as_str(), "gen-0002");
+        let resumed =
+            resume_prepared_state_edit(fixture.layout.clone(), resume_lease, &pending).unwrap();
+        let roots = resumed.roots.as_ref().unwrap();
+        let report = RootSetTransitionReport::new(
+            publish_root_set(roots, &fixture.maintenance).unwrap(),
+            roots
+                .request()
+                .entries()
+                .iter()
+                .map(|entry| entry.name().clone())
+                .collect(),
+            roots.request().mapping_digest(),
+        )
+        .unwrap();
+        let activated = resumed
+            .activate_transitioned(Some(&report), "updresume1")
+            .unwrap();
+        drop(activated);
+
+        let finish_lease = mutation_lease(&fixture.layout);
+        assert_eq!(
+            recover_transitioned_state_edit(&fixture.layout, &finish_lease, &pending).unwrap(),
+            RecoveryResult::FinishedActivated
+        );
+        assert_eq!(
+            pending_state_edit_generation(&fixture.layout, &finish_lease).unwrap(),
+            None
+        );
+        let recovered = load_active_snapshot(&fixture.layout, &finish_lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.generation().operation().kind(), "update");
+        assert_eq!(recovered.state().manifest().channel_seq().get().get(), 2);
+        assert_eq!(recovered.state().manifest().entries().len(), 1);
     }
 
     #[test]

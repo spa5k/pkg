@@ -10,6 +10,7 @@ use pkg_store::{LeaseMode, StateLayout, StateLease, stage_activation};
 use serde_json::json;
 
 use crate::activation_metadata::{activation_inputs, collision_policy_name, collision_resolutions};
+use crate::commit::strictly_newer;
 use crate::{
     CandidateGeneration, CommitError, InstallStateError, PreparedGeneration,
     assemble_install_evidence_state,
@@ -220,20 +221,6 @@ fn invalid_candidate() -> InstallGenerationError {
     InstallGenerationError::Commit(CommitError::InvalidCandidate)
 }
 
-fn strictly_newer(candidate: &str, active: &str) -> bool {
-    let Some(candidate) = candidate.strip_prefix("gen-") else {
-        return false;
-    };
-    let Some(active) = active.strip_prefix("gen-") else {
-        return false;
-    };
-    let candidate = candidate.trim_start_matches('0');
-    let active = active.trim_start_matches('0');
-    let candidate = if candidate.is_empty() { "0" } else { candidate };
-    let active = if active.is_empty() { "0" } else { active };
-    candidate.len() > active.len() || (candidate.len() == active.len() && candidate > active)
-}
-
 fn discard_staging(staging: &std::path::Path) {
     let Ok(metadata) = fs::symlink_metadata(staging) else {
         return;
@@ -255,7 +242,7 @@ mod tests {
     use serde_json::json;
     use tempfile::Builder;
 
-    use super::{InstallGenerationMetadata, build_candidate, strictly_newer};
+    use super::{InstallGenerationMetadata, build_candidate};
     use crate::assemble_install_evidence_state;
 
     const STORE: &str = "/nix/store/00000000000000000000000000000000-demo";
@@ -332,12 +319,5 @@ mod tests {
         assert_eq!(candidate.generation().parent(), None);
         assert_eq!(candidate.generation().outputs().len(), 1);
         assert_eq!(candidate.generation().activation().output_roots().len(), 1);
-    }
-
-    #[test]
-    fn generation_order_is_numeric_and_never_wraps_by_text_order() {
-        assert!(strictly_newer("gen-0010", "gen-0009"));
-        assert!(!strictly_newer("gen-0009", "gen-0010"));
-        assert!(!strictly_newer("generation-11", "gen-0010"));
     }
 }

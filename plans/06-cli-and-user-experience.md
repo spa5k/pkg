@@ -98,7 +98,9 @@ pkg [--json | --jsonl] [--quiet | --verbose] [--no-color] [--config <path>]
 > **No public `--debug` flag.** V1 ships no user-facing debug mode: a debug surface that retains the symlink forest or exposes internal ids/Nix state conflicts with hidden, exclusively-managed Nix. Internal developer instrumentation (phase traces, the kept staging tree, raw adapter events) is **compile/test-only** and is never a user flag. `--verbose` is the only increased-detail public flag and it stays **sanitized** (above): no subprocess argv, raw Nix options/journal, drv/store paths, attributes, or flake refs.
 
 Env vars: `NO_COLOR`, `PKG_STATE_DIR`, `PKG_CONFIG`,
-`PKG_CACHE_TTL_SECONDS`. (There is **no** `PKG_YES_TO_BUILDS`: V1 has no
+`PKG_CACHE_TTL_SECONDS`. A non-empty `PKG_STATE_DIR` is an explicit alternate,
+read-only inspection origin with the same mutation limits as `--state`; an empty
+value is unset. (There is **no** `PKG_YES_TO_BUILDS`: V1 has no
 ambient/session/persistent build approval; use `--yes` to pre-approve the single
 operation.) The product **ignores** Nix env overrides
 (`NIX_SUBSTITUTERS`, `NIX_TRUSTED_PUBLIC_KEYS`, `NIX_PATH`, `NIX_REMOTE`,

@@ -1,0 +1,1326 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>pkg Architecture Report</title>
+  <style>
+    :root {
+      --paper: #f4f1e8;
+      --surface: #fffdf7;
+      --ink: #18231d;
+      --muted: #536158;
+      --line: #ccd2c9;
+      --complete: #087856;
+      --complete-soft: #dcefe7;
+      --next: #2259a6;
+      --next-soft: #e1eafa;
+      --caution: #9c5500;
+      --caution-soft: #f8e8cc;
+      --dark: #10251c;
+      --code: #e9ebe5;
+      --radius: 16px;
+      --shadow: 0 8px 26px rgb(25 45 34 / 9%);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      overflow-wrap: break-word;
+    }
+
+    a { color: var(--next); }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible, summary:focus-visible {
+      outline: 3px solid var(--next);
+      outline-offset: 4px;
+      border-radius: 4px;
+    }
+
+    .wrap {
+      width: min(1180px, calc(100% - 32px));
+      margin-inline: auto;
+    }
+
+    .hero {
+      color: #f8fff9;
+      background: var(--dark);
+      border-bottom: 6px solid var(--complete);
+      padding: 54px 0 42px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: #9cd8c1;
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, h4 { line-height: 1.13; }
+    h1 { max-width: 820px; margin: 0; font-size: clamp(2.2rem, 6vw, 4.8rem); letter-spacing: -.045em; }
+    h2 { margin: 0 0 22px; font-size: clamp(1.55rem, 3vw, 2.35rem); letter-spacing: -.025em; }
+    h3 { margin: 0 0 10px; font-size: 1.08rem; }
+    h4 { margin: 22px 0 8px; font-size: 1rem; }
+    p { margin: 0 0 12px; }
+
+    .lede { max-width: 740px; margin: 20px 0 0; color: #d2e1d8; font-size: 1.12rem; }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 6px 12px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: .82rem;
+      font-weight: 800;
+    }
+
+    .pill::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+    .pill.complete { color: #8fe0bf; }
+    .pill.next { color: #a9c8ff; }
+    .pill.caution { color: #ffd089; }
+
+    main { padding: 34px 0 72px; }
+    section { margin-top: 52px; scroll-margin-top: 24px; }
+
+    .summary-grid, .card-grid, .domain-grid, .decision-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: -58px; position: relative; }
+    .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .domain-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .decision-grid { grid-template-columns: 1fr 1fr; }
+
+    .card {
+      min-width: 0;
+      padding: 22px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .metric { min-height: 145px; border-top: 5px solid var(--complete); }
+    .metric.caution-border { border-top-color: var(--caution); }
+    .metric.next-border { border-top-color: var(--next); }
+    .metric .number { display: block; font-size: clamp(2rem, 4vw, 3.15rem); font-weight: 850; letter-spacing: -.06em; line-height: 1; }
+    .metric .label { display: block; margin-top: 10px; color: var(--muted); font-weight: 700; }
+    .metric .detail { margin: 6px 0 0; color: var(--muted); font-size: .86rem; }
+
+    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+    .section-head p { max-width: 580px; color: var(--muted); }
+
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: .85rem; }
+    .key { display: inline-flex; align-items: center; gap: 7px; }
+    .key::before { content: ""; width: 11px; height: 11px; border-radius: 3px; background: var(--key); }
+
+    .architecture {
+      padding: 26px;
+      background: var(--dark);
+      color: #f5fff8;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr auto 1.35fr auto 1.35fr auto 1.35fr;
+      align-items: stretch;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .node {
+      display: grid;
+      place-items: center;
+      min-height: 110px;
+      padding: 14px;
+      border: 1px solid #759084;
+      border-radius: 12px;
+      background: #173428;
+      text-align: center;
+    }
+
+    .node strong { display: block; font-size: 1rem; }
+    .node span { display: block; margin-top: 5px; color: #bdd0c5; font-size: .78rem; }
+    .node.future { border: 2px solid #8fb7ff; background: #173357; }
+    .arrow { align-self: center; color: #9cd8c1; font-size: 1.6rem; font-weight: 800; }
+
+    .seam-note {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      align-items: start;
+      margin-top: 18px;
+      padding: 16px;
+      border-left: 4px solid #8fb7ff;
+      background: #183124;
+      border-radius: 8px;
+    }
+
+    code {
+      padding: 2px 5px;
+      color: inherit;
+      background: var(--code);
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .9em;
+      overflow-wrap: anywhere;
+    }
+
+    .architecture code { background: #29483a; color: #fff; }
+
+    .test-panel {
+      display: grid;
+      grid-template-columns: minmax(190px, .65fr) 1.35fr;
+      gap: 26px;
+      align-items: center;
+    }
+
+    .test-score {
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      width: min(220px, 100%);
+      margin-inline: auto;
+      border: 20px solid var(--complete);
+      border-radius: 50%;
+      background: var(--complete-soft);
+      text-align: center;
+    }
+
+    .test-score strong { display: block; font-size: 3rem; line-height: .9; }
+    .test-score span { display: block; margin-top: 8px; color: #285b48; font-weight: 800; }
+
+    .test-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0; padding: 0; list-style: none; }
+    .test-list li { display: flex; justify-content: space-between; gap: 14px; padding: 10px 12px; background: var(--complete-soft); border-radius: 8px; }
+    .test-list strong { color: var(--complete); }
+
+    .health-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(260px, .7fr); gap: 18px; }
+    .health-bars { display: grid; gap: 17px; }
+    .health-row { display: grid; grid-template-columns: 150px 1fr 52px; align-items: center; gap: 12px; }
+    .track { height: 14px; overflow: hidden; border-radius: 999px; background: #dfe2da; }
+    .fill { width: var(--value); height: 100%; background: var(--complete); border-radius: inherit; }
+    .fill.caution { background: var(--caution); }
+    .health-row strong { text-align: right; font-variant-numeric: tabular-nums; }
+    .health-score { display: grid; align-content: center; padding: 28px; color: white; background: var(--dark); text-align: center; }
+    .health-score strong { font-size: clamp(3rem, 8vw, 5rem); letter-spacing: -.07em; line-height: 1; }
+    .health-score span { margin-top: 8px; color: #bcd1c5; font-weight: 700; }
+
+    .caution-box { margin-top: 18px; padding: 16px 18px; border-left: 5px solid var(--caution); background: var(--caution-soft); border-radius: 8px; }
+
+    .deletion {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      align-items: center;
+    }
+
+    .deletion-visual { padding: 26px; background: var(--dark); border-radius: var(--radius); color: white; }
+    .dead-bar { display: grid; place-items: center; height: 190px; margin-top: 18px; border-radius: 9px; background: #b2553c; font-size: 2rem; font-weight: 850; }
+
+    .clean-list { margin: 14px 0 0; padding-left: 20px; }
+    .clean-list li { margin: 7px 0; }
+    .clean-list li::marker { color: var(--complete); font-weight: 800; }
+
+    .tag { display: inline-block; margin-bottom: 10px; padding: 4px 9px; border-radius: 999px; color: #164334; background: var(--complete-soft); font-size: .75rem; font-weight: 850; text-transform: uppercase; letter-spacing: .07em; }
+    .tag.next { color: #183f79; background: var(--next-soft); }
+    .tag.caution { color: #6a3b00; background: var(--caution-soft); }
+
+    .included-fix { margin-top: 14px; padding: 14px; border-left: 4px solid var(--next); background: var(--next-soft); border-radius: 8px; }
+    .included-fix p { margin: 5px 0 0; }
+
+    .longform { margin-top: 64px; padding: clamp(22px, 5vw, 54px); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+    .longform > header { max-width: 860px; }
+    .longform > section { margin-top: 44px; padding-top: 38px; border-top: 1px solid var(--line); }
+    .longform p, .longform li { max-width: 82ch; }
+    .chapter-lede { color: var(--muted); font-size: 1.12rem; }
+    .source-key { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 0; padding: 0; list-style: none; }
+    .source-key li, .evidence-label { max-width: none; padding: 4px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); font-size: .76rem; font-weight: 800; }
+    .evidence-label { display: inline-block; margin-bottom: 10px; color: var(--muted); }
+    .evidence-label.accepted { color: #164334; background: var(--complete-soft); }
+    .evidence-label.proof { color: #6a3b00; background: var(--caution-soft); }
+    .evidence-label.model { color: #183f79; background: var(--next-soft); }
+    .long-callout { margin: 20px 0; padding: 18px 20px; border-left: 5px solid var(--next); background: var(--next-soft); border-radius: 8px; }
+    .long-callout.caution { border-left-color: var(--caution); background: var(--caution-soft); }
+    .long-callout p:last-child { margin-bottom: 0; }
+
+    .table-wrap { max-width: 100%; overflow-x: auto; margin: 18px 0 24px; border: 1px solid var(--line); border-radius: 12px; }
+    .decision-table { width: 100%; min-width: 720px; border-collapse: collapse; background: var(--surface); }
+    .decision-table th, .decision-table td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    .decision-table th { color: var(--ink); background: var(--paper); font-size: .82rem; letter-spacing: .03em; }
+    .decision-table tr:last-child td { border-bottom: 0; }
+    .decision-table td:first-child { font-weight: 800; }
+    .decision-table .yes { color: var(--complete); font-weight: 850; }
+    .decision-table .no { color: #8a3b28; font-weight: 850; }
+    .decision-table .maybe { color: var(--caution); font-weight: 850; }
+
+    .process-flow { counter-reset: flow; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 26px; margin: 22px 0; padding: 0; list-style: none; }
+    .process-flow li { counter-increment: flow; position: relative; max-width: none; min-width: 0; padding: 18px; border: 1px solid var(--line); border-top: 5px solid var(--complete); border-radius: 12px; background: var(--paper); }
+    .process-flow li::before { content: counter(flow); display: grid; place-items: center; width: 30px; height: 30px; margin-bottom: 12px; color: #fff; background: var(--complete); border-radius: 50%; font-weight: 850; }
+    .process-flow li:not(:last-child)::after { content: "→"; position: absolute; top: 50%; right: -22px; color: var(--complete); font-size: 1.45rem; font-weight: 850; }
+    .process-flow strong { display: block; margin-bottom: 6px; }
+
+    .state-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }
+    .state-strip > div { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+    .state-strip strong { display: block; color: var(--next); }
+    .state-strip span { display: block; margin-top: 5px; color: var(--muted); font-size: .84rem; }
+
+    .numbered-detail { counter-reset: detail; display: grid; gap: 18px; margin: 18px 0; padding: 0; list-style: none; }
+    .numbered-detail > li { counter-increment: detail; position: relative; max-width: 86ch; padding-left: 48px; }
+    .numbered-detail > li::before { content: counter(detail); position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 32px; height: 32px; color: #fff; background: var(--next); border-radius: 8px; font-weight: 850; }
+    .numbered-detail strong { display: block; margin-bottom: 4px; }
+
+    .plain-example { margin: 16px 0; padding: 16px 18px; border: 1px dashed var(--next); border-radius: 10px; background: #f5f8fe; }
+    .plain-example strong { display: block; margin-bottom: 5px; }
+
+    .domain-card ul, .decision-card ul { margin: 10px 0 0; padding-left: 19px; }
+    .domain-card li, .decision-card li { margin: 5px 0; }
+    .adr-list { counter-reset: adr; display: grid; gap: 10px; margin: 18px 0 0; padding: 0; list-style: none; }
+    .adr-list li { counter-increment: adr; display: grid; grid-template-columns: 42px 1fr; gap: 12px; align-items: center; }
+    .adr-list li::before { content: counter(adr, decimal-leading-zero); display: grid; place-items: center; width: 42px; height: 42px; color: white; background: var(--complete); border-radius: 50%; font-weight: 850; }
+
+    .next-list { counter-reset: next; display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+    .next-list li { counter-increment: next; display: grid; grid-template-columns: 44px 1fr; gap: 14px; align-items: start; padding: 15px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+    .next-list li::before { content: counter(next); display: grid; place-items: center; width: 36px; height: 36px; color: white; background: var(--next); border-radius: 8px; font-weight: 850; }
+    .next-list strong { display: block; }
+    .next-list span { color: var(--muted); font-size: .9rem; }
+    .work-group + .work-group { margin-top: 24px; }
+    .work-group h3 { color: var(--next); }
+    .next-list.start-5 { counter-reset: next 4; }
+    .next-list.start-8 { counter-reset: next 7; }
+
+    .change-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--line); }
+    .change-strip.transition-strip { grid-template-columns: repeat(3, 1fr); }
+    .change-strip > div { padding: 18px; background: var(--surface); }
+    .change-strip strong { display: block; font-size: 1.65rem; }
+    .change-strip span { color: var(--muted); font-size: .84rem; }
+
+    footer { padding: 28px 0; color: #d0dfd6; background: var(--dark); }
+    footer .wrap { display: flex; justify-content: space-between; gap: 24px; }
+    footer p { margin: 0; }
+
+    @media (max-width: 900px) {
+      .summary-grid, .card-grid, .domain-grid { grid-template-columns: 1fr 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); justify-self: center; line-height: 1; }
+      .health-grid, .deletion { grid-template-columns: 1fr; }
+      .process-flow { grid-template-columns: 1fr 1fr; }
+      .process-flow li:nth-child(2)::after { display: none; }
+      .state-strip { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 620px) {
+      .wrap { width: min(100% - 22px, 1180px); }
+      .hero { padding-top: 38px; }
+      .summary-grid { grid-template-columns: 1fr; margin-top: -34px; }
+      .metric { min-height: 125px; padding: 16px; }
+      .card-grid, .domain-grid, .decision-grid, .test-panel, .test-list, .change-strip, .change-strip.transition-strip { grid-template-columns: 1fr; }
+      .section-head, footer .wrap { align-items: start; flex-direction: column; }
+      .health-row { grid-template-columns: 112px 1fr 44px; gap: 8px; font-size: .83rem; }
+      .architecture { padding: 18px; }
+      .seam-note { grid-template-columns: 1fr; }
+      .longform { padding: 20px; }
+      .process-flow, .state-strip { grid-template-columns: 1fr; }
+      .process-flow li::after { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+
+    @media print {
+      :root { --paper: #fff; --surface: #fff; --ink: #000; --muted: #333; --line: #aaa; --shadow: none; }
+      body { font-size: 10pt; background: #fff; }
+      .hero, .architecture, .health-score, .deletion-visual, footer { color: #000; background: #fff; border: 2px solid #333; }
+      .hero { padding: 24px 0; border-width: 0 0 3px; }
+      .lede, footer, footer p, .node span, .health-score span { color: #222; }
+      .hero .eyebrow, .hero .pill, .architecture .tag { color: #111; background: #fff; border-color: #333; }
+      .hero .pill::before { color: #111; background: #111; }
+      .summary-grid { margin-top: 18px; }
+      .card { box-shadow: none; break-inside: avoid; }
+      section { margin-top: 30px; break-inside: auto; }
+      .node, .node.future, .seam-note { color: #000; background: #fff; border-color: #555; }
+      .architecture code { color: #000; background: #eee; }
+      .longform { padding: 0; border: 0; box-shadow: none; }
+      .longform > section { break-inside: auto; }
+      .long-callout, .plain-example { color: #000; background: #fff; border-color: #555; }
+      .table-wrap { overflow: visible; border-color: #555; }
+      .decision-table { min-width: 0; font-size: 8.5pt; }
+      .process-flow, .state-strip { grid-template-columns: 1fr 1fr; }
+      .process-flow li { break-inside: avoid; }
+      .flow { grid-template-columns: 1fr; }
+      .arrow { color: #000; transform: rotate(90deg); justify-self: center; }
+      a { color: #000; text-decoration: none; }
+      @page { margin: 14mm; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Architecture and domain review</p>
+      <h1>A smaller and safer base for the pkg alpha</h1>
+      <p class="lede">The Determinate Nix ownership decision is accepted. Delivery is not complete. Earlier checks passed, but they do not prove the new external-installer path.</p>
+      <div class="status-row" aria-label="Report status">
+        <span class="pill complete">Decision accepted</span>
+        <span class="pill caution">Delivery not complete</span>
+        <span class="pill complete">162 earlier tests passed</span>
+        <span class="pill caution">Two current-alpha safety fixes open</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="summary-grid" aria-label="Key results">
+      <article class="card metric">
+        <span class="number">162</span>
+        <span class="label">Tests passed</span>
+        <p class="detail">Earlier alpha checks. Zero failed.</p>
+      </article>
+      <article class="card metric">
+        <span class="number">296</span>
+        <span class="label">Dead lines removed</span>
+        <p class="detail">Unused architecture was deleted.</p>
+      </article>
+      <article class="card metric next-border">
+        <span class="number">99%</span>
+        <span class="label">Modularity</span>
+        <p class="detail">Crate boundaries remain strong.</p>
+      </article>
+      <article class="card metric caution-border">
+        <span class="number">5993</span>
+        <span class="label">TraceDecay technical signal</span>
+        <p class="detail">Earlier alpha snapshot. Not a grade.</p>
+      </article>
+    </section>
+
+    <section aria-labelledby="product-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Product</p>
+          <h2 id="product-title">What pkg does</h2>
+        </div>
+        <p>pkg is a terminal tool for Linux and macOS. Nix is its package engine.</p>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <span class="tag">One install</span>
+          <h3>The person installs pkg</h3>
+          <p>The person does not install Nix first.</p>
+        </article>
+        <article class="card">
+          <span class="tag">Automatic base</span>
+          <h3>pkg installs Determinate Nix</h3>
+          <p>When the Nix base is absent, pkg automatically verifies and runs a pinned Determinate Nix Installer binary. Determinate then owns machine-wide Nix install, repair, and uninstall.</p>
+        </article>
+        <article class="card">
+          <span class="tag">Product work</span>
+          <h3>pkg manages packages</h3>
+          <p>People can search, install, update, remove, roll back, and repair packages. pkg owns package choices, per-user state, generations, and package operations.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="reader-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">At a glance</p>
+          <h2 id="reader-title">The report in three steps</h2>
+        </div>
+        <p>Start here if you do not work with the code.</p>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <span class="tag caution">What was wrong</span>
+          <h3>Three defect groups</h3>
+          <p>In the earlier alpha, GC could deadlock. An interrupted update could fail to resume. Process data could affect trusted state identity.</p>
+        </article>
+        <article class="card">
+          <span class="tag">What is fixed</span>
+          <h3>Safer state and less code</h3>
+          <p>All three defect groups are fixed. We also removed 296 unused lines from pipeline and fake-test seams.</p>
+        </article>
+        <article class="card">
+          <span class="tag caution">What is still risky</span>
+          <h3>Two open safety items</h3>
+          <p>In the current alpha, failed install recovery may leave a broker operation active. Read-only repair may block other work. These risks remain until that path is replaced.</p>
+        </article>
+      </div>
+    </section>
+
+    <article class="longform" aria-labelledby="chapter-title">
+      <header>
+        <p class="eyebrow" style="color: var(--next)">Long-form decision chapter</p>
+        <h2 id="chapter-title">How pkg will use Determinate Nix</h2>
+        <p class="chapter-lede">This chapter separates facts, decisions, observations, recommendations, and work that still needs proof. It explains the full boundary in plain language.</p>
+        <ul class="source-key" aria-label="Evidence labels used in this chapter">
+          <li>Verified current alpha</li>
+          <li>Accepted direction</li>
+          <li>Upstream observation</li>
+          <li>Model recommendation</li>
+          <li>VM proof required</li>
+        </ul>
+      </header>
+
+      <section aria-labelledby="chapter-status-title">
+        <span class="evidence-label">Verified current alpha</span>
+        <h3 id="chapter-status-title">1. Three different kinds of status</h3>
+        <p>The report contains three time frames. They must not be mixed.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Status comparison table">
+          <table class="decision-table">
+            <caption>Status of the architecture work</caption>
+            <thead><tr><th>Time frame</th><th>What is true</th><th>What is not proved</th></tr></thead>
+            <tbody>
+              <tr><td>Earlier current alpha</td><td>162 tests passed and zero failed. Three defect groups were fixed. A total of 296 unused lines were removed.</td><td>These facts do not test Determinate Nix integration.</td></tr>
+              <tr><td>Accepted target</td><td>Users install pkg only. pkg will verify and run a pinned Determinate Nix Installer. Determinate will own the machine-wide Nix base.</td><td>The target is a decision. It is not delivered code.</td></tr>
+              <tr><td>Delivery pending</td><td>The contract, adapter, clean-host tests, lifecycle tests, and deletion proof are planned.</td><td>No old machine-wide path can be deleted yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="long-callout caution">
+          <strong>Read every number in its time frame.</strong>
+          <p>The 162 tests, 5993 TraceDecay signal, 25 modified tracked files, +664 additions, −586 deletions, and four domain documents with 166 lines are an earlier alpha snapshot. They are not proof of the accepted target.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-change-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-change-title">2. Why the recommendation changed</h3>
+        <p>The first architecture had a different ownership rule. pkg tried to own a private Nix runtime. The Broker and Root Helper protected that private runtime. Raw Nix was treated as hidden system detail. That rule made direct upstream reuse difficult.</p>
+        <ol class="numbered-detail">
+          <li><strong>Earlier rule</strong>pkg owned the private runtime, privileged writes, repair, and uninstall behavior. An upstream installer that owns machine-wide <code>/nix</code> did not fit that rule.</li>
+          <li><strong>New product choice</strong>The user accepted machine-wide <code>/nix</code>. The user also accepted Determinate ownership of base Nix install, repair, update, and uninstall.</li>
+          <li><strong>New UX rule</strong>Raw Nix stays outside the normal product PATH and UX. It is still discoverable by absolute path. It is not secret. PATH is not a security boundary.</li>
+          <li><strong>New threat limit</strong>A local administrator can change the machine. This is outside the supported threat model. A checksum cannot secure a machine that an administrator already controls.</li>
+          <li><strong>Smallest correct boundary</strong>With those choices accepted, a pinned vendor executable becomes the smallest complete machine-wide boundary. pkg can call it as a subprocess and keep product package work separate.</li>
+        </ol>
+        <div class="plain-example">
+          <strong>Small example</strong>
+          <p>A person installs pkg on a clean Mac. pkg sees that the Nix base is absent. pkg obtains one exact installer asset, verifies its SHA-256 value, and runs it with a clean fixed contract. Determinate creates and owns the base Nix system. pkg then installs the packages that the person selected.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-boundary-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-boundary-title">3. Choose the executable boundary</h3>
+        <p>The boundary must be complete. It must not make pkg rebuild an installer from fragments.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Installer integration options">
+          <table class="decision-table">
+            <caption>Comparison of integration options</caption>
+            <thead><tr><th>Option</th><th>Result</th><th>Reason</th><th>Rule</th></tr></thead>
+            <tbody>
+              <tr><td>Pinned vendor executable</td><td class="yes">Recommend</td><td>It gives pkg one complete vendor boundary. pkg verifies one exact binary and calls it as a subprocess.</td><td>Pin version, platform asset, filename, source record, and SHA-256.</td></tr>
+              <tr><td>Experimental Rust crate</td><td class="no">Do not use</td><td>The reviewed library path is experimental. It also pulls installer internals and build requirements into pkg.</td><td>Use the stable executable surface instead.</td></tr>
+              <tr><td>Copied upstream source files</td><td class="no">Do not use</td><td>Copied files lose upstream structure, make updates hard, and can miss required embedded payload behavior.</td><td>Never copy selected files into pkg.</td></tr>
+              <tr><td>Small complete fork</td><td class="maybe">Last resort</td><td>A full fork keeps source context, but it creates a permanent update and security duty.</td><td>Allow only after one verified blocking contract gap and a new explicit decision.</td></tr>
+              <tr><td><code>curl | sh</code></td><td class="no">Reject</td><td>It makes the fetched script a changing execution surface and weakens asset control.</td><td>Never use a moving script pipeline.</td></tr>
+              <tr><td>Installer found on PATH</td><td class="no">Reject</td><td>PATH lets the caller or local environment select a different binary.</td><td>Run only the verified binary at a fixed absolute path.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Packaging form is still a spike choice</h4>
+        <p>The accepted contract says that pkg automatically obtains one exact installer asset and verifies it. It does not yet say how the asset reaches the machine.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Installer asset packaging choices">
+          <table class="decision-table">
+            <caption>Two valid packaging forms to test</caption>
+            <thead><tr><th>Form</th><th>Benefit</th><th>Cost</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Bundle exact asset with pkg</td><td>Can remove the runtime download and makes offline delivery possible.</td><td>Increases each pkg release size and platform packaging work.</td><td class="maybe">Spike choice. Not implemented.</td></tr>
+              <tr><td>Download exact asset at runtime</td><td>Can reduce pkg release size and separates vendor asset delivery.</td><td>Needs network handling, cache rules, verification, and a source availability plan.</td><td class="maybe">Spike choice. Not implemented.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="long-callout caution">
+          <strong>Never use “latest.”</strong>
+          <p>Both packaging forms must name one exact version and platform asset. A moving latest URL is outside the accepted contract.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-ownership-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-ownership-title">4. Exact ownership</h3>
+        <p>Each durable object and lifecycle has one owner. pkg and Determinate must not act as equal writers to the same machine-wide state.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Ownership decision table">
+          <table class="decision-table">
+            <caption>Authoritative ownership</caption>
+            <thead><tr><th>Owner</th><th>Owns</th><th>Does not own</th></tr></thead>
+            <tbody>
+              <tr><td>pkg</td><td>Package selection; catalog and policy; per-user Manifest and Lock; generations; activation; product repair; product UX; progress; package operations; one small handoff marker.</td><td><code>/nix</code>; Nix daemon and service integration; build accounts; base Nix receipt; machine-wide Nix lifecycle.</td></tr>
+              <tr><td>Determinate Nix</td><td><code>/nix</code>; daemon and service integration; build accounts; base Nix install, repair, update, and uninstall; the authoritative vendor receipt.</td><td>pkg package choices; per-user package state; pkg generations; product activation; pkg UX.</td></tr>
+              <tr><td>Concrete Application seam</td><td>pkg-owned typed requests, outcomes, progress, recovery, and product workflows.</td><td>Machine-wide base Nix install, repair, update, or uninstall.</td></tr>
+              <tr><td>Local administrator</td><td>The machine itself. The administrator can inspect or change either component.</td><td>No promise of tamper resistance is made against that administrator.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ol class="process-flow" aria-label="Ownership handoff flow">
+          <li><strong>pkg receives intent</strong><span>The user asks for pkg or package work.</span></li>
+          <li><strong>pkg checks base state</strong><span>It reads supported evidence. It does not guess from PATH.</span></li>
+          <li><strong>Determinate owns base work</strong><span>The verified vendor executable performs base lifecycle work.</span></li>
+          <li><strong>pkg owns product work</strong><span>pkg manages selections, generations, activation, and per-user state.</span></li>
+        </ol>
+      </section>
+
+      <section aria-labelledby="chapter-state-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-state-title">5. One vendor receipt and one pkg handoff marker</h3>
+        <p>The vendor receipt is the authoritative record for the base Nix installation. pkg reads it. pkg never edits it. The pkg handoff marker records only that pkg completed or started its own handoff. The marker is not machine authority.</p>
+        <div class="state-strip" aria-label="Base Nix state model">
+          <div><strong>Absent</strong><span>No supported base receipt or install evidence exists.</span></div>
+          <div><strong>Provisioning</strong><span>pkg started a verified vendor operation and wrote a small handoff marker.</span></div>
+          <div><strong>Ready</strong><span>The vendor receipt and required base behavior agree.</span></div>
+          <div><strong>Unknown</strong><span>Evidence is missing, damaged, or contradictory. Stop and diagnose.</span></div>
+          <div><strong>Unsupported existing Nix</strong><span>A foreign Nix installation exists. Refuse automatic takeover.</span></div>
+        </div>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Receipt and marker rules">
+          <table class="decision-table">
+            <caption>Receipt and marker responsibilities</caption>
+            <thead><tr><th>Record</th><th>Writer</th><th>Reader</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Vendor receipt</td><td>Determinate only</td><td>Determinate and pkg</td><td>Authority for the supported base Nix lifecycle.</td></tr>
+              <tr><td>pkg handoff marker</td><td>pkg only</td><td>pkg</td><td>Small coordination evidence for a pkg-started handoff. It cannot override the receipt.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>If the receipt is damaged or missing while <code>/nix</code> still exists, pkg enters <strong>Unknown</strong>. It must not rewrite the receipt, silently declare success, or take ownership of the existing installation.</p>
+      </section>
+
+      <section aria-labelledby="chapter-workflows-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-workflows-title">6. Step-by-step product and base workflows</h3>
+        <p>Normal package work and base Nix work are separate commands and separate ownership paths.</p>
+        <ol class="numbered-detail">
+          <li><strong>Fresh install</strong>The person installs pkg. pkg sees no supported Nix base. pkg obtains the exact installer asset, verifies it, runs it from a fixed absolute path with a clean environment, waits for completion, validates the vendor receipt and required behavior, records its small handoff marker, and then allows package work.</li>
+          <li><strong>Existing Determinate Nix</strong>pkg reads the vendor receipt and checks supported base behavior. If the state is Ready, pkg does not reinstall Nix. It continues to pkg-owned package work.</li>
+          <li><strong>Existing foreign Nix</strong>pkg detects Nix evidence without the supported Determinate authority. It enters Unsupported existing Nix. It explains the conflict and refuses automatic takeover or deletion.</li>
+          <li><strong>Package install or update</strong>The Application seam handles the typed package request. pkg resolves catalog and policy, updates per-user Manifest and Lock, performs package execution through its Nix adapter, creates a generation, activates it, and reports progress. Normal package update never updates base Nix.</li>
+          <li><strong>Package remove</strong>pkg removes the selected product package from user state and creates the next generation. Package remove never uninstalls Nix.</li>
+          <li><strong>User-state repair</strong>pkg repairs Manifest, Lock, generations, activation, and pkg-owned roots. It does not edit the vendor receipt or repair machine-wide Nix.</li>
+          <li><strong>Base-Nix repair</strong>An explicit base repair command checks the supported state and delegates to the verified Determinate executable. pkg reports progress and result. Determinate owns all machine-wide writes.</li>
+          <li><strong>Explicit base-Nix uninstall</strong>A separate explicit command warns that the package engine will be removed. It checks pkg-owned package state, applies product cleanup policy, and delegates the base uninstall to Determinate. It then verifies that owned residue is gone. A package removal command cannot reach this path.</li>
+          <li><strong>Base-Nix update</strong>A separate explicit command selects a newly approved pinned Determinate contract. It is not part of normal package update. It must test upgrade and downgrade refusal rules before release.</li>
+        </ol>
+        <div class="plain-example">
+          <strong>Command separation example</strong>
+          <p>“Update my editor” changes a pkg package generation. “Update the Nix base” invokes an explicit Determinate-owned lifecycle. These two actions do not share an update switch.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-contract-title">
+        <span class="evidence-label proof">VM proof required</span>
+        <h3 id="chapter-contract-title">7. Pinned asset and clean process contract</h3>
+        <p>The adapter must accept less input, not more input. The caller cannot select a different installer or planner.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Pinned asset contract fields">
+          <table class="decision-table">
+            <caption>Fields fixed by the pkg release</caption>
+            <thead><tr><th>Field</th><th>Rule</th><th>Failure behavior</th></tr></thead>
+            <tbody>
+              <tr><td>Version</td><td>One exact Determinate Nix Installer version.</td><td>Unknown or moving versions are rejected.</td></tr>
+              <tr><td>Platform</td><td>Exact supported operating system and architecture asset.</td><td>Unsupported platform fails before execution.</td></tr>
+              <tr><td>SHA-256</td><td>Expected digest stored in release manifest metadata.</td><td>Mismatch fails closed and deletes or quarantines the untrusted asset.</td></tr>
+              <tr><td>Asset filename</td><td>Exact filename for the selected platform.</td><td>Unexpected name is not executed.</td></tr>
+              <tr><td>Source record</td><td>Fixed source identity for the exact asset. Never latest.</td><td>Redirect or source mismatch follows a strict failure rule.</td></tr>
+              <tr><td>Execution path</td><td>Fixed absolute path after verification.</td><td>No PATH lookup or relative execution.</td></tr>
+              <tr><td>Environment</td><td>Clean allowlist. No user installer flags or inherited planner controls.</td><td>Unexpected environment input is ignored or rejected.</td></tr>
+              <tr><td>Planner and Nix source</td><td>Chosen by the reviewed pkg contract.</td><td>No caller-selected Nix URL or planner.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The exact vendor CLI flags are not yet fixed. They remain VM-spike work. One flag must not be treated as proof of lifecycle or PATH behavior.</p>
+
+        <h4>PATH is a blocking compatibility gate</h4>
+        <p>Raw Nix must stay outside the normal pkg PATH and UX. This is a product compatibility rule. It is not secrecy and it is not a security boundary. A local administrator can use an absolute path and can change system configuration.</p>
+        <ul class="clean-list">
+          <li>Prove behavior in a login shell.</li>
+          <li>Prove behavior in a non-login shell.</li>
+          <li>Prove the GUI and macOS launch environment.</li>
+          <li>Prove that repair does not expose raw Nix in normal PATH.</li>
+          <li>Prove that base update keeps the PATH rule.</li>
+          <li>Prove that uninstall removes any owned PATH integration.</li>
+        </ul>
+        <div class="long-callout caution">
+          <strong>Stop condition</strong>
+          <p>If the pinned installer cannot meet the PATH contract across these environments, stop the migration. Do not claim that one installer flag solves the problem.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-security-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-security-title">8. Security, failure, and crash rules</h3>
+        <h4>Security improvements</h4>
+        <ul class="clean-list">
+          <li>One exact vendor asset replaces a broad custom machine-wide implementation.</li>
+          <li>SHA-256 verification happens before execution.</li>
+          <li>A fixed absolute path prevents PATH binary substitution by normal callers.</li>
+          <li>A clean environment removes caller-selected Nix URLs, planners, and flags.</li>
+          <li>One vendor receipt gives base Nix one machine authority.</li>
+          <li>Foreign Nix is refused instead of silently adopted.</li>
+        </ul>
+
+        <h4>Accepted limits</h4>
+        <ul class="clean-list">
+          <li>A local administrator can replace files, change services, edit PATH, or run raw Nix.</li>
+          <li>Raw Nix outside normal PATH is a UX rule only.</li>
+          <li>A checksum does not protect a compromised release manifest, build system, signing process, vendor release, or administrator-controlled machine.</li>
+        </ul>
+
+        <h4>Remaining supply-chain risks</h4>
+        <p>pkg still trusts the selected vendor revision, release asset production, the pkg release manifest, pkg distribution, and the digest review process. If the asset is downloaded, pkg also depends on source availability. The checksum protects integrity against a different byte stream. It does not prove that approved bytes are safe.</p>
+
+        <h4>Fail-closed behavior</h4>
+        <ul class="clean-list">
+          <li>Digest mismatch: do not execute.</li>
+          <li>Unsupported platform: do not execute.</li>
+          <li>Foreign Nix: do not install over it.</li>
+          <li>Missing or damaged receipt with existing Nix: enter Unknown and stop.</li>
+          <li>Unexpected vendor exit: keep diagnostic evidence and do not mark Ready.</li>
+          <li>Post-install behavior mismatch: do not enable package work.</li>
+        </ul>
+
+        <h4>Crash and power-loss behavior</h4>
+        <p>Before execution, pkg writes only a small handoff marker with the pinned contract identity. During execution, Determinate owns its machine transaction. After a crash or reboot, pkg reads the vendor receipt and real machine behavior. It never turns its marker into machine authority. It resumes, repairs, or stops only through the supported vendor lifecycle. VM tests must prove SIGKILL and power-loss boundaries.</p>
+      </section>
+
+      <section aria-labelledby="chapter-delete-title">
+        <span class="evidence-label proof">VM proof required</span>
+        <h3 id="chapter-delete-title">9. Delete code only after replacement proof</h3>
+        <p>The new boundary can remove large custom machine-wide areas. Removal is not automatic. Every row has a proof gate.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Detailed code deletion map">
+          <table class="decision-table">
+            <caption>Machine-wide deletion map</caption>
+            <thead><tr><th>Current area</th><th>Why it can become redundant</th><th>Proof required before deletion</th></tr></thead>
+            <tbody>
+              <tr><td>Broker client</td><td>pkg no longer needs a private client for machine-wide Nix lifecycle when Determinate is the sole base owner.</td><td>Fresh install, repair, update, uninstall, progress, cancellation, and error mapping pass without this client.</td></tr>
+              <tr><td>Broker protocol and framing</td><td>The machine-wide request protocol has no job after the subprocess contract replaces it.</td><td>Confirm no retained pkg-owned workflow uses each message or frame type. Delete only dead machine-wide types.</td></tr>
+              <tr><td>Root Helper</td><td>Determinate performs required privileged base writes and service work.</td><td>Linux and macOS ownership, daemon, account, repair, and uninstall gates pass through Determinate only.</td></tr>
+              <tr><td>Custom runtime provisioning</td><td>Determinate owns creation and maintenance of <code>/nix</code> and the base runtime.</td><td>Clean-host install and repeat install pass on every supported platform.</td></tr>
+              <tr><td>Custom base repair</td><td>Determinate owns base Nix repair.</td><td>Damage and receipt-state repair tests pass, including safe refusal for Unknown and foreign Nix.</td></tr>
+              <tr><td>Custom base uninstall</td><td>Determinate owns removal of its Nix base.</td><td>Explicit uninstall leaves no owned service, account, PATH, receipt, installer, or store residue.</td></tr>
+              <tr><td>System assets and accounts</td><td>Determinate owns daemon services, integration files, and build accounts.</td><td>Ownership inventory before and after install, repair, and uninstall is exact on Linux and macOS.</td></tr>
+              <tr><td>Base-Nix installer journals</td><td>The vendor receipt and lifecycle replace pkg journals for machine-wide installation.</td><td>SIGKILL, reboot, repeat run, and receipt damage tests show safe vendor recovery.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Keep these pkg-owned areas</h4>
+        <ul class="clean-list">
+          <li><code>pkg-pipeline</code> package transaction behavior.</li>
+          <li>User-state and generation recovery.</li>
+          <li>Catalog and policy logic.</li>
+          <li>Product progress and safe error presentation.</li>
+          <li>User ownership and effective-identity checks.</li>
+          <li>The Nix package-execution adapter used after the base is Ready.</li>
+        </ul>
+
+        <h4>Classify <code>pkg-nix</code>; do not delete it as one block</h4>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="pkg-nix type classification">
+          <table class="decision-table">
+            <caption>Type-by-type classification rule</caption>
+            <thead><tr><th>Type group</th><th>Action</th><th>Reason</th></tr></thead>
+            <tbody>
+              <tr><td>Package execution, store-path validation, build results, and product package errors</td><td class="yes">Keep</td><td>pkg still uses Nix as its package engine.</td></tr>
+              <tr><td>Machine-wide broker request, response, framing, helper, and base provisioning types</td><td class="maybe">Delete after proof</td><td>These become redundant only when all callers move to the verified subprocess contract.</td></tr>
+              <tr><td>Shared names used by both groups</td><td class="maybe">Split or rename minimally</td><td>Keep the product meaning. Remove only machine-wide meaning.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="long-callout caution">
+          <strong>Do not polish code scheduled for deletion.</strong>
+          <p>Do not add a new broker operation guard, shared broker frame abstraction, or consolidated installer journal before the migration. Add only a small current-alpha safety fix that is needed before replacement.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-deps-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-deps-title">10. Dependency and abstraction decisions</h3>
+        <p>The only new component is a non-Cargo installer executable plus release manifest metadata. Do not add a Rust installer library.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Dependency decisions">
+          <table class="decision-table">
+            <caption>Keep, add, evaluate, and reject</caption>
+            <thead><tr><th>Item</th><th>Decision</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>Pinned Determinate installer executable</td><td class="yes">Add as release component</td><td>It is the complete external machine-wide boundary.</td></tr>
+              <tr><td>Release manifest metadata</td><td class="yes">Add</td><td>It records exact version, platform asset, filename, source identity, and SHA-256.</td></tr>
+              <tr><td>Existing Rust <code>nix</code> crate</td><td class="yes">Keep where useful</td><td>It already provides correct system user and platform calls.</td></tr>
+              <tr><td>Small percent encoder and strict encoders</td><td class="yes">Keep</td><td>They are small and preserve exact security-sensitive formats.</td></tr>
+              <tr><td>Existing <code>hex</code> and <code>futures-util</code></td><td class="yes">Keep</td><td>They already solve used problems with less code than local replacements.</td></tr>
+              <tr><td>Existing <code>jiff</code></td><td class="maybe">Evaluate only</td><td>Use it for strict timestamps only if a measured change removes custom code without weakening accepted formats.</td></tr>
+              <tr><td>Broad <code>thiserror</code> migration</td><td class="no">Reject</td><td>It does not help the ownership migration and can change exact error and redaction behavior.</td></tr>
+              <tr><td><code>strum</code> for wire names</td><td class="no">Reject</td><td>Trusted wire text needs explicit exact names, not flexible parsing features.</td></tr>
+              <tr><td>Generic Serde protocol envelope</td><td class="no">Reject</td><td>The old machine protocol should be deleted, not generalized.</td></tr>
+              <tr><td>One-implementation traits</td><td class="no">Reject</td><td>A concrete type is smaller and clearer.</td></tr>
+              <tr><td>Premature <code>pkg-app</code> crate</td><td class="no">Reject</td><td>Move real behavior first. Do not create a pass-through crate.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Keep the concrete <code>Application::open</code> and <code>Application::run</code> direction for pkg-owned work. Keep typed requests, outcomes, errors, and progress. Move test fakes down to the package Nix adapter or another real lower boundary.</p>
+      </section>
+
+      <section aria-labelledby="chapter-proof-title">
+        <span class="evidence-label proof">VM proof required</span>
+        <h3 id="chapter-proof-title">11. Clean-host proof matrix</h3>
+        <p>Run the matrix on disposable clean hosts. A developer laptop is not clean-host proof.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Clean-host VM proof matrix">
+          <table class="decision-table">
+            <caption>Proof required before old code deletion</caption>
+            <thead><tr><th>Case</th><th>Required result</th><th>Evidence to keep</th></tr></thead>
+            <tbody>
+              <tr><td>Linux x86_64</td><td>Fresh install, package operation, repair, update, and uninstall pass.</td><td>Asset identity, receipt, services, accounts, ownership, PATH, and residue inventory.</td></tr>
+              <tr><td>Linux aarch64</td><td>Same lifecycle passes with the exact architecture asset.</td><td>Same inventory and digest evidence.</td></tr>
+              <tr><td>Apple Silicon macOS</td><td>Fresh install and full lifecycle pass with launch environment checks.</td><td>Receipt, services, users/groups, GUI environment, shell PATH, and residue inventory.</td></tr>
+              <tr><td>Verification failure</td><td>A wrong digest never executes.</td><td>Exit status, safe error, no machine change, and untrusted asset cleanup.</td></tr>
+              <tr><td>Repeat install</td><td>A Ready base is not reinstalled or damaged.</td><td>Stable receipt, ownership, services, and package behavior.</td></tr>
+              <tr><td>SIGKILL and reboot</td><td>Each tested interruption returns to Ready through supported recovery or stops safely as Unknown.</td><td>Interruption point, receipt state, marker state, service state, and recovery result.</td></tr>
+              <tr><td>Ownership</td><td>Every machine-wide file, service, account, and product state has the expected owner.</td><td>Before-and-after inventory.</td></tr>
+              <tr><td>Receipt damaged or missing</td><td>pkg does not invent authority or edit the receipt.</td><td>Unknown result, safe guidance, and no automatic takeover.</td></tr>
+              <tr><td>Foreign Nix</td><td>pkg refuses automatic install, repair, update, or uninstall.</td><td>Detection evidence and unchanged foreign installation.</td></tr>
+              <tr><td>Base update and downgrade</td><td>Approved update succeeds. Unsupported downgrade refuses safely.</td><td>Old and new contract identities, receipt state, and package behavior.</td></tr>
+              <tr><td>Base repair</td><td>Determinate repairs supported damage without changing pkg user state.</td><td>Damage setup, vendor result, receipt, and unchanged Manifest/Lock.</td></tr>
+              <tr><td>Explicit base uninstall</td><td>All Determinate-owned and pkg handoff residue is gone. User-facing policy is followed.</td><td>Post-uninstall filesystem, account, service, PATH, receipt, installer, and marker inventory.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ol class="process-flow" aria-label="Proof before delete sequence">
+          <li><strong>Freeze contract</strong><span>Record exact asset and lifecycle inputs.</span></li>
+          <li><strong>Build thin adapter</strong><span>No flexible installer API.</span></li>
+          <li><strong>Run full matrix</strong><span>Keep evidence for each clean host.</span></li>
+          <li><strong>Delete by proven row</strong><span>Remove only code with a complete replacement.</span></li>
+        </ol>
+      </section>
+
+      <section aria-labelledby="chapter-stop-title">
+        <span class="evidence-label proof">VM proof required</span>
+        <h3 id="chapter-stop-title">12. Rollback and stop conditions</h3>
+        <p>The migration must have one writer at each machine-wide step.</p>
+        <ul class="clean-list">
+          <li>Never run the old custom installer and Determinate as equal writers.</li>
+          <li>Do not silently take over foreign Nix.</li>
+          <li>Do not delete old code until the matching proof gates pass.</li>
+          <li>If PATH behavior fails, stop the migration.</li>
+          <li>If install, repair, update, uninstall, receipt, or crash recovery cannot meet the contract, stop the migration.</li>
+          <li>If the executable contract has one proven blocking gap, write the gap down and make a new explicit fork decision. Do not drift into copied source.</li>
+        </ul>
+        <div class="long-callout caution">
+          <strong>Rollback during delivery</strong>
+          <p>Before the new path becomes authoritative, keep the current path unchanged except for required safety fixes. If a spike fails, remove the thin experimental adapter and keep the current alpha. Do not leave both models enabled.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-model-title">
+        <span class="evidence-label model">Model recommendation</span>
+        <h3 id="chapter-model-title">13. Research and model review reconciliation</h3>
+        <p>Herdr and Pi ran GLM 5.3, DeepSeek Pro, and Qwen 3.8 Max reviews. These models produced findings and design pressure. They did not implement or prove the target architecture.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Model advice reconciliation">
+          <table class="decision-table">
+            <caption>Accepted, adapted, and rejected advice</caption>
+            <thead><tr><th>Advice</th><th>Decision</th><th>How it applies now</th></tr></thead>
+            <tbody>
+              <tr><td>Concrete <code>Application::open/run</code></td><td class="maybe">Adapt</td><td>Keep the concrete seam, but use it only for pkg-owned workflows.</td></tr>
+              <tr><td>Typed requests, outcomes, errors, and progress</td><td class="yes">Keep</td><td>Keep CLI and machine details outside product outcomes.</td></tr>
+              <tr><td>Total user-state recovery barrier</td><td class="yes">Keep</td><td>It remains required for pkg-owned state before reads and mutations.</td></tr>
+              <tr><td>Lower-boundary test fakes</td><td class="yes">Keep</td><td>Fake the package Nix adapter or another real boundary, not a broad application trait.</td></tr>
+              <tr><td>Extract real workflows from <code>local.rs</code></td><td class="yes">Keep</td><td>Move real pkg-owned behavior. Do not move machine-wide Nix ownership into the Application.</td></tr>
+              <tr><td>Broker operation guard</td><td class="no">Reject as target work</td><td>The broker path should be deleted after migration. Apply only the two current-alpha safety fixes.</td></tr>
+              <tr><td>Shared broker frame abstraction</td><td class="no">Reject now</td><td>Do not deepen a protocol planned for removal.</td></tr>
+              <tr><td>Installer journal consolidation</td><td class="no">Reject now</td><td>Vendor lifecycle and receipt should replace these journals after proof.</td></tr>
+              <tr><td>Replace <code>futures-util</code></td><td class="no">Reject</td><td>The existing dependency is clearer and smaller than manual polling code.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h4>Two verified Qwen current-alpha findings</h4>
+        <p>First, <code>recover_pending_install</code> can return on some errors without cancelling the broker operation. Second, verify-only repair holds an exclusive state lease for the full check. These are current-alpha facts and are higher priority than Qwen's lower-priority cleanup suggestions.</p>
+      </section>
+
+      <section aria-labelledby="chapter-upstream-title">
+        <span class="evidence-label">Upstream observation</span>
+        <h3 id="chapter-upstream-title">14. Evidence from the reviewed upstream revision</h3>
+        <p>The source review used nix-installer version 3.22.1 at commit <code>4132ad07a15ee7d88c096ac7172b7afb2672866b</code>. The clone was temporary and clean. These points are observations of that revision. They are not proof of pkg integration.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Upstream source observations">
+          <table class="decision-table">
+            <caption>Observed upstream properties</caption>
+            <thead><tr><th>Observed item</th><th>Observation at reviewed revision</th><th>Integration meaning</th></tr></thead>
+            <tbody>
+              <tr><td>License</td><td>LGPL-2.1.</td><td>Release and fork decisions must preserve applicable license duties.</td></tr>
+              <tr><td>Default features</td><td>CLI and diagnostics features are enabled by default.</td><td>The exact released executable behavior and diagnostics policy need review.</td></tr>
+              <tr><td>Library path</td><td>The Rust library path is experimental.</td><td>Do not make it pkg's API boundary.</td></tr>
+              <tr><td>Build requirements</td><td>The reviewed build uses <code>tokio_unstable</code> and embedded target payload requirements.</td><td>Copying pieces or embedding the crate adds build coupling.</td></tr>
+              <tr><td>Receipt</td><td>The receipt is at <code>/nix/receipt.json</code>.</td><td>pkg may read it as vendor authority. pkg never edits it.</td></tr>
+              <tr><td>Installer copy</td><td>An installer copy is at <code>/nix/nix-installer</code>.</td><td>Uninstall and repair spikes must confirm how this copy participates.</td></tr>
+              <tr><td>Diagnostics</td><td>Diagnostics are on by default. Endpoint and self-build choices exist.</td><td>pkg must make an explicit diagnostics and endpoint decision. Do not inherit a choice accidentally.</td></tr>
+              <tr><td>Plan JSON</td><td>Plan JSON exists but was not established as a stable product interface.</td><td>Do not bind pkg product state to plan JSON.</td></tr>
+              <tr><td>Crash durability</td><td>Receipt crash-durability guarantees were not proved by source reading.</td><td>VM interruption and receipt-damage tests are mandatory.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="chapter-docs-title">
+        <span class="evidence-label accepted">Accepted direction</span>
+        <h3 id="chapter-docs-title">15. Domain documents need a later update</h3>
+        <p>The existing CONTEXT, ADR, and product documents describe the Broker, Root Helper, and private runtime as the current-alpha architecture. They remain valid history for that implementation.</p>
+        <p>The Determinate decision supersedes those documents only for the future machine-wide Nix lifecycle. It does not supersede per-user Manifest and Lock, generations, activation, product repair, package policy, catalog, or the package Application direction.</p>
+        <p>After the packaging spike confirms the exact contract, add an ADR for Determinate ownership. Update the domain terms for Pinned Determinate Nix Installer, Determinate Nix, Vendor Receipt, pkg Handoff Marker, Foreign Nix, and the five base states. Do not rewrite the documents as delivered architecture before the spike passes.</p>
+      </section>
+
+      <section aria-labelledby="chapter-appendix-title">
+        <span class="evidence-label">Verified current alpha</span>
+        <h3 id="chapter-appendix-title">16. Reference and evidence appendix</h3>
+        <h4>Preserved earlier facts</h4>
+        <ul class="clean-list">
+          <li>162 earlier tests passed. Zero failed.</li>
+          <li>296 unused pipeline and fake-test lines were removed.</li>
+          <li>The earlier tracked change covered 25 modified files, +664 additions, and −586 deletions.</li>
+          <li>Four domain documents added 166 lines.</li>
+          <li>The earlier TraceDecay signal was 5993. It is a technical signal, not a grade or percentage.</li>
+          <li>Three defect groups were fixed: the GC admission and lease deadlock, interrupted update recovery, and trusted state identity with fixed platform roots.</li>
+          <li>Two current-alpha safety findings remain open: broker cancellation during pending-install recovery and the exclusive verify-only repair lease.</li>
+        </ul>
+
+        <h4>Meaning of source labels</h4>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Evidence label definitions">
+          <table class="decision-table">
+            <caption>How to read claims in this chapter</caption>
+            <thead><tr><th>Label</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Verified current alpha</td><td>Observed in the current code, earlier checks, or reviewed current-alpha behavior.</td></tr>
+              <tr><td>Accepted direction</td><td>A product or architecture decision accepted for future delivery. Not implementation proof.</td></tr>
+              <tr><td>Upstream observation</td><td>Observed in nix-installer 3.22.1 at the named commit. Not pkg integration proof.</td></tr>
+              <tr><td>Model recommendation</td><td>Advice from delegated model review. It needs human and implementation validation.</td></tr>
+              <tr><td>VM proof required</td><td>A claim that must pass clean-host execution before code removal or release.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Review limits for this artifact</h4>
+        <p>Earlier HTML source and static CSS checks passed. For this revision, browser layout was tested at 320 px and 1200 px with no page-level horizontal overflow. These checks do not prove every browser, operating system, or assistive technology. The print stylesheet was inspected, but a real print render was not tested.</p>
+      </section>
+    </article>
+
+    <section aria-labelledby="architecture-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Accepted install path</p>
+          <h2 id="architecture-title">pkg installs the Nix base automatically</h2>
+        </div>
+        <p>The person installs pkg only. pkg uses one verified external installer when the Nix base is absent.</p>
+      </div>
+
+      <div class="architecture">
+        <div class="flow" role="img" aria-label="Accepted install path: person installs pkg; pkg verifies a fixed Determinate Nix Installer; Determinate installs and maintains the Nix base; pkg manages product packages and user state">
+          <div class="node"><div><strong>Person installs pkg</strong><span>No Nix preinstall</span></div></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node future"><div><strong>pkg verifies installer</strong><span>Fixed version and checksum</span></div></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><div><strong>Determinate owns Nix base</strong><span>Install, repair, and uninstall</span></div></div>
+          <div class="arrow" aria-hidden="true">→</div>
+          <div class="node"><div><strong>pkg owns product work</strong><span>Packages, generations, and user state</span></div></div>
+        </div>
+        <div class="seam-note">
+          <span class="tag next">pkg-owned seam</span>
+          <div>
+            <p><strong>Concrete Application recommendation:</strong> Keep <code>Application::open(config)</code> and <code>Application::run(request, progress)</code> for pkg-owned package and user-state work only.</p>
+            <p>The Application must not own machine-wide Nix install, repair, or uninstall. Determinate owns that lifecycle.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="decision-grid" style="margin-top: 16px" aria-label="Ownership map">
+        <article class="card">
+          <span class="tag">Determinate owns</span>
+          <h3>Base Nix lifecycle</h3>
+          <p>Determinate Nix owns machine-wide Nix install, repair, and uninstall.</p>
+        </article>
+        <article class="card">
+          <span class="tag">pkg owns</span>
+          <h3>Product package lifecycle</h3>
+          <p>pkg owns package selections, package operations, generations, and per-user state.</p>
+        </article>
+      </div>
+      <div class="caution-box">
+        <strong>Accepted support boundary</strong>
+        <p>A local administrator can change the machine. This risk is accepted and is outside the supported threat model.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="trust-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Trust</p>
+          <h2 id="trust-title">A verified input, not a tamper-proof machine</h2>
+        </div>
+        <p>pkg verifies the pinned installer before execution. This does not make the machine tamper-proof.</p>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <span class="tag">Verified pinned input</span>
+          <h3>Check before execution</h3>
+          <p>pkg accepts one fixed installer version and checksum. Verification fails closed.</p>
+        </article>
+        <article class="card">
+          <span class="tag">Normal UX</span>
+          <h3>Raw Nix stays outside PATH</h3>
+          <p>Raw Nix stays out of the normal product experience. It is not secret and it is not a security boundary.</p>
+        </article>
+        <article class="card">
+          <span class="tag caution">Accepted limit</span>
+          <h3>Local admin can change the machine</h3>
+          <p>Local administrator tampering is outside the supported threat model.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="fixes-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Earlier alpha work</p>
+          <h2 id="fixes-title">Three defect groups were fixed</h2>
+        </div>
+        <div class="legend" aria-label="Color key">
+          <span class="key" style="--key: var(--complete)">Complete</span>
+          <span class="key" style="--key: var(--next)">Next</span>
+          <span class="key" style="--key: var(--caution)">Caution</span>
+        </div>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <span class="tag">Current-alpha fix</span>
+          <h3>GC deadlock</h3>
+          <p>The current broker path now gets GC admission before it takes the state lease. A blocked GC no longer blocks other state access.</p>
+        </article>
+        <article class="card">
+          <span class="tag">Current-alpha fix</span>
+          <h3>Interrupted update</h3>
+          <p>Update is now a resumable state operation. Tests cover failure before and after the current-generation switch.</p>
+        </article>
+        <article class="card">
+          <span class="tag">Current-alpha fix</span>
+          <h3>Trusted state identity</h3>
+          <p>The effective UID and passwd data protect normal processes when pkg selects the user home. This does not protect against a local administrator.</p>
+          <div class="included-fix">
+            <strong>Included: fixed platform roots</strong>
+            <p>Linux uses <code>$HOME/.local/share/pkg</code>. macOS uses <code>$HOME/Library/Application Support/pkg</code>. Here, <code>HOME</code> means the effective UID's passwd home. Process <code>HOME</code> is ignored.</p>
+          </div>
+        </article>
+        <article class="card">
+          <span class="tag">Deleted</span>
+          <h3>Unused seams</h3>
+          <p>Unused pipeline traits, phases, errors, runners, and fake test code are gone.</p>
+        </article>
+        <article class="card">
+          <span class="tag">Simplified</span>
+          <h3>Generation helpers</h3>
+          <p>Generation ordering has one private helper. Safe staging deletion is shared where its rules are equal.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="tests-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Verification</p>
+          <h2 id="tests-title">162 earlier tests passed</h2>
+        </div>
+        <p>These tests do not prove the new external-installer path. New tests and review are required.</p>
+      </div>
+      <div class="card test-panel">
+        <div class="test-score" aria-label="162 tests passed and 0 failed">
+          <div><strong>162</strong><span>passed<br>0 failed</span></div>
+        </div>
+        <ul class="test-list" aria-label="Test count by group">
+          <li><span>Pipeline</span><strong>48</strong></li>
+          <li><span>CLI library</span><strong>101</strong></li>
+          <li><span>Binaries</span><strong>2</strong></li>
+          <li><span>CLI integration</span><strong>9</strong></li>
+          <li><span>Fake E2E</span><strong>1</strong></li>
+          <li><span>Installer PATH</span><strong>1</strong></li>
+        </ul>
+      </div>
+    </section>
+
+    <section aria-labelledby="health-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Earlier alpha code health</p>
+          <h2 id="health-title">System structure is strong. One large command file still needs to be split.</h2>
+        </div>
+        <p>The production crate dependency graph is still a DAG. No production crate cycle was added. The large file is <code>local.rs</code>.</p>
+      </div>
+      <div class="health-grid">
+        <div class="card health-bars">
+          <div class="health-row"><span>Modularity</span><div class="track"><div class="fill" style="--value: 99%"></div></div><strong>99%</strong></div>
+          <div class="health-row"><span>Depth</span><div class="track"><div class="fill" style="--value: 100%"></div></div><strong>100%</strong></div>
+          <div class="health-row"><span>Redundancy</span><div class="track"><div class="fill" style="--value: 86%"></div></div><strong>86%</strong></div>
+          <div class="health-row"><span>Complexity equality</span><div class="track"><div class="fill caution" style="--value: 34%"></div></div><strong>34%</strong></div>
+          <div class="health-row"><span>Reported acyclicity</span><div class="track"><div class="fill caution" style="--value: 26%"></div></div><strong>26%</strong></div>
+        </div>
+        <div class="card health-score">
+          <strong>5993</strong>
+          <span>Earlier TraceDecay technical signal<br>Not a grade or percentage</span>
+        </div>
+      </div>
+      <div class="caution-box">
+        <strong>These are technical code-shape metrics.</strong>
+        <p>Modularity measures separation between modules. Depth measures whether modules hide detail. Redundancy measures repeated structure. Complexity equality shows how evenly complexity is spread. Reported acyclicity looks for dependency loops. Its graph includes false edges from tests and same-name methods. The production crate DAG is unchanged.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="deletion-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Less code</p>
+          <h2 id="deletion-title">Delete the design that had no job</h2>
+        </div>
+        <p>The removed pipeline seam had no production caller or implementation.</p>
+      </div>
+      <div class="deletion">
+        <div class="deletion-visual" role="img" aria-label="296 unused lines were removed from unused pipeline and fake-test seams.">
+          <strong>296 unused lines were removed from unused pipeline and fake-test seams.</strong>
+          <div class="dead-bar" aria-hidden="true">−296</div>
+        </div>
+        <div class="card">
+          <span class="tag">Outcome</span>
+          <h3>Fewer names and fewer false choices</h3>
+          <ul class="clean-list">
+            <li>No unused install backend trait.</li>
+            <li>No unused phase and pipeline error types.</li>
+            <li>No runner built for a future that does not exist.</li>
+            <li>No fake E2E code that only tests dead design.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="domain-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Domain model</p>
+          <h2 id="domain-title">One set of words for the product</h2>
+        </div>
+        <p>The new context file separates user ideas from implementation details.</p>
+      </div>
+      <div class="domain-grid">
+        <article class="card domain-card">
+          <span class="tag">Package input</span>
+          <h3>From choice to build</h3>
+          <p>This group describes what people ask pkg to install.</p>
+          <ul><li>Package Selector</li><li>Catalog</li><li>Index</li><li>Realization</li><li>Store Path</li><li>Build Plan</li><li>Build Preview</li><li>Build Approval</li></ul>
+        </article>
+        <article class="card domain-card">
+          <span class="tag">User state</span>
+          <h3>From intent to history</h3>
+          <p>This group describes what pkg remembers for each user.</p>
+          <ul><li>Manifest</li><li>Lock</li><li>Lifecycle State</li><li>Generation</li><li>Activation Forest</li><li>GC Root</li></ul>
+        </article>
+        <article class="card domain-card">
+          <span class="tag">System work</span>
+          <h3>From verified installer to ownership</h3>
+          <p>This group describes which component owns machine-wide Nix work and which component owns product work.</p>
+          <ul><li>Pinned Determinate Nix Installer</li><li>Determinate Nix</li><li>Lifecycle Operation</li><li>Repair</li><li>Channel</li><li>Managed Nix</li><li>Broker (current alpha)</li><li>Root Helper (current alpha)</li></ul>
+        </article>
+      </div>
+      <div class="card" style="margin-top: 16px">
+        <h3>Architecture decision history</h3>
+        <ol class="adr-list">
+          <li><span><strong>Activation forest outside the store.</strong> User-visible activation state stays separate from immutable store data.</span></li>
+          <li><span><strong>Per-user authoritative state.</strong> User package state stays user-owned. In the current alpha, shared authenticated data stays broker-owned.</span></li>
+          <li><span><strong>Broker and Root Helper privilege split.</strong> This earlier alpha decision is superseded for machine-wide Nix work. Determinate now owns that lifecycle. The current path remains until replacement gates pass.</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section aria-labelledby="deps-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Dependency audit</p>
+          <h2 id="deps-title">One external component is accepted</h2>
+        </div>
+        <p>Adopt a pinned Determinate Nix Installer as a separate binary.</p>
+      </div>
+      <p>pkg verifies the fixed binary before execution. It does not use the experimental Rust crate. It does not copy upstream source files.</p>
+      <div class="decision-grid">
+        <article class="card decision-card">
+          <span class="tag">Adopt</span>
+          <h3>Pinned external installer</h3>
+          <ul>
+            <li>Use a fixed version and checksum.</li>
+            <li>Run it as a thin subprocess contract.</li>
+            <li>Fail closed when verification fails.</li>
+            <li>Use a small complete fork only if a verified external-contract gap blocks the product.</li>
+            <li>Do not copy individual upstream source files.</li>
+          </ul>
+        </article>
+        <article class="card decision-card">
+          <span class="tag">Keep</span>
+          <h3>Unrelated library decisions</h3>
+          <ul>
+            <li>Reuse the installed Rust <code>nix</code> crate user lookup.</li>
+            <li>Keep the small percent encoder.</li>
+            <li>Keep strict secret and digest encoders.</li>
+            <li>Use <code>hex</code> only where it is already direct.</li>
+            <li>No <code>strum</code> for trusted wire names.</li>
+            <li>No broad <code>thiserror</code> conversion.</li>
+            <li>No generic Serde protocol envelope.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="follow-up-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--caution)">Current-alpha findings</p>
+          <h2 id="follow-up-title">Two safety items remain open in the current path</h2>
+        </div>
+        <p>These findings apply until the current broker and helper path is replaced.</p>
+      </div>
+      <div class="card-grid">
+        <article class="card">
+          <span class="tag caution">Current-alpha safety</span>
+          <h3>Broker cancellation</h3>
+          <p><code>recover_pending_install</code> can return on some errors without cancelling the broker operation.</p>
+          <p><strong>Why it matters:</strong> Failed recovery can leave the operation active.</p>
+        </article>
+        <article class="card">
+          <span class="tag caution">Current-alpha safety</span>
+          <h3>Repair lease</h3>
+          <p>Verify-only repair takes an exclusive state lease for the full check.</p>
+          <p><strong>Why it matters:</strong> Read-only repair can block other work.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="transition-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--next)">Transition</p>
+          <h2 id="transition-title">The decision starts a new proof cycle</h2>
+        </div>
+        <p>Earlier facts stay valid for the earlier alpha. The new path needs new evidence.</p>
+      </div>
+      <div class="change-strip transition-strip" aria-label="Architecture transition">
+        <div><strong>1</strong><span>Earlier alpha snapshot</span></div>
+        <div><strong>2</strong><span>Accepted Determinate ownership change</span></div>
+        <div><strong>3</strong><span>New tests and review required</span></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="proof-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--caution)">Proof before removal</p>
+          <h2 id="proof-title">Do not delete the current installer yet</h2>
+        </div>
+        <p>Delete the custom machine-wide installer only after every gate passes.</p>
+      </div>
+      <div class="card">
+        <ul class="test-list" aria-label="External installer proof gates">
+          <li><span>Disposable Linux VM</span><strong>Required</strong></li>
+          <li><span>Disposable Apple Silicon macOS VM</span><strong>Required</strong></li>
+          <li><span>Failed verification</span><strong>Fail closed</strong></li>
+          <li><span>Normal PATH</span><strong>No raw Nix</strong></li>
+          <li><span>File ownership</span><strong>Correct</strong></li>
+          <li><span>Repeat run</span><strong>Safe</strong></li>
+          <li><span>SIGKILL and reboot recovery</span><strong>Safe</strong></li>
+          <li><span>Uninstall</span><strong>No owned residue</strong></li>
+        </ul>
+      </div>
+    </section>
+
+    <section aria-labelledby="next-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--next)">Next</p>
+          <h2 id="next-title">Work in this order</h2>
+        </div>
+        <p>Prove the external installer contract before removing the current machine-wide path.</p>
+      </div>
+      <div class="work-group">
+        <h3>Now</h3>
+        <ol class="next-list">
+          <li><div><strong>Cancel failed pending installs.</strong><span>Make <code>recover_pending_install</code> cancel the broker operation on every required error path.</span></div></li>
+          <li><div><strong>Reduce the verify-only repair lease.</strong><span>Do not hold an exclusive state lease for a read-only check.</span></div></li>
+          <li><div><strong>Record the pinned Determinate binary contract.</strong><span>Record the version, checksum, input, and fail-safe behavior.</span></div></li>
+          <li><div><strong>Record the ownership and support boundary.</strong><span>Determinate owns base Nix. pkg owns product work. Local administrator tampering is outside support.</span></div></li>
+        </ol>
+      </div>
+      <div class="work-group">
+        <h3>Next</h3>
+        <ol class="next-list start-5" start="5">
+          <li><div><strong>Build one thin subprocess adapter.</strong><span>Install Nix automatically after pkg installation.</span></div></li>
+          <li><div><strong>Run disposable VM gates.</strong><span>Test Linux and Apple Silicon macOS.</span></div></li>
+          <li><div><strong>Test the failure and cleanup contract.</strong><span>Test failed verification, no-PATH behavior, repeat run, crash and reboot recovery, ownership, and uninstall.</span></div></li>
+        </ol>
+      </div>
+      <div class="work-group">
+        <h3>Later</h3>
+        <ol class="next-list start-8" start="8">
+          <li><div><strong>Delete only proven redundant machine-wide paths.</strong><span>Remove custom installer, broker, and helper paths only after the proof gates pass.</span></div></li>
+          <li><div><strong>Keep the concrete Application seam.</strong><span>Split pkg-owned workflows from <code>local.rs</code>. Do not move machine-wide Nix lifecycle into it.</span></div></li>
+          <li><div><strong>Fork only if the external contract fails.</strong><span>Use a small full upstream fork only for a verified blocking gap. Do not copy individual upstream source files.</span></div></li>
+        </ol>
+      </div>
+      <div class="caution-box">
+        <strong>pkg-owned follow-up</strong>
+        <p>Add a total user-state recovery barrier. Add a direct upgrade transaction test. Evaluate <code>jiff</code> for strict <code>pkg-store</code> timestamp parsing.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="change-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">Change record</p>
+          <h2 id="change-title">Earlier alpha snapshot</h2>
+        </div>
+        <p>These Git counts describe the earlier reviewed alpha change. They do not include delivery of the Determinate Nix path.</p>
+      </div>
+      <div class="change-strip" aria-label="Change counts">
+        <div><strong>25</strong><span>modified files</span></div>
+        <div><strong>+664</strong><span>tracked additions</span></div>
+        <div><strong>−586</strong><span>tracked deletions</span></div>
+        <div><strong>4 / 166</strong><span>new domain documents / lines</span></div>
+      </div>
+    </section>
+
+    <section aria-labelledby="review-title">
+      <div class="card">
+        <span class="tag">Review method</span>
+        <h2 id="review-title">Multiple designs, then a second review</h2>
+        <p>Pi and Herdr ran design work with GLM 5.3 and DeepSeek Pro. Independent agents reviewed the important conclusions again. Qwen 3.8 Max then reviewed the report and code findings.</p>
+        <p>The Determinate decision used upstream version 3.22.1 at commit <code>4132ad07a15ee7d88c096ac7172b7afb2672866b</code>. The LGPL-2.1 source was reviewed from a clean temporary clone.</p>
+        <p><small>The review evidence is in the active Herdr and TraceDecay transcripts. It is not repo source evidence.</small></p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p><strong>pkg architecture report</strong></p>
+      <p>Internal alpha · Earlier checks passed · Two current-alpha safety fixes remain open · Determinate Nix change pending</p>
+    </div>
+  </footer>
+</body>
+</html>
