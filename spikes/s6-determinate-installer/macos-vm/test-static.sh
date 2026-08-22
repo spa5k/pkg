@@ -23,7 +23,9 @@ grep -F 'export TART_NO_AUTO_PRUNE=1' "$host" >/dev/null || die "automatic pruni
 grep -F '[ "$tart_version" = 2.35.0 ]' "$host" >/dev/null && grep -F 'tart-version' "$host" >/dev/null || die "exact Tart version pin missing"
 grep -F 'bounded_host 15 tart --version' "$host" >/dev/null || die "Tart version probe is not bounded"
 grep -F 'bounded_host 30 tart list --source "$source" --quiet' "$host" >/dev/null || die "Tart list probe is not bounded or source-scoped"
+grep -F 'bounded_host 15 tart --version >"$out/tart-version.raw"' "$host" >/dev/null && grep -F 'bounded_host 30 tart list --source "$source" --quiet >"$list_file"' "$host" >/dev/null || die "Tart probe output is not file-backed"
 [ "$(grep -c 'tart --version' "$host")" -eq 1 ] && [ "$(grep -c 'tart list' "$host")" -eq 1 ] || die "unbounded Tart version or list probe found"
+grep -E '\$\((bounded_host|bounded_exec)([[:space:]]|$)' "$host" >/dev/null && die "bounded command runs inside a command substitution"
 grep -F 'has_exact_vm oci "$base"' "$host" >/dev/null && grep -F 'pinned base is not cached; refusing to clone' "$host" >/dev/null || die "exact cached-base gate missing"
 grep -F 'grep -Fx -- "$name"' "$host" >/dev/null || die "Tart name matching is not exact"
 grep -F 'vm_name=pkg-s6-dn03c-preflight-$token' "$host" >/dev/null && grep -F 'collision_status' "$host" >/dev/null && grep -F 'generated VM name already exists' "$host" >/dev/null || die "unique exact VM collision gate missing"
@@ -50,6 +52,21 @@ grep -F 'while [ "$i" -lt 60 ]' "$host" >/dev/null && grep -F 'if [ "$elapsed" -
 grep -F 'kill -TERM "$child"' "$host" >/dev/null && grep -F 'kill -KILL "$child"' "$host" >/dev/null && grep -F '[ "$grace" -lt 5 ]' "$host" >/dev/null || die "hard deadline escalation missing"
 grep -F 'active_child=$!' "$host" >/dev/null && grep -F 'if [ "$active_child" = "$child" ]; then active_child=; fi' "$host" >/dev/null || die "bounded child is not tracked and cleared"
 [ "$(grep -c 'active_child=\$!' "$host")" -eq 2 ] || die "bounded host and guest calls must both track the active child"
+host_hold_line=$(grep -n '^    signals_hold$' "$host" | head -1 | cut -d: -f1)
+host_spawn_line=$(grep -n '^    "\$@" &$' "$host" | cut -d: -f1)
+host_pid_line=$(grep -n '^    active_child=\$!' "$host" | head -1 | cut -d: -f1)
+host_restore_line=$(grep -n '^    signals_restore$' "$host" | head -1 | cut -d: -f1)
+[ "$host_hold_line" -lt "$host_spawn_line" ] && [ "$host_spawn_line" -lt "$host_pid_line" ] && [ "$host_pid_line" -lt "$host_restore_line" ] || die "bounded host fork is not signal-safe"
+guest_hold_line=$(grep -n '^    signals_hold$' "$host" | tail -1 | cut -d: -f1)
+guest_spawn_line=$(grep -n '^    tart exec -i .* &$' "$host" | cut -d: -f1)
+guest_pid_line=$(grep -n '^    active_child=\$!' "$host" | tail -1 | cut -d: -f1)
+guest_restore_line=$(grep -n '^    signals_restore$' "$host" | tail -1 | cut -d: -f1)
+[ "$guest_hold_line" -lt "$guest_spawn_line" ] && [ "$guest_spawn_line" -lt "$guest_pid_line" ] && [ "$guest_pid_line" -lt "$guest_restore_line" ] || die "bounded guest fork is not signal-safe"
+run_hold_line=$(grep -n '^signals_hold$' "$host" | tail -1 | cut -d: -f1)
+run_spawn_line=$(grep -n '^tart run .* &$' "$host" | cut -d: -f1)
+run_pid_line=$(grep -n '^run_pid=\$!' "$host" | cut -d: -f1)
+run_restore_line=$(grep -n '^signals_restore$' "$host" | tail -1 | cut -d: -f1)
+[ "$run_hold_line" -lt "$run_spawn_line" ] && [ "$run_spawn_line" -lt "$run_pid_line" ] && [ "$run_pid_line" -lt "$run_restore_line" ] || die "Tart run fork is not signal-safe"
 grep -F "trap 'terminate_for_signal 129' HUP" "$host" >/dev/null && grep -F "trap 'terminate_for_signal 130' INT" "$host" >/dev/null && grep -F "trap 'terminate_for_signal 143' TERM" "$host" >/dev/null && grep -F 'terminate_for_signal()' "$host" >/dev/null || die "signal handlers do not terminate the active child"
 grep -F "trap '' HUP INT TERM" "$host" >/dev/null && grep -F 'wait "$child" 2>/dev/null || :' "$host" >/dev/null || die "signal handler can be interrupted or skip reaping"
 signal_term_line=$(grep -n 'kill -TERM "$child"' "$host" | tail -1 | cut -d: -f1)
@@ -62,11 +79,11 @@ grep -F 'if [ -e "$dir" ] || [ -L "$dir" ]; then exit 1; fi' "$host" >/dev/null 
 grep -F '/bin/chmod 0600 "$1"' "$host" >/dev/null && grep -F '<"$installer"' "$host" >/dev/null || die "private streamed installer missing"
 grep -F 'git show "$product_revision:spikes/s6-determinate-installer/macos-vm/inside.sh"' "$host" >/dev/null && grep -F '<"$out/inside.sh"' "$host" >/dev/null || die "immutable inside.sh is not streamed"
 grep -F 'inside.expected.sha256' "$host" >/dev/null && grep -F 'inside.actual.sha256' "$host" >/dev/null && grep -F 'staged inside.sh digest mismatch' "$host" >/dev/null || die "staged inside.sh hash proof missing"
-grep -F 'guest_inside_hash_line=$(bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside")' "$host" >/dev/null || die "staged inside.sh is not hashed directly"
-grep -F 'guest_inside_sha=$(printf '\''%s\n'\'' "$guest_inside_hash_line" | awk '\''{print $1}'\'')' "$host" >/dev/null || die "staged inside.sh hash is not parsed on the host"
+grep -F 'bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside" >"$out/inside.actual.sha256.line"' "$host" >/dev/null || die "staged inside.sh hash is not file-backed"
+grep -F 'guest_inside_sha=$(awk '\''{print $1}'\'' "$out/inside.actual.sha256.line")' "$host" >/dev/null || die "staged inside.sh hash is not parsed on the host"
 grep -F '[ "${#guest_inside_sha}" -eq 64 ]' "$host" >/dev/null && grep -F '*[!0-9a-f]*' "$host" >/dev/null || die "staged inside.sh hash is not validated as 64 hexadecimal characters"
 grep -F '/usr/bin/awk' "$host" >/dev/null && die "guest awk parsing form found"
-inside_hash_line=$(grep -n '^guest_inside_hash_line=' "$host" | cut -d: -f1)
+inside_hash_line=$(grep -n '^bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum' "$host" | cut -d: -f1)
 inside_exec_line=$(grep -n '^bounded_exec 60 /usr/bin/sudo -n "$guest_inside"' "$host" | cut -d: -f1)
 [ "$inside_hash_line" -lt "$inside_exec_line" ] || die "inside.sh can execute before its staged hash is checked"
 grep -F 'installer.expected.sha256' "$host" >/dev/null && grep -F 'installer.actual.sha256' "$host" >/dev/null || die "separate installer hashes missing"

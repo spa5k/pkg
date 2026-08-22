@@ -9,6 +9,7 @@ private_tree() {
     find "$1" -type f -exec chmod 0600 {} \;
 }
 active_child=
+cleanup_active=0
 wait_pid() {
     limit=$1
     child=$2
@@ -38,8 +39,10 @@ wait_pid() {
 bounded_host() {
     limit=$1
     shift
+    signals_hold
     "$@" &
     active_child=$!
+    signals_restore
     if wait_pid "$limit" "$active_child"; then bounded_status=0; else bounded_status=$?; fi
     active_child=
     return "$bounded_status"
@@ -47,8 +50,16 @@ bounded_host() {
 has_exact_vm() {
     source=$1
     name=$2
-    listing=$(bounded_host 30 tart list --source "$source" --quiet) || return 2
-    printf '%s\n' "$listing" | grep -Fx -- "$name" >/dev/null
+    list_file=$3
+    bounded_host 30 tart list --source "$source" --quiet >"$list_file" || return 2
+    grep -Fx -- "$name" "$list_file" >/dev/null
+}
+signals_hold() { trap '' HUP INT TERM; }
+signals_restore() {
+    [ "$cleanup_active" -eq 0 ] || return 0
+    trap 'terminate_for_signal 129' HUP
+    trap 'terminate_for_signal 130' INT
+    trap 'terminate_for_signal 143' TERM
 }
 terminate_for_signal() {
     signal_status=$1
@@ -114,15 +125,18 @@ actual_installer_sha=$(sha256 "$installer")
 for tool in tart git shasum awk df find chmod uname sw_vers od tr sed sleep grep; do
     command -v "$tool" >/dev/null 2>&1 || die "required host tool is missing: $tool"
 done
-tart_version=$(bounded_host 15 tart --version) || die "could not read Tart version"
+umask 077
+mkdir -m 0700 "$out"
+bounded_host 15 tart --version >"$out/tart-version.raw" || die "could not read Tart version"
+tart_version=$(sed -n '1p' "$out/tart-version.raw")
 [ "$tart_version" = 2.35.0 ] || die "Tart 2.35.0 is required"
-has_exact_vm oci "$base" || die "pinned base is not cached; refusing to clone"
+has_exact_vm oci "$base" "$out/tart-list-oci.txt" || die "pinned base is not cached; refusing to clone"
 export TART_NO_AUTO_PRUNE=1
 token=$(LC_ALL=C od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 [ "${#token}" -eq 32 ] || die "could not generate run token"
 vm_name=pkg-s6-dn03c-preflight-$token
 set +e
-has_exact_vm local "$vm_name"
+has_exact_vm local "$vm_name" "$out/tart-list-local-preflight.txt"
 collision_status=$?
 set -e
 case $collision_status in
@@ -131,8 +145,6 @@ case $collision_status in
     *) die "could not check generated VM name" ;;
 esac
 
-umask 077
-mkdir -m 0700 "$out"
 printf '%s\n' "$product_revision" >"$out/product-git-revision"
 printf '%s\n' "$vendor_revision" >"$out/vendor-full-revision"
 printf '%s\n' "$installer_pin" >"$out/installer.expected.sha256"
@@ -157,9 +169,9 @@ clone_attempted=0
 run_pid=
 success=0
 cleanup() {
-    original_status=$?
+    original_status=$? cleanup_active=1
+    signals_hold
     trap - EXIT
-    trap '' HUP INT TERM
     cleanup_ok=1
     if [ "$created" -eq 1 ]; then
         if [ ! -f "$out/vm-owner" ] ||
@@ -179,7 +191,7 @@ cleanup() {
                 if bounded_host 60 tart delete "$vm_name" >>"$out/cleanup" 2>&1; then :; else cleanup_ok=0; fi
             fi
             set +e
-            has_exact_vm local "$vm_name"
+            has_exact_vm local "$vm_name" "$out/tart-list-local-cleanup.txt"
             absent_status=$?
             set -e
             case $absent_status in
@@ -204,14 +216,18 @@ clone_attempted=1
 bounded_host 600 tart clone "$base" "$vm_name" >>"$out/tart.log" 2>&1
 created=1
 write_argv "$out/vm-run.argv" tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-softnet "$vm_name"
+signals_hold
 tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-softnet "$vm_name" >>"$out/tart.log" 2>&1 &
 run_pid=$!
+signals_restore
 
 bounded_exec() {
     limit=$1
     shift
+    signals_hold
     tart exec -i "$vm_name" "$@" &
     active_child=$!
+    signals_restore
     if wait_pid "$limit" "$active_child"; then bounded_status=0; else bounded_status=$?; fi
     active_child=
     return "$bounded_status"
@@ -246,8 +262,8 @@ guest_installer=$guest_dir/nix-installer
 guest_inside=$guest_dir/inside.sh
 bounded_exec 60 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0600 "$1"' sh "$guest_installer" <"$installer" || die "could not stream installer into guest"
 bounded_exec 30 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0700 "$1"' sh "$guest_inside" <"$out/inside.sh" || die "could not stream inside.sh into guest"
-guest_inside_hash_line=$(bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside") || die "could not hash staged inside.sh"
-guest_inside_sha=$(printf '%s\n' "$guest_inside_hash_line" | awk '{print $1}')
+bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside" >"$out/inside.actual.sha256.line" || die "could not hash staged inside.sh"
+guest_inside_sha=$(awk '{print $1}' "$out/inside.actual.sha256.line")
 case $guest_inside_sha in ''|*[!0-9a-f]*) die "staged inside.sh digest is not hexadecimal" ;; esac
 [ "${#guest_inside_sha}" -eq 64 ] || die "staged inside.sh digest is not 64 hexadecimal characters"
 printf '%s\n' "$guest_inside_sha" >"$out/inside.actual.sha256"
