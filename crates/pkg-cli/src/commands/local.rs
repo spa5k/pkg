@@ -401,130 +401,8 @@ impl CoreOperations for LocalStateOperations {
                 "omit --from-manifest and --from-lock to verify or repair a generation",
             ));
         }
-        let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        let mut handle = broker
-            .begin(BrokerOperationKind::Repair)
-            .map_err(broker_error)?;
-        let result = (|| {
-            let (lease, _) = self.gc_lease(&layout)?;
-            let generation = match args.generation() {
-                Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
-                    CommandError::new(
-                        ExitCode::Usage,
-                        "the repair generation identifier is invalid",
-                        "use an identifier shown by `pkg history`",
-                    )
-                })?,
-                None => {
-                    let active = load_active_snapshot(&layout, &lease)
-                        .map_err(state_read_error)?
-                        .ok_or_else(no_active_generation)?;
-                    pkg_nix::GenerationId::new(active.generation().id()).map_err(|_| {
-                        CommandError::new(
-                            ExitCode::StateCorrupt,
-                            "the active generation identifier is invalid",
-                            "run `pkg doctor` before repairing packages",
-                        )
-                    })?
-                }
-            };
-            let verify_only = args.verify_only() || policy.dry_run();
-            if !verify_only {
-                write_repair_warning()?;
-                confirm_destructive(
-                    policy.yes(),
-                    "Repair can temporarily make affected commands unavailable. Continue?",
-                )?;
-            }
-            let mut report = broker
-                .repair_generation(
-                    handle.clone(),
-                    RepairGenerationRequest::new(generation.clone(), verify_only),
-                )
-                .map_err(repair_broker_error)?;
-            let mut approved_preview = None;
-            if report.status() == RepairGenerationStatus::NeedsApproval {
-                let preview = report.build_preview().ok_or_else(|| {
-                    CommandError::new(
-                        ExitCode::EngineUnavailable,
-                        "the repair service returned no build preview",
-                        "retry after running `pkg doctor`",
-                    )
-                })?;
-                render_build_preview(preview)?;
-                approved_preview = Some(
-                    preview
-                        .to_json_value()
-                        .map_err(|_| install_commit_failed())?,
-                );
-                confirm_destructive(policy.yes(), "Rebuild the damaged packages locally?")?;
-                let source = if policy.yes() {
-                    ApprovalSource::AssumeYes
-                } else {
-                    ApprovalSource::Interactive
-                };
-                let digest = parse_build_plan_digest(preview.build_plan_digest())?;
-                handle = broker
-                    .begin(BrokerOperationKind::Repair)
-                    .map_err(broker_error)?;
-                report = broker
-                    .repair_generation(
-                        handle.clone(),
-                        RepairGenerationRequest::with_approval(
-                            generation.clone(),
-                            pkg_nix::BuildApprovalRequest::new(digest, source),
-                        ),
-                    )
-                    .map_err(repair_broker_error)?;
-            }
-            match report.status() {
-                RepairGenerationStatus::Clean => repair_result(
-                    "The generation is clean.",
-                    &generation,
-                    "clean",
-                    0,
-                    verify_only,
-                    approved_preview,
-                ),
-                RepairGenerationStatus::RepairedFromCache => repair_result(
-                    "The generation was repaired from the signed cache.",
-                    &generation,
-                    "repaired-from-cache",
-                    0,
-                    false,
-                    approved_preview,
-                ),
-                RepairGenerationStatus::RepairedByBuild => repair_result(
-                    "The generation was repaired by an approved local build.",
-                    &generation,
-                    "repaired-by-build",
-                    0,
-                    false,
-                    approved_preview,
-                ),
-                RepairGenerationStatus::DamageDetected => Err(CommandError::new(
-                    ExitCode::VerifyFail,
-                    format!(
-                        "verification found {} damaged store path(s)",
-                        report.damaged_paths()
-                    ),
-                    "run `pkg repair` without --verify-only to restore signed cache paths",
-                )),
-                RepairGenerationStatus::NeedsApproval => Err(CommandError::new(
-                    ExitCode::AcquireNeedsApproval,
-                    format!(
-                        "{} damaged store path(s) require an approved local rebuild",
-                        report.damaged_paths()
-                    ),
-                    "retry and approve the newly displayed repair build plan",
-                )),
-            }
-        })();
-        if result.is_err() {
-            let _ = broker.cancel(handle);
-        }
-        result
+        self.repair_with_broker(&mut broker, args, policy)
     }
 }
 
@@ -1373,6 +1251,148 @@ impl LocalStateOperations {
             Ok(recovered)
         })();
         if result.is_err() {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+
+    fn repair_with_broker(
+        &self,
+        broker: &mut BrokerLifecycleClient,
+        args: &RepairArgs,
+        policy: OperationPolicy,
+    ) -> Result<CommandResult, CommandError> {
+        let layout = self.layout().clone();
+        let verify_only = args.verify_only() || policy.dry_run();
+        if !verify_only {
+            write_repair_warning()?;
+            confirm_destructive(
+                policy.yes(),
+                "Repair can temporarily make affected commands unavailable. Continue?",
+            )?;
+        }
+        let mut handle: Option<OperationHandle> = None;
+        let result = (|| {
+            let (lease, _) = self.gc_lease(&layout)?;
+            let generation = match args.generation() {
+                Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
+                    CommandError::new(
+                        ExitCode::Usage,
+                        "the repair generation identifier is invalid",
+                        "use an identifier shown by `pkg history`",
+                    )
+                })?,
+                None => {
+                    let active = load_active_snapshot(&layout, &lease)
+                        .map_err(state_read_error)?
+                        .ok_or_else(no_active_generation)?;
+                    pkg_nix::GenerationId::new(active.generation().id()).map_err(|_| {
+                        CommandError::new(
+                            ExitCode::StateCorrupt,
+                            "the active generation identifier is invalid",
+                            "run `pkg doctor` before repairing packages",
+                        )
+                    })?
+                }
+            };
+            let opened = broker
+                .begin(BrokerOperationKind::Repair)
+                .map_err(broker_error)?;
+            handle = Some(opened.clone());
+            if verify_only {
+                // The Broker-held GC inhibitor now protects the selected
+                // generation and its roots. Release the exclusive state lease
+                // before the long read-only verification.
+                drop(lease);
+            }
+            let mut report = broker
+                .repair_generation(
+                    opened.clone(),
+                    RepairGenerationRequest::new(generation.clone(), verify_only),
+                )
+                .map_err(repair_broker_error)?;
+            let mut approved_preview = None;
+            if report.status() == RepairGenerationStatus::NeedsApproval {
+                let preview = report.build_preview().ok_or_else(|| {
+                    CommandError::new(
+                        ExitCode::EngineUnavailable,
+                        "the repair service returned no build preview",
+                        "retry after running `pkg doctor`",
+                    )
+                })?;
+                render_build_preview(preview)?;
+                approved_preview = Some(
+                    preview
+                        .to_json_value()
+                        .map_err(|_| install_commit_failed())?,
+                );
+                confirm_destructive(policy.yes(), "Rebuild the damaged packages locally?")?;
+                let source = if policy.yes() {
+                    ApprovalSource::AssumeYes
+                } else {
+                    ApprovalSource::Interactive
+                };
+                let digest = parse_build_plan_digest(preview.build_plan_digest())?;
+                let opened = broker
+                    .begin(BrokerOperationKind::Repair)
+                    .map_err(broker_error)?;
+                handle = Some(opened.clone());
+                report = broker
+                    .repair_generation(
+                        opened.clone(),
+                        RepairGenerationRequest::with_approval(
+                            generation.clone(),
+                            pkg_nix::BuildApprovalRequest::new(digest, source),
+                        ),
+                    )
+                    .map_err(repair_broker_error)?;
+            }
+            match report.status() {
+                RepairGenerationStatus::Clean => repair_result(
+                    "The generation is clean.",
+                    &generation,
+                    "clean",
+                    0,
+                    verify_only,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::RepairedFromCache => repair_result(
+                    "The generation was repaired from the signed cache.",
+                    &generation,
+                    "repaired-from-cache",
+                    0,
+                    false,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::RepairedByBuild => repair_result(
+                    "The generation was repaired by an approved local build.",
+                    &generation,
+                    "repaired-by-build",
+                    0,
+                    false,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::DamageDetected => Err(CommandError::new(
+                    ExitCode::VerifyFail,
+                    format!(
+                        "verification found {} damaged store path(s)",
+                        report.damaged_paths()
+                    ),
+                    "run `pkg repair` without --verify-only to restore signed cache paths",
+                )),
+                RepairGenerationStatus::NeedsApproval => Err(CommandError::new(
+                    ExitCode::AcquireNeedsApproval,
+                    format!(
+                        "{} damaged store path(s) require an approved local rebuild",
+                        report.damaged_paths()
+                    ),
+                    "retry and approve the newly displayed repair build plan",
+                )),
+            }
+        })();
+        if result.is_err()
+            && let Some(handle) = handle
+        {
             let _ = broker.cancel(handle);
         }
         result
@@ -2591,7 +2611,8 @@ mod tests {
         BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
         CatalogInfoLookup, CatalogInfoReport, CatalogPackageInfo, CatalogPackageSummary,
         CatalogSearchReport, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse,
-        InProcessBroker, InProcessCallerPeer, ProductFrameCodec, StorePath,
+        InProcessBroker, InProcessCallerPeer, ProductFrameCodec, RepairGenerationReport,
+        RepairGenerationStatus, StorePath,
     };
     use pkg_pipeline::{CandidateGeneration, PreparedGeneration};
     use pkg_store::inspect_staged_activation;
@@ -2615,6 +2636,31 @@ mod tests {
     fn write_response(stream: &mut UnixStream, request_id: u64, response: CliBrokerResponse) {
         let frame = ProductFrameCodec::encode_cli_response(request_id, &response).unwrap();
         stream.write_all(&frame).unwrap();
+    }
+
+    fn repair_fixture() -> (TempDir, StateLayout, LocalStateOperations, u32) {
+        let home = TempDir::new().unwrap();
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
+        let layout = StateLayout::initialize(home.path(), &home.path().join("pkg"), uid).unwrap();
+        let operations = LocalStateOperations {
+            source: layout.clone(),
+            broker_state_compatible: true,
+        };
+        (home, layout, operations, uid)
+    }
+
+    fn repair_args(verify_only: bool, generation: &str) -> crate::cli::RepairArgs {
+        let mut argv = vec!["pkg".to_owned(), "repair".to_owned()];
+        if verify_only {
+            argv.push("--verify-only".to_owned());
+        }
+        argv.push(generation.to_owned());
+        let cli = Cli::try_parse(argv).unwrap();
+        let crate::cli::Command::Repair(args) = cli.parsed_command() else {
+            panic!("expected repair command");
+        };
+        args.clone()
     }
 
     fn install_evidence(provenance: &str) -> InstallEvidence {
@@ -2782,6 +2828,171 @@ mod tests {
         assert!(!admissions.build_held());
         assert!(!admissions.gc_held());
         assert_eq!(admissions.gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn verify_only_repair_releases_the_exclusive_state_lease() {
+        let (_home, layout, operations, uid) = repair_fixture();
+        let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
+        let (probed_tx, probed_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let server_layout = layout.clone();
+        let server = thread::spawn(move || {
+            let broker = InProcessBroker::new().unwrap();
+            let caller = broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap();
+            let (request_id, request) = read_request(&mut server_stream);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Repair)
+            );
+            let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+            write_response(
+                &mut server_stream,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server_stream);
+            let CliBrokerRequest::RepairGeneration(actual, repair_request) = request else {
+                panic!("expected repair generation");
+            };
+            assert_eq!(actual, handle);
+            assert_eq!(repair_request.generation().as_str(), "gen-0001");
+            assert!(repair_request.verify_only());
+
+            let lease_available = StateLease::try_exclusive(
+                &server_layout,
+                &LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap(),
+            )
+            .is_ok();
+            probed_tx.send(lease_available).unwrap();
+
+            let report = RepairGenerationReport::new(RepairGenerationStatus::Clean, 0).unwrap();
+            write_response(
+                &mut server_stream,
+                request_id,
+                CliBrokerResponse::RepairGeneration(report),
+            );
+            done_rx.recv().unwrap();
+        });
+
+        let mut client = BrokerLifecycleClient::from_stream(client_stream);
+        let args = repair_args(true, "gen-0001");
+        let result = operations.repair_with_broker(
+            &mut client,
+            &args,
+            OperationPolicy::for_test(true, false),
+        );
+        done_tx.send(()).unwrap();
+        server.join().unwrap();
+        assert!(result.is_ok());
+        assert!(probed_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+    }
+
+    #[test]
+    fn mutating_repair_keeps_the_exclusive_state_lease() {
+        let (_home, layout, operations, uid) = repair_fixture();
+        let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
+        let (probed_tx, probed_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let server_layout = layout.clone();
+        let server = thread::spawn(move || {
+            let broker = InProcessBroker::new().unwrap();
+            let caller = broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap();
+            let (request_id, request) = read_request(&mut server_stream);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Repair)
+            );
+            let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+            write_response(
+                &mut server_stream,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server_stream);
+            let CliBrokerRequest::RepairGeneration(actual, repair_request) = request else {
+                panic!("expected repair generation");
+            };
+            assert_eq!(actual, handle);
+            assert_eq!(repair_request.generation().as_str(), "gen-0001");
+            assert!(!repair_request.verify_only());
+
+            let lease_held = matches!(
+                StateLease::try_exclusive(
+                    &server_layout,
+                    &LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap(),
+                ),
+                Err(LeaseError::Locked)
+            );
+            probed_tx.send(lease_held).unwrap();
+
+            let report = RepairGenerationReport::new(RepairGenerationStatus::Clean, 0).unwrap();
+            write_response(
+                &mut server_stream,
+                request_id,
+                CliBrokerResponse::RepairGeneration(report),
+            );
+            done_rx.recv().unwrap();
+        });
+
+        let mut client = BrokerLifecycleClient::from_stream(client_stream);
+        let args = repair_args(false, "gen-0001");
+        let result = operations.repair_with_broker(
+            &mut client,
+            &args,
+            OperationPolicy::for_test(true, false),
+        );
+        done_tx.send(()).unwrap();
+        server.join().unwrap();
+        assert!(result.is_ok());
+        assert!(probed_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+    }
+
+    #[test]
+    fn repair_begin_failure_holds_the_lease_through_failure_and_releases_after() {
+        let (_home, layout, operations, _uid) = repair_fixture();
+        let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
+        let (probed_tx, probed_rx) = mpsc::channel();
+        let server_layout = layout.clone();
+        let server = thread::spawn(move || {
+            let (_request_id, request) = read_request(&mut server_stream);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Repair)
+            );
+            let lease_held = matches!(
+                StateLease::try_exclusive(
+                    &server_layout,
+                    &LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap(),
+                ),
+                Err(LeaseError::Locked)
+            );
+            probed_tx.send(lease_held).unwrap();
+            drop(server_stream);
+        });
+
+        let mut client = BrokerLifecycleClient::from_stream(client_stream);
+        let args = repair_args(true, "gen-0001");
+        let result = operations.repair_with_broker(
+            &mut client,
+            &args,
+            OperationPolicy::for_test(true, false),
+        );
+        server.join().unwrap();
+        assert!(result.is_err());
+        assert!(probed_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+        let released = StateLease::try_exclusive(
+            &layout,
+            &LeaseIdentity::new("op_probe2", "nonce_probe2", "2026-08-21T00:00:00Z").unwrap(),
+        )
+        .is_ok();
+        assert!(released);
     }
 
     #[test]

@@ -301,6 +301,9 @@ pub trait ChannelRefreshDispatch: Send + Sync {
 pub trait RepairAuthorityDispatch: Send + Sync {
     /// Repairs one authenticated rooted generation without accepting paths or Nix controls.
     ///
+    /// A successful authority must close its repair through
+    /// [`AuthenticatedCaller::complete_repair_dispatch`].
+    ///
     /// # Errors
     ///
     /// Returns only a stable sanitized repair failure category.
@@ -747,6 +750,28 @@ fn dispatch_request_with_progress(
     }
 }
 
+/// Runs one repair authority body inside the repair-execution lifecycle.
+///
+/// A begin or finish failure always maps to `admission_failure`, including when
+/// the body itself already failed, so a failed cleanup never reports a body
+/// result as if admission were healthy.
+pub fn run_repair_dispatch<T, E>(
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    body: impl FnOnce() -> Result<T, E>,
+    admission_failure: impl Fn() -> E,
+) -> Result<T, E> {
+    caller
+        .begin_repair_dispatch(handle)
+        .map_err(|_| admission_failure())?;
+    let result = body();
+    let success = result.is_ok();
+    if caller.finish_repair_dispatch(handle, success).is_err() {
+        return Err(admission_failure());
+    }
+    result
+}
+
 fn repair_generation_response(
     authority: Option<&dyn RepairAuthorityDispatch>,
     caller: &AuthenticatedCaller,
@@ -754,13 +779,20 @@ fn repair_generation_response(
     request: &RepairGenerationRequest,
     approval_journal: Option<&BrokerCallerApprovalJournal>,
 ) -> CliBrokerResponse {
-    authority.map_or(
-        CliBrokerResponse::RepairGenerationRefused(RepairGenerationErrorCode::AuthorityUnavailable),
-        |repair| match repair.repair(caller, handle, request, approval_journal) {
-            Ok(report) => CliBrokerResponse::RepairGeneration(report),
-            Err(error) => CliBrokerResponse::RepairGenerationRefused(error),
-        },
-    )
+    let Some(repair) = authority else {
+        return CliBrokerResponse::RepairGenerationRefused(
+            RepairGenerationErrorCode::AuthorityUnavailable,
+        );
+    };
+    match run_repair_dispatch(
+        caller,
+        handle,
+        || repair.repair(caller, handle, request, approval_journal),
+        || RepairGenerationErrorCode::AdmissionFailed,
+    ) {
+        Ok(report) => CliBrokerResponse::RepairGeneration(report),
+        Err(error) => CliBrokerResponse::RepairGenerationRefused(error),
+    }
 }
 
 fn dispatch_evaluation(
@@ -1670,6 +1702,9 @@ mod tests {
                 request.generation().as_str().to_owned(),
                 request.verify_only(),
             ));
+            caller
+                .complete_repair_dispatch(handle)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
             RepairGenerationReport::new(pkg_nix::RepairGenerationStatus::DamageDetected, 2)
                 .map_err(|_| RepairGenerationErrorCode::VerifyFailed)
         }
@@ -1712,17 +1747,96 @@ mod tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
             Some((1001, String::from("gen-0042"), true))
         );
-        assert_eq!(
-            dispatch_request(
-                &caller,
-                CliBrokerRequest::Cancel(handle),
-                None,
-                None,
-                None,
-                None,
-            ),
-            Ok(CliBrokerResponse::Cancelled)
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    struct ObservingRepairAuthority {
+        broker: Arc<InProcessBroker>,
+        inhibited_during: std::sync::Mutex<usize>,
+        gc_blocked_during: std::sync::Mutex<bool>,
+    }
+
+    impl RepairAuthorityDispatch for ObservingRepairAuthority {
+        fn repair(
+            &self,
+            caller: &AuthenticatedCaller,
+            handle: &OperationHandle,
+            _request: &RepairGenerationRequest,
+            _approval_journal: Option<&BrokerCallerApprovalJournal>,
+        ) -> Result<RepairGenerationReport, RepairGenerationErrorCode> {
+            caller
+                .authorize_repair(handle)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
+            *self
+                .inhibited_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                self.broker.admission_snapshot().gc_inhibitor_count();
+            let gc = caller
+                .begin(BrokerOperationKind::Gc)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
+            *self
+                .gc_blocked_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                caller.acquire_gc(&gc).is_err();
+            let _ = caller.cancel(&gc);
+            caller
+                .complete_repair_dispatch(handle)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
+            RepairGenerationReport::new(pkg_nix::RepairGenerationStatus::DamageDetected, 2)
+                .map_err(|_| RepairGenerationErrorCode::VerifyFailed)
+        }
+    }
+
+    #[test]
+    fn repair_dispatch_holds_gc_inhibitor_across_authority_and_releases_after() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        let authority = ObservingRepairAuthority {
+            broker: broker.clone(),
+            inhibited_during: std::sync::Mutex::new(0),
+            gc_blocked_during: std::sync::Mutex::new(false),
+        };
+        let request = RepairGenerationRequest::new(GenerationId::new("gen-0043").unwrap(), true);
+
+        let response = dispatch_request_with_progress(
+            &caller,
+            CliBrokerRequest::RepairGeneration(handle.clone(), request),
+            DispatchAuthorities {
+                adapter: None,
+                approval_journal: None,
+                build: None,
+                roots: None,
+                refresh: None,
+                repair: Some(&authority),
+            },
+            &mut |_| Ok(()),
         );
+
+        assert!(matches!(
+            response,
+            Ok(CliBrokerResponse::RepairGeneration(_))
+        ));
+        assert_eq!(
+            *authority
+                .inhibited_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            1
+        );
+        assert!(
+            *authority
+                .gc_blocked_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
     }
 
     #[test]

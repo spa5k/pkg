@@ -164,13 +164,18 @@ impl fmt::Debug for OperationHandle {
 }
 
 /// Publicly observable operation lifecycle state.
+///
+/// `Completed` and `Cancelled` can briefly retain admission while an authority
+/// dispatch is still executing. That dispatch releases it when it exits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationStatus {
     /// The broker is still processing the operation.
     Running,
-    /// The operation completed and released all admission.
+    /// The operation completed. Admission can still be retained by an
+    /// executing authority dispatch.
     Completed,
-    /// Cancellation or caller disconnect released all admission.
+    /// Cancellation or caller disconnect marked the operation terminal.
+    /// Admission can still be retained by an executing authority dispatch.
     Cancelled,
 }
 
@@ -187,13 +192,17 @@ struct OperationRecord {
     build_executing: bool,
     cache_acquiring: bool,
     root_transition_executing: bool,
+    repair_executing: bool,
     awaiting_root_outputs: Option<BTreeSet<String>>,
     install_evidence: Option<InstallEvidence>,
 }
 
 impl OperationRecord {
     const fn authority_executing(&self) -> bool {
-        self.build_executing || self.cache_acquiring || self.root_transition_executing
+        self.build_executing
+            || self.cache_acquiring
+            || self.root_transition_executing
+            || self.repair_executing
     }
 }
 
@@ -1419,6 +1428,96 @@ impl AuthenticatedCaller {
         Ok(())
     }
 
+    /// Atomically marks one live repair handle as actively dispatching and
+    /// re-asserts its shared GC inhibitor.
+    ///
+    /// While this bit is set, expiry, cancellation, and disconnect retain the
+    /// inhibitor until [`AuthenticatedCaller::finish_repair_dispatch`] runs.
+    pub fn begin_repair_dispatch(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Repair])?;
+        let record = self.record_mut(&mut state, handle)?;
+        if record.repair_executing {
+            return Err(BrokerError::new(
+                BrokerErrorCode::InvalidAdmissionTransition,
+            ));
+        }
+        record.repair_executing = true;
+        state.gc_inhibitors.insert(handle.clone());
+        Ok(())
+    }
+
+    /// Marks one live dispatching repair handle terminal as completed while
+    /// retaining its GC inhibitor until [`AuthenticatedCaller::finish_repair_dispatch`]
+    /// clears the execution bit and releases admission.
+    pub fn complete_repair_dispatch(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
+        let mut state = self.broker.lock();
+        self.require_running_kind(&mut state, handle, &[BrokerOperationKind::Repair])?;
+        let record = self.record_mut(&mut state, handle)?;
+        if !record.repair_executing {
+            return Err(BrokerError::new(
+                BrokerErrorCode::InvalidAdmissionTransition,
+            ));
+        }
+        record.cancellation.cancel();
+        if let Some(operation_id) = build_operation_id(record) {
+            self.broker.build_engine.cancel_approval(operation_id);
+        }
+        record.status = OperationStatus::Completed;
+        record.prepared_build = None;
+        record.awaiting_root_outputs = None;
+        record.install_evidence = None;
+        Ok(())
+    }
+
+    /// Always runs after one repair authority dispatch exits.
+    ///
+    /// Clears the execution bit, releases every admission gate, and converts a
+    /// successful repair that was cancelled or expired during dispatch into an
+    /// admission failure so the caller never reports a late, unprotected win.
+    pub fn finish_repair_dispatch(
+        &self,
+        handle: &OperationHandle,
+        success: bool,
+    ) -> Result<(), BrokerError> {
+        let mut state = self.broker.lock();
+        self.check_epoch(&state)?;
+        let completed = {
+            let record = state
+                .operations
+                .get_mut(handle)
+                .ok_or_else(|| BrokerError::new(BrokerErrorCode::InvalidOperationHandle))?;
+            if record.owner_uid != self.uid {
+                return Err(BrokerError::new(BrokerErrorCode::InvalidOperationHandle));
+            }
+            if record.kind != BrokerOperationKind::Repair || !record.repair_executing {
+                return Err(BrokerError::new(
+                    BrokerErrorCode::InvalidAdmissionTransition,
+                ));
+            }
+            record.repair_executing = false;
+            if record.status == OperationStatus::Running {
+                // Defensive cleanup: an authority that returned without
+                // completing its repair must never leave a live,
+                // unprotected operation behind.
+                record.cancellation.cancel();
+                if let Some(operation_id) = build_operation_id(record) {
+                    self.broker.build_engine.cancel_approval(operation_id);
+                }
+                record.status = OperationStatus::Cancelled;
+                record.prepared_build = None;
+                record.awaiting_root_outputs = None;
+                record.install_evidence = None;
+            }
+            record.status == OperationStatus::Completed
+        };
+        release_admission(&mut state, &self.broker.build_gate, handle);
+        if success && !completed {
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionCancelled));
+        }
+        Ok(())
+    }
+
     /// Acquires exclusive garbage-collection admission.
     pub fn acquire_gc(&self, handle: &OperationHandle) -> Result<(), BrokerError> {
         let mut state = self.broker.lock();
@@ -1528,6 +1627,13 @@ impl AuthenticatedCaller {
             &self.broker.build_gate,
             &self.broker.build_engine,
         );
+        // A repair handle must acquire its GC inhibitor before the exclusive
+        // state lease is released. Refuse admission while exclusive GC is
+        // admitted so the inhibitor can never be bypassed by an already
+        // admitted GC operation.
+        if kind == BrokerOperationKind::Repair && state.gc_holder.is_some() {
+            return Err(BrokerError::new(BrokerErrorCode::AdmissionBusy));
+        }
         state.next_operation = state.next_operation.saturating_add(1);
         let handle = mint_handle(&state, self.uid, kind);
         let build_operation_id = if matches!(
@@ -1552,10 +1658,14 @@ impl AuthenticatedCaller {
                 build_executing: false,
                 cache_acquiring: false,
                 root_transition_executing: false,
+                repair_executing: false,
                 awaiting_root_outputs: None,
                 install_evidence: None,
             },
         );
+        if kind == BrokerOperationKind::Repair {
+            state.gc_inhibitors.insert(handle.clone());
+        }
         Ok(handle)
     }
 
@@ -3769,6 +3879,192 @@ mod tests {
         assert!(!snapshot.gc_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
         assert_eq!(broker.build_engine.approval_count(), 0);
+    }
+
+    #[test]
+    fn begin_repair_acquires_gc_inhibitor_and_refuses_while_gc_admitted() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+
+        let repair = caller.begin(BrokerOperationKind::Repair).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+        caller.cancel(&repair).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+
+        let gc = caller.begin(BrokerOperationKind::Gc).unwrap();
+        caller.acquire_gc(&gc).unwrap();
+        assert_eq!(
+            caller
+                .begin(BrokerOperationKind::Repair)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::AdmissionBusy
+        );
+        caller.cancel(&gc).unwrap();
+    }
+
+    #[test]
+    fn repair_dispatch_completion_retains_inhibitor_until_finish() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        caller.begin_repair_dispatch(&handle).unwrap();
+        caller.complete_repair_dispatch(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        caller.finish_repair_dispatch(&handle, true).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn repair_dispatch_rejects_external_complete_and_cancel_retains_until_finish() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        caller.begin_repair_dispatch(&handle).unwrap();
+
+        assert_eq!(
+            caller.complete(&handle).unwrap_err().code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        caller.cancel(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        caller.finish_repair_dispatch(&handle, false).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn repair_dispatch_expiry_retains_admission_and_finish_rejects_late_success() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller
+            .begin_with_deadline(
+                BrokerOperationKind::Repair,
+                Instant::now() + Duration::from_secs(60),
+            )
+            .unwrap();
+        caller.begin_repair_dispatch(&handle).unwrap();
+
+        {
+            let mut state = broker.lock();
+            purge_expired(
+                &mut state,
+                Instant::now() + Duration::from_secs(61),
+                &broker.build_gate,
+                &broker.build_engine,
+            );
+        }
+
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+        assert_eq!(broker.admission_snapshot().operation_count(), 1);
+        assert_eq!(
+            caller
+                .finish_repair_dispatch(&handle, true)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::AdmissionCancelled
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn finish_repair_dispatch_cancels_a_still_running_failure() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        caller.begin_repair_dispatch(&handle).unwrap();
+
+        // An authority error that never cancelled still exits with a terminal,
+        // unprotected-free operation.
+        caller.finish_repair_dispatch(&handle, false).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn repair_dispatch_disconnect_retains_inhibitor_until_finish() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        caller.begin_repair_dispatch(&handle).unwrap();
+
+        caller.disconnect().unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+        assert_eq!(
+            caller
+                .finish_repair_dispatch(&handle, true)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::AdmissionCancelled
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn finish_repair_dispatch_rejects_foreign_handle_without_releasing() {
+        let broker = InProcessBroker::new().unwrap();
+        let owner = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let other = broker
+            .connect(InProcessCallerPeer::authenticated(1002))
+            .unwrap();
+        let handle = owner.begin(BrokerOperationKind::Repair).unwrap();
+        owner.begin_repair_dispatch(&handle).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        assert_eq!(
+            other
+                .finish_repair_dispatch(&handle, true)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidOperationHandle
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        owner.finish_repair_dispatch(&handle, false).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    #[test]
+    fn finish_repair_dispatch_rejects_non_dispatching_repair_without_releasing() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        assert_eq!(
+            caller
+                .finish_repair_dispatch(&handle, true)
+                .unwrap_err()
+                .code(),
+            BrokerErrorCode::InvalidAdmissionTransition
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        caller.cancel(&handle).unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
     }
 
     #[test]

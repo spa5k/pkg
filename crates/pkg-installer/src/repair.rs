@@ -474,14 +474,6 @@ pub fn repair_generation(
         }
     }
 
-    if admission.acquire_gc_inhibit(handle).is_err() {
-        return Err(cancel_with_error(
-            admission,
-            handle,
-            RepairCoordinatorError::new(RepairCoordinatorErrorCode::AdmissionFailure),
-        ));
-    }
-
     if let Err(error) = run_helper_phase(
         request,
         initial.damaged(),
@@ -609,7 +601,7 @@ fn complete_or_cancel(
     admission: &AuthenticatedCaller,
     handle: &OperationHandle,
 ) -> Result<(), RepairCoordinatorError> {
-    if admission.complete(handle).is_ok() {
+    if admission.complete_repair_dispatch(handle).is_ok() {
         Ok(())
     } else {
         admission.cancel(handle).map_err(|_| {
@@ -914,6 +906,35 @@ mod tests {
         admission: &AuthenticatedCaller,
     ) -> Result<OperationHandle, pkg_nix::BrokerError> {
         admission.begin(BrokerOperationKind::Repair)
+    }
+
+    /// Test-local shadow of the coordinator that wraps it with the same
+    /// repair-execution lifecycle as the production dispatch wrapper.
+    fn repair_generation(
+        request: &RepairRequest,
+        adapter: &dyn NixAdapter,
+        admission: &AuthenticatedCaller,
+        handle: &OperationHandle,
+        maintenance: &dyn RepairMaintenance,
+        approval_gate: &dyn RepairApprovalGate,
+        journal: &mut dyn RepairJournal,
+    ) -> Result<RepairResult, RepairCoordinatorError> {
+        crate::broker::run_repair_dispatch(
+            admission,
+            handle,
+            || {
+                super::repair_generation(
+                    request,
+                    adapter,
+                    admission,
+                    handle,
+                    maintenance,
+                    approval_gate,
+                    journal,
+                )
+            },
+            || RepairCoordinatorError::new(RepairCoordinatorErrorCode::AdmissionFailure),
+        )
     }
 
     type Harness = (
