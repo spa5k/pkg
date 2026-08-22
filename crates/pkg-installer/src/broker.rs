@@ -2249,6 +2249,49 @@ mod tests {
     }
 
     #[test]
+    fn broker_disconnect_cancels_running_recovery_handle() -> Result<(), Box<dyn Error>> {
+        let broker = InProcessBroker::new()?;
+        let (first_server, mut first_client) = UnixStream::pair()?;
+        let first_broker = Arc::clone(&broker);
+        let first_worker =
+            thread::spawn(move || serve_broker_connection(first_server, &first_broker));
+
+        first_client.write_all(&ProductFrameCodec::encode_cli_request(
+            1,
+            &CliBrokerRequest::Begin(BrokerOperationKind::Activate),
+        )?)?;
+        let (_, started) =
+            ProductFrameCodec::decode_cli_response(&read_response(&mut first_client)?)?;
+        let CliBrokerResponse::Started(handle) = started else {
+            return Err(io::Error::other("expected started response").into());
+        };
+        drop(first_client);
+        first_worker
+            .join()
+            .map_err(|_| io::Error::other("broker thread panicked"))??;
+
+        let (second_server, mut second_client) = UnixStream::pair()?;
+        let second_broker = Arc::clone(&broker);
+        let second_worker =
+            thread::spawn(move || serve_broker_connection(second_server, &second_broker));
+        second_client.write_all(&ProductFrameCodec::encode_cli_request(
+            1,
+            &CliBrokerRequest::Poll(handle),
+        )?)?;
+        let (_, status) =
+            ProductFrameCodec::decode_cli_response(&read_response(&mut second_client)?)?;
+        assert_eq!(
+            status,
+            CliBrokerResponse::Status(OperationStatus::Cancelled)
+        );
+        second_client.shutdown(Shutdown::Write)?;
+        second_worker
+            .join()
+            .map_err(|_| io::Error::other("broker thread panicked"))??;
+        Ok(())
+    }
+
+    #[test]
     fn partial_authenticated_frame_expires_without_dispatch() -> Result<(), Box<dyn Error>> {
         let (mut server, mut client) = UnixStream::pair()?;
         server.set_nonblocking(true)?;

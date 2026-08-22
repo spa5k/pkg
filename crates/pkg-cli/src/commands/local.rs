@@ -1411,7 +1411,7 @@ fn reconcile_completion(
             }
             Ok(OperationStatus::Cancelled) => Err(broker_error(first_error)),
             Err(_) => {
-                cancel_operation_on_fresh(reconnect, handle);
+                cancel_operation(&mut fresh, reconnect, handle);
                 Err(broker_error(first_error))
             }
         },
@@ -1422,7 +1422,8 @@ fn reconcile_completion(
 /// Cancels one still-live Broker operation, falling back to a fresh same-uid
 /// connection when the current connection is poisoned or otherwise unusable.
 ///
-/// Returns `true` only when a cancellation acknowledgement was observed.
+/// Returns `true` only after a cancellation acknowledgement or an exact
+/// `Cancelled` status was observed.
 /// Cleanup never overrides the caller's first functional error.
 fn cancel_operation(
     broker: &mut BrokerLifecycleClient,
@@ -1432,18 +1433,33 @@ fn cancel_operation(
     if broker.cancel(handle.clone()).is_ok() {
         return true;
     }
-    cancel_operation_on_fresh(reconnect, handle)
-}
-
-/// Cancels one operation on a fresh connection without surfacing its failure.
-fn cancel_operation_on_fresh(
-    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
-    handle: OperationHandle,
-) -> bool {
-    if let Ok(mut fresh) = reconnect() {
-        return fresh.cancel(handle).is_ok();
+    let Ok(mut fresh) = reconnect() else {
+        return false;
+    };
+    match fresh.poll(handle.clone()) {
+        Ok(OperationStatus::Cancelled) => {
+            *broker = fresh;
+            true
+        }
+        Ok(OperationStatus::Running) => match fresh.cancel(handle.clone()) {
+            Ok(()) => {
+                *broker = fresh;
+                true
+            }
+            Err(_) => {
+                let Ok(mut final_client) = reconnect() else {
+                    return false;
+                };
+                if final_client.poll(handle) == Ok(OperationStatus::Cancelled) {
+                    *broker = final_client;
+                    true
+                } else {
+                    false
+                }
+            }
+        },
+        Ok(OperationStatus::Completed) | Err(_) => false,
     }
-    false
 }
 
 fn outdated_attributes(result: &CommandResult) -> Result<BTreeSet<String>, CommandError> {
@@ -3722,14 +3738,13 @@ mod tests {
     }
 
     #[test]
-    fn recover_pending_install_cancels_the_activate_handle_after_a_resume_failure() {
+    fn attestation_failure_reconciles_cancelled_activate_then_discards_with_gc() {
         let home = TempDir::new().unwrap();
         fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let uid = fs::symlink_metadata(home.path()).unwrap().uid();
         let layout = StateLayout::initialize(home.path(), &home.path().join("pkg"), uid).unwrap();
 
-        // Fixture: one prepared-but-uncommitted install generation, staged
-        // against a store path that never exists on the test host.
+        // Fixture: one prepared-but-uncommitted install generation.
         let store_path = format!("/nix/store/{STORE_HASH}-hello-1.0");
         let staging = layout.state_root().join("activations/gen-0001.staging");
         fs::create_dir(&staging).unwrap();
@@ -3840,34 +3855,134 @@ mod tests {
         let lease = StateLease::try_exclusive(&layout, &identity).unwrap();
         let prepared = PreparedGeneration::prepare(layout.clone(), candidate, plan, lease).unwrap();
         drop(prepared);
-        // Deterministic pre-commit fault: the staged activation forest is gone.
-        fs::remove_dir_all(&staging).unwrap();
 
         let broker = InProcessBroker::new().unwrap();
-        let server_broker = broker.clone();
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let worker = thread::spawn(move || {
-            let caller = server_broker
+        let activate_broker = broker.clone();
+        let (mut activate_server, client) = UnixStream::pair().unwrap();
+        let activate_worker = thread::spawn(move || {
+            let caller = activate_broker
                 .connect(InProcessCallerPeer::authenticated(uid))
                 .unwrap();
-            let (request_id, request) = read_request(&mut server);
+            let (request_id, request) = read_request(&mut activate_server);
             assert_eq!(
                 request,
                 CliBrokerRequest::Begin(BrokerOperationKind::Activate)
             );
             let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
             write_response(
-                &mut server,
+                &mut activate_server,
                 request_id,
                 CliBrokerResponse::Started(handle.clone()),
             );
-            let (request_id, request) = read_request(&mut server);
+
+            let (request_id, request) = read_request(&mut activate_server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::AttestGenerationRoots(
+                    handle.clone(),
+                    GenerationId::new("gen-0001").unwrap()
+                )
+            );
+            let error = caller
+                .attest_generation_root_intent(
+                    &handle,
+                    GenerationId::new("gen-0001").unwrap(),
+                    |_| Err(MaintenanceError::backend_failure()),
+                )
+                .unwrap_err();
+            assert_eq!(
+                error.code(),
+                pkg_nix::BrokerErrorCode::RootPublicationFailed
+            );
+            write_response(
+                &mut activate_server,
+                request_id,
+                CliBrokerResponse::GenerationRootAttestationRefused(
+                    GenerationRootAttestationErrorCode::AttestationFailed,
+                ),
+            );
+
+            let (_, request) = read_request(&mut activate_server);
             assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
-            caller.cancel(&handle).unwrap();
-            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
-            let mut eof = [0_u8; 1];
-            let _ = server.read(&mut eof);
+            assert_eq!(
+                caller.cancel(&handle).unwrap_err().code(),
+                pkg_nix::BrokerErrorCode::InvalidAdmissionTransition
+            );
+            // Lose the error reply after attestation made the handle terminal.
             handle
+        });
+
+        let recovery_broker = broker.clone();
+        let (mut recovery_server, recovery_client) = UnixStream::pair().unwrap();
+        let recovery_worker = thread::spawn(move || {
+            let caller = recovery_broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap();
+            let (request_id, request) = read_request(&mut recovery_server);
+            let CliBrokerRequest::Poll(activate) = request else {
+                panic!("expected Activate status reconciliation");
+            };
+            let status = caller.poll(&activate).unwrap();
+            assert_eq!(status, OperationStatus::Cancelled);
+            write_response(
+                &mut recovery_server,
+                request_id,
+                CliBrokerResponse::Status(status),
+            );
+
+            let (request_id, request) = read_request(&mut recovery_server);
+            assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Gc));
+            let gc = caller.begin(BrokerOperationKind::Gc).unwrap();
+            write_response(
+                &mut recovery_server,
+                request_id,
+                CliBrokerResponse::Started(gc.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut recovery_server);
+            assert_eq!(request, CliBrokerRequest::AcquireGc(gc.clone()));
+            caller.acquire_gc_wait(&gc).unwrap();
+            write_response(
+                &mut recovery_server,
+                request_id,
+                CliBrokerResponse::GcAdmissionAcquired,
+            );
+
+            let (request_id, request) = read_request(&mut recovery_server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::RemoveGenerationRoots(
+                    gc.clone(),
+                    GenerationId::new("gen-0001").unwrap()
+                )
+            );
+            caller
+                .remove_generation_root_intent(
+                    &gc,
+                    GenerationId::new("gen-0001").unwrap(),
+                    |request| {
+                        assert_eq!(request.owner_uid(), uid);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            write_response(
+                &mut recovery_server,
+                request_id,
+                CliBrokerResponse::GenerationRootsRemoved,
+            );
+
+            let (request_id, request) = read_request(&mut recovery_server);
+            assert_eq!(request, CliBrokerRequest::Complete(gc.clone()));
+            caller.complete(&gc).unwrap();
+            write_response(
+                &mut recovery_server,
+                request_id,
+                CliBrokerResponse::Completed,
+            );
+            let mut eof = [0_u8; 1];
+            let _ = recovery_server.read(&mut eof);
+            (activate, gc)
         });
 
         let operations = LocalStateOperations {
@@ -3875,31 +3990,38 @@ mod tests {
             broker_state_compatible: true,
         };
         let mut client = BrokerLifecycleClient::from_stream(client);
-        let mut reconnect = || -> Result<BrokerLifecycleClient, BrokerClientError> {
-            unreachable!("the primary cancel opened an unexpected fresh connection");
+        let mut recovery_client = Some(BrokerLifecycleClient::from_stream(recovery_client));
+        let mut reconnect = || {
+            Ok(recovery_client
+                .take()
+                .expect("recovery opened an unexpected fresh connection"))
         };
-        let error = operations
+        operations
             .recover_pending_install_with(&layout, &mut client, &mut reconnect)
-            .unwrap_err();
-        // Close the client stream so the worker's EOF wait completes.
+            .unwrap();
         drop(client);
-        let handle = worker.join().unwrap();
+        let activate = activate_worker.join().unwrap();
+        let (reconciled, gc) = recovery_worker.join().unwrap();
+        assert_eq!(activate, reconciled);
 
-        // Cleanup never replaces the first functional error.
-        assert_eq!(error, install_commit_failed());
-        // The exact Activate handle is Cancelled on the real broker.
         let probe = broker
             .connect(InProcessCallerPeer::authenticated(uid))
             .unwrap();
-        assert_eq!(probe.poll(&handle).unwrap(), OperationStatus::Cancelled);
-        // Local state kept the generation pending and never activated it.
+        assert_eq!(probe.poll(&activate).unwrap(), OperationStatus::Cancelled);
+        assert_eq!(probe.poll(&gc).unwrap(), OperationStatus::Completed);
         assert_eq!(layout.current_generation().unwrap(), None);
         let probe_identity =
             LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap();
         let probe_lease = StateLease::try_exclusive(&layout, &probe_identity).unwrap();
         assert_eq!(
             pending_install_generation(&layout, &probe_lease).unwrap(),
-            Some(GenerationId::new("gen-0001").unwrap())
+            None
+        );
+        assert!(
+            !layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
         );
     }
 
@@ -3931,6 +4053,13 @@ mod tests {
             let handle = handle.clone();
             fresh_clients.push_back(scripted_server(&mut workers, move |server| {
                 let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                write_response(
+                    server,
+                    request_id,
+                    CliBrokerResponse::Status(caller.poll(&handle).unwrap()),
+                );
+                let (request_id, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
                 caller.cancel(&handle).unwrap();
                 write_response(server, request_id, CliBrokerResponse::Cancelled);
@@ -3945,6 +4074,7 @@ mod tests {
         };
 
         cancel_operation(&mut client, &mut reconnect, handle.clone());
+        drop(client);
 
         for worker in workers {
             worker.join().unwrap();
@@ -4042,6 +4172,11 @@ mod tests {
             let handle = handle.clone();
             fresh_clients.push_back(scripted_server(&mut workers, move |server| {
                 let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                let status = caller.poll(&handle).unwrap();
+                assert_eq!(status, OperationStatus::Running);
+                write_response(server, request_id, CliBrokerResponse::Status(status));
+                let (request_id, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
                 caller.cancel(&handle).unwrap();
                 write_response(server, request_id, CliBrokerResponse::Cancelled);
@@ -4098,6 +4233,11 @@ mod tests {
             let handle = handle.clone();
             fresh_clients.push_back(scripted_server(&mut workers, move |server| {
                 let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                let status = caller.poll(&handle).unwrap();
+                assert_eq!(status, OperationStatus::Running);
+                write_response(server, request_id, CliBrokerResponse::Status(status));
+                let (request_id, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
                 caller.cancel(&handle).unwrap();
                 write_response(server, request_id, CliBrokerResponse::Cancelled);
@@ -4122,7 +4262,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_operation_reports_false_when_all_cancellation_fails() {
+    fn cancel_operation_rejects_running_after_failed_reconciliation() {
         let broker = InProcessBroker::new().unwrap();
         let caller = broker
             .connect(InProcessCallerPeer::authenticated(501))
@@ -4139,9 +4279,28 @@ mod tests {
         {
             let handle = handle.clone();
             fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                write_response(
+                    server,
+                    request_id,
+                    CliBrokerResponse::Status(OperationStatus::Running),
+                );
                 let (_, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
                 // Drop without responding so the fresh cancellation also fails.
+            }));
+        }
+        {
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle));
+                write_response(
+                    server,
+                    request_id,
+                    CliBrokerResponse::Status(OperationStatus::Running),
+                );
             }));
         }
         let mut reconnect = move || -> Result<BrokerLifecycleClient, BrokerClientError> {
@@ -4160,5 +4319,7 @@ mod tests {
             worker.join().unwrap();
         }
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
+        caller.cancel(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
     }
 }
