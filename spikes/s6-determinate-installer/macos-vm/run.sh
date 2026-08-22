@@ -223,9 +223,10 @@ signals_restore
 
 bounded_exec() {
     limit=$1
-    shift
+    stdin_file=$2
+    shift 2
     signals_hold
-    tart exec -i "$vm_name" "$@" &
+    tart exec -i "$vm_name" "$@" <"$stdin_file" &
     active_child=$!
     signals_restore
     if wait_pid "$limit" "$active_child"; then bounded_status=0; else bounded_status=$?; fi
@@ -236,17 +237,17 @@ bounded_exec() {
 ready=0
 i=0
 while [ "$i" -lt 60 ]; do
-    if bounded_exec 10 /usr/bin/true </dev/null >>"$out/guest-agent.log" 2>&1; then ready=1; break; fi
+    if bounded_exec 10 /dev/null /usr/bin/true >>"$out/guest-agent.log" 2>&1; then ready=1; break; fi
     kill -0 "$run_pid" 2>/dev/null || die "Tart VM exited before Guest Agent became ready"
     i=$((i + 1))
     sleep 2
 done
 [ "$ready" -eq 1 ] || die "Tart Guest Agent did not become ready"
-bounded_exec 15 /usr/bin/sudo -n /usr/bin/true </dev/null >>"$out/guest-agent.log" 2>&1 || die "passwordless guest sudo is unavailable"
+bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/true >>"$out/guest-agent.log" 2>&1 || die "passwordless guest sudo is unavailable"
 
 guest_dir=/private/var/tmp/pkg-s6-dn03c-$token
 marker=$guest_dir/owner-marker
-bounded_exec 15 /usr/bin/sudo -n /bin/sh -c '
+bounded_exec 15 /dev/null /usr/bin/sudo -n /bin/sh -c '
     set -eu
     dir=$1 marker=$2 token=$3
     if [ -e "$dir" ] || [ -L "$dir" ]; then exit 1; fi
@@ -256,18 +257,24 @@ bounded_exec 15 /usr/bin/sudo -n /bin/sh -c '
     /usr/bin/printf "%s\n" "$token" >"$marker"
     /usr/sbin/chown root:wheel "$marker"
     /bin/chmod 0600 "$marker"
-' sh "$guest_dir" "$marker" "$token" </dev/null >>"$out/guest-agent.log" 2>&1 || die "could not create private guest staging"
+' sh "$guest_dir" "$marker" "$token" >>"$out/guest-agent.log" 2>&1 || die "could not create private guest staging"
 
 guest_installer=$guest_dir/nix-installer
 guest_inside=$guest_dir/inside.sh
-bounded_exec 60 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0600 "$1"' sh "$guest_installer" <"$installer" || die "could not stream installer into guest"
-bounded_exec 30 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0700 "$1"' sh "$guest_inside" <"$out/inside.sh" || die "could not stream inside.sh into guest"
-bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside" >"$out/inside.actual.sha256.line" || die "could not hash staged inside.sh"
+bounded_exec 60 "$installer" /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0600 "$1"' sh "$guest_installer" || die "could not stream installer into guest"
+bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_installer" >"$out/installer.guest.sha256.line" || die "could not hash staged installer"
+guest_installer_sha=$(awk '{print $1}' "$out/installer.guest.sha256.line")
+case $guest_installer_sha in ''|*[!0-9a-f]*) die "staged installer digest is not hexadecimal" ;; esac
+[ "${#guest_installer_sha}" -eq 64 ] || die "staged installer digest is not 64 hexadecimal characters"
+printf '%s\n' "$guest_installer_sha" >"$out/installer.guest.sha256"
+[ "$guest_installer_sha" = "$installer_pin" ] || die "staged installer digest mismatch"
+bounded_exec 30 "$out/inside.sh" /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0700 "$1"' sh "$guest_inside" || die "could not stream inside.sh into guest"
+bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside" >"$out/inside.actual.sha256.line" || die "could not hash staged inside.sh"
 guest_inside_sha=$(awk '{print $1}' "$out/inside.actual.sha256.line")
 case $guest_inside_sha in ''|*[!0-9a-f]*) die "staged inside.sh digest is not hexadecimal" ;; esac
 [ "${#guest_inside_sha}" -eq 64 ] || die "staged inside.sh digest is not 64 hexadecimal characters"
 printf '%s\n' "$guest_inside_sha" >"$out/inside.actual.sha256"
 [ "$guest_inside_sha" = "$inside_sha" ] || die "staged inside.sh digest mismatch"
-bounded_exec 60 /usr/bin/sudo -n "$guest_inside" "$token" "$marker" "$guest_installer" "$installer_pin" >"$out/guest-preflight.txt" 2>&1 || die "guest preflight failed"
+bounded_exec 60 /dev/null /usr/bin/sudo -n "$guest_inside" "$token" "$marker" "$guest_installer" "$installer_pin" >"$out/guest-preflight.txt" 2>&1 || die "guest preflight failed"
 private_tree "$out"
 success=1

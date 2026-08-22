@@ -48,7 +48,12 @@ grep -F 'clone did not report success; exact name may need inspection' "$host" >
 grep -F 'tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer "$vm_name"' "$host" >/dev/null || die "exact default-network Tart run flags missing"
 grep -F 'write_argv "$out/vm-run.argv" tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer "$vm_name"' "$host" >/dev/null || die "exact default-network VM run argv is not recorded"
 grep -E -- '--net-(softnet|host|bridged)' "$host" >/dev/null && die "explicit Tart networking is forbidden for this preflight"
-grep -F 'tart exec -i "$vm_name"' "$host" >/dev/null || die "Guest Agent stdin execution missing"
+grep -F 'stdin_file=$2' "$host" >/dev/null && grep -F 'shift 2' "$host" >/dev/null || die "bounded guest stdin parameter missing"
+grep -F 'tart exec -i "$vm_name" "$@" <"$stdin_file" &' "$host" >/dev/null || die "Guest Agent stdin is not redirected on the asynchronous command"
+grep -E '(^|[[:space:]])bounded_exec .*[[:space:]]<' "$host" >/dev/null && die "caller-level bounded_exec input redirection found"
+grep -F '</dev/null' "$host" >/dev/null && die "legacy caller-level /dev/null redirection found"
+grep -F '<"$installer"' "$host" >/dev/null && die "legacy caller-level installer redirection found"
+grep -F '<"$out/inside.sh"' "$host" >/dev/null && die "legacy caller-level inside.sh redirection found"
 grep -F 'while [ "$i" -lt 60 ]' "$host" >/dev/null && grep -F 'if [ "$elapsed" -ge "$limit" ]' "$host" >/dev/null || die "bounded waits missing"
 grep -F 'kill -TERM "$child"' "$host" >/dev/null && grep -F 'kill -KILL "$child"' "$host" >/dev/null && grep -F '[ "$grace" -lt 5 ]' "$host" >/dev/null || die "hard deadline escalation missing"
 grep -F 'active_child=$!' "$host" >/dev/null && grep -F 'if [ "$active_child" = "$child" ]; then active_child=; fi' "$host" >/dev/null || die "bounded child is not tracked and cleared"
@@ -77,16 +82,25 @@ signal_exit_line=$(grep -n 'exit "$signal_status"' "$host" | cut -d: -f1)
 grep -F '/usr/bin/sudo -n /usr/bin/true' "$host" >/dev/null || die "passwordless sudo proof missing"
 grep -F '/usr/sbin/chown root:wheel "$dir"' "$host" >/dev/null && grep -F '/bin/chmod 0600 "$marker"' "$host" >/dev/null || die "root-owned private marker missing"
 grep -F 'if [ -e "$dir" ] || [ -L "$dir" ]; then exit 1; fi' "$host" >/dev/null || die "existing guest staging path is not refused explicitly"
-grep -F '/bin/chmod 0600 "$1"' "$host" >/dev/null && grep -F '<"$installer"' "$host" >/dev/null || die "private streamed installer missing"
-grep -F 'git show "$product_revision:spikes/s6-determinate-installer/macos-vm/inside.sh"' "$host" >/dev/null && grep -F '<"$out/inside.sh"' "$host" >/dev/null || die "immutable inside.sh is not streamed"
+grep -F 'if bounded_exec 10 /dev/null /usr/bin/true' "$host" >/dev/null && grep -F 'bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/true' "$host" >/dev/null || die "no-input readiness calls lack /dev/null"
+grep -F 'bounded_exec 15 /dev/null /usr/bin/sudo -n /bin/sh -c' "$host" >/dev/null || die "no-input staging call lacks /dev/null"
+grep -F 'bounded_exec 60 "$installer" /usr/bin/sudo -n /bin/sh -c' "$host" >/dev/null && grep -F '/bin/chmod 0600 "$1"' "$host" >/dev/null || die "private installer stdin path missing"
+grep -F 'bounded_exec 30 "$out/inside.sh" /usr/bin/sudo -n /bin/sh -c' "$host" >/dev/null && grep -F 'git show "$product_revision:spikes/s6-determinate-installer/macos-vm/inside.sh"' "$host" >/dev/null || die "immutable inside.sh stdin path missing"
 grep -F 'inside.expected.sha256' "$host" >/dev/null && grep -F 'inside.actual.sha256' "$host" >/dev/null && grep -F 'staged inside.sh digest mismatch' "$host" >/dev/null || die "staged inside.sh hash proof missing"
-grep -F 'bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside" >"$out/inside.actual.sha256.line"' "$host" >/dev/null || die "staged inside.sh hash is not file-backed"
+grep -F 'bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside" >"$out/inside.actual.sha256.line"' "$host" >/dev/null || die "staged inside.sh hash is not file-backed"
 grep -F 'guest_inside_sha=$(awk '\''{print $1}'\'' "$out/inside.actual.sha256.line")' "$host" >/dev/null || die "staged inside.sh hash is not parsed on the host"
 grep -F '[ "${#guest_inside_sha}" -eq 64 ]' "$host" >/dev/null && grep -F '*[!0-9a-f]*' "$host" >/dev/null || die "staged inside.sh hash is not validated as 64 hexadecimal characters"
 grep -F '/usr/bin/awk' "$host" >/dev/null && die "guest awk parsing form found"
-inside_hash_line=$(grep -n '^bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum' "$host" | cut -d: -f1)
-inside_exec_line=$(grep -n '^bounded_exec 60 /usr/bin/sudo -n "$guest_inside"' "$host" | cut -d: -f1)
-[ "$inside_hash_line" -lt "$inside_exec_line" ] || die "inside.sh can execute before its staged hash is checked"
+grep -F 'bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_installer" >"$out/installer.guest.sha256.line"' "$host" >/dev/null || die "staged installer hash is not file-backed"
+grep -F 'guest_installer_sha=$(awk '\''{print $1}'\'' "$out/installer.guest.sha256.line")' "$host" >/dev/null && grep -F 'case $guest_installer_sha in' "$host" >/dev/null && grep -F '*[!0-9a-f]*) die "staged installer digest is not hexadecimal"' "$host" >/dev/null && grep -F '[ "${#guest_installer_sha}" -eq 64 ]' "$host" >/dev/null || die "staged installer hash is not parsed and validated on the host"
+grep -F 'installer.guest.sha256' "$host" >/dev/null && grep -F '[ "$guest_installer_sha" = "$installer_pin" ]' "$host" >/dev/null || die "staged installer hash is not recorded and compared"
+installer_hash_line=$(grep -n '^bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/shasum.*"$guest_installer"' "$host" | cut -d: -f1)
+installer_compare_line=$(grep -n '^\[ "$guest_installer_sha" = "$installer_pin" \]' "$host" | cut -d: -f1)
+inside_hash_line=$(grep -n '^bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/shasum.*"$guest_inside"' "$host" | cut -d: -f1)
+inside_compare_line=$(grep -n '^\[ "$guest_inside_sha" = "$inside_sha" \]' "$host" | cut -d: -f1)
+inside_exec_line=$(grep -n '^bounded_exec 60 /dev/null /usr/bin/sudo -n "$guest_inside"' "$host" | cut -d: -f1)
+[ "$installer_hash_line" -lt "$installer_compare_line" ] && [ "$installer_compare_line" -lt "$inside_hash_line" ] && [ "$inside_hash_line" -lt "$inside_compare_line" ] && [ "$inside_compare_line" -lt "$inside_exec_line" ] || die "guest hashes do not precede inside.sh execution"
+grep -F 'bounded_exec 60 /dev/null /usr/bin/sudo -n "$guest_inside"' "$host" >/dev/null || die "inside.sh execution lacks /dev/null stdin"
 grep -F 'installer.expected.sha256' "$host" >/dev/null && grep -F 'installer.actual.sha256' "$host" >/dev/null || die "separate installer hashes missing"
 grep -F 'sed -n '\''1p'\'' "$out/vm-owner"' "$host" >/dev/null && grep -F 'sed -n '\''2p'\'' "$out/vm-owner"' "$host" >/dev/null || die "private ownership record is not checked"
 grep -F 'tart stop "$vm_name"' "$host" >/dev/null && grep -F 'tart delete "$vm_name"' "$host" >/dev/null && grep -F 'has_exact_vm local "$vm_name"' "$host" >/dev/null || die "exact cleanup and absence proof missing"
@@ -129,4 +143,20 @@ grep -E '^[[:space:]]*(/usr/bin/)?env([[:space:]]+[^[:space:]=]+=[^[:space:]]*)*
 
 hash_line=$(grep -n '^actual_installer_sha=$(sha256 "$installer")' "$host" | cut -d: -f1)
 [ "$hash_line" -lt "$clone_line" ] || die "installer hash does not precede clone"
+
+semantic_tmp=${TMPDIR:-/tmp}/pkg-s6-async-stdin.$$
+[ ! -e "$semantic_tmp" ] || die "semantic regression path exists"
+mkdir -m 0700 "$semantic_tmp"
+semantic_cleanup() {
+    find "$semantic_tmp" -type f -exec unlink {} \; 2>/dev/null || :
+    rmdir "$semantic_tmp" 2>/dev/null || :
+}
+trap semantic_cleanup EXIT HUP INT TERM
+printf '%s\n' 'async-stdin-proof' >"$semantic_tmp/input"
+bad_async() { /bin/cat >"$semantic_tmp/bad" & semantic_pid=$!; wait "$semantic_pid"; }
+good_async() { semantic_input=$1; /bin/cat <"$semantic_input" >"$semantic_tmp/good" & semantic_pid=$!; wait "$semantic_pid"; }
+bad_async <"$semantic_tmp/input"
+[ ! -s "$semantic_tmp/bad" ] || die "async child unexpectedly inherited function stdin"
+good_async "$semantic_tmp/input"
+cmp -s "$semantic_tmp/input" "$semantic_tmp/good" || die "explicit async stdin redirection failed"
 printf '%s\n' 'ok - macOS Tart preflight static text contract; Tart was not run'
