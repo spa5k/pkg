@@ -309,6 +309,7 @@ printf '%s\n' "$guest_inside_sha" >"$out/inside.actual.sha256"
 
 mkdir -m 0700 "$out/phases" "$out/reboots"
 printf 'PASS\n' >"$out/phases/phase-status.expected"
+printf 'FAIL\n' >"$out/phases/phase-status.fail.expected"
 validate_phase_archive() {
     phase=$1
     archive=$2
@@ -340,7 +341,10 @@ validate_phase_archive() {
     grep -Fx -- "$phase/phase-ledger" "$list" >/dev/null || die "phase archive lacks phase-ledger: $phase"
     bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-status" >"$out/phases/$phase.phase-status" 2>>"$validation_stderr" || die "could not read phase-status: $phase"
     bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-ledger" >"$out/phases/$phase.phase-ledger" 2>>"$validation_stderr" || die "could not read phase-ledger: $phase"
-    cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status" || die "phase-status is not PASS: $phase"
+    if cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status"; then :
+    elif cmp -s "$out/phases/phase-status.fail.expected" "$out/phases/$phase.phase-status"; then :
+    else die "phase-status is not exactly PASS or FAIL: $phase"
+    fi
     awk -v target="$phase" '
         $0 != "reboot" { print }
         $0 == target { found=1; exit }
@@ -375,10 +379,20 @@ run_phase() {
     printf '%s\n' "$guest_status" >"$out/phases/$phase.guest-status"
     capture_phase "$phase"
     case $phase:$guest_status in
-        foreign-refuse:20) ;;
-        foreign-refuse:*) die "foreign-refuse did not return status 20" ;;
-        *:0) ;;
-        *) die "guest phase failed with status $guest_status: $phase" ;;
+        foreign-refuse:20)
+            cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status" || die "guest status 20 does not match phase-status: $phase"
+            ;;
+        foreign-refuse:0)
+            cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status" || die "guest status 0 does not match phase-status: $phase"
+            die "foreign-refuse did not return status 20"
+            ;;
+        *:0)
+            cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status" || die "guest status 0 does not match phase-status: $phase"
+            ;;
+        *)
+            cmp -s "$out/phases/phase-status.fail.expected" "$out/phases/$phase.phase-status" || die "failed guest status does not match phase-status: $phase"
+            die "guest phase failed with status $guest_status: $phase"
+            ;;
     esac
 }
 wait_guest_ready() {
