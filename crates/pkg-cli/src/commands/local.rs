@@ -2611,8 +2611,8 @@ mod tests {
         BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
         CatalogInfoLookup, CatalogInfoReport, CatalogPackageInfo, CatalogPackageSummary,
         CatalogSearchReport, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse,
-        InProcessBroker, InProcessCallerPeer, ProductFrameCodec, RepairGenerationReport,
-        RepairGenerationStatus, StorePath,
+        InProcessBroker, InProcessCallerPeer, InProcessHelper, InProcessPeer, MaintenanceErrorCode,
+        ProductFrameCodec, RepairGenerationReport, RepairGenerationStatus, StorePath,
     };
     use pkg_pipeline::{CandidateGeneration, PreparedGeneration};
     use pkg_store::inspect_staged_activation;
@@ -2831,64 +2831,505 @@ mod tests {
     }
 
     #[test]
-    fn verify_only_repair_releases_the_exclusive_state_lease() {
-        let (_home, layout, operations, uid) = repair_fixture();
-        let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
-        let (probed_tx, probed_rx) = mpsc::channel();
-        let (done_tx, done_rx) = mpsc::channel();
-        let server_layout = layout.clone();
-        let server = thread::spawn(move || {
-            let broker = InProcessBroker::new().unwrap();
-            let caller = broker
+    fn verify_only_repair_allows_state_mutation_and_blocks_selected_history_prune_until_finish() {
+        let (_home, layout, uid) = prepared_pending_install_fixture();
+        let broker = InProcessBroker::new().unwrap();
+        let helper = InProcessHelper::new(991).unwrap();
+        let maintenance = helper
+            .connect(InProcessPeer::authenticated_uid(991))
+            .unwrap()
+            .for_caller(uid);
+
+        let generation_one = GenerationId::new("gen-0001").unwrap();
+        let setup_nonce = "00112233445566778899aabbccddeeff";
+        let setup_identity =
+            LeaseIdentity::new("op_setup", setup_nonce, "2026-08-09T00:00:00Z").unwrap();
+        let setup_lease = StateLease::try_exclusive(&layout, &setup_identity).unwrap();
+        assert_eq!(
+            pending_install_generation(&layout, &setup_lease).unwrap(),
+            Some(generation_one.clone())
+        );
+        let prepared =
+            resume_prepared_install(layout.clone(), setup_lease, &generation_one).unwrap();
+        let intent = prepared.root_intent().unwrap().unwrap();
+        let generation_one_roots =
+            RootSet::new(uid, generation_one.clone(), intent.entries().to_vec()).unwrap();
+        let generation_one_report = maintenance.publish_root_set(&generation_one_roots).unwrap();
+        prepared
+            .activate_published(Some(&generation_one_report), setup_nonce)
+            .unwrap()
+            .finish()
+            .unwrap();
+
+        let manifest_bytes = fs::read(
+            layout
+                .state_root()
+                .join("generations/gen-0001.manifest.json"),
+        )
+        .unwrap();
+        let lock_bytes =
+            fs::read(layout.state_root().join("generations/gen-0001.lock.json")).unwrap();
+        let mut generation: Value = serde_json::from_slice(
+            &fs::read(layout.state_root().join("generations/gen-0001.json")).unwrap(),
+        )
+        .unwrap();
+        {
+            let generation = generation.as_object_mut().unwrap();
+            generation.remove("generationHash");
+            generation.insert("id".into(), json!("gen-0002"));
+            generation.insert("parent".into(), json!("gen-0001"));
+            generation.insert("createdAt".into(), json!("2026-08-10T00:00:00Z"));
+            generation.insert(
+                "manifestSnapshot".into(),
+                json!("generations/gen-0002.manifest.json"),
+            );
+            generation.insert(
+                "lockSnapshot".into(),
+                json!("generations/gen-0002.lock.json"),
+            );
+            generation
+                .get_mut("activation")
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert("treePath".into(), json!("activations/gen-0002"));
+            generation
+                .get_mut("operation")
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert("opId".into(), json!("op_setup_two"));
+        }
+        let generation_hash = canonical_digest(&generation).unwrap().to_string();
+        generation
+            .as_object_mut()
+            .unwrap()
+            .insert("generationHash".into(), json!(generation_hash));
+        let staging = layout.state_root().join("activations/gen-0002.staging");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        let store_path = format!("/nix/store/{STORE_HASH}-hello-1.0");
+        symlink(format!("{store_path}/bin/hello"), staging.join("hello")).unwrap();
+        let plan = inspect_staged_activation(
+            &staging,
+            vec![pkg_core::StorePath::new(&store_path).unwrap()],
+        )
+        .unwrap();
+        let candidate = CandidateGeneration::new(
+            manifest_bytes,
+            lock_bytes,
+            serde_json::to_vec(&generation).unwrap(),
+        )
+        .unwrap();
+        let setup_two_nonce = "11112222333344445555666677778888";
+        let setup_two_identity =
+            LeaseIdentity::new("op_setup_two", setup_two_nonce, "2026-08-10T00:00:00Z").unwrap();
+        let setup_two_lease = StateLease::try_exclusive(&layout, &setup_two_identity).unwrap();
+        let prepared =
+            PreparedGeneration::prepare(layout.clone(), candidate, plan, setup_two_lease).unwrap();
+        let intent = prepared.root_intent().unwrap().unwrap();
+        let generation_two = GenerationId::new("gen-0002").unwrap();
+        let generation_two_roots =
+            RootSet::new(uid, generation_two.clone(), intent.entries().to_vec()).unwrap();
+        let generation_two_report = maintenance.publish_root_set(&generation_two_roots).unwrap();
+        prepared
+            .activate_published(Some(&generation_two_report), setup_two_nonce)
+            .unwrap()
+            .finish()
+            .unwrap();
+        let initial_identity =
+            LeaseIdentity::new("op_initial", "nonce_initial", "2026-08-10T01:00:00Z").unwrap();
+        let initial_lease = StateLease::try_exclusive(&layout, &initial_identity).unwrap();
+        let initial_active = load_active_snapshot(&layout, &initial_lease)
+            .unwrap()
+            .unwrap();
+        let initial_history = load_retained_history(&layout, &initial_lease).unwrap();
+        assert_eq!(initial_active.generation().id(), "gen-0002");
+        assert_eq!(initial_active.state().manifest().entries().len(), 1);
+        assert_eq!(
+            initial_history
+                .snapshots()
+                .iter()
+                .map(|snapshot| snapshot.generation().id())
+                .collect::<Vec<_>>(),
+            vec!["gen-0002", "gen-0001"]
+        );
+        drop(initial_lease);
+        assert_eq!(
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_one.clone(),))
+                .unwrap(),
+            generation_one_report
+        );
+        assert_eq!(
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_two.clone()))
+                .unwrap(),
+            generation_two_report
+        );
+
+        let (mut repair_server_stream, repair_client_stream) = UnixStream::pair().unwrap();
+        let (repair_started_tx, repair_started_rx) = mpsc::channel();
+        let (release_verification_tx, release_verification_rx) = mpsc::channel();
+        let (repair_returned_tx, repair_returned_rx) = mpsc::channel();
+        let repair_broker = broker.clone();
+        let repair_server = thread::spawn(move || {
+            let caller = repair_broker
                 .connect(InProcessCallerPeer::authenticated(uid))
                 .unwrap();
-            let (request_id, request) = read_request(&mut server_stream);
+            let (request_id, request) = read_request(&mut repair_server_stream);
             assert_eq!(
                 request,
                 CliBrokerRequest::Begin(BrokerOperationKind::Repair)
             );
             let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
             write_response(
-                &mut server_stream,
+                &mut repair_server_stream,
                 request_id,
                 CliBrokerResponse::Started(handle.clone()),
             );
 
-            let (request_id, request) = read_request(&mut server_stream);
+            let (request_id, request) = read_request(&mut repair_server_stream);
             let CliBrokerRequest::RepairGeneration(actual, repair_request) = request else {
                 panic!("expected repair generation");
             };
             assert_eq!(actual, handle);
             assert_eq!(repair_request.generation().as_str(), "gen-0001");
             assert!(repair_request.verify_only());
-
-            let lease_available = StateLease::try_exclusive(
-                &server_layout,
-                &LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap(),
-            )
-            .is_ok();
-            probed_tx.send(lease_available).unwrap();
-
+            caller.begin_repair_dispatch(&handle).unwrap();
+            repair_started_tx.send(handle.clone()).unwrap();
+            release_verification_rx.recv().unwrap();
+            caller.complete_repair_dispatch(&handle).unwrap();
+            caller.finish_repair_dispatch(&handle, true).unwrap();
             let report = RepairGenerationReport::new(RepairGenerationStatus::Clean, 0).unwrap();
             write_response(
-                &mut server_stream,
+                &mut repair_server_stream,
                 request_id,
                 CliBrokerResponse::RepairGeneration(report),
             );
-            done_rx.recv().unwrap();
+            repair_returned_rx.recv().unwrap();
+            handle
+        });
+        let repair_operations = LocalStateOperations {
+            source: layout.clone(),
+            broker_state_compatible: true,
+        };
+        let repair = thread::spawn(move || {
+            let mut client = BrokerLifecycleClient::from_stream(repair_client_stream);
+            let result = repair_operations.repair_with_broker(
+                &mut client,
+                &repair_args(true, "gen-0001"),
+                OperationPolicy::for_test(true, false),
+            );
+            repair_returned_tx.send(()).unwrap();
+            result
+        });
+        let repair_handle = repair_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 1);
+
+        let mutation_nonce = "9999aaaabbbbccccddddeeeeffff0000";
+        let mutation_identity =
+            LeaseIdentity::new("op_gen-0003", mutation_nonce, "2026-08-11T00:00:00Z").unwrap();
+        let mutation_lease = StateLease::try_exclusive(&layout, &mutation_identity).unwrap();
+        let mutation_source = load_active_snapshot(&layout, &mutation_lease)
+            .unwrap()
+            .unwrap();
+        let remove = Cli::try_parse(["pkg", "remove", "hello"]).unwrap();
+        let crate::cli::Command::Remove(remove_args) = remove.parsed_command() else {
+            panic!("expected remove state edit");
+        };
+        let next = remove_state(mutation_source.state().clone(), remove_args)
+            .unwrap()
+            .into_parts()
+            .0;
+        let source_generation = GenerationId::new(mutation_source.generation().id()).unwrap();
+        let prepared = prepare_state_edit(
+            layout.clone(),
+            mutation_lease,
+            &mutation_source,
+            next,
+            StateEditMetadata::new(
+                "gen-0003",
+                "2026-08-11T00:00:00Z",
+                "op_gen-0003",
+                StateEditKind::Remove,
+            ),
+        )
+        .unwrap();
+        assert!(
+            prepared
+                .root_transition_intent(source_generation)
+                .unwrap()
+                .is_none()
+        );
+        let mutation_caller = broker
+            .connect(InProcessCallerPeer::authenticated(uid))
+            .unwrap();
+        let mutation_handle = mutation_caller
+            .begin(BrokerOperationKind::Activate)
+            .unwrap();
+        prepared
+            .activate_transitioned(None, mutation_nonce)
+            .unwrap()
+            .finish()
+            .unwrap();
+        mutation_caller.complete(&mutation_handle).unwrap();
+        let snapshot_identity =
+            LeaseIdentity::new("op_snapshot", "nonce_snapshot", "2026-08-11T01:00:00Z").unwrap();
+        let snapshot_lease = StateLease::try_exclusive(&layout, &snapshot_identity).unwrap();
+        let generation_snapshot = load_retained_history(&layout, &snapshot_lease).unwrap();
+        let active_snapshot = load_active_snapshot(&layout, &snapshot_lease)
+            .unwrap()
+            .unwrap();
+        assert_eq!(active_snapshot.generation().id(), "gen-0003");
+        assert!(active_snapshot.state().manifest().entries().is_empty());
+        assert_eq!(
+            generation_snapshot
+                .snapshots()
+                .iter()
+                .map(|snapshot| snapshot.generation().id())
+                .collect::<Vec<_>>(),
+            vec!["gen-0003", "gen-0002", "gen-0001"]
+        );
+        drop(snapshot_lease);
+        let root_snapshot = [
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_one.clone()))
+                .unwrap(),
+            generation_two_report,
+        ];
+        assert_eq!(
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(
+                    uid,
+                    GenerationId::new("gen-0003").unwrap(),
+                ))
+                .unwrap_err()
+                .code(),
+            MaintenanceErrorCode::GenerationNotRooted
+        );
+
+        let (mut prune_server_stream, prune_client_stream) = UnixStream::pair().unwrap();
+        let (gc_waiting_tx, gc_waiting_rx) = mpsc::channel();
+        let (gc_admitted_tx, gc_admitted_rx) = mpsc::channel();
+        let (prune_returned_tx, prune_returned_rx) = mpsc::channel();
+        let prune_broker = broker.clone();
+        let prune_maintenance = maintenance.clone();
+        let prune_server = thread::spawn(move || {
+            let caller = prune_broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap();
+            let (request_id, request) = read_request(&mut prune_server_stream);
+            assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Gc));
+            let handle = caller.begin(BrokerOperationKind::Gc).unwrap();
+            write_response(
+                &mut prune_server_stream,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut prune_server_stream);
+            assert_eq!(request, CliBrokerRequest::AcquireGc(handle.clone()));
+            gc_waiting_tx.send(()).unwrap();
+            caller.acquire_gc_wait(&handle).unwrap();
+            gc_admitted_tx.send(()).unwrap();
+            write_response(
+                &mut prune_server_stream,
+                request_id,
+                CliBrokerResponse::GcAdmissionAcquired,
+            );
+
+            let (request_id, request) = read_request(&mut prune_server_stream);
+            assert_eq!(
+                request,
+                CliBrokerRequest::RemoveGenerationRoots(
+                    handle.clone(),
+                    GenerationId::new("gen-0001").unwrap()
+                )
+            );
+            caller
+                .remove_generation_root_intent(
+                    &handle,
+                    GenerationId::new("gen-0001").unwrap(),
+                    |request| prune_maintenance.remove_root_set(request),
+                )
+                .unwrap();
+            write_response(
+                &mut prune_server_stream,
+                request_id,
+                CliBrokerResponse::GenerationRootsRemoved,
+            );
+
+            let (request_id, request) = read_request(&mut prune_server_stream);
+            assert_eq!(request, CliBrokerRequest::Complete(handle.clone()));
+            caller.complete(&handle).unwrap();
+            write_response(
+                &mut prune_server_stream,
+                request_id,
+                CliBrokerResponse::Completed,
+            );
+            prune_returned_rx.recv().unwrap();
+            handle
+        });
+        let prune_layout = layout.clone();
+        let prune = thread::spawn(move || {
+            let mut client = BrokerLifecycleClient::from_stream(prune_client_stream);
+            let handle = client.begin(BrokerOperationKind::Gc).unwrap();
+            client.acquire_gc(handle.clone()).unwrap();
+            let identity =
+                LeaseIdentity::new("op_prune", "nonce_prune", "2026-08-12T00:00:00Z").unwrap();
+            let lease = StateLease::try_exclusive(&prune_layout, &identity).unwrap();
+            let active = load_active_snapshot(&prune_layout, &lease)
+                .unwrap()
+                .unwrap();
+            let history = load_retained_history(&prune_layout, &lease).unwrap();
+            ensure_generation_deletable(&active, &history, "gen-0001").unwrap();
+            let candidate = plan_generation_prune(
+                &active,
+                history.snapshots(),
+                "gen-0001",
+                unix_now().unwrap(),
+            )
+            .unwrap();
+            let maintenance = BrokerGcMaintenance {
+                broker: Mutex::new(&mut client),
+                handle: handle.clone(),
+            };
+            let outcome =
+                prune_generation(&prune_layout, &lease, &candidate, &maintenance, "op_prune")
+                    .unwrap();
+            drop(maintenance);
+            client.complete(handle).unwrap();
+            prune_returned_tx.send(()).unwrap();
+            outcome
         });
 
-        let mut client = BrokerLifecycleClient::from_stream(client_stream);
-        let args = repair_args(true, "gen-0001");
-        let result = operations.repair_with_broker(
-            &mut client,
-            &args,
-            OperationPolicy::for_test(true, false),
+        gc_waiting_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            gc_admitted_rx.recv_timeout(Duration::from_millis(75)),
+            Err(mpsc::RecvTimeoutError::Timeout)
         );
-        done_tx.send(()).unwrap();
-        server.join().unwrap();
-        assert!(result.is_ok());
-        assert!(probed_rx.recv_timeout(Duration::from_secs(1)).unwrap());
+        assert!(!prune.is_finished());
+        let waiting_admission = broker.admission_snapshot();
+        assert!(!waiting_admission.gc_held());
+        assert_eq!(waiting_admission.gc_inhibitor_count(), 1);
+
+        let waiting_identity =
+            LeaseIdentity::new("op_waiting", "nonce_waiting", "2026-08-11T02:00:00Z").unwrap();
+        let waiting_lease = StateLease::try_exclusive(&layout, &waiting_identity).unwrap();
+        assert_eq!(
+            load_active_snapshot(&layout, &waiting_lease)
+                .unwrap()
+                .unwrap(),
+            active_snapshot
+        );
+        assert_eq!(
+            load_retained_history(&layout, &waiting_lease)
+                .unwrap()
+                .snapshots(),
+            generation_snapshot.snapshots()
+        );
+        drop(waiting_lease);
+        assert_eq!(
+            [
+                maintenance
+                    .attest_root_set(&RootSetAttestationRequest::new(uid, generation_one.clone(),))
+                    .unwrap(),
+                maintenance
+                    .attest_root_set(&RootSetAttestationRequest::new(
+                        uid,
+                        GenerationId::new("gen-0002").unwrap(),
+                    ))
+                    .unwrap(),
+            ],
+            root_snapshot
+        );
+        assert_eq!(
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(
+                    uid,
+                    GenerationId::new("gen-0003").unwrap(),
+                ))
+                .unwrap_err()
+                .code(),
+            MaintenanceErrorCode::GenerationNotRooted
+        );
+
+        release_verification_tx.send(()).unwrap();
+        repair.join().unwrap().unwrap();
+        assert_eq!(repair_server.join().unwrap(), repair_handle);
+        assert_eq!(
+            broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap()
+                .poll(&repair_handle)
+                .unwrap(),
+            OperationStatus::Completed
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+        gc_admitted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(prune.join().unwrap(), PruneOutcome::Pruned);
+        let prune_handle = prune_server.join().unwrap();
+        assert_eq!(
+            broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap()
+                .poll(&prune_handle)
+                .unwrap(),
+            OperationStatus::Completed
+        );
+
+        let final_identity =
+            LeaseIdentity::new("op_final", "nonce_final", "2026-08-12T01:00:00Z").unwrap();
+        let final_lease = StateLease::try_exclusive(&layout, &final_identity).unwrap();
+        assert_eq!(
+            load_retained_history(&layout, &final_lease)
+                .unwrap()
+                .snapshots()
+                .iter()
+                .map(|snapshot| snapshot.generation().id())
+                .collect::<Vec<_>>(),
+            vec!["gen-0003", "gen-0002"]
+        );
+        assert!(
+            !layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
+        );
+        drop(final_lease);
+        assert_eq!(
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_one))
+                .unwrap_err()
+                .code(),
+            MaintenanceErrorCode::GenerationNotRooted
+        );
+        assert_eq!(
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(
+                    uid,
+                    GenerationId::new("gen-0002").unwrap(),
+                ))
+                .unwrap(),
+            root_snapshot[1]
+        );
+        assert_eq!(
+            maintenance
+                .attest_root_set(&RootSetAttestationRequest::new(
+                    uid,
+                    GenerationId::new("gen-0003").unwrap(),
+                ))
+                .unwrap_err()
+                .code(),
+            MaintenanceErrorCode::GenerationNotRooted
+        );
+        let final_admission = broker.admission_snapshot();
+        assert!(!final_admission.build_held());
+        assert!(!final_admission.gc_held());
+        assert_eq!(final_admission.gc_inhibitor_count(), 0);
     }
 
     #[test]
