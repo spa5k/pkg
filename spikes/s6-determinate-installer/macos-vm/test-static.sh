@@ -48,13 +48,25 @@ grep -F 'write_argv "$out/vm-run.argv" tart run' "$host" >/dev/null || die "exac
 grep -F 'tart exec -i "$vm_name"' "$host" >/dev/null || die "Guest Agent stdin execution missing"
 grep -F 'while [ "$i" -lt 60 ]' "$host" >/dev/null && grep -F 'if [ "$elapsed" -ge "$limit" ]' "$host" >/dev/null || die "bounded waits missing"
 grep -F 'kill -TERM "$child"' "$host" >/dev/null && grep -F 'kill -KILL "$child"' "$host" >/dev/null && grep -F '[ "$grace" -lt 5 ]' "$host" >/dev/null || die "hard deadline escalation missing"
+grep -F 'active_child=$!' "$host" >/dev/null && grep -F 'if [ "$active_child" = "$child" ]; then active_child=; fi' "$host" >/dev/null || die "bounded child is not tracked and cleared"
+[ "$(grep -c 'active_child=\$!' "$host")" -eq 2 ] || die "bounded host and guest calls must both track the active child"
+grep -F "trap 'terminate_for_signal 129' HUP" "$host" >/dev/null && grep -F "trap 'terminate_for_signal 130' INT" "$host" >/dev/null && grep -F "trap 'terminate_for_signal 143' TERM" "$host" >/dev/null && grep -F 'terminate_for_signal()' "$host" >/dev/null || die "signal handlers do not terminate the active child"
+grep -F "trap '' HUP INT TERM" "$host" >/dev/null && grep -F 'wait "$child" 2>/dev/null || :' "$host" >/dev/null || die "signal handler can be interrupted or skip reaping"
+signal_term_line=$(grep -n 'kill -TERM "$child"' "$host" | tail -1 | cut -d: -f1)
+signal_kill_line=$(grep -n 'kill -KILL "$child"' "$host" | tail -1 | cut -d: -f1)
+signal_exit_line=$(grep -n 'exit "$signal_status"' "$host" | cut -d: -f1)
+[ "$signal_term_line" -lt "$signal_kill_line" ] && [ "$signal_kill_line" -lt "$signal_exit_line" ] || die "signal exit can precede child termination"
 grep -F '/usr/bin/sudo -n /usr/bin/true' "$host" >/dev/null || die "passwordless sudo proof missing"
 grep -F '/usr/sbin/chown root:wheel "$dir"' "$host" >/dev/null && grep -F '/bin/chmod 0600 "$marker"' "$host" >/dev/null || die "root-owned private marker missing"
 grep -F 'if [ -e "$dir" ] || [ -L "$dir" ]; then exit 1; fi' "$host" >/dev/null || die "existing guest staging path is not refused explicitly"
 grep -F '/bin/chmod 0600 "$1"' "$host" >/dev/null && grep -F '<"$installer"' "$host" >/dev/null || die "private streamed installer missing"
 grep -F 'git show "$product_revision:spikes/s6-determinate-installer/macos-vm/inside.sh"' "$host" >/dev/null && grep -F '<"$out/inside.sh"' "$host" >/dev/null || die "immutable inside.sh is not streamed"
 grep -F 'inside.expected.sha256' "$host" >/dev/null && grep -F 'inside.actual.sha256' "$host" >/dev/null && grep -F 'staged inside.sh digest mismatch' "$host" >/dev/null || die "staged inside.sh hash proof missing"
-inside_hash_line=$(grep -n '^guest_inside_sha=' "$host" | cut -d: -f1)
+grep -F 'guest_inside_hash_line=$(bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside")' "$host" >/dev/null || die "staged inside.sh is not hashed directly"
+grep -F 'guest_inside_sha=$(printf '\''%s\n'\'' "$guest_inside_hash_line" | awk '\''{print $1}'\'')' "$host" >/dev/null || die "staged inside.sh hash is not parsed on the host"
+grep -F '[ "${#guest_inside_sha}" -eq 64 ]' "$host" >/dev/null && grep -F '*[!0-9a-f]*' "$host" >/dev/null || die "staged inside.sh hash is not validated as 64 hexadecimal characters"
+grep -F '/usr/bin/awk' "$host" >/dev/null && die "guest awk parsing form found"
+inside_hash_line=$(grep -n '^guest_inside_hash_line=' "$host" | cut -d: -f1)
 inside_exec_line=$(grep -n '^bounded_exec 60 /usr/bin/sudo -n "$guest_inside"' "$host" | cut -d: -f1)
 [ "$inside_hash_line" -lt "$inside_exec_line" ] || die "inside.sh can execute before its staged hash is checked"
 grep -F 'installer.expected.sha256' "$host" >/dev/null && grep -F 'installer.actual.sha256' "$host" >/dev/null || die "separate installer hashes missing"
@@ -86,7 +98,8 @@ grep -F '/nix /nix/receipt.json /nix/nix-installer /usr/local/bin/determinate-ni
 grep -F 'Nix Store APFS volume exists' "$guest" >/dev/null || die "APFS volume gate missing"
 grep -F '/etc/fstab /etc/synthetic.conf' "$guest" >/dev/null || die "fstab and synthetic.conf gates missing"
 grep -F '/Library/LaunchDaemons /Library/LaunchAgents' "$guest" >/dev/null && grep -F 'launchctl print system' "$guest" >/dev/null || die "launchd baseline gates missing"
-grep -F '/Groups/nixbld' "$guest" >/dev/null && grep -F "'^_?nixbld[0-9]+$'" "$guest" >/dev/null || die "nixbld gates missing"
+grep -F 'groups=$(dscl . -list /Groups) || die' "$guest" >/dev/null && grep -F 'grep -Fx nixbld' "$guest" >/dev/null && grep -F "'^_?nixbld[0-9]+$'" "$guest" >/dev/null || die "fail-closed nixbld gates missing"
+grep -F 'dscl . -read /Groups/nixbld' "$guest" >/dev/null && die "nixbld group check can fail open"
 grep -E '(cat|sed|awk|head|tail|less|more)[[:space:]].*/nix/receipt\.json' "$guest" >/dev/null && die "receipt content is read"
 grep -E '(^|[[:space:]])(rm|mv|install|mount|diskutil[[:space:]]+(erase|delete|add|rename)|launchctl[[:space:]]+(load|unload|bootstrap|bootout))([[:space:]]|$)' "$guest" >/dev/null && die "guest mutates Nix or system state"
 grep -E '(^|[[:space:]])(/bin/rm|/bin/mv|/usr/bin/install|/sbin/mount)([[:space:]]|$)' "$guest" >/dev/null && die "absolute guest mutation command found"

@@ -8,6 +8,7 @@ private_tree() {
     find "$1" -type d -exec chmod 0700 {} \;
     find "$1" -type f -exec chmod 0600 {} \;
 }
+active_child=
 wait_pid() {
     limit=$1
     child=$2
@@ -24,19 +25,24 @@ wait_pid() {
             done
             if kill -0 "$child" 2>/dev/null; then kill -KILL "$child" 2>/dev/null || :; fi
             wait "$child" 2>/dev/null || :
+            if [ "$active_child" = "$child" ]; then active_child=; fi
             return 124
         fi
         sleep 1
         elapsed=$((elapsed + 1))
     done
-    wait "$child"
+    if wait "$child"; then wait_status=0; else wait_status=$?; fi
+    if [ "$active_child" = "$child" ]; then active_child=; fi
+    return "$wait_status"
 }
 bounded_host() {
     limit=$1
     shift
     "$@" &
-    child=$!
-    wait_pid "$limit" "$child"
+    active_child=$!
+    if wait_pid "$limit" "$active_child"; then bounded_status=0; else bounded_status=$?; fi
+    active_child=
+    return "$bounded_status"
 }
 has_exact_vm() {
     source=$1
@@ -44,6 +50,28 @@ has_exact_vm() {
     listing=$(bounded_host 30 tart list --source "$source" --quiet) || return 2
     printf '%s\n' "$listing" | grep -Fx -- "$name" >/dev/null
 }
+terminate_for_signal() {
+    signal_status=$1
+    trap '' HUP INT TERM
+    child=$active_child
+    if [ -n "$child" ]; then
+        if kill -0 "$child" 2>/dev/null; then
+            kill -TERM "$child" 2>/dev/null || :
+            grace=0
+            while kill -0 "$child" 2>/dev/null && [ "$grace" -lt 5 ]; do
+                sleep 1
+                grace=$((grace + 1))
+            done
+            if kill -0 "$child" 2>/dev/null; then kill -KILL "$child" 2>/dev/null || :; fi
+        fi
+        wait "$child" 2>/dev/null || :
+    fi
+    active_child=
+    exit "$signal_status"
+}
+trap 'terminate_for_signal 129' HUP
+trap 'terminate_for_signal 130' INT
+trap 'terminate_for_signal 143' TERM
 
 [ "$#" -eq 3 ] || die "usage: $0 --approve-destructive-vm ABS_INSTALLER ABS_NEW_EVIDENCE"
 [ "$1" = --approve-destructive-vm ] || die "explicit destructive VM approval is required"
@@ -171,9 +199,6 @@ cleanup() {
     printf '%s\n' 'PASS: macOS VM preflight'
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 clone_attempted=1
 bounded_host 600 tart clone "$base" "$vm_name" >>"$out/tart.log" 2>&1
@@ -186,8 +211,10 @@ bounded_exec() {
     limit=$1
     shift
     tart exec -i "$vm_name" "$@" &
-    child=$!
-    wait_pid "$limit" "$child"
+    active_child=$!
+    if wait_pid "$limit" "$active_child"; then bounded_status=0; else bounded_status=$?; fi
+    active_child=
+    return "$bounded_status"
 }
 
 ready=0
@@ -219,7 +246,10 @@ guest_installer=$guest_dir/nix-installer
 guest_inside=$guest_dir/inside.sh
 bounded_exec 60 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0600 "$1"' sh "$guest_installer" <"$installer" || die "could not stream installer into guest"
 bounded_exec 30 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0700 "$1"' sh "$guest_inside" <"$out/inside.sh" || die "could not stream inside.sh into guest"
-guest_inside_sha=$(bounded_exec 15 /usr/bin/sudo -n /bin/sh -c '/usr/bin/shasum -a 256 "$1" | /usr/bin/awk "{print \\$1}"' sh "$guest_inside") || die "could not hash staged inside.sh"
+guest_inside_hash_line=$(bounded_exec 15 /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_inside") || die "could not hash staged inside.sh"
+guest_inside_sha=$(printf '%s\n' "$guest_inside_hash_line" | awk '{print $1}')
+case $guest_inside_sha in ''|*[!0-9a-f]*) die "staged inside.sh digest is not hexadecimal" ;; esac
+[ "${#guest_inside_sha}" -eq 64 ] || die "staged inside.sh digest is not 64 hexadecimal characters"
 printf '%s\n' "$guest_inside_sha" >"$out/inside.actual.sha256"
 [ "$guest_inside_sha" = "$inside_sha" ] || die "staged inside.sh digest mismatch"
 bounded_exec 60 /usr/bin/sudo -n "$guest_inside" "$token" "$marker" "$guest_installer" "$installer_pin" >"$out/guest-preflight.txt" 2>&1 || die "guest preflight failed"

@@ -56,7 +56,8 @@ launchd=$(launchctl print system 2>/dev/null) || die "could not inspect system l
 if printf '%s\n' "$launchd" | grep -Ei '(^|[^[:alnum:]_])(nix|determinate)([^[:alnum:]_]|$)' >/dev/null; then
     residue 'system launchd contains a Nix or Determinate job'
 fi
-if dscl . -read /Groups/nixbld >/dev/null 2>&1; then residue 'nixbld group exists'; fi
+groups=$(dscl . -list /Groups) || die "could not inspect local groups"
+if printf '%s\n' "$groups" | grep -Fx nixbld >/dev/null; then residue 'nixbld group exists'; fi
 users=$(dscl . -list /Users) || die "could not inspect local users"
 if printf '%s\n' "$users" | grep -E '^_?nixbld[0-9]+$' >/dev/null; then residue 'nixbld users exist'; fi
 [ "$dirty" -eq 0 ] || die "guest Nix baseline is not clean"
