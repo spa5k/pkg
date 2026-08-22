@@ -56,6 +56,15 @@ launchd=$(launchctl print system 2>/dev/null) || die "could not inspect system l
 if printf '%s\n' "$launchd" | grep -Ei '(^|[^[:alnum:]_])(nix|determinate)([^[:alnum:]_]|$)' >/dev/null; then
     residue 'system launchd contains a Nix or Determinate job'
 fi
+set +e
+/usr/bin/security find-generic-password -a 'Nix Store' -s 'Nix Store' /Library/Keychains/System.keychain >/dev/null 2>&1
+keychain_status=$?
+set -e
+case $keychain_status in
+    0) residue 'Determinate Nix Store System Keychain item exists' ;;
+    44) ;;
+    *) die "System Keychain probe failed: $keychain_status" ;;
+esac
 groups=$(dscl . -list /Groups) || die "could not inspect local groups"
 if printf '%s\n' "$groups" | grep -Fx nixbld >/dev/null; then residue 'nixbld group exists'; fi
 users=$(dscl . -list /Users) || die "could not inspect local users"

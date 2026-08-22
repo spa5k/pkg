@@ -6,7 +6,7 @@ script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
 host=$script_dir/run.sh
 guest=$script_dir/inside.sh
 
-sh -n "$host" "$guest" "$0"
+for script in "$host" "$guest" "$0"; do sh -n "$script"; done
 [ -x "$host" ] && [ -x "$guest" ] && [ -x "$0" ] || die "scripts must be executable"
 grep -F '[ "$#" -eq 3 ]' "$host" >/dev/null && grep -F -- '--approve-destructive-vm ABS_INSTALLER ABS_NEW_EVIDENCE' "$host" >/dev/null || die "exact host arguments missing"
 grep -F '[ "$(uname -s)" = Darwin ]' "$host" >/dev/null && grep -F '[ "$(uname -m)" = arm64 ]' "$host" >/dev/null || die "host platform gates missing"
@@ -115,6 +115,9 @@ grep -F '/nix /nix/receipt.json /nix/nix-installer /usr/local/bin/determinate-ni
 grep -F 'Nix Store APFS volume exists' "$guest" >/dev/null || die "APFS volume gate missing"
 grep -F '/etc/fstab /etc/synthetic.conf' "$guest" >/dev/null || die "fstab and synthetic.conf gates missing"
 grep -F '/Library/LaunchDaemons /Library/LaunchAgents' "$guest" >/dev/null && grep -F 'launchctl print system' "$guest" >/dev/null || die "launchd baseline gates missing"
+grep -F "/usr/bin/security find-generic-password -a 'Nix Store' -s 'Nix Store' /Library/Keychains/System.keychain >/dev/null 2>&1" "$guest" >/dev/null || die "exact System Keychain metadata probe missing"
+grep -E '/usr/bin/security find-generic-password.*(^|[[:space:]])-w([[:space:]]|$)' "$guest" >/dev/null && die "System Keychain password can be read"
+grep -F "0) residue 'Determinate Nix Store System Keychain item exists'" "$guest" >/dev/null && grep -F '44) ;;' "$guest" >/dev/null && grep -F '*) die "System Keychain probe failed: $keychain_status"' "$guest" >/dev/null || die "System Keychain status branches missing"
 grep -F 'groups=$(dscl . -list /Groups) || die' "$guest" >/dev/null && grep -F 'grep -Fx nixbld' "$guest" >/dev/null && grep -F "'^_?nixbld[0-9]+$'" "$guest" >/dev/null || die "fail-closed nixbld gates missing"
 grep -F 'dscl . -read /Groups/nixbld' "$guest" >/dev/null && die "nixbld group check can fail open"
 grep -E '(cat|sed|awk|head|tail|less|more)[[:space:]].*/nix/receipt\.json' "$guest" >/dev/null && die "receipt content is read"
