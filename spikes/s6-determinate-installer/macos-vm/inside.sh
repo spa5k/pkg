@@ -14,7 +14,10 @@ die() {
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
 }
-sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
+sha256() {
+    sha256_line=$(shasum -a 256 "$1") || return 1
+    printf '%s\n' "${sha256_line%% *}"
+}
 record() { printf '%s: %s\n' "$1" "$2" >>"$phase_dir/results"; }
 write_argv() { argv_file=$1; shift; : >"$argv_file"; for argv_item in "$@"; do printf '%s\n' "$argv_item" >>"$argv_file"; done; }
 path_exists() { [ -e "$1" ] || [ -L "$1" ]; }
@@ -27,15 +30,29 @@ wait_bounded() {
             wait_grace=0
             while kill -0 "$wait_child" 2>/dev/null && [ "$wait_grace" -lt 5 ]; do sleep 1; wait_grace=$((wait_grace + 1)); done
             if kill -0 "$wait_child" 2>/dev/null; then kill -KILL "$wait_child" 2>/dev/null || :; fi
+            signals_hold
             wait "$wait_child" 2>/dev/null || :
+            if [ "$active_vendor_pid" = "$wait_child" ]; then active_vendor_pid=; fi
+            signals_restore
             return 124
         fi
         sleep 1
         wait_elapsed=$((wait_elapsed + 1))
     done
-    if wait "$wait_child"; then return 0; else return $?; fi
+    signals_hold
+    if wait "$wait_child"; then wait_status=0; else wait_status=$?; fi
+    if [ "$active_vendor_pid" = "$wait_child" ]; then active_vendor_pid=; fi
+    signals_restore
+    return "$wait_status"
+}
+signals_hold() { trap '' HUP INT TERM; }
+signals_restore() {
+    trap 'cleanup_children; exit 129' HUP
+    trap 'cleanup_children; exit 130' INT
+    trap 'cleanup_children; exit 143' TERM
 }
 cleanup_children() {
+    signals_hold
     capture_stop
     [ -n "$active_vendor_pid" ] || return 0
     if kill -0 "$active_vendor_pid" 2>/dev/null; then
@@ -51,20 +68,22 @@ run_recorded() {
     run_name=$1 run_limit=$2
     shift 2
     write_argv "$phase_dir/$run_name.argv" "$@"
+    signals_hold
     "$@" </dev/null >"$phase_dir/$run_name.output" 2>&1 &
     run_pid=$!
     active_vendor_pid=$run_pid
+    signals_restore
     set +e
     wait_bounded "$run_limit" "$run_pid"
     last_status=$?
     set -e
-    active_vendor_pid=
     printf '%s\n' "$last_status" >"$phase_dir/$run_name.status"
 }
 
 capture_pid=
 capture_start() {
     capture_name=$1 capture_port=$2 capture_count=$phase_dir/$capture_name
+    [ -x /usr/bin/python3 ] || die "/usr/bin/python3 is required for controlled diagnostic capture"
     printf '0' >"$capture_count"
     cat >"$phase_dir/capture.py" <<'PY'
 import http.server
@@ -110,7 +129,11 @@ receipt_identity() {
 }
 snapshot() {
     snapshot_name=$1 snapshot_prefix=$phase_dir/$snapshot_name
-    { sw_vers; uname -a; printf 'console-user=%s\n' "$console_user"; printf 'boot-session=%s\n' "$(sysctl -n kern.bootsessionuuid)"; } >"$snapshot_prefix.platform"
+    sw_vers >"$snapshot_prefix.platform" || die "could not record macOS version"
+    uname -a >>"$snapshot_prefix.platform" || die "could not record kernel version"
+    printf 'console-user=%s\n' "$console_user" >>"$snapshot_prefix.platform"
+    snapshot_boot=$(sysctl -n kern.boottime) || die "could not record raw kernel boot time"
+    printf 'kern-boottime=%s\n' "$snapshot_boot" >>"$snapshot_prefix.platform"
     : >"$snapshot_prefix.paths"
     for snapshot_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd /etc/fstab /etc/synthetic.conf /opt/pkg '/Library/Application Support/pkg'; do
         if [ -L "$snapshot_path" ]; then
@@ -126,22 +149,44 @@ snapshot() {
     for config_file in /etc/fstab /etc/synthetic.conf; do
         if [ -f "$config_file" ] && [ ! -L "$config_file" ]; then grep -Ein '(^|[[:space:]/])(nix|Nix Store)([[:space:]/]|$)' "$config_file" >>"$snapshot_prefix.config" || :; fi
     done
-    { for launch_dir in /Library/LaunchDaemons /Library/LaunchAgents; do [ -d "$launch_dir" ] || continue; find "$launch_dir" -maxdepth 1 \( -type f -o -type l \) \( -iname '*nix*' -o -iname '*determinate*' -o -iname '*pkg*' \) -print; done; } >"$snapshot_prefix.launchd-files" 2>&1
-    launchctl print system 2>/dev/null | grep -Ei '(^|[^[:alnum:]_])(nix|determinate|pkg)([^[:alnum:]_]|$)' >"$snapshot_prefix.launchd-jobs" || :
+    : >"$snapshot_prefix.launchd-files"
+    for launch_dir in /Library/LaunchDaemons /Library/LaunchAgents; do
+        [ -d "$launch_dir" ] || continue
+        find "$launch_dir" -maxdepth 1 \( -type f -o -type l \) \( -iname '*nix*' -o -iname '*determinate*' -o -iname '*pkg*' \) -print >>"$snapshot_prefix.launchd-files" || die "could not record launchd files"
+    done
+    launchctl print system >"$snapshot_prefix.launchd-system" 2>&1 || die "could not record system launchd"
+    grep -Ei '(^|[^[:alnum:]_])(nix|determinate|pkg)([^[:alnum:]_]|$)' "$snapshot_prefix.launchd-system" >"$snapshot_prefix.launchd-jobs" || :
     set +e
     security find-generic-password -a 'Nix Store' -s 'Nix Store' /Library/Keychains/System.keychain >/dev/null 2>&1
     snapshot_keychain_status=$?
     set -e
     case $snapshot_keychain_status in 0) printf '%s\n' present >"$snapshot_prefix.keychain" ;; 44) printf '%s\n' absent >"$snapshot_prefix.keychain" ;; *) die "System Keychain metadata probe failed: $snapshot_keychain_status" ;; esac
-    dscl . -list /Groups | grep -E '^(nixbld|_nixbld|_?pkg)$' >"$snapshot_prefix.groups" || :
-    dscl . -list /Users | grep -E '^(_?nixbld[0-9]+|_?pkg)$' >"$snapshot_prefix.users" || :
-    find /var/run /private/var/run -xdev -type s \( -iname '*nix*' -o -iname '*determinate*' -o -iname '*pkg*' \) -print 2>/dev/null >"$snapshot_prefix.sockets" || :
+    dscl . -list /Groups >"$snapshot_prefix.groups.all" || die "could not record local groups"
+    grep -E '^(nixbld|_nixbld|_?pkg)$' "$snapshot_prefix.groups.all" >"$snapshot_prefix.groups" || :
+    dscl . -list /Users >"$snapshot_prefix.users.all" || die "could not record local users"
+    grep -E '^(_?nixbld[0-9]+|_?pkg)$' "$snapshot_prefix.users.all" >"$snapshot_prefix.users" || :
+    find /var/run /private/var/run -xdev -type s \( -iname '*nix*' -o -iname '*determinate*' -o -iname '*pkg*' \) -print 2>/dev/null >"$snapshot_prefix.sockets" || die "could not record sockets"
 }
-require_vendor_disk() {
-    vendor_available_kb=$(df -Pk / | awk 'END {print $4}')
+record_free_disk() {
+    df -Pk / >"$phase_dir/guest-disk.df" || die "could not record guest free disk"
+    vendor_available_kb=$(awk 'END {print $4}' "$phase_dir/guest-disk.df") || die "could not parse guest free disk"
     case $vendor_available_kb in ''|*[!0-9]*) die "could not determine guest free disk" ;; esac
     printf '%s\n' "$vendor_available_kb" >"$phase_dir/vendor-free-kb"
-    [ "$vendor_available_kb" -ge 31457280 ] || die "at least 30 GiB of guest free disk is required before vendor execution"
+}
+require_first_vendor_gates() {
+    [ "$vendor_available_kb" -ge 31457280 ] || die "at least 30 GiB of guest free disk is required before first vendor execution"
+    case $console_user in ''|root|loginwindow|_mbsetupuser) die "a real graphical console user is required before first vendor execution" ;; esac
+    id "$console_user" >/dev/null 2>&1 || die "graphical console user does not exist"
+    console_uid=$(id -u "$console_user") console_gid=$(id -g "$console_user")
+    secure_token_state=$(sysadminctl -secureTokenStatus "$console_user" 2>&1) || die "could not read console secure-token state"
+    printf '%s\n' "$secure_token_state" | grep -F 'Secure token is ENABLED' >/dev/null || die "graphical console user lacks a secure token"
+    SUDO_USER=$console_user SUDO_UID=$console_uid SUDO_GID=$console_gid
+    export SUDO_USER SUDO_UID SUDO_GID
+}
+require_installer_version() {
+    run_recorded installer-version 60 "$staged" --version
+    [ "$last_status" -eq 0 ] || die "installer version command failed"
+    grep -F '3.22.1' "$phase_dir/installer-version.output" >/dev/null || die "installer version is not 3.22.1"
 }
 require_functional_nix() {
     nix_bin=/nix/var/nix/profiles/default/bin/nix
@@ -156,6 +201,80 @@ require_reboot_since() {
     previous_boot=$(cat "$evidence/$reboot_phase/boot-session")
     [ "$current_boot" != "$previous_boot" ] || die "required reboot after $reboot_phase was not observed"
 }
+content_hex() {
+    od -An -tx1 "$1" >"$phase_dir/content-hex.raw" || die "could not read fixture bytes"
+    tr -d ' \n' <"$phase_dir/content-hex.raw"
+}
+assert_installed_state() {
+    installed_name=$1
+    diskutil apfs list >"$phase_dir/$installed_name.apfs" 2>&1 || die "could not inspect installed APFS state"
+    installed_volume_count=$(grep -Ec 'Name:[[:space:]]+Nix Store([[:space:]]|$)' "$phase_dir/$installed_name.apfs" || :)
+    [ "$installed_volume_count" -eq 1 ] || die "installed state does not contain exactly one Nix Store APFS volume"
+    : >"$phase_dir/$installed_name.launchd-found.raw"
+    for installed_launch_dir in /Library/LaunchDaemons /Library/LaunchAgents; do
+        [ -d "$installed_launch_dir" ] || continue
+        find "$installed_launch_dir" -maxdepth 1 \( -type f -o -type l \) \( -iname '*nix*' -o -iname '*determinate*' \) -print >>"$phase_dir/$installed_name.launchd-found.raw" || die "could not inspect installed launchd files"
+    done
+    sort "$phase_dir/$installed_name.launchd-found.raw" >"$phase_dir/$installed_name.launchd-found"
+    printf '%s\n' \
+        /Library/LaunchDaemons/systems.determinate.nix-daemon.plist \
+        /Library/LaunchDaemons/systems.determinate.nix-installer.nix-hook.plist \
+        /Library/LaunchDaemons/systems.determinate.nix-store.plist >"$phase_dir/$installed_name.launchd-expected"
+    cmp -s "$phase_dir/$installed_name.launchd-expected" "$phase_dir/$installed_name.launchd-found" || die "installed state does not have exactly the three pinned launchd files"
+    for installed_plist in \
+        /Library/LaunchDaemons/systems.determinate.nix-store.plist \
+        /Library/LaunchDaemons/systems.determinate.nix-daemon.plist \
+        /Library/LaunchDaemons/systems.determinate.nix-installer.nix-hook.plist; do
+        [ -f "$installed_plist" ] && [ ! -L "$installed_plist" ] || die "required launchd file is missing or unsafe: $installed_plist"
+        [ "$(stat -f '%Su:%Sg:%Lp' "$installed_plist")" = root:wheel:644 ] || die "required launchd file identity is unexpected: $installed_plist"
+        stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' "$installed_plist" >>"$phase_dir/$installed_name.launchd-files"
+    done
+    for installed_job in systems.determinate.nix-store systems.determinate.nix-daemon systems.determinate.nix-installer.nix-hook; do
+        launchctl print "system/$installed_job" >"$phase_dir/$installed_name.launchd-$installed_job" 2>&1 || die "required launchd job is absent: $installed_job"
+    done
+    security find-generic-password -a 'Nix Store' -s 'Nix Store' /Library/Keychains/System.keychain >"$phase_dir/$installed_name.keychain-metadata" 2>&1 || die "Nix Store System Keychain metadata item is absent"
+    dscl . -list /Groups >"$phase_dir/$installed_name.groups.all" || die "could not inspect installed groups"
+    grep -Fx nixbld "$phase_dir/$installed_name.groups.all" >"$phase_dir/$installed_name.group" || die "nixbld group is absent"
+    dscl . -list /Users >"$phase_dir/$installed_name.users.all" || die "could not inspect installed users"
+    grep -E '^_nixbld[0-9]+$' "$phase_dir/$installed_name.users.all" >"$phase_dir/$installed_name.build-users" || die "Nix build users are absent"
+    installed_user_count=$(wc -l <"$phase_dir/$installed_name.build-users") || die "could not count Nix build users"
+    [ "$installed_user_count" -eq 32 ] || die "installed state does not have exactly 32 Nix build users"
+    installed_user_number=1
+    while [ "$installed_user_number" -le 32 ]; do
+        grep -Fx "_nixbld$installed_user_number" "$phase_dir/$installed_name.build-users" >/dev/null || die "required build user is absent: _nixbld$installed_user_number"
+        installed_user_number=$((installed_user_number + 1))
+    done
+    receipt_identity "$installed_name.receipt"
+    [ -f /nix/nix-installer ] && [ ! -L /nix/nix-installer ] || die "installed installer helper is missing or unsafe"
+    sha256 /nix/nix-installer >"$phase_dir/$installed_name.installer.sha256"
+    [ "$(cat "$phase_dir/$installed_name.installer.sha256")" = "$expected_sha" ] || die "installed installer helper differs from the pin"
+    [ -x /usr/local/bin/determinate-nixd ] && [ ! -L /usr/local/bin/determinate-nixd ] || die "determinate-nixd is missing or unsafe"
+    [ "$(stat -f '%Su:%Sg:%Lp' /usr/local/bin/determinate-nixd)" = root:wheel:555 ] || die "determinate-nixd identity is unexpected"
+    [ -d /nix/store ] && [ ! -L /nix/store ] || die "Nix store is missing or unsafe"
+    mount >"$phase_dir/$installed_name.mounts" 2>&1 || die "could not inspect installed mount state"
+    grep -E '[[:space:]]on[[:space:]]/nix[[:space:]].*\(apfs[,)]' "$phase_dir/$installed_name.mounts" >"$phase_dir/$installed_name.nix-mount" || die "Nix Store is not mounted at /nix as APFS"
+    find /nix/store -mindepth 1 -maxdepth 1 -print -quit >"$phase_dir/$installed_name.store-first" 2>&1 || die "could not inspect Nix store"
+    [ -s "$phase_dir/$installed_name.store-first" ] || die "Nix store is empty"
+    require_functional_nix
+}
+record_foreign_state() {
+    foreign_name=$1 sentinel=/nix/pkg-s6-foreign-sentinel
+    mount >"$phase_dir/$foreign_name.mounts" 2>&1 || die "could not record foreign mount state"
+    if grep -E '[[:space:]]on[[:space:]]/nix[[:space:]]' "$phase_dir/$foreign_name.mounts" >"$phase_dir/$foreign_name.nix-mount"; then
+        printf '%s\n' mounted >"$phase_dir/$foreign_name.mount-state"
+    else
+        : >"$phase_dir/$foreign_name.nix-mount"
+        printf '%s\n' unmounted >"$phase_dir/$foreign_name.mount-state"
+    fi
+    if [ -f "$sentinel" ] && [ ! -L "$sentinel" ]; then
+        printf '%s\n' visible >"$phase_dir/$foreign_name.sentinel-visibility"
+        sha256 "$sentinel" >"$phase_dir/$foreign_name.sentinel.sha256"
+    elif [ "$(cat "$phase_dir/$foreign_name.mount-state")" = mounted ]; then
+        printf '%s\n' 'hidden-by-mounted-filesystem; not proved deleted' >"$phase_dir/$foreign_name.sentinel-visibility"
+    else
+        die "foreign sentinel is absent while /nix is unmounted"
+    fi
+}
 
 strict_residue() {
     residue_dirty=0
@@ -163,22 +282,27 @@ strict_residue() {
     for residue_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd; do
         if path_exists "$residue_path"; then printf 'present path=%s\n' "$residue_path" >>"$phase_dir/vendor-residue"; residue_dirty=1; fi
     done
-    if diskutil apfs list | grep -E 'Name:[[:space:]]+Nix Store([[:space:]]|$)' >/dev/null; then
+    diskutil apfs list >"$phase_dir/residue.apfs" 2>&1 || die "could not inspect APFS residue"
+    if grep -E 'Name:[[:space:]]+Nix Store([[:space:]]|$)' "$phase_dir/residue.apfs" >/dev/null; then
         printf '%s\n' 'present APFS=Nix Store' >>"$phase_dir/vendor-residue"
         residue_dirty=1
     fi
     for residue_file in /etc/fstab /etc/synthetic.conf; do
-        if [ -f "$residue_file" ] && [ ! -L "$residue_file" ] && grep -Ei '(^|[[:space:]/])(nix|Nix Store)([[:space:]/]|$)' "$residue_file" >/dev/null; then
+        if [ -L "$residue_file" ]; then
+            printf 'symlink file=%s\n' "$residue_file" >>"$phase_dir/vendor-residue"
+            residue_dirty=1
+        elif [ -f "$residue_file" ] && grep -Ei '(^|[[:space:]/])(nix|Nix Store)([[:space:]/]|$)' "$residue_file" >/dev/null; then
             printf 'entry file=%s\n' "$residue_file" >>"$phase_dir/vendor-residue"
             residue_dirty=1
         fi
     done
     for residue_dir in /Library/LaunchDaemons /Library/LaunchAgents; do
         [ -d "$residue_dir" ] || continue
-        find "$residue_dir" -maxdepth 1 \( -type f -o -type l \) \( -iname '*nix*' -o -iname '*determinate*' \) -print >>"$phase_dir/vendor-residue"
+        find "$residue_dir" -maxdepth 1 \( -type f -o -type l \) \( -iname '*nix*' -o -iname '*determinate*' \) -print >>"$phase_dir/vendor-residue" || die "could not inspect launchd residue"
     done
     [ ! -s "$phase_dir/vendor-residue" ] || residue_dirty=1
-    launchctl print system 2>/dev/null | grep -Ei '(^|[^[:alnum:]_])(nix|determinate)([^[:alnum:]_]|$)' >"$phase_dir/vendor-launchd-residue" || :
+    launchctl print system >"$phase_dir/residue.launchd-system" 2>&1 || die "could not inspect launchd residue"
+    grep -Ei '(^|[^[:alnum:]_])(nix|determinate)([^[:alnum:]_]|$)' "$phase_dir/residue.launchd-system" >"$phase_dir/vendor-launchd-residue" || :
     [ ! -s "$phase_dir/vendor-launchd-residue" ] || residue_dirty=1
     set +e
     security find-generic-password -a 'Nix Store' -s 'Nix Store' /Library/Keychains/System.keychain >/dev/null 2>&1
@@ -189,9 +313,11 @@ strict_residue() {
         44) printf '%s\n' absent >"$phase_dir/vendor-keychain-residue" ;;
         *) die "System Keychain residue probe failed: $residue_keychain_status" ;;
     esac
-    { dscl . -list /Groups | grep -E '^(nixbld|_nixbld)$' || :; dscl . -list /Users | grep -E '^_?nixbld[0-9]+$' || :; } >"$phase_dir/vendor-account-residue"
+    dscl . -list /Groups >"$phase_dir/residue.groups.all" || die "could not inspect group residue"
+    dscl . -list /Users >"$phase_dir/residue.users.all" || die "could not inspect user residue"
+    { grep -E '^(nixbld|_nixbld)$' "$phase_dir/residue.groups.all" || :; grep -E '^_?nixbld[0-9]+$' "$phase_dir/residue.users.all" || :; } >"$phase_dir/vendor-account-residue"
     [ ! -s "$phase_dir/vendor-account-residue" ] || residue_dirty=1
-    find /var/run /private/var/run -xdev -type s \( -iname '*nix*' -o -iname '*determinate*' \) -print 2>/dev/null >"$phase_dir/vendor-socket-residue" || :
+    find /var/run /private/var/run -xdev -type s \( -iname '*nix*' -o -iname '*determinate*' \) -print 2>/dev/null >"$phase_dir/vendor-socket-residue" || die "could not inspect socket residue"
     [ ! -s "$phase_dir/vendor-socket-residue" ] || residue_dirty=1
     if [ "$residue_dirty" -eq 0 ]; then printf '%s\n' PASS >"$phase_dir/vendor-outcome"; else printf '%s\n' FAIL >"$phase_dir/vendor-outcome"; fi
 
@@ -202,9 +328,9 @@ strict_residue() {
     done
     for product_dir in /Library/LaunchDaemons /Library/LaunchAgents; do
         [ -d "$product_dir" ] || continue
-        find "$product_dir" -maxdepth 1 \( -type f -o -type l \) -iname '*pkg*' -print >>"$phase_dir/product-residue"
+        find "$product_dir" -maxdepth 1 \( -type f -o -type l \) -iname '*pkg*' -print >>"$phase_dir/product-residue" || die "could not inspect product launchd residue"
     done
-    { dscl . -list /Groups | grep -E '^_?pkg$' || :; dscl . -list /Users | grep -E '^_?pkg$' || :; } >"$phase_dir/product-account-residue"
+    { grep -E '^_?pkg$' "$phase_dir/residue.groups.all" || :; grep -E '^_?pkg$' "$phase_dir/residue.users.all" || :; } >"$phase_dir/product-account-residue"
     [ ! -s "$phase_dir/product-residue" ] || product_dirty=1
     [ ! -s "$phase_dir/product-account-residue" ] || product_dirty=1
     if [ "$product_dirty" -eq 0 ]; then printf '%s\n' PASS >"$phase_dir/product-residue-outcome"; else printf '%s\n' FAIL >"$phase_dir/product-residue-outcome"; fi
@@ -237,14 +363,7 @@ marker_parent=$(CDPATH= cd -P "$(dirname "$marker")" && pwd) || die "marker pare
 [ "$marker" = "${marker_parent%/}/$(basename "$marker")" ] || die "marker path is not canonical"
 [ "$(stat -f '%Su:%Sg:%Lp' "$marker_parent")" = root:wheel:700 ] || die "marker parent is not private"
 
-console_user=$(stat -f %Su /dev/console)
-case $console_user in ''|root|loginwindow|_mbsetupuser) die "a real graphical console user is required" ;; esac
-id "$console_user" >/dev/null 2>&1 || die "graphical console user does not exist"
-console_uid=$(id -u "$console_user") console_gid=$(id -g "$console_user")
-secure_token_state=$(sysadminctl -secureTokenStatus "$console_user" 2>&1) || die "could not read console secure-token state"
-printf '%s\n' "$secure_token_state" | grep -F 'Secure token is ENABLED' >/dev/null || die "graphical console user lacks a secure token"
-SUDO_USER=$console_user SUDO_UID=$console_uid SUDO_GID=$console_gid
-export SUDO_USER SUDO_UID SUDO_GID
+console_user=$(stat -f %Su /dev/console) || die "could not record graphical console owner"
 
 ledger=$evidence/phase-ledger
 if [ "$phase" = baseline ]; then
@@ -332,41 +451,37 @@ printf '%s\n' "$phase" >>"$ledger"
 printf '%s\n' "$expected_sha" >"$phase_dir/installer.expected.sha256"
 sha256 "$staged" >"$phase_dir/installer.actual.sha256"
 printf '%s\n' "$console_user" >"$phase_dir/console-user"
-current_boot=$(sysctl -n kern.bootsessionuuid)
+current_boot=$(sysctl -n kern.boottime) || die "could not record raw kernel boot time"
 printf '%s\n' "$current_boot" >"$phase_dir/boot-session"
+record_free_disk
 snapshot before
 
 phase_exit=0
 case $phase in
     baseline)
-        require_vendor_disk
-        run_recorded installer-version 60 "$staged" --version
-        [ "$last_status" -eq 0 ] || die "installer version command failed"
-        grep -F '3.22.1' "$phase_dir/installer-version.output" >/dev/null || die "installer version is not 3.22.1"
         strict_residue
         ;;
     lifecycle-install)
-        require_vendor_disk
+        require_first_vendor_gates
+        require_installer_version
         capture_start diagnostic-request-count 18080
-        diagnostic_endpoint=http://127.0.0.1:18080
-        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
+        DETSYS_IDS_TRANSPORT=http://127.0.0.1:18080
+        export DETSYS_IDS_TRANSPORT
+        run_recorded install 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
         sleep 2
         capture_stop
+        unset DETSYS_IDS_TRANSPORT
         [ "$last_status" -eq 0 ] || die "initial Determinate install failed"
-        [ "$(cat "$phase_dir/diagnostic-request-count")" -gt 0 ] || die "controlled diagnostic endpoint received no request"
-        receipt_identity receipt
-        [ -f /nix/nix-installer ] && [ ! -L /nix/nix-installer ] || die "installed installer copy is unsafe or absent"
+        [ "$(cat "$phase_dir/diagnostic-request-count")" -eq 0 ] || die "disabled diagnostic endpoint received a controlled request"
+        assert_installed_state after-install
         sha256 /nix/nix-installer >"$phase_dir/installed-installer.sha256"
         [ "$(cat "$phase_dir/installed-installer.sha256")" = "$expected_sha" ] || die "installed installer digest differs from the pin"
-        phase_exit=194
         ;;
     lifecycle-post-reboot)
         require_reboot_since lifecycle-install
-        receipt_identity receipt
-        require_functional_nix
+        assert_installed_state after-reboot
         ;;
     lifecycle-repeat-install)
-        require_vendor_disk
         capture_start disabled-diagnostic-request-count 18081
         DETSYS_IDS_TRANSPORT=http://127.0.0.1:18081
         export DETSYS_IDS_TRANSPORT
@@ -377,26 +492,24 @@ case $phase in
         [ "$last_status" -eq 0 ] || die "repeat Determinate install failed"
         [ "$(cat "$phase_dir/disabled-diagnostic-request-count")" -eq 0 ] || die "disabled diagnostic endpoint received a request"
         printf '%s\n' 'This proves only that the controlled endpoint received zero requests.' >"$phase_dir/diagnostic-scope"
-        receipt_identity receipt
-        require_functional_nix
+        assert_installed_state after-repeat-install
         ;;
     lifecycle-repair)
-        require_vendor_disk
         run_recorded repair 7200 /nix/nix-installer --diagnostic-endpoint '' repair --no-confirm
         [ "$last_status" -eq 0 ] || die "default repair failed"
         run_recorded repair-sequoia 7200 /nix/nix-installer --diagnostic-endpoint '' repair sequoia --no-confirm
         [ "$last_status" -eq 0 ] || die "Sequoia repair failed"
-        receipt_identity receipt
-        require_functional_nix
+        assert_installed_state after-repair
         ;;
     lifecycle-daemon)
-        require_vendor_disk
         daemon=/usr/local/bin/determinate-nixd
         [ -x "$daemon" ] && [ ! -L "$daemon" ] || die "determinate-nixd is unsafe or absent"
         stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' "$daemon" >"$phase_dir/determinate-nixd.stat"
         [ "$(stat -f '%Lp:%Su:%Sg' "$daemon")" = 555:root:wheel ] || die "determinate-nixd mode or ownership is unexpected"
         run_recorded daemon-version 60 "$daemon" version
         [ "$last_status" -eq 0 ] || die "determinate-nixd version failed"
+        run_recorded daemon-status 60 "$daemon" status
+        [ "$last_status" -eq 0 ] || die "determinate-nixd status failed"
         run_recorded daemon-upgrade-help 60 "$daemon" upgrade --help
         [ "$last_status" -eq 0 ] || die "determinate-nixd upgrade help failed"
         run_recorded daemon-upgrade 7200 "$daemon" upgrade --version v3.22.1
@@ -406,35 +519,34 @@ case $phase in
             [ "$last_status" -ne 0 ] || die "installer unexpectedly accepts $absent_command"
             grep -Ei '(unrecognized|unknown|invalid).*(subcommand|command)|unexpected argument' "$phase_dir/installer-$absent_command.output" >/dev/null || die "installer $absent_command rejection was not identified as an unknown subcommand"
         done
-        receipt_identity receipt
-        require_functional_nix
+        assert_installed_state after-daemon
         ;;
     lifecycle-uninstall)
-        require_vendor_disk
         receipt_identity receipt-before-uninstall
         run_recorded uninstall 7200 /nix/nix-installer --diagnostic-endpoint '' uninstall --no-confirm /nix/receipt.json
         [ "$last_status" -eq 0 ] || { printf '%s\n' FAIL >"$phase_dir/vendor-outcome"; die "uninstall failed"; }
         printf '%s\n' PASS >"$phase_dir/vendor-outcome"
         ;;
     lifecycle-repeat-uninstall)
-        require_vendor_disk
         run_recorded repeat-uninstall 7200 "$staged" --diagnostic-endpoint '' uninstall --no-confirm /nix/receipt.json
         [ "$last_status" -eq 1 ] || die "repeat uninstall did not return the pinned observed status 1"
         grep -F 'Reading receipt' "$phase_dir/repeat-uninstall.output" >/dev/null || die "repeat uninstall did not identify receipt reading"
         grep -F 'No such file or directory' "$phase_dir/repeat-uninstall.output" >/dev/null || die "repeat uninstall did not identify the absent receipt"
         printf '%s\n' PASS >"$phase_dir/vendor-outcome"
-        phase_exit=194
         ;;
     lifecycle-residue)
         require_reboot_since lifecycle-repeat-uninstall
         strict_residue
         ;;
     crash-kill)
-        require_vendor_disk
+        require_first_vendor_gates
+        require_installer_version
         write_argv "$phase_dir/install.argv" "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
+        signals_hold
         "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile </dev/null >"$phase_dir/install.output" 2>&1 &
         crash_pid=$!
         active_vendor_pid=$crash_pid
+        signals_restore
         case $crash_pid in ''|*[!0-9]*) die "installer PID is invalid" ;; esac
         [ "$crash_pid" -gt 1 ] && [ "$crash_pid" -ne "$$" ] || die "installer PID is unsafe"
         crash_command=$(ps -p "$crash_pid" -o command=) || die "installer process exited before PID validation"
@@ -442,79 +554,107 @@ case $phase in
         printf '%s\n' "$crash_pid" >"$phase_dir/installer.pid"
         crash_elapsed=0 crash_ready=0
         while kill -0 "$crash_pid" 2>/dev/null && [ "$crash_elapsed" -lt 1800 ]; do
-            if [ -x /usr/local/bin/determinate-nixd ] && find /nix/store -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep . >/dev/null; then crash_ready=1; break; fi
+            : >"$phase_dir/crash-store-first"
+            if [ -d /nix/store ]; then find /nix/store -mindepth 1 -maxdepth 1 -print -quit >"$phase_dir/crash-store-first" 2>&1 || die "could not inspect crash progress"; fi
+            if [ -x /usr/local/bin/determinate-nixd ] && [ -s "$phase_dir/crash-store-first" ]; then crash_ready=1; break; fi
             sleep 1
             crash_elapsed=$((crash_elapsed + 1))
         done
         if [ "$crash_ready" -ne 1 ]; then
             kill -TERM "$crash_pid" 2>/dev/null || :
             set +e; wait_bounded 5 "$crash_pid"; set -e
-            active_vendor_pid=
             die "late crash marker was not reached while the installer remained alive"
         fi
         printf '%s\n' 'determinate-nixd executable and non-empty Nix store' >"$phase_dir/crash-marker"
-        kill -KILL "$crash_pid" || die "could not SIGKILL the validated installer PID"
+        signals_hold
+        kill -KILL "$crash_pid" || { signals_restore; die "could not SIGKILL the validated installer PID"; }
         set +e
         wait "$crash_pid"
         crash_status=$?
-        set -e
         active_vendor_pid=
+        set -e
+        signals_restore
         printf '%s\n' "$crash_status" >"$phase_dir/install.status"
         [ "$crash_status" -eq 137 ] || die "SIGKILL did not produce status 137"
         snapshot immediate-after-sigkill
-        phase_exit=194
         ;;
     crash-recover)
         require_reboot_since crash-kill
-        require_vendor_disk
         run_recorded recover-install 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
         [ "$last_status" -eq 0 ] || die "install did not recover after the forced crash"
-        receipt_identity receipt
         [ "$(sha256 /nix/nix-installer)" = "$expected_sha" ] || die "recovered installed copy digest differs from the pin"
-        require_functional_nix
+        assert_installed_state after-recovery
         ;;
     foreign-synthetic-prepare)
         path_exists /nix && die "foreign lane requires /nix to be absent before synthetic preparation"
-        [ ! -L /etc/synthetic.conf ] || die "/etc/synthetic.conf must not be a symlink"
-        if [ -f /etc/synthetic.conf ]; then grep -Eq '^nix([[:space:]]|$)' /etc/synthetic.conf && die "a synthetic nix entry already exists"; fi
-        printf 'nix\n' >>/etc/synthetic.conf
-        chown root:wheel /etc/synthetic.conf
-        chmod 0644 /etc/synthetic.conf
+        [ ! -e /etc/synthetic.conf ] && [ ! -L /etc/synthetic.conf ] || die "foreign fixture requires absent /etc/synthetic.conf"
+        synthetic_temp=/etc/.pkg-s6-synthetic-$token
+        [ ! -e "$synthetic_temp" ] && [ ! -L "$synthetic_temp" ] || die "synthetic fixture temporary path already exists"
+        printf 'nix\n' >"$synthetic_temp"
+        chown root:wheel "$synthetic_temp"
+        chmod 0644 "$synthetic_temp"
+        ln "$synthetic_temp" /etc/synthetic.conf || die "could not atomically create absent synthetic fixture"
+        rm -f "$synthetic_temp"
+        [ "$(stat -f '%Su:%Sg:%Lp' /etc/synthetic.conf)" = root:wheel:644 ] || die "synthetic fixture identity is invalid"
+        synthetic_hex=$(content_hex /etc/synthetic.conf) || die "could not hash synthetic fixture content"
+        synthetic_hash=$(sha256 /etc/synthetic.conf) || die "could not hash synthetic fixture"
+        [ "$synthetic_hex" = 6e69780a ] || die "synthetic fixture content is not exact"
+        printf 'token=%s\ncontent-hex=%s\nsha256=%s\n' "$token" "$synthetic_hex" "$synthetic_hash" >"$phase_dir/synthetic-ownership"
+        stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' /etc/synthetic.conf >"$phase_dir/synthetic.stat"
         sync
-        phase_exit=194
         ;;
     foreign-post-reboot)
         require_reboot_since foreign-synthetic-prepare
+        [ -f /etc/synthetic.conf ] && [ ! -L /etc/synthetic.conf ] || die "owned synthetic fixture is absent or unsafe"
+        [ "$(stat -f '%Su:%Sg:%Lp' /etc/synthetic.conf)" = root:wheel:644 ] || die "owned synthetic fixture identity changed"
+        [ "$(content_hex /etc/synthetic.conf)" = 6e69780a ] || die "owned synthetic fixture content changed"
+        grep -Fx "token=$token" "$evidence/foreign-synthetic-prepare/synthetic-ownership" >/dev/null || die "synthetic fixture ownership token does not match"
+        grep -Fx "sha256=$(sha256 /etc/synthetic.conf)" "$evidence/foreign-synthetic-prepare/synthetic-ownership" >/dev/null || die "synthetic fixture digest changed"
         [ -d /nix ] && [ ! -L /nix ] || die "synthetic /nix did not appear after reboot"
+        mount >"$phase_dir/pre-sentinel.mounts" 2>&1 || die "could not inspect synthetic /nix mount state"
+        grep -E '[[:space:]]on[[:space:]]/nix[[:space:]]' "$phase_dir/pre-sentinel.mounts" >/dev/null && die "synthetic /nix must be unmounted before the foreign fixture"
+        find /nix -mindepth 1 -maxdepth 1 -print -quit >"$phase_dir/pre-sentinel.first-entry" 2>&1 || die "could not inspect synthetic /nix"
+        [ ! -s "$phase_dir/pre-sentinel.first-entry" ] || die "synthetic /nix must be empty before the foreign fixture"
         sentinel=/nix/pkg-s6-foreign-sentinel
         [ ! -e "$sentinel" ] && [ ! -L "$sentinel" ] || die "foreign sentinel already exists"
-        printf '%s' 'pkg-s6 foreign Nix ownership proof' >"$sentinel"
+        printf 'pkg-s6-foreign:%s\n' "$token" >"$sentinel"
         chown root:wheel "$sentinel"
         chmod 0600 "$sentinel"
+        [ "$(stat -f '%Su:%Sg:%Lp' "$sentinel")" = root:wheel:600 ] || die "foreign sentinel identity is invalid"
+        sentinel_hex=$(content_hex "$sentinel") || die "could not hash foreign sentinel content"
+        sentinel_hash=$(sha256 "$sentinel") || die "could not hash foreign sentinel"
+        printf 'token=%s\ncontent-hex=%s\nsha256=%s\n' "$token" "$sentinel_hex" "$sentinel_hash" >"$phase_dir/sentinel-ownership"
+        stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' "$sentinel" >"$phase_dir/sentinel.stat"
         sha256 "$sentinel" >"$phase_dir/sentinel.sha256"
         ;;
     foreign-refuse)
         sentinel=/nix/pkg-s6-foreign-sentinel
         [ -f "$sentinel" ] && [ ! -L "$sentinel" ] || die "foreign sentinel is absent or unsafe"
+        [ "$(stat -f '%Su:%Sg:%Lp' "$sentinel")" = root:wheel:600 ] || die "foreign sentinel identity changed before refusal"
         sha256 "$sentinel" >"$phase_dir/sentinel.sha256"
         [ "$(cat "$phase_dir/sentinel.sha256")" = "$(cat "$evidence/foreign-post-reboot/sentinel.sha256")" ] || die "foreign sentinel changed before refusal"
         printf '%s\n' 'SECOND_APPROVAL_REQUIRED' >"$phase_dir/vendor-outcome"
         phase_exit=20
         ;;
     foreign-observe)
-        require_vendor_disk
+        require_first_vendor_gates
         sentinel=/nix/pkg-s6-foreign-sentinel
         [ -f "$sentinel" ] && [ ! -L "$sentinel" ] || die "foreign sentinel is absent or unsafe"
         sentinel_before=$(sha256 "$sentinel")
         [ "$sentinel_before" = "$(cat "$evidence/foreign-post-reboot/sentinel.sha256")" ] || die "foreign sentinel changed before observation"
+        record_foreign_state before-observation
+        require_installer_version
         run_recorded foreign-install 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
         printf 'status=%s\n' "$last_status" >"$phase_dir/vendor-outcome"
-        [ -f "$sentinel" ] && [ ! -L "$sentinel" ] || die "vendor removed the foreign sentinel"
-        [ "$(sha256 "$sentinel")" = "$sentinel_before" ] || die "vendor changed the foreign sentinel"
+        record_foreign_state after-observation
+        if [ "$(cat "$phase_dir/after-observation.sentinel-visibility")" = visible ]; then
+            [ "$(cat "$phase_dir/after-observation.sentinel.sha256")" = "$sentinel_before" ] || die "vendor changed the visible foreign sentinel"
+        fi
         printf '%s\n' 'No uninstall or cleanup was run after the foreign observation.' >"$phase_dir/cleanup-scope"
         ;;
     upstream-install)
-        require_vendor_disk
+        require_first_vendor_gates
+        require_installer_version
         run_recorded upstream-install 7200 "$staged" --diagnostic-endpoint '' install --prefer-upstream-nix --no-confirm --no-modify-profile
         [ "$last_status" -eq 0 ] || die "upstream Nix install failed"
         receipt_identity receipt
@@ -525,7 +665,6 @@ case $phase in
         [ "$(sed -n '1p' "$phase_dir/upstream-version.output")" = 'nix (Nix) 2.35.2' ] || die "upstream Nix is not exactly 2.35.2"
         ;;
     upstream-determinate-attempt)
-        require_vendor_disk
         receipt_identity receipt-before
         run_recorded determinate-attempt 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
         [ "$last_status" -eq 1 ] || die "Determinate-on-upstream attempt did not return the pinned status 1"
@@ -540,6 +679,7 @@ case $phase in
 esac
 
 snapshot after
+cp "$ledger" "$phase_dir/phase-ledger.snapshot"
 printf '%s\n' PASS >"$phase_dir/phase-status"
 record PASS "$phase completed with expected observations"
 find "$evidence" -type d -exec chmod 0700 {} \;
