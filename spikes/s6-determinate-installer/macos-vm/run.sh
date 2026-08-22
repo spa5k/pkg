@@ -100,7 +100,7 @@ case $lane in
     foreign-nix)
         case $# in
             7) ;;
-            8) [ "$8" = --approve-observe-vendor-foreign-state ] || die "invalid foreign-state approval"; foreign_approval=$8 ;;
+            8) [ "$8" = --approve-observe-vendor-foreign-state ] || die "invalid foreign-state approval"; foreign_approval=approve-observe-vendor-foreign-state ;;
             *) die "extra arguments are forbidden for lane $lane" ;;
         esac
         ;;
