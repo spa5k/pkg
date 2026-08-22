@@ -92,7 +92,11 @@ pkg CLI -> local broker -> non-root broker -> privileged helper -> managed runti
 - A normal user cannot access the private runtime, daemon, helper, or trust
   controls.
 
-Read the full [security model](plans/08-security-model.md).
+This section describes the current alpha. The accepted target replaces Base
+Nix installation with Determinate after its proof gates pass. See the
+[active implementation plan](plans/determinate-nix-stacked-prs.md). Present-tense
+user documentation changes in the same PR as each proved platform cutover.
+DN-20 completes the release documentation.
 
 ## Platform status
 
@@ -111,13 +115,9 @@ and uninstall.
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the toolchain, local checks, and
 review rules.
 
-The design documents are in [`plans/`](plans/README.md):
-
-- [Architecture decisions](plans/00-overview-and-decisions.md)
-- [Security model](plans/08-security-model.md)
-- [Release and operations](plans/10-release-and-operations.md)
-- [PR roadmap](plans/11-pr-roadmap.md)
-- [Open decisions and risks](plans/12-open-decisions-and-risks.md)
+The [plan index](plans/README.md) identifies the one active
+[stacked-PR implementation plan](plans/determinate-nix-stacked-prs.md). The
+earlier custom private-Nix design is archived and is not normative.
 
 ## License
 

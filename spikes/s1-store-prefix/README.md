@@ -1,5 +1,8 @@
 # Spike S1 — Nix store-prefix & coexistence (`spikes/s1-store-prefix/`)
 
+> Plan citations in this spike are legacy-plan context. They do not define the
+> current architecture.
+
 PR-4 / Spike S1. Determines whether `pkg` V1 can use a private/nonstandard Nix store or
 coexist with an unmanaged Nix installation while keeping **stock Nix**, **native package
 execution**, and **standard `cache.nixos.org` reuse** on Linux **and** macOS — and
@@ -137,4 +140,4 @@ real-Nix'd host was executed — what was validated, exactly: Nix-free macOS non
 safe ambiguity/refusal; root Alpine CLEAN; positive artifacts fixture-driven; privileged
 macOS CLEAN not run.
 Cross-file authoritative ownership: only `spikes/s1-store-prefix/**` and the DR-001 entry
-in `plans/12-open-decisions-and-risks.md` are touched by this spike.
+in `plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md` are touched by this spike.

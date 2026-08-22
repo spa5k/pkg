@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repository-local docs link checker for the `pkg` plan set.
+"""Repository-local docs link checker for `pkg` documentation.
 
 Pure Python 3 standard library — no third-party dependencies, no network.
 
@@ -16,12 +16,9 @@ What it validates
      * the target does **not** escape the repository root.
 2. External schemes (`http:`, `https:`, `ftp:`, `mailto:`, ...) and autolinks
    are ignored — they are out of scope for a repo-local checker.
-3. Structural invariants required by PR-0:
-     * `plans/00-overview-and-decisions.md` … `plans/12-open-decisions-and-risks.md`
-       and `plans/README.md` all exist;
-     * `README.md` links the threat model (`plans/08-security-model.md`);
-     * `CONTRIBUTING.md` links the reviewer-model source
-       (`plans/11-pr-roadmap.md`).
+3. Structural plan invariants:
+     * `plans/README.md` and the active stacked-PR plan exist;
+     * `README.md` and `CONTRIBUTING.md` link the active plan.
 
 Exit code is 0 only when every check passes; otherwise errors are aggregated and
 printed with file + (approximate) reason, and the process exits 1.
@@ -49,22 +46,10 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 # components, never substrings, so e.g. `my-target/` stays in scope.
 IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target"}
 
-# Plans that must exist (PR-0 makes plans/ the source of truth).
+# The plan index names one active implementation plan.
 REQUIRED_PLANS: List[str] = [
-    "plans/00-overview-and-decisions.md",
-    "plans/01-system-architecture.md",
-    "plans/02-trust-and-update-model.md",
-    "plans/03-nixpkgs-source-and-index.md",
-    "plans/04-resolution-install-build.md",
-    "plans/05-state-locks-generations-gc.md",
-    "plans/06-cli-and-user-experience.md",
-    "plans/07-platform-installation-and-runtime.md",
-    "plans/08-security-model.md",
-    "plans/09-testing-and-validation.md",
-    "plans/10-release-and-operations.md",
-    "plans/11-pr-roadmap.md",
-    "plans/12-open-decisions-and-risks.md",
     "plans/README.md",
+    "plans/determinate-nix-stacked-prs.md",
 ]
 
 # ----- Markdown parsing helpers ------------------------------------------------
@@ -78,13 +63,6 @@ ATX_HEADING_RE = re.compile(r"^[ \t]{0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
 # Inline code span (single backtick pair) — blanked out before link scanning
 # so link-shaped text inside `code` is ignored.
 INLINE_CODE_RE = re.compile(r"`[^`]*`")
-
-# HTML comment: `<!-- ... -->`, may span multiple lines. The whole comment is
-# blanked out (newlines preserved) before link scanning so a Markdown link
-# hidden inside a comment is neither extracted nor able to satisfy the PR-0
-# structural invariants. Non-greedy so each comment ends at the first `-->`,
-# matching GitHub/CommonMark rendering.
-HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 # Inline link / image, plain form:   [label](target)   or   ![alt](target)
 # Optional ' "title"' suffix is allowed.
@@ -175,17 +153,57 @@ def iter_markdown_files() -> List[Path]:
 
 
 def mask_html_comments(text: str) -> str:
-    """Blank out HTML comments while preserving line numbers.
+    """Blank comments outside fenced code while preserving offsets.
 
     Every character of an `<!-- ... -->` comment (including any Markdown links
     inside it) is replaced with a space; newlines are preserved so that line
-    numbers in downstream error messages stay accurate. Multi-line comments
-    keep the same number of lines they occupied.
+    numbers in downstream error messages stay accurate. Comment markers inside
+    fenced code are literal code and do not start or end a comment.
     """
-    def _blank(match: re.Match) -> str:
-        return "".join("\n" if ch == "\n" else " " for ch in match.group(0))
+    out: List[str] = []
+    in_comment = False
+    in_fence = False
+    fence_char = ""
 
-    return HTML_COMMENT_RE.sub(_blank, text)
+    for raw in text.splitlines(keepends=True):
+        if not in_comment:
+            fence = FENCE_OPEN_RE.match(raw)
+            if fence:
+                token = fence.group(1)[0]
+                if not in_fence:
+                    in_fence = True
+                    fence_char = token
+                elif token == fence_char:
+                    in_fence = False
+                    fence_char = ""
+                out.append(raw)
+                continue
+        if in_fence:
+            out.append(raw)
+            continue
+
+        masked = list(raw)
+        cursor = 0
+        while cursor < len(raw):
+            if in_comment:
+                end = raw.find("-->", cursor)
+                stop = len(raw) if end < 0 else end + 3
+                for index in range(cursor, stop):
+                    if masked[index] not in "\r\n":
+                        masked[index] = " "
+                cursor = stop
+                if end < 0:
+                    break
+                in_comment = False
+            else:
+                start = raw.find("<!--", cursor)
+                if start < 0:
+                    break
+                cursor = start
+                in_comment = True
+        out.append("".join(masked))
+
+    return "".join(out)
 
 
 def strip_inline_code(line: str) -> str:
@@ -387,16 +405,19 @@ def check_structure(report: Report) -> None:
     readme = REPO_ROOT / "README.md"
     if not readme.is_file():
         report.fail("required file missing: README.md")
-    elif not _links_to(readme, "plans/08-security-model.md"):
-        report.fail("README.md must link the threat model (plans/08-security-model.md)")
+    elif not _links_to(readme, "plans/determinate-nix-stacked-prs.md"):
+        report.fail(
+            "README.md must link the active plan "
+            "(plans/determinate-nix-stacked-prs.md)"
+        )
 
     contributing = REPO_ROOT / "CONTRIBUTING.md"
     if not contributing.is_file():
         report.fail("required file missing: CONTRIBUTING.md")
-    elif not _links_to(contributing, "plans/11-pr-roadmap.md"):
+    elif not _links_to(contributing, "plans/determinate-nix-stacked-prs.md"):
         report.fail(
-            "CONTRIBUTING.md must link the reviewer-model source "
-            "(plans/11-pr-roadmap.md)"
+            "CONTRIBUTING.md must link the active plan "
+            "(plans/determinate-nix-stacked-prs.md)"
         )
 
 
@@ -447,7 +468,7 @@ def main() -> int:
         f"validated {report.links_checked} local link(s)."
     )
     if report.ok:
-        print("OK: all doc links and PR-0 structural checks passed.")
+        print("OK: all doc links and active-plan structural checks passed.")
         return 0
 
     print(f"\nFAILED: {len(report.errors)} problem(s):", file=sys.stderr)

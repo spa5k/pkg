@@ -8,13 +8,13 @@ Complete real run exists for that lane. Nothing is invented.
 
 - **Spike:** S3 — macOS binary coverage + signing/notarization evidence harness.
   Harness: [`pkg-spike-s3-macos`](README.md).
-- **PR:** [PR-7 — SPIKE S3: macOS binary coverage + signing](../../plans/11-pr-roadmap.md)
+- **PR:** [PR-7 — SPIKE S3: macOS binary coverage + signing](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md)
   (M0.5). Owns this directory and DR-003.
-- **Decision:** [DR-003 — macOS build security + signing/notarization](../../plans/12-open-decisions-and-risks.md)
+- **Decision:** [DR-003 — macOS build security + signing/notarization](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — **Status: Proposed** (pending S3 / PR-7).
-- **Downstream gates:** [PR-28](../../plans/11-pr-roadmap.md) (macOS lane) and
-  [PR-36](../../plans/11-pr-roadmap.md) (notarized installer/runtime) are **direct
-  macOS evidence gates on S3**. [PR-26](../../plans/11-pr-roadmap.md) (shared
+- **Downstream gates:** [PR-28](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) (macOS lane) and
+  [PR-36](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) (notarized installer/runtime) are **direct
+  macOS evidence gates on S3**. [PR-26](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) (shared
   local-build engine) is **not** simply gated on S3: its shared mechanism is gated
   on [S5]/[DR-005], while `plans/12` lists S3 as blocking/informing PR-26's Darwin
   *policy*. All remain gated until S3 (and, for PR-26, S5/DR-005) is satisfied.
@@ -327,7 +327,7 @@ managed macOS host.
 
 BuildProbe has **no CLI and no orchestrator** in this spike, so it is
 `Pending`/`NotSelected` in every report this spike can produce. It stays that
-way until a managed macOS / [S5](../../plans/11-pr-roadmap.md) real harness
+way until a managed macOS / [S5](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) real harness
 performs an actual native build. The rows below describe what that future lane
 would record; none are observed today.
 
@@ -342,7 +342,7 @@ would record; none are observed today.
 | `resourceBoundaryHolds` (ledger-only; **no** per-build cap exists in stock Nix 2.34.8: `max-jobs` bounds concurrency, `timeout`/`max-silent-time`/`max-build-log-size` are daemon bounds, `use-cgroups` is Linux cleanup/statistics not caps, service-manager ceilings are Pending; S5/DR-005/PR-26 evidence) | Pending |
 
 > **Cap/approval/network-denial boundary is owned jointly by [S5]
-> / [DR-005] / [PR-26](../../plans/11-pr-roadmap.md).** The current BuildProbe
+> / [DR-005] / [PR-26](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md).** The current BuildProbe
 > **schema** (booleans for sandbox/fallback/users/network/approval) is a
 > data-contract placeholder and **must not be read as evidence that resource
 > caps, approval gates, or network denial are *effective***. Per DR-005: stock
@@ -444,12 +444,12 @@ For BuildProbe and signing/notarization, **additionally** (these cannot be
 satisfied from this spike alone):
 
 - [ ] A real native sandboxed Darwin build under `_nixbld*` build users (BuildProbe) from a
-      managed macOS / [S5](../../plans/11-pr-roadmap.md) harness, with
+      managed macOS / [S5](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) harness, with
       `sandbox=true`/`sandbox-fallback=false`, regular-derivation network denial
       (fixed-output derivations are network-enabled with their hash as the boundary),
       single-operation approval, and the honest resource boundary (**no** per-build cap
       in stock Nix 2.34.8; cap/approval/network boundary co-owned with
-      [S5] / [DR-005] / [PR-26](../../plans/11-pr-roadmap.md)).
+      [S5] / [DR-005] / [PR-26](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md)).
 - [ ] A notarized installer/runtime that builds, signs (codesign), submits
       (notarytool), and staples successfully end-to-end.
 
@@ -470,11 +470,11 @@ managed macOS host and fill the coverage matrix in §5.1 from reviewed
 `report.json` outputs; (2) run a live Detect on the same host and fill §5.2;
 (3) defer BuildProbe and signing/notarization to the managed macOS / [S5] lane
 and fill §5.3/§5.4; then satisfy the checklist in §6 and **update this file and
-[DR-003](../../plans/12-open-decisions-and-risks.md)** with reviewed values.
-Until that happens, [DR-003](../../plans/12-open-decisions-and-risks.md) stays
-`Proposed`; the direct S3 gates [PR-28](../../plans/11-pr-roadmap.md) and
-[PR-36](../../plans/11-pr-roadmap.md) stay gated on S3 macOS evidence, while
-[PR-26](../../plans/11-pr-roadmap.md) (shared local-build engine) stays gated on
+[DR-003](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)** with reviewed values.
+Until that happens, [DR-003](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md) stays
+`Proposed`; the direct S3 gates [PR-28](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) and
+[PR-36](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) stay gated on S3 macOS evidence, while
+[PR-26](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) (shared local-build engine) stays gated on
 [S5]/[DR-005] for its shared mechanism (its Darwin policy informed by S3).
 
 ---
@@ -486,11 +486,11 @@ Until that happens, [DR-003](../../plans/12-open-decisions-and-risks.md) stays
   exit codes).
 - [`fixtures.json`](fixtures.json) — embedded, validated pin.
 - [`run.sh`](run.sh) — executable wrapper (effect warnings; closed grammar).
-- [DR-003 in `plans/12-open-decisions-and-risks.md`](../../plans/12-open-decisions-and-risks.md)
+- [DR-003 in `plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — the decision record this evidence feeds.
-- [PR-7 in `plans/11-pr-roadmap.md`](../../plans/11-pr-roadmap.md) — spike owner.
+- [PR-7 in `plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) — spike owner.
   Downstream macOS evidence gates: PR-28/PR-36 direct on S3; PR-26 (shared
   local-build engine) gated on S5/DR-005 with Darwin policy informed by S3.
 
-[S5]: ../../plans/11-pr-roadmap.md
-[DR-005]: ../../plans/12-open-decisions-and-risks.md
+[S5]: ../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md
+[DR-005]: ../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md

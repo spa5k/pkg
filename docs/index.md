@@ -19,4 +19,6 @@ version, URL, and SHA-256 placeholder.
 - [Troubleshooting and support](support.md)
 - [Privacy and security](privacy.md)
 
-The complete engineering design and threat model remain available in the [accepted plans](../plans/README.md).
+The [plan index](../plans/README.md) identifies the active implementation plan
+and separates it from historical design material. The plan describes a target.
+It does not describe delivered alpha behavior.

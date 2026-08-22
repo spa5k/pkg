@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Spike** | S2 (PR-5) — *Does the real TUF specification, as implemented by the Rust [`tough`](https://docs.rs/tough/) crate (awslabs / AWS Bottlerocket), express `pkg`'s channel/trust requirements — small target set, per-role threshold signatures, key revocation, rollback, freeze, mix-and-match, endless-data, and drained-stream tamper protection — **without** inventing any "TUF-lite" bespoke cryptography (D-09)?* |
-| **Decision it feeds** | DR-002 ([`plans/12`](../../plans/12-open-decisions-and-risks.md)). **Accepted 2026-08-09 after the F+A review recorded in §11.** |
+| **Decision it feeds** | DR-002 ([`plans/12`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)). **Accepted 2026-08-09 after the F+A review recorded in §11.** |
 | **Owner (spike)** | This directory only: `spikes/s2-tough/**`. It is a **standalone** Cargo workspace (`[workspace]` in [`Cargo.toml`](Cargo.toml)), deliberately **not** part of the production workspace at the repo root. `publish = false`, **no** `license` field, **no** SPDX headers (DR-015). |
 | **Crypto boundary** | **No bespoke ("TUF-lite") signature or verification anywhere.** Targets/snapshot/timestamp/delegated targets are signed by `tough::editor::RepositoryEditor` + `tough::key_source::LocalKeySource`; all verification is `tough::RepositoryLoader` over `FilesystemTransport`. The ONE hand-assembled role is the bootstrap `root.json`, built from `tough::schema` types and signed through `tough::sign::Sign` (the narrow test-publisher boundary in [`src/keys.rs`](src/keys.rs)). `aws-lc-rs` is used **only to *generate* ephemeral Ed25519 PKCS#8 test material** — it performs no parsing and no signing here. See §2. |
 | **Evidence labels** | **(a)** actually executed · **(b)** official docs/source inspected. F+A acceptance is recorded separately in §11. |
@@ -469,7 +469,7 @@ This spike deliberately does **not** claim:
 - That it evaluates a **real HTTPS** transport — only `FilesystemTransport` (spike-only;
   PR-11 decides production transport).
 - That the spike alone accepted DR-002 — acceptance occurred later, on 2026-08-09, after the
-  recorded F+A review in §11 and [`plans/12`](../../plans/12-open-decisions-and-risks.md).
+  recorded F+A review in §11 and [`plans/12`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md).
 - That it is production code — it is a standalone, `publish = false` spike.
 
 ---
@@ -551,11 +551,11 @@ Tool versions: `cargo-audit 0.22.2`, `cargo-deny 0.20.2` (matching
 
 ## 13. Cross-references
 
-- Decision record: [`plans/12` DR-002](../../plans/12-open-decisions-and-risks.md)
+- Decision record: [`plans/12` DR-002](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
 - This spike's README (purpose, prereqs, commands, threat matrix, claims):
   [`README.md`](README.md)
-- Channel/TUF design: [`plans/02`](../../plans/02-trust-and-update-model.md) §7
+- Channel/TUF design: [`plans/02`](../../plans/archive/2026-08-22-custom-managed-nix-v1/02-trust-and-update-model.md) §7
   (canonical descriptor schema), §6.5 (TUF roles)
-- Threat model: [`plans/08`](../../plans/08-security-model.md) §6.5 (T-CHAN-*), §7 (crypto)
-- PR roadmap: [`plans/11`](../../plans/11-pr-roadmap.md) PR-5 (this spike), PR-11
+- Threat model: [`plans/08`](../../plans/archive/2026-08-22-custom-managed-nix-v1/08-security-model.md) §6.5 (T-CHAN-*), §7 (crypto)
+- PR roadmap: [`plans/11`](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) PR-5 (this spike), PR-11
   (production client, gated)

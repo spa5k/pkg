@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Focused unit tests for the repo docs link checker.
 
-Scope of this file (PR-0 fix): prove that Markdown links hidden inside HTML
-comments are masked before link extraction and before the PR-0 structural
-invariant checks, so a commented-out link can never satisfy the required
-README -> plans/08 / CONTRIBUTING -> plans/11 links.
+Scope of this file: prove that Markdown links hidden inside HTML comments are
+masked before link extraction and before structural invariant checks, so a
+commented-out link cannot satisfy a required active-plan link.
 
 Standard library only. Every test runs in a private tempdir and cleans up after
 itself — no residue is left in the repository working tree.
@@ -104,12 +103,40 @@ class CommentedLinksAreIgnoredTests(unittest.TestCase):
         self.assertIn("./target.md", targets)
         self.assertNotIn("missing.md", targets)
 
+    def test_comment_opener_in_fence_does_not_hide_visible_broken_link(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            src = root / "doc.md"
+            text = (
+                "```text\n"
+                "<!-- literal code\n"
+                "```\n"
+                "[visible broken](missing.md)\n"
+                "-->\n"
+            )
+            _write(src, text)
+
+            targets = [lnk.target for lnk in cdl.extract_links(src, text)]
+            self.assertIn("missing.md", targets)
+
+            with patch.object(cdl, "REPO_ROOT", root):
+                report = cdl.Report()
+                cdl.check_links(report)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any(
+                "missing.md" in error and "target not found" in error
+                for error in report.errors
+            )
+        )
+
 
 class StructuralInvariantTests(unittest.TestCase):
     """Requirements (b) and (c) exercised via _links_to in isolated temp repos.
 
-    _links_to is the predicate behind the README -> plans/08 and
-    CONTRIBUTING -> plans/11 invariants in check_structure. It shares the single
+    _links_to is the predicate behind the README and CONTRIBUTING active-plan
+    invariants in check_structure. It shares the single
     extract_links choke point, so masking there covers both code paths.
     """
 
@@ -119,65 +146,64 @@ class StructuralInvariantTests(unittest.TestCase):
         root = Path(td.name)
         _write(root / "README.md", readme)
         _write(root / "CONTRIBUTING.md", contributing)
-        _write(root / "plans" / "08-security-model.md", "# Threat model\n")
-        _write(root / "plans" / "11-pr-roadmap.md", "# PR roadmap\n")
+        _write(root / "plans" / "determinate-nix-stacked-prs.md", "# Active plan\n")
         return root
 
     # --- (b) a commented-only required link must NOT satisfy the invariant ---
 
-    def test_commented_only_threat_link_fails_invariant(self):
+    def test_commented_only_readme_plan_link_fails_invariant(self):
         root = self._make_repo(
-            readme="# pkg\n<!-- [threat](plans/08-security-model.md) -->\n",
+            readme="# pkg\n<!-- [plan](plans/determinate-nix-stacked-prs.md) -->\n",
             contributing="# Contrib\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertFalse(
-                cdl._links_to(root / "README.md", "plans/08-security-model.md")
+                cdl._links_to(root / "README.md", "plans/determinate-nix-stacked-prs.md")
             )
 
-    def test_commented_only_reviewer_link_fails_invariant(self):
+    def test_commented_only_contributing_plan_link_fails_invariant(self):
         root = self._make_repo(
             readme="# pkg\n",
-            contributing="# Contrib\n<!-- [roadmap](plans/11-pr-roadmap.md) -->\n",
+            contributing="# Contrib\n<!-- [plan](plans/determinate-nix-stacked-prs.md) -->\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertFalse(
-                cdl._links_to(root / "CONTRIBUTING.md", "plans/11-pr-roadmap.md")
+                cdl._links_to(root / "CONTRIBUTING.md", "plans/determinate-nix-stacked-prs.md")
             )
 
-    def test_multiline_commented_only_threat_link_fails_invariant(self):
+    def test_multiline_commented_only_plan_link_fails_invariant(self):
         readme = (
             "# pkg\n"
             "<!-- a multi-line note\n"
-            "[threat](plans/08-security-model.md)\n"
+            "[plan](plans/determinate-nix-stacked-prs.md)\n"
             "end note -->\n"
         )
         root = self._make_repo(readme=readme, contributing="# Contrib\n")
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertFalse(
-                cdl._links_to(root / "README.md", "plans/08-security-model.md")
+                cdl._links_to(root / "README.md", "plans/determinate-nix-stacked-prs.md")
             )
 
     # --- (c) the existing visible links still satisfy the invariant --------
 
-    def test_visible_threat_link_satisfies_invariant(self):
+    def test_visible_readme_plan_link_satisfies_invariant(self):
         root = self._make_repo(
-            readme="# pkg\n[threat](plans/08-security-model.md)\n",
+            readme="# pkg\n[plan](plans/determinate-nix-stacked-prs.md)\n",
             contributing="# Contrib\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertTrue(
-                cdl._links_to(root / "README.md", "plans/08-security-model.md")
+                cdl._links_to(root / "README.md", "plans/determinate-nix-stacked-prs.md")
             )
 
-    def test_visible_reviewer_link_satisfies_invariant(self):
+    def test_visible_contributing_plan_link_satisfies_invariant(self):
         root = self._make_repo(
             readme="# pkg\n",
-            contributing="# Contrib\n[roadmap](plans/11-pr-roadmap.md)\n",
+            contributing="# Contrib\n[plan](plans/determinate-nix-stacked-prs.md)\n",
         )
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertTrue(
-                cdl._links_to(root / "CONTRIBUTING.md", "plans/11-pr-roadmap.md")
+                cdl._links_to(root / "CONTRIBUTING.md", "plans/determinate-nix-stacked-prs.md")
             )
 
     def test_visible_link_beats_commented_broken_link(self):
@@ -186,15 +212,15 @@ class StructuralInvariantTests(unittest.TestCase):
         readme = (
             "# pkg\n"
             "<!-- [broken](missing.md) -->\n"
-            "[threat](plans/08-security-model.md)\n"
+            "[plan](plans/determinate-nix-stacked-prs.md)\n"
         )
         root = self._make_repo(readme=readme, contributing="# Contrib\n")
         with patch.object(cdl, "REPO_ROOT", root):
             self.assertTrue(
-                cdl._links_to(root / "README.md", "plans/08-security-model.md")
+                cdl._links_to(root / "README.md", "plans/determinate-nix-stacked-prs.md")
             )
         targets = [lnk.target for lnk in cdl.extract_links(root / "README.md", readme)]
-        self.assertIn("plans/08-security-model.md", targets)
+        self.assertIn("plans/determinate-nix-stacked-prs.md", targets)
         self.assertNotIn("missing.md", targets)
 
 
@@ -215,7 +241,7 @@ class IterMarkdownFilesDiscoveryTests(unittest.TestCase):
 
         # Author-owned Markdown that must be discovered.
         _write(root / "README.md", "# pkg\n")
-        _write(root / "plans" / "00-overview-and-decisions.md", "# Overview\n")
+        _write(root / "plans" / "determinate-nix-stacked-prs.md", "# Active plan\n")
         # Generated / ignored trees that must NOT be discovered.
         _write(
             root
@@ -235,14 +261,14 @@ class IterMarkdownFilesDiscoveryTests(unittest.TestCase):
 
         # Generated/VCS Markdown is excluded; repo Markdown survives.
         self.assertIn("README.md", found)
-        self.assertIn("plans/00-overview-and-decisions.md", found)
+        self.assertIn("plans/determinate-nix-stacked-prs.md", found)
         self.assertNotIn(
             "target/doc/static.files/SourceSerif4-LICENSE-a2cfd9d5.md", found
         )
         self.assertNotIn(".git/notes/commentary.md", found)
         # Exactly the two author-owned files and nothing else.
         self.assertEqual(
-            found, {"README.md", "plans/00-overview-and-decisions.md"}
+            found, {"README.md", "plans/determinate-nix-stacked-prs.md"}
         )
 
     def test_ignored_match_is_exact_component_not_substring(self):
