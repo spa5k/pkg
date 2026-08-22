@@ -34,8 +34,12 @@ It stays unchanged after the pinned daemon upgrade and vendor uninstall.
 
 The public installer source does not contain the path
 `/etc/nix/sentry-endpoint`.
-It also does not contain a dedicated action for this file.
-A search of the full fixed commit returned no match.[S0]
+A search of the full fixed commit returned no literal match.[S0]
+No dedicated sentry action is visible in the cited plan, receipt, and action
+paths.[S3][S4][S6][S10][S11]
+This is literal-search evidence only.
+It is not structural proof that generated, constructed, or embedded code lacks
+this behavior.
 
 The exact internal writer is therefore **uncertain**.
 The visible vendor execution boundaries are the diagnostics client, an
@@ -117,7 +121,9 @@ source contract.
 Diagnostics are a default feature.
 That feature uses `detsys-ids-client` 0.7.0.[S1]
 
-`main` always calls `diagnostics(...)` after command-line parsing.
+When the diagnostics feature is enabled, `main` calls `diagnostics(...)` after
+command-line parsing.
+The feature is enabled by default.[S1]
 `DiagnosticData::new` passes the optional endpoint to
 `detsys_ids_client::Builder::endpoint`.
 It then calls `build_or_default`.[S1]
@@ -228,8 +234,8 @@ Then inspect only the audit records whose path is
 
 The audit record must identify the creating process, executable, PID, parent
 PID, syscall, numeric UID, and time.
-This one run distinguishes the diagnostics client, `determinate-nixd init`,
-the Determinate Nix commands, and the later daemon process.
+This one run distinguishes executable and process boundaries.
+It does not identify a library call inside the installer process.
 
 If the image has no working Linux audit facility, use the existing source
 boundaries as checkpoints instead:
@@ -240,10 +246,20 @@ boundaries as checkpoints instead:
 3. After an explicit
    `/usr/local/bin/determinate-nixd init --stop-after nix-configuration`.[S10]
 
-The first command executes diagnostics setup without install actions.[S1][S8]
-The second skips the visible daemon-init call and prevents service start.
-[S9][S12]
-The third executes the visible daemon-init boundary directly.[S10]
+These checkpoints require a fresh disposable guest.
+`--no-start-daemon` sets the normal start request to false.
+However, the init action can still enable a socket immediately when it found
+that socket active before the action started.[S9]
+
+The fallback checkpoints isolate component groups, not each command.
+The first group includes feature-gated diagnostics construction, plan-time
+feedback, and plan construction.[S1][S8]
+The second group skips the visible daemon-init call, but still includes
+`ProvisionNix`, `SetupDefaultProfile`, and the remaining install actions.
+[S4][S11][S12]
+The third group executes the visible daemon-init boundary directly.[S10]
+An observation at one checkpoint still needs the earlier checkpoints to rule
+out these confounders.
 
 Keep the sentry contents private.
 Record only no-follow type, numeric owner, mode, size, and SHA-256.
@@ -268,7 +284,9 @@ All source links use fixed commit
 
 - **S0 — fixed commit-wide search.**
   `git grep -n -F 'sentry-endpoint' 4132ad07a15ee7d88c096ac7172b7afb2672866b --`
-  returned no matches.
+  returned no matches. This command searches the full pinned checkout for the
+  exact literal. The cited-file subset below cannot reproduce that negative
+  result, and the result is not structural proof.
 - **S1 — diagnostics construction and dependency.**
   [`Cargo.toml`, lines 11–25](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/Cargo.toml#L11-L25),
   [`Cargo.lock`, `detsys-ids-client` package, lines 532–559](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/Cargo.lock#L532-L559),
@@ -299,7 +317,7 @@ All source links use fixed commit
   [`src/cli/subcommand/plan.rs`, `Plan::execute`, lines 29–69](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/src/cli/subcommand/plan.rs#L29-L69).
 - **S9 — daemon start controls.**
   [`src/settings.rs`, `InitSettings`, lines 357–385](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/src/settings.rs#L357-L385) and
-  [`src/action/common/configure_init_service.rs`, systemd activation, lines 451–486](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/src/action/common/configure_init_service.rs#L451-L486).
+  [`src/action/common/configure_init_service.rs`, prior socket state and systemd activation, lines 341–486](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/src/action/common/configure_init_service.rs#L341-L486).
 - **S10 — direct daemon-init command.**
   [`src/action/common/configure_nix.rs`, `ConfigureNix::execute`, lines 163–188](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/src/action/common/configure_nix.rs#L163-L188) and
   [`src/action/common/place_nix_configuration.rs`, `PlaceNixConfiguration::execute`, lines 353–384](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/src/action/common/place_nix_configuration.rs#L353-L384).
