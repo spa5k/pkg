@@ -27,7 +27,10 @@ case $(sysctl -n hw.model) in VirtualMac*) ;; *) die "guest model is not Virtual
 printf '%s\n' 'guest sw_vers:'
 sw_vers
 printf '%s\n' 'guest free disk (KiB):'
-df -Pk /
+guest_available_kb=$(df -Pk / | awk 'END {print $4}')
+case $guest_available_kb in ''|*[!0-9]*) die "could not determine guest free disk" ;; esac
+printf '%s\n' "$guest_available_kb"
+[ "$guest_available_kb" -ge 16777216 ] || die "at least 16 GiB of guest free disk is required"
 
 dirty=0
 for path in /nix /nix/receipt.json /nix/nix-installer /usr/local/bin/determinate-nixd /etc/nix; do

@@ -3,21 +3,26 @@ set -eu
 
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
+write_argv() { file=$1; shift; : >"$file"; for arg in "$@"; do printf '%s\n' "$arg" >>"$file"; done; }
 private_tree() {
     find "$1" -type d -exec chmod 0700 {} \;
     find "$1" -type f -exec chmod 0600 {} \;
 }
-has_exact_vm() {
-    listing=$(tart list) || return 2
-    printf '%s\n' "$listing" | awk -v name="$1" '{ for (i = 1; i <= NF; i++) if ($i == name) found = 1 } END { exit !found }'
-}
 wait_pid() {
     limit=$1
     child=$2
+    wait_timed_out=0
     elapsed=0
     while kill -0 "$child" 2>/dev/null; do
         if [ "$elapsed" -ge "$limit" ]; then
-            kill "$child" 2>/dev/null || :
+            wait_timed_out=1
+            kill -TERM "$child" 2>/dev/null || :
+            grace=0
+            while kill -0 "$child" 2>/dev/null && [ "$grace" -lt 5 ]; do
+                sleep 1
+                grace=$((grace + 1))
+            done
+            if kill -0 "$child" 2>/dev/null; then kill -KILL "$child" 2>/dev/null || :; fi
             wait "$child" 2>/dev/null || :
             return 124
         fi
@@ -25,6 +30,19 @@ wait_pid() {
         elapsed=$((elapsed + 1))
     done
     wait "$child"
+}
+bounded_host() {
+    limit=$1
+    shift
+    "$@" &
+    child=$!
+    wait_pid "$limit" "$child"
+}
+has_exact_vm() {
+    source=$1
+    name=$2
+    listing=$(bounded_host 30 tart list --source "$source" --quiet) || return 2
+    printf '%s\n' "$listing" | grep -Fx -- "$name" >/dev/null
 }
 
 [ "$#" -eq 3 ] || die "usage: $0 --approve-destructive-vm ABS_INSTALLER ABS_NEW_EVIDENCE"
@@ -49,6 +67,11 @@ out_parent_real=$(CDPATH= cd -P "$out_parent" && pwd) || die "evidence parent do
 available_kb=$(df -Pk "$out_parent" | awk 'END {print $4}')
 case $available_kb in ''|*[!0-9]*) die "could not determine free disk" ;; esac
 [ "$available_kb" -ge 16777216 ] || die "at least 16 GiB of free disk is required"
+tart_home=${TART_HOME:-$HOME/.tart}
+[ -d "$tart_home" ] && [ ! -L "$tart_home" ] || die "Tart storage path must be a non-symlink directory"
+tart_available_kb=$(df -Pk "$tart_home" | awk 'END {print $4}')
+case $tart_available_kb in ''|*[!0-9]*) die "could not determine Tart storage free disk" ;; esac
+[ "$tart_available_kb" -ge 16777216 ] || die "at least 16 GiB of free Tart storage is required"
 
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
 repo_root=$(git -C "$script_dir/../../.." rev-parse --show-toplevel) || die "runner is not in a Git worktree"
@@ -60,16 +83,18 @@ base=ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4b
 actual_installer_sha=$(sha256 "$installer")
 [ "$actual_installer_sha" = "$installer_pin" ] || die "installer digest mismatch"
 
-for tool in tart git shasum awk df find chmod uname sw_vers od tr sed sleep; do
+for tool in tart git shasum awk df find chmod uname sw_vers od tr sed sleep grep; do
     command -v "$tool" >/dev/null 2>&1 || die "required host tool is missing: $tool"
 done
-has_exact_vm "$base" || die "pinned base is not cached; refusing to pull"
+tart_version=$(bounded_host 15 tart --version) || die "could not read Tart version"
+[ "$tart_version" = 2.35.0 ] || die "Tart 2.35.0 is required"
+has_exact_vm oci "$base" || die "pinned base is not cached; refusing to clone"
 export TART_NO_AUTO_PRUNE=1
 token=$(LC_ALL=C od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 [ "${#token}" -eq 32 ] || die "could not generate run token"
 vm_name=pkg-s6-dn03c-preflight-$token
 set +e
-has_exact_vm "$vm_name"
+has_exact_vm local "$vm_name"
 collision_status=$?
 set -e
 case $collision_status in
@@ -82,23 +107,31 @@ umask 077
 mkdir -m 0700 "$out"
 printf '%s\n' "$product_revision" >"$out/product-git-revision"
 printf '%s\n' "$vendor_revision" >"$out/vendor-full-revision"
-printf '%s\n' "$installer_pin" >"$out/installer.sha256"
+printf '%s\n' "$installer_pin" >"$out/installer.expected.sha256"
+printf '%s\n' "$actual_installer_sha" >"$out/installer.actual.sha256"
 printf '%s\n' "$base" >"$out/base-image"
 printf '%s\n' "$vm_name" >"$out/vm-name"
 printf 'vm=%s\ntoken=%s\n' "$vm_name" "$token" >"$out/vm-owner"
+printf '%s\n' "$available_kb" >"$out/evidence-available-kb"
+printf '%s\n' "$tart_home" >"$out/tart-home"
+printf '%s\n' "$tart_available_kb" >"$out/tart-available-kb"
+printf '%s\n' "$tart_version" >"$out/tart-version"
+git show "$product_revision:spikes/s6-determinate-installer/macos-vm/inside.sh" >"$out/inside.sh"
+inside_sha=$(sha256 "$out/inside.sh")
+printf '%s\n' "$inside_sha" >"$out/inside.expected.sha256"
 {
     sw_vers
     uname -a
-    printf 'tart: '
-    tart --version
 } >"$out/host.txt" 2>&1
 
 created=0
+clone_attempted=0
 run_pid=
 success=0
 cleanup() {
     original_status=$?
-    trap - EXIT HUP INT TERM
+    trap - EXIT
+    trap '' HUP INT TERM
     cleanup_ok=1
     if [ "$created" -eq 1 ]; then
         if [ ! -f "$out/vm-owner" ] ||
@@ -108,18 +141,17 @@ cleanup() {
             cleanup_ok=0
         else
             if [ -n "$run_pid" ] && kill -0 "$run_pid" 2>/dev/null; then
-                tart stop "$vm_name" >>"$out/cleanup" 2>&1 &
-                stop_pid=$!
-                if wait_pid 60 "$stop_pid"; then :; else cleanup_ok=0; fi
-                if ! wait_pid 60 "$run_pid"; then cleanup_ok=0; fi
+                if bounded_host 60 tart stop "$vm_name" >>"$out/cleanup" 2>&1; then :; else cleanup_ok=0; fi
+                set +e
+                wait_pid 60 "$run_pid"
+                set -e
+                [ "$wait_timed_out" -eq 0 ] || cleanup_ok=0
             fi
             if [ "$cleanup_ok" -eq 1 ]; then
-                tart delete "$vm_name" >>"$out/cleanup" 2>&1 &
-                delete_pid=$!
-                if wait_pid 60 "$delete_pid"; then :; else cleanup_ok=0; fi
+                if bounded_host 60 tart delete "$vm_name" >>"$out/cleanup" 2>&1; then :; else cleanup_ok=0; fi
             fi
             set +e
-            has_exact_vm "$vm_name"
+            has_exact_vm local "$vm_name"
             absent_status=$?
             set -e
             case $absent_status in
@@ -128,6 +160,8 @@ cleanup() {
                 *) printf '%s\n' 'could not verify VM absence' >>"$out/cleanup"; cleanup_ok=0 ;;
             esac
         fi
+    elif [ "$clone_attempted" -eq 1 ]; then
+        printf 'clone did not report success; exact name may need inspection: %s\n' "$vm_name" >>"$out/cleanup"
     else
         printf '%s\n' 'no VM created' >>"$out/cleanup"
     fi
@@ -141,9 +175,11 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+clone_attempted=1
+bounded_host 600 tart clone "$base" "$vm_name" >>"$out/tart.log" 2>&1
 created=1
-tart clone "$base" "$vm_name" >>"$out/tart.log" 2>&1
-tart run "$vm_name" --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-softnet >>"$out/tart.log" 2>&1 &
+write_argv "$out/vm-run.argv" tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-softnet "$vm_name"
+tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-softnet "$vm_name" >>"$out/tart.log" 2>&1 &
 run_pid=$!
 
 bounded_exec() {
@@ -170,7 +206,7 @@ marker=$guest_dir/owner-marker
 bounded_exec 15 /usr/bin/sudo -n /bin/sh -c '
     set -eu
     dir=$1 marker=$2 token=$3
-    [ ! -e "$dir" ] && [ ! -L "$dir" ]
+    if [ -e "$dir" ] || [ -L "$dir" ]; then exit 1; fi
     umask 077
     /bin/mkdir -m 0700 "$dir"
     /usr/sbin/chown root:wheel "$dir"
@@ -182,7 +218,10 @@ bounded_exec 15 /usr/bin/sudo -n /bin/sh -c '
 guest_installer=$guest_dir/nix-installer
 guest_inside=$guest_dir/inside.sh
 bounded_exec 60 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0600 "$1"' sh "$guest_installer" <"$installer" || die "could not stream installer into guest"
-bounded_exec 30 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0700 "$1"' sh "$guest_inside" <"$script_dir/inside.sh" || die "could not stream inside.sh into guest"
+bounded_exec 30 /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0700 "$1"' sh "$guest_inside" <"$out/inside.sh" || die "could not stream inside.sh into guest"
+guest_inside_sha=$(bounded_exec 15 /usr/bin/sudo -n /bin/sh -c '/usr/bin/shasum -a 256 "$1" | /usr/bin/awk "{print \\$1}"' sh "$guest_inside") || die "could not hash staged inside.sh"
+printf '%s\n' "$guest_inside_sha" >"$out/inside.actual.sha256"
+[ "$guest_inside_sha" = "$inside_sha" ] || die "staged inside.sh digest mismatch"
 bounded_exec 60 /usr/bin/sudo -n "$guest_inside" "$token" "$marker" "$guest_installer" "$installer_pin" >"$out/guest-preflight.txt" 2>&1 || die "guest preflight failed"
 private_tree "$out"
 success=1
