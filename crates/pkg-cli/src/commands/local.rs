@@ -4176,14 +4176,13 @@ mod tests {
                 .expect("cancellation opened an unexpected fresh connection"))
         };
 
-        let result = if cancel_operation(&mut client, &mut reconnect, handle.clone()) {
-            Ok(())
-        } else {
-            Err(install_commit_failed())
-        };
+        assert!(!cancel_operation(
+            &mut client,
+            &mut reconnect,
+            handle.clone()
+        ));
         drop(reconnect);
         assert_eq!(reconnects, 1);
-        assert_eq!(result.unwrap_err(), install_commit_failed());
         for worker in workers {
             worker.join().unwrap();
         }
