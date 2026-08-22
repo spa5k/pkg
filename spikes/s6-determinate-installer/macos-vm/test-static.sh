@@ -7,7 +7,7 @@ host=$script_dir/run.sh
 guest=$script_dir/inside.sh
 
 need() { grep -F -- "$2" "$1" >/dev/null || die "$3"; }
-reject() { grep -E -- "$2" $1 >/dev/null && die "$3"; return 0; }
+reject() { reject_pattern=$1 reject_message=$2; shift 2; for reject_file in "$@"; do grep -E -- "$reject_pattern" "$reject_file" >/dev/null && die "$reject_message"; done; return 0; }
 line() { grep -n -F -- "$2" "$1" | head -1 | cut -d: -f1; }
 graph() {
     actual=$(sed -n "/^    $1)\$/,/^        ;;/p" "$host" | sed -n -e 's/^        run_phase /phase /p' -e 's/^        reboot_guest /reboot /p')
@@ -63,7 +63,7 @@ need "$host" 'ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2a
 need "$host" '[ "$tart_version" = 2.35.0 ]' "Tart version pin missing"
 need "$host" 'export TART_NO_AUTO_PRUNE=1' "Tart auto-prune guard missing"
 need "$host" 'tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer "$vm_name"' "default-NAT Tart argv changed"
-reject "$host" '--net-(softnet|host|bridged)' "explicit Tart networking is forbidden"
+reject '--net-(softnet|host|bridged)' "explicit Tart networking is forbidden" "$host"
 evidence_gate_line=$(line "$host" '[ "$available_kb" -ge 33554432 ]')
 tart_gate_line=$(line "$host" '[ "$tart_available_kb" -ge 33554432 ]')
 clone_line=$(line "$host" 'bounded_host 600 tart clone "$base" "$vm_name"')
@@ -74,9 +74,9 @@ need "$host" 'stdin_file=$2' "bounded_exec stdin file missing"
 need "$host" 'tart exec -i "$vm_name" "$@" <"$stdin_file" &' "async stdin transport changed"
 need "$host" 'bounded_exec 60 "$installer" /usr/bin/sudo -n /bin/sh -c' "installer upload input is not explicit"
 need "$host" 'bounded_exec 30 "$out/inside.sh" /usr/bin/sudo -n /bin/sh -c' "inside upload input is not explicit"
-reject "$host" 'bounded_exec .*<' "caller-level upload redirection found"
-reject "$host" '(\|[[:space:]]*tart exec|tart exec.*\|)' "pipe into tart exec found"
-reject "$host" '<&0' "bare inherited stdin found"
+reject 'bounded_exec .*<' "caller-level upload redirection found" "$host"
+reject '(\|[[:space:]]*tart exec|tart exec.*\|)' "pipe into tart exec found" "$host"
+reject '<&0' "bare inherited stdin found" "$host"
 
 # Reboot proof is ready, then down, then ready, with raw boot-time change.
 need "$host" 'Guest Agent did not become unavailable for reboot' "reboot down proof missing"
@@ -115,7 +115,7 @@ need "$guest" 'receipt_identity()' "opaque receipt identity helper missing"
 need "$guest" "stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' \"\$receipt\"" "receipt metadata proof missing"
 need "$guest" 'sha256 "$receipt"' "receipt digest proof missing"
 need "$host" 'case $entry in */receipt.json) die "phase archive contains receipt bytes"' "host receipt archive rejection missing"
-reject "$guest" '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?(cat|cp|dd|grep|head|tail|sed|awk|tar|tee|strings)[[:space:]].*(/nix/receipt\.json|"?\$receipt"?)' "receipt content read or copy found"
+reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?(cat|cp|dd|grep|head|tail|sed|awk|tar|tee|strings)[[:space:]].*(/nix/receipt\.json|"?\$receipt"?)' "receipt content read or copy found" "$guest"
 
 # Exact vendor argv and observed statuses.
 need "$guest" "run_recorded install 7200 \"\$staged\" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile" "install argv changed"
@@ -156,7 +156,7 @@ need "$host" 'active_child=$!' "host active-child tracking missing"
 need "$host" 'bounded_exec 9000 /dev/null' "phase deadline missing"
 need "$guest" 'wait_bounded "$run_limit" "$run_pid"' "vendor deadline missing"
 need "$guest" 'active_vendor_pid=$run_pid' "vendor child tracking missing"
-need "$guest" 'cleanup_children; exit 143' "guest signal cleanup missing"
+need "$guest" "trap 'exit 143' TERM" "guest signal cleanup missing"
 need "$guest" 'kill -TERM "$wait_child"' "guest deadline TERM missing"
 need "$guest" 'kill -KILL "$wait_child"' "guest deadline KILL missing"
 need "$host" 'ownership record mismatch; VM preserved' "private cleanup ownership check missing"
@@ -168,12 +168,34 @@ need "$host" 'original_status=$? cleanup_active=1' "cleanup signal state missing
 need "$host" "trap '' HUP INT TERM" "cleanup signal hold missing"
 
 # Forbidden transport and execution shapes.
-reject "$host" '--(net-softnet|net-host|net-bridged|dir|disk|rosetta)([=[:space:]]|$)' "forbidden Tart flag found"
-reject "$host $guest" '(^|[[:space:]])(ssh|scp)([[:space:]]|$)' "SSH transport found"
-reject "$host" '(^|[[:space:]])(/usr/bin/)?sudo([[:space:]]+-n)?[[:space:]]+tart([[:space:]]|$)' "host sudo found"
-reject "$guest" '(^|[;&|()])[[:space:]]*(nix-installer|determinate-nixd)([[:space:]]|$)' "vendor executable uses PATH lookup"
-reject "$guest" '(^|[[:space:]])(which|type[[:space:]]+-[a-zA-Z]*p)([[:space:]]|$)' "PATH lookup helper found"
+reject '--(net-softnet|net-host|net-bridged|dir|disk|rosetta)([=[:space:]]|$)' "forbidden Tart flag found" "$host"
+reject '(^|[[:space:]])(ssh|scp)([[:space:]]|$)' "SSH transport found" "$host" "$guest"
+reject '(^|[[:space:]])(/usr/bin/)?sudo([[:space:]]+-n)?[[:space:]]+tart([[:space:]]|$)' "host sudo found" "$host"
+reject '(^|[;&|()])[[:space:]]*(nix-installer|determinate-nixd)([[:space:]]|$)' "vendor executable uses PATH lookup" "$guest"
+reject '(^|[[:space:]])(which|type[[:space:]]+-[a-zA-Z]*p)([[:space:]]|$)' "PATH lookup helper found" "$guest"
 [ "$(grep -F -c 'tart clone ' "$host")" -eq 1 ] || die "lane must clone exactly one VM"
 [ "$(grep -c '^tart run ' "$host")" -eq 1 ] || die "lane must run exactly one VM"
+
+# A raw post-phase write failure must finalize failure evidence before cleanup.
+fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-finalizer.XXXXXX") || die "could not create finalizer fixture"
+trap 'rm -R "$fixture_root"' EXIT HUP INT TERM
+{
+    printf '%s\n' '#!/bin/sh' 'set -eu' 'fixture_root=$1' 'phase_dir=$fixture_root/phase' 'ledger=$fixture_root/phase-ledger' 'active_vendor_pid=' 'capture_pid='
+    printf '%s\n' 'cleanup_children() { [ "$(cat "$phase_dir/phase-status")" = FAIL ] && printf "%s\n" after-failure-evidence >"$fixture_root/cleanup-order"; }'
+    sed -n '/^finalize_exit() {$/,/^}$/p' "$guest"
+    printf '%s\n' 'mkdir "$fixture_root"' 'mkdir "$phase_dir"' 'printf "baseline\ncurrent\n" >"$ledger"' 'trap finalize_exit EXIT' 'mkdir "$phase_dir/post-write"' 'printf "%s\n" must-fail >"$phase_dir/post-write"'
+} >"$fixture_root/fixture.sh"
+set +e
+sh "$fixture_root/fixture.sh" "$fixture_root/state" >/dev/null 2>&1
+fixture_status=$?
+set -e
+[ "$fixture_status" -ne 0 ] || die "post-phase fixture did not fail"
+printf '%s\n' FAIL >"$fixture_root/fail.expected"
+printf '%s\n' after-failure-evidence >"$fixture_root/cleanup.expected"
+cmp -s "$fixture_root/fail.expected" "$fixture_root/state/phase/phase-status" || die "EXIT finalizer did not write exact FAIL status"
+cmp -s "$fixture_root/state/phase-ledger" "$fixture_root/state/phase/phase-ledger" || die "EXIT finalizer did not copy the complete phase ledger"
+cmp -s "$fixture_root/cleanup.expected" "$fixture_root/state/cleanup-order" || die "EXIT finalizer did not run before cleanup"
+rm -R "$fixture_root"
+trap - EXIT HUP INT TERM
 
 printf '%s\n' 'ok - destructive macOS lane static shape contract; Tart and the installer were not run'

@@ -10,19 +10,6 @@ die() {
     set +e
     if [ -n "$phase_dir" ] && [ -d "$phase_dir" ] && [ ! -L "$phase_dir" ]; then
         printf '%s\n' "FAIL: $*" >>"$phase_dir/results"
-        printf '%s\n' FAIL >"$phase_dir/phase-status"
-        ledger_copy=$phase_dir/.phase-ledger-copy
-        if [ -n "${ledger-}" ] && [ -f "$ledger" ] && [ ! -L "$ledger" ] \
-            && [ "$(stat -f '%Su:%Sg:%Lp' "$phase_dir" 2>/dev/null)" = root:wheel:700 ] \
-            && [ "$(stat -f '%Su:%Sg:%Lp' "$ledger" 2>/dev/null)" = root:wheel:600 ] \
-            && [ ! -e "$phase_dir/phase-ledger" ] && [ ! -L "$phase_dir/phase-ledger" ] \
-            && [ ! -e "$ledger_copy" ] && [ ! -L "$ledger_copy" ]; then
-            if cp "$ledger" "$ledger_copy" && chmod 0600 "$ledger_copy" && cmp -s "$ledger" "$ledger_copy"; then
-                mv "$ledger_copy" "$phase_dir/phase-ledger"
-            else
-                rm -f "$ledger_copy"
-            fi
-        fi
     fi
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
@@ -60,9 +47,9 @@ wait_bounded() {
 }
 signals_hold() { trap '' HUP INT TERM; }
 signals_restore() {
-    trap 'cleanup_children; exit 129' HUP
-    trap 'cleanup_children; exit 130' INT
-    trap 'cleanup_children; exit 143' TERM
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 }
 cleanup_children() {
     signals_hold
@@ -128,10 +115,36 @@ capture_stop() {
     wait "$capture_pid" 2>/dev/null || :
     capture_pid=
 }
-trap cleanup_children EXIT
-trap 'cleanup_children; exit 129' HUP
-trap 'cleanup_children; exit 130' INT
-trap 'cleanup_children; exit 143' TERM
+finalize_exit() {
+    original_status=$?
+    trap - EXIT
+    trap '' HUP INT TERM
+    set +e
+    if [ "$original_status" -ne 0 ] && [ -n "$phase_dir" ] && [ -d "$phase_dir" ] && [ ! -L "$phase_dir" ]; then
+        status_file=$phase_dir/phase-status
+        status_size=
+        if [ -f "$status_file" ] && [ ! -L "$status_file" ]; then status_size=$(wc -c <"$status_file" 2>/dev/null); fi
+        if ! { [ "$status_size" -eq 5 ] 2>/dev/null && grep -Fx PASS "$status_file" >/dev/null 2>&1; }; then
+            [ ! -L "$status_file" ] && printf '%s\n' FAIL >"$status_file"
+            ledger_copy=$phase_dir/.phase-ledger-copy
+            if [ -n "${ledger-}" ] && [ -f "$ledger" ] && [ ! -L "$ledger" ] \
+                && [ ! -L "$phase_dir/phase-ledger" ] && [ ! -e "$ledger_copy" ] && [ ! -L "$ledger_copy" ]; then
+                if cp "$ledger" "$ledger_copy" && chmod 0600 "$ledger_copy" && cmp -s "$ledger" "$ledger_copy" \
+                    && mv -f "$ledger_copy" "$phase_dir/phase-ledger"; then
+                    :
+                else
+                    rm -f "$ledger_copy"
+                fi
+            fi
+        fi
+    fi
+    cleanup_children
+    exit "$original_status"
+}
+trap finalize_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 receipt_identity() {
     receipt_name=$1 receipt=/nix/receipt.json
