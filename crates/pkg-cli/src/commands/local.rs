@@ -33,9 +33,9 @@ use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildPreview, CacheInstallErrorCode, CacheInstallOutcome,
     CatalogInfoRequest, CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest,
     GenerationId, GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter,
-    MaintenanceError, OperationHandle, RemoveRootSetRequest, RepairGenerationRequest,
-    RepairGenerationStatus, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
-    RootSetAttestationRequest, RootSetReport,
+    MaintenanceError, OperationHandle, OperationStatus, RemoveRootSetRequest,
+    RepairGenerationRequest, RepairGenerationStatus, RepairStorePathsReport,
+    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
@@ -905,6 +905,16 @@ impl LocalStateOperations {
         layout: &StateLayout,
         broker: &mut BrokerLifecycleClient,
     ) -> Result<(), CommandError> {
+        let mut reconnect = BrokerLifecycleClient::connect_default;
+        self.recover_pending_install_with(layout, broker, &mut reconnect)
+    }
+
+    fn recover_pending_install_with(
+        &self,
+        layout: &StateLayout,
+        broker: &mut BrokerLifecycleClient,
+        reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    ) -> Result<(), CommandError> {
         let nonce = secure_nonce()?;
         let created_at = utc_now()?;
         let identity = LeaseIdentity::new("recover_install", &nonce, &created_at)
@@ -919,49 +929,66 @@ impl LocalStateOperations {
         let handle = broker
             .begin(BrokerOperationKind::Activate)
             .map_err(broker_error)?;
-        if current.as_ref() == Some(&pending) {
-            let report = broker
-                .attest_generation_roots(handle.clone(), pending.clone())
-                .map_err(install_broker_error)?;
-            let maintenance = AttestedRootMaintenance { report };
-            recover_generation(layout, &lease, &pending, &maintenance)
-                .map_err(|_| install_commit_failed())?;
-            let _ = broker.complete(handle);
-            return Ok(());
-        }
-        let prepared = resume_prepared_install(layout.clone(), lease, &pending)
-            .map_err(|_| install_commit_failed())?;
-        let report = match broker.attest_generation_roots(handle.clone(), pending.clone()) {
-            Ok(report) => report,
-            Err(error)
-                if error.generation_root_attestation_code()
-                    == Some(GenerationRootAttestationErrorCode::AttestationFailed) =>
-            {
-                drop(prepared);
-                let _ = broker.cancel(handle);
-                self.discard_unrooted_install(layout, broker, &pending)?;
-                return Ok(());
+        // `local_committed` marks the linearization point after which the
+        // Activate operation must be completed, never cancelled.
+        // `activate_cancelled` marks the AttestationFailed branch, which has
+        // already cancelled the Activate handle before the nested GC discard.
+        let mut local_committed = false;
+        let mut activate_cancelled = false;
+        let result = (|| {
+            if current.as_ref() == Some(&pending) {
+                let report = broker
+                    .attest_generation_roots(handle.clone(), pending.clone())
+                    .map_err(install_broker_error)?;
+                let maintenance = AttestedRootMaintenance { report };
+                recover_generation(layout, &lease, &pending, &maintenance)
+                    .map_err(|_| install_commit_failed())?;
+                local_committed = true;
+                return complete_operation(broker, reconnect, handle.clone());
             }
-            Err(error) => return Err(install_broker_error(error)),
-        };
-        prepared
-            .activate_published(Some(&report), &nonce)
-            .map_err(|_| install_commit_failed())?
-            .finish()
-            .map_err(|_| install_commit_failed())?;
-        let _ = broker.complete(handle);
-        Ok(())
+            let prepared = resume_prepared_install(layout.clone(), lease, &pending)
+                .map_err(|_| install_commit_failed())?;
+            match broker.attest_generation_roots(handle.clone(), pending.clone()) {
+                Ok(report) => {
+                    prepared
+                        .activate_published(Some(&report), &nonce)
+                        .map_err(|_| install_commit_failed())?
+                        .finish()
+                        .map_err(|_| install_commit_failed())?;
+                    local_committed = true;
+                    complete_operation(broker, reconnect, handle.clone())
+                }
+                Err(error)
+                    if error.generation_root_attestation_code()
+                        == Some(GenerationRootAttestationErrorCode::AttestationFailed) =>
+                {
+                    drop(prepared);
+                    if !cancel_operation(broker, reconnect, handle.clone()) {
+                        return Err(install_broker_error(error));
+                    }
+                    activate_cancelled = true;
+                    self.discard_unrooted_install_with(layout, broker, reconnect, &pending)
+                }
+                Err(error) => Err(install_broker_error(error)),
+            }
+        })();
+        if result.is_err() && !local_committed && !activate_cancelled {
+            cancel_operation(broker, reconnect, handle);
+        }
+        result
     }
 
-    fn discard_unrooted_install(
+    fn discard_unrooted_install_with(
         &self,
         layout: &StateLayout,
         broker: &mut BrokerLifecycleClient,
+        reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
         generation: &pkg_nix::GenerationId,
     ) -> Result<(), CommandError> {
         let handle = broker
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
+        let mut local_committed = false;
         let result = (|| {
             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, _) = self.gc_lease(layout)?;
@@ -972,11 +999,11 @@ impl LocalStateOperations {
             recover_generation(layout, &lease, generation, &maintenance)
                 .map_err(|_| install_commit_failed())?;
             drop(maintenance);
-            let _ = broker.complete(handle.clone());
-            Ok(())
+            local_committed = true;
+            complete_operation(broker, reconnect, handle.clone())
         })();
-        if result.is_err() {
-            let _ = broker.cancel(handle);
+        if result.is_err() && !local_committed {
+            cancel_operation(broker, reconnect, handle);
         }
         result
     }
@@ -1350,6 +1377,73 @@ impl LocalStateOperations {
         }
         result
     }
+}
+
+/// Completes one committed Broker operation and reconciles an uncertain reply.
+///
+/// A lost completion acknowledgement never returns success while it is
+/// uncertain. The caller polls the exact handle on a fresh same-uid connection.
+/// A confirmed completed report is success. A confirmed live handle is
+/// cancelled before the original error is returned.
+fn complete_operation(
+    broker: &mut BrokerLifecycleClient,
+    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    handle: OperationHandle,
+) -> Result<(), CommandError> {
+    match broker.complete(handle.clone()) {
+        Ok(()) => Ok(()),
+        Err(error) => reconcile_completion(reconnect, handle, error),
+    }
+}
+
+/// Reconciles one operation after a lost completion reply on a fresh connection.
+fn reconcile_completion(
+    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    handle: OperationHandle,
+    first_error: BrokerClientError,
+) -> Result<(), CommandError> {
+    match reconnect() {
+        Ok(mut fresh) => match fresh.poll(handle.clone()) {
+            Ok(OperationStatus::Completed) => Ok(()),
+            Ok(OperationStatus::Running) => {
+                cancel_operation(&mut fresh, reconnect, handle);
+                Err(broker_error(first_error))
+            }
+            Ok(OperationStatus::Cancelled) => Err(broker_error(first_error)),
+            Err(_) => {
+                cancel_operation_on_fresh(reconnect, handle);
+                Err(broker_error(first_error))
+            }
+        },
+        Err(_) => Err(broker_error(first_error)),
+    }
+}
+
+/// Cancels one still-live Broker operation, falling back to a fresh same-uid
+/// connection when the current connection is poisoned or otherwise unusable.
+///
+/// Returns `true` only when a cancellation acknowledgement was observed.
+/// Cleanup never overrides the caller's first functional error.
+fn cancel_operation(
+    broker: &mut BrokerLifecycleClient,
+    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    handle: OperationHandle,
+) -> bool {
+    if broker.cancel(handle.clone()).is_ok() {
+        return true;
+    }
+    cancel_operation_on_fresh(reconnect, handle)
+}
+
+/// Cancels one operation on a fresh connection without surfacing its failure.
+fn cancel_operation_on_fresh(
+    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    handle: OperationHandle,
+) -> bool {
+    if let Ok(mut fresh) = reconnect() {
+        return fresh.cancel(handle).is_ok();
+    }
+    false
 }
 
 fn outdated_attributes(result: &CommandResult) -> Result<BTreeSet<String>, CommandError> {
@@ -2456,9 +2550,10 @@ fn index_unavailable() -> CommandError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::fs;
     use std::io::{Read, Write};
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::os::unix::net::UnixStream;
     use std::sync::mpsc;
     use std::thread;
@@ -2474,6 +2569,7 @@ mod tests {
         CommandEngine, CommandRequest, CoreEngine, OperationPolicy, write_success,
     };
     use crate::ux::OutputMode;
+    use pkg_core::state::{body_digest, canonical_digest};
     use pkg_core::{AttributePath, ChannelSequence, NixpkgsRevision, PackageVersion};
     use pkg_nix::{
         BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
@@ -2481,6 +2577,8 @@ mod tests {
         CatalogSearchReport, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse,
         InProcessBroker, InProcessCallerPeer, ProductFrameCodec, StorePath,
     };
+    use pkg_pipeline::{CandidateGeneration, PreparedGeneration};
+    use pkg_store::inspect_staged_activation;
 
     const FRAME_HEADER_BYTES: usize = 20;
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
@@ -3621,5 +3719,446 @@ mod tests {
         )
         .unwrap();
         assert!(outdated_attributes(&malformed).is_err());
+    }
+
+    #[test]
+    fn recover_pending_install_cancels_the_activate_handle_after_a_resume_failure() {
+        let home = TempDir::new().unwrap();
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
+        let layout = StateLayout::initialize(home.path(), &home.path().join("pkg"), uid).unwrap();
+
+        // Fixture: one prepared-but-uncommitted install generation, staged
+        // against a store path that never exists on the test host.
+        let store_path = format!("/nix/store/{STORE_HASH}-hello-1.0");
+        let staging = layout.state_root().join("activations/gen-0001.staging");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(format!("{store_path}/bin/hello"), staging.join("hello")).unwrap();
+        let plan = inspect_staged_activation(
+            &staging,
+            vec![pkg_core::StorePath::new(&store_path).unwrap()],
+        )
+        .unwrap();
+        let manifest_bytes = serde_json::to_vec(&json!({
+            "schemaVersion": 1,
+            "channelSeq": 1,
+            "uid": uid,
+            "entries": [{
+                "id": "sel_hello",
+                "selector": "hello",
+                "attribute": "hello",
+                "versionPref": { "kind": "any" },
+                "outputs": null,
+                "sourceRev": "channel:current",
+                "pinned": false,
+                "pinnedTo": null,
+                "addedAt": "2026-08-09T00:00:00Z",
+                "origin": "user:install"
+            }],
+            "pins": []
+        }))
+        .unwrap();
+        let lock_bytes = serde_json::to_vec(&json!({
+            "schemaVersion": 1,
+            "channelSeq": 1,
+            "system": "x86_64-linux",
+            "uid": uid,
+            "entries": {
+                "sel_hello": {
+                    "attribute": "hello",
+                    "nixpkgsRev": REVISION,
+                    "realized": {
+                        "storePath": store_path,
+                        "deriver": format!("{store_path}.drv"),
+                        "outputs": { "out": store_path },
+                        "outputsToInstall": ["out"],
+                        "system": "x86_64-linux",
+                        "narHash": NAR_HASH,
+                        "closureNarSize": 42,
+                        "pname": "hello",
+                        "version": "1.0"
+                    },
+                    "lockedAt": "2026-08-09T00:00:01Z",
+                    "provenance": "cache:official",
+                    "sigsObserved": ["official-1:fixture"]
+                }
+            }
+        }))
+        .unwrap();
+        let mut generation = json!({
+            "schemaVersion": 1,
+            "uid": uid,
+            "id": "gen-0001",
+            "parent": null,
+            "createdAt": "2026-08-09T00:00:00Z",
+            "channelSeq": 1,
+            "manifestHash": body_digest(&manifest_bytes).to_string(),
+            "lockHash": body_digest(&lock_bytes).to_string(),
+            "manifestSnapshot": "generations/gen-0001.manifest.json",
+            "lockSnapshot": "generations/gen-0001.lock.json",
+            "activation": {
+                "kind": "pkg-symlink-forest",
+                "treePath": "activations/gen-0001",
+                "treeDigest": plan.tree_digest().to_string(),
+                "entryCount": plan.entry_count(),
+                "collisionPolicy": "abort",
+                "outputRoots": plan.output_roots().iter().map(pkg_core::StorePath::as_str).collect::<Vec<_>>(),
+                "collisionResolutions": []
+            },
+            "outputs": [{
+                "id": "sel_hello",
+                "attribute": "hello",
+                "nixpkgsRev": REVISION,
+                "storePath": store_path,
+                "deriver": format!("{store_path}.drv"),
+                "outputsToInstall": ["out"],
+                "narHash": NAR_HASH,
+                "closureNarSize": 42,
+                "provenance": "cache:official",
+                "pinned": false
+            }],
+            "operation": {
+                "opId": "op_fixture",
+                "kind": "install",
+                "approval": { "build": "not_required" }
+            }
+        });
+        let generation_hash = canonical_digest(&generation).unwrap().to_string();
+        generation
+            .as_object_mut()
+            .unwrap()
+            .insert("generationHash".into(), json!(generation_hash));
+        let candidate = CandidateGeneration::new(
+            manifest_bytes,
+            lock_bytes,
+            serde_json::to_vec(&generation).unwrap(),
+        )
+        .unwrap();
+        let identity =
+            LeaseIdentity::new("op_fixture", "nonce_fixture", "2026-08-09T00:00:00Z").unwrap();
+        let lease = StateLease::try_exclusive(&layout, &identity).unwrap();
+        let prepared = PreparedGeneration::prepare(layout.clone(), candidate, plan, lease).unwrap();
+        drop(prepared);
+        // Deterministic pre-commit fault: the staged activation forest is gone.
+        fs::remove_dir_all(&staging).unwrap();
+
+        let broker = InProcessBroker::new().unwrap();
+        let server_broker = broker.clone();
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            let caller = server_broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap();
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Activate)
+            );
+            let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+            caller.cancel(&handle).unwrap();
+            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+            let mut eof = [0_u8; 1];
+            let _ = server.read(&mut eof);
+            handle
+        });
+
+        let operations = LocalStateOperations {
+            source: layout.clone(),
+            broker_state_compatible: true,
+        };
+        let mut client = BrokerLifecycleClient::from_stream(client);
+        let mut reconnect = || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            unreachable!("the primary cancel opened an unexpected fresh connection");
+        };
+        let error = operations
+            .recover_pending_install_with(&layout, &mut client, &mut reconnect)
+            .unwrap_err();
+        // Close the client stream so the worker's EOF wait completes.
+        drop(client);
+        let handle = worker.join().unwrap();
+
+        // Cleanup never replaces the first functional error.
+        assert_eq!(error, install_commit_failed());
+        // The exact Activate handle is Cancelled on the real broker.
+        let probe = broker
+            .connect(InProcessCallerPeer::authenticated(uid))
+            .unwrap();
+        assert_eq!(probe.poll(&handle).unwrap(), OperationStatus::Cancelled);
+        // Local state kept the generation pending and never activated it.
+        assert_eq!(layout.current_generation().unwrap(), None);
+        let probe_identity =
+            LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap();
+        let probe_lease = StateLease::try_exclusive(&layout, &probe_identity).unwrap();
+        assert_eq!(
+            pending_install_generation(&layout, &probe_lease).unwrap(),
+            Some(GenerationId::new("gen-0001").unwrap())
+        );
+    }
+
+    fn scripted_server(
+        workers: &mut Vec<thread::JoinHandle<()>>,
+        script: impl FnOnce(&mut UnixStream) + Send + 'static,
+    ) -> BrokerLifecycleClient {
+        let (mut server, client) = UnixStream::pair().unwrap();
+        workers.push(thread::spawn(move || script(&mut server)));
+        BrokerLifecycleClient::from_stream(client)
+    }
+
+    #[test]
+    fn cancel_operation_falls_back_to_a_fresh_connection() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(501))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+
+        let (server, client) = UnixStream::pair().unwrap();
+        drop(server);
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let mut workers = Vec::new();
+        let mut fresh_clients = VecDeque::new();
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                caller.cancel(&handle).unwrap();
+                write_response(server, request_id, CliBrokerResponse::Cancelled);
+                let mut eof = [0_u8; 1];
+                let _ = server.read(&mut eof);
+            }));
+        }
+        let mut reconnect = move || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            Ok(fresh_clients
+                .pop_front()
+                .expect("cancel fallback opened an unexpected fresh connection"))
+        };
+
+        cancel_operation(&mut client, &mut reconnect, handle.clone());
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+    }
+
+    #[test]
+    fn complete_operation_reconciles_completed_on_fresh_connection() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(501))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+
+        let mut workers = Vec::new();
+        let (mut main_server, main_client) = UnixStream::pair().unwrap();
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            workers.push(thread::spawn(move || {
+                let (_, request) = read_request(&mut main_server);
+                assert_eq!(request, CliBrokerRequest::Complete(handle.clone()));
+                caller.complete(&handle).unwrap();
+                // Drop the completion reply without responding.
+            }));
+        }
+
+        let mut fresh_clients = VecDeque::new();
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                let status = caller.poll(&handle).unwrap();
+                write_response(server, request_id, CliBrokerResponse::Status(status));
+                let mut eof = [0_u8; 1];
+                let _ = server.read(&mut eof);
+            }));
+        }
+        let mut reconnect = move || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            Ok(fresh_clients
+                .pop_front()
+                .expect("reconciliation opened an unexpected fresh connection"))
+        };
+
+        let mut client = BrokerLifecycleClient::from_stream(main_client);
+        complete_operation(&mut client, &mut reconnect, handle.clone()).unwrap();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+    }
+
+    #[test]
+    fn complete_operation_cancels_after_uncertain_completion() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(501))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+
+        let mut workers = Vec::new();
+        let (mut main_server, main_client) = UnixStream::pair().unwrap();
+        {
+            let handle = handle.clone();
+            workers.push(thread::spawn(move || {
+                let (_, request) = read_request(&mut main_server);
+                assert_eq!(request, CliBrokerRequest::Complete(handle.clone()));
+                // Leave the operation Running and drop the transport.
+            }));
+        }
+
+        let mut fresh_clients = VecDeque::new();
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                let status = caller.poll(&handle).unwrap();
+                assert_eq!(status, OperationStatus::Running);
+                write_response(server, request_id, CliBrokerResponse::Status(status));
+                // Read the Cancel request, then drop without responding so the
+                // cancel transport fails and the fallback opens a second fresh
+                // connection.
+                let (_, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+            }));
+        }
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                caller.cancel(&handle).unwrap();
+                write_response(server, request_id, CliBrokerResponse::Cancelled);
+                let mut eof = [0_u8; 1];
+                let _ = server.read(&mut eof);
+            }));
+        }
+        let mut reconnect = move || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            Ok(fresh_clients
+                .pop_front()
+                .expect("reconciliation opened an unexpected fresh connection"))
+        };
+
+        let mut client = BrokerLifecycleClient::from_stream(main_client);
+        let error = complete_operation(&mut client, &mut reconnect, handle.clone()).unwrap_err();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(error.exit_code(), ExitCode::EngineUnavailable);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+    }
+
+    #[test]
+    fn complete_operation_retries_cancel_after_poll_failure() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(501))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+
+        let mut workers = Vec::new();
+        let (mut main_server, main_client) = UnixStream::pair().unwrap();
+        {
+            let handle = handle.clone();
+            workers.push(thread::spawn(move || {
+                let (_, request) = read_request(&mut main_server);
+                assert_eq!(request, CliBrokerRequest::Complete(handle.clone()));
+                // Leave the operation Running and drop the transport.
+            }));
+        }
+
+        let mut fresh_clients = VecDeque::new();
+        {
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (_, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                // Drop without responding: the poll transport fails.
+            }));
+        }
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                caller.cancel(&handle).unwrap();
+                write_response(server, request_id, CliBrokerResponse::Cancelled);
+                let mut eof = [0_u8; 1];
+                let _ = server.read(&mut eof);
+            }));
+        }
+        let mut reconnect = move || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            Ok(fresh_clients
+                .pop_front()
+                .expect("reconciliation opened an unexpected fresh connection"))
+        };
+
+        let mut client = BrokerLifecycleClient::from_stream(main_client);
+        let error = complete_operation(&mut client, &mut reconnect, handle.clone()).unwrap_err();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(error.exit_code(), ExitCode::EngineUnavailable);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+    }
+
+    #[test]
+    fn cancel_operation_reports_false_when_all_cancellation_fails() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(501))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+
+        // The primary connection is already dead, so its cancel fails first.
+        let (server, client) = UnixStream::pair().unwrap();
+        drop(server);
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let mut workers = Vec::new();
+        let mut fresh_clients = VecDeque::new();
+        {
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (_, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                // Drop without responding so the fresh cancellation also fails.
+            }));
+        }
+        let mut reconnect = move || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            Ok(fresh_clients
+                .pop_front()
+                .expect("cancel fallback opened an unexpected fresh connection"))
+        };
+
+        assert!(!cancel_operation(
+            &mut client,
+            &mut reconnect,
+            handle.clone()
+        ));
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
     }
 }
