@@ -341,7 +341,12 @@ validate_phase_archive() {
     bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-status" >"$out/phases/$phase.phase-status" 2>>"$validation_stderr" || die "could not read phase-status: $phase"
     bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-ledger" >"$out/phases/$phase.phase-ledger" 2>>"$validation_stderr" || die "could not read phase-ledger: $phase"
     cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status" || die "phase-status is not PASS: $phase"
-    [ -s "$out/phases/$phase.phase-ledger" ] || die "phase-ledger is empty: $phase"
+    awk -v target="$phase" '
+        $0 != "reboot" { print }
+        $0 == target { found=1; exit }
+        END { if (!found) exit 1 }
+    ' "$out/phase-sequence" >"$out/phases/$phase.phase-ledger.expected" || die "phase is absent from the lane sequence: $phase"
+    cmp -s "$out/phases/$phase.phase-ledger.expected" "$out/phases/$phase.phase-ledger" || die "phase-ledger does not match the expected lane prefix: $phase"
     printf '%s\n' "$archive_size" >"$out/phases/$phase.size"
 }
 capture_phase() {
