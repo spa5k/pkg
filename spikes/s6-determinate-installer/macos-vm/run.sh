@@ -215,9 +215,9 @@ trap cleanup EXIT
 clone_attempted=1
 bounded_host 600 tart clone "$base" "$vm_name" >>"$out/tart.log" 2>&1
 created=1
-write_argv "$out/vm-run.argv" tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-softnet "$vm_name"
+write_argv "$out/vm-run.argv" tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-host "$vm_name"
 signals_hold
-tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-softnet "$vm_name" >>"$out/tart.log" 2>&1 &
+tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer --net-host "$vm_name" >>"$out/tart.log" 2>&1 &
 run_pid=$!
 signals_restore
 
