@@ -140,7 +140,7 @@ base=ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4b
 actual_installer_sha=$(sha256 "$installer")
 [ "$actual_installer_sha" = "$installer_pin" ] || die "installer digest mismatch"
 
-for tool in tart git shasum awk df find chmod uname sw_vers od tr sed sleep grep tar wc sort uniq cmp; do
+for tool in tart git shasum awk cat df find chmod uname sw_vers od tr sed sleep grep tar wc sort uniq cmp mv; do
     command -v "$tool" >/dev/null 2>&1 || die "required host tool is missing: $tool"
 done
 umask 077
@@ -280,21 +280,19 @@ marker=$guest_dir/owner-marker
 guest_evidence=$guest_dir/evidence
 bounded_exec 15 /dev/null /usr/bin/sudo -n /bin/sh -c '
     set -eu
-    dir=$1 marker=$2 token=$3 evidence=$4
+    dir=$1 marker=$2 token=$3
     if [ -e "$dir" ] || [ -L "$dir" ]; then exit 1; fi
     umask 077
     /bin/mkdir -m 0700 "$dir"
     /usr/sbin/chown root:wheel "$dir"
-    /bin/mkdir -m 0700 "$evidence"
-    /usr/sbin/chown root:wheel "$evidence"
     /usr/bin/printf "%s\n" "$token" >"$marker"
     /usr/sbin/chown root:wheel "$marker"
     /bin/chmod 0600 "$marker"
-' sh "$guest_dir" "$marker" "$token" "$guest_evidence" >>"$out/guest-agent.log" 2>&1 || die "could not create private guest staging"
+' sh "$guest_dir" "$marker" "$token" >>"$out/guest-agent.log" 2>&1 || die "could not create private guest staging"
 
 guest_installer=$guest_dir/nix-installer
 guest_inside=$guest_dir/inside.sh
-bounded_exec 60 "$installer" /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0600 "$1"' sh "$guest_installer" || die "could not stream installer into guest"
+bounded_exec 60 "$installer" /usr/bin/sudo -n /bin/sh -c 'set -eu; umask 077; /bin/cat >"$1"; /usr/sbin/chown root:wheel "$1"; /bin/chmod 0700 "$1"' sh "$guest_installer" || die "could not stream installer into guest"
 bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/shasum -a 256 "$guest_installer" >"$out/installer.guest.sha256.line" || die "could not hash staged installer"
 guest_installer_sha=$(awk '{print $1}' "$out/installer.guest.sha256.line")
 case $guest_installer_sha in ''|*[!0-9a-f]*) die "staged installer digest is not hexadecimal" ;; esac
@@ -310,20 +308,22 @@ printf '%s\n' "$guest_inside_sha" >"$out/inside.actual.sha256"
 [ "$guest_inside_sha" = "$inside_sha" ] || die "staged inside.sh digest mismatch"
 
 mkdir -m 0700 "$out/phases" "$out/reboots"
+printf 'PASS\n' >"$out/phases/phase-status.expected"
 validate_phase_archive() {
     phase=$1
-    archive=$out/phases/$phase.tar
+    archive=$2
     list=$out/phases/$phase.list
     verbose=$out/phases/$phase.verbose
+    validation_stderr=$out/phases/$phase.validation.stderr
     archive_size=$(wc -c <"$archive" | tr -d ' ')
     case $archive_size in ''|*[!0-9]*) die "could not determine phase archive size: $phase" ;; esac
     [ "$archive_size" -gt 0 ] && [ "$archive_size" -le 268435456 ] || die "phase archive size is invalid: $phase"
-    bounded_host 30 /usr/bin/tar -tf "$archive" >"$list" 2>>"$out/phase-capture.log" || die "could not list phase archive: $phase"
-    bounded_host 30 /usr/bin/tar -tvf "$archive" >"$verbose" 2>>"$out/phase-capture.log" || die "could not inspect phase archive types: $phase"
+    bounded_host 30 /usr/bin/tar -tf "$archive" >"$list" 2>"$validation_stderr" || die "could not list phase archive: $phase"
+    bounded_host 30 /usr/bin/tar -tvf "$archive" >"$verbose" 2>>"$validation_stderr" || die "could not inspect phase archive types: $phase"
     [ -s "$list" ] || die "phase archive is empty: $phase"
     while IFS= read -r entry; do
         case $entry in /*) die "phase archive has an absolute path: $entry" ;; esac
-        case $entry in "$phase/"|"$phase/"*) ;; *) die "phase archive has an unexpected prefix: $entry" ;; esac
+        case $entry in "$phase/"*) ;; *) die "phase archive has an unexpected prefix: $entry" ;; esac
         case $entry in *[!A-Za-z0-9._/-]*) die "phase archive has an unsafe name: $entry" ;; esac
         case /$entry/ in *'/../'*|*'/./'*|*'//'*) die "phase archive has an unsafe path: $entry" ;; esac
         case $entry in */receipt.json) die "phase archive contains receipt bytes" ;; esac
@@ -335,25 +335,46 @@ validate_phase_archive() {
         type=${detail%"${detail#?}"}
         case $type in -|d) ;; *) die "phase archive contains a link or special entry: $phase" ;; esac
     done <"$verbose"
+    [ "$(wc -l <"$list" | tr -d ' ')" = "$(wc -l <"$verbose" | tr -d ' ')" ] || die "phase archive manifests disagree: $phase"
+    grep -Fx -- "$phase/phase-status" "$list" >/dev/null || die "phase archive lacks phase-status: $phase"
+    grep -Fx -- "$phase/phase-ledger" "$list" >/dev/null || die "phase archive lacks phase-ledger: $phase"
+    bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-status" >"$out/phases/$phase.phase-status" 2>>"$validation_stderr" || die "could not read phase-status: $phase"
+    bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-ledger" >"$out/phases/$phase.phase-ledger" 2>>"$validation_stderr" || die "could not read phase-ledger: $phase"
+    cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status" || die "phase-status is not PASS: $phase"
+    [ -s "$out/phases/$phase.phase-ledger" ] || die "phase-ledger is empty: $phase"
     printf '%s\n' "$archive_size" >"$out/phases/$phase.size"
-    sha256 "$archive" >"$out/phases/$phase.tar.sha256"
 }
 capture_phase() {
     phase=$1
-    bounded_exec 120 /dev/null /usr/bin/sudo -n /usr/bin/tar -cf - -C "$guest_evidence" "$phase" >"$out/phases/$phase.tar" 2>>"$out/phase-capture.log" || die "could not capture phase evidence: $phase"
-    validate_phase_archive "$phase"
+    archive_part=$out/phases/$phase.tar.part
+    archive=$out/phases/$phase.tar
+    bounded_exec 120 /dev/null /usr/bin/sudo -n /usr/bin/tar -cf - -C "$guest_evidence" "$phase" >"$archive_part" 2>"$out/phases/$phase.capture.stderr" || die "could not capture phase evidence: $phase"
+    validate_phase_archive "$phase" "$archive_part"
+    sha256 "$archive_part" >"$out/phases/$phase.tar.sha256"
+    /bin/mv "$archive_part" "$archive" || die "could not finalize phase archive: $phase"
 }
 run_phase() {
     phase=$1
     approval=${2-}
+    set +e
     if [ -n "$approval" ]; then
         write_argv "$out/phases/$phase.argv" /usr/bin/sudo -n "$guest_inside" "$phase" "$token" "$marker" "$guest_installer" "$installer_pin" "$guest_evidence" "$approval"
-        bounded_exec 9000 /dev/null /usr/bin/sudo -n "$guest_inside" "$phase" "$token" "$marker" "$guest_installer" "$installer_pin" "$guest_evidence" "$approval" >"$out/phases/$phase.output" 2>&1 || die "guest phase failed: $phase"
+        bounded_exec 9000 /dev/null /usr/bin/sudo -n "$guest_inside" "$phase" "$token" "$marker" "$guest_installer" "$installer_pin" "$guest_evidence" "$approval" >"$out/phases/$phase.output" 2>&1
+        guest_status=$?
     else
         write_argv "$out/phases/$phase.argv" /usr/bin/sudo -n "$guest_inside" "$phase" "$token" "$marker" "$guest_installer" "$installer_pin" "$guest_evidence"
-        bounded_exec 9000 /dev/null /usr/bin/sudo -n "$guest_inside" "$phase" "$token" "$marker" "$guest_installer" "$installer_pin" "$guest_evidence" >"$out/phases/$phase.output" 2>&1 || die "guest phase failed: $phase"
+        bounded_exec 9000 /dev/null /usr/bin/sudo -n "$guest_inside" "$phase" "$token" "$marker" "$guest_installer" "$installer_pin" "$guest_evidence" >"$out/phases/$phase.output" 2>&1
+        guest_status=$?
     fi
+    set -e
+    printf '%s\n' "$guest_status" >"$out/phases/$phase.guest-status"
     capture_phase "$phase"
+    case $phase:$guest_status in
+        foreign-refuse:20) ;;
+        foreign-refuse:*) die "foreign-refuse did not return status 20" ;;
+        *:0) ;;
+        *) die "guest phase failed with status $guest_status: $phase" ;;
+    esac
 }
 wait_guest_ready() {
     ready=0
@@ -365,6 +386,7 @@ wait_guest_ready() {
         sleep 2
     done
     [ "$ready" -eq 1 ] || die "Guest Agent did not return after reboot"
+    kill -0 "$run_pid" 2>/dev/null || die "Tart VM exited before post-reboot readiness was accepted"
 }
 revalidate_guest() {
     label=$1
