@@ -205,11 +205,35 @@ content_hex() {
     od -An -tx1 "$1" >"$phase_dir/content-hex.raw" || die "could not read fixture bytes"
     tr -d ' \n' <"$phase_dir/content-hex.raw"
 }
+plist_expect() {
+    plist_file=$1 plist_key=$2 plist_expected=$3 plist_output=$4
+    /usr/libexec/PlistBuddy -c "Print $plist_key" "$plist_file" >"$plist_output" 2>&1 || die "could not read pinned plist key $plist_key"
+    [ "$(cat "$plist_output")" = "$plist_expected" ] || die "pinned plist value differs at $plist_key"
+}
 assert_installed_state() {
     installed_name=$1
     diskutil apfs list >"$phase_dir/$installed_name.apfs" 2>&1 || die "could not inspect installed APFS state"
     installed_volume_count=$(grep -Ec 'Name:[[:space:]]+Nix Store([[:space:]]|$)' "$phase_dir/$installed_name.apfs" || :)
     [ "$installed_volume_count" -eq 1 ] || die "installed state does not contain exactly one Nix Store APFS volume"
+    diskutil info -plist 'Nix Store' >"$phase_dir/$installed_name.volume.plist" 2>&1 || die "could not inspect the Nix Store APFS volume"
+    installed_volume_name=$(plutil -extract VolumeName raw -o - "$phase_dir/$installed_name.volume.plist") || die "could not read Nix Store volume name"
+    installed_filesystem=$(plutil -extract FilesystemType raw -o - "$phase_dir/$installed_name.volume.plist") || die "could not read Nix Store filesystem type"
+    installed_encryption=$(plutil -extract Encryption raw -o - "$phase_dir/$installed_name.volume.plist") || die "could not read Nix Store encryption state"
+    installed_uuid=$(plutil -extract VolumeUUID raw -o - "$phase_dir/$installed_name.volume.plist") || die "could not read Nix Store volume UUID"
+    [ "$installed_volume_name" = 'Nix Store' ] || die "Nix Store APFS volume name differs"
+    [ "$installed_filesystem" = apfs ] || die "Nix Store filesystem is not APFS"
+    [ "$installed_encryption" = true ] || die "Nix Store APFS volume is not encrypted"
+    printf '%s\n' "$installed_uuid" >"$phase_dir/$installed_name.volume-uuid"
+    printf '%s\n' "$installed_uuid" | grep -E '^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$' >/dev/null || die "Nix Store volume UUID is empty or invalid"
+    [ -f /etc/fstab ] && [ ! -L /etc/fstab ] || die "installed fstab is missing or unsafe"
+    installed_fstab="UUID=$installed_uuid /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer"
+    grep -Fxc "$installed_fstab" /etc/fstab >"$phase_dir/$installed_name.fstab-count" || die "exact Determinate fstab entry is absent"
+    [ "$(cat "$phase_dir/$installed_name.fstab-count")" -eq 1 ] || die "exact Determinate fstab entry is not unique"
+    awk '$2 == "/nix" {print}' /etc/fstab >"$phase_dir/$installed_name.fstab-nix" || die "could not inspect fstab /nix entries"
+    [ "$(wc -l <"$phase_dir/$installed_name.fstab-nix")" -eq 1 ] || die "fstab contains an extra /nix entry"
+    [ -f /etc/synthetic.conf ] && [ ! -L /etc/synthetic.conf ] || die "installed synthetic.conf is missing or unsafe"
+    installed_synthetic_hex=$(content_hex /etc/synthetic.conf) || die "could not inspect installed synthetic.conf"
+    [ "$installed_synthetic_hex" = 6e69780a ] || die "installed synthetic.conf is not exactly nix newline"
     : >"$phase_dir/$installed_name.launchd-found.raw"
     for installed_launch_dir in /Library/LaunchDaemons /Library/LaunchAgents; do
         [ -d "$installed_launch_dir" ] || continue
@@ -218,23 +242,57 @@ assert_installed_state() {
     sort "$phase_dir/$installed_name.launchd-found.raw" >"$phase_dir/$installed_name.launchd-found"
     printf '%s\n' \
         /Library/LaunchDaemons/systems.determinate.nix-daemon.plist \
-        /Library/LaunchDaemons/systems.determinate.nix-installer.nix-hook.plist \
         /Library/LaunchDaemons/systems.determinate.nix-store.plist >"$phase_dir/$installed_name.launchd-expected"
-    cmp -s "$phase_dir/$installed_name.launchd-expected" "$phase_dir/$installed_name.launchd-found" || die "installed state does not have exactly the three pinned launchd files"
+    cmp -s "$phase_dir/$installed_name.launchd-expected" "$phase_dir/$installed_name.launchd-found" || die "installed state does not have exactly the two pinned launchd files"
     for installed_plist in \
         /Library/LaunchDaemons/systems.determinate.nix-store.plist \
-        /Library/LaunchDaemons/systems.determinate.nix-daemon.plist \
-        /Library/LaunchDaemons/systems.determinate.nix-installer.nix-hook.plist; do
+        /Library/LaunchDaemons/systems.determinate.nix-daemon.plist; do
         [ -f "$installed_plist" ] && [ ! -L "$installed_plist" ] || die "required launchd file is missing or unsafe: $installed_plist"
         [ "$(stat -f '%Su:%Sg:%Lp' "$installed_plist")" = root:wheel:644 ] || die "required launchd file identity is unexpected: $installed_plist"
         stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' "$installed_plist" >>"$phase_dir/$installed_name.launchd-files"
     done
-    for installed_job in systems.determinate.nix-store systems.determinate.nix-daemon systems.determinate.nix-installer.nix-hook; do
+    store_plist=/Library/LaunchDaemons/systems.determinate.nix-store.plist
+    daemon_plist=/Library/LaunchDaemons/systems.determinate.nix-daemon.plist
+    plist_expect "$store_plist" :ProgramArguments:0 /usr/local/bin/determinate-nixd "$phase_dir/$installed_name.store-argv-0"
+    plist_expect "$store_plist" :ProgramArguments:1 init "$phase_dir/$installed_name.store-argv-1"
+    plist_expect "$daemon_plist" :ProgramArguments:0 /usr/local/bin/determinate-nixd "$phase_dir/$installed_name.daemon-argv-0"
+    plist_expect "$daemon_plist" :ProgramArguments:1 daemon "$phase_dir/$installed_name.daemon-argv-1"
+    plist_expect "$daemon_plist" ':Sockets:determinate-nixd.socket:SockPathName' /var/run/determinate-nixd.socket "$phase_dir/$installed_name.determinate-socket"
+    plist_expect "$daemon_plist" ':Sockets:nix-daemon.socket:SockPathName' /var/run/nix-daemon.socket "$phase_dir/$installed_name.nix-socket"
+    for pinned_plist in "$store_plist" "$daemon_plist"; do
+        set +e
+        /usr/libexec/PlistBuddy -c 'Print :ProgramArguments:2' "$pinned_plist" >/dev/null 2>&1
+        extra_argument_status=$?
+        set -e
+        [ "$extra_argument_status" -ne 0 ] || die "pinned launchd program has an extra argument: $pinned_plist"
+    done
+    hook_plist=/Library/LaunchDaemons/systems.determinate.nix-installer.nix-hook.plist
+    [ ! -e "$hook_plist" ] && [ ! -L "$hook_plist" ] || die "no-modify-profile install created the forbidden nix-hook file"
+    for installed_job in systems.determinate.nix-store systems.determinate.nix-daemon; do
         launchctl print "system/$installed_job" >"$phase_dir/$installed_name.launchd-$installed_job" 2>&1 || die "required launchd job is absent: $installed_job"
     done
+    set +e
+    launchctl print system/systems.determinate.nix-installer.nix-hook >"$phase_dir/$installed_name.launchd-nix-hook-absent" 2>&1
+    hook_job_status=$?
+    set -e
+    [ "$hook_job_status" -ne 0 ] || die "no-modify-profile install loaded the forbidden nix-hook job"
     security find-generic-password -a 'Nix Store' -s 'Nix Store' /Library/Keychains/System.keychain >"$phase_dir/$installed_name.keychain-metadata" 2>&1 || die "Nix Store System Keychain metadata item is absent"
     dscl . -list /Groups >"$phase_dir/$installed_name.groups.all" || die "could not inspect installed groups"
     grep -Fx nixbld "$phase_dir/$installed_name.groups.all" >"$phase_dir/$installed_name.group" || die "nixbld group is absent"
+    dscl . -read /Groups/nixbld PrimaryGroupID GroupMembership >"$phase_dir/$installed_name.group-record" || die "could not inspect pinned nixbld group"
+    grep -Fx 'PrimaryGroupID: 350' "$phase_dir/$installed_name.group-record" >/dev/null || die "nixbld group ID is not pinned GID 350"
+    sed -n 's/^GroupMembership: //p' "$phase_dir/$installed_name.group-record" >"$phase_dir/$installed_name.membership-line" || die "could not read nixbld membership"
+    tr ' ' '\n' <"$phase_dir/$installed_name.membership-line" >"$phase_dir/$installed_name.membership-lines" || die "could not split nixbld membership"
+    sed '/^$/d' "$phase_dir/$installed_name.membership-lines" >"$phase_dir/$installed_name.membership-raw" || die "could not normalize nixbld membership"
+    sort "$phase_dir/$installed_name.membership-raw" >"$phase_dir/$installed_name.membership" || die "could not sort nixbld membership"
+    : >"$phase_dir/$installed_name.membership-expected.raw"
+    installed_user_number=1
+    while [ "$installed_user_number" -le 32 ]; do
+        printf '_nixbld%s\n' "$installed_user_number" >>"$phase_dir/$installed_name.membership-expected.raw"
+        installed_user_number=$((installed_user_number + 1))
+    done
+    sort "$phase_dir/$installed_name.membership-expected.raw" >"$phase_dir/$installed_name.membership-expected" || die "could not sort expected nixbld membership"
+    cmp -s "$phase_dir/$installed_name.membership-expected" "$phase_dir/$installed_name.membership" || die "nixbld group membership differs from the pinned 32 users"
     dscl . -list /Users >"$phase_dir/$installed_name.users.all" || die "could not inspect installed users"
     grep -E '^_nixbld[0-9]+$' "$phase_dir/$installed_name.users.all" >"$phase_dir/$installed_name.build-users" || die "Nix build users are absent"
     installed_user_count=$(wc -l <"$phase_dir/$installed_name.build-users") || die "could not count Nix build users"
@@ -242,6 +300,9 @@ assert_installed_state() {
     installed_user_number=1
     while [ "$installed_user_number" -le 32 ]; do
         grep -Fx "_nixbld$installed_user_number" "$phase_dir/$installed_name.build-users" >/dev/null || die "required build user is absent: _nixbld$installed_user_number"
+        dscl . -read "/Users/_nixbld$installed_user_number" UniqueID PrimaryGroupID >"$phase_dir/$installed_name.user-$installed_user_number" || die "could not inspect pinned build user _nixbld$installed_user_number"
+        grep -Fx "UniqueID: $((350 + installed_user_number))" "$phase_dir/$installed_name.user-$installed_user_number" >/dev/null || die "pinned build user ID differs: _nixbld$installed_user_number"
+        grep -Fx 'PrimaryGroupID: 350' "$phase_dir/$installed_name.user-$installed_user_number" >/dev/null || die "pinned build user group differs: _nixbld$installed_user_number"
         installed_user_number=$((installed_user_number + 1))
     done
     receipt_identity "$installed_name.receipt"
@@ -258,7 +319,7 @@ assert_installed_state() {
     require_functional_nix
 }
 record_foreign_state() {
-    foreign_name=$1 sentinel=/nix/pkg-s6-foreign-sentinel
+    foreign_name=$1 sentinel=/nix/.pkg-s6-dn03c-foreign-$token
     mount >"$phase_dir/$foreign_name.mounts" 2>&1 || die "could not record foreign mount state"
     if grep -E '[[:space:]]on[[:space:]]/nix[[:space:]]' "$phase_dir/$foreign_name.mounts" >"$phase_dir/$foreign_name.nix-mount"; then
         printf '%s\n' mounted >"$phase_dir/$foreign_name.mount-state"
@@ -550,7 +611,7 @@ case $phase in
         case $crash_pid in ''|*[!0-9]*) die "installer PID is invalid" ;; esac
         [ "$crash_pid" -gt 1 ] && [ "$crash_pid" -ne "$$" ] || die "installer PID is unsafe"
         crash_command=$(ps -p "$crash_pid" -o command=) || die "installer process exited before PID validation"
-        case $crash_command in *"$staged"*) ;; *) die "PID does not identify the staged installer" ;; esac
+        case $crash_command in "$staged"|"$staged "*) ;; *) die "PID command does not start with the exact staged installer path" ;; esac
         printf '%s\n' "$crash_pid" >"$phase_dir/installer.pid"
         crash_elapsed=0 crash_ready=0
         while kill -0 "$crash_pid" 2>/dev/null && [ "$crash_elapsed" -lt 1800 ]; do
@@ -567,6 +628,9 @@ case $phase in
         fi
         printf '%s\n' 'determinate-nixd executable and non-empty Nix store' >"$phase_dir/crash-marker"
         signals_hold
+        crash_command_before_kill=$(ps -p "$crash_pid" -o command=) || { signals_restore; die "installer process exited before final PID validation"; }
+        case $crash_command_before_kill in "$staged"|"$staged "*) ;; *) signals_restore; die "final PID command does not start with the exact staged installer path" ;; esac
+        printf '%s\n' "$crash_command_before_kill" >"$phase_dir/installer-command-before-sigkill"
         kill -KILL "$crash_pid" || { signals_restore; die "could not SIGKILL the validated installer PID"; }
         set +e
         wait "$crash_pid"
@@ -615,7 +679,7 @@ case $phase in
         grep -E '[[:space:]]on[[:space:]]/nix[[:space:]]' "$phase_dir/pre-sentinel.mounts" >/dev/null && die "synthetic /nix must be unmounted before the foreign fixture"
         find /nix -mindepth 1 -maxdepth 1 -print -quit >"$phase_dir/pre-sentinel.first-entry" 2>&1 || die "could not inspect synthetic /nix"
         [ ! -s "$phase_dir/pre-sentinel.first-entry" ] || die "synthetic /nix must be empty before the foreign fixture"
-        sentinel=/nix/pkg-s6-foreign-sentinel
+        sentinel=/nix/.pkg-s6-dn03c-foreign-$token
         [ ! -e "$sentinel" ] && [ ! -L "$sentinel" ] || die "foreign sentinel already exists"
         printf 'pkg-s6-foreign:%s\n' "$token" >"$sentinel"
         chown root:wheel "$sentinel"
@@ -628,7 +692,7 @@ case $phase in
         sha256 "$sentinel" >"$phase_dir/sentinel.sha256"
         ;;
     foreign-refuse)
-        sentinel=/nix/pkg-s6-foreign-sentinel
+        sentinel=/nix/.pkg-s6-dn03c-foreign-$token
         [ -f "$sentinel" ] && [ ! -L "$sentinel" ] || die "foreign sentinel is absent or unsafe"
         [ "$(stat -f '%Su:%Sg:%Lp' "$sentinel")" = root:wheel:600 ] || die "foreign sentinel identity changed before refusal"
         sha256 "$sentinel" >"$phase_dir/sentinel.sha256"
@@ -638,7 +702,7 @@ case $phase in
         ;;
     foreign-observe)
         require_first_vendor_gates
-        sentinel=/nix/pkg-s6-foreign-sentinel
+        sentinel=/nix/.pkg-s6-dn03c-foreign-$token
         [ -f "$sentinel" ] && [ ! -L "$sentinel" ] || die "foreign sentinel is absent or unsafe"
         sentinel_before=$(sha256 "$sentinel")
         [ "$sentinel_before" = "$(cat "$evidence/foreign-post-reboot/sentinel.sha256")" ] || die "foreign sentinel changed before observation"
@@ -679,7 +743,7 @@ case $phase in
 esac
 
 snapshot after
-cp "$ledger" "$phase_dir/phase-ledger.snapshot"
+cp "$ledger" "$phase_dir/phase-ledger"
 printf '%s\n' PASS >"$phase_dir/phase-status"
 record PASS "$phase completed with expected observations"
 find "$evidence" -type d -exec chmod 0700 {} \;
