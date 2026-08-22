@@ -3737,8 +3737,7 @@ mod tests {
         assert!(outdated_attributes(&malformed).is_err());
     }
 
-    #[test]
-    fn attestation_failure_reconciles_cancelled_activate_then_discards_with_gc() {
+    fn prepared_pending_install_fixture() -> (TempDir, StateLayout, u32) {
         let home = TempDir::new().unwrap();
         fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let uid = fs::symlink_metadata(home.path()).unwrap().uid();
@@ -3855,6 +3854,12 @@ mod tests {
         let lease = StateLease::try_exclusive(&layout, &identity).unwrap();
         let prepared = PreparedGeneration::prepare(layout.clone(), candidate, plan, lease).unwrap();
         drop(prepared);
+        (home, layout, uid)
+    }
+
+    #[test]
+    fn attestation_failure_reconciles_cancelled_activate_then_discards_with_gc() {
+        let (_home, layout, uid) = prepared_pending_install_fixture();
 
         let broker = InProcessBroker::new().unwrap();
         let activate_broker = broker.clone();
@@ -4025,6 +4030,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn generic_resume_failure_preserves_first_error_and_cancels_running_activate() {
+        let (_home, layout, uid) = prepared_pending_install_fixture();
+        fs::remove_dir_all(layout.state_root().join("activations/gen-0001.staging")).unwrap();
+
+        let broker = InProcessBroker::new().unwrap();
+        let server_broker = broker.clone();
+        let (mut server, client) = UnixStream::pair().unwrap();
+        let worker = thread::spawn(move || {
+            let caller = server_broker
+                .connect(InProcessCallerPeer::authenticated(uid))
+                .unwrap();
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(
+                request,
+                CliBrokerRequest::Begin(BrokerOperationKind::Activate)
+            );
+            let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+            write_response(
+                &mut server,
+                request_id,
+                CliBrokerResponse::Started(handle.clone()),
+            );
+
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+            assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
+            caller.cancel(&handle).unwrap();
+            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+            let mut eof = [0_u8; 1];
+            let _ = server.read(&mut eof);
+            handle
+        });
+
+        let operations = LocalStateOperations {
+            source: layout.clone(),
+            broker_state_compatible: true,
+        };
+        let mut client = BrokerLifecycleClient::from_stream(client);
+        let mut reconnect = || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            unreachable!("the primary cancellation opened a fresh connection");
+        };
+        let error = operations
+            .recover_pending_install_with(&layout, &mut client, &mut reconnect)
+            .unwrap_err();
+        drop(client);
+        let handle = worker.join().unwrap();
+
+        assert_eq!(error, install_commit_failed());
+        let probe = broker
+            .connect(InProcessCallerPeer::authenticated(uid))
+            .unwrap();
+        assert_eq!(probe.poll(&handle).unwrap(), OperationStatus::Cancelled);
+        let probe_identity =
+            LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap();
+        let probe_lease = StateLease::try_exclusive(&layout, &probe_identity).unwrap();
+        assert_eq!(
+            pending_install_generation(&layout, &probe_lease).unwrap(),
+            Some(GenerationId::new("gen-0001").unwrap())
+        );
+    }
+
     fn scripted_server(
         workers: &mut Vec<thread::JoinHandle<()>>,
         script: impl FnOnce(&mut UnixStream) + Send + 'static,
@@ -4083,6 +4150,49 @@ mod tests {
     }
 
     #[test]
+    fn cancel_operation_returns_false_when_fresh_poll_transport_fails() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(501))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+
+        let (server, client) = UnixStream::pair().unwrap();
+        drop(server);
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let mut workers = Vec::new();
+        let handle_for_poll = handle.clone();
+        let mut fresh_client = Some(scripted_server(&mut workers, move |server| {
+            let (_, request) = read_request(server);
+            assert_eq!(request, CliBrokerRequest::Poll(handle_for_poll));
+            // Drop without responding so the exact-handle poll is unreadable.
+        }));
+        let mut reconnects = 0;
+        let mut reconnect = || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            reconnects += 1;
+            Ok(fresh_client
+                .take()
+                .expect("cancellation opened an unexpected fresh connection"))
+        };
+
+        let result = if cancel_operation(&mut client, &mut reconnect, handle.clone()) {
+            Ok(())
+        } else {
+            Err(install_commit_failed())
+        };
+        drop(reconnect);
+        assert_eq!(reconnects, 1);
+        assert_eq!(result.unwrap_err(), install_commit_failed());
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
+        caller.cancel(&handle).unwrap();
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
+    }
+
+    #[test]
     fn complete_operation_reconciles_completed_on_fresh_connection() {
         let broker = InProcessBroker::new().unwrap();
         let caller = broker
@@ -4129,6 +4239,64 @@ mod tests {
             worker.join().unwrap();
         }
         assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+    }
+
+    #[test]
+    fn complete_operation_preserves_error_when_reconciled_cancelled() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(501))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Activate).unwrap();
+
+        let mut workers = Vec::new();
+        let (mut main_server, main_client) = UnixStream::pair().unwrap();
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            workers.push(thread::spawn(move || {
+                let (_, request) = read_request(&mut main_server);
+                assert_eq!(request, CliBrokerRequest::Complete(handle.clone()));
+                caller.cancel(&handle).unwrap();
+                // Lose the completion response after the handle is Cancelled.
+            }));
+        }
+
+        let mut fresh_clients = VecDeque::new();
+        {
+            let caller = caller.clone();
+            let handle = handle.clone();
+            fresh_clients.push_back(scripted_server(&mut workers, move |server| {
+                let (request_id, request) = read_request(server);
+                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                let status = caller.poll(&handle).unwrap();
+                assert_eq!(status, OperationStatus::Cancelled);
+                write_response(server, request_id, CliBrokerResponse::Status(status));
+                let mut eof = [0_u8; 1];
+                let _ = server.read(&mut eof);
+            }));
+        }
+        let mut reconnect = move || -> Result<BrokerLifecycleClient, BrokerClientError> {
+            Ok(fresh_clients
+                .pop_front()
+                .expect("completion reconciliation opened an unexpected fresh connection"))
+        };
+
+        let mut client = BrokerLifecycleClient::from_stream(main_client);
+        let error = complete_operation(&mut client, &mut reconnect, handle.clone()).unwrap_err();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(
+            error,
+            CommandError::new(
+                ExitCode::EngineUnavailable,
+                "the managed package service refused the transaction",
+                "run `pkg doctor` to inspect managed broker readiness",
+            )
+        );
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Cancelled);
     }
 
     #[test]
