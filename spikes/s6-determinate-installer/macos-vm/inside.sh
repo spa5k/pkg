@@ -7,9 +7,22 @@ umask 077
 phase_dir=
 active_vendor_pid=
 die() {
-    if [ -n "$phase_dir" ] && [ -d "$phase_dir" ]; then
+    set +e
+    if [ -n "$phase_dir" ] && [ -d "$phase_dir" ] && [ ! -L "$phase_dir" ]; then
         printf '%s\n' "FAIL: $*" >>"$phase_dir/results"
         printf '%s\n' FAIL >"$phase_dir/phase-status"
+        ledger_copy=$phase_dir/.phase-ledger-copy
+        if [ -n "${ledger-}" ] && [ -f "$ledger" ] && [ ! -L "$ledger" ] \
+            && [ "$(stat -f '%Su:%Sg:%Lp' "$phase_dir" 2>/dev/null)" = root:wheel:700 ] \
+            && [ "$(stat -f '%Su:%Sg:%Lp' "$ledger" 2>/dev/null)" = root:wheel:600 ] \
+            && [ ! -e "$phase_dir/phase-ledger" ] && [ ! -L "$phase_dir/phase-ledger" ] \
+            && [ ! -e "$ledger_copy" ] && [ ! -L "$ledger_copy" ]; then
+            if cp "$ledger" "$ledger_copy" && chmod 0600 "$ledger_copy" && cmp -s "$ledger" "$ledger_copy"; then
+                mv "$ledger_copy" "$phase_dir/phase-ledger"
+            else
+                rm -f "$ledger_copy"
+            fi
+        fi
     fi
     printf 'FAIL: %s\n' "$*" >&2
     exit 1
