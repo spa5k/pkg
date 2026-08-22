@@ -320,7 +320,7 @@ upstream-install' ;;
 esac
 [ "$(cat "$ledger")" = "$expected_ledger" ] || die "phase order is invalid for $phase"
 if [ "$phase" = foreign-observe ]; then
-    [ "$#" -eq 7 ] && [ "$approval" = --approve-foreign-nix-observation ] || die "foreign observation requires exact second approval"
+    [ "$#" -eq 7 ] && [ "$approval" = approve-observe-vendor-foreign-state ] || die "foreign observation requires exact second approval"
 else
     [ "$#" -eq 6 ] || die "$phase does not accept approval"
 fi
