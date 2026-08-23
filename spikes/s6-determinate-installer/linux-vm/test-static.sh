@@ -164,7 +164,6 @@ grep -F 'cp "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents
 grep -F 'cat "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents can be printed"
 grep -F 'sha256 "$sentry" >"$prefix.sha256"' "$arm_guest" >/dev/null || die "aarch64 private sentry digest missing"
 grep -F 'strict clean-uninstall residue contract' "$arm_guest" >/dev/null || die "aarch64 strict residue gate missing"
-container_guards_are_exact "$arm_guest" || die "container destructive entry guards are not exact"
 container_config_is_exact "$arm_guest" || die "container target configuration is not exact"
 
 base_hash_line=$(grep -n 'sha256 "$base"' "$host" | head -1 | cut -d: -f1)

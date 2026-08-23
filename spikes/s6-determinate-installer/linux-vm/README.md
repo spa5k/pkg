@@ -105,10 +105,16 @@ environment. This setting is only an x86_64 container-proof input.
 
 The authenticated index has this exact Linux AMD64 child:
 `ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316`.
-Use this command form with new absolute host paths:
+For a new run, first require this exact child to be present locally:
 
 ```sh
-docker run --rm --cidfile /absolute/new-evidence/container.cid \
+docker image inspect ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316 >/dev/null
+```
+
+Then use this command form with new absolute host paths:
+
+```sh
+docker run --rm --pull never --cidfile /absolute/new-evidence/container.cid \
   --name pkg-s6-dn03b-x86-unique \
   --platform linux/amd64 --network none \
   --mount type=bind,src=/absolute/nix-installer-x86_64-linux,dst=/input/nix-installer-x86_64-linux,readonly \
