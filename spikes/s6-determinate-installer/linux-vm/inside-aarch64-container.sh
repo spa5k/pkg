@@ -107,9 +107,9 @@ while [ "$i" -lt 50 ] && [ ! -s "$evidence/diagnostic-canary.ready" ]; do i=$((i
 record 'PASS: loopback diagnostics canary is active'
 
 printf '%s\n' 'DETSYS_IDS_TELEMETRY=disabled' >"$evidence/install.env"
-write_argv "$evidence/install.argv" "$installer" --diagnostic-endpoint "$endpoint" install linux --determinate --no-confirm --no-modify-profile --init none --extra-conf 'sandbox = false'
+write_argv "$evidence/install.argv" "$installer" --diagnostic-endpoint "$endpoint" install linux --determinate --no-confirm --no-modify-profile --init none --extra-conf 'sandbox = false' 'filter-syscalls = false'
 set +e
-DETSYS_IDS_TELEMETRY=disabled "$installer" --diagnostic-endpoint "$endpoint" install linux --determinate --no-confirm --no-modify-profile --init none --extra-conf 'sandbox = false' >"$evidence/install.output" 2>&1
+DETSYS_IDS_TELEMETRY=disabled "$installer" --diagnostic-endpoint "$endpoint" install linux --determinate --no-confirm --no-modify-profile --init none --extra-conf 'sandbox = false' 'filter-syscalls = false' >"$evidence/install.output" 2>&1
 install_status=$?
 set -e
 printf '%s\n' "$install_status" >"$evidence/install.status"

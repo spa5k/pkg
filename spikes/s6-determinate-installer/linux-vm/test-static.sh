@@ -28,10 +28,11 @@ arm_cleanup_is_exact() {
         grep -F -x '[ "$cleanup_count" -eq 0 ] || die "exact container remained after docker run --rm"' "$candidate" >/dev/null
 }
 
-check_x86_container_target() {
+check_x86_container_contract() {
     file=$1
     grep -F 'x86_64-linux) machine=x86_64; expected_installer_sha=9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c' "$file" >/dev/null &&
-        grep -F 'installer=/input/nix-installer-$target' "$file" >/dev/null
+        grep -F 'installer=/input/nix-installer-$target' "$file" >/dev/null &&
+        grep -F -- "--extra-conf 'sandbox = false' 'filter-syscalls = false'" "$file" >/dev/null
 }
 
 sh -n "$host" "$guest" "$arm_host" "$arm_guest" "$0"
@@ -139,7 +140,7 @@ grep -F 'cp "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents
 grep -F 'cat "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents can be printed"
 grep -F 'sha256 "$sentry" >"$prefix.sha256"' "$arm_guest" >/dev/null || die "aarch64 private sentry digest missing"
 grep -F 'strict clean-uninstall residue contract' "$arm_guest" >/dev/null || die "aarch64 strict residue gate missing"
-check_x86_container_target "$arm_guest" || die "x86_64 container target pin missing"
+check_x86_container_contract "$arm_guest" || die "x86_64 container contract missing"
 
 base_hash_line=$(grep -n 'sha256 "$base"' "$host" | head -1 | cut -d: -f1)
 qemu_line=$(grep -n '^qemu-system-x86_64 ' "$host" | cut -d: -f1)
@@ -228,8 +229,14 @@ first_arm_mutation_line=$(grep -Fn -x ': >"$evidence/results"' "$arm_guest" | cu
 cp "$arm_guest" "$tmp/container-target-mutant.sh"
 sed 's/9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c/0000000000000000000000000000000000000000000000000000000000000000/' "$tmp/container-target-mutant.sh" >"$tmp/container-target-mutant.new"
 mv "$tmp/container-target-mutant.new" "$tmp/container-target-mutant.sh"
-if check_x86_container_target "$tmp/container-target-mutant.sh"; then
+if check_x86_container_contract "$tmp/container-target-mutant.sh"; then
     die "x86_64 target-pin mutation was accepted"
+fi
+cp "$arm_guest" "$tmp/container-filter-mutant.sh"
+sed 's/filter-syscalls = false/filter-syscalls = true/' "$tmp/container-filter-mutant.sh" >"$tmp/container-filter-mutant.new"
+mv "$tmp/container-filter-mutant.new" "$tmp/container-filter-mutant.sh"
+if check_x86_container_contract "$tmp/container-filter-mutant.sh"; then
+    die "syscall-filter mutation was accepted"
 fi
 if "$host" --approve-destructive-vm /no/base /no/installer unknown "$tmp/out" >"$tmp/out.log" 2>&1; then
     die "unsupported lane was accepted"

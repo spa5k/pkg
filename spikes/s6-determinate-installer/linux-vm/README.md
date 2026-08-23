@@ -94,3 +94,6 @@ For x86_64, use the authenticated image reference
 with `--platform linux/amd64`. Use an exact container name and a CID file.
 After the expected nonzero probe result, require `docker container inspect`
 for that CID to fail. This proves that `--rm` removed the exact container.
+The container install also sets `filter-syscalls = false`. The x86_64 image
+runs under ARM64 emulation on this proof host. The default syscall filter does
+not load in that environment. This setting is only a container-proof input.
