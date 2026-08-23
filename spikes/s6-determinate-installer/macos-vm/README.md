@@ -22,3 +22,14 @@ Each evidence path must be absolute, canonical, absent, and on a volume with at 
 Pinned inputs are Determinate Nix Installer 3.22.1 with SHA-256 `90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b`, vendor source revision `4132ad07a15ee7d88c096ac7172b7afb2672866b`, Tart `2.35.0`, and cached base `ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c`.
 
 Hard blocker: never run the installer unless the host has at least 32 GiB free on both the evidence and Tart storage volumes, and the guest has at least 30 GiB free before its first vendor execution.
+
+Each reboot starts with an outcome of `FAIL` and records the raw pre-reboot
+`kern.boottime`. The shutdown call records its exit status and the host-timeout
+flag in separate files. Only `0:0` and `124:1` can continue. Shutdown output is
+evidence, but it is not reboot proof. The harness waits for a successful guest
+`sysctl` result with a different raw boot time. Temporary guest unavailability
+and an already-completed reboot are both valid. An equal boot time at the
+deadline or any comparison error fails the run. After the boot time changes,
+the harness checks passwordless `sudo`, the owner marker, both staged file
+hashes, and the Tart process. It writes `PASS` and returns success only after
+all checks pass.

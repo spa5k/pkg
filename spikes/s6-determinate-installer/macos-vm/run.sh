@@ -398,18 +398,6 @@ run_phase() {
             ;;
     esac
 }
-wait_guest_ready() {
-    ready=0
-    i=0
-    while [ "$i" -lt 150 ]; do
-        if bounded_exec 1 /dev/null /usr/bin/true >>"$out/guest-agent.log" 2>&1; then ready=1; break; fi
-        kill -0 "$run_pid" 2>/dev/null || die "Tart VM exited during guest reboot"
-        i=$((i + 1))
-        sleep 2
-    done
-    [ "$ready" -eq 1 ] || die "Guest Agent did not return after reboot"
-    kill -0 "$run_pid" 2>/dev/null || die "Tart VM exited before post-reboot readiness was accepted"
-}
 revalidate_guest() {
     label=$1
     bounded_exec 30 /dev/null /usr/bin/sudo -n /bin/sh -c '
@@ -427,31 +415,42 @@ revalidate_guest() {
 }
 reboot_guest() {
     label=$1
+    printf '%s\n' FAIL >"$out/reboots/$label.outcome"
     bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>&1 || die "could not record pre-reboot kern.boottime"
     set +e
     bounded_exec 30 /dev/null /usr/bin/sudo -n /sbin/shutdown -r now >>"$out/reboots/$label.shutdown" 2>&1
     shutdown_status=$?
+    shutdown_timed_out=$wait_timed_out
     set -e
     printf '%s\n' "$shutdown_status" >"$out/reboots/$label.shutdown.status"
-    [ "$shutdown_status" -eq 0 ] || die "guest shutdown command failed"
-    down=0
+    printf '%s\n' "$shutdown_timed_out" >"$out/reboots/$label.shutdown.timed-out"
+    case "$shutdown_status:$shutdown_timed_out" in
+        0:0|124:1) ;;
+        *) die "guest shutdown command returned an invalid status/timeout pair" ;;
+    esac
+    rebooted=0
     i=0
-    while [ "$i" -lt 60 ]; do
-        if bounded_exec 1 /dev/null /usr/bin/true >/dev/null 2>&1; then :; else down=1; break; fi
+    while [ "$i" -lt 150 ]; do
+        kill -0 "$run_pid" 2>/dev/null || die "Tart VM exited during guest reboot"
+        if bounded_exec 1 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.after" 2>"$out/reboots/$label.after.stderr"; then
+            if cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after"; then
+                :
+            else
+                reboot_cmp_status=$?
+                case $reboot_cmp_status in
+                    1) rebooted=1; break ;;
+                    *) die "could not compare raw kern.boottime across reboot" ;;
+                esac
+            fi
+        fi
         i=$((i + 1))
-        sleep 1
+        sleep 2
     done
-    [ "$down" -eq 1 ] || die "Guest Agent did not become unavailable for reboot"
-    wait_guest_ready
+    [ "$rebooted" -eq 1 ] || die "raw kern.boottime did not change before reboot deadline"
     bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/true >>"$out/guest-agent.log" 2>&1 || die "passwordless guest sudo did not return after reboot"
     revalidate_guest "$label"
-    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.after" 2>&1 || die "could not record post-reboot kern.boottime"
-    if cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after"; then
-        die "raw kern.boottime did not change across reboot"
-    else
-        reboot_cmp_status=$?
-    fi
-    [ "$reboot_cmp_status" -eq 1 ] || die "could not compare raw kern.boottime across reboot"
+    kill -0 "$run_pid" 2>/dev/null || die "Tart VM exited before reboot proof was accepted"
+    printf '%s\n' PASS >"$out/reboots/$label.outcome"
     return 0
 }
 

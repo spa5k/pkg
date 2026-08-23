@@ -127,6 +127,31 @@ lane under `set -e`.
 uninstall, the second reboot, and residue cleanup. Receipt contents were not
 read.
 
+## R7 observed evidence and limits
+
+The preserved evidence path is
+`/private/var/tmp/pkg-s6-dn03c-evidence/lifecycle-diagnostics-23195d1-r7`.
+
+**Observed:** The product source is `23195d1`. All phases from baseline through
+lifecycle-repeat-uninstall passed with guest status `0`. The run finalized and
+validated eight archives. No `.tar.part` file remains. The first shutdown
+returned raw status `0`. The Guest Agent became unavailable and then ready.
+Identity revalidation passed, and raw `kern.boottime` changed. The second
+shutdown printed the same normal text as the first shutdown. Its raw status was
+`124`, and its status file appeared about 35 seconds later. The run did not
+record a second post-reboot boot time. It did not run the second identity
+revalidation, lifecycle-residue, or final reboot validation. Exact VM cleanup
+passed, and no VM remains. The evidence tree is private and has no symlinks.
+The tree and archives contain no `receipt.json`. Receipt evidence contains only
+metadata, size, and SHA-256 identity. Receipt contents were not read.
+
+**Inference:** The host deadline in `wait_pid` produced status `124`. The
+shutdown connection did not return before that deadline. The normal shutdown
+text does not prove that the reboot completed.
+
+**Unproved:** The second reboot, post-second-reboot identity, and final residue
+remain unproved.
+
 ## Decision table
 
 | Decision | Result | Reason |
