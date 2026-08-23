@@ -6,10 +6,11 @@
 | Pinned source revision | `4132ad07a15ee7d88c096ac7172b7afb2672866b` |
 | Research date | 2026-08-23 |
 | Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, and install self-test warnings |
-| Evidence rule | Primary sources only. No private receipt contents were read. No private evidence was changed. |
+| Evidence rule | Pinned primary-source analysis plus preserved R4 observations. No private receipt contents were read. No private evidence was changed. |
 
-In this report, **r2** means the reported prior lifecycle attempt. **r3** means
-the next evidence-only lifecycle attempt.
+In this report, **r2** means the reported first lifecycle attempt. **r3** means
+the evidence-only harness revision. **R4** means the preserved run that used
+that revision.
 
 ## Short answer
 
@@ -29,8 +30,8 @@ contract has more than one part:
 3. The installer writes the UUID-based `/etc/fstab` line.
 4. A root launchd service runs `determinate-nixd init` to mount the store.
 
-A strong source-backed hypothesis for installer exit `0`, a valid APFS mount,
-and harness `fstab-count = 0` is a UUID letter-case mismatch.
+The R4 evidence proves that the failed exact comparison was a UUID letter-case
+mismatch.
 
 The installer parses `VolumeUUID` as a Rust `Uuid`. It formats `{uuid}` in the
 fstab line. The `uuid` crate formats `Display` output as lower-case,
@@ -38,9 +39,32 @@ hyphenated text. The harness reads the raw `diskutil` value and requires
 upper-case text. A correct lower-case vendor line does not equal the harness's
 upper-case expected line.
 
-This is a source-backed explanation. It is not runtime proof. The next run must
-capture the actual fstab line and launchd service evidence before any exact
-comparison stops the phase.
+Only the expected UUID text must change. The raw `diskutil` UUID evidence and
+its upper-case format validation must not change. Every other fstab field and
+strict count gate must remain exact.
+
+## R4 observed evidence
+
+The preserved evidence path is
+`/private/var/tmp/pkg-s6-dn03c-evidence/lifecycle-diagnostics-f65b6e4-r4`.
+
+The following values are **Observed** in R4:
+
+| Evidence | Observed value |
+|---|---|
+| `baseline` phase archive SHA-256 | `ad7a98cfc05668f918d4f9c029de4aeda3b410376781f268b1d9eab3b6a8e604` |
+| `lifecycle-install` phase archive SHA-256 | `5d6c63b9d0a9865aed14556fa5398e57c5aa770174dd990e3974ffc93773c815` |
+| Raw `diskutil` UUID | `4540405A-CCE8-4E05-9632-CB2A88D70667` |
+| Vendor fstab UUID | `4540405a-cce8-4e05-9632-cb2a88d70667` |
+| Installer status | `0` |
+| `determinate-nixd status` probe | `0` |
+| Nix daemon store-ping probe | `0` |
+| Strict expected-line count | `0` |
+
+All fstab fields other than UUID letter case matched. This is **Observed**.
+
+R4 stopped at the strict comparison. It does not prove a complete lifecycle,
+a reboot result, repair, uninstall, or residue cleanup.
 
 ## Decision table
 
@@ -48,11 +72,11 @@ comparison stops the phase.
 |---|---|---|
 | Is the exact vendor fstab contract known? | **GO** | The pinned source constructs the full line directly. |
 | Is a persistent mount service part of the contract? | **GO** | The pinned source creates and loads `systems.determinate.nix-store`. |
-| Can DN-03c relax the fstab gate now? | **NO-GO** | The current runtime evidence has not been inspected in this research task. Source analysis alone does not prove the guest's actual line. |
-| Should r3 add evidence capture before the gate? | **GO** | This is the smallest safe next step. It does not change acceptance. |
+| Can DN-03c change the UUID comparison now? | **GO** | R4 proves that only UUID letter case differs. Lower-case only the expected UUID. |
+| Did r3 add evidence capture before the gate? | **DONE** | R4 preserved the raw UUID, raw fstab line, and probe results before the strict gate. |
 | Should `nix: not found` make installer exit `0` fail? | **NO-GO** | The installer treats self-test failures as warnings. With `--no-modify-profile`, a bare `nix` command can be absent from shell `PATH`. |
 | Should the harness keep its absolute-path Nix checks? | **GO** | They test the installed binary and daemon without depending on shell profile changes. |
-| Is DN-03c complete after this research? | **NO-GO** | A destructive install and reboot lane must still prove the contract on the pinned guest. |
+| Is DN-03c complete after R4? | **NO-GO** | R4 stopped at the strict fstab comparison. A later run must prove the remaining lifecycle. |
 
 ## 1. Source and release identity
 
@@ -183,8 +207,8 @@ format the UUID.
 | Part | Vendor source | Current harness |
 |---|---|---|
 | UUID input | Parses `VolumeUUID` into `uuid::Uuid` | Reads raw `VolumeUUID` text with `plutil` |
-| UUID validation | Rust UUID parser | Requires upper-case hexadecimal text |
-| UUID output | Formats `{uuid}` | Reuses raw upper-case text |
+| UUID validation | Rust UUID parser | Requires upper-case raw `diskutil` text |
+| UUID output | Formats `{uuid}` | Lower-cases only the UUID used in the expected fstab line |
 | Mount point | `/nix` | `/nix` |
 | Filesystem | `apfs` | `apfs` |
 | Options | `rw,noatime,noauto,nobrowse,nosuid,owners` | Same |
@@ -200,15 +224,14 @@ selects `uuid` `1.24.1`. The crate's official
 [`Uuid` documentation](https://docs.rs/uuid/1.24.1/uuid/struct.Uuid.html#formatting)
 shows that default `Display` is a lower-case, hyphenated value.
 
-The harness validates an upper-case value and uses it without normalization.
-See [`inside.sh`](./inside.sh).
+The harness still records and validates the raw upper-case value. It now
+lower-cases only `A` through `F` while it builds the expected fstab line. See
+[`inside.sh`](./inside.sh).
 
-The reported r2 phase reached the exact fstab string comparison. In the
-harness, the raw APFS UUID upper-case validation runs immediately before that
-comparison. Thus, the upper-case UUID validation had already passed when the
-exact fstab string comparison failed. The remaining source-backed hypothesis
-is a difference between that accepted upper-case value and the vendor's
-lower-case formatted value.
+R4 reached the exact fstab string comparison. The raw upper-case UUID
+validation passed. The installer and both evidence probes returned status `0`.
+The raw vendor line used the same UUID in lower-case text. All other fstab
+fields matched. These values are **Observed**.
 
 ### Source-backed example
 
@@ -224,7 +247,7 @@ the installer can write:
 UUID=936da01f-9abd-4d9d-80c7-02af85c822a8 /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer
 ```
 
-The current harness expects:
+The pre-fix harness expected:
 
 ```text
 UUID=936DA01F-9ABD-4D9D-80C7-02AF85C822A8 /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer
@@ -235,23 +258,23 @@ case-sensitive. The harness then stops the phase. This grep runs after the
 installer's immediate mount command. It does not change mount state. Thus, an
 existing mount and a failed later text comparison can coexist.
 
-This is the best source-backed explanation for the reported combination:
+R4 observed this combination:
 
 - installer status `0`;
-- encrypted APFS `Nix Store` mounted at `/nix`;
+- both evidence probe statuses `0`;
 - exact fstab count `0`.
 
-It is still an inference until the raw guest fstab line is captured.
+The case-only cause is no longer an inference. R4 captured both UUID forms.
 
-## 4. Other possible explanations
+## 4. Other lifecycle risks
 
-The following explanations are less consistent with the pinned source, but the
-next evidence run must keep them open:
+R4 closes the cause of this exact comparison failure. It does not close the
+rest of the lifecycle:
 
 | Possible cause | Source assessment | Required evidence |
 |---|---|---|
-| UUID case only | Strong candidate | Raw `/etc/fstab` `/nix` line and raw `VolumeUUID` |
-| Another process changed fstab after install | Possible | Before/after fstab hashes and timestamps |
+| UUID case only | Observed cause of the strict count `0` | Lower-case only the expected UUID |
+| Another process changes fstab later | Not closed by the stopped R4 run | Before/after fstab hashes and timestamps |
 | A different installer binary ran | Reduced by existing version and SHA gates | Recorded installer SHA and version |
 | The launchd service mounted without a valid fstab line | Not proved by installer source | Raw service plist, launchd job state, fstab line, and mount state from one phase |
 | The fstab line is truly absent | Conflicts with a clean execution of this action sequence | Installer output, fstab metadata, service evidence, and exact source pin |
@@ -328,49 +351,33 @@ Keep the current functional checks that call the absolute executable:
 These checks test the installed product without depending on a shell profile.
 If either absolute-path check fails, the installation is not accepted.
 
-## 6. Smallest safe r3 change
+## 6. Smallest safe R4 follow-up
 
-Do not relax the current exact gate yet.
+R3 added the evidence capture before the strict fstab assertion. R4 then
+proved a case-only UUID difference.
 
-Make one evidence-only change to the macOS guest harness:
-
-1. After installer status `0`, capture every raw `/etc/fstab` line whose second
-   field is `/nix`.
-2. Capture `/etc/fstab` metadata and SHA-256.
-3. Capture `diskutil info -plist 'Nix Store'` and its raw `VolumeUUID`.
-4. Capture the store plist metadata, SHA-256, program arguments, and
-   `launchctl print system/systems.determinate.nix-store` result.
-5. Capture the `/nix` mount line.
-6. Only then run the current exact fstab and service acceptance checks.
-
-Use the native commands that the harness already uses. Do not add a dependency
-or a new parser. Do not read receipt contents.
-
-The most minimal implementation is to move or duplicate the existing raw
-fstab, plist, launchd, and mount captures so they run before the first exact
-fstab assertion. Keep the exact assertion unchanged for this evidence run.
-
-### r3 decision after evidence
-
-| Observed evidence | Next decision |
-|---|---|
-| One vendor line exists and only UUID letter case differs | Canonicalize the expected UUID to lower-case, then keep the full exact line and uniqueness checks. |
-| One line exists but options, spacing, or comment differ | Stop. Compare the binary pin and actual source path. Do not relax the gate. |
-| No `/nix` fstab line exists | Stop. Treat the persistent contract as failed. Investigate the service and installer execution path. |
-| Store plist or launchd job differs | Stop. Do not accept mount state alone. |
-| Fstab, service, mount, and absolute Nix checks pass before and after reboot | Accept this contract row for the pinned guest and revision. |
-
-If the evidence proves a case-only difference, the later code change can be
-small:
+The follow-up changes one expression in the expected line:
 
 ```sh
-installed_uuid_fstab=$(printf '%s\n' "$installed_uuid" | tr '[:upper:]' '[:lower:]')
+$(printf '%s\n' "$installed_uuid" | tr 'ABCDEF' 'abcdef')
 ```
 
-Use this normalized value only to build the expected vendor fstab line. Keep
-the raw upper-case `diskutil` UUID validation and evidence file. This preserves
-the exact vendor contract. It does not change the option, comment, mount point,
-or count gates.
+This expression changes only hexadecimal letters in the comparison UUID. It
+does not normalize the full fstab line.
+
+Keep all of these controls unchanged:
+
+- The raw UUID evidence keeps the upper-case `diskutil` value.
+- The raw UUID must still match the upper-case UUID format.
+- The mount point must be `/nix`.
+- The filesystem must be `apfs`.
+- The option order, spacing, and vendor comment must match exactly.
+- The full vendor line must occur exactly once.
+- `/etc/fstab` must contain exactly one `/nix` row.
+- Raw fstab capture and receipt opacity must remain.
+
+After this change, run the lifecycle lane again from a clean pinned guest. R4
+does not supply the later reboot, repair, uninstall, and residue results.
 
 ## 7. Final conclusion
 
@@ -378,18 +385,18 @@ The Determinate installer is not using a hidden replacement for fstab. At the
 pinned revision, it creates both the UUID fstab entry and a root launchd mount
 service.
 
-The current harness line matches the vendor source in all fields other than
-UUID letter case. The probable error is that the harness expects an upper-case
-UUID while the Rust formatter writes lower-case text.
+R4 proves that the pre-fix harness line matched the vendor line in all fields
+other than UUID letter case. The harness now lower-cases only the expected
+UUID.
 
 The self-test warnings are separate. The installer intentionally logs
 self-test failures as warnings and still succeeds. With
 `--no-modify-profile`, a bare `nix` lookup can fail even when the absolute Nix
 binary and daemon work.
 
-The next step is evidence capture, not gate relaxation. DN-03c remains a
-**NO-GO** until the actual fstab line, launchd service, mount state, absolute
-Nix checks, and reboot behavior all pass on the pinned guest.
+The next step is a new lifecycle run with the corrected exact gate. DN-03c
+remains a **NO-GO** until the remaining launchd, mount, absolute Nix, reboot,
+repair, uninstall, and residue checks pass on the pinned guest.
 
 ## Primary sources
 

@@ -224,7 +224,7 @@ assert_installed_state() {
     printf '%s\n' "$installed_uuid" >"$phase_dir/$installed_name.volume-uuid"
     printf '%s\n' "$installed_uuid" | grep -E '^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$' >/dev/null || die "Nix Store volume UUID is empty or invalid"
     [ -f /etc/fstab ] && [ ! -L /etc/fstab ] || die "installed fstab is missing or unsafe"
-    installed_fstab="UUID=$installed_uuid /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer"
+    installed_fstab="UUID=$(printf '%s\n' "$installed_uuid" | tr 'ABCDEF' 'abcdef') /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer"
     grep -Fxc "$installed_fstab" /etc/fstab >"$phase_dir/$installed_name.fstab-count" || die "exact Determinate fstab entry is absent"
     [ "$(cat "$phase_dir/$installed_name.fstab-count")" -eq 1 ] || die "exact Determinate fstab entry is not unique"
     awk '$2 == "/nix" {print}' /etc/fstab >"$phase_dir/$installed_name.fstab-nix" || die "could not inspect fstab /nix entries"

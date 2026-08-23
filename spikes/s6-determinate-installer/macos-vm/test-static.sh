@@ -11,6 +11,11 @@ need_exact() { exact_count=$(grep -F -x -c -- "$2" "$1" || :); [ "$exact_count" 
 reject() { reject_pattern=$1 reject_message=$2; shift 2; for reject_file in "$@"; do grep -E -- "$reject_pattern" "$reject_file" >/dev/null && die "$reject_message"; done; return 0; }
 line() { grep -n -F -- "$2" "$1" | head -1 | cut -d: -f1; }
 exact_line() { grep -n -F -x -- "$2" "$1" | head -1 | cut -d: -f1; }
+fstab_uuid_line="    installed_fstab=\"UUID=\$(printf '%s\\n' \"\$installed_uuid\" | tr 'ABCDEF' 'abcdef') /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer\""
+fstab_uuid_case_is_valid() {
+    fstab_case_count=$(grep -F -x -c -- "$fstab_uuid_line" "$1" || :)
+    [ "$fstab_case_count" -eq 1 ]
+}
 installer_line_exact='        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile'
 status_save_line_exact='        initial_install_status=$last_status'
 snapshot_line_exact='        snapshot install-preassert'
@@ -192,6 +197,8 @@ need "$guest" 'if [ -f /etc/fstab ] && [ ! -L /etc/fstab ]; then' "safe raw fsta
 need "$guest" 'cp /etc/fstab "$snapshot_prefix.fstab.raw" || die "could not record raw fstab"' "raw fstab capture missing"
 need "$guest" 'chmod 0600 "$snapshot_prefix.fstab.raw" || die "could not make raw fstab evidence private"' "raw fstab privacy missing"
 need "$guest" 'printf '\''%s\n'\'' absent-or-unsafe >"$snapshot_prefix.fstab.raw" || die "could not record unsafe or absent fstab"' "raw fstab unsafe marker missing"
+need_exact "$guest" "$fstab_uuid_line" "fstab UUID comparison lowercasing changed"
+fstab_uuid_case_is_valid "$guest" || die "fstab UUID comparison does not use the exact lowercase translation"
 need "$guest" 'grep -Fxc "$installed_fstab" /etc/fstab >"$phase_dir/$installed_name.fstab-count" || die "exact Determinate fstab entry is absent"' "strict fstab assertion changed"
 install_evidence_order_is_valid "$guest" || die "install pre-assert evidence phase or order changed"
 order_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-install-order.XXXXXX") || die "could not create install-order fixture"
@@ -236,6 +243,14 @@ bare_state_change='        run_recorded missing-endpoint-install 7200 "$staged" 
 awk -v anchor='    lifecycle-repeat-install)' -v bare="$bare_state_change" '{ print; if ($0 == anchor) print bare }' "$guest" >"$order_fixture/missing-endpoint.sh"
 need_exact "$order_fixture/missing-endpoint.sh" "$bare_state_change" "missing-endpoint mutation vanished"
 if installer_process_coverage_is_valid "$order_fixture/missing-endpoint.sh"; then die "bare state-changing installer mutation was accepted"; fi
+fstab_uppercase_line="    installed_fstab=\"UUID=\$(printf '%s\\n' \"\$installed_uuid\" | tr 'ABCDEF' 'ABCDEF') /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer\""
+awk -v lowercase="tr 'ABCDEF' 'abcdef'" -v uppercase="tr 'ABCDEF' 'ABCDEF'" '
+index($0, lowercase) { start = index($0, lowercase); print substr($0, 1, start - 1) uppercase substr($0, start + length(lowercase)); next }
+{ print }
+' "$guest" >"$order_fixture/uppercase-fstab-translation.sh"
+need_exact "$order_fixture/uppercase-fstab-translation.sh" "$fstab_uppercase_line" "uppercase fstab translation mutation vanished"
+if grep -F -x -- "$fstab_uuid_line" "$order_fixture/uppercase-fstab-translation.sh" >/dev/null; then die "lowercase fstab translation survived uppercase mutation"; fi
+if fstab_uuid_case_is_valid "$order_fixture/uppercase-fstab-translation.sh"; then die "uppercase fstab translation mutation was accepted"; fi
 rm -R "$order_fixture"
 trap - EXIT HUP INT TERM
 
