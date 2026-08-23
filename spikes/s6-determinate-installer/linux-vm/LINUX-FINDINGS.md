@@ -2,20 +2,20 @@
 
 | | |
 |---|---|
-| **Report** | DN-03b, Linux x86_64 only. Destructive QEMU guest proof of the pinned vendor executable. |
-| **Date** | 2026-08-22 (UTC). |
+| **Report** | DN-03b. Full Linux x86_64 QEMU proof plus a native Linux aarch64 container asset proof. |
+| **Date** | 2026-08-23 (UTC). |
 | **Parent** | [S6 research findings](../FINDINGS.md), [Linux VM harness](README.md), [stack plan](../../../plans/determinate-nix-stacked-prs.md). |
-| **Status** | Evidence bundle accepted. Lifecycle vendor contract **FAIL**. Linux x86_64 stop-gate decision in section 13. |
+| **Status** | Evidence bundle accepted. Linux aarch64 asset support is proved. The clean-uninstall vendor contract remains **FAIL** on both tested architectures. |
 
 ## Terms
 
 - **Vendor** means Determinate Systems, the maker of the installer.
 - **Vendor executable** means the `nix-installer` binary from vendor release v3.22.1.
-- **Guest** means the disposable Ubuntu virtual machine that ran the proof.
-- **Lane** means one proof scenario. Each lane used a fresh guest disk.
+- **Guest** means a disposable Ubuntu virtual machine or container that ran a proof.
+- **Lane** means one proof scenario. Each lane used fresh disposable guest state.
 - **Sentinel** means a marker file that the harness made before the vendor ran. The harness checked that the vendor did not change it.
 - **Residue** means a file or account that stays on the host after uninstall.
-- **Sentry endpoint** means the file `/etc/nix/sentry-endpoint`. The vendor writes the address of its error-reporting service into this file. The address is private. This report does not print it.
+- **Sentry endpoint** means the file `/etc/nix/sentry-endpoint`. Vendor execution creates this file with the address of its error-reporting service. The exact internal writer is not public. The address is private. This report does not print it.
 - **PASS / FAIL** mean the verdicts of the pinned harness checks. They are not product acceptance.
 - **Accepted** means reviewers agreed that the evidence is complete and trustworthy.
 
@@ -23,9 +23,11 @@
 
 ## 1. Executive decision
 
-The vendor executable installed, repaired, ran a same-version daemon upgrade probe, and uninstalled Determinate Nix on Linux.
+The vendor executable installed, repaired, ran a same-version daemon upgrade probe, and uninstalled Determinate Nix on Linux x86_64.
 
-One vendor residue survived uninstall. The file `/etc/nix/sentry-endpoint` stayed on the guest.
+The pinned Linux aarch64 executable also ran natively. It installed Determinate Nix 3.22.1 in the vendor's documented root-only container mode. The installed Nix executable ran and reported version 2.35.2. Vendor uninstall returned zero.
+
+One vendor residue survived uninstall on both architectures. The file `/etc/nix/sentry-endpoint` stayed on each guest.
 
 So the strict lifecycle residue contract **failed**. The evidence itself is complete and accepted.
 
@@ -35,9 +37,9 @@ The vendor executable is good enough for alpha install and recovery. It is not g
 
 ## 2. Scope and exact pins
 
-This report covers the Linux x86_64 lanes only. It covers DN-03b. It does not cover Apple Silicon macOS, Linux aarch64, or the pkg integration PRs.
+This report covers the full Linux x86_64 lanes and the Linux aarch64 asset-support lane. It covers DN-03b. It does not cover Apple Silicon macOS or the pkg integration PRs.
 
-DN-03b is the Linux x86_64 execution child of roadmap PR DN-03. The roadmap keeps the parent number DN-03.
+DN-03b is the Linux execution child of roadmap PR DN-03. The roadmap keeps the parent number DN-03.
 
 Pins used in every lane:
 
@@ -52,6 +54,18 @@ Pins used in every lane:
 | Guest image SHA-256 | `6e40c07ae715f744f84af0bec76415cc1987dd115b4b8de437818561f01a3733` |
 
 The harness checked the guest image digest before it started QEMU. It checked the vendor asset digest again after it copied the asset inside the guest. It executed only that verified copy, by absolute path.
+
+The aarch64 lane used these additional pins:
+
+| Item | Value |
+|---|---|
+| Vendor asset | `nix-installer-aarch64-linux` |
+| Vendor asset SHA-256 | `9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179` |
+| Product revision | `05891b67d78bd9b4fa9a43ada6fb9b0f802d7de2` |
+| Container image | `ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517` |
+| Container architecture | `linux/arm64`; guest `uname -m` returned `aarch64` |
+
+The aarch64 lane used no network. It mounted the pinned executable read-only. It used the exact root-only container form documented by the vendor: `install linux --init none --extra-conf 'sandbox = false'`.
 
 Not in scope: pkg Handoff state, package lifecycle, product repair, product uninstall, and final product residue. Those belong to DN-07 and later PRs.
 
@@ -87,8 +101,9 @@ The first upstream run is **not** in this table. It is historical. See section 9
 | `foreign-nix` | 0 | Vendor install returned 0. Sentinel preserved. | The vendor **accepted** a foreign `/nix` and installed into it. `pkg` must own the refusal policy. |
 | `upstream-input` (r2) | 0 | Upstream Nix installed. Later Determinate install returned 1. | The vendor can build an upstream Nix input. The observed Determinate attempt refused it. The lane did not require that status. |
 | `diagnostics-disabled` | 0 | Install returned 0 with zero captured requests. | The empty diagnostic endpoint produced no requests to the guest-local capture service. |
+| `aarch64-container` (r4) | 1 | Ten asset, install, execution, identity, inventory, and uninstall checks passed. The strict residue check failed. | Native Linux aarch64 support is proved. Vendor uninstall again left only `/etc/nix/sentry-endpoint`. This is not a systemd, reboot, repair, or crash-recovery proof. |
 
-The `lifecycle` exit status 1 is correct behavior of the harness. The harness found a real vendor residue. Do not read it as an evidence problem.
+The `lifecycle` and `aarch64-container` exit statuses of 1 are correct behavior. Each proof found the same vendor residue. Do not read these statuses as an evidence problem.
 
 ## 5. Lifecycle observations
 
@@ -240,6 +255,7 @@ Rules:
 6. `pkg` owns the foreign-input refusal policy. The vendor accepts a foreign `/nix`. Only `pkg` preflight can refuse it.
 7. Do not add product cleanup for the sentry endpoint in this spike.
 8. Route the final residue policy to the later uninstall-policy PR, DN-13. If product cleanup is ever approved, require exact checks first: file type, owner, mode, and hash. Only a file that matches the proved identity exactly may be removed.
+9. The smallest possible DN-13 policy is one exact-file rule. After successful vendor uninstall, `pkg` can remove only `/etc/nix/sentry-endpoint` when it is a non-symlink regular file, owned by root, mode `0600`, size 95 bytes, and its digest matches the approved value for the pinned vendor version and target. Any mismatch must fail closed and leave the file in place. No recursive `/etc/nix` cleanup is allowed. `/etc/nix` can be removed only after it is an empty, non-symlink, root-owned `0755` directory. This is a proposal. DN-03b does not apply it.
 
 Reasons:
 
@@ -249,11 +265,12 @@ Reasons:
 
 ## 13. Stop-gate decision
 
-The evidence is sufficient to understand vendor behavior on Linux x86_64. No observation is missing for the Linux x86_64 part of the DN-03 decision.
+The evidence is sufficient to understand the required vendor behavior on Linux x86_64. Native Linux aarch64 asset execution is also proved. No Linux observation required by the DN-03 release gate is missing.
 
 Decision:
 
 - The vendor executable is usable for alpha installation and recovery.
+- The pinned Linux aarch64 asset is usable for the documented root-only container install mode.
 - The strict complete-uninstall guarantee is **not** met. One vendor residue remains after uninstall.
 - Do not claim a clean uninstall until the later residue policy is decided and proved.
 
@@ -264,7 +281,7 @@ Two statements must stay separate:
 
 Do not call the lifecycle lane PASS.
 
-Linux aarch64 and Apple Silicon macOS still need their own proofs before the DN-03 child PR unblocks.
+Apple Silicon macOS still needs its proof before the DN-03 parent gate can unblock.
 
 ## 14. Evidence manifest
 
@@ -292,12 +309,22 @@ About the results hashes:
 - So the hashes fingerprint only the public lane summaries. They do not expose private receipts.
 - The first upstream run, `upstream-input-0d4809e`, is historical and is not part of this manifest. It is retained only to explain the transient DNS failure.
 
+The private aarch64 evidence is under `/var/tmp/pkg-s6-dn03b-aarch64-evidence/probe-05891b6-r4/`.
+
+| Directory | Lane | UTC run date | Container exit | Results SHA-256 | Probe SHA-256 |
+|---|---|---|---:|---|---|
+| `probe-05891b6-r4` | aarch64-container | 2026-08-23T19:53:03Z | 1 | `c8b3a3511e3e00901f5751ce1361afa47ce524332ef306a8b53aa056ee8e292f` | `ead1f75ac0e7a2e578b12196e4ec96312bf946bcabdc3e00877dd3e10fd9b32b` |
+
+The aarch64 output records ten PASS lines and one strict-residue FAIL line. The only `/etc/nix` entry was `sentry-endpoint`. The receipt contents and the sentry bytes were not archived. Only receipt metadata and the private sentry identity hash were recorded.
+
 ## 15. Primary sources
 
 These sources are official and primary. No blog or secondary source is cited.
 
 - [Exact release v3.22.1](https://github.com/DeterminateSystems/nix-installer/releases/tag/v3.22.1)
 - [Release asset used here](https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-x86_64-linux)
+- [Linux aarch64 release asset used here](https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-linux)
+- [Pinned official Linux and container support documentation](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/README.md#in-a-container)
 - [Pinned source commit](https://github.com/DeterminateSystems/nix-installer/commit/4132ad07a15ee7d88c096ac7172b7afb2672866b)
 - [Repository LGPL-2.1 license at the pinned commit](https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE)
 - [Pinned Rust library warning](https://github.com/DeterminateSystems/nix-installer/blob/4132ad07a15ee7d88c096ac7172b7afb2672866b/docs/rust-library.md)
@@ -311,8 +338,8 @@ These sources are official and primary. No blog or secondary source is cited.
 
 Limitations of this spike:
 
-1. One platform only. Linux x86_64 was tested. Linux aarch64 and Apple Silicon macOS need their own runs.
-2. One image only. Ubuntu 24.04 with one kernel version.
+1. Linux x86_64 received the full lifecycle proof. Linux aarch64 received only a native root-only container asset proof. Apple Silicon macOS has its own DN-03c proof.
+2. One x86_64 VM image and one aarch64 container image were tested.
 3. One run per lane. Cutover PRs require two clean runs.
 4. Crash recovery proves receipt and helper presence only. It does not run a functional Nix command.
 5. Foreign input stored no independent before/after sentinel hashes in the evidence. The in-guest comparison passed, but it cannot be rechecked from the files.
@@ -323,6 +350,7 @@ Limitations of this spike:
 10. The lifecycle lane did not prove pkg Handoff, package lifecycle, product repair, or product uninstall. Those belong to later PRs.
 11. The vendor executable ran as root inside a disposable guest. Behavior under a restricted or hardened host was not tested.
 12. `determinate-nixd upgrade --version v3.22.1` was a same-version probe. A real N to N+1 upgrade was not run.
+13. The aarch64 container proof did not run systemd, reboot, repair, crash recovery, diagnostics capture, repeat install, or repeat uninstall. DN-03 requires only asset support before release. DN-15 owns the complete Linux cutover proof.
 
 Later proof work:
 
