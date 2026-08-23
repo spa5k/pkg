@@ -9,6 +9,23 @@ guest=$script_dir/inside.sh
 need() { grep -F -- "$2" "$1" >/dev/null || die "$3"; }
 reject() { reject_pattern=$1 reject_message=$2; shift 2; for reject_file in "$@"; do grep -E -- "$reject_pattern" "$reject_file" >/dev/null && die "$reject_message"; done; return 0; }
 line() { grep -n -F -- "$2" "$1" | head -1 | cut -d: -f1; }
+installer_anchor='run_recorded install 7200 "$staged"'
+expected_install_evidence='        snapshot install-preassert
+        run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status
+        run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon
+        assert_installed_state after-install'
+install_evidence_order_is_valid() {
+    install_block=$(sed -n '/^phase_exit=0$/,$p' "$1" | sed -n '/^    lifecycle-install)$/,/^        ;;/p')
+    installer_line=$(printf '%s\n' "$install_block" | grep -n -F "$installer_anchor" | head -1 | cut -d: -f1)
+    install_success_line=$(printf '%s\n' "$install_block" | grep -n -F '[ "$last_status" -eq 0 ] || die "initial Determinate install failed"' | head -1 | cut -d: -f1)
+    diagnostic_line=$(printf '%s\n' "$install_block" | grep -n -F 'disabled diagnostic endpoint received a controlled request' | head -1 | cut -d: -f1)
+    evidence_snapshot_line=$(printf '%s\n' "$install_block" | grep -n -F 'snapshot install-preassert' | head -1 | cut -d: -f1)
+    actual_install_evidence=$(printf '%s\n' "$install_block" | sed -n '/^        snapshot install-preassert$/,/^        assert_installed_state after-install$/p')
+    [ "$actual_install_evidence" = "$expected_install_evidence" ] &&
+        [ -n "$installer_line$install_success_line$diagnostic_line$evidence_snapshot_line" ] &&
+        [ "$installer_line" -lt "$install_success_line" ] && [ "$install_success_line" -lt "$diagnostic_line" ] &&
+        [ "$diagnostic_line" -lt "$evidence_snapshot_line" ]
+}
 graph() {
     actual=$(sed -n "/^    $1)\$/,/^        ;;/p" "$host" | sed -n -e 's/^        run_phase /phase /p' -e 's/^        reboot_guest /reboot /p')
     [ "$actual" = "$2" ] || die "$1 execution graph changed"
@@ -132,6 +149,41 @@ need "$guest" 'receipt_identity()' "opaque receipt identity helper missing"
 need "$guest" "stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' \"\$receipt\"" "receipt metadata proof missing"
 need "$guest" 'sha256 "$receipt"' "receipt digest proof missing"
 reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?(cat|cp|dd|grep|head|tail|sed|awk|tar|tee|strings)[[:space:]].*(/nix/receipt\.json|"?\$receipt"?)' "receipt content read or copy found" "$guest"
+
+# Private install evidence precedes the unchanged strict installed-state gate.
+need "$guest" 'for snapshot_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd /etc/fstab /etc/synthetic.conf /opt/pkg '\''/Library/Application Support/pkg'\''; do' "snapshot path anchors changed"
+need "$guest" 'launchctl print system >"$snapshot_prefix.launchd-system" 2>&1 || die "could not record system launchd"' "snapshot launchd anchor changed"
+need "$guest" 'if [ -f /etc/fstab ] && [ ! -L /etc/fstab ]; then' "safe raw fstab test missing"
+need "$guest" 'cp /etc/fstab "$snapshot_prefix.fstab.raw" || die "could not record raw fstab"' "raw fstab capture missing"
+need "$guest" 'chmod 0600 "$snapshot_prefix.fstab.raw" || die "could not make raw fstab evidence private"' "raw fstab privacy missing"
+need "$guest" 'printf '\''%s\n'\'' absent-or-unsafe >"$snapshot_prefix.fstab.raw" || die "could not record unsafe or absent fstab"' "raw fstab unsafe marker missing"
+need "$guest" 'grep -Fxc "$installed_fstab" /etc/fstab >"$phase_dir/$installed_name.fstab-count" || die "exact Determinate fstab entry is absent"' "strict fstab assertion changed"
+install_evidence_order_is_valid "$guest" || die "install pre-assert evidence phase or order changed"
+order_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-install-order.XXXXXX") || die "could not create install-order fixture"
+trap 'rm -R "$order_fixture"' EXIT HUP INT TERM
+awk -v installer_anchor="$installer_anchor" '
+index($0, installer_anchor) {
+    print "        snapshot install-preassert"
+    print "        run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status"
+    print "        run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon"
+}
+index($0, "install-preassert") { next }
+{ print }
+' "$guest" >"$order_fixture/before-installer.sh"
+need "$order_fixture/before-installer.sh" 'snapshot install-preassert' "moved snapshot vanished from mutation"
+need "$order_fixture/before-installer.sh" 'run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status' "moved determinate-nixd probe vanished from mutation"
+need "$order_fixture/before-installer.sh" 'run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon' "moved Nix probe vanished from mutation"
+if install_evidence_order_is_valid "$order_fixture/before-installer.sh"; then die "install evidence before the installer was accepted"; fi
+awk '
+{ print }
+index($0, "run_recorded install-preassert-determinate-nixd-status 60") {
+    print "        [ \"$last_status\" -eq 0 ] || die \"install pre-assert probe failed\""
+}
+' "$guest" >"$order_fixture/fatal-probe.sh"
+need "$order_fixture/fatal-probe.sh" '[ "$last_status" -eq 0 ] || die "install pre-assert probe failed"' "fatal probe mutation vanished"
+if install_evidence_order_is_valid "$order_fixture/fatal-probe.sh"; then die "fatal install pre-assert probe gate was accepted"; fi
+rm -R "$order_fixture"
+trap - EXIT HUP INT TERM
 
 # Exact vendor argv and observed statuses.
 need "$guest" "run_recorded install 7200 \"\$staged\" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile" "install argv changed"

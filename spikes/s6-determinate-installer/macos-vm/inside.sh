@@ -175,6 +175,12 @@ snapshot() {
     for config_file in /etc/fstab /etc/synthetic.conf; do
         if [ -f "$config_file" ] && [ ! -L "$config_file" ]; then grep -Ein '(^|[[:space:]/])(nix|Nix Store)([[:space:]/]|$)' "$config_file" >>"$snapshot_prefix.config" || :; fi
     done
+    if [ -f /etc/fstab ] && [ ! -L /etc/fstab ]; then
+        cp /etc/fstab "$snapshot_prefix.fstab.raw" || die "could not record raw fstab"
+        chmod 0600 "$snapshot_prefix.fstab.raw" || die "could not make raw fstab evidence private"
+    else
+        printf '%s\n' absent-or-unsafe >"$snapshot_prefix.fstab.raw" || die "could not record unsafe or absent fstab"
+    fi
     : >"$snapshot_prefix.launchd-files"
     for launch_dir in /Library/LaunchDaemons /Library/LaunchAgents; do
         [ -d "$launch_dir" ] || continue
@@ -560,6 +566,9 @@ case $phase in
         unset DETSYS_IDS_TRANSPORT
         [ "$last_status" -eq 0 ] || die "initial Determinate install failed"
         [ "$(cat "$phase_dir/diagnostic-request-count")" -eq 0 ] || die "disabled diagnostic endpoint received a controlled request"
+        snapshot install-preassert
+        run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status
+        run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon
         assert_installed_state after-install
         sha256 /nix/nix-installer >"$phase_dir/installed-installer.sha256"
         [ "$(cat "$phase_dir/installed-installer.sha256")" = "$expected_sha" ] || die "installed installer digest differs from the pin"
