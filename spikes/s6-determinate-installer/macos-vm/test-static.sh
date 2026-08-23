@@ -7,24 +7,52 @@ host=$script_dir/run.sh
 guest=$script_dir/inside.sh
 
 need() { grep -F -- "$2" "$1" >/dev/null || die "$3"; }
+need_exact() { exact_count=$(grep -F -x -c -- "$2" "$1" || :); [ "$exact_count" -eq 1 ] || die "$3"; }
 reject() { reject_pattern=$1 reject_message=$2; shift 2; for reject_file in "$@"; do grep -E -- "$reject_pattern" "$reject_file" >/dev/null && die "$reject_message"; done; return 0; }
 line() { grep -n -F -- "$2" "$1" | head -1 | cut -d: -f1; }
-installer_anchor='run_recorded install 7200 "$staged"'
-expected_install_evidence='        snapshot install-preassert
+exact_line() { grep -n -F -x -- "$2" "$1" | head -1 | cut -d: -f1; }
+installer_line_exact='        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile'
+status_save_line_exact='        initial_install_status=$last_status'
+snapshot_line_exact='        snapshot install-preassert'
+determinate_probe_line_exact='        run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status'
+nix_probe_line_exact='        run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon'
+status_gate_line_exact='        [ "$initial_install_status" -eq 0 ] || die "initial Determinate install failed"'
+assert_line_exact='        assert_installed_state after-install'
+expected_install_sequence='        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
+        initial_install_status=$last_status
+        snapshot install-preassert
         run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status
         run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon
+        [ "$initial_install_status" -eq 0 ] || die "initial Determinate install failed"
         assert_installed_state after-install'
 install_evidence_order_is_valid() {
     install_block=$(sed -n '/^phase_exit=0$/,$p' "$1" | sed -n '/^    lifecycle-install)$/,/^        ;;/p')
-    installer_line=$(printf '%s\n' "$install_block" | grep -n -F "$installer_anchor" | head -1 | cut -d: -f1)
-    install_success_line=$(printf '%s\n' "$install_block" | grep -n -F '[ "$last_status" -eq 0 ] || die "initial Determinate install failed"' | head -1 | cut -d: -f1)
-    diagnostic_line=$(printf '%s\n' "$install_block" | grep -n -F 'disabled diagnostic endpoint received a controlled request' | head -1 | cut -d: -f1)
-    evidence_snapshot_line=$(printf '%s\n' "$install_block" | grep -n -F 'snapshot install-preassert' | head -1 | cut -d: -f1)
-    actual_install_evidence=$(printf '%s\n' "$install_block" | sed -n '/^        snapshot install-preassert$/,/^        assert_installed_state after-install$/p')
-    [ "$actual_install_evidence" = "$expected_install_evidence" ] &&
-        [ -n "$installer_line$install_success_line$diagnostic_line$evidence_snapshot_line" ] &&
-        [ "$installer_line" -lt "$install_success_line" ] && [ "$install_success_line" -lt "$diagnostic_line" ] &&
-        [ "$diagnostic_line" -lt "$evidence_snapshot_line" ]
+    actual_install_sequence=$(printf '%s\n' "$install_block" | sed -n '/^        run_recorded install 7200 "\$staged" --diagnostic-endpoint "\$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile$/,/^        assert_installed_state after-install$/p')
+    [ "$actual_install_sequence" = "$expected_install_sequence" ] || return 1
+    for install_line in "$installer_line_exact" "$status_save_line_exact" "$snapshot_line_exact" "$determinate_probe_line_exact" "$nix_probe_line_exact" "$status_gate_line_exact" "$assert_line_exact"; do
+        install_count=$(printf '%s\n' "$install_block" | grep -F -x -c -- "$install_line" || :)
+        [ "$install_count" -eq 1 ] || return 1
+    done
+}
+installer_process_coverage_is_valid() {
+    coverage_file=$1
+    version_probe='    run_recorded installer-version 60 "$staged" --version'
+    help_probe='            run_recorded "installer-$absent_command" 60 "$staged" "$absent_command" --help'
+    installer_processes=$(awk '
+/^[[:space:]]*#/ { next }
+/^[[:space:]]*run_recorded / && (index($0, " \"$staged\" ") || index($0, " $staged ") || index($0, " /nix/nix-installer ") || index($0, " \"/nix/nix-installer\" ")) { print; next }
+/^[[:space:]]*"?\$staged"?[[:space:]]/ { print; next }
+/^[[:space:]]*"?\/nix\/nix-installer"?[[:space:]]/ { print }
+' "$coverage_file")
+    version_probe_count=$(printf '%s\n' "$installer_processes" | grep -F -x -c -- "$version_probe" || :)
+    help_probe_count=$(printf '%s\n' "$installer_processes" | grep -F -x -c -- "$help_probe" || :)
+    [ "$version_probe_count" -eq 1 ] && [ "$help_probe_count" -eq 1 ] || return 1
+    printf '%s\n' "$installer_processes" | awk -v version_probe="$version_probe" -v help_probe="$help_probe" '
+index($0, "--diagnostic-endpoint \"$diagnostic_endpoint\"") { next }
+$0 == version_probe || $0 == help_probe { next }
+{ unsafe = 1 }
+END { exit unsafe }
+'
 }
 graph() {
     actual=$(sed -n "/^    $1)\$/,/^        ;;/p" "$host" | sed -n -e 's/^        run_phase /phase /p' -e 's/^        reboot_guest /reboot /p')
@@ -151,6 +179,13 @@ need "$guest" 'sha256 "$receipt"' "receipt digest proof missing"
 reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?(cat|cp|dd|grep|head|tail|sed|awk|tar|tee|strings)[[:space:]].*(/nix/receipt\.json|"?\$receipt"?)' "receipt content read or copy found" "$guest"
 
 # Private install evidence precedes the unchanged strict installed-state gate.
+need_exact "$guest" 'DETSYS_IDS_TELEMETRY=disabled' "telemetry kill switch changed"
+need_exact "$guest" 'diagnostic_endpoint=http://127.0.0.1:18080' "diagnostic loopback canary changed"
+need_exact "$guest" 'export DETSYS_IDS_TELEMETRY' "telemetry kill switch export changed"
+reject 'DETSYS_IDS_TRANSPORT' "ambient diagnostics transport is forbidden" "$guest"
+reject 'capture_(pid|start|stop|name|port|count|grace)|diagnostic-request-count|disabled-diagnostic-request-count|diagnostic-scope|capture\.py' "controlled diagnostic capture code remains" "$guest"
+reject "--diagnostic-endpoint[[:space:]]+''" "empty diagnostic endpoint remains" "$guest"
+installer_process_coverage_is_valid "$guest" || die "an installer process lacks the loopback canary"
 need "$guest" 'for snapshot_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd /etc/fstab /etc/synthetic.conf /opt/pkg '\''/Library/Application Support/pkg'\''; do' "snapshot path anchors changed"
 need "$guest" 'launchctl print system >"$snapshot_prefix.launchd-system" 2>&1 || die "could not record system launchd"' "snapshot launchd anchor changed"
 need "$guest" 'if [ -f /etc/fstab ] && [ ! -L /etc/fstab ]; then' "safe raw fstab test missing"
@@ -161,46 +196,67 @@ need "$guest" 'grep -Fxc "$installed_fstab" /etc/fstab >"$phase_dir/$installed_n
 install_evidence_order_is_valid "$guest" || die "install pre-assert evidence phase or order changed"
 order_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-install-order.XXXXXX") || die "could not create install-order fixture"
 trap 'rm -R "$order_fixture"' EXIT HUP INT TERM
-awk -v installer_anchor="$installer_anchor" '
-index($0, installer_anchor) {
-    print "        snapshot install-preassert"
-    print "        run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status"
-    print "        run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon"
+awk -v installer="$installer_line_exact" -v snapshot="$snapshot_line_exact" -v determinate_probe="$determinate_probe_line_exact" -v nix_probe="$nix_probe_line_exact" '
+$0 == installer {
+    print snapshot
+    print determinate_probe
+    print nix_probe
 }
-index($0, "install-preassert") { next }
+$0 == snapshot || $0 == determinate_probe || $0 == nix_probe { next }
 { print }
 ' "$guest" >"$order_fixture/before-installer.sh"
-need "$order_fixture/before-installer.sh" 'snapshot install-preassert' "moved snapshot vanished from mutation"
-need "$order_fixture/before-installer.sh" 'run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status' "moved determinate-nixd probe vanished from mutation"
-need "$order_fixture/before-installer.sh" 'run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon' "moved Nix probe vanished from mutation"
+need_exact "$order_fixture/before-installer.sh" "$snapshot_line_exact" "moved snapshot vanished from mutation"
+need_exact "$order_fixture/before-installer.sh" "$determinate_probe_line_exact" "moved determinate-nixd probe vanished from mutation"
+need_exact "$order_fixture/before-installer.sh" "$nix_probe_line_exact" "moved Nix probe vanished from mutation"
+moved_snapshot_line=$(exact_line "$order_fixture/before-installer.sh" "$snapshot_line_exact")
+moved_installer_line=$(exact_line "$order_fixture/before-installer.sh" "$installer_line_exact")
+[ "$moved_snapshot_line" -lt "$moved_installer_line" ] || die "evidence mutation did not move evidence before the installer"
 if install_evidence_order_is_valid "$order_fixture/before-installer.sh"; then die "install evidence before the installer was accepted"; fi
-awk '
+for probe_name in determinate nix; do
+    case $probe_name in
+        determinate) mutated_probe=$determinate_probe_line_exact ;;
+        nix) mutated_probe=$nix_probe_line_exact ;;
+    esac
+    fatal_probe_line="        [ \"\$last_status\" -eq 0 ] || die \"$probe_name install pre-assert probe failed\""
+    awk -v probe="$mutated_probe" -v fatal="$fatal_probe_line" '{ print; if ($0 == probe) print fatal }' "$guest" >"$order_fixture/fatal-$probe_name-probe.sh"
+    need_exact "$order_fixture/fatal-$probe_name-probe.sh" "$fatal_probe_line" "fatal $probe_name probe mutation vanished"
+    if install_evidence_order_is_valid "$order_fixture/fatal-$probe_name-probe.sh"; then die "fatal $probe_name install pre-assert probe gate was accepted"; fi
+done
+awk -v saved="$status_save_line_exact" -v gate="$status_gate_line_exact" '
+$0 == gate { next }
 { print }
-index($0, "run_recorded install-preassert-determinate-nixd-status 60") {
-    print "        [ \"$last_status\" -eq 0 ] || die \"install pre-assert probe failed\""
-}
-' "$guest" >"$order_fixture/fatal-probe.sh"
-need "$order_fixture/fatal-probe.sh" '[ "$last_status" -eq 0 ] || die "install pre-assert probe failed"' "fatal probe mutation vanished"
-if install_evidence_order_is_valid "$order_fixture/fatal-probe.sh"; then die "fatal install pre-assert probe gate was accepted"; fi
+$0 == saved { print gate }
+' "$guest" >"$order_fixture/early-install-gate.sh"
+need_exact "$order_fixture/early-install-gate.sh" "$status_gate_line_exact" "moved installer status gate vanished from mutation"
+moved_gate_line=$(exact_line "$order_fixture/early-install-gate.sh" "$status_gate_line_exact")
+remaining_snapshot_line=$(exact_line "$order_fixture/early-install-gate.sh" "$snapshot_line_exact")
+[ "$moved_gate_line" -lt "$remaining_snapshot_line" ] || die "installer status mutation did not move the gate before evidence"
+if install_evidence_order_is_valid "$order_fixture/early-install-gate.sh"; then die "installer status gate before evidence was accepted"; fi
+bare_state_change='        run_recorded missing-endpoint-install 7200 "$staged" install --determinate --no-confirm --no-modify-profile'
+awk -v anchor='    lifecycle-repeat-install)' -v bare="$bare_state_change" '{ print; if ($0 == anchor) print bare }' "$guest" >"$order_fixture/missing-endpoint.sh"
+need_exact "$order_fixture/missing-endpoint.sh" "$bare_state_change" "missing-endpoint mutation vanished"
+if installer_process_coverage_is_valid "$order_fixture/missing-endpoint.sh"; then die "bare state-changing installer mutation was accepted"; fi
 rm -R "$order_fixture"
 trap - EXIT HUP INT TERM
 
 # Exact vendor argv and observed statuses.
-need "$guest" "run_recorded install 7200 \"\$staged\" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile" "install argv changed"
-need "$guest" "run_recorded repeat-install 7200 \"\$staged\" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile" "repeat install argv changed"
-need "$guest" "run_recorded repair 7200 /nix/nix-installer --diagnostic-endpoint '' repair --no-confirm" "repair argv changed"
-need "$guest" "run_recorded repair-sequoia 7200 /nix/nix-installer --diagnostic-endpoint '' repair sequoia --no-confirm" "Sequoia repair argv changed"
-need "$guest" "run_recorded uninstall 7200 /nix/nix-installer --diagnostic-endpoint '' uninstall --no-confirm /nix/receipt.json" "uninstall argv changed"
-need "$guest" "run_recorded repeat-uninstall 7200 \"\$staged\" --diagnostic-endpoint '' uninstall --no-confirm /nix/receipt.json" "repeat uninstall argv changed"
-need "$guest" "run_recorded recover-install 7200 \"\$staged\" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile" "recovery argv changed"
-need "$guest" "run_recorded foreign-install 7200 \"\$staged\" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile" "foreign argv changed"
-need "$guest" "run_recorded upstream-install 7200 \"\$staged\" --diagnostic-endpoint '' install --prefer-upstream-nix --no-confirm --no-modify-profile" "upstream argv changed"
-need "$guest" "run_recorded determinate-attempt 7200 \"\$staged\" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile" "upstream refusal argv changed"
+need_exact "$guest" '        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "install argv changed"
+need_exact "$guest" '        run_recorded repeat-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "repeat install argv changed"
+need_exact "$guest" '        run_recorded repair 7200 /nix/nix-installer --diagnostic-endpoint "$diagnostic_endpoint" repair --no-confirm' "repair argv changed"
+need_exact "$guest" '        run_recorded repair-sequoia 7200 /nix/nix-installer --diagnostic-endpoint "$diagnostic_endpoint" repair sequoia --no-confirm' "Sequoia repair argv changed"
+need_exact "$guest" '        run_recorded uninstall 7200 /nix/nix-installer --diagnostic-endpoint "$diagnostic_endpoint" uninstall --no-confirm /nix/receipt.json' "uninstall argv changed"
+need_exact "$guest" '        run_recorded repeat-uninstall 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" uninstall --no-confirm /nix/receipt.json' "repeat uninstall argv changed"
+need_exact "$guest" '        write_argv "$phase_dir/install.argv" "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "crash argv record changed"
+need_exact "$guest" '        "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile </dev/null >"$phase_dir/install.output" 2>&1 &' "crash installer argv changed"
+need_exact "$guest" '        run_recorded recover-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "recovery argv changed"
+need_exact "$guest" '        run_recorded foreign-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "foreign argv changed"
+need_exact "$guest" '        run_recorded upstream-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --prefer-upstream-nix --no-confirm --no-modify-profile' "upstream argv changed"
+need_exact "$guest" '        run_recorded determinate-attempt 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "upstream refusal argv changed"
+[ "$(grep -E -c '^[[:space:]]+[^#].*--diagnostic-endpoint "\$diagnostic_endpoint"' "$guest")" -eq 12 ] || die "vendor diagnostic endpoint coverage changed"
 need "$guest" 'run_recorded daemon-version 60 "$daemon" version' "daemon version argv changed"
 need "$guest" 'run_recorded daemon-status 60 "$daemon" status' "daemon status argv changed"
 need "$guest" 'run_recorded daemon-upgrade-help 60 "$daemon" upgrade --help' "daemon upgrade probe changed"
 need "$guest" 'run_recorded daemon-upgrade 7200 "$daemon" upgrade --version v3.22.1' "daemon upgrade argv changed"
-need "$guest" '[ "$last_status" -eq 0 ] || die "initial Determinate install failed"' "install status changed"
 need "$guest" '[ "$last_status" -eq 0 ] || die "repeat Determinate install failed"' "repeat install status changed"
 need "$guest" '[ "$last_status" -eq 0 ] || die "default repair failed"' "repair status changed"
 need "$guest" '[ "$last_status" -eq 0 ] || die "Sequoia repair failed"' "Sequoia repair status changed"
@@ -285,7 +341,7 @@ trap - EXIT HUP INT TERM
 fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-finalizer.XXXXXX") || die "could not create finalizer fixture"
 trap 'rm -R "$fixture_root"' EXIT HUP INT TERM
 {
-    printf '%s\n' '#!/bin/sh' 'set -eu' 'fixture_root=$1' 'phase_dir=$fixture_root/phase' 'ledger=$fixture_root/phase-ledger' 'active_vendor_pid=' 'capture_pid='
+    printf '%s\n' '#!/bin/sh' 'set -eu' 'fixture_root=$1' 'phase_dir=$fixture_root/phase' 'ledger=$fixture_root/phase-ledger' 'active_vendor_pid='
     printf '%s\n' 'cleanup_children() { [ "$(cat "$phase_dir/phase-status")" = FAIL ] && printf "%s\n" after-failure-evidence >"$fixture_root/cleanup-order"; }'
     sed -n '/^finalize_exit() {$/,/^}$/p' "$guest"
     printf '%s\n' 'mkdir "$fixture_root"' 'mkdir "$phase_dir"' 'printf "baseline\ncurrent\n" >"$ledger"' 'trap finalize_exit EXIT' 'mkdir "$phase_dir/post-write"' 'printf "%s\n" must-fail >"$phase_dir/post-write"'

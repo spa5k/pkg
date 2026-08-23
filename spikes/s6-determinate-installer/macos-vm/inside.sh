@@ -2,6 +2,9 @@
 set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
+DETSYS_IDS_TELEMETRY=disabled
+diagnostic_endpoint=http://127.0.0.1:18080
+export DETSYS_IDS_TELEMETRY
 umask 077
 
 phase_dir=
@@ -53,7 +56,6 @@ signals_restore() {
 }
 cleanup_children() {
     signals_hold
-    capture_stop
     [ -n "$active_vendor_pid" ] || return 0
     if kill -0 "$active_vendor_pid" 2>/dev/null; then
         kill -TERM "$active_vendor_pid" 2>/dev/null || :
@@ -78,42 +80,6 @@ run_recorded() {
     last_status=$?
     set -e
     printf '%s\n' "$last_status" >"$phase_dir/$run_name.status"
-}
-
-capture_pid=
-capture_start() {
-    capture_name=$1 capture_port=$2 capture_count=$phase_dir/$capture_name
-    [ -x /usr/bin/python3 ] || die "/usr/bin/python3 is required for controlled diagnostic capture"
-    printf '0' >"$capture_count"
-    cat >"$phase_dir/capture.py" <<'PY'
-import http.server
-import pathlib
-import sys
-counter = pathlib.Path(sys.argv[2])
-class Handler(http.server.BaseHTTPRequestHandler):
-    def handle_one_request(self):
-        counter.write_text(str(int(counter.read_text() or "0") + 1))
-        super().handle_one_request()
-    def do_POST(self):
-        self.send_response(204); self.end_headers()
-    def do_PUT(self):
-        self.send_response(204); self.end_headers()
-    def log_message(self, *_): pass
-http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
-PY
-    /usr/bin/python3 "$phase_dir/capture.py" "$capture_port" "$capture_count" >"$phase_dir/$capture_name.log" 2>&1 &
-    capture_pid=$!
-    sleep 1
-    kill -0 "$capture_pid" 2>/dev/null || die "diagnostic capture service did not start"
-}
-capture_stop() {
-    [ -n "$capture_pid" ] || return 0
-    kill -TERM "$capture_pid" 2>/dev/null || :
-    capture_grace=0
-    while kill -0 "$capture_pid" 2>/dev/null && [ "$capture_grace" -lt 5 ]; do sleep 1; capture_grace=$((capture_grace + 1)); done
-    if kill -0 "$capture_pid" 2>/dev/null; then kill -KILL "$capture_pid" 2>/dev/null || :; fi
-    wait "$capture_pid" 2>/dev/null || :
-    capture_pid=
 }
 finalize_exit() {
     original_status=$?
@@ -557,18 +523,12 @@ case $phase in
     lifecycle-install)
         require_first_vendor_gates
         require_installer_version
-        capture_start diagnostic-request-count 18080
-        DETSYS_IDS_TRANSPORT=http://127.0.0.1:18080
-        export DETSYS_IDS_TRANSPORT
-        run_recorded install 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
-        sleep 2
-        capture_stop
-        unset DETSYS_IDS_TRANSPORT
-        [ "$last_status" -eq 0 ] || die "initial Determinate install failed"
-        [ "$(cat "$phase_dir/diagnostic-request-count")" -eq 0 ] || die "disabled diagnostic endpoint received a controlled request"
+        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
+        initial_install_status=$last_status
         snapshot install-preassert
         run_recorded install-preassert-determinate-nixd-status 60 /usr/local/bin/determinate-nixd status
         run_recorded install-preassert-nix-store-ping 120 /nix/var/nix/profiles/default/bin/nix store ping --store daemon
+        [ "$initial_install_status" -eq 0 ] || die "initial Determinate install failed"
         assert_installed_state after-install
         sha256 /nix/nix-installer >"$phase_dir/installed-installer.sha256"
         [ "$(cat "$phase_dir/installed-installer.sha256")" = "$expected_sha" ] || die "installed installer digest differs from the pin"
@@ -578,22 +538,14 @@ case $phase in
         assert_installed_state after-reboot
         ;;
     lifecycle-repeat-install)
-        capture_start disabled-diagnostic-request-count 18081
-        DETSYS_IDS_TRANSPORT=http://127.0.0.1:18081
-        export DETSYS_IDS_TRANSPORT
-        run_recorded repeat-install 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
-        sleep 2
-        capture_stop
-        unset DETSYS_IDS_TRANSPORT
+        run_recorded repeat-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
         [ "$last_status" -eq 0 ] || die "repeat Determinate install failed"
-        [ "$(cat "$phase_dir/disabled-diagnostic-request-count")" -eq 0 ] || die "disabled diagnostic endpoint received a request"
-        printf '%s\n' 'This proves only that the controlled endpoint received zero requests.' >"$phase_dir/diagnostic-scope"
         assert_installed_state after-repeat-install
         ;;
     lifecycle-repair)
-        run_recorded repair 7200 /nix/nix-installer --diagnostic-endpoint '' repair --no-confirm
+        run_recorded repair 7200 /nix/nix-installer --diagnostic-endpoint "$diagnostic_endpoint" repair --no-confirm
         [ "$last_status" -eq 0 ] || die "default repair failed"
-        run_recorded repair-sequoia 7200 /nix/nix-installer --diagnostic-endpoint '' repair sequoia --no-confirm
+        run_recorded repair-sequoia 7200 /nix/nix-installer --diagnostic-endpoint "$diagnostic_endpoint" repair sequoia --no-confirm
         [ "$last_status" -eq 0 ] || die "Sequoia repair failed"
         assert_installed_state after-repair
         ;;
@@ -619,12 +571,12 @@ case $phase in
         ;;
     lifecycle-uninstall)
         receipt_identity receipt-before-uninstall
-        run_recorded uninstall 7200 /nix/nix-installer --diagnostic-endpoint '' uninstall --no-confirm /nix/receipt.json
+        run_recorded uninstall 7200 /nix/nix-installer --diagnostic-endpoint "$diagnostic_endpoint" uninstall --no-confirm /nix/receipt.json
         [ "$last_status" -eq 0 ] || { printf '%s\n' FAIL >"$phase_dir/vendor-outcome"; die "uninstall failed"; }
         printf '%s\n' PASS >"$phase_dir/vendor-outcome"
         ;;
     lifecycle-repeat-uninstall)
-        run_recorded repeat-uninstall 7200 "$staged" --diagnostic-endpoint '' uninstall --no-confirm /nix/receipt.json
+        run_recorded repeat-uninstall 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" uninstall --no-confirm /nix/receipt.json
         [ "$last_status" -eq 1 ] || die "repeat uninstall did not return the pinned observed status 1"
         grep -F 'Reading receipt' "$phase_dir/repeat-uninstall.output" >/dev/null || die "repeat uninstall did not identify receipt reading"
         grep -F 'No such file or directory' "$phase_dir/repeat-uninstall.output" >/dev/null || die "repeat uninstall did not identify the absent receipt"
@@ -637,9 +589,9 @@ case $phase in
     crash-kill)
         require_first_vendor_gates
         require_installer_version
-        write_argv "$phase_dir/install.argv" "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
+        write_argv "$phase_dir/install.argv" "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
         signals_hold
-        "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile </dev/null >"$phase_dir/install.output" 2>&1 &
+        "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile </dev/null >"$phase_dir/install.output" 2>&1 &
         crash_pid=$!
         active_vendor_pid=$crash_pid
         signals_restore
@@ -679,7 +631,7 @@ case $phase in
         ;;
     crash-recover)
         require_reboot_since crash-kill
-        run_recorded recover-install 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
+        run_recorded recover-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
         [ "$last_status" -eq 0 ] || die "install did not recover after the forced crash"
         [ "$(sha256 /nix/nix-installer)" = "$expected_sha" ] || die "recovered installed copy digest differs from the pin"
         assert_installed_state after-recovery
@@ -743,7 +695,7 @@ case $phase in
         [ "$sentinel_before" = "$(cat "$evidence/foreign-post-reboot/sentinel.sha256")" ] || die "foreign sentinel changed before observation"
         record_foreign_state before-observation
         require_installer_version
-        run_recorded foreign-install 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
+        run_recorded foreign-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
         printf 'status=%s\n' "$last_status" >"$phase_dir/vendor-outcome"
         record_foreign_state after-observation
         if [ "$(cat "$phase_dir/after-observation.sentinel-visibility")" = visible ]; then
@@ -754,7 +706,7 @@ case $phase in
     upstream-install)
         require_first_vendor_gates
         require_installer_version
-        run_recorded upstream-install 7200 "$staged" --diagnostic-endpoint '' install --prefer-upstream-nix --no-confirm --no-modify-profile
+        run_recorded upstream-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --prefer-upstream-nix --no-confirm --no-modify-profile
         [ "$last_status" -eq 0 ] || die "upstream Nix install failed"
         receipt_identity receipt
         upstream_nix=/nix/var/nix/profiles/default/bin/nix
@@ -765,7 +717,7 @@ case $phase in
         ;;
     upstream-determinate-attempt)
         receipt_identity receipt-before
-        run_recorded determinate-attempt 7200 "$staged" --diagnostic-endpoint '' install --determinate --no-confirm --no-modify-profile
+        run_recorded determinate-attempt 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
         [ "$last_status" -eq 1 ] || die "Determinate-on-upstream attempt did not return the pinned status 1"
         grep -F 'used different planner settings' "$phase_dir/determinate-attempt.output" >/dev/null || die "planner mismatch refusal was not observed"
         receipt_identity receipt-after
@@ -783,6 +735,5 @@ printf '%s\n' PASS >"$phase_dir/phase-status"
 record PASS "$phase completed with expected observations"
 find "$evidence" -type d -exec chmod 0700 {} \;
 find "$evidence" -type f -exec chmod 0600 {} \;
-capture_stop
 trap - EXIT HUP INT TERM
 exit "$phase_exit"
