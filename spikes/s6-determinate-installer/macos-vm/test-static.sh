@@ -16,6 +16,20 @@ fstab_uuid_case_is_valid() {
     fstab_case_count=$(grep -F -x -c -- "$fstab_uuid_line" "$1" || :)
     [ "$fstab_case_count" -eq 1 ]
 }
+recorded_child_line='    (umask 022; exec "$@") </dev/null >"$phase_dir/$run_name.output" 2>&1 &'
+recorded_child_unsafe_line='    "$@" </dev/null >"$phase_dir/$run_name.output" 2>&1 &'
+recorded_child_boundary_is_valid() {
+    recorded_child_count=$(grep -F -x -c -- "$recorded_child_line" "$1" || :)
+    recorded_child_unsafe_count=$(grep -F -x -c -- "$recorded_child_unsafe_line" "$1" || :)
+    [ "$recorded_child_count" -eq 1 ] && [ "$recorded_child_unsafe_count" -eq 0 ]
+}
+archive_validation_line='    (validate_phase_archive "$phase" "$archive_part")'
+archive_validation_unsafe_line='    validate_phase_archive "$phase" "$archive_part"'
+archive_validation_boundary_is_valid() {
+    archive_validation_count=$(grep -F -x -c -- "$archive_validation_line" "$1" || :)
+    archive_validation_unsafe_count=$(grep -F -x -c -- "$archive_validation_unsafe_line" "$1" || :)
+    [ "$archive_validation_count" -eq 1 ] && [ "$archive_validation_unsafe_count" -eq 0 ]
+}
 installer_line_exact='        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile'
 status_save_line_exact='        initial_install_status=$last_status'
 snapshot_line_exact='        snapshot install-preassert'
@@ -158,7 +172,8 @@ need "$guest" '[ "$#" -eq 7 ] && [ "$approval" = approve-observe-vendor-foreign-
 
 # Phase archives validate a private part, hash it, then atomically finalize it before status classification.
 need "$host" 'archive_part=$out/phases/$phase.tar.part' "partial archive missing"
-need "$host" 'validate_phase_archive "$phase" "$archive_part"' "archive validation missing"
+need_exact "$host" "$archive_validation_line" "archive validation is not isolated"
+archive_validation_boundary_is_valid "$host" || die "archive validation can overwrite capture variables"
 need "$host" 'sha256 "$archive_part" >"$out/phases/$phase.tar.sha256"' "archive digest missing"
 need "$host" '/bin/mv "$archive_part" "$archive"' "atomic archive finalization missing"
 need "$host" 'phase archive contains a link or special entry' "archive type rejection missing"
@@ -169,13 +184,28 @@ need "$host" 'case "/$checked_entry/" in *'\''/../'\''*|*'\''/./'\''*|*'\''//'\'
 need "$host" 'case $checked_entry in */receipt.json) die "phase archive contains receipt bytes" ;; esac' "host receipt archive rejection missing"
 need "$host" 'sed '\''s|/$||'\'' "$list" | LC_ALL=C sort >"$out/phases/$phase.sorted"' "normalized archive duplicate sort missing"
 need "$host" 'uniq -d "$out/phases/$phase.sorted" >"$out/phases/$phase.duplicates"' "archive duplicate detection missing"
-validate_line=$(line "$host" 'validate_phase_archive "$phase" "$archive_part"')
+validate_line=$(exact_line "$host" "$archive_validation_line")
 hash_line=$(line "$host" 'sha256 "$archive_part"')
 rename_line=$(line "$host" '/bin/mv "$archive_part" "$archive"')
 classify_line=$(line "$host" 'case $phase:$guest_status in')
 [ "$validate_line" -lt "$hash_line" ] && [ "$hash_line" -lt "$rename_line" ] && [ "$rename_line" -lt "$classify_line" ] || die "archive finalization does not precede status classification"
 need "$host" 'foreign-refuse:20)' "semantic status 20 missing"
 need "$host" 'phase-status.fail.expected' "failed phase evidence is not classified"
+
+# Private evidence keeps umask 077, but recorded child commands use their normal system mask.
+need_exact "$guest" "$recorded_child_line" "recorded child umask or exec boundary changed"
+recorded_child_boundary_is_valid "$guest" || die "recorded child inherits the private evidence umask"
+
+boundary_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-boundaries.XXXXXX") || die "could not create boundary fixture"
+trap 'rm -R "$boundary_fixture"' EXIT HUP INT TERM
+awk -v safe="$recorded_child_line" -v unsafe="$recorded_child_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$guest" >"$boundary_fixture/inherited-umask.sh"
+need_exact "$boundary_fixture/inherited-umask.sh" "$recorded_child_unsafe_line" "inherited-umask mutation vanished"
+if recorded_child_boundary_is_valid "$boundary_fixture/inherited-umask.sh"; then die "inherited-umask mutation was accepted"; fi
+awk -v safe="$archive_validation_line" -v unsafe="$archive_validation_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/global-validation.sh"
+need_exact "$boundary_fixture/global-validation.sh" "$archive_validation_unsafe_line" "global-validation mutation vanished"
+if archive_validation_boundary_is_valid "$boundary_fixture/global-validation.sh"; then die "global-validation mutation was accepted"; fi
+rm -R "$boundary_fixture"
+trap - EXIT HUP INT TERM
 
 # Receipt contents stay opaque. Metadata and SHA-256 identity are allowed.
 need "$guest" 'receipt_identity()' "opaque receipt identity helper missing"

@@ -66,6 +66,48 @@ All fstab fields other than UUID letter case matched. This is **Observed**.
 R4 stopped at the strict comparison. It does not prove a complete lifecycle,
 a reboot result, repair, uninstall, or residue cleanup.
 
+## R5 observed evidence and limits
+
+The preserved evidence path is
+`/private/var/tmp/pkg-s6-dn03c-evidence/lifecycle-diagnostics-7da72d9-r5`.
+
+The following facts are **Observed** in R5:
+
+- The product revision is
+  `7da72d96a79139f77220e9490a5ad500e896425a`.
+- The baseline phase passed.
+- The install command returned status `0`.
+- The `determinate-nixd status` probe returned status `0`.
+- The Nix daemon store-ping probe returned status `0`.
+- The strict fstab expected-line count is `1`. Thus, the UUID fix passed.
+- The lifecycle-install phase then returned status `1` and recorded `FAIL`.
+- Its exact error says that the identity of
+  `/Library/LaunchDaemons/systems.determinate.nix-store.plist` is unexpected.
+- The baseline and lifecycle-install archives passed validation. Their saved
+  SHA-256 values equal the hashes of the preserved files. Their list and
+  verbose manifests have equal entry counts. Their validation error files are
+  empty.
+- Both valid archives remain named `.tar.part`. Neither became `.tar`.
+- No later lifecycle phase ran.
+- Cleanup proved that the exact VM was absent. Both final local-VM lists are
+  empty.
+
+The following conclusions are **Source-based inferences**:
+
+- The harness keeps `umask 077` for private evidence. Before this fix,
+  `run_recorded` launched every child without changing that mask. The vendor
+  installer therefore inherited `077`. This explains the later launchd
+  identity failure. R5 did not archive the actual plist mode.
+- POSIX shell function variables are global unless a shell provides and uses
+  a non-standard local-variable feature. `validate_phase_archive` assigned
+  its second argument to `archive`. This overwrote the `.tar` destination in
+  `capture_phase` with the `.tar.part` source. The later move therefore used
+  the partial path as both source and destination. This explains why both
+  validated archives kept the `.tar.part` suffix.
+
+R5 does not prove receipt metadata, reboot, repeat install, repair, daemon
+phase behavior, uninstall, repeat uninstall, or residue cleanup.
+
 ## Decision table
 
 | Decision | Result | Reason |

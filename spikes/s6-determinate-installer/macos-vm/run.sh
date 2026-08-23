@@ -361,7 +361,7 @@ capture_phase() {
     archive_part=$out/phases/$phase.tar.part
     archive=$out/phases/$phase.tar
     bounded_exec 120 /dev/null /usr/bin/sudo -n /usr/bin/tar -cf - -C "$guest_evidence" "$phase" >"$archive_part" 2>"$out/phases/$phase.capture.stderr" || die "could not capture phase evidence: $phase"
-    validate_phase_archive "$phase" "$archive_part"
+    (validate_phase_archive "$phase" "$archive_part")
     sha256 "$archive_part" >"$out/phases/$phase.tar.sha256"
     /bin/mv "$archive_part" "$archive" || die "could not finalize phase archive: $phase"
 }

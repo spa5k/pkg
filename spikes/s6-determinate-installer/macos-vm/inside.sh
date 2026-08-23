@@ -71,7 +71,7 @@ run_recorded() {
     shift 2
     write_argv "$phase_dir/$run_name.argv" "$@"
     signals_hold
-    "$@" </dev/null >"$phase_dir/$run_name.output" 2>&1 &
+    (umask 022; exec "$@") </dev/null >"$phase_dir/$run_name.output" 2>&1 &
     run_pid=$!
     active_vendor_pid=$run_pid
     signals_restore
