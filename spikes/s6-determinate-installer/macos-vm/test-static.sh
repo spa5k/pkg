@@ -125,6 +125,18 @@ install_evidence_order_is_valid() {
         [ "$install_count" -eq 1 ] || return 1
     done
 }
+inventory_find_line='    LC_ALL=C /usr/bin/find -P /etc/nix -xdev -exec /bin/sh "$0" --inventory-entries /etc/nix "$inventory_root_device" "$inventory_raw" {} + || die "could not inventory /etc/nix"'
+inventory_find_unsafe_line='    LC_ALL=C /usr/bin/find -L /etc/nix -xdev -exec /bin/sh "$0" --inventory-entries /etc/nix "$inventory_root_device" "$inventory_raw" {} + || die "could not inventory /etc/nix"'
+inventory_regular_link_gate='                [ "$inventory_nlink" -eq 1 ] || die "regular inventory file has multiple hard links"'
+final_residue_compare_line='    lifecycle-residue) compare_residue_contract "$phase_dir/before" "$phase_dir/after" "final post-reboot residue identity changed during observation" ;;'
+residue_inventory_boundary_is_valid() {
+    inventory_find_count=$(grep -F -x -c -- "$inventory_find_line" "$1" || :)
+    inventory_find_unsafe_count=$(grep -F -x -c -- "$inventory_find_unsafe_line" "$1" || :)
+    inventory_regular_link_count=$(grep -F -x -c -- "$inventory_regular_link_gate" "$1" || :)
+    final_residue_compare_count=$(grep -F -x -c -- "$final_residue_compare_line" "$1" || :)
+    [ "$inventory_find_count" -eq 1 ] && [ "$inventory_find_unsafe_count" -eq 0 ] \
+        && [ "$inventory_regular_link_count" -eq 1 ] && [ "$final_residue_compare_count" -eq 1 ]
+}
 installer_process_coverage_is_valid() {
     coverage_file=$1
     version_probe='    run_recorded installer-version 60 "$staged" --version'
@@ -369,7 +381,97 @@ failure_line=$(exact_line "$boundary_fixture/early-reboot-pass.block" "$reboot_f
 [ "$moved_pass_line" -lt "$failure_line" ] || die "PASS mutation did not move before reboot proof"
 sh -n "$boundary_fixture/early-reboot-pass.sh"
 if reboot_status_boundary_is_valid "$boundary_fixture/early-reboot-pass.sh"; then die "early reboot PASS mutation was accepted"; fi
+awk -v safe="$inventory_find_line" -v unsafe="$inventory_find_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$guest" >"$boundary_fixture/inventory-follow-links.sh"
+need_exact "$boundary_fixture/inventory-follow-links.sh" "$inventory_find_unsafe_line" "find -L inventory mutation vanished"
+if residue_inventory_boundary_is_valid "$boundary_fixture/inventory-follow-links.sh"; then die "find -L inventory mutation was accepted"; fi
+awk -v gate="$inventory_regular_link_gate" '$0 != gate { print }' "$guest" >"$boundary_fixture/inventory-hardlinks.sh"
+if grep -F -x -- "$inventory_regular_link_gate" "$boundary_fixture/inventory-hardlinks.sh" >/dev/null; then die "regular-file hardlink mutation vanished"; fi
+if residue_inventory_boundary_is_valid "$boundary_fixture/inventory-hardlinks.sh"; then die "missing regular-file hardlink gate was accepted"; fi
+awk -v comparison="$final_residue_compare_line" '$0 != comparison { print }' "$guest" >"$boundary_fixture/final-residue-comparison.sh"
+if grep -F -x -- "$final_residue_compare_line" "$boundary_fixture/final-residue-comparison.sh" >/dev/null; then die "final residue comparison mutation vanished"; fi
+if residue_inventory_boundary_is_valid "$boundary_fixture/final-residue-comparison.sh"; then die "missing final residue comparison was accepted"; fi
 rm -R "$boundary_fixture"
+trap - EXIT HUP INT TERM
+
+# Byte-safe inventory uses find argv. It never parses path lines.
+need_exact "$guest" "$inventory_find_line" "argv-safe /etc/nix inventory command changed"
+residue_inventory_boundary_is_valid "$guest" || die "residue inventory safety boundary changed"
+need_exact "$guest" '        printf '\''path_hex=%s type=%s mode=%s uid=%s gid=%s size=%s nlink=%s sha256=%s target_hex=%s\n'\'' \' "inventory record format changed"
+need_exact "$guest" '        printf '\''state=absent path_hex=%s type=- mode=- uid=- gid=- size=- nlink=- sha256=-\n'\'' "$identity_path_hex" >"$identity_file"' "fixed-path absence format changed"
+need_exact "$guest" '    capture_fixed_identity /etc/fstab "$residue_stem.fstab.identity"' "fstab identity capture missing"
+need_exact "$guest" '    capture_fixed_identity /var/log/determinate-nix-init.log "$residue_stem.determinate-nix-init-log.identity"' "init-log identity capture missing"
+need_exact "$guest" '    capture_fixed_identity /var/log/determinate-nix-daemon.log "$residue_stem.determinate-nix-daemon-log.identity"' "daemon-log identity capture missing"
+need "$guest" 'stat_state_line=$(LC_ALL=C /usr/bin/stat -f '\''%d:%i:%p:%u:%g:%z:%l:%m:%c:%Lp:%HT'\'' "$stat_path")' "lstat stability identity missing"
+need "$guest" '[ "$inventory_device" = "$inventory_root_device" ] || die "inventory path crossed a device boundary"' "inventory device gate missing"
+need "$guest" '[ "$stat_state_line" = "$inventory_before" ] || die "inventory path changed while it was inspected"' "inventory stat stability gate missing"
+need "$guest" '[ "$inventory_link_size" -eq $((inventory_size + 1)) ] || die "inventory readlink length differs from lstat size"' "symlink readlink length gate missing"
+need "$guest" '[ "${#inventory_target_hex}" -eq $((inventory_size * 2)) ] || die "inventory symlink target hex differs from lstat size"' "symlink target hex gate missing"
+need "$guest" '[ "$stat_type" = '\''Regular File'\'' ] || die "fixed identity path is not a non-symlink regular file"' "fixed-path type gate missing"
+need "$guest" '[ "$identity_nlink" -eq 1 ] || die "fixed identity file has multiple hard links"' "fixed-path hardlink gate missing"
+need "$guest" '[ "$stat_state_line" = "$identity_before" ] || die "fixed identity changed while it was inspected"' "fixed-path stability gate missing"
+need "$guest" '/usr/bin/cmp -s "$residue_first.$residue_suffix" "$residue_second.$residue_suffix" || die "residue identity was not stable across two scans: $residue_suffix"' "double-scan comparison missing"
+need "$guest" '/bin/mv "$residue_first.$residue_suffix" "$residue_prefix.$residue_suffix" || die "could not finalize residue identity: $residue_suffix"' "stable-first inventory finalization missing"
+need_exact "$guest" '    lifecycle-install) compare_residue_contract "$evidence/baseline/after" "$phase_dir/before" "install pre-state differs from clean baseline" ;;' "install/baseline comparison missing"
+need_exact "$guest" '    lifecycle-uninstall) compare_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;' "uninstall/daemon comparison missing"
+need_exact "$guest" '    lifecycle-repeat-uninstall) compare_residue_contract "$evidence/lifecycle-uninstall/after" "$phase_dir/before" "repeat-uninstall pre-state differs from uninstall post-state" ;;' "repeat/uninstall comparison missing"
+need_exact "$guest" '        compare_residue_contract "$evidence/lifecycle-repeat-uninstall/after" "$phase_dir/before" "post-reboot residue pre-state differs from repeat-uninstall post-state"' "post-reboot/repeat comparison missing"
+need_exact "$guest" "$final_residue_compare_line" "final residue stability comparison missing"
+snapshot_after_line=$(exact_line "$guest" 'snapshot after')
+final_compare_line=$(exact_line "$guest" "$final_residue_compare_line")
+strict_fail_line=$(exact_line "$guest" '[ "$strict_vendor_failed" -eq 0 ] || die "vendor residue remains"')
+[ "$snapshot_after_line" -lt "$final_compare_line" ] && [ "$final_compare_line" -lt "$strict_fail_line" ] || die "final residue failure precedes snapshot-after or comparison"
+reject '(^|[[:space:]/])(python|python3|perl|rustc|cargo|mtree)([[:space:]]|$)' "residue inventory added a forbidden runtime" "$guest"
+reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?rm[[:space:]]+-[^[:space:]]*[rR][^[:space:]]*[[:space:]]+(/etc/nix|/etc/fstab|/var/log/determinate)' "recursive fixed-path cleanup found" "$guest"
+reject 'find[[:space:]]+/etc/nix[^\n]*-delete' "recursive /etc/nix deletion found" "$guest"
+
+# The real internal scanner handles directories, files, links, and newlines under sh and dash.
+inventory_fixture=$(mktemp -d "/private/var/tmp/pkg-dn03c-inventory.XXXXXX") || die "could not create inventory fixture"
+trap 'rm -R "$inventory_fixture"' EXIT HUP INT TERM
+mkdir "$inventory_fixture/root" "$inventory_fixture/root/dir"
+printf '%s\n' payload >"$inventory_fixture/root/file"
+inventory_link_target='missing
+target'
+ln -s "$inventory_link_target" "$inventory_fixture/root/link"
+inventory_newline_path="$inventory_fixture/root/name
+with-newline"
+printf '%s\n' newline >"$inventory_newline_path"
+inventory_root_device=$(/usr/bin/stat -f %d "$inventory_fixture/root")
+inventory_expected_target_hex=$(LC_ALL=C printf %s "$inventory_link_target" | /usr/bin/od -An -v -tx1 | /usr/bin/tr -d ' \n')
+for inventory_shell in /bin/sh /bin/dash; do
+    inventory_raw=$inventory_fixture/$(basename "$inventory_shell").raw
+    : >"$inventory_raw"
+    chmod 0600 "$inventory_raw"
+    LC_ALL=C /usr/bin/find -P "$inventory_fixture/root" -xdev -exec "$inventory_shell" "$guest" --inventory-entries "$inventory_fixture/root" "$inventory_root_device" "$inventory_raw" {} + || die "inventory fixture failed under $inventory_shell"
+    [ "$(wc -l <"$inventory_raw" | /usr/bin/tr -d ' ')" -eq 5 ] || die "inventory fixture path count changed under $inventory_shell"
+    grep -Ev '^path_hex=[0-9a-f]+ type=[dfl] mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=[0-9]+ sha256=(-|[0-9a-f]{64}) target_hex=(-|[0-9a-f]+)$' "$inventory_raw" >"$inventory_raw.invalid" || :
+    [ ! -s "$inventory_raw.invalid" ] || die "inventory fixture format changed under $inventory_shell"
+    grep -F " type=l " "$inventory_raw" | grep -F " target_hex=$inventory_expected_target_hex" >/dev/null || die "inventory symlink target changed under $inventory_shell"
+    find "$inventory_fixture" -name '*.link.*' -print -quit | grep . >/dev/null && die "inventory readlink temporary file remains"
+done
+printf '%s\n' hardlink >"$inventory_fixture/root/hard-a"
+ln "$inventory_fixture/root/hard-a" "$inventory_fixture/root/hard-b"
+for inventory_shell in /bin/sh /bin/dash; do
+    inventory_raw=$inventory_fixture/hard-$(basename "$inventory_shell").raw
+    : >"$inventory_raw"
+    chmod 0600 "$inventory_raw"
+    set +e
+    "$inventory_shell" "$guest" --inventory-entries "$inventory_fixture/root" "$inventory_root_device" "$inventory_raw" "$inventory_fixture/root/hard-a" >"$inventory_fixture/hard.stdout" 2>"$inventory_fixture/hard.stderr"
+    inventory_status=$?
+    set -e
+    [ "$inventory_status" -ne 0 ] || die "inventory hardlink passed under $inventory_shell"
+    grep -F 'regular inventory file has multiple hard links' "$inventory_fixture/hard.stderr" >/dev/null || die "inventory hardlink failure changed under $inventory_shell"
+done
+mkfifo "$inventory_fixture/root/fifo"
+inventory_raw=$inventory_fixture/fifo.raw
+: >"$inventory_raw"
+chmod 0600 "$inventory_raw"
+set +e
+/bin/sh "$guest" --inventory-entries "$inventory_fixture/root" "$inventory_root_device" "$inventory_raw" "$inventory_fixture/root/fifo" >"$inventory_fixture/fifo.stdout" 2>"$inventory_fixture/fifo.stderr"
+inventory_status=$?
+set -e
+[ "$inventory_status" -ne 0 ] || die "inventory special file passed"
+grep -F 'inventory contains an unsupported file type' "$inventory_fixture/fifo.stderr" >/dev/null || die "inventory special-file failure changed"
+rm -R "$inventory_fixture"
 trap - EXIT HUP INT TERM
 
 # Receipt contents stay opaque. Metadata and SHA-256 identity are allowed.
@@ -388,13 +490,13 @@ reject "--diagnostic-endpoint[[:space:]]+''" "empty diagnostic endpoint remains"
 installer_process_coverage_is_valid "$guest" || die "an installer process lacks the loopback canary"
 need "$guest" 'for snapshot_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd /etc/fstab /etc/synthetic.conf /opt/pkg '\''/Library/Application Support/pkg'\''; do' "snapshot path anchors changed"
 need "$guest" 'launchctl print system >"$snapshot_prefix.launchd-system" 2>&1 || die "could not record system launchd"' "snapshot launchd anchor changed"
-need "$guest" 'if [ -f /etc/fstab ] && [ ! -L /etc/fstab ]; then' "safe raw fstab test missing"
-need "$guest" 'cp /etc/fstab "$snapshot_prefix.fstab.raw" || die "could not record raw fstab"' "raw fstab capture missing"
-need "$guest" 'chmod 0600 "$snapshot_prefix.fstab.raw" || die "could not make raw fstab evidence private"' "raw fstab privacy missing"
-need "$guest" 'printf '\''%s\n'\'' absent-or-unsafe >"$snapshot_prefix.fstab.raw" || die "could not record unsafe or absent fstab"' "raw fstab unsafe marker missing"
+need_exact "$guest" '    for config_file in /etc/synthetic.conf; do' "snapshot config scope changed"
+reject 'fstab[.]raw|cp[[:space:]]+/etc/fstab' "fstab contents are copied into evidence" "$guest"
+reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?(cat|cp|dd|head|tail|sed|tar|tee|strings)[[:space:]].*(/etc/fstab|/var/log/determinate-nix-(init|daemon)[.]log)' "fixed-path contents are copied or printed" "$guest"
 need_exact "$guest" "$fstab_uuid_line" "fstab UUID comparison lowercasing changed"
 fstab_uuid_case_is_valid "$guest" || die "fstab UUID comparison does not use the exact lowercase translation"
 need "$guest" 'grep -Fxc "$installed_fstab" /etc/fstab >"$phase_dir/$installed_name.fstab-count" || die "exact Determinate fstab entry is absent"' "strict fstab assertion changed"
+need_exact "$guest" '    awk '\''$2 == "/nix" {count++} END {print count + 0}'\'' /etc/fstab >"$phase_dir/$installed_name.fstab-nix-count" || die "could not count fstab /nix entries"' "fstab count-only evidence changed"
 install_evidence_order_is_valid "$guest" || die "install pre-assert evidence phase or order changed"
 order_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-install-order.XXXXXX") || die "could not create install-order fixture"
 trap 'rm -R "$order_fixture"' EXIT HUP INT TERM

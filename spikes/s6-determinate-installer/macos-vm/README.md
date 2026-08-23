@@ -33,3 +33,43 @@ deadline or any comparison error fails the run. After the boot time changes,
 the harness checks passwordless `sudo`, the owner marker, both staged file
 hashes, and the Tart process. It writes `PASS` and returns success only after
 all checks pass.
+
+## Residue identity evidence
+
+Every guest snapshot records four identity files:
+
+- `<snapshot>.etc-nix.inventory`
+- `<snapshot>.fstab.identity`
+- `<snapshot>.determinate-nix-init-log.identity`
+- `<snapshot>.determinate-nix-daemon-log.identity`
+
+The `/etc/nix` inventory does not follow symbolic links. It stays on one
+device. It accepts only directories, regular files, and symbolic links.
+Regular files and symbolic links must have one hard link. Paths and symbolic
+link targets are hexadecimal bytes. Regular file contents are represented
+only by SHA-256. The evidence does not contain fstab bytes, log bytes, or
+receipt bytes.
+
+Each snapshot runs the four scans twice. It sorts the `/etc/nix` records with
+the C locale. It keeps the first scan only when both scans are byte-for-byte
+equal. A changing file, an unsupported file type, a hard link, a followed
+link, or a cross-device entry stops the phase.
+
+The lifecycle lane compares these identities across the exact boundaries:
+
+1. The clean baseline stays unchanged and all four paths are absent.
+2. Install starts from the baseline and creates `/etc/nix` and `/etc/fstab`.
+3. Uninstall starts from the daemon phase state.
+4. Repeat uninstall starts from the uninstall state and changes nothing.
+5. The final post-reboot state equals the repeat-uninstall state and stays
+   unchanged during the final phase.
+
+The lifecycle produces nine phase archives. The final residue decision occurs
+only after the final `after` snapshot and all final comparisons. DN-03c does
+not delete `/etc/nix`, `/etc/fstab`, or the Determinate logs. DN-13 can later
+remove only residue whose complete identity is proved again at cleanup time.
+
+R8 did not record the contents of `/etc/nix`. It also missed an empty fstab
+file and did not inspect the two Determinate log paths. Thus, R8 does not prove
+the exact vendor residue. A new full R9 lifecycle run is required with this
+identity contract.

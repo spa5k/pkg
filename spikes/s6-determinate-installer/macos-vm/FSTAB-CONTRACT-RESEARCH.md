@@ -4,15 +4,17 @@
 |---|---|
 | Installer release | `v3.22.1` |
 | Pinned source revision | `4132ad07a15ee7d88c096ac7172b7afb2672866b` |
-| Research date | 2026-08-23 |
-| Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, and install self-test warnings |
-| Evidence rule | Pinned primary-source analysis plus preserved R4, R5, R6, and R7 observations. No private receipt contents were read. No private evidence was changed. |
+| Research date | 2026-08-24 |
+| Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, install self-test warnings, and residue identity |
+| Evidence rule | Pinned primary-source analysis plus preserved R4, R5, R6, R7, and R8 observations. No private receipt contents were read. No private evidence was changed. |
 
 In this report, **r2** means the reported first lifecycle attempt. **r3** means
 the evidence-only harness revision. **R4** means the preserved run that used
 that revision. **R5** means the preserved run that used the UUID comparison
 fix. **R6** means the preserved run at product revision `4fb8c70`. **R7** means
-the preserved run at product revision `23195d1`.
+the preserved run at product revision `23195d1`. **R8** means the preserved
+run at product revision `650e205`. **R9** means the required fresh run with the
+byte-safe residue identity contract described in this report.
 
 ## Short answer
 
@@ -153,6 +155,113 @@ text does not prove that the reboot completed.
 **Unproved:** The second reboot, post-second-reboot identity, and final residue
 remain unproved.
 
+## R8 Observed/Inference/Unproved
+
+The preserved evidence path is
+`/private/var/tmp/pkg-s6-dn03c-evidence/lifecycle-diagnostics-650e205-r8`.
+The runtime source is `650e205`.
+
+**Observed:**
+
+- The installer SHA-256 is
+  `90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b`.
+  Its size is 58,427,232 bytes. Its mode is `0700`.
+- Both reboots passed. Each shutdown recorded status and timeout as `0:0`.
+  Each raw boot time changed. The separate boot-time stderr files are empty.
+  Installer and inside-script revalidation matched after each reboot.
+- Baseline, install, post-reboot, repeat install, repair, daemon, uninstall,
+  and repeat uninstall passed with guest status `0`.
+- The lifecycle-residue phase returned guest status `1`. The old scanner
+  reported `/etc/nix`. This was the only path that the old scanner reported.
+  This result does not prove that it was the only residue.
+- The baseline had no `/etc/nix`. Install created `/etc/nix` as
+  `root:wheel`, mode `0755`, size 192. Uninstall left it as `root:wheel`, mode
+  `0755`, size 128. That top-level identity stayed stable through repeat
+  uninstall and the final reboot.
+- The baseline had no `/etc/fstab`. The final state had a regular
+  `/etc/fstab` owned by `root:wheel`, mode `0644`, size 0. The old residue
+  scanner did not report this empty file because it searched for Nix text.
+- Installed launchd evidence names `/var/log/determinate-nix-init.log` and
+  `/var/log/determinate-nix-daemon.log`. The R8 scanner did not inspect these
+  fixed paths.
+- The receipt was `root:wheel`, mode `0644`, size 35,811, with SHA-256
+  `d7c9336a64c6411395188e787f7a11327d4d3c40060ac4d99115c1d3fae96a4d`.
+  It was absent after uninstall. Only receipt metadata, size, and SHA-256 were
+  saved. Receipt contents were not read.
+- All nine phase archives are valid and final. No `.tar.part` remains. The
+  evidence is private. It has no symlink or non-regular archive entry. No
+  archive contains `receipt.json`.
+- Exact VM and Tart cleanup passed. The runtime source worktree is clean.
+
+The nine archive SHA-256 values are:
+
+| Phase | SHA-256 |
+|---|---|
+| baseline | `f027ad775254278daea0b61e9cb2a9a466795678b4b8af114e71a5a84094de3f` |
+| lifecycle-install | `acb1331fc196b99b0ea2604e53bc6aa03186ba2e23ee2b2b4fa48a774f681085` |
+| lifecycle-post-reboot | `15f86a0bf8654afb13f5bb42f77114ed48df65e80b333c4762dfb22c9a65acd5` |
+| lifecycle-repeat-install | `5d323463165457d29f9504d46c4db51b449ed6a72d5e8d6718886417b3e303b7` |
+| lifecycle-repair | `70394bb941f5c0166367216676bc409eb697c421d66871c9af6756a09c1562d5` |
+| lifecycle-daemon | `eb5b7c1c397b5ef59c21c5f1d8a6f80b6675b80ec4a5a89c92308a96fb4787d9` |
+| lifecycle-uninstall | `d177e14634fbd72e23c28cbbd11d9d7856aa079e659d0fe92d5c26028706e62d` |
+| lifecycle-repeat-uninstall | `f4a2cf784e8d3959e32bb95099ea158f850a16279b455675bba635ea301f5965` |
+| lifecycle-residue | `bf2ed6e92679e69527e8a851f5eed9a92b88f95b62a2abefa3113b877786878c` |
+
+**Inference:**
+
+- The vendor uninstall leaves at least the observed `/etc/nix` directory and
+  empty `/etc/fstab` on this pinned guest.
+- The old text-based fstab check was too narrow. An empty file differs from an
+  absent baseline even though it contains no Nix text.
+- The stable top-level `/etc/nix` metadata does not prove stable children.
+  Different trees can have the same top-level mode, owner, and size.
+
+**Unproved:**
+
+- The exact `/etc/nix` child paths, types, modes, owners, sizes, hard-link
+  counts, regular-file hashes, and symbolic-link targets are unproved.
+- The presence and identity of the two Determinate log files are unproved.
+- The exact complete vendor residue is unproved. `/etc/nix` must not be
+  described as the only residue.
+- R8 is a **NO-GO** for DN-03c completion. A fresh full R9 run is required.
+
+## R9 required residue contract
+
+R9 must run the complete lifecycle from a clean pinned guest. It must finalize
+exactly nine phase archives. It must not copy fstab, log, or receipt contents.
+
+Each snapshot must save these four files:
+
+- `.etc-nix.inventory`
+- `.fstab.identity`
+- `.determinate-nix-init-log.identity`
+- `.determinate-nix-daemon-log.identity`
+
+The `/etc/nix` inventory uses `find -P` and `-xdev`. Found paths stay in argv;
+they are not parsed as newline-delimited text. Path bytes and symbolic-link
+target bytes use hexadecimal text. Regular files require one hard link and a
+stable lstat-hash-lstat result. Symbolic links require one hard link and a
+stable lstat-readlink-lstat result. Directories are allowed. Every other type
+and every cross-device entry is rejected. Each complete sorted scan must match
+a second scan byte for byte.
+
+The baseline before and after identities must match, and all four paths must
+be absent. Install must start from the baseline and must create `/etc/nix` and
+`/etc/fstab`. Uninstall must start from the daemon post-state. Repeat uninstall
+must start from the uninstall post-state and change no identity. After the
+final reboot, the residue pre-state must equal the repeat-uninstall post-state.
+The final residue after-state must equal its pre-state.
+
+Strict residue compares the final identities with the baseline identities.
+Thus, absent-to-present `/etc/nix`, fstab, or log identities are residue. Any
+fstab identity difference is residue, including an empty file. An unchanged
+pre-existing identity is not attributed to the vendor. The final residue
+failure, when present, must occur only after the final `after` snapshot and all
+final comparisons.
+
+DN-03c records this contract. It does not delete the residue. DN-13 must later
+revalidate the complete exact identity before any fail-closed cleanup.
+
 ## Decision table
 
 | Decision | Result | Reason |
@@ -163,7 +272,7 @@ remain unproved.
 | Did r3 add evidence capture before the gate? | **DONE** | R4 preserved the raw UUID, raw fstab line, and probe results before the strict gate. |
 | Should `nix: not found` make installer exit `0` fail? | **NO-GO** | The installer treats self-test failures as warnings. With `--no-modify-profile`, a bare `nix` command can be absent from shell `PATH`. |
 | Should the harness keep its absolute-path Nix checks? | **GO** | They test the installed binary and daemon without depending on shell profile changes. |
-| Is DN-03c complete after R4? | **NO-GO** | R4 stopped at the strict fstab comparison. A later run must prove the remaining lifecycle. |
+| Is DN-03c complete after R8? | **NO-GO** | R8 completed the lifecycle, but its scanner did not prove exact `/etc/nix`, empty fstab, or Determinate log residue. A fresh R9 run is required. |
 
 ## 1. Source and release identity
 
@@ -461,7 +570,8 @@ Keep all of these controls unchanged:
 - The option order, spacing, and vendor comment must match exactly.
 - The full vendor line must occur exactly once.
 - `/etc/fstab` must contain exactly one `/nix` row.
-- Raw fstab capture and receipt opacity must remain.
+- Fstab identity and SHA-256 evidence must remain. Fstab and receipt bytes must
+  not be copied into phase evidence.
 
 After this change, run the lifecycle lane again from a clean pinned guest. R4
 does not supply the later reboot, repair, uninstall, and residue results.
@@ -481,10 +591,15 @@ self-test failures as warnings and still succeeds. With
 `--no-modify-profile`, a bare `nix` lookup can fail even when the absolute Nix
 binary and daemon work.
 
-R7 proved baseline, install, the first reboot, post-reboot checks, repeat
-install, repair, daemon behavior, uninstall, and repeat uninstall on the pinned
-guest. DN-03c remains a **NO-GO** until a new run proves the second reboot, its
-identity revalidation, and final residue.
+R8 proved the complete phase and reboot sequence on the pinned guest. It also
+proved that the old scanner was incomplete. The scanner reported `/etc/nix`,
+but it did not inventory its children. It missed a new empty `/etc/fstab`. It
+did not inspect the two Determinate logs. Thus, the exact complete residue is
+still unproved.
+
+DN-03c remains a **NO-GO** until a fresh R9 run produces all nine final
+archives with the byte-safe identity contract. DN-03c must not clean these
+paths. DN-13 can later clean only an exact identity that it revalidates.
 
 ## Primary sources
 

@@ -9,6 +9,8 @@ umask 077
 
 phase_dir=
 active_vendor_pid=
+strict_vendor_failed=0
+strict_product_failed=0
 die() {
     set +e
     if [ -n "$phase_dir" ] && [ -d "$phase_dir" ] && [ ! -L "$phase_dir" ]; then
@@ -18,12 +20,90 @@ die() {
     exit 1
 }
 sha256() {
-    sha256_line=$(shasum -a 256 "$1") || return 1
+    sha256_line=$(shasum -a 256 <"$1") || return 1
     printf '%s\n' "${sha256_line%% *}"
 }
 record() { printf '%s: %s\n' "$1" "$2" >>"$phase_dir/results"; }
 write_argv() { argv_file=$1; shift; : >"$argv_file"; for argv_item in "$@"; do printf '%s\n' "$argv_item" >>"$argv_file"; done; }
 path_exists() { [ -e "$1" ] || [ -L "$1" ]; }
+
+path_hex() {
+    LC_ALL=C printf %s "$1" | /usr/bin/od -An -v -tx1 | /usr/bin/tr -d ' \n'
+}
+stat_state() {
+    stat_path=$1
+    stat_state_line=$(LC_ALL=C /usr/bin/stat -f '%d:%i:%p:%u:%g:%z:%l:%m:%c:%Lp:%HT' "$stat_path") || die "could not inspect path identity"
+    stat_saved_ifs=$IFS
+    IFS=:
+    read -r stat_device stat_inode stat_full_mode stat_uid stat_gid stat_size stat_nlink stat_mtime stat_ctime stat_mode stat_type <<EOF
+$stat_state_line
+EOF
+    IFS=$stat_saved_ifs
+    case $stat_device:$stat_inode:$stat_full_mode:$stat_uid:$stat_gid:$stat_size:$stat_nlink:$stat_mtime:$stat_ctime in
+        *[!0-9:]*) die "path identity contains a non-numeric field" ;;
+    esac
+    case $stat_mode in ''|*[!0-7]*) die "path mode is not octal" ;; esac
+}
+inventory_entries() {
+    shift
+    inventory_root=$1 inventory_root_device=$2 inventory_output=$3
+    shift 3
+    case $inventory_root_device in ''|*[!0-9]*) die "inventory root device is invalid" ;; esac
+    case $inventory_output in /*) ;; *) die "inventory output path is not absolute" ;; esac
+    [ -f "$inventory_output" ] && [ ! -L "$inventory_output" ] || die "inventory output is unsafe"
+    [ "$(LC_ALL=C /usr/bin/stat -f '%u:%Lp' "$inventory_output")" = "$(id -u):600" ] || die "inventory output is not private"
+    inventory_link_index=0
+    for inventory_path do
+        case $inventory_path in "$inventory_root"|"$inventory_root"/*) ;; *) die "inventory path escaped its root" ;; esac
+        stat_state "$inventory_path"
+        inventory_before=$stat_state_line
+        inventory_device=$stat_device inventory_mode=$stat_mode inventory_uid=$stat_uid inventory_gid=$stat_gid
+        inventory_size=$stat_size inventory_nlink=$stat_nlink inventory_type=$stat_type
+        [ "$inventory_device" = "$inventory_root_device" ] || die "inventory path crossed a device boundary"
+        inventory_sha=- inventory_target_hex=-
+        case $inventory_type in
+            Directory) inventory_kind=d ;;
+            'Regular File')
+                inventory_kind=f
+                [ "$inventory_nlink" -eq 1 ] || die "regular inventory file has multiple hard links"
+                inventory_sha=$(sha256 "$inventory_path") || die "could not hash regular inventory file"
+                case $inventory_sha in *[!0-9a-f]*|'') die "regular inventory file hash is invalid" ;; esac
+                [ "${#inventory_sha}" -eq 64 ] || die "regular inventory file hash length is invalid"
+                ;;
+            'Symbolic Link')
+                inventory_kind=l
+                [ "$inventory_nlink" -eq 1 ] || die "inventory symlink has multiple hard links"
+                inventory_link_index=$((inventory_link_index + 1))
+                inventory_link_output=$inventory_output.link.$$.$inventory_link_index
+                [ ! -e "$inventory_link_output" ] && [ ! -L "$inventory_link_output" ] || die "inventory readlink temporary path exists"
+                trap '/bin/rm -f "$inventory_link_output"' EXIT HUP INT TERM
+                LC_ALL=C /usr/bin/readlink "$inventory_path" >"$inventory_link_output" || die "could not read inventory symlink"
+                inventory_link_size=$(wc -c <"$inventory_link_output" | /usr/bin/tr -d ' ')
+                case $inventory_link_size in ''|*[!0-9]*) die "inventory readlink length is invalid" ;; esac
+                [ "$inventory_link_size" -eq $((inventory_size + 1)) ] || die "inventory readlink length differs from lstat size"
+                inventory_link_hex=$(LC_ALL=C /usr/bin/od -An -v -tx1 "$inventory_link_output" | /usr/bin/tr -d ' \n')
+                [ "${#inventory_link_hex}" -eq $((inventory_link_size * 2)) ] || die "inventory readlink hex length is invalid"
+                case $inventory_link_hex in *0a) inventory_target_hex=${inventory_link_hex%0a} ;; *) die "inventory readlink output lacks its delimiter" ;; esac
+                [ "${#inventory_target_hex}" -eq $((inventory_size * 2)) ] || die "inventory symlink target hex differs from lstat size"
+                /bin/rm -f "$inventory_link_output" || die "could not remove inventory readlink temporary file"
+                trap - EXIT HUP INT TERM
+                ;;
+            *) die "inventory contains an unsupported file type" ;;
+        esac
+        stat_state "$inventory_path"
+        [ "$stat_state_line" = "$inventory_before" ] || die "inventory path changed while it was inspected"
+        inventory_path_hex=$(path_hex "$inventory_path") || die "could not encode inventory path"
+        printf 'path_hex=%s type=%s mode=%s uid=%s gid=%s size=%s nlink=%s sha256=%s target_hex=%s\n' \
+            "$inventory_path_hex" "$inventory_kind" "$inventory_mode" "$inventory_uid" "$inventory_gid" \
+            "$inventory_size" "$inventory_nlink" "$inventory_sha" "$inventory_target_hex" >>"$inventory_output"
+    done
+}
+
+if [ "${1-}" = --inventory-entries ]; then
+    [ "$#" -ge 5 ] || die "inventory scanner requires a root, device, output, and path"
+    inventory_entries "$@"
+    exit 0
+fi
 
 wait_bounded() {
     wait_limit=$1 wait_child=$2 wait_elapsed=0
@@ -119,6 +199,84 @@ receipt_identity() {
     stat -f %z "$receipt" >"$phase_dir/$receipt_name.size"
     sha256 "$receipt" >"$phase_dir/$receipt_name.sha256"
 }
+capture_inventory_once() {
+    inventory_file=$1 inventory_raw=$1.raw
+    : >"$inventory_raw"
+    if ! path_exists /etc/nix; then
+        printf '%s\n' 'state=absent path_hex=2f6574632f6e6978' >"$inventory_file"
+        /bin/rm -f "$inventory_raw"
+        return 0
+    fi
+    case $0 in /*) ;; *) die "inventory scanner path is not absolute" ;; esac
+    stat_state /etc/nix
+    inventory_root_before=$stat_state_line inventory_root_device=$stat_device
+    LC_ALL=C /usr/bin/find -P /etc/nix -xdev -exec /bin/sh "$0" --inventory-entries /etc/nix "$inventory_root_device" "$inventory_raw" {} + || die "could not inventory /etc/nix"
+    stat_state /etc/nix
+    [ "$stat_state_line" = "$inventory_root_before" ] || die "/etc/nix changed during inventory"
+    LC_ALL=C /usr/bin/sort "$inventory_raw" >"$inventory_file" || die "could not sort /etc/nix inventory"
+    /bin/rm -f "$inventory_raw" || die "could not remove raw /etc/nix inventory"
+}
+capture_fixed_identity() {
+    identity_path=$1 identity_file=$2
+    identity_path_hex=$(path_hex "$identity_path") || die "could not encode fixed identity path"
+    if ! path_exists "$identity_path"; then
+        printf 'state=absent path_hex=%s type=- mode=- uid=- gid=- size=- nlink=- sha256=-\n' "$identity_path_hex" >"$identity_file"
+        return 0
+    fi
+    stat_state "$identity_path"
+    identity_before=$stat_state_line identity_mode=$stat_mode identity_uid=$stat_uid identity_gid=$stat_gid
+    identity_size=$stat_size identity_nlink=$stat_nlink
+    [ "$stat_type" = 'Regular File' ] || die "fixed identity path is not a non-symlink regular file"
+    [ "$identity_nlink" -eq 1 ] || die "fixed identity file has multiple hard links"
+    identity_sha=$(sha256 "$identity_path") || die "could not hash fixed identity file"
+    case $identity_sha in *[!0-9a-f]*|'') die "fixed identity hash is invalid" ;; esac
+    [ "${#identity_sha}" -eq 64 ] || die "fixed identity hash length is invalid"
+    stat_state "$identity_path"
+    [ "$stat_state_line" = "$identity_before" ] || die "fixed identity changed while it was inspected"
+    printf 'state=present path_hex=%s type=f mode=%s uid=%s gid=%s size=%s nlink=%s sha256=%s\n' \
+        "$identity_path_hex" "$identity_mode" "$identity_uid" "$identity_gid" "$identity_size" "$identity_nlink" "$identity_sha" >"$identity_file"
+}
+capture_residue_contract_once() {
+    residue_stem=$1
+    capture_inventory_once "$residue_stem.etc-nix.inventory"
+    capture_fixed_identity /etc/fstab "$residue_stem.fstab.identity"
+    capture_fixed_identity /var/log/determinate-nix-init.log "$residue_stem.determinate-nix-init-log.identity"
+    capture_fixed_identity /var/log/determinate-nix-daemon.log "$residue_stem.determinate-nix-daemon-log.identity"
+}
+capture_residue_contract() {
+    residue_prefix=$1 residue_first=$1.residue-scan-1 residue_second=$1.residue-scan-2
+    capture_residue_contract_once "$residue_first"
+    capture_residue_contract_once "$residue_second"
+    for residue_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
+        /usr/bin/cmp -s "$residue_first.$residue_suffix" "$residue_second.$residue_suffix" || die "residue identity was not stable across two scans: $residue_suffix"
+    done
+    for residue_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
+        /bin/mv "$residue_first.$residue_suffix" "$residue_prefix.$residue_suffix" || die "could not finalize residue identity: $residue_suffix"
+        /bin/rm -f "$residue_second.$residue_suffix" || die "could not remove second residue scan: $residue_suffix"
+    done
+}
+compare_residue_contract() {
+    contract_left=$1 contract_right=$2 contract_reason=$3
+    for contract_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
+        /usr/bin/cmp -s "$contract_left.$contract_suffix" "$contract_right.$contract_suffix" || die "$contract_reason: $contract_suffix"
+    done
+}
+identity_is_exact() {
+    identity_count=$(grep -F -x -c -- "$2" "$1" || :)
+    [ "$identity_count" -eq 1 ] && [ "$(wc -l <"$1" | /usr/bin/tr -d ' ')" -eq 1 ]
+}
+require_clean_residue_contract() {
+    clean_prefix=$1
+    identity_is_exact "$clean_prefix.etc-nix.inventory" 'state=absent path_hex=2f6574632f6e6978' || die "clean snapshot contains /etc/nix"
+    identity_is_exact "$clean_prefix.fstab.identity" 'state=absent path_hex=2f6574632f6673746162 type=- mode=- uid=- gid=- size=- nlink=- sha256=-' || die "clean snapshot contains /etc/fstab"
+    identity_is_exact "$clean_prefix.determinate-nix-init-log.identity" 'state=absent path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=- mode=- uid=- gid=- size=- nlink=- sha256=-' || die "clean snapshot contains the Determinate init log"
+    identity_is_exact "$clean_prefix.determinate-nix-daemon-log.identity" 'state=absent path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=- mode=- uid=- gid=- size=- nlink=- sha256=-' || die "clean snapshot contains the Determinate daemon log"
+}
+require_installed_residue_contract() {
+    installed_prefix=$1
+    grep -E '^path_hex=2f6574632f6e6978 type=d mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=[0-9]+ sha256=- target_hex=-$' "$installed_prefix.etc-nix.inventory" >/dev/null || die "installed snapshot lacks the /etc/nix root directory"
+    grep -E '^state=present path_hex=2f6574632f6673746162 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$' "$installed_prefix.fstab.identity" >/dev/null || die "installed snapshot lacks stable /etc/fstab identity"
+}
 snapshot() {
     snapshot_name=$1 snapshot_prefix=$phase_dir/$snapshot_name
     sw_vers >"$snapshot_prefix.platform" || die "could not record macOS version"
@@ -126,6 +284,7 @@ snapshot() {
     printf 'console-user=%s\n' "$console_user" >>"$snapshot_prefix.platform"
     snapshot_boot=$(sysctl -n kern.boottime) || die "could not record raw kernel boot time"
     printf 'kern-boottime=%s\n' "$snapshot_boot" >>"$snapshot_prefix.platform"
+    capture_residue_contract "$snapshot_prefix"
     : >"$snapshot_prefix.paths"
     for snapshot_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd /etc/fstab /etc/synthetic.conf /opt/pkg '/Library/Application Support/pkg'; do
         if [ -L "$snapshot_path" ]; then
@@ -138,15 +297,9 @@ snapshot() {
     diskutil apfs list >"$snapshot_prefix.apfs" 2>&1 || die "could not record APFS state"
     mount >"$snapshot_prefix.mounts" 2>&1 || die "could not record mounts"
     : >"$snapshot_prefix.config"
-    for config_file in /etc/fstab /etc/synthetic.conf; do
+    for config_file in /etc/synthetic.conf; do
         if [ -f "$config_file" ] && [ ! -L "$config_file" ]; then grep -Ein '(^|[[:space:]/])(nix|Nix Store)([[:space:]/]|$)' "$config_file" >>"$snapshot_prefix.config" || :; fi
     done
-    if [ -f /etc/fstab ] && [ ! -L /etc/fstab ]; then
-        cp /etc/fstab "$snapshot_prefix.fstab.raw" || die "could not record raw fstab"
-        chmod 0600 "$snapshot_prefix.fstab.raw" || die "could not make raw fstab evidence private"
-    else
-        printf '%s\n' absent-or-unsafe >"$snapshot_prefix.fstab.raw" || die "could not record unsafe or absent fstab"
-    fi
     : >"$snapshot_prefix.launchd-files"
     for launch_dir in /Library/LaunchDaemons /Library/LaunchAgents; do
         [ -d "$launch_dir" ] || continue
@@ -227,8 +380,8 @@ assert_installed_state() {
     installed_fstab="UUID=$(printf '%s\n' "$installed_uuid" | tr 'ABCDEF' 'abcdef') /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer"
     grep -Fxc "$installed_fstab" /etc/fstab >"$phase_dir/$installed_name.fstab-count" || die "exact Determinate fstab entry is absent"
     [ "$(cat "$phase_dir/$installed_name.fstab-count")" -eq 1 ] || die "exact Determinate fstab entry is not unique"
-    awk '$2 == "/nix" {print}' /etc/fstab >"$phase_dir/$installed_name.fstab-nix" || die "could not inspect fstab /nix entries"
-    [ "$(wc -l <"$phase_dir/$installed_name.fstab-nix")" -eq 1 ] || die "fstab contains an extra /nix entry"
+    awk '$2 == "/nix" {count++} END {print count + 0}' /etc/fstab >"$phase_dir/$installed_name.fstab-nix-count" || die "could not count fstab /nix entries"
+    [ "$(cat "$phase_dir/$installed_name.fstab-nix-count")" -eq 1 ] || die "fstab contains an extra /nix entry"
     [ -f /etc/synthetic.conf ] && [ ! -L /etc/synthetic.conf ] || die "installed synthetic.conf is missing or unsafe"
     installed_synthetic_hex=$(content_hex /etc/synthetic.conf) || die "could not inspect installed synthetic.conf"
     [ "$installed_synthetic_hex" = 6e69780a ] || die "installed synthetic.conf is not exactly nix newline"
@@ -336,9 +489,28 @@ record_foreign_state() {
 }
 
 strict_residue() {
+    residue_snapshot=$1
     residue_dirty=0
     : >"$phase_dir/vendor-residue"
-    for residue_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd; do
+    if [ "$phase" = lifecycle-residue ]; then
+        residue_baseline=$evidence/baseline/after
+        for residue_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
+            if /usr/bin/cmp -s "$residue_baseline.$residue_suffix" "$residue_snapshot.$residue_suffix"; then
+                :
+            else
+                residue_compare_status=$?
+                [ "$residue_compare_status" -eq 1 ] || die "could not compare baseline residue identity: $residue_suffix"
+                printf 'changed identity=%s\n' "$residue_suffix" >>"$phase_dir/vendor-residue"
+                residue_dirty=1
+            fi
+        done
+    else
+        if ! identity_is_exact "$residue_snapshot.etc-nix.inventory" 'state=absent path_hex=2f6574632f6e6978'; then printf '%s\n' 'present identity=etc-nix.inventory' >>"$phase_dir/vendor-residue"; residue_dirty=1; fi
+        if ! identity_is_exact "$residue_snapshot.fstab.identity" 'state=absent path_hex=2f6574632f6673746162 type=- mode=- uid=- gid=- size=- nlink=- sha256=-'; then printf '%s\n' 'present identity=fstab.identity' >>"$phase_dir/vendor-residue"; residue_dirty=1; fi
+        if ! identity_is_exact "$residue_snapshot.determinate-nix-init-log.identity" 'state=absent path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=- mode=- uid=- gid=- size=- nlink=- sha256=-'; then printf '%s\n' 'present identity=determinate-nix-init-log.identity' >>"$phase_dir/vendor-residue"; residue_dirty=1; fi
+        if ! identity_is_exact "$residue_snapshot.determinate-nix-daemon-log.identity" 'state=absent path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=- mode=- uid=- gid=- size=- nlink=- sha256=-'; then printf '%s\n' 'present identity=determinate-nix-daemon-log.identity' >>"$phase_dir/vendor-residue"; residue_dirty=1; fi
+    fi
+    for residue_path in /nix /nix/receipt.json /nix/nix-installer /usr/local/bin/determinate-nixd; do
         if path_exists "$residue_path"; then printf 'present path=%s\n' "$residue_path" >>"$phase_dir/vendor-residue"; residue_dirty=1; fi
     done
     diskutil apfs list >"$phase_dir/residue.apfs" 2>&1 || die "could not inspect APFS residue"
@@ -346,7 +518,7 @@ strict_residue() {
         printf '%s\n' 'present APFS=Nix Store' >>"$phase_dir/vendor-residue"
         residue_dirty=1
     fi
-    for residue_file in /etc/fstab /etc/synthetic.conf; do
+    for residue_file in /etc/synthetic.conf; do
         if [ -L "$residue_file" ]; then
             printf 'symlink file=%s\n' "$residue_file" >>"$phase_dir/vendor-residue"
             residue_dirty=1
@@ -393,8 +565,8 @@ strict_residue() {
     [ ! -s "$phase_dir/product-residue" ] || product_dirty=1
     [ ! -s "$phase_dir/product-account-residue" ] || product_dirty=1
     if [ "$product_dirty" -eq 0 ]; then printf '%s\n' PASS >"$phase_dir/product-residue-outcome"; else printf '%s\n' FAIL >"$phase_dir/product-residue-outcome"; fi
-    [ "$residue_dirty" -eq 0 ] || die "vendor residue remains"
-    [ "$product_dirty" -eq 0 ] || die "product residue remains"
+    strict_vendor_failed=$residue_dirty
+    strict_product_failed=$product_dirty
 }
 
 case $# in 6|7) ;; *) die "usage: inside.sh PHASE TOKEN MARKER STAGED_INSTALLER INSTALLER_SHA256 GUEST_EVIDENCE_DIR [APPROVAL]" ;; esac
@@ -514,11 +686,16 @@ current_boot=$(sysctl -n kern.boottime) || die "could not record raw kernel boot
 printf '%s\n' "$current_boot" >"$phase_dir/boot-session"
 record_free_disk
 snapshot before
+case $phase in
+    lifecycle-install) compare_residue_contract "$evidence/baseline/after" "$phase_dir/before" "install pre-state differs from clean baseline" ;;
+    lifecycle-uninstall) compare_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;
+    lifecycle-repeat-uninstall) compare_residue_contract "$evidence/lifecycle-uninstall/after" "$phase_dir/before" "repeat-uninstall pre-state differs from uninstall post-state" ;;
+esac
 
 phase_exit=0
 case $phase in
     baseline)
-        strict_residue
+        strict_residue "$phase_dir/before"
         ;;
     lifecycle-install)
         require_first_vendor_gates
@@ -584,7 +761,8 @@ case $phase in
         ;;
     lifecycle-residue)
         require_reboot_since lifecycle-repeat-uninstall
-        strict_residue
+        compare_residue_contract "$evidence/lifecycle-repeat-uninstall/after" "$phase_dir/before" "post-reboot residue pre-state differs from repeat-uninstall post-state"
+        strict_residue "$phase_dir/before"
         ;;
     crash-kill)
         require_first_vendor_gates
@@ -730,6 +908,17 @@ case $phase in
 esac
 
 snapshot after
+case $phase in
+    baseline)
+        compare_residue_contract "$phase_dir/before" "$phase_dir/after" "baseline changed during observation"
+        require_clean_residue_contract "$phase_dir/after"
+        ;;
+    lifecycle-install) require_installed_residue_contract "$phase_dir/after" ;;
+    lifecycle-repeat-uninstall) compare_residue_contract "$phase_dir/before" "$phase_dir/after" "repeat uninstall changed residue identity" ;;
+    lifecycle-residue) compare_residue_contract "$phase_dir/before" "$phase_dir/after" "final post-reboot residue identity changed during observation" ;;
+esac
+[ "$strict_vendor_failed" -eq 0 ] || die "vendor residue remains"
+[ "$strict_product_failed" -eq 0 ] || die "product residue remains"
 cp "$ledger" "$phase_dir/phase-ledger"
 printf '%s\n' PASS >"$phase_dir/phase-status"
 record PASS "$phase completed with expected observations"
