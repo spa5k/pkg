@@ -6,12 +6,12 @@
 | Pinned source revision | `4132ad07a15ee7d88c096ac7172b7afb2672866b` |
 | Research date | 2026-08-23 |
 | Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, and install self-test warnings |
-| Evidence rule | Pinned primary-source analysis plus preserved R4 and R5 observations. No private receipt contents were read. No private evidence was changed. |
+| Evidence rule | Pinned primary-source analysis plus preserved R4, R5, and R6 observations. No private receipt contents were read. No private evidence was changed. |
 
 In this report, **r2** means the reported first lifecycle attempt. **r3** means
 the evidence-only harness revision. **R4** means the preserved run that used
 that revision. **R5** means the preserved run that used the UUID comparison
-fix.
+fix. **R6** means the preserved run at product revision `4fb8c70`.
 
 ## Short answer
 
@@ -108,6 +108,24 @@ The following conclusions are **Source-based inferences**:
 
 R5 does not prove receipt metadata, reboot, repeat install, repair, daemon
 phase behavior, uninstall, repeat uninstall, or residue cleanup.
+
+## R6 observed evidence and limits
+
+The preserved evidence path is
+`/private/var/tmp/pkg-s6-dn03c-evidence/lifecycle-diagnostics-4fb8c70-r6`.
+
+**Observed:** Baseline and lifecycle-install passed with guest status `0`.
+Shutdown returned `0`. The Guest Agent returned, identity revalidation passed,
+and raw `kern.boottime` changed. Cleanup proved exact VM absence. No later
+phase ran.
+
+**Inference:** `reboot_guest` ended with `cmp ... && die`. The changed files
+made `cmp` return `1`. That status became the function status and stopped the
+lane under `set -e`.
+
+**Unproved:** Repeat install, repair, daemon behavior, uninstall, repeat
+uninstall, the second reboot, and residue cleanup. Receipt contents were not
+read.
 
 ## Decision table
 

@@ -445,7 +445,13 @@ reboot_guest() {
     bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/true >>"$out/guest-agent.log" 2>&1 || die "passwordless guest sudo did not return after reboot"
     revalidate_guest "$label"
     bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.after" 2>&1 || die "could not record post-reboot kern.boottime"
-    cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after" && die "raw kern.boottime did not change across reboot"
+    if cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after"; then
+        die "raw kern.boottime did not change across reboot"
+    else
+        reboot_cmp_status=$?
+    fi
+    [ "$reboot_cmp_status" -eq 1 ] || die "could not compare raw kern.boottime across reboot"
+    return 0
 }
 
 case $lane in

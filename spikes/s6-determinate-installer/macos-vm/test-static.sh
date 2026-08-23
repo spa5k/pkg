@@ -39,6 +39,21 @@ archive_validation_boundary_is_valid() {
     archive_validation_collision_count=$(grep -F -x -c -- "$archive_validation_collision_line" "$1" || :)
     [ "$archive_validation_count" -eq 1 ] && [ "$archive_validation_variable_count" -eq 1 ] && [ "$archive_validation_collision_count" -eq 0 ]
 }
+reboot_compare_line='    if cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after"; then'
+reboot_die_line='        die "raw kern.boottime did not change across reboot"'
+reboot_status_line='        reboot_cmp_status=$?'
+reboot_error_line='    [ "$reboot_cmp_status" -eq 1 ] || die "could not compare raw kern.boottime across reboot"'
+reboot_return_line='    return 0'
+reboot_unsafe_line='    cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after" && die "raw kern.boottime did not change across reboot"'
+reboot_status_boundary_is_valid() {
+    reboot_compare_count=$(grep -F -x -c -- "$reboot_compare_line" "$1" || :)
+    reboot_die_count=$(grep -F -x -c -- "$reboot_die_line" "$1" || :)
+    reboot_status_count=$(grep -F -x -c -- "$reboot_status_line" "$1" || :)
+    reboot_error_count=$(grep -F -x -c -- "$reboot_error_line" "$1" || :)
+    reboot_return_count=$(grep -F -x -c -- "$reboot_return_line" "$1" || :)
+    reboot_unsafe_count=$(grep -F -x -c -- "$reboot_unsafe_line" "$1" || :)
+    [ "$reboot_compare_count" -eq 1 ] && [ "$reboot_die_count" -eq 1 ] && [ "$reboot_status_count" -eq 1 ] && [ "$reboot_error_count" -eq 1 ] && [ "$reboot_return_count" -eq 1 ] && [ "$reboot_unsafe_count" -eq 0 ]
+}
 installer_line_exact='        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile'
 status_save_line_exact='        initial_install_status=$last_status'
 snapshot_line_exact='        snapshot install-preassert'
@@ -168,7 +183,7 @@ need "$host" 'Guest Agent did not become unavailable for reboot' "reboot down pr
 need "$host" 'wait_guest_ready' "post-reboot ready proof missing"
 need "$host" '/usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before"' "pre-reboot boot time missing"
 need "$host" '/usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.after"' "post-reboot boot time missing"
-need "$host" 'cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after" && die' "raw boot-time comparison missing"
+reboot_status_boundary_is_valid "$host" || die "raw boot-time comparison can return failure after a successful reboot"
 down_line=$(line "$host" 'Guest Agent did not become unavailable for reboot')
 ready_line=$(grep -n -F '    wait_guest_ready' "$host" | tail -1 | cut -d: -f1)
 [ "$down_line" -lt "$ready_line" ] || die "reboot ready/down/ready order changed"
@@ -213,6 +228,14 @@ if recorded_child_boundary_is_valid "$boundary_fixture/inherited-umask.sh"; then
 awk -v safe="$archive_validation_variable_line" -v unsafe="$archive_validation_collision_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/global-validation.sh"
 need_exact "$boundary_fixture/global-validation.sh" "$archive_validation_collision_line" "global-validation mutation vanished"
 if archive_validation_boundary_is_valid "$boundary_fixture/global-validation.sh"; then die "global-validation mutation was accepted"; fi
+awk -v safe="$reboot_compare_line" -v unsafe="$reboot_unsafe_line" '
+$0 == safe { print unsafe; skip=6; next }
+skip > 0 { skip--; next }
+{ print }
+' "$host" >"$boundary_fixture/reboot-status.sh"
+need_exact "$boundary_fixture/reboot-status.sh" "$reboot_unsafe_line" "reboot-status mutation vanished"
+sh -n "$boundary_fixture/reboot-status.sh"
+if reboot_status_boundary_is_valid "$boundary_fixture/reboot-status.sh"; then die "reboot-status mutation was accepted"; fi
 rm -R "$boundary_fixture"
 trap - EXIT HUP INT TERM
 
