@@ -41,22 +41,46 @@ archive_validation_boundary_is_valid() {
 }
 reboot_compare_line='    if cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after"; then'
 reboot_die_line='        die "raw kern.boottime did not change across reboot"'
-reboot_status_line='        reboot_cmp_status=$?'
-reboot_error_line='    [ "$reboot_cmp_status" -eq 1 ] || die "could not compare raw kern.boottime across reboot"'
 reboot_return_line='    return 0'
 reboot_unsafe_line='    cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after" && die "raw kern.boottime did not change across reboot"'
+reboot_set_plus_e_line='    set +e'
+reboot_shutdown_line='    bounded_exec 30 /dev/null /usr/bin/sudo -n /sbin/shutdown -r now >>"$out/reboots/$label.shutdown" 2>&1'
 shutdown_status_capture_line='    shutdown_status=$?'
 shutdown_status_write_line='    printf '\''%s\n'\'' "$shutdown_status" >"$out/reboots/$label.shutdown.status"'
 shutdown_status_gate_line='    [ "$shutdown_status" -eq 0 ] || die "guest shutdown command failed"'
 shutdown_status_unsafe_line='    : # mutation: guest shutdown status is ignored'
+expected_reboot_sequence='reboot_guest() {
+    label=$1
+    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>&1 || die "could not record pre-reboot kern.boottime"
+    set +e
+    bounded_exec 30 /dev/null /usr/bin/sudo -n /sbin/shutdown -r now >>"$out/reboots/$label.shutdown" 2>&1
+    shutdown_status=$?
+    set -e
+    printf '\''%s\n'\'' "$shutdown_status" >"$out/reboots/$label.shutdown.status"
+    [ "$shutdown_status" -eq 0 ] || die "guest shutdown command failed"
+    down=0
+    i=0
+    while [ "$i" -lt 60 ]; do
+        if bounded_exec 1 /dev/null /usr/bin/true >/dev/null 2>&1; then :; else down=1; break; fi
+        i=$((i + 1))
+        sleep 1
+    done
+    [ "$down" -eq 1 ] || die "Guest Agent did not become unavailable for reboot"
+    wait_guest_ready
+    bounded_exec 15 /dev/null /usr/bin/sudo -n /usr/bin/true >>"$out/guest-agent.log" 2>&1 || die "passwordless guest sudo did not return after reboot"
+    revalidate_guest "$label"
+    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.after" 2>&1 || die "could not record post-reboot kern.boottime"
+    if cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after"; then
+        die "raw kern.boottime did not change across reboot"
+    else
+        reboot_cmp_status=$?
+    fi
+    [ "$reboot_cmp_status" -eq 1 ] || die "could not compare raw kern.boottime across reboot"
+    return 0
+}'
 reboot_status_boundary_is_valid() {
-    reboot_compare_count=$(grep -F -x -c -- "$reboot_compare_line" "$1" || :)
-    reboot_die_count=$(grep -F -x -c -- "$reboot_die_line" "$1" || :)
-    reboot_status_count=$(grep -F -x -c -- "$reboot_status_line" "$1" || :)
-    reboot_error_count=$(grep -F -x -c -- "$reboot_error_line" "$1" || :)
-    reboot_return_count=$(grep -F -x -c -- "$reboot_return_line" "$1" || :)
-    reboot_unsafe_count=$(grep -F -x -c -- "$reboot_unsafe_line" "$1" || :)
-    [ "$reboot_compare_count" -eq 1 ] && [ "$reboot_die_count" -eq 1 ] && [ "$reboot_status_count" -eq 1 ] && [ "$reboot_error_count" -eq 1 ] && [ "$reboot_return_count" -eq 1 ] && [ "$reboot_unsafe_count" -eq 0 ]
+    actual_reboot_sequence=$(sed -n '/^reboot_guest() {$/,/^}$/p' "$1")
+    [ "$actual_reboot_sequence" = "$expected_reboot_sequence" ]
 }
 shutdown_status_boundary_is_valid() {
     shutdown_status_gate_count=$(grep -F -x -c -- "$shutdown_status_gate_line" "$1" || :)
@@ -253,6 +277,34 @@ skip > 0 { skip--; next }
 need_exact "$boundary_fixture/reboot-status.sh" "$reboot_unsafe_line" "reboot-status mutation vanished"
 sh -n "$boundary_fixture/reboot-status.sh"
 if reboot_status_boundary_is_valid "$boundary_fixture/reboot-status.sh"; then die "reboot-status mutation was accepted"; fi
+awk -v set_plus_e="$reboot_set_plus_e_line" -v shutdown="$reboot_shutdown_line" '
+/^reboot_guest\(\) \{$/ { in_reboot=1 }
+in_reboot && $0 == set_plus_e { next }
+in_reboot && $0 == shutdown { print; print set_plus_e; next }
+{ print }
+in_reboot && /^}$/ { in_reboot=0 }
+' "$host" >"$boundary_fixture/late-set-plus-e.sh"
+sed -n '/^reboot_guest() {$/,/^}$/p' "$boundary_fixture/late-set-plus-e.sh" >"$boundary_fixture/late-set-plus-e.block"
+need_exact "$boundary_fixture/late-set-plus-e.block" "$reboot_set_plus_e_line" "moved set +e mutation vanished"
+moved_shutdown_line=$(exact_line "$boundary_fixture/late-set-plus-e.block" "$reboot_shutdown_line")
+moved_set_plus_e_line=$(exact_line "$boundary_fixture/late-set-plus-e.block" "$reboot_set_plus_e_line")
+[ "$moved_shutdown_line" -lt "$moved_set_plus_e_line" ] || die "set +e mutation did not move after shutdown"
+sh -n "$boundary_fixture/late-set-plus-e.sh"
+if reboot_status_boundary_is_valid "$boundary_fixture/late-set-plus-e.sh"; then die "late set +e mutation was accepted"; fi
+awk -v return_line="$reboot_return_line" -v failure="$reboot_die_line" '
+/^reboot_guest\(\) \{$/ { in_reboot=1 }
+in_reboot && $0 == return_line { next }
+in_reboot && $0 == failure { print return_line; print; next }
+{ print }
+in_reboot && /^}$/ { in_reboot=0 }
+' "$host" >"$boundary_fixture/early-reboot-return.sh"
+sed -n '/^reboot_guest() {$/,/^}$/p' "$boundary_fixture/early-reboot-return.sh" >"$boundary_fixture/early-reboot-return.block"
+need_exact "$boundary_fixture/early-reboot-return.block" "$reboot_return_line" "moved reboot return mutation vanished"
+moved_return_line=$(exact_line "$boundary_fixture/early-reboot-return.block" "$reboot_return_line")
+equal_failure_line=$(exact_line "$boundary_fixture/early-reboot-return.block" "$reboot_die_line")
+[ "$moved_return_line" -lt "$equal_failure_line" ] || die "return mutation did not move before equal-file failure"
+sh -n "$boundary_fixture/early-reboot-return.sh"
+if reboot_status_boundary_is_valid "$boundary_fixture/early-reboot-return.sh"; then die "early reboot return mutation was accepted"; fi
 awk -v safe="$shutdown_status_gate_line" -v unsafe="$shutdown_status_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/shutdown-status.sh"
 need_exact "$boundary_fixture/shutdown-status.sh" "$shutdown_status_unsafe_line" "shutdown-status mutation vanished"
 sh -n "$boundary_fixture/shutdown-status.sh"
