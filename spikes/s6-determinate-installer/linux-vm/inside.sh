@@ -143,12 +143,21 @@ lifecycle)
         capture_stop
         requests=$(cat "$evidence/diagnostic-initial-requests")
         if [ "$rc" -eq 0 ] && [ "$requests" -gt 0 ]; then record PASS "initial install with captured diagnostics"; else record FAIL "initial install or diagnostic capture"; status=1; fi
-        if [ -s /nix/receipt.json ] && [ -x /nix/nix-installer ]; then
-            sha256 /nix/receipt.json >"$evidence/receipt.sha256"
-            cp /nix/receipt.json "$evidence/receipt.json"
-            sha256 /nix/nix-installer >"$evidence/installed-installer.sha256"
-            [ "$(sha256 /nix/nix-installer)" = "$expected" ] && record PASS "receipt and installed copy" || { record FAIL "installed copy identity"; status=1; }
-        else record FAIL "receipt or installed copy missing"; status=1; fi
+        receipt=/nix/receipt.json
+        installed=/nix/nix-installer
+        if [ -L "$receipt" ]; then
+            record FAIL "receipt is a symlink"
+            status=1
+        elif [ -f "$receipt" ] && [ -s "$receipt" ] && [ -x "$installed" ] && [ ! -L "$installed" ] && [ "$(stat -c %F -- "$receipt")" = 'regular file' ]; then
+            if stat -c 'type=%F uid=%u gid=%g mode=0%a size=%s links=%h path=%n' -- "$receipt" >"$evidence/receipt.stat" &&
+                receipt_hash=$(sha256 "$receipt") &&
+                installed_hash=$(sha256 "$installed") &&
+                [ "$installed_hash" = "$expected" ]; then
+                printf '%s\n' "$receipt_hash" >"$evidence/receipt.sha256"
+                printf '%s\n' "$installed_hash" >"$evidence/installed-installer.sha256"
+                record PASS "opaque receipt metadata, private hash, and installed copy identity"
+            else record FAIL "receipt metadata, private hash, or installed copy identity"; status=1; fi
+        else record FAIL "receipt or installed copy missing or unsafe"; status=1; fi
         capture_sentry_identity after-initial
         snapshot after-initial-install.txt
         [ "$status" -eq 0 ] || exit 1

@@ -47,6 +47,17 @@ container_config_is_exact() {
         [ "$(grep -c '^[[:space:]]*set -- ' "$candidate" || :)" -eq 2 ]
 }
 
+qemu_receipt_is_private() {
+    candidate=$1
+    [ "$(grep -Fxc -- '        if [ -L "$receipt" ]; then' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '        elif [ -f "$receipt" ] && [ -s "$receipt" ] && [ -x "$installed" ] && [ ! -L "$installed" ] && [ "$(stat -c %F -- "$receipt")" = '\''regular file'\'' ]; then' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '            if stat -c '\''type=%F uid=%u gid=%g mode=0%a size=%s links=%h path=%n'\'' -- "$receipt" >"$evidence/receipt.stat" &&' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '                receipt_hash=$(sha256 "$receipt") &&' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '                printf '\''%s\n'\'' "$receipt_hash" >"$evidence/receipt.sha256"' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '                printf '\''%s\n'\'' "$installed_hash" >"$evidence/installed-installer.sha256"' "$candidate" || :)" -eq 1 ] &&
+        ! grep -E '(cp|cat|tar).*("\$receipt"|/nix/receipt\.json)' "$candidate" >/dev/null
+}
+
 sh -n "$host" "$guest" "$arm_host" "$arm_guest" "$0"
 [ -x "$host" ] && [ -x "$guest" ] && [ -x "$arm_host" ] && [ -x "$arm_guest" ] && [ -x "$0" ] || die "scripts must be executable"
 grep -F 'lifecycle|diagnostics-disabled|crash-recovery|foreign-nix|upstream-input' "$host" >/dev/null || die "exact host lanes missing"
@@ -91,6 +102,7 @@ grep -F '[ "$command_rc" -eq 0 ] || ! grep -Ei' "$guest" >/dev/null || die "inst
 grep -F 'required pinned same-version daemon upgrade' "$guest" >/dev/null || die "required daemon upgrade probe missing"
 grep -F 'S6_ENABLE_PINNED_UPGRADE_PROBE' "$host" "$guest" >/dev/null && die "optional daemon upgrade gate remains"
 grep -F "/nix/nix-installer --diagnostic-endpoint '' uninstall --no-confirm /nix/receipt.json" "$guest" >/dev/null || die "installed-copy uninstall argv missing"
+qemu_receipt_is_private "$guest" || die "QEMU receipt metadata or privacy contract missing"
 grep -F 'uninstall observations satisfy the pinned residue contract' "$guest" >/dev/null || die "uninstall residue gate missing"
 grep -F "'^nixbld[0-9]+$'" "$guest" >/dev/null || die "all nixbld users are not checked"
 grep -F 'find /usr/local/bin -maxdepth 1' "$guest" >/dev/null || die "bounded local-bin residue scan missing"
@@ -301,6 +313,13 @@ fi
 run_container_config_fixture "$tmp/container-arm-inherit-mutant.sh" aarch64-linux "$tmp/container-arm-inherit-mutant.argv"
 extract_final_nix_config "$tmp/container-arm-inherit-mutant.argv" >"$tmp/container-arm-inherit-mutant.nix-config"
 cmp -s "$tmp/container-x86.expected-nix-config" "$tmp/container-arm-inherit-mutant.nix-config" || die "aarch64 inheritance mutation did not change final NIX_CONFIG"
+
+sed '/printf '\''%s\\n'\'' "$receipt_hash" >"$evidence\/receipt.sha256"/a\
+            cp "$receipt" "$evidence/receipt.json"' "$guest" >"$tmp/qemu-receipt-copy-mutant.sh"
+grep -F -x '            cp "$receipt" "$evidence/receipt.json"' "$tmp/qemu-receipt-copy-mutant.sh" >/dev/null || die "QEMU receipt-copy mutation was vacuous"
+if qemu_receipt_is_private "$tmp/qemu-receipt-copy-mutant.sh"; then
+    die "QEMU receipt-copy mutation survived"
+fi
 
 if "$host" --approve-destructive-vm /no/base /no/installer unknown "$tmp/out" >"$tmp/out.log" 2>&1; then
     die "unsupported lane was accepted"

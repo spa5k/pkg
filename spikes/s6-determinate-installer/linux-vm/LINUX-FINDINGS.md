@@ -188,7 +188,7 @@ These steps are in execution order. All commands used absolute paths.
 4. Install ran with these arguments, in this order: `<staged binary> --diagnostic-endpoint http://127.0.0.1:18080 install --determinate --no-confirm --no-modify-profile`. Exit status 0.
 5. The guest-local capture service counted 2 diagnostic requests during that install.
 6. The install printed one warning. The vendor self-test ran a build probe through `sh -lc` and `bash -lc`. Both shells could not find `nix` on PATH. This is expected with `--no-modify-profile`. So the install was **not** warning-free.
-7. `/nix/receipt.json` existed and was non-empty. `/nix/nix-installer` existed and was executable. The installed copy had the same SHA-256 as the pinned vendor asset. The harness did not hash the receipt.
+7. `/nix/receipt.json` existed and was non-empty. `/nix/nix-installer` existed and was executable. The installed copy had the same SHA-256 as the pinned vendor asset. The historical accepted run did not save a receipt hash.
 8. `/etc/nix/sentry-endpoint` now existed. It was a regular file. It was owned by `root:root`. Its mode was `0600`. Its size was 95 bytes.
 9. The guest performed a clean reboot. The kernel boot ID changed. The boot ID value is private and is not printed here.
 10. Repeat install used the same arguments. Exit status 0. The capture service counted 0 diagnostic requests. The receipt and the installed copy stayed intact.
@@ -206,6 +206,8 @@ These steps are in execution order. All commands used absolute paths.
 22. The pinned residue contract therefore failed. The results file recorded two FAIL lines: `/etc/nix is unsafe or nonempty`, and `uninstall observations violate the pinned residue contract`. The harness did not prove that `sentry-endpoint` was the only x86_64 `/etc/nix` entry.
 
 The pinned contract allows `/etc/nix` to remain only when it is empty. One file is enough to fail it.
+
+**Source-derived, current reproducible QEMU harness.** The checked-in harness now rejects a receipt symlink. It requires a nonempty regular file. It records only no-follow type, numeric owner, mode, size, link count, path, and a private SHA-256. It records the installed helper hash separately. It does not copy, print, or archive receipt contents. This correction was not used by the historical accepted run and does not add a runtime fact.
 
 ## 6. Sentry residue finding
 
@@ -322,7 +324,9 @@ The parent S6 findings record the vendor disable contract from vendor help text 
 
 ### Receipt evidence status
 
-**Observed, Linux x86_64.** The broad QEMU run verified that `/nix/receipt.json` was nonempty, but it did not save a receipt hash. The final r11 container closes that evidence gap. Its receipt was a non-symlink regular file owned by uid 0 and gid 0, mode `0600`, size 30,618 bytes, and link count 1. The probe recorded a private SHA-256 before uninstall. It did not print, copy, or archive receipt contents. The installed helper matched the pinned asset.
+**Observed, Linux x86_64.** The historical broad QEMU run verified that `/nix/receipt.json` was nonempty, but it did not save a receipt hash. The final r11 container remains the evidence that closes the actual x86_64 receipt gap. Its receipt was a non-symlink regular file owned by uid 0 and gid 0, mode `0600`, size 30,618 bytes, and link count 1. The probe recorded a private SHA-256 before uninstall. It did not print, copy, or archive receipt contents. The installed helper matched the pinned asset.
+
+**Source-derived, current QEMU harness.** The current harness records safe receipt metadata and a private SHA-256 only. It does not copy, print, or archive receipt contents. This code correction was not rerun.
 
 **Observed, Linux aarch64.** The r10 receipt was a non-symlink regular file owned by uid 0 and gid 0, mode `0600`, size 30,503 bytes, and link count 1. The probe computed its SHA-256 before uninstall and kept the digest only in private evidence. It did not print, copy, or archive receipt contents. The installed helper was a non-symlink executable with the pinned asset digest. Therefore the aarch64 standalone receipt and installed-copy Asset proof is complete.
 
@@ -493,7 +497,7 @@ Limitations of this spike:
 14. Both Linux target Asset proofs recorded the roadmap-required private receipt hash. The x86_64 proof used architecture emulation and disabled the Nix syscall filter for that disposable unsandboxed container.
 15. The macOS DN-03 evidence lane still owns the blocking Apple Silicon rows. Intel macOS asset availability is observed, but no Intel lifecycle ran because v3.22.1 has no standalone Intel macOS executable.
 16. The prior aarch64 r9 run did not preserve immediate cleanup evidence. The final r10 run replaces it for Asset-row acceptance and preserves the exact cleanup record.
-17. The post-r11 guard correction was not rerun in Docker. It narrows entry and makes the emulation-only Nix setting target-specific. Safe fixtures prove the guard and final configuration selection. They do not add a runtime fact.
+17. The post-evidence harness corrections were not rerun. They narrow container entry, make the emulation-only Nix setting target-specific, and remove QEMU receipt content capture. Safe fixtures and static checks prove the guards, final configuration selection, and receipt privacy shape. They do not add a runtime fact.
 
 Later proof work:
 

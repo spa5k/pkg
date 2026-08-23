@@ -44,6 +44,9 @@ return the pinned missing-receipt refusal for `/nix/receipt.json`.
 
 The lifecycle lane records no-follow identity evidence for
 `/etc/nix/sentry-endpoint` at four stable lifecycle stages.
+It also records no-follow regular-file metadata and a private SHA-256 for the
+opaque receipt. It never copies, prints, or archives receipt contents. The
+installed helper hash is recorded separately.
 
 ## Linux container Asset proof
 
