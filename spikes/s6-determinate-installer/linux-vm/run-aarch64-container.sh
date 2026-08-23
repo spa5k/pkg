@@ -53,7 +53,7 @@ set -- docker run --rm --pull never --name "$container" \
     --mount "type=bind,src=$installer,dst=/input/nix-installer-aarch64-linux,readonly" \
     --mount "type=bind,src=$probe,dst=/probe.sh,readonly" \
     --mount "type=bind,src=$evidence,dst=/evidence" \
-    "$image" /bin/sh /probe.sh --approve-destructive-container
+    "$image" /bin/sh /probe.sh --approve-destructive-container aarch64-linux
 printf '%s\n' "$@" >"$evidence/container.argv"
 set +e
 "$@" >"$evidence/container-run.output" 2>&1

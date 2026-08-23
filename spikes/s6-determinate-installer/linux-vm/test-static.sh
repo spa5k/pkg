@@ -7,7 +7,7 @@ host=$script_dir/run.sh
 guest=$script_dir/inside.sh
 arm_guest=$script_dir/inside-aarch64-container.sh
 arm_host=$script_dir/run-aarch64-container.sh
-arm_approval_guard='[ "$#" -eq 1 ] && [ "$1" = --approve-destructive-container ] || die "missing --approve-destructive-container"'
+arm_approval_guard='[ "$#" -eq 2 ] && [ "$1" = --approve-destructive-container ] || die "usage: inside-aarch64-container.sh --approve-destructive-container TARGET"'
 arm_state_paths='for existing_path in /nix /etc/nix /usr/local/bin/determinate-nixd; do'
 arm_state_guard='    [ ! -e "$existing_path" ] && [ ! -L "$existing_path" ] || die "pre-existing Nix state: $existing_path"'
 
@@ -26,6 +26,12 @@ arm_cleanup_is_exact() {
         grep -F -x 'exact_container_names >"$evidence/container-post-cleanup.names"' "$candidate" >/dev/null &&
         grep -F -x 'printf '\''%s\n'\'' "$cleanup_count" >"$evidence/container-post-cleanup.count"' "$candidate" >/dev/null &&
         grep -F -x '[ "$cleanup_count" -eq 0 ] || die "exact container remained after docker run --rm"' "$candidate" >/dev/null
+}
+
+check_x86_container_target() {
+    file=$1
+    grep -F 'x86_64-linux) machine=x86_64; expected_installer_sha=9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c' "$file" >/dev/null &&
+        grep -F 'installer=/input/nix-installer-$target' "$file" >/dev/null
 }
 
 sh -n "$host" "$guest" "$arm_host" "$arm_guest" "$0"
@@ -116,7 +122,7 @@ grep -F -x '[ "$1" = --approve-destructive-container ] || die "explicit destruct
 grep -F -x 'image=ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517' "$arm_host" >/dev/null || die "aarch64 pinned image missing"
 grep -F -x '    --platform linux/arm64 \' "$arm_host" >/dev/null || die "aarch64 Docker platform missing"
 grep -F -x '    --network none \' "$arm_host" >/dev/null || die "aarch64 Docker network isolation missing"
-grep -F -x '    "$image" /bin/sh /probe.sh --approve-destructive-container' "$arm_host" >/dev/null || die "aarch64 guest approval forwarding missing"
+grep -F -x '    "$image" /bin/sh /probe.sh --approve-destructive-container aarch64-linux' "$arm_host" >/dev/null || die "aarch64 guest approval forwarding missing"
 grep -F -x 'printf '\''%s\n'\'' "$@" >"$evidence/container.argv"' "$arm_host" >/dev/null || die "aarch64 exact Docker argv record missing"
 grep -F 'container-post-cleanup.checked-at' "$arm_host" >/dev/null && grep -F 'container-post-cleanup.provenance' "$arm_host" >/dev/null && grep -F 'container-post-cleanup.sha256' "$arm_host" >/dev/null || die "aarch64 durable cleanup record missing"
 grep -F -x 'find "$evidence" -type f ! -name evidence.sha256 -print | LC_ALL=C sort |' "$arm_host" >/dev/null && grep -F -x '    while IFS= read -r file; do shasum -a 256 "$file"; done >"$evidence/evidence.sha256"' "$arm_host" >/dev/null || die "aarch64 complete evidence manifest missing"
@@ -133,6 +139,7 @@ grep -F 'cp "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents
 grep -F 'cat "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents can be printed"
 grep -F 'sha256 "$sentry" >"$prefix.sha256"' "$arm_guest" >/dev/null || die "aarch64 private sentry digest missing"
 grep -F 'strict clean-uninstall residue contract' "$arm_guest" >/dev/null || die "aarch64 strict residue gate missing"
+check_x86_container_target "$arm_guest" || die "x86_64 container target pin missing"
 
 base_hash_line=$(grep -n 'sha256 "$base"' "$host" | head -1 | cut -d: -f1)
 qemu_line=$(grep -n '^qemu-system-x86_64 ' "$host" | cut -d: -f1)
@@ -165,11 +172,11 @@ grep -F -x 'explicit destructive container approval is required' "$tmp/arm-host-
 if "$arm_guest" >"$tmp/arm-no-approval.log" 2>&1; then
     die "aarch64 probe accepted missing approval"
 fi
-grep -F -x 'FAIL: missing --approve-destructive-container' "$tmp/arm-no-approval.log" >/dev/null || die "aarch64 missing-approval failure changed"
-if "$arm_guest" --approve-destructive-container extra >"$tmp/arm-extra-approval.log" 2>&1; then
+grep -F -x 'FAIL: usage: inside-aarch64-container.sh --approve-destructive-container TARGET' "$tmp/arm-no-approval.log" >/dev/null || die "aarch64 missing-approval failure changed"
+if "$arm_guest" --approve-destructive-container aarch64-linux extra >"$tmp/arm-extra-approval.log" 2>&1; then
     die "aarch64 probe accepted extra approval input"
 fi
-grep -F -x 'FAIL: missing --approve-destructive-container' "$tmp/arm-extra-approval.log" >/dev/null || die "aarch64 exact-approval failure changed"
+grep -F -x 'FAIL: usage: inside-aarch64-container.sh --approve-destructive-container TARGET' "$tmp/arm-extra-approval.log" >/dev/null || die "aarch64 exact-approval failure changed"
 
 sed 's/--approve-destructive-container/--approve-unsafe-container/g' "$arm_guest" >"$tmp/arm-approval-mutation.sh"
 grep -F -- '--approve-unsafe-container' "$tmp/arm-approval-mutation.sh" >/dev/null || die "aarch64 approval mutation was vacuous"
@@ -218,6 +225,12 @@ state_paths_line=$(grep -Fn -x -- "$arm_state_paths" "$arm_guest" | cut -d: -f1)
 first_arm_mutation_line=$(grep -Fn -x ': >"$evidence/results"' "$arm_guest" | cut -d: -f1)
 [ "$approval_line" -lt "$state_paths_line" ] && [ "$state_paths_line" -lt "$first_arm_mutation_line" ] || die "aarch64 guards do not precede mutation"
 
+cp "$arm_guest" "$tmp/container-target-mutant.sh"
+sed 's/9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c/0000000000000000000000000000000000000000000000000000000000000000/' "$tmp/container-target-mutant.sh" >"$tmp/container-target-mutant.new"
+mv "$tmp/container-target-mutant.new" "$tmp/container-target-mutant.sh"
+if check_x86_container_target "$tmp/container-target-mutant.sh"; then
+    die "x86_64 target-pin mutation was accepted"
+fi
 if "$host" --approve-destructive-vm /no/base /no/installer unknown "$tmp/out" >"$tmp/out.log" 2>&1; then
     die "unsupported lane was accepted"
 fi

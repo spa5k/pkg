@@ -2,8 +2,6 @@
 set -eu
 
 evidence=/evidence
-installer=/input/nix-installer-aarch64-linux
-expected_installer_sha=9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179
 endpoint=http://127.0.0.1:18080
 status=0
 canary_pid=
@@ -37,7 +35,14 @@ capture_sentry() {
     fi
 }
 
-[ "$#" -eq 1 ] && [ "$1" = --approve-destructive-container ] || die "missing --approve-destructive-container"
+[ "$#" -eq 2 ] && [ "$1" = --approve-destructive-container ] || die "usage: inside-aarch64-container.sh --approve-destructive-container TARGET"
+target=$2
+case $target in
+    aarch64-linux) machine=aarch64; expected_installer_sha=9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179 ;;
+    x86_64-linux) machine=x86_64; expected_installer_sha=9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c ;;
+    *) die "unsupported container target: $target" ;;
+esac
+installer=/input/nix-installer-$target
 [ "$(id -u)" -eq 0 ] || die "container probe requires EUID 0"
 [ "$(uname -s)" = Linux ] || die "container probe requires Linux"
 [ -d "$evidence" ] && [ ! -L "$evidence" ] || die "evidence path is unsafe"
@@ -50,15 +55,15 @@ umask 077
 : >"$evidence/results"
 uname -m >"$evidence/uname-machine"
 uname -sr >"$evidence/uname-kernel"
-[ "$(cat "$evidence/uname-machine")" = aarch64 ] || { record 'FAIL: container is not aarch64'; exit 1; }
-record 'PASS: container reports aarch64'
+[ "$(cat "$evidence/uname-machine")" = "$machine" ] || { record "FAIL: container is not $machine"; exit 1; }
+record "PASS: container reports $machine"
 
 [ -f "$installer" ] && [ ! -L "$installer" ] || { record 'FAIL: pinned installer input is unsafe'; exit 1; }
 actual_installer_sha=$(sha256 "$installer")
 printf '%s\n' "$expected_installer_sha" >"$evidence/installer.expected.sha256"
 printf '%s\n' "$actual_installer_sha" >"$evidence/installer.actual.sha256"
 [ "$actual_installer_sha" = "$expected_installer_sha" ] || { record 'FAIL: pinned installer digest mismatch'; exit 1; }
-record 'PASS: pinned aarch64-linux installer digest matches'
+record "PASS: pinned $target installer digest matches"
 
 "$installer" --version >"$evidence/installer-version.output" 2>&1
 installer_version_status=$?
@@ -144,9 +149,9 @@ nix_status=$?
 set -e
 printf '%s\n' "$nix_status" >"$evidence/nix-version.status"
 if [ "$nix_status" -eq 0 ] && grep -F -x 'nix (Determinate Nix 3.22.1) 2.35.2' "$evidence/nix-version.output" >/dev/null; then
-    record 'PASS: installed aarch64 Nix executable runs'
+    record "PASS: installed $machine Nix executable runs"
 else
-    record 'FAIL: installed aarch64 Nix executable'
+    record "FAIL: installed $machine Nix executable"
     exit 1
 fi
 

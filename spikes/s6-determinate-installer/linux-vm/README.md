@@ -70,14 +70,27 @@ count fails the runner. It also writes `evidence.sha256` for the complete
 private bundle. The runner never removes any other container.
 
 `inside-aarch64-container.sh` is the guest side. The host runner invokes it
-with the exact `--approve-destructive-container` argument.
+with the exact `--approve-destructive-container aarch64-linux` arguments.
 
 Before it writes evidence or runs the installer, the script requires the
-exact one-argument approval, root, and Linux. It also refuses if `/nix`,
+exact approval and target arguments, root, and Linux. It also refuses if `/nix`,
 `/etc/nix`, or `/usr/local/bin/determinate-nixd` exists or is a symlink.
+
+`inside-aarch64-container.sh` is the guest side of the narrow Linux container
+Asset proof. Pass `aarch64-linux` or `x86_64-linux` after the approval
+argument. Run it only in a fresh container whose platform matches the target.
+Mount the pinned target asset at `/input` as read-only. Mount the script at
+`/probe.sh` as read-only. Mount a new private evidence directory at
+`/evidence`. Use Docker `--network none` and `--rm`.
 
 The script records exact argv, the telemetry-disable environment, loopback
 canary counts, receipt metadata and a private receipt SHA-256, installed-copy
 identity, Nix execution, sentry metadata and private identity hashes, and the
 strict residue result. It does not copy or print receipt or sentry contents.
 The expected vendor result still exits nonzero when `sentry-endpoint` remains.
+
+For x86_64, use the authenticated image reference
+`ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517`
+with `--platform linux/amd64`. Use an exact container name and a CID file.
+After the expected nonzero probe result, require `docker container inspect`
+for that CID to fail. This proves that `--rm` removed the exact container.
