@@ -108,6 +108,8 @@ The final x86_64 r11 lane used these additional pins:
 
 **Observed.** The r11 install and uninstall used `DETSYS_IDS_TELEMETRY=disabled`, the explicit loopback endpoint, and Docker `--network none`. The live canary recorded zero requests after install and zero total requests after uninstall. This is not a packet capture. It proves only that the state-changing commands did not reach the controlled loopback endpoint while the supported telemetry-disable policy was active.
 
+**Post-evidence guard correction.** The r11 Docker argv invoked the then-current probe as `/probe.sh x86_64-linux`. Its probe hash and runtime evidence remain unchanged. The checked-in probe now requires `/probe.sh --approve-destructive-container x86_64-linux`. It also rejects pre-existing Nix state before the first evidence write. The x86_64 install argument list still contains the same two Nix configuration lines in the same order. The aarch64 target now keeps only its prior `sandbox = false` line. No Docker rerun supports this follow-up. Static safe-entry fixtures and exact configuration probes support only the narrowed preflight and target-selection code.
+
 ### Intel macOS asset availability
 
 **Observed.** An authenticated GitHub API response for official release v3.22.1 listed exactly four assets: `nix-installer-aarch64-darwin`, `nix-installer-aarch64-linux`, `nix-installer-x86_64-linux`, and `nix-installer.sh`. It listed no `nix-installer-x86_64-darwin` asset. The exact-name count was zero. No Intel asset was downloaded.
@@ -491,6 +493,7 @@ Limitations of this spike:
 14. Both Linux target Asset proofs recorded the roadmap-required private receipt hash. The x86_64 proof used architecture emulation and disabled the Nix syscall filter for that disposable unsandboxed container.
 15. The macOS DN-03 evidence lane still owns the blocking Apple Silicon rows. Intel macOS asset availability is observed, but no Intel lifecycle ran because v3.22.1 has no standalone Intel macOS executable.
 16. The prior aarch64 r9 run did not preserve immediate cleanup evidence. The final r10 run replaces it for Asset-row acceptance and preserves the exact cleanup record.
+17. The post-r11 guard correction was not rerun in Docker. It narrows entry and makes the emulation-only Nix setting target-specific. Safe fixtures prove the guard and final configuration selection. They do not add a runtime fact.
 
 Later proof work:
 

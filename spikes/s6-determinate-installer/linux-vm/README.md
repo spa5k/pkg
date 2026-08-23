@@ -77,11 +77,16 @@ exact approval and target arguments, root, and Linux. It also refuses if `/nix`,
 `/etc/nix`, or `/usr/local/bin/determinate-nixd` exists or is a symlink.
 
 `inside-aarch64-container.sh` is the guest side of the narrow Linux container
-Asset proof. Pass `aarch64-linux` or `x86_64-linux` after the approval
-argument. Run it only in a fresh container whose platform matches the target.
-Mount the pinned target asset at `/input` as read-only. Mount the script at
-`/probe.sh` as read-only. Mount a new private evidence directory at
-`/evidence`. Use Docker `--network none` and `--rm`.
+Asset proof. It requires exactly two arguments:
+`--approve-destructive-container TARGET`. The target must be
+`aarch64-linux` or `x86_64-linux`. Run it only in a fresh container whose
+platform matches the target. Mount the pinned target asset at `/input` as
+read-only. Mount the script at `/probe.sh` as read-only. Mount a new private
+evidence directory at `/evidence`. Use Docker `--network none` and `--rm`.
+
+Before the first evidence write or installer action, the script requires the
+exact approval, an allowed target, root, and Linux. It refuses any existing or
+symlink `/nix`, `/etc/nix`, or `/usr/local/bin/determinate-nixd`.
 
 The script records exact argv, the telemetry-disable environment, loopback
 canary counts, receipt metadata and a private receipt SHA-256, installed-copy
@@ -94,9 +99,11 @@ For x86_64, use the authenticated image reference
 with `--platform linux/amd64`. Use an exact container name and a CID file.
 After the expected nonzero probe result, require `docker container inspect`
 for that CID to fail. This proves that `--rm` removed the exact container.
-The container install also sets `filter-syscalls = false`. The x86_64 image
-runs under ARM64 emulation on this proof host. The default syscall filter does
-not load in that environment. This setting is only a container-proof input.
+Both targets set only `sandbox = false` by default. The `x86_64-linux` target
+then appends `filter-syscalls = false` as the next Nix configuration line.
+The ARM target does not inherit that line. The x86_64 image runs under ARM64
+emulation on this proof host. The default syscall filter does not load in that
+environment. This setting is only an x86_64 container-proof input.
 
 The authenticated index has this exact Linux AMD64 child:
 `ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316`.
@@ -110,5 +117,5 @@ docker run --rm --cidfile /absolute/new-evidence/container.cid \
   --mount type=bind,src=/absolute/inside-aarch64-container.sh,dst=/probe.sh,readonly \
   --mount type=bind,src=/absolute/new-evidence,dst=/evidence \
   ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316 \
-  /probe.sh x86_64-linux
+  /probe.sh --approve-destructive-container x86_64-linux
 ```

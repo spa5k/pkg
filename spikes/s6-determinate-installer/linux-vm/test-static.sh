@@ -7,16 +7,12 @@ host=$script_dir/run.sh
 guest=$script_dir/inside.sh
 arm_guest=$script_dir/inside-aarch64-container.sh
 arm_host=$script_dir/run-aarch64-container.sh
-arm_approval_guard='[ "$#" -eq 2 ] && [ "$1" = --approve-destructive-container ] || die "usage: inside-aarch64-container.sh --approve-destructive-container TARGET"'
-arm_state_paths='for existing_path in /nix /etc/nix /usr/local/bin/determinate-nixd; do'
-arm_state_guard='    [ ! -e "$existing_path" ] && [ ! -L "$existing_path" ] || die "pre-existing Nix state: $existing_path"'
-
-arm_guards_are_exact() {
-    candidate=$1
-    [ "$(grep -Fxc -- "$arm_approval_guard" "$candidate" || :)" -eq 1 ] &&
-        [ "$(grep -Fxc -- "$arm_state_paths" "$candidate" || :)" -eq 1 ] &&
-        [ "$(grep -Fxc -- "$arm_state_guard" "$candidate" || :)" -eq 1 ]
-}
+container_approval_guard='[ "$#" -eq 2 ] && [ "$1" = --approve-destructive-container ] || die "usage: inside-aarch64-container.sh --approve-destructive-container TARGET"'
+container_state_paths='for existing_path in /nix /etc/nix /usr/local/bin/determinate-nixd; do'
+container_state_guard='    [ ! -e "$existing_path" ] && [ ! -L "$existing_path" ] || die "pre-existing Nix state: $existing_path"'
+container_base_argv='set -- "$installer" --diagnostic-endpoint "$endpoint" install linux --determinate --no-confirm --no-modify-profile --init none --extra-conf '\''sandbox = false'\'''
+container_x86_condition='if [ "$target" = x86_64-linux ]; then'
+container_x86_append='    set -- "$@" '\''filter-syscalls = false'\'''
 
 arm_cleanup_is_exact() {
     candidate=$1
@@ -28,11 +24,27 @@ arm_cleanup_is_exact() {
         grep -F -x '[ "$cleanup_count" -eq 0 ] || die "exact container remained after docker run --rm"' "$candidate" >/dev/null
 }
 
-check_x86_container_contract() {
-    file=$1
-    grep -F 'x86_64-linux) machine=x86_64; expected_installer_sha=9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c' "$file" >/dev/null &&
-        grep -F 'installer=/input/nix-installer-$target' "$file" >/dev/null &&
-        grep -F -- "--extra-conf 'sandbox = false' 'filter-syscalls = false'" "$file" >/dev/null
+container_guards_are_exact() {
+    candidate=$1
+    [ "$(grep -Fxc -- "$container_approval_guard" "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- 'target=$2' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '    aarch64-linux) machine=aarch64; expected_installer_sha=9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179 ;;' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '    x86_64-linux) machine=x86_64; expected_installer_sha=9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c ;;' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '    *) die "unsupported container target: $target" ;;' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '[ "$(id -u)" -eq 0 ] || die "container probe requires EUID 0"' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- '[ "$(uname -s)" = Linux ] || die "container probe requires Linux"' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- "$container_state_paths" "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- "$container_state_guard" "$candidate" || :)" -eq 1 ]
+}
+
+container_config_is_exact() {
+    candidate=$1
+    [ "$(grep -Fxc -- "$container_base_argv" "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- "$container_x86_condition" "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- "$container_x86_append" "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- 'write_argv "$evidence/install.argv" "$@"' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- 'DETSYS_IDS_TELEMETRY=disabled "$@" >"$evidence/install.output" 2>&1' "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -c '^[[:space:]]*set -- ' "$candidate" || :)" -eq 2 ]
 }
 
 sh -n "$host" "$guest" "$arm_host" "$arm_guest" "$0"
@@ -129,7 +141,7 @@ grep -F 'container-post-cleanup.checked-at' "$arm_host" >/dev/null && grep -F 'c
 grep -F -x 'find "$evidence" -type f ! -name evidence.sha256 -print | LC_ALL=C sort |' "$arm_host" >/dev/null && grep -F -x '    while IFS= read -r file; do shasum -a 256 "$file"; done >"$evidence/evidence.sha256"' "$arm_host" >/dev/null || die "aarch64 complete evidence manifest missing"
 arm_cleanup_is_exact "$arm_host" || die "aarch64 exact cleanup proof is incomplete"
 grep -F 'endpoint=http://127.0.0.1:18080' "$arm_guest" >/dev/null || die "aarch64 loopback endpoint missing"
-arm_guards_are_exact "$arm_guest" || die "aarch64 destructive entry guards are not exact"
+container_guards_are_exact "$arm_guest" || die "aarch64 destructive entry guards are not exact"
 grep -F '[ "$(id -u)" -eq 0 ]' "$arm_guest" >/dev/null && grep -F '[ "$(uname -s)" = Linux ]' "$arm_guest" >/dev/null || die "aarch64 root or Linux gate missing"
 grep -F '[ ! -e "$evidence/results" ] && [ ! -L "$evidence/results" ]' "$arm_guest" >/dev/null || die "aarch64 fresh-evidence gate missing"
 grep -F 'diagnostic-install.requests' "$arm_guest" >/dev/null && grep -F 'diagnostic-total.requests' "$arm_guest" >/dev/null || die "aarch64 zero-request evidence missing"
@@ -140,7 +152,8 @@ grep -F 'cp "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents
 grep -F 'cat "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents can be printed"
 grep -F 'sha256 "$sentry" >"$prefix.sha256"' "$arm_guest" >/dev/null || die "aarch64 private sentry digest missing"
 grep -F 'strict clean-uninstall residue contract' "$arm_guest" >/dev/null || die "aarch64 strict residue gate missing"
-check_x86_container_contract "$arm_guest" || die "x86_64 container contract missing"
+container_guards_are_exact "$arm_guest" || die "container destructive entry guards are not exact"
+container_config_is_exact "$arm_guest" || die "container target configuration is not exact"
 
 base_hash_line=$(grep -n 'sha256 "$base"' "$host" | head -1 | cut -d: -f1)
 qemu_line=$(grep -n '^qemu-system-x86_64 ' "$host" | cut -d: -f1)
@@ -159,6 +172,13 @@ uninstall_line=$(grep -n '^    /nix/nix-installer --diagnostic-endpoint.* uninst
 sentry_after_uninstall_line=$(grep -n 'capture_sentry_identity after-uninstall' "$guest" | cut -d: -f1)
 [ "$sentry_before_line" -lt "$install_line" ] && [ "$install_line" -lt "$sentry_after_install_line" ] && [ "$sentry_after_install_line" -lt "$upgrade_line" ] && [ "$upgrade_line" -lt "$sentry_after_upgrade_line" ] && [ "$sentry_after_upgrade_line" -lt "$uninstall_line" ] && [ "$uninstall_line" -lt "$sentry_after_uninstall_line" ] || die "sentry lifecycle stage order is wrong"
 
+container_approval_line=$(grep -Fn -x -- "$container_approval_guard" "$arm_guest" | cut -d: -f1)
+container_target_line=$(grep -n '^case \$target in$' "$arm_guest" | cut -d: -f1)
+container_root_line=$(grep -Fn -x '[ "$(id -u)" -eq 0 ] || die "container probe requires EUID 0"' "$arm_guest" | cut -d: -f1)
+container_state_line=$(grep -Fn -x -- "$container_state_paths" "$arm_guest" | cut -d: -f1)
+container_first_write_line=$(grep -Fn -x ': >"$evidence/results"' "$arm_guest" | cut -d: -f1)
+[ "$container_approval_line" -lt "$container_target_line" ] && [ "$container_target_line" -lt "$container_root_line" ] && [ "$container_root_line" -lt "$container_state_line" ] && [ "$container_state_line" -lt "$container_first_write_line" ] || die "container guards do not precede evidence mutation"
+
 tmp=${TMPDIR:-/tmp}/pkg-s6-static.$$
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir -m 0700 "$tmp"
@@ -170,20 +190,6 @@ if "$arm_host" --approve-unsafe-container /no/installer /no/evidence safe-name >
     die "aarch64 host runner accepted wrong approval"
 fi
 grep -F -x 'explicit destructive container approval is required' "$tmp/arm-host-wrong-approval.log" >/dev/null || die "aarch64 host wrong-approval failure changed"
-if "$arm_guest" >"$tmp/arm-no-approval.log" 2>&1; then
-    die "aarch64 probe accepted missing approval"
-fi
-grep -F -x 'FAIL: usage: inside-aarch64-container.sh --approve-destructive-container TARGET' "$tmp/arm-no-approval.log" >/dev/null || die "aarch64 missing-approval failure changed"
-if "$arm_guest" --approve-destructive-container aarch64-linux extra >"$tmp/arm-extra-approval.log" 2>&1; then
-    die "aarch64 probe accepted extra approval input"
-fi
-grep -F -x 'FAIL: usage: inside-aarch64-container.sh --approve-destructive-container TARGET' "$tmp/arm-extra-approval.log" >/dev/null || die "aarch64 exact-approval failure changed"
-
-sed 's/--approve-destructive-container/--approve-unsafe-container/g' "$arm_guest" >"$tmp/arm-approval-mutation.sh"
-grep -F -- '--approve-unsafe-container' "$tmp/arm-approval-mutation.sh" >/dev/null || die "aarch64 approval mutation was vacuous"
-if arm_guards_are_exact "$tmp/arm-approval-mutation.sh"; then
-    die "aarch64 approval mutation survived"
-fi
 
 sed 's/docker run --rm --pull never --name/docker run --pull never --name/' "$arm_host" >"$tmp/arm-host-rm-mutation.sh"
 grep -F -x 'set -- docker run --pull never --name "$container" \' "$tmp/arm-host-rm-mutation.sh" >/dev/null || die "aarch64 --rm mutation was vacuous"
@@ -195,13 +201,49 @@ grep -F '$0 != exact' "$tmp/arm-host-name-mutation.sh" >/dev/null || die "aarch6
 if arm_cleanup_is_exact "$tmp/arm-host-name-mutation.sh"; then
     die "aarch64 exact-name mutation survived"
 fi
-sed 's#/nix /etc/nix /usr/local/bin/determinate-nixd#/nix /usr/local/bin/determinate-nixd#' "$arm_guest" >"$tmp/arm-state-mutation.sh"
-grep -F -x 'for existing_path in /nix /usr/local/bin/determinate-nixd; do' "$tmp/arm-state-mutation.sh" >/dev/null || die "aarch64 state mutation was vacuous"
-if arm_guards_are_exact "$tmp/arm-state-mutation.sh"; then
-    die "aarch64 state mutation survived"
+
+if "$arm_guest" >"$tmp/container-no-approval.log" 2>&1; then
+    die "container probe accepted missing approval"
+fi
+grep -F -x 'FAIL: usage: inside-aarch64-container.sh --approve-destructive-container TARGET' "$tmp/container-no-approval.log" >/dev/null || die "container missing-approval failure changed"
+if "$arm_guest" --approve-unsafe-container aarch64-linux >"$tmp/container-wrong-approval.log" 2>&1; then
+    die "container probe accepted wrong approval"
+fi
+grep -F -x 'FAIL: usage: inside-aarch64-container.sh --approve-destructive-container TARGET' "$tmp/container-wrong-approval.log" >/dev/null || die "container wrong-approval failure changed"
+if "$arm_guest" --approve-destructive-container aarch64-linux extra >"$tmp/container-extra-approval.log" 2>&1; then
+    die "container probe accepted extra approval input"
+fi
+grep -F -x 'FAIL: usage: inside-aarch64-container.sh --approve-destructive-container TARGET' "$tmp/container-extra-approval.log" >/dev/null || die "container exact-argument failure changed"
+if "$arm_guest" --approve-destructive-container unsupported-linux >"$tmp/container-unsupported-target.log" 2>&1; then
+    die "container probe accepted unsupported target"
+fi
+grep -F -x 'FAIL: unsupported container target: unsupported-linux' "$tmp/container-unsupported-target.log" >/dev/null || die "container target allowlist failure changed"
+
+sed 's/--approve-destructive-container/--approve-unsafe-container/g' "$arm_guest" >"$tmp/container-approval-mutant.sh"
+grep -F -- '--approve-unsafe-container' "$tmp/container-approval-mutant.sh" >/dev/null || die "container approval mutation was vacuous"
+if container_guards_are_exact "$tmp/container-approval-mutant.sh"; then
+    die "container approval mutation survived"
+fi
+cp "$arm_guest" "$tmp/container-target-mutant.sh"
+sed 's/9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c/0000000000000000000000000000000000000000000000000000000000000000/' "$tmp/container-target-mutant.sh" >"$tmp/container-target-mutant.new"
+mv "$tmp/container-target-mutant.new" "$tmp/container-target-mutant.sh"
+if container_guards_are_exact "$tmp/container-target-mutant.sh"; then
+    die "x86_64 target-pin mutation was accepted"
+fi
+cp "$arm_guest" "$tmp/container-filter-mutant.sh"
+sed 's/filter-syscalls = false/filter-syscalls = true/' "$tmp/container-filter-mutant.sh" >"$tmp/container-filter-mutant.new"
+mv "$tmp/container-filter-mutant.new" "$tmp/container-filter-mutant.sh"
+if container_config_is_exact "$tmp/container-filter-mutant.sh"; then
+    die "syscall-filter mutation was accepted"
 fi
 
-run_arm_state_fixture() {
+sed 's#/nix /etc/nix /usr/local/bin/determinate-nixd#/nix /usr/local/bin/determinate-nixd#' "$arm_guest" >"$tmp/container-state-mutant.sh"
+grep -F -x 'for existing_path in /nix /usr/local/bin/determinate-nixd; do' "$tmp/container-state-mutant.sh" >/dev/null || die "container state mutation was vacuous"
+if container_guards_are_exact "$tmp/container-state-mutant.sh"; then
+    die "container state mutation survived"
+fi
+
+run_container_state_fixture() {
     blocked_path=$1
     fixture=$2
     {
@@ -211,33 +253,55 @@ run_arm_state_fixture() {
         printf '%s\n' 'printf "UNSAFE: guard accepted pre-existing state\n" >&2'
     } >"$fixture"
     if sh "$fixture" >"$fixture.log" 2>&1; then
-        die "aarch64 pre-existing-state fixture was accepted"
+        die "container pre-existing-state fixture was accepted"
     fi
-    grep -F -x "FAIL: pre-existing Nix state: $blocked_path" "$fixture.log" >/dev/null || die "aarch64 pre-existing-state fixture failure changed"
+    grep -F -x "FAIL: pre-existing Nix state: $blocked_path" "$fixture.log" >/dev/null || die "container pre-existing-state fixture failure changed"
 }
 
 : >"$tmp/existing-file"
-run_arm_state_fixture "$tmp/existing-file" "$tmp/arm-existing-file-fixture.sh"
+run_container_state_fixture "$tmp/existing-file" "$tmp/container-existing-file-fixture.sh"
 ln -s "$tmp/absent-target" "$tmp/existing-link"
-run_arm_state_fixture "$tmp/existing-link" "$tmp/arm-existing-link-fixture.sh"
+run_container_state_fixture "$tmp/existing-link" "$tmp/container-existing-link-fixture.sh"
 
-approval_line=$(grep -Fn -x -- "$arm_approval_guard" "$arm_guest" | cut -d: -f1)
-state_paths_line=$(grep -Fn -x -- "$arm_state_paths" "$arm_guest" | cut -d: -f1)
-first_arm_mutation_line=$(grep -Fn -x ': >"$evidence/results"' "$arm_guest" | cut -d: -f1)
-[ "$approval_line" -lt "$state_paths_line" ] && [ "$state_paths_line" -lt "$first_arm_mutation_line" ] || die "aarch64 guards do not precede mutation"
+run_container_config_fixture() {
+    candidate=$1
+    target_name=$2
+    output=$3
+    fixture=$output.sh
+    {
+        printf '%s\n' '#!/bin/sh' 'set -eu' "target=$target_name" "installer=/input/nix-installer-$target_name" 'endpoint=http://127.0.0.1:18080'
+        awk -v start="$container_base_argv" '
+            $0 == start { copying = 1 }
+            copying && $0 == "write_argv \"\$evidence/install.argv\" \"\$@\"" { exit }
+            copying { print }
+        ' "$candidate"
+        printf '%s\n' 'printf "%s\n" "$@"'
+    } >"$fixture"
+    sh "$fixture" >"$output"
+}
 
-cp "$arm_guest" "$tmp/container-target-mutant.sh"
-sed 's/9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c/0000000000000000000000000000000000000000000000000000000000000000/' "$tmp/container-target-mutant.sh" >"$tmp/container-target-mutant.new"
-mv "$tmp/container-target-mutant.new" "$tmp/container-target-mutant.sh"
-if check_x86_container_contract "$tmp/container-target-mutant.sh"; then
-    die "x86_64 target-pin mutation was accepted"
+extract_final_nix_config() {
+    awk '$0 == "--extra-conf" { found = 1; next } found { print }' "$1"
+}
+
+run_container_config_fixture "$arm_guest" aarch64-linux "$tmp/container-arm.argv"
+run_container_config_fixture "$arm_guest" x86_64-linux "$tmp/container-x86.argv"
+extract_final_nix_config "$tmp/container-arm.argv" >"$tmp/container-arm.nix-config"
+extract_final_nix_config "$tmp/container-x86.argv" >"$tmp/container-x86.nix-config"
+printf '%s\n' 'sandbox = false' >"$tmp/container-arm.expected-nix-config"
+printf '%s\n' 'sandbox = false' 'filter-syscalls = false' >"$tmp/container-x86.expected-nix-config"
+cmp -s "$tmp/container-arm.expected-nix-config" "$tmp/container-arm.nix-config" || die "aarch64 final NIX_CONFIG changed"
+cmp -s "$tmp/container-x86.expected-nix-config" "$tmp/container-x86.nix-config" || die "x86_64 final NIX_CONFIG changed"
+
+sed 's/if \[ "$target" = x86_64-linux \]; then/if [ -n "$target" ]; then/' "$arm_guest" >"$tmp/container-arm-inherit-mutant.sh"
+grep -F -x 'if [ -n "$target" ]; then' "$tmp/container-arm-inherit-mutant.sh" >/dev/null || die "aarch64 inheritance mutation was vacuous"
+if container_config_is_exact "$tmp/container-arm-inherit-mutant.sh"; then
+    die "aarch64 inheritance mutation survived"
 fi
-cp "$arm_guest" "$tmp/container-filter-mutant.sh"
-sed 's/filter-syscalls = false/filter-syscalls = true/' "$tmp/container-filter-mutant.sh" >"$tmp/container-filter-mutant.new"
-mv "$tmp/container-filter-mutant.new" "$tmp/container-filter-mutant.sh"
-if check_x86_container_contract "$tmp/container-filter-mutant.sh"; then
-    die "syscall-filter mutation was accepted"
-fi
+run_container_config_fixture "$tmp/container-arm-inherit-mutant.sh" aarch64-linux "$tmp/container-arm-inherit-mutant.argv"
+extract_final_nix_config "$tmp/container-arm-inherit-mutant.argv" >"$tmp/container-arm-inherit-mutant.nix-config"
+cmp -s "$tmp/container-x86.expected-nix-config" "$tmp/container-arm-inherit-mutant.nix-config" || die "aarch64 inheritance mutation did not change final NIX_CONFIG"
+
 if "$host" --approve-destructive-vm /no/base /no/installer unknown "$tmp/out" >"$tmp/out.log" 2>&1; then
     die "unsupported lane was accepted"
 fi
