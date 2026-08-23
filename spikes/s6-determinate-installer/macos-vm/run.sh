@@ -328,10 +328,11 @@ validate_phase_archive() {
         case $entry in /*) die "phase archive has an absolute path: $entry" ;; esac
         case $entry in "$phase/"*) ;; *) die "phase archive has an unexpected prefix: $entry" ;; esac
         case $entry in *[!A-Za-z0-9._/-]*) die "phase archive has an unsafe name: $entry" ;; esac
-        case /$entry/ in *'/../'*|*'/./'*|*'//'*) die "phase archive has an unsafe path: $entry" ;; esac
-        case $entry in */receipt.json) die "phase archive contains receipt bytes" ;; esac
+        checked_entry=${entry%/}
+        case "/$checked_entry/" in *'/../'*|*'/./'*|*'//'*) die "phase archive has an unsafe path: $entry" ;; esac
+        case $checked_entry in */receipt.json) die "phase archive contains receipt bytes" ;; esac
     done <"$list"
-    LC_ALL=C sort "$list" >"$out/phases/$phase.sorted"
+    sed 's|/$||' "$list" | LC_ALL=C sort >"$out/phases/$phase.sorted"
     uniq -d "$out/phases/$phase.sorted" >"$out/phases/$phase.duplicates"
     [ ! -s "$out/phases/$phase.duplicates" ] || die "phase archive has duplicate paths: $phase"
     while IFS= read -r detail; do

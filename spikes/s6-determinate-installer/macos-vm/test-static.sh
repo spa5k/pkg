@@ -114,6 +114,11 @@ need "$host" '/bin/mv "$archive_part" "$archive"' "atomic archive finalization m
 need "$host" 'phase archive contains a link or special entry' "archive type rejection missing"
 need "$host" 'phase archive has duplicate paths' "archive duplicate rejection missing"
 need "$host" 'phase archive has an unexpected prefix' "archive prefix rejection missing"
+need "$host" 'checked_entry=${entry%/}' "archive path normalization changed"
+need "$host" 'case "/$checked_entry/" in *'\''/../'\''*|*'\''/./'\''*|*'\''//'\''*) die "phase archive has an unsafe path: $entry" ;; esac' "archive path validation changed"
+need "$host" 'case $checked_entry in */receipt.json) die "phase archive contains receipt bytes" ;; esac' "host receipt archive rejection missing"
+need "$host" 'sed '\''s|/$||'\'' "$list" | LC_ALL=C sort >"$out/phases/$phase.sorted"' "normalized archive duplicate sort missing"
+need "$host" 'uniq -d "$out/phases/$phase.sorted" >"$out/phases/$phase.duplicates"' "archive duplicate detection missing"
 validate_line=$(line "$host" 'validate_phase_archive "$phase" "$archive_part"')
 hash_line=$(line "$host" 'sha256 "$archive_part"')
 rename_line=$(line "$host" '/bin/mv "$archive_part" "$archive"')
@@ -126,7 +131,6 @@ need "$host" 'phase-status.fail.expected' "failed phase evidence is not classifi
 need "$guest" 'receipt_identity()' "opaque receipt identity helper missing"
 need "$guest" "stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' \"\$receipt\"" "receipt metadata proof missing"
 need "$guest" 'sha256 "$receipt"' "receipt digest proof missing"
-need "$host" 'case $entry in */receipt.json) die "phase archive contains receipt bytes"' "host receipt archive rejection missing"
 reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?(cat|cp|dd|grep|head|tail|sed|awk|tar|tee|strings)[[:space:]].*(/nix/receipt\.json|"?\$receipt"?)' "receipt content read or copy found" "$guest"
 
 # Exact vendor argv and observed statuses.
@@ -187,6 +191,43 @@ reject '(^|[;&|()])[[:space:]]*(nix-installer|determinate-nixd)([[:space:]]|$)' 
 reject '(^|[[:space:]])(which|type[[:space:]]+-[a-zA-Z]*p)([[:space:]]|$)' "PATH lookup helper found" "$guest"
 [ "$(grep -F -c 'tart clone ' "$host")" -eq 1 ] || die "lane must clone exactly one VM"
 [ "$(grep -c '^tart run ' "$host")" -eq 1 ] || die "lane must run exactly one VM"
+
+# Normal tar directory entries pass, but redundant and traversing paths remain unsafe.
+archive_fixture=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-archive.XXXXXX") || die "could not create archive fixture"
+trap 'rm -R "$archive_fixture"' EXIT HUP INT TERM
+mkdir "$archive_fixture/tree" "$archive_fixture/tree/baseline" "$archive_fixture/tree/baseline/nested"
+printf '%s\n' evidence >"$archive_fixture/tree/baseline/nested/file"
+/usr/bin/tar -cf "$archive_fixture/normal.tar" -C "$archive_fixture/tree" baseline
+/usr/bin/tar -tf "$archive_fixture/normal.tar" >"$archive_fixture/normal.list"
+for safe_entry in baseline/ baseline/nested/ baseline/nested/file; do
+    grep -Fx -- "$safe_entry" "$archive_fixture/normal.list" >/dev/null || die "normal archive entry missing: $safe_entry"
+done
+while IFS= read -r entry; do
+    checked_entry=${entry%/}
+    case "/$checked_entry/" in *'/../'*|*'/./'*|*'//'*) die "normal archive entry rejected: $entry" ;; esac
+done <"$archive_fixture/normal.list"
+for entry in baseline//file baseline/../file baseline/./file baseline// baseline///; do
+    checked_entry=${entry%/}
+    case "/$checked_entry/" in *'/../'*|*'/./'*|*'//'*) ;; *) die "unsafe archive entry accepted: $entry" ;; esac
+done
+for entry in baseline/receipt.json baseline/receipt.json/; do
+    checked_entry=${entry%/}
+    case $checked_entry in */receipt.json) ;; *) die "receipt archive entry accepted: $entry" ;; esac
+done
+mkdir "$archive_fixture/collision-tree" "$archive_fixture/collision-tree/baseline"
+printf '%s\n' collision >"$archive_fixture/collision-tree/baseline/nested"
+/usr/bin/tar -rf "$archive_fixture/normal.tar" -C "$archive_fixture/collision-tree" baseline/nested
+/usr/bin/tar -tf "$archive_fixture/normal.tar" >"$archive_fixture/collision.list"
+sed 's|/$||' "$archive_fixture/collision.list" | LC_ALL=C sort >"$archive_fixture/collision.sorted"
+uniq -d "$archive_fixture/collision.sorted" >"$archive_fixture/collision.duplicates"
+grep -Fx -- baseline/nested "$archive_fixture/collision.duplicates" >/dev/null || die "normalized file/directory collision was not found"
+set +e
+( [ ! -s "$archive_fixture/collision.duplicates" ] || die "archive has duplicate paths" ) >/dev/null 2>&1
+collision_status=$?
+set -e
+[ "$collision_status" -ne 0 ] || die "normalized file/directory collision was accepted"
+rm -R "$archive_fixture"
+trap - EXIT HUP INT TERM
 
 # A raw post-phase write failure must finalize failure evidence before cleanup.
 fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-dn03c-finalizer.XXXXXX") || die "could not create finalizer fixture"
