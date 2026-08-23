@@ -37,7 +37,7 @@ This is an ARM64 Linux container on an ARM64 Docker server. It is not a bare-met
 
 **Observed result.** The strict clean-uninstall residue contract failed in the broad x86_64 QEMU run and both final container Asset proofs. The broad x86_64 run proves at least one `/etc/nix` entry remained. The final x86_64 and aarch64 container inventories prove `sentry-endpoint` was the only `/etc/nix` entry in those guests.
 
-**Linux gate result.** The final x86_64 container closes the missing Linux receipt-hash fact. Both Linux targets now complete the three Asset proof rows. The parent still owns the separate macOS decision.
+**Linux gate result.** The Linux aarch64 and x86_64 Asset proof gaps are closed. The strict sentry residue remains a real vendor clean-uninstall FAIL. Fresh guest state, creation during vendor execution, and the unchanged after-uninstall identity prove vendor ownership in the tested lanes. DN-13 owns exact product cleanup; DN-03 does not apply it. The DN-03 parent and DN-04 still wait for the separate macOS child to close.
 
 **Inference.** The observed install and recovery behavior supports using the pinned vendor executable as a private helper after the DN-03 gate passes. It does not support a clean vendor-uninstall claim. Section 12 gives the recommendation and the future DN-13 cleanup proposal.
 
@@ -399,7 +399,7 @@ The lane completes all three Linux aarch64 `Asset proof` rows. It does not run t
 
 ### Parent gate
 
-The Linux report has no remaining Asset proof gap. This report does not decide whether the separate Apple Silicon macOS rows pass. The parent owner must combine both child reports before changing the DN-03 or DN-04 state. Intel macOS asset availability is observed: release v3.22.1 has no standalone Intel macOS executable.
+The Linux report has no remaining Asset proof gap. The strict sentry residue is still a real FAIL, and vendor ownership is proven for the tested lanes. DN-13 owns the future exact cleanup. This report does not apply that cleanup and does not decide whether the separate Apple Silicon macOS rows pass. The parent owner must combine both child reports before closing DN-03 or starting DN-04. Intel macOS asset availability is observed: release v3.22.1 has no standalone Intel macOS executable.
 
 DN-04 cannot start before the DN-03 parent passes. DN-13 later owns exact product cleanup. This ordering is not a dependency cycle because DN-03 proves vendor behavior and ownership; DN-13 implements and proves product-owned cleanup after integration support exists.
 

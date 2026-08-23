@@ -72,13 +72,6 @@ count, UTC time, and provenance. It hashes this cleanup record. A nonzero
 count fails the runner. It also writes `evidence.sha256` for the complete
 private bundle. The runner never removes any other container.
 
-`inside-aarch64-container.sh` is the guest side. The host runner invokes it
-with the exact `--approve-destructive-container aarch64-linux` arguments.
-
-Before it writes evidence or runs the installer, the script requires the
-exact approval and target arguments, root, and Linux. It also refuses if `/nix`,
-`/etc/nix`, or `/usr/local/bin/determinate-nixd` exists or is a symlink.
-
 `inside-aarch64-container.sh` is the guest side of the narrow Linux container
 Asset proof. It requires exactly two arguments:
 `--approve-destructive-container TARGET`. The target must be
@@ -86,6 +79,8 @@ Asset proof. It requires exactly two arguments:
 platform matches the target. Mount the pinned target asset at `/input` as
 read-only. Mount the script at `/probe.sh` as read-only. Mount a new private
 evidence directory at `/evidence`. Use Docker `--network none` and `--rm`.
+The ARM64 host runner invokes it with the exact
+`--approve-destructive-container aarch64-linux` arguments.
 
 Before the first evidence write or installer action, the script requires the
 exact approval, an allowed target, root, and Linux. It refuses any existing or
