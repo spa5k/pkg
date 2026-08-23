@@ -44,3 +44,17 @@ return the pinned missing-receipt refusal for `/nix/receipt.json`.
 
 The lifecycle lane records no-follow identity evidence for
 `/etc/nix/sentry-endpoint` at four stable lifecycle stages.
+
+## Linux ARM64 Asset proof
+
+`inside-aarch64-container.sh` is the guest side of the narrow ARM64 Asset
+proof. Run it only in a fresh `linux/arm64` container. Mount the pinned
+`aarch64-linux` asset at `/input` as read-only. Mount the script at
+`/probe.sh` as read-only. Mount a new private evidence directory at
+`/evidence`. Use Docker `--network none`.
+
+The script records exact argv, the telemetry-disable environment, loopback
+canary counts, receipt metadata and a private receipt SHA-256, installed-copy
+identity, Nix execution, sentry metadata and private identity hashes, and the
+strict residue result. It does not copy or print receipt or sentry contents.
+The expected vendor result still exits nonzero when `sentry-endpoint` remains.

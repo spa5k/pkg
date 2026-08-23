@@ -5,9 +5,10 @@ die() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
 host=$script_dir/run.sh
 guest=$script_dir/inside.sh
+arm_guest=$script_dir/inside-aarch64-container.sh
 
-sh -n "$host" "$guest" "$0"
-[ -x "$host" ] && [ -x "$guest" ] && [ -x "$0" ] || die "scripts must be executable"
+sh -n "$host" "$guest" "$arm_guest" "$0"
+[ -x "$host" ] && [ -x "$guest" ] && [ -x "$arm_guest" ] && [ -x "$0" ] || die "scripts must be executable"
 grep -F 'lifecycle|diagnostics-disabled|crash-recovery|foreign-nix|upstream-input' "$host" >/dev/null || die "exact host lanes missing"
 grep -F 'lifecycle|diagnostics-disabled|crash-recovery|foreign-nix|upstream-input' "$guest" >/dev/null || die "exact guest lanes missing"
 grep -F -- '--approve-destructive-vm' "$host" >/dev/null || die "approval gate missing"
@@ -88,6 +89,18 @@ git check-ignore -q "$script_dir/evidence/raw-private.log" || die "raw evidence 
 if git check-ignore -q "$script_dir/evidence/README.md"; then die "evidence README is ignored"; fi
 grep -F 'installer version recorded' "$guest" >/dev/null || die "common installer version evidence missing"
 grep -F '2|124|137|143)' "$host" >/dev/null || die "timeout statuses are not UNPROVED"
+grep -F 'DETSYS_IDS_TELEMETRY=disabled' "$arm_guest" >/dev/null || die "aarch64 telemetry-disable policy missing"
+grep -F 'endpoint=http://127.0.0.1:18080' "$arm_guest" >/dev/null || die "aarch64 loopback endpoint missing"
+grep -F '[ "$(id -u)" -eq 0 ]' "$arm_guest" >/dev/null && grep -F '[ "$(uname -s)" = Linux ]' "$arm_guest" >/dev/null || die "aarch64 root or Linux gate missing"
+grep -F '[ ! -e "$evidence/results" ] && [ ! -L "$evidence/results" ]' "$arm_guest" >/dev/null || die "aarch64 fresh-evidence gate missing"
+grep -F 'diagnostic-install.requests' "$arm_guest" >/dev/null && grep -F 'diagnostic-total.requests' "$arm_guest" >/dev/null || die "aarch64 zero-request evidence missing"
+[ "$(grep -c 'kill -0 "$canary_pid"' "$arm_guest")" -eq 3 ] || die "aarch64 canary liveness gates missing"
+grep -F 'sha256 "$receipt" >"$evidence/receipt.sha256"' "$arm_guest" >/dev/null || die "aarch64 private receipt digest missing"
+grep -F 'links=%h' "$arm_guest" >/dev/null || die "aarch64 link-count evidence missing"
+grep -F 'cp "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents can be archived"
+grep -F 'cat "$receipt"' "$arm_guest" >/dev/null && die "aarch64 receipt contents can be printed"
+grep -F 'sha256 "$sentry" >"$prefix.sha256"' "$arm_guest" >/dev/null || die "aarch64 private sentry digest missing"
+grep -F 'strict clean-uninstall residue contract' "$arm_guest" >/dev/null || die "aarch64 strict residue gate missing"
 
 base_hash_line=$(grep -n 'sha256 "$base"' "$host" | head -1 | cut -d: -f1)
 qemu_line=$(grep -n '^qemu-system-x86_64 ' "$host" | cut -d: -f1)
