@@ -127,14 +127,16 @@ install_evidence_order_is_valid() {
 }
 inventory_find_line='    LC_ALL=C /usr/bin/find -P /etc/nix -xdev -exec /bin/sh "$0" --inventory-entries /etc/nix "$inventory_root_device" "$inventory_raw" {} + || die "could not inventory /etc/nix"'
 inventory_find_unsafe_line='    LC_ALL=C /usr/bin/find -L /etc/nix -xdev -exec /bin/sh "$0" --inventory-entries /etc/nix "$inventory_root_device" "$inventory_raw" {} + || die "could not inventory /etc/nix"'
+inventory_root_directory_gate='    [ "$stat_type" = Directory ] || die "/etc/nix inventory root is not a real directory"'
 inventory_regular_link_gate='                [ "$inventory_nlink" -eq 1 ] || die "regular inventory file has multiple hard links"'
 final_residue_compare_line='    lifecycle-residue) compare_residue_contract "$phase_dir/before" "$phase_dir/after" "final post-reboot residue identity changed during observation" ;;'
 residue_inventory_boundary_is_valid() {
     inventory_find_count=$(grep -F -x -c -- "$inventory_find_line" "$1" || :)
     inventory_find_unsafe_count=$(grep -F -x -c -- "$inventory_find_unsafe_line" "$1" || :)
+    inventory_root_directory_count=$(grep -F -x -c -- "$inventory_root_directory_gate" "$1" || :)
     inventory_regular_link_count=$(grep -F -x -c -- "$inventory_regular_link_gate" "$1" || :)
     final_residue_compare_count=$(grep -F -x -c -- "$final_residue_compare_line" "$1" || :)
-    [ "$inventory_find_count" -eq 1 ] && [ "$inventory_find_unsafe_count" -eq 0 ] \
+    [ "$inventory_find_count" -eq 1 ] && [ "$inventory_find_unsafe_count" -eq 0 ] && [ "$inventory_root_directory_count" -eq 1 ] \
         && [ "$inventory_regular_link_count" -eq 1 ] && [ "$final_residue_compare_count" -eq 1 ]
 }
 installer_process_coverage_is_valid() {
@@ -384,6 +386,9 @@ if reboot_status_boundary_is_valid "$boundary_fixture/early-reboot-pass.sh"; the
 awk -v safe="$inventory_find_line" -v unsafe="$inventory_find_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$guest" >"$boundary_fixture/inventory-follow-links.sh"
 need_exact "$boundary_fixture/inventory-follow-links.sh" "$inventory_find_unsafe_line" "find -L inventory mutation vanished"
 if residue_inventory_boundary_is_valid "$boundary_fixture/inventory-follow-links.sh"; then die "find -L inventory mutation was accepted"; fi
+awk -v gate="$inventory_root_directory_gate" '$0 != gate { print }' "$guest" >"$boundary_fixture/inventory-root-symlink.sh"
+if grep -F -x -- "$inventory_root_directory_gate" "$boundary_fixture/inventory-root-symlink.sh" >/dev/null; then die "inventory root-directory mutation vanished"; fi
+if residue_inventory_boundary_is_valid "$boundary_fixture/inventory-root-symlink.sh"; then die "missing inventory root-directory gate was accepted"; fi
 awk -v gate="$inventory_regular_link_gate" '$0 != gate { print }' "$guest" >"$boundary_fixture/inventory-hardlinks.sh"
 if grep -F -x -- "$inventory_regular_link_gate" "$boundary_fixture/inventory-hardlinks.sh" >/dev/null; then die "regular-file hardlink mutation vanished"; fi
 if residue_inventory_boundary_is_valid "$boundary_fixture/inventory-hardlinks.sh"; then die "missing regular-file hardlink gate was accepted"; fi

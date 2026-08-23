@@ -209,6 +209,7 @@ capture_inventory_once() {
     fi
     case $0 in /*) ;; *) die "inventory scanner path is not absolute" ;; esac
     stat_state /etc/nix
+    [ "$stat_type" = Directory ] || die "/etc/nix inventory root is not a real directory"
     inventory_root_before=$stat_state_line inventory_root_device=$stat_device
     LC_ALL=C /usr/bin/find -P /etc/nix -xdev -exec /bin/sh "$0" --inventory-entries /etc/nix "$inventory_root_device" "$inventory_raw" {} + || die "could not inventory /etc/nix"
     stat_state /etc/nix
