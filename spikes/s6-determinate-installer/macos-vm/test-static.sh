@@ -45,6 +45,10 @@ reboot_status_line='        reboot_cmp_status=$?'
 reboot_error_line='    [ "$reboot_cmp_status" -eq 1 ] || die "could not compare raw kern.boottime across reboot"'
 reboot_return_line='    return 0'
 reboot_unsafe_line='    cmp -s "$out/reboots/$label.before" "$out/reboots/$label.after" && die "raw kern.boottime did not change across reboot"'
+shutdown_status_capture_line='    shutdown_status=$?'
+shutdown_status_write_line='    printf '\''%s\n'\'' "$shutdown_status" >"$out/reboots/$label.shutdown.status"'
+shutdown_status_gate_line='    [ "$shutdown_status" -eq 0 ] || die "guest shutdown command failed"'
+shutdown_status_unsafe_line='    : # mutation: guest shutdown status is ignored'
 reboot_status_boundary_is_valid() {
     reboot_compare_count=$(grep -F -x -c -- "$reboot_compare_line" "$1" || :)
     reboot_die_count=$(grep -F -x -c -- "$reboot_die_line" "$1" || :)
@@ -53,6 +57,11 @@ reboot_status_boundary_is_valid() {
     reboot_return_count=$(grep -F -x -c -- "$reboot_return_line" "$1" || :)
     reboot_unsafe_count=$(grep -F -x -c -- "$reboot_unsafe_line" "$1" || :)
     [ "$reboot_compare_count" -eq 1 ] && [ "$reboot_die_count" -eq 1 ] && [ "$reboot_status_count" -eq 1 ] && [ "$reboot_error_count" -eq 1 ] && [ "$reboot_return_count" -eq 1 ] && [ "$reboot_unsafe_count" -eq 0 ]
+}
+shutdown_status_boundary_is_valid() {
+    shutdown_status_gate_count=$(grep -F -x -c -- "$shutdown_status_gate_line" "$1" || :)
+    shutdown_status_unsafe_count=$(grep -F -x -c -- "$shutdown_status_unsafe_line" "$1" || :)
+    [ "$shutdown_status_gate_count" -eq 1 ] && [ "$shutdown_status_unsafe_count" -eq 0 ]
 }
 installer_line_exact='        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile'
 status_save_line_exact='        initial_install_status=$last_status'
@@ -183,7 +192,15 @@ need "$host" 'Guest Agent did not become unavailable for reboot' "reboot down pr
 need "$host" 'wait_guest_ready' "post-reboot ready proof missing"
 need "$host" '/usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before"' "pre-reboot boot time missing"
 need "$host" '/usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.after"' "post-reboot boot time missing"
+need_exact "$host" "$shutdown_status_capture_line" "shutdown status capture changed"
+need_exact "$host" "$shutdown_status_write_line" "shutdown status evidence changed"
+shutdown_status_boundary_is_valid "$host" || die "failed guest shutdown can enter reboot availability checks"
 reboot_status_boundary_is_valid "$host" || die "raw boot-time comparison can return failure after a successful reboot"
+shutdown_capture_line=$(exact_line "$host" "$shutdown_status_capture_line")
+shutdown_write_line=$(exact_line "$host" "$shutdown_status_write_line")
+shutdown_gate_line=$(exact_line "$host" "$shutdown_status_gate_line")
+down_start_line=$(exact_line "$host" '    down=0')
+[ "$shutdown_capture_line" -lt "$shutdown_write_line" ] && [ "$shutdown_write_line" -lt "$shutdown_gate_line" ] && [ "$shutdown_gate_line" -lt "$down_start_line" ] || die "shutdown status gate order changed"
 down_line=$(line "$host" 'Guest Agent did not become unavailable for reboot')
 ready_line=$(grep -n -F '    wait_guest_ready' "$host" | tail -1 | cut -d: -f1)
 [ "$down_line" -lt "$ready_line" ] || die "reboot ready/down/ready order changed"
@@ -236,6 +253,10 @@ skip > 0 { skip--; next }
 need_exact "$boundary_fixture/reboot-status.sh" "$reboot_unsafe_line" "reboot-status mutation vanished"
 sh -n "$boundary_fixture/reboot-status.sh"
 if reboot_status_boundary_is_valid "$boundary_fixture/reboot-status.sh"; then die "reboot-status mutation was accepted"; fi
+awk -v safe="$shutdown_status_gate_line" -v unsafe="$shutdown_status_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/shutdown-status.sh"
+need_exact "$boundary_fixture/shutdown-status.sh" "$shutdown_status_unsafe_line" "shutdown-status mutation vanished"
+sh -n "$boundary_fixture/shutdown-status.sh"
+if shutdown_status_boundary_is_valid "$boundary_fixture/shutdown-status.sh"; then die "shutdown-status mutation was accepted"; fi
 rm -R "$boundary_fixture"
 trap - EXIT HUP INT TERM
 

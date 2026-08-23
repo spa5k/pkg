@@ -433,6 +433,7 @@ reboot_guest() {
     shutdown_status=$?
     set -e
     printf '%s\n' "$shutdown_status" >"$out/reboots/$label.shutdown.status"
+    [ "$shutdown_status" -eq 0 ] || die "guest shutdown command failed"
     down=0
     i=0
     while [ "$i" -lt 60 ]; do
