@@ -254,10 +254,10 @@ The final residue after-state must equal its pre-state.
 
 Strict residue compares the final identities with the baseline identities.
 Thus, absent-to-present `/etc/nix`, fstab, or log identities are residue. Any
-fstab identity difference is residue, including an empty file. An unchanged
-pre-existing identity is not attributed to the vendor. The final residue
-failure, when present, must occur only after the final `after` snapshot and all
-final comparisons.
+fstab identity difference is residue, including an empty file. Clean-baseline
+R9 forbids pre-existing identities and requires all four paths to be absent.
+The final residue failure, when present, must occur only after the final
+`after` snapshot and all final comparisons.
 
 DN-03c records this contract. It does not delete the residue. DN-13 must later
 revalidate the complete exact identity before any fail-closed cleanup.
