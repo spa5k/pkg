@@ -66,8 +66,20 @@ need "$host" 'tart run --no-graphics --no-audio --no-clipboard --no-keyboard --n
 reject '--net-(softnet|host|bridged)' "explicit Tart networking is forbidden" "$host"
 evidence_gate_line=$(line "$host" '[ "$available_kb" -ge 33554432 ]')
 tart_gate_line=$(line "$host" '[ "$tart_available_kb" -ge 33554432 ]')
-clone_line=$(line "$host" 'bounded_host 600 tart clone "$base" "$vm_name"')
+clone_line=$(grep -n -F -x 'bounded_host 600 tart clone "$base" "$vm_name" >>"$out/tart.log" 2>&1' "$host" | head -1 | cut -d: -f1)
 [ "$evidence_gate_line" -lt "$clone_line" ] && [ "$tart_gate_line" -lt "$clone_line" ] || die "host capacity gates do not precede clone"
+need "$host" 'write_argv "$out/vm-resize.argv" tart set "$vm_name" --disk-size 80' "VM resize argv record missing"
+need "$host" 'bounded_host 60 tart set "$vm_name" --disk-size 80 >>"$out/tart.log" 2>&1 || die "could not resize cloned VM"' "bounded VM resize missing"
+[ "$(grep -E -c '^[[:space:]]*write_argv "\$out/vm-resize\.argv" tart set "\$vm_name" --disk-size ' "$host")" -eq 1 ] || die "lane must record exactly one VM disk resize"
+[ "$(grep -F -x -c 'write_argv "$out/vm-resize.argv" tart set "$vm_name" --disk-size 80' "$host")" -eq 1 ] || die "exact VM resize argv record must be active exactly once"
+[ "$(grep -E -c '^[[:space:]]*bounded_host [0-9]+ tart set "\$vm_name" --disk-size ' "$host")" -eq 1 ] || die "lane must resize exactly one VM disk"
+[ "$(grep -F -x -c 'bounded_host 60 tart set "$vm_name" --disk-size 80 >>"$out/tart.log" 2>&1 || die "could not resize cloned VM"' "$host")" -eq 1 ] || die "exact VM resize command must be active exactly once"
+created_line=$(grep -n -F -x 'created=1' "$host" | head -1 | cut -d: -f1)
+resize_argv_line=$(grep -n -F -x 'write_argv "$out/vm-resize.argv" tart set "$vm_name" --disk-size 80' "$host" | head -1 | cut -d: -f1)
+resize_line=$(grep -n -F -x 'bounded_host 60 tart set "$vm_name" --disk-size 80 >>"$out/tart.log" 2>&1 || die "could not resize cloned VM"' "$host" | head -1 | cut -d: -f1)
+run_argv_line=$(grep -n -F -x 'write_argv "$out/vm-run.argv" tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer "$vm_name"' "$host" | head -1 | cut -d: -f1)
+run_line=$(grep -n -F -x 'tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer "$vm_name" >>"$out/tart.log" 2>&1 &' "$host" | head -1 | cut -d: -f1)
+[ "$clone_line" -lt "$created_line" ] && [ "$created_line" -lt "$resize_argv_line" ] && [ "$resize_argv_line" -lt "$resize_line" ] && [ "$resize_line" -lt "$run_argv_line" ] && [ "$run_argv_line" -lt "$run_line" ] || die "clone/resize/run order changed"
 
 # Explicit stdin transport. Callers pass a file argument; only the async child redirects it.
 need "$host" 'stdin_file=$2' "bounded_exec stdin file missing"

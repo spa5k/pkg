@@ -245,6 +245,8 @@ trap cleanup EXIT
 clone_attempted=1
 bounded_host 600 tart clone "$base" "$vm_name" >>"$out/tart.log" 2>&1
 created=1
+write_argv "$out/vm-resize.argv" tart set "$vm_name" --disk-size 80
+bounded_host 60 tart set "$vm_name" --disk-size 80 >>"$out/tart.log" 2>&1 || die "could not resize cloned VM"
 write_argv "$out/vm-run.argv" tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer "$vm_name"
 signals_hold
 tart run --no-graphics --no-audio --no-clipboard --no-keyboard --no-pointer "$vm_name" >>"$out/tart.log" 2>&1 &
