@@ -37,13 +37,16 @@ capture_sentry() {
     fi
 }
 
-trap stop_canary EXIT HUP INT TERM
-umask 077
-[ "$#" -eq 0 ] || die "usage: inside-aarch64-container.sh"
+[ "$#" -eq 1 ] && [ "$1" = --approve-destructive-container ] || die "missing --approve-destructive-container"
 [ "$(id -u)" -eq 0 ] || die "container probe requires EUID 0"
 [ "$(uname -s)" = Linux ] || die "container probe requires Linux"
 [ -d "$evidence" ] && [ ! -L "$evidence" ] || die "evidence path is unsafe"
 [ ! -e "$evidence/results" ] && [ ! -L "$evidence/results" ] || die "evidence results already exist"
+for existing_path in /nix /etc/nix /usr/local/bin/determinate-nixd; do
+    [ ! -e "$existing_path" ] && [ ! -L "$existing_path" ] || die "pre-existing Nix state: $existing_path"
+done
+trap stop_canary EXIT HUP INT TERM
+umask 077
 : >"$evidence/results"
 uname -m >"$evidence/uname-machine"
 uname -sr >"$evidence/uname-kernel"

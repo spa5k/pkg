@@ -6,9 +6,30 @@ script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
 host=$script_dir/run.sh
 guest=$script_dir/inside.sh
 arm_guest=$script_dir/inside-aarch64-container.sh
+arm_host=$script_dir/run-aarch64-container.sh
+arm_approval_guard='[ "$#" -eq 1 ] && [ "$1" = --approve-destructive-container ] || die "missing --approve-destructive-container"'
+arm_state_paths='for existing_path in /nix /etc/nix /usr/local/bin/determinate-nixd; do'
+arm_state_guard='    [ ! -e "$existing_path" ] && [ ! -L "$existing_path" ] || die "pre-existing Nix state: $existing_path"'
 
-sh -n "$host" "$guest" "$arm_guest" "$0"
-[ -x "$host" ] && [ -x "$guest" ] && [ -x "$arm_guest" ] && [ -x "$0" ] || die "scripts must be executable"
+arm_guards_are_exact() {
+    candidate=$1
+    [ "$(grep -Fxc -- "$arm_approval_guard" "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- "$arm_state_paths" "$candidate" || :)" -eq 1 ] &&
+        [ "$(grep -Fxc -- "$arm_state_guard" "$candidate" || :)" -eq 1 ]
+}
+
+arm_cleanup_is_exact() {
+    candidate=$1
+    grep -F -x 'set -- docker run --rm --pull never --name "$container" \' "$candidate" >/dev/null &&
+        grep -F -x "    names=\$(docker ps -a --format '{{.Names}}') || die \"cannot list Docker containers\"" "$candidate" >/dev/null &&
+        grep -F -x "    printf '%s\\n' \"\$names\" | awk -v exact=\"\$container\" '\$0 == exact'" "$candidate" >/dev/null &&
+        grep -F -x 'exact_container_names >"$evidence/container-post-cleanup.names"' "$candidate" >/dev/null &&
+        grep -F -x 'printf '\''%s\n'\'' "$cleanup_count" >"$evidence/container-post-cleanup.count"' "$candidate" >/dev/null &&
+        grep -F -x '[ "$cleanup_count" -eq 0 ] || die "exact container remained after docker run --rm"' "$candidate" >/dev/null
+}
+
+sh -n "$host" "$guest" "$arm_host" "$arm_guest" "$0"
+[ -x "$host" ] && [ -x "$guest" ] && [ -x "$arm_host" ] && [ -x "$arm_guest" ] && [ -x "$0" ] || die "scripts must be executable"
 grep -F 'lifecycle|diagnostics-disabled|crash-recovery|foreign-nix|upstream-input' "$host" >/dev/null || die "exact host lanes missing"
 grep -F 'lifecycle|diagnostics-disabled|crash-recovery|foreign-nix|upstream-input' "$guest" >/dev/null || die "exact guest lanes missing"
 grep -F -- '--approve-destructive-vm' "$host" >/dev/null || die "approval gate missing"
@@ -90,7 +111,18 @@ if git check-ignore -q "$script_dir/evidence/README.md"; then die "evidence READ
 grep -F 'installer version recorded' "$guest" >/dev/null || die "common installer version evidence missing"
 grep -F '2|124|137|143)' "$host" >/dev/null || die "timeout statuses are not UNPROVED"
 grep -F 'DETSYS_IDS_TELEMETRY=disabled' "$arm_guest" >/dev/null || die "aarch64 telemetry-disable policy missing"
+grep -F -x '[ "$#" -eq 4 ] || die "usage: $0 --approve-destructive-container INSTALLER /absolute/new/evidence CONTAINER"' "$arm_host" >/dev/null || die "aarch64 host argument gate missing"
+grep -F -x '[ "$1" = --approve-destructive-container ] || die "explicit destructive container approval is required"' "$arm_host" >/dev/null || die "aarch64 host approval gate missing"
+grep -F -x 'image=ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517' "$arm_host" >/dev/null || die "aarch64 pinned image missing"
+grep -F -x '    --platform linux/arm64 \' "$arm_host" >/dev/null || die "aarch64 Docker platform missing"
+grep -F -x '    --network none \' "$arm_host" >/dev/null || die "aarch64 Docker network isolation missing"
+grep -F -x '    "$image" /bin/sh /probe.sh --approve-destructive-container' "$arm_host" >/dev/null || die "aarch64 guest approval forwarding missing"
+grep -F -x 'printf '\''%s\n'\'' "$@" >"$evidence/container.argv"' "$arm_host" >/dev/null || die "aarch64 exact Docker argv record missing"
+grep -F 'container-post-cleanup.checked-at' "$arm_host" >/dev/null && grep -F 'container-post-cleanup.provenance' "$arm_host" >/dev/null && grep -F 'container-post-cleanup.sha256' "$arm_host" >/dev/null || die "aarch64 durable cleanup record missing"
+grep -F -x 'find "$evidence" -type f ! -name evidence.sha256 -print | LC_ALL=C sort |' "$arm_host" >/dev/null && grep -F -x '    while IFS= read -r file; do shasum -a 256 "$file"; done >"$evidence/evidence.sha256"' "$arm_host" >/dev/null || die "aarch64 complete evidence manifest missing"
+arm_cleanup_is_exact "$arm_host" || die "aarch64 exact cleanup proof is incomplete"
 grep -F 'endpoint=http://127.0.0.1:18080' "$arm_guest" >/dev/null || die "aarch64 loopback endpoint missing"
+arm_guards_are_exact "$arm_guest" || die "aarch64 destructive entry guards are not exact"
 grep -F '[ "$(id -u)" -eq 0 ]' "$arm_guest" >/dev/null && grep -F '[ "$(uname -s)" = Linux ]' "$arm_guest" >/dev/null || die "aarch64 root or Linux gate missing"
 grep -F '[ ! -e "$evidence/results" ] && [ ! -L "$evidence/results" ]' "$arm_guest" >/dev/null || die "aarch64 fresh-evidence gate missing"
 grep -F 'diagnostic-install.requests' "$arm_guest" >/dev/null && grep -F 'diagnostic-total.requests' "$arm_guest" >/dev/null || die "aarch64 zero-request evidence missing"
@@ -122,6 +154,70 @@ sentry_after_uninstall_line=$(grep -n 'capture_sentry_identity after-uninstall' 
 tmp=${TMPDIR:-/tmp}/pkg-s6-static.$$
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir -m 0700 "$tmp"
+if "$arm_host" >"$tmp/arm-host-no-approval.log" 2>&1; then
+    die "aarch64 host runner accepted missing approval"
+fi
+grep -F 'usage:' "$tmp/arm-host-no-approval.log" >/dev/null || die "aarch64 host missing-approval failure changed"
+if "$arm_host" --approve-unsafe-container /no/installer /no/evidence safe-name >"$tmp/arm-host-wrong-approval.log" 2>&1; then
+    die "aarch64 host runner accepted wrong approval"
+fi
+grep -F -x 'explicit destructive container approval is required' "$tmp/arm-host-wrong-approval.log" >/dev/null || die "aarch64 host wrong-approval failure changed"
+if "$arm_guest" >"$tmp/arm-no-approval.log" 2>&1; then
+    die "aarch64 probe accepted missing approval"
+fi
+grep -F -x 'FAIL: missing --approve-destructive-container' "$tmp/arm-no-approval.log" >/dev/null || die "aarch64 missing-approval failure changed"
+if "$arm_guest" --approve-destructive-container extra >"$tmp/arm-extra-approval.log" 2>&1; then
+    die "aarch64 probe accepted extra approval input"
+fi
+grep -F -x 'FAIL: missing --approve-destructive-container' "$tmp/arm-extra-approval.log" >/dev/null || die "aarch64 exact-approval failure changed"
+
+sed 's/--approve-destructive-container/--approve-unsafe-container/g' "$arm_guest" >"$tmp/arm-approval-mutation.sh"
+grep -F -- '--approve-unsafe-container' "$tmp/arm-approval-mutation.sh" >/dev/null || die "aarch64 approval mutation was vacuous"
+if arm_guards_are_exact "$tmp/arm-approval-mutation.sh"; then
+    die "aarch64 approval mutation survived"
+fi
+
+sed 's/docker run --rm --pull never --name/docker run --pull never --name/' "$arm_host" >"$tmp/arm-host-rm-mutation.sh"
+grep -F -x 'set -- docker run --pull never --name "$container" \' "$tmp/arm-host-rm-mutation.sh" >/dev/null || die "aarch64 --rm mutation was vacuous"
+if arm_cleanup_is_exact "$tmp/arm-host-rm-mutation.sh"; then
+    die "aarch64 --rm mutation survived"
+fi
+sed 's/\$0 == exact/\$0 != exact/' "$arm_host" >"$tmp/arm-host-name-mutation.sh"
+grep -F '$0 != exact' "$tmp/arm-host-name-mutation.sh" >/dev/null || die "aarch64 exact-name mutation was vacuous"
+if arm_cleanup_is_exact "$tmp/arm-host-name-mutation.sh"; then
+    die "aarch64 exact-name mutation survived"
+fi
+sed 's#/nix /etc/nix /usr/local/bin/determinate-nixd#/nix /usr/local/bin/determinate-nixd#' "$arm_guest" >"$tmp/arm-state-mutation.sh"
+grep -F -x 'for existing_path in /nix /usr/local/bin/determinate-nixd; do' "$tmp/arm-state-mutation.sh" >/dev/null || die "aarch64 state mutation was vacuous"
+if arm_guards_are_exact "$tmp/arm-state-mutation.sh"; then
+    die "aarch64 state mutation survived"
+fi
+
+run_arm_state_fixture() {
+    blocked_path=$1
+    fixture=$2
+    {
+        printf '%s\n' '#!/bin/sh' 'set -eu' 'die() { printf "FAIL: %s\n" "$*" >&2; exit 1; }'
+        sed -n '/^for existing_path in \/nix \/etc\/nix \/usr\/local\/bin\/determinate-nixd; do$/,/^done$/p' "$arm_guest" |
+            sed "s#/nix /etc/nix /usr/local/bin/determinate-nixd#$tmp/absent-a $blocked_path $tmp/absent-b#"
+        printf '%s\n' 'printf "UNSAFE: guard accepted pre-existing state\n" >&2'
+    } >"$fixture"
+    if sh "$fixture" >"$fixture.log" 2>&1; then
+        die "aarch64 pre-existing-state fixture was accepted"
+    fi
+    grep -F -x "FAIL: pre-existing Nix state: $blocked_path" "$fixture.log" >/dev/null || die "aarch64 pre-existing-state fixture failure changed"
+}
+
+: >"$tmp/existing-file"
+run_arm_state_fixture "$tmp/existing-file" "$tmp/arm-existing-file-fixture.sh"
+ln -s "$tmp/absent-target" "$tmp/existing-link"
+run_arm_state_fixture "$tmp/existing-link" "$tmp/arm-existing-link-fixture.sh"
+
+approval_line=$(grep -Fn -x -- "$arm_approval_guard" "$arm_guest" | cut -d: -f1)
+state_paths_line=$(grep -Fn -x -- "$arm_state_paths" "$arm_guest" | cut -d: -f1)
+first_arm_mutation_line=$(grep -Fn -x ': >"$evidence/results"' "$arm_guest" | cut -d: -f1)
+[ "$approval_line" -lt "$state_paths_line" ] && [ "$state_paths_line" -lt "$first_arm_mutation_line" ] || die "aarch64 guards do not precede mutation"
+
 if "$host" --approve-destructive-vm /no/base /no/installer unknown "$tmp/out" >"$tmp/out.log" 2>&1; then
     die "unsupported lane was accepted"
 fi

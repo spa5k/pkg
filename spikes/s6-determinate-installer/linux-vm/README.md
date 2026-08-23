@@ -47,11 +47,34 @@ The lifecycle lane records no-follow identity evidence for
 
 ## Linux ARM64 Asset proof
 
-`inside-aarch64-container.sh` is the guest side of the narrow ARM64 Asset
-proof. Run it only in a fresh `linux/arm64` container. Mount the pinned
-`aarch64-linux` asset at `/input` as read-only. Mount the script at
-`/probe.sh` as read-only. Mount a new private evidence directory at
-`/evidence`. Use Docker `--network none`.
+`run-aarch64-container.sh` is the host runner for the narrow ARM64 Asset
+proof. It uses the pinned image, `--platform linux/arm64`, `--network none`,
+and `--rm`. It mounts the pinned `aarch64-linux` asset and guest probe as
+read-only files. The evidence path must be absolute and absent. The exact
+container name must not exist.
+
+Invoke the host runner with the exact destructive approval:
+
+```sh
+./linux-vm/run-aarch64-container.sh --approve-destructive-container \
+  /absolute/path/nix-installer-aarch64-linux \
+  /absolute/path/new-private-evidence \
+  pkg-s6-dn03b-arm64-probe-REV-RUN
+```
+
+The runner records the exact Docker argv. The argv includes `--rm`. After
+Docker returns, the runner immediately queries `docker ps -a`. It compares
+names by exact equality. It records the exact name, matching-name list, zero
+count, UTC time, and provenance. It hashes this cleanup record. A nonzero
+count fails the runner. It also writes `evidence.sha256` for the complete
+private bundle. The runner never removes any other container.
+
+`inside-aarch64-container.sh` is the guest side. The host runner invokes it
+with the exact `--approve-destructive-container` argument.
+
+Before it writes evidence or runs the installer, the script requires the
+exact one-argument approval, root, and Linux. It also refuses if `/nix`,
+`/etc/nix`, or `/usr/local/bin/determinate-nixd` exists or is a symlink.
 
 The script records exact argv, the telemetry-disable environment, loopback
 canary counts, receipt metadata and a private receipt SHA-256, installed-copy
