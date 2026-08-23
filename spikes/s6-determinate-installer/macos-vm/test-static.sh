@@ -30,12 +30,14 @@ crash_child_boundary_is_valid() {
     crash_child_unsafe_count=$(grep -F -x -c -- "$crash_child_unsafe_line" "$1" || :)
     [ "$crash_child_count" -eq 1 ] && [ "$crash_child_unsafe_count" -eq 0 ]
 }
-archive_validation_line='    (validate_phase_archive "$phase" "$archive_part")'
-archive_validation_unsafe_line='    validate_phase_archive "$phase" "$archive_part"'
+archive_validation_line='    validate_phase_archive "$phase" "$archive_part"'
+archive_validation_variable_line='    validation_archive=$2'
+archive_validation_collision_line='    archive=$2'
 archive_validation_boundary_is_valid() {
     archive_validation_count=$(grep -F -x -c -- "$archive_validation_line" "$1" || :)
-    archive_validation_unsafe_count=$(grep -F -x -c -- "$archive_validation_unsafe_line" "$1" || :)
-    [ "$archive_validation_count" -eq 1 ] && [ "$archive_validation_unsafe_count" -eq 0 ]
+    archive_validation_variable_count=$(grep -F -x -c -- "$archive_validation_variable_line" "$1" || :)
+    archive_validation_collision_count=$(grep -F -x -c -- "$archive_validation_collision_line" "$1" || :)
+    [ "$archive_validation_count" -eq 1 ] && [ "$archive_validation_variable_count" -eq 1 ] && [ "$archive_validation_collision_count" -eq 0 ]
 }
 installer_line_exact='        run_recorded install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile'
 status_save_line_exact='        initial_install_status=$last_status'
@@ -179,7 +181,7 @@ need "$guest" '[ "$#" -eq 7 ] && [ "$approval" = approve-observe-vendor-foreign-
 
 # Phase archives validate a private part, hash it, then atomically finalize it before status classification.
 need "$host" 'archive_part=$out/phases/$phase.tar.part' "partial archive missing"
-need_exact "$host" "$archive_validation_line" "archive validation is not isolated"
+need_exact "$host" "$archive_validation_line" "archive validation call changed"
 archive_validation_boundary_is_valid "$host" || die "archive validation can overwrite capture variables"
 need "$host" 'sha256 "$archive_part" >"$out/phases/$phase.tar.sha256"' "archive digest missing"
 need "$host" '/bin/mv "$archive_part" "$archive"' "atomic archive finalization missing"
@@ -208,8 +210,8 @@ trap 'rm -R "$boundary_fixture"' EXIT HUP INT TERM
 awk -v safe="$recorded_child_line" -v unsafe="$recorded_child_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$guest" >"$boundary_fixture/inherited-umask.sh"
 need_exact "$boundary_fixture/inherited-umask.sh" "$recorded_child_unsafe_line" "inherited-umask mutation vanished"
 if recorded_child_boundary_is_valid "$boundary_fixture/inherited-umask.sh"; then die "inherited-umask mutation was accepted"; fi
-awk -v safe="$archive_validation_line" -v unsafe="$archive_validation_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/global-validation.sh"
-need_exact "$boundary_fixture/global-validation.sh" "$archive_validation_unsafe_line" "global-validation mutation vanished"
+awk -v safe="$archive_validation_variable_line" -v unsafe="$archive_validation_collision_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/global-validation.sh"
+need_exact "$boundary_fixture/global-validation.sh" "$archive_validation_collision_line" "global-validation mutation vanished"
 if archive_validation_boundary_is_valid "$boundary_fixture/global-validation.sh"; then die "global-validation mutation was accepted"; fi
 rm -R "$boundary_fixture"
 trap - EXIT HUP INT TERM

@@ -6,11 +6,12 @@
 | Pinned source revision | `4132ad07a15ee7d88c096ac7172b7afb2672866b` |
 | Research date | 2026-08-23 |
 | Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, and install self-test warnings |
-| Evidence rule | Pinned primary-source analysis plus preserved R4 observations. No private receipt contents were read. No private evidence was changed. |
+| Evidence rule | Pinned primary-source analysis plus preserved R4 and R5 observations. No private receipt contents were read. No private evidence was changed. |
 
 In this report, **r2** means the reported first lifecycle attempt. **r3** means
 the evidence-only harness revision. **R4** means the preserved run that used
-that revision.
+that revision. **R5** means the preserved run that used the UUID comparison
+fix.
 
 ## Short answer
 

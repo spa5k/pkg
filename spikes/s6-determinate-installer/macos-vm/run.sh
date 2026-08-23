@@ -314,15 +314,15 @@ printf 'PASS\n' >"$out/phases/phase-status.expected"
 printf 'FAIL\n' >"$out/phases/phase-status.fail.expected"
 validate_phase_archive() {
     phase=$1
-    archive=$2
+    validation_archive=$2
     list=$out/phases/$phase.list
     verbose=$out/phases/$phase.verbose
     validation_stderr=$out/phases/$phase.validation.stderr
-    archive_size=$(wc -c <"$archive" | tr -d ' ')
+    archive_size=$(wc -c <"$validation_archive" | tr -d ' ')
     case $archive_size in ''|*[!0-9]*) die "could not determine phase archive size: $phase" ;; esac
     [ "$archive_size" -gt 0 ] && [ "$archive_size" -le 268435456 ] || die "phase archive size is invalid: $phase"
-    bounded_host 30 /usr/bin/tar -tf "$archive" >"$list" 2>"$validation_stderr" || die "could not list phase archive: $phase"
-    bounded_host 30 /usr/bin/tar -tvf "$archive" >"$verbose" 2>>"$validation_stderr" || die "could not inspect phase archive types: $phase"
+    bounded_host 30 /usr/bin/tar -tf "$validation_archive" >"$list" 2>"$validation_stderr" || die "could not list phase archive: $phase"
+    bounded_host 30 /usr/bin/tar -tvf "$validation_archive" >"$verbose" 2>>"$validation_stderr" || die "could not inspect phase archive types: $phase"
     [ -s "$list" ] || die "phase archive is empty: $phase"
     while IFS= read -r entry; do
         case $entry in /*) die "phase archive has an absolute path: $entry" ;; esac
@@ -342,8 +342,8 @@ validate_phase_archive() {
     [ "$(wc -l <"$list" | tr -d ' ')" = "$(wc -l <"$verbose" | tr -d ' ')" ] || die "phase archive manifests disagree: $phase"
     grep -Fx -- "$phase/phase-status" "$list" >/dev/null || die "phase archive lacks phase-status: $phase"
     grep -Fx -- "$phase/phase-ledger" "$list" >/dev/null || die "phase archive lacks phase-ledger: $phase"
-    bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-status" >"$out/phases/$phase.phase-status" 2>>"$validation_stderr" || die "could not read phase-status: $phase"
-    bounded_host 30 /usr/bin/tar -xOf "$archive" "$phase/phase-ledger" >"$out/phases/$phase.phase-ledger" 2>>"$validation_stderr" || die "could not read phase-ledger: $phase"
+    bounded_host 30 /usr/bin/tar -xOf "$validation_archive" "$phase/phase-status" >"$out/phases/$phase.phase-status" 2>>"$validation_stderr" || die "could not read phase-status: $phase"
+    bounded_host 30 /usr/bin/tar -xOf "$validation_archive" "$phase/phase-ledger" >"$out/phases/$phase.phase-ledger" 2>>"$validation_stderr" || die "could not read phase-ledger: $phase"
     if cmp -s "$out/phases/phase-status.expected" "$out/phases/$phase.phase-status"; then :
     elif cmp -s "$out/phases/phase-status.fail.expected" "$out/phases/$phase.phase-status"; then :
     else die "phase-status is not exactly PASS or FAIL: $phase"
@@ -361,7 +361,7 @@ capture_phase() {
     archive_part=$out/phases/$phase.tar.part
     archive=$out/phases/$phase.tar
     bounded_exec 120 /dev/null /usr/bin/sudo -n /usr/bin/tar -cf - -C "$guest_evidence" "$phase" >"$archive_part" 2>"$out/phases/$phase.capture.stderr" || die "could not capture phase evidence: $phase"
-    (validate_phase_archive "$phase" "$archive_part")
+    validate_phase_archive "$phase" "$archive_part"
     sha256 "$archive_part" >"$out/phases/$phase.tar.sha256"
     /bin/mv "$archive_part" "$archive" || die "could not finalize phase archive: $phase"
 }
