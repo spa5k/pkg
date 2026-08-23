@@ -45,7 +45,7 @@ return the pinned missing-receipt refusal for `/nix/receipt.json`.
 The lifecycle lane records no-follow identity evidence for
 `/etc/nix/sentry-endpoint` at four stable lifecycle stages.
 
-## Linux ARM64 Asset proof
+## Linux container Asset proof
 
 `run-aarch64-container.sh` is the host runner for the narrow ARM64 Asset
 proof. It uses the pinned image, `--platform linux/arm64`, `--network none`,
@@ -97,3 +97,18 @@ for that CID to fail. This proves that `--rm` removed the exact container.
 The container install also sets `filter-syscalls = false`. The x86_64 image
 runs under ARM64 emulation on this proof host. The default syscall filter does
 not load in that environment. This setting is only a container-proof input.
+
+The authenticated index has this exact Linux AMD64 child:
+`ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316`.
+Use this command form with new absolute host paths:
+
+```sh
+docker run --rm --cidfile /absolute/new-evidence/container.cid \
+  --name pkg-s6-dn03b-x86-unique \
+  --platform linux/amd64 --network none \
+  --mount type=bind,src=/absolute/nix-installer-x86_64-linux,dst=/input/nix-installer-x86_64-linux,readonly \
+  --mount type=bind,src=/absolute/inside-aarch64-container.sh,dst=/probe.sh,readonly \
+  --mount type=bind,src=/absolute/new-evidence,dst=/evidence \
+  ubuntu@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316 \
+  /probe.sh x86_64-linux
+```
