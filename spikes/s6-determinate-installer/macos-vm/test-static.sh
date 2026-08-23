@@ -56,10 +56,12 @@ shutdown_pair_accept_124_0_line='        0:0|124:0|124:1) ;;'
 shutdown_pair_wildcard_line='        *:*) ;;'
 reboot_outcome_fail_line='    printf '\''%s\n'\'' FAIL >"$out/reboots/$label.outcome"'
 reboot_outcome_pass_line='    printf '\''%s\n'\'' PASS >"$out/reboots/$label.outcome"'
+reboot_before_line='    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>"$out/reboots/$label.before.stderr" || die "could not record pre-reboot kern.boottime"'
+reboot_before_unsafe_line='    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>&1 || die "could not record pre-reboot kern.boottime"'
 expected_reboot_sequence='reboot_guest() {
     label=$1
     printf '\''%s\n'\'' FAIL >"$out/reboots/$label.outcome"
-    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>&1 || die "could not record pre-reboot kern.boottime"
+    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>"$out/reboots/$label.before.stderr" || die "could not record pre-reboot kern.boottime"
     set +e
     bounded_exec 30 /dev/null /usr/bin/sudo -n /sbin/shutdown -r now >>"$out/reboots/$label.shutdown" 2>&1
     shutdown_status=$?
@@ -227,6 +229,7 @@ reject '<&0' "bare inherited stdin found" "$host"
 # Reboot proof accepts only the two known shutdown outcomes and then observes a new boot time.
 need "$host" '/usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before"' "pre-reboot boot time missing"
 need "$host" '/usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.after"' "post-reboot boot time missing"
+need_exact "$host" "$reboot_before_line" "pre-reboot stderr separation changed"
 need_exact "$host" "$reboot_outcome_fail_line" "initial reboot outcome changed"
 need_exact "$host" "$shutdown_status_capture_line" "shutdown status capture changed"
 need_exact "$host" "$shutdown_timeout_capture_line" "shutdown timeout capture changed"
@@ -278,6 +281,10 @@ if recorded_child_boundary_is_valid "$boundary_fixture/inherited-umask.sh"; then
 awk -v safe="$archive_validation_variable_line" -v unsafe="$archive_validation_collision_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/global-validation.sh"
 need_exact "$boundary_fixture/global-validation.sh" "$archive_validation_collision_line" "global-validation mutation vanished"
 if archive_validation_boundary_is_valid "$boundary_fixture/global-validation.sh"; then die "global-validation mutation was accepted"; fi
+awk -v safe="$reboot_before_line" -v unsafe="$reboot_before_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/reboot-before-stderr.sh"
+need_exact "$boundary_fixture/reboot-before-stderr.sh" "$reboot_before_unsafe_line" "pre-reboot stderr mutation vanished"
+sh -n "$boundary_fixture/reboot-before-stderr.sh"
+if reboot_status_boundary_is_valid "$boundary_fixture/reboot-before-stderr.sh"; then die "merged pre-reboot stderr mutation was accepted"; fi
 awk -v safe="$reboot_compare_error_line" -v unsafe="$reboot_compare_error_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$host" >"$boundary_fixture/reboot-status.sh"
 need_exact "$boundary_fixture/reboot-status.sh" "$reboot_compare_error_unsafe_line" "reboot-status mutation vanished"
 if grep -F -x -- "$reboot_compare_error_line" "$boundary_fixture/reboot-status.sh" >/dev/null; then die "safe compare-error gate survived mutation"; fi

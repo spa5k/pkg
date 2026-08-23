@@ -416,7 +416,7 @@ revalidate_guest() {
 reboot_guest() {
     label=$1
     printf '%s\n' FAIL >"$out/reboots/$label.outcome"
-    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>&1 || die "could not record pre-reboot kern.boottime"
+    bounded_exec 15 /dev/null /usr/sbin/sysctl -n kern.boottime >"$out/reboots/$label.before" 2>"$out/reboots/$label.before.stderr" || die "could not record pre-reboot kern.boottime"
     set +e
     bounded_exec 30 /dev/null /usr/bin/sudo -n /sbin/shutdown -r now >>"$out/reboots/$label.shutdown" 2>&1
     shutdown_status=$?
