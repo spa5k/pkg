@@ -5,7 +5,7 @@
 | **Report** | DN-03b. Broad Linux x86_64 QEMU behavior evidence plus a Linux aarch64 container Asset proof. |
 | **Date** | 2026-08-23 (UTC). |
 | **Parent** | [S6 research findings](../FINDINGS.md), [Linux VM harness](README.md), [stack plan](../../../plans/determinate-nix-stacked-prs.md). |
-| **Status** | Linux aarch64 recorded the three in-container Asset behaviors. Its immediate exact-name container cleanup was not durably recorded, so final lane acceptance is Unproved. Linux x86_64 still lacks a receipt hash. The DN-03 parent gate is **NO-GO**. No clean vendor uninstall is claimed. |
+| **Status** | Linux aarch64 completed the three DN-03 Asset proof rows. Linux x86_64 still lacks a receipt hash. The DN-03 parent gate is **NO-GO**. No clean vendor uninstall is claimed. |
 
 ## Terms
 
@@ -35,7 +35,7 @@ This is an ARM64 Linux container on an ARM64 Docker server. It is not a bare-met
 
 **Observed result.** The strict clean-uninstall residue contract failed on both runs. The x86_64 result proves at least one `/etc/nix` entry remained. The aarch64 result proves `sentry-endpoint` was the only `/etc/nix` entry.
 
-**Incomplete rows.** The checked-in Linux x86_64 harness did not record a receipt hash in its accepted run. The aarch64 r9 command did not use `--rm`, and its immediate exact-name cleanup check was not saved. A later exact-name query found no matching container, but it cannot prove immediate cleanup. These missing facts and the separate blocking macOS rows keep the DN-03 parent gate at NO-GO.
+**Incomplete row.** The checked-in Linux x86_64 harness did not record a receipt hash in its accepted run. This missing fact and the separate blocking macOS rows keep the DN-03 parent gate at NO-GO.
 
 **Inference.** The observed install and recovery behavior supports using the pinned vendor executable as a private helper after the DN-03 gate passes. It does not support a clean vendor-uninstall claim. Section 12 gives the recommendation and the future DN-13 cleanup proposal.
 
@@ -59,13 +59,13 @@ Pins used by all five x86_64 lanes:
 
 The harness checked the guest image digest before it started QEMU. It checked the vendor asset digest again after it copied the asset inside the guest. It executed only that verified copy, by absolute path.
 
-The final aarch64 r9 lane used these additional pins:
+The final aarch64 r10 lane used these additional pins:
 
 | Item | Value |
 |---|---|
 | Vendor asset | `nix-installer-aarch64-linux` |
 | Vendor asset SHA-256 | `9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179` |
-| Product revision | `bff2cb46ed780fde16f73f366570305c80b46c66` |
+| Product revision | `16f0bbef1fa8d329b55da498828e0c2ba616a43c` |
 | Container image | `ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517` |
 | Container architecture | `linux/arm64`; guest `uname -m` returned `aarch64` |
 
@@ -83,7 +83,7 @@ The uninstall used the same environment and loopback endpoint. Docker used `--ne
 
 **Source-derived payload explanation.** The pinned v3.22.1 source embeds the Determinate Nix payload and `determinate-nixd` in the installer build. This is the source-defined local payload for the installed Nix files.
 
-The exact Docker argv is in private evidence. The host command used `--platform linux/arm64` and `--network none`. The saved r9 argv omitted `--rm`. The operator later removed the exact container and verified its absence live, but the immediate post-run check was not saved. This is not an accepted cleanup proof. A fresh run must use the checked-in host runner.
+The exact Docker argv is in private evidence. It used `--rm`, the exact name `pkg-s6-dn03b-arm64-probe-16f0bbe-r10`, `--platform linux/arm64`, `--network none`, and the pinned image digest. Immediately after Docker returned, the host runner compared `docker ps -a` names by exact equality. The saved match list was empty and the saved count was zero. The cleanup record and complete private evidence bundle have checksum manifests.
 
 The diagnostics check is not a packet capture and does not prove that all possible traffic was absent. It proves that neither state-changing command reached the controlled loopback endpoint while the supported telemetry-disable policy was active.
 
@@ -140,7 +140,7 @@ The first upstream run is **not** in this table. It is historical. See section 9
 | `foreign-nix` | 0 | Vendor install returned 0. Sentinel preserved. | The vendor **accepted** a foreign `/nix` and installed into it. `pkg` must own the refusal policy. |
 | `upstream-input` (r2) | 0 | Upstream Nix installed. Later Determinate install returned 1. | The vendor can build an upstream Nix input. The observed Determinate attempt refused it. The lane did not require that status. |
 | `diagnostics-disabled` | 0 | Install returned 0 with zero captured requests. | The empty diagnostic endpoint produced no requests to the guest-local capture service. |
-| `aarch64-container` (r9) | 1 | Eleven in-container asset, diagnostics, install, execution, identity, inventory, and uninstall checks passed. The strict residue check failed. | The in-container Asset behaviors were observed. Immediate exact-name container cleanup was not durably recorded, so final lane acceptance is Unproved. The full `/etc/nix` inventory contained only `sentry-endpoint`. This is not a Sample-row proof. |
+| `aarch64-container` (r10) | 1 | Eleven in-container checks passed. The immediate host cleanup count was zero. The strict residue check failed. | The three Linux aarch64 Asset proof rows are complete. The full `/etc/nix` inventory contained only `sentry-endpoint`. This is not a Sample-row proof. |
 
 The `lifecycle` and `aarch64-container` exit statuses of 1 are correct harness behavior. Each proof found a real strict-residue failure. The x86_64 evidence proves at least the sentry file remained. The aarch64 evidence proves it was the only `/etc/nix` entry.
 
@@ -198,7 +198,7 @@ Consequences:
 
 ### Linux aarch64 container observations
 
-The private r9 evidence records this non-secret metadata:
+The private r10 evidence records this non-secret metadata:
 
 | Stage | Type | Numeric owner | Mode | Size | Link count |
 |---|---|---|---|---:|---|
@@ -286,7 +286,7 @@ The parent S6 findings record the vendor disable contract from vendor help text 
 
 **Observed, Linux x86_64.** The accepted harness verifies that `/nix/receipt.json` is nonempty, but its accepted run did not compute or save a receipt hash. The x86_64 receipt-hash requirement remains Unproved.
 
-**Observed, Linux aarch64.** The r9 receipt was a non-symlink regular file owned by uid 0 and gid 0, mode `0600`, size 30,503 bytes, and link count 1. The probe computed its SHA-256 before uninstall and kept the digest only in private evidence. It did not print, copy, or archive receipt contents. The installed helper was a non-symlink executable with the pinned asset digest. These in-container behaviors are observed. Final lane acceptance remains Unproved because immediate exact-name container cleanup was not durably recorded.
+**Observed, Linux aarch64.** The r10 receipt was a non-symlink regular file owned by uid 0 and gid 0, mode `0600`, size 30,503 bytes, and link count 1. The probe computed its SHA-256 before uninstall and kept the digest only in private evidence. It did not print, copy, or archive receipt contents. The installed helper was a non-symlink executable with the pinned asset digest. Therefore the aarch64 standalone receipt and installed-copy Asset proof is complete.
 
 | Behavior | Command form | Result |
 |---|---|---|
@@ -316,12 +316,12 @@ Rules:
 6. `pkg` owns the foreign-input refusal policy. The vendor accepts a foreign `/nix`. Only `pkg` preflight can refuse it.
 7. **Current decision:** do not add product cleanup for the sentry endpoint in DN-03.
 8. **Ordered ownership:** DN-03 records vendor behavior and the ownership boundary. DN-13 owns product cleanup after the earlier integration PRs exist. This is an ordered dependency, not a DN-03-to-DN-13 cycle.
-9. **Future DN-13 proposal:** after successful vendor uninstall, inspect only `/etc/nix/sentry-endpoint` without following links. Remove it only when every property is present and exact: non-symlink regular file, uid 0, gid 0, mode `0600`, link count 1, and the size and digest approved for the pinned vendor version and target. Any missing or mismatched property leaves the file in place and keeps the strict residue verdict FAIL. Never recursively delete `/etc/nix`. Remove `/etc/nix` only after the exact file checks passed and the directory is empty, not a symlink, owned by uid 0 and gid 0, and mode `0755`. The aarch64 r9 evidence records link count 1 and keeps the digest private. The x86_64 evidence does not record link count. DN-03 does not approve or apply this proposal.
+9. **Future DN-13 proposal:** after successful vendor uninstall, inspect only `/etc/nix/sentry-endpoint` without following links. Remove it only when every property is present and exact: non-symlink regular file, uid 0, gid 0, mode `0600`, link count 1, and the size and digest approved for the pinned vendor version and target. Any missing or mismatched property leaves the file in place and keeps the strict residue verdict FAIL. Never recursively delete `/etc/nix`. Remove `/etc/nix` only after the exact file checks passed and the directory is empty, not a symlink, owned by uid 0 and gid 0, and mode `0755`. The aarch64 r10 evidence records link count 1 and keeps the digest private. The x86_64 evidence does not record link count. DN-03 does not approve or apply this proposal.
 
 Reasons:
 
 - The x86_64 evidence proves the tested install, repair, same-version upgrade, uninstall, and crash-recovery behavior.
-- Linux aarch64 recorded the three in-container Asset behaviors. Final lane acceptance needs a fresh run with durable exact-name cleanup evidence. The accepted Linux x86_64 run still lacks a receipt hash.
+- Linux aarch64 completed the three Asset proof rows. The accepted Linux x86_64 run still lacks a receipt hash.
 - A private path does not remove LGPL-2.1 obligations. DN-05 must keep the license notice and source inventory, and it must complete a distribution compliance review.
 
 ## 13. Stop-gate decision
@@ -334,7 +334,7 @@ The x86_64 evidence is sufficient to describe the tested vendor install, repeat 
 
 The roadmap uses `Asset proof` for three DN-03 matrix rows: standalone invocation and arguments, diagnostics control, and standalone receipt and installed-copy behavior.
 
-The aarch64 r9 lane proves these facts:
+The aarch64 r10 lane proves these facts:
 
 - the pinned asset digest matched;
 - the guest reported `aarch64`;
@@ -349,12 +349,15 @@ The aarch64 r9 lane proves these facts:
 - uninstall returned 0;
 - the sentry file link count was 1 after install and after uninstall;
 - the post-uninstall `/etc/nix` inventory contained only `sentry-endpoint`.
+- the exact Docker argv included `--rm`, the pinned image digest, the exact container name, `--platform linux/arm64`, and `--network none`;
+- the immediate exact-name post-cleanup list was empty and its count was zero;
+- the cleanup record and complete private evidence bundle passed their checksum manifests.
 
-The lane records the required in-container behavior for all three Linux aarch64 `Asset proof` rows. It does not complete final acceptance because r9 lacks a durable immediate exact-name cleanup record. A fresh run is required. It does not run the aarch64 Sample rows: repeat install, SIGKILL and reboot, repair and update, or repeat uninstall. It does not prove systemd, reboot, repair, update, crash recovery, clean vendor uninstall, product cleanup, or the complete product lifecycle.
+The lane completes all three Linux aarch64 `Asset proof` rows. It does not run the aarch64 Sample rows: repeat install, SIGKILL and reboot, repair and update, or repeat uninstall. It does not prove systemd, reboot, repair, update, crash recovery, clean vendor uninstall, product cleanup, or the complete product lifecycle.
 
 ### Parent gate
 
-The DN-03 parent remains **NO-GO** until all remaining DN-03 rows pass. This includes a fresh Linux aarch64 run with durable immediate exact-name cleanup evidence, the missing Linux x86_64 receipt hash, and the separate blocking Apple Silicon macOS rows. Intel macOS asset availability is now observed: release v3.22.1 has no standalone Intel macOS executable.
+The DN-03 parent remains **NO-GO** until all remaining DN-03 rows pass. This includes the missing Linux x86_64 receipt hash and the separate blocking Apple Silicon macOS rows. Intel macOS asset availability is now observed: release v3.22.1 has no standalone Intel macOS executable.
 
 DN-04 cannot start before the DN-03 parent passes. DN-13 later owns exact product cleanup. This ordering is not a dependency cycle because DN-03 proves vendor behavior and ownership; DN-13 implements and proves product-owned cleanup after integration support exists.
 
@@ -386,15 +389,17 @@ About the results hashes:
 - So the hashes fingerprint only the public lane summaries. They do not expose private receipts.
 - The first upstream run, `upstream-input-0d4809e`, is historical and is not part of this manifest. It is retained only to explain the transient DNS failure.
 
-The final private aarch64 evidence is under `/var/tmp/pkg-s6-dn03b-aarch64-evidence/probe-bff2cb4-r9/`.
+The final private aarch64 evidence is under `/var/tmp/pkg-s6-dn03b-aarch64-evidence/probe-16f0bbe-r10/`.
 
 | Directory | Lane | UTC run date | Container exit | Results SHA-256 | Probe SHA-256 |
 |---|---|---|---:|---|---|
-| `probe-bff2cb4-r9` | aarch64-container | 2026-08-23T15:08:34Z | 1 | `67a7900f81fc39c48f0ec06af02f2b04469cdf0270652a8271d14e0397fb8344` | `6e13a5dbbaaec601130b1be63d3083762706868f75b4c0a04463899d1d46b3cc` |
+| `probe-16f0bbe-r10` | aarch64-container | 2026-08-23T15:28:52Z | 1 | `67a7900f81fc39c48f0ec06af02f2b04469cdf0270652a8271d14e0397fb8344` | `e522ac56186e77a803ca39667e2cab3be972fe06deb2aa90940bce107eda4d9c` |
 
 The aarch64 output records eleven PASS lines and one strict-residue FAIL line. The only `/etc/nix` entry was `sentry-endpoint`. It was a non-symlink regular file with uid 0, gid 0, mode `0600`, size 95 bytes, and link count 1 after install and uninstall. Receipt contents and sentry bytes were not printed, copied, or archived. Receipt metadata, a private receipt SHA-256, and private sentry identity hashes were recorded. The private digest values are not published.
 
-The authenticated official release manifest is stored in the same private directory. Its SHA-256 is `69f5e70f86310df06d4d3c83698e21e4e9803a7f7319fb31778b71c07f99f8a1`. The derived four-row asset list has SHA-256 `5293dfa5a1b6e660612f35bbf0de6456ecef55481453701792ee9ec2131b3b42`. The exact `nix-installer-x86_64-darwin` asset count is zero.
+The immediate cleanup check ran at `2026-08-23T15:28:53Z`. The exact-name match list was empty and the count was zero. The cleanup checksum manifest has SHA-256 `5aa2080210dd9e1a49be083d201262a2b3e61e6387465f5a1dc1e3eecfd968a3`. The complete private evidence checksum manifest has SHA-256 `2f889c53569cc7e724db86be19fdeae09d690b952c51aa068b876677659f444f`. Both manifests passed verification.
+
+The authenticated official release manifest is stored in the prior private r9 directory. Its SHA-256 is `69f5e70f86310df06d4d3c83698e21e4e9803a7f7319fb31778b71c07f99f8a1`. The derived four-row asset list has SHA-256 `5293dfa5a1b6e660612f35bbf0de6456ecef55481453701792ee9ec2131b3b42`. The exact `nix-installer-x86_64-darwin` asset count is zero.
 
 **Later cleanup check, not r9 acceptance evidence.** At `2026-08-23T15:21:40Z`, a host-side `docker ps -a` query compared names by exact equality with `pkg-s6-dn03b-arm64-probe-bff2cb4-r9`. It recorded an empty match list and exact count 0. The cleanup-record checksum manifest has SHA-256 `9ee5e24199a85c4eadce75c2bbe4765bbae482f2f619da5e250245593c123af9`. Its provenance states that this was a later live query. It does not prove immediate cleanup and does not upgrade r9 from Unproved.
 
@@ -437,7 +442,7 @@ Limitations of this spike:
 13. The aarch64 container run did not run systemd, reboot, repair, update, crash recovery, repeat install, or repeat uninstall.
 14. Linux aarch64 recorded the roadmap-required private receipt hash. The accepted Linux x86_64 run did not.
 15. The macOS DN-03 evidence lane still owns the blocking Apple Silicon rows. Intel macOS asset availability is observed, but no Intel lifecycle ran because v3.22.1 has no standalone Intel macOS executable.
-16. The aarch64 r9 saved Docker argv omitted `--rm`. No durable immediate post-run exact-name cleanup record exists. A later exact-name query found count 0, but final aarch64 lane acceptance needs a fresh run.
+16. The prior aarch64 r9 run did not preserve immediate cleanup evidence. The final r10 run replaces it for Asset-row acceptance and preserves the exact cleanup record.
 
 Later proof work:
 
