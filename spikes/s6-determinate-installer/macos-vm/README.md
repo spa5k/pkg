@@ -52,8 +52,8 @@ receipt bytes.
 
 Each snapshot runs the four scans twice. It sorts the `/etc/nix` records with
 the C locale. It keeps the first scan only when both scans are byte-for-byte
-equal. A changing file, an unsupported file type, a hard link, a followed
-link, or a cross-device entry stops the phase.
+equal. A changing path, an unsupported file type, a root symbolic link, a file
+with multiple hard links, or a cross-device entry stops the phase.
 
 The lifecycle lane compares these identities across the exact boundaries:
 

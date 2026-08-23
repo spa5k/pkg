@@ -290,7 +290,6 @@ snapshot() {
     for snapshot_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd /etc/fstab /etc/synthetic.conf /opt/pkg '/Library/Application Support/pkg'; do
         if [ -L "$snapshot_path" ]; then
             stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' "$snapshot_path" >>"$snapshot_prefix.paths"
-            printf 'link-target=%s path=%s\n' "$(readlink "$snapshot_path")" "$snapshot_path" >>"$snapshot_prefix.paths"
         elif [ -e "$snapshot_path" ]; then
             stat -f 'type=%HT uid=%u gid=%g owner=%Su:%Sg mode=%Lp size=%z path=%N' "$snapshot_path" >>"$snapshot_prefix.paths"
         else printf 'absent path=%s\n' "$snapshot_path" >>"$snapshot_prefix.paths"; fi

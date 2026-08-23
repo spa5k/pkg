@@ -5,6 +5,12 @@ die() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
 script_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd)
 host=$script_dir/run.sh
 guest=$script_dir/inside.sh
+set -- /bin/sh
+if dash_path=$(command -v dash 2>/dev/null); then
+    case $dash_path in
+        /*) if [ -x "$dash_path" ] && [ "$dash_path" != /bin/sh ]; then set -- "$@" "$dash_path"; fi ;;
+    esac
+fi
 
 need() { grep -F -- "$2" "$1" >/dev/null || die "$3"; }
 need_exact() { exact_count=$(grep -F -x -c -- "$2" "$1" || :); [ "$exact_count" -eq 1 ] || die "$3"; }
@@ -164,7 +170,7 @@ graph() {
     [ "$actual" = "$2" ] || die "$1 execution graph changed"
 }
 
-for script in "$host" "$guest" "$0"; do sh -n "$script"; done
+for script in "$host" "$guest" "$0"; do for test_shell do "$test_shell" -n "$script"; done; done
 [ -x "$host" ] && [ -x "$guest" ] && [ -x "$0" ] || die "scripts must be executable"
 
 # Exact interfaces and lane graphs.
@@ -442,7 +448,7 @@ with-newline"
 printf '%s\n' newline >"$inventory_newline_path"
 inventory_root_device=$(/usr/bin/stat -f %d "$inventory_fixture/root")
 inventory_expected_target_hex=$(LC_ALL=C printf %s "$inventory_link_target" | /usr/bin/od -An -v -tx1 | /usr/bin/tr -d ' \n')
-for inventory_shell in /bin/sh /bin/dash; do
+for inventory_shell do
     inventory_raw=$inventory_fixture/$(basename "$inventory_shell").raw
     : >"$inventory_raw"
     chmod 0600 "$inventory_raw"
@@ -455,7 +461,7 @@ for inventory_shell in /bin/sh /bin/dash; do
 done
 printf '%s\n' hardlink >"$inventory_fixture/root/hard-a"
 ln "$inventory_fixture/root/hard-a" "$inventory_fixture/root/hard-b"
-for inventory_shell in /bin/sh /bin/dash; do
+for inventory_shell do
     inventory_raw=$inventory_fixture/hard-$(basename "$inventory_shell").raw
     : >"$inventory_raw"
     chmod 0600 "$inventory_raw"
@@ -495,6 +501,7 @@ reject "--diagnostic-endpoint[[:space:]]+''" "empty diagnostic endpoint remains"
 installer_process_coverage_is_valid "$guest" || die "an installer process lacks the loopback canary"
 need "$guest" 'for snapshot_path in /nix /nix/receipt.json /nix/nix-installer /etc/nix /usr/local/bin/determinate-nixd /etc/fstab /etc/synthetic.conf /opt/pkg '\''/Library/Application Support/pkg'\''; do' "snapshot path anchors changed"
 need "$guest" 'launchctl print system >"$snapshot_prefix.launchd-system" 2>&1 || die "could not record system launchd"' "snapshot launchd anchor changed"
+reject 'link-target=%s' "raw snapshot symlink target remains" "$guest"
 need_exact "$guest" '    for config_file in /etc/synthetic.conf; do' "snapshot config scope changed"
 reject 'fstab[.]raw|cp[[:space:]]+/etc/fstab' "fstab contents are copied into evidence" "$guest"
 reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?(cat|cp|dd|head|tail|sed|tar|tee|strings)[[:space:]].*(/etc/fstab|/var/log/determinate-nix-(init|daemon)[.]log)' "fixed-path contents are copied or printed" "$guest"
