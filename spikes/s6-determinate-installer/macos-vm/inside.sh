@@ -591,7 +591,7 @@ case $phase in
         require_installer_version
         write_argv "$phase_dir/install.argv" "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile
         signals_hold
-        "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile </dev/null >"$phase_dir/install.output" 2>&1 &
+        (umask 022; exec "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile) </dev/null >"$phase_dir/install.output" 2>&1 &
         crash_pid=$!
         active_vendor_pid=$crash_pid
         signals_restore

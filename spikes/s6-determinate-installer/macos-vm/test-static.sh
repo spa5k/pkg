@@ -23,6 +23,13 @@ recorded_child_boundary_is_valid() {
     recorded_child_unsafe_count=$(grep -F -x -c -- "$recorded_child_unsafe_line" "$1" || :)
     [ "$recorded_child_count" -eq 1 ] && [ "$recorded_child_unsafe_count" -eq 0 ]
 }
+crash_child_line='        (umask 022; exec "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile) </dev/null >"$phase_dir/install.output" 2>&1 &'
+crash_child_unsafe_line='        "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile </dev/null >"$phase_dir/install.output" 2>&1 &'
+crash_child_boundary_is_valid() {
+    crash_child_count=$(grep -F -x -c -- "$crash_child_line" "$1" || :)
+    crash_child_unsafe_count=$(grep -F -x -c -- "$crash_child_unsafe_line" "$1" || :)
+    [ "$crash_child_count" -eq 1 ] && [ "$crash_child_unsafe_count" -eq 0 ]
+}
 archive_validation_line='    (validate_phase_archive "$phase" "$archive_part")'
 archive_validation_unsafe_line='    validate_phase_archive "$phase" "$archive_part"'
 archive_validation_boundary_is_valid() {
@@ -273,6 +280,11 @@ bare_state_change='        run_recorded missing-endpoint-install 7200 "$staged" 
 awk -v anchor='    lifecycle-repeat-install)' -v bare="$bare_state_change" '{ print; if ($0 == anchor) print bare }' "$guest" >"$order_fixture/missing-endpoint.sh"
 need_exact "$order_fixture/missing-endpoint.sh" "$bare_state_change" "missing-endpoint mutation vanished"
 if installer_process_coverage_is_valid "$order_fixture/missing-endpoint.sh"; then die "bare state-changing installer mutation was accepted"; fi
+crash_child_boundary_is_valid "$guest" || die "crash installer child umask boundary changed"
+awk -v safe="$crash_child_line" -v unsafe="$crash_child_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$guest" >"$order_fixture/unsafe-crash-child.sh"
+need_exact "$order_fixture/unsafe-crash-child.sh" "$crash_child_unsafe_line" "unsafe crash child mutation vanished"
+if grep -F -x -- "$crash_child_line" "$order_fixture/unsafe-crash-child.sh" >/dev/null; then die "safe crash child survived unsafe mutation"; fi
+if crash_child_boundary_is_valid "$order_fixture/unsafe-crash-child.sh"; then die "unsafe crash child mutation was accepted"; fi
 fstab_uppercase_line="    installed_fstab=\"UUID=\$(printf '%s\\n' \"\$installed_uuid\" | tr 'ABCDEF' 'ABCDEF') /nix apfs rw,noatime,noauto,nobrowse,nosuid,owners # Added by the Determinate Nix Installer\""
 awk -v lowercase="tr 'ABCDEF' 'abcdef'" -v uppercase="tr 'ABCDEF' 'ABCDEF'" '
 index($0, lowercase) { start = index($0, lowercase); print substr($0, 1, start - 1) uppercase substr($0, start + length(lowercase)); next }
@@ -292,7 +304,7 @@ need_exact "$guest" '        run_recorded repair-sequoia 7200 /nix/nix-installer
 need_exact "$guest" '        run_recorded uninstall 7200 /nix/nix-installer --diagnostic-endpoint "$diagnostic_endpoint" uninstall --no-confirm /nix/receipt.json' "uninstall argv changed"
 need_exact "$guest" '        run_recorded repeat-uninstall 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" uninstall --no-confirm /nix/receipt.json' "repeat uninstall argv changed"
 need_exact "$guest" '        write_argv "$phase_dir/install.argv" "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "crash argv record changed"
-need_exact "$guest" '        "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile </dev/null >"$phase_dir/install.output" 2>&1 &' "crash installer argv changed"
+need_exact "$guest" "$crash_child_line" "crash installer argv or umask boundary changed"
 need_exact "$guest" '        run_recorded recover-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "recovery argv changed"
 need_exact "$guest" '        run_recorded foreign-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --determinate --no-confirm --no-modify-profile' "foreign argv changed"
 need_exact "$guest" '        run_recorded upstream-install 7200 "$staged" --diagnostic-endpoint "$diagnostic_endpoint" install --prefer-upstream-nix --no-confirm --no-modify-profile' "upstream argv changed"
