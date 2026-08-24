@@ -6,6 +6,8 @@
 //! signing/notarization applies to product runtime artifacts only, never to
 //! locally built Nix store outputs.
 
+#[cfg(test)]
+use crate::assets::{InstallAssetOwner, install_asset_owner};
 use crate::{BrokerHelperDispatch, LinuxHelperSession, platform::linux::LinuxRootSetStore};
 #[cfg(target_os = "macos")]
 use nix::unistd::getpeereid;
@@ -172,7 +174,7 @@ pub enum MacOsAssetPrincipal {
     Build,
 }
 
-/// One exact product-owned macOS install artifact.
+/// One exact macOS install artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MacOsInstallAsset {
     id: &'static str,
@@ -560,7 +562,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
     ),
 ];
 
-/// Exact macOS product-owned artifact allowlist.
+/// Exact macOS install artifact allowlist.
 #[must_use]
 pub const fn macos_install_assets() -> &'static [MacOsInstallAsset] {
     MACOS_ASSETS
@@ -1569,6 +1571,79 @@ mod tests {
             assert_eq!(asset.owner, Some(owner));
         }
         Ok(())
+    }
+
+    #[test]
+    fn lifecycle_ownership_is_a_complete_partition() {
+        let product: BTreeSet<_> = MACOS_ASSETS
+            .iter()
+            .copied()
+            .filter(|asset| install_asset_owner(asset.id()) == InstallAssetOwner::Product)
+            .map(|asset| asset.id().to_owned())
+            .collect();
+        let base_nix: BTreeSet<_> = MACOS_ASSETS
+            .iter()
+            .copied()
+            .filter(|asset| install_asset_owner(asset.id()) == InstallAssetOwner::BaseNix)
+            .map(|asset| asset.id().to_owned())
+            .collect();
+        let mut expected_base_nix = BTreeSet::from([
+            "build-group",
+            "daemon-plist",
+            "daemon-socket-dir",
+            "managed-nix-state",
+            "nix-config",
+            "nix-root",
+            "nix-state",
+            "nix-store",
+            "nix-var",
+            "runtime-root",
+            "store-volume-plist",
+        ])
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+        for index in 1..=32 {
+            expected_base_nix.insert(format!("build-user-{index:02}"));
+        }
+        let expected_product = [
+            "broker-binary",
+            "broker-channel-state",
+            "broker-group",
+            "broker-home",
+            "broker-log-dir",
+            "broker-plist",
+            "broker-socket-dir",
+            "broker-tmp",
+            "broker-user",
+            "helper-binary",
+            "helper-home",
+            "helper-log-dir",
+            "helper-plist",
+            "helper-socket-dir",
+            "helper-tmp",
+            "log-root",
+            "path-file",
+            "product-bin",
+            "product-cli",
+            "product-config-dir",
+            "product-config-root",
+            "product-root",
+            "run-root",
+            "service-root",
+            "uninstall-manifest",
+            "uninstall-root",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+
+        assert!(!product.is_empty());
+        assert!(!base_nix.is_empty());
+        assert!(product.is_disjoint(&base_nix));
+        assert_eq!(product.len() + base_nix.len(), MACOS_ASSETS.len());
+        assert_eq!(base_nix, expected_base_nix);
+        assert_eq!(product, expected_product);
     }
 
     #[test]

@@ -24,7 +24,44 @@ pub enum LinuxAssetPrincipal {
     BuildUsers,
 }
 
-/// One static Linux artifact that PR-29 may later remove by exact identity.
+/// The lifecycle that owns one install asset.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallAssetOwner {
+    /// Product binaries, services, sockets, product configuration, and state.
+    Product,
+    /// The vendor-owned machine-wide Base Nix installation.
+    BaseNix,
+}
+
+#[cfg(test)]
+pub fn install_asset_owner(id: &str) -> InstallAssetOwner {
+    if id.starts_with("build-user-")
+        || matches!(
+            id,
+            "build-group"
+                | "nix-root"
+                | "nix-store"
+                | "nix-var"
+                | "nix-state"
+                | "nix-gcroots"
+                | "daemon-socket-dir"
+                | "nix-config"
+                | "daemon-socket-unit"
+                | "daemon-service-unit"
+                | "runtime-root"
+                | "managed-nix-state"
+                | "store-volume-plist"
+                | "daemon-plist"
+        )
+    {
+        InstallAssetOwner::BaseNix
+    } else {
+        InstallAssetOwner::Product
+    }
+}
+
+/// One static Linux install artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinuxInstallAsset {
     id: &'static str,
@@ -89,7 +126,7 @@ impl LinuxInstallAsset {
         self
     }
 
-    /// Returns the stable product-owned artifact id.
+    /// Returns the stable install artifact id.
     #[must_use]
     pub const fn id(self) -> &'static str {
         self.id
@@ -449,6 +486,80 @@ mod tests {
             .collect::<String>();
         assert!(!unit_text.contains(".timer"));
         assert!(!unit_text.to_ascii_lowercase().contains("auto-gc"));
+    }
+
+    #[test]
+    fn lifecycle_ownership_is_a_complete_partition() {
+        let product: BTreeSet<_> = ASSETS
+            .iter()
+            .copied()
+            .filter(|asset| install_asset_owner(asset.id()) == InstallAssetOwner::Product)
+            .map(|asset| asset.id().to_owned())
+            .collect();
+        let base_nix: BTreeSet<_> = ASSETS
+            .iter()
+            .copied()
+            .filter(|asset| install_asset_owner(asset.id()) == InstallAssetOwner::BaseNix)
+            .map(|asset| asset.id().to_owned())
+            .collect();
+        let mut expected_base_nix = BTreeSet::from([
+            "build-group",
+            "daemon-service-unit",
+            "daemon-socket-dir",
+            "daemon-socket-unit",
+            "nix-config",
+            "nix-gcroots",
+            "nix-root",
+            "nix-state",
+            "nix-store",
+            "nix-var",
+        ])
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+        for index in 1..=16 {
+            expected_base_nix.insert(format!("build-user-{index:02}"));
+        }
+        let expected_product = [
+            "broker-binary",
+            "broker-channel-state",
+            "broker-group",
+            "broker-home",
+            "broker-log-dir",
+            "broker-service-unit",
+            "broker-socket-dir",
+            "broker-socket-unit",
+            "broker-tmp",
+            "broker-user",
+            "helper-home",
+            "helper-log-dir",
+            "helper-service-unit",
+            "helper-socket-dir",
+            "helper-socket-unit",
+            "helper-tmp",
+            "log-root",
+            "product-cli",
+            "product-config-dir",
+            "product-config-root",
+            "product-root",
+            "profile-snippet",
+            "root-helper-binary",
+            "runtime-tmpfiles",
+            "service-bin-dir",
+            "service-root",
+            "uninstall-manifest",
+            "uninstall-root",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+
+        assert!(!product.is_empty());
+        assert!(!base_nix.is_empty());
+        assert!(product.is_disjoint(&base_nix));
+        assert_eq!(product.len() + base_nix.len(), ASSETS.len());
+        assert_eq!(base_nix, expected_base_nix);
+        assert_eq!(product, expected_product);
     }
 
     #[test]

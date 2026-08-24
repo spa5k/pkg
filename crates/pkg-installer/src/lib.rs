@@ -4,7 +4,7 @@
 //! commands, arbitrary install paths, or caller-supplied identities.
 
 mod approval_audit;
-mod assets;
+pub(crate) mod assets;
 mod bootstrap;
 mod broker;
 #[allow(dead_code)] // Inactive until the grouped DN08-DN14 routing checkpoint.
