@@ -384,12 +384,11 @@
     <div class="wrap">
       <p class="eyebrow">Architecture and domain review</p>
       <h1>A smaller and safer base for the pkg alpha</h1>
-      <p class="lede">The Determinate Nix ownership decision is accepted. Delivery is not complete. Earlier checks passed, but they do not prove the new external-installer path.</p>
+      <p class="lede">DN-03 evidence is complete. Product delivery is still NO-GO. DN-04 is next.</p>
       <div class="status-row" aria-label="Report status">
-        <span class="pill complete">Decision accepted</span>
-        <span class="pill caution">Delivery not complete</span>
-        <span class="pill complete">162 earlier tests passed</span>
-        <span class="pill caution">Two current-alpha safety fixes open</span>
+        <span class="pill complete">DN-03 evidence complete</span>
+        <span class="pill caution">Product delivery NO-GO</span>
+        <span class="pill next">DN-04 is next</span>
       </div>
     </div>
   </header>
@@ -472,6 +471,37 @@
       </div>
     </section>
 
+    <section aria-labelledby="dn03-status-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">DN-03 evidence</p>
+          <h2 id="dn03-status-title">The evidence gate is complete</h2>
+        </div>
+        <p>Evidence complete does not mean clean uninstall or successful crash recovery.</p>
+      </div>
+      <div class="card-grid" aria-label="DN-03 platform and product status">
+        <article class="card">
+          <span class="tag">Linux evidence</span>
+          <h3>Lifecycle PASS</h3>
+          <p>Linux R12 proves broad x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records.</p>
+          <p><strong>Vendor cleanup: FAIL.</strong></p>
+        </article>
+        <article class="card">
+          <span class="tag">macOS evidence</span>
+          <h3>Lifecycle and reboots PASS</h3>
+          <p>R10 proves lifecycle and residue behavior. Crash R1 records a failed recovery after the installer exits 0 because <code>_nixbld1</code> is missing.</p>
+          <p><strong>Crash recovery: FAIL.</strong></p>
+        </article>
+        <article class="card">
+          <span class="tag caution">Product status</span>
+          <h3>Delivery NO-GO</h3>
+          <p>DN-04 can document the proved contract. DN-13 owns exact residue cleanup. DN-16 must later prove the full macOS cutover lifecycle twice.</p>
+          <p><strong>Next: DN-04.</strong></p>
+        </article>
+      </div>
+      <p>Read the <a href="spikes/s6-determinate-installer/FINDINGS.md">DN-03 parent decision</a>, the <a href="spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md">Linux findings</a>, and the <a href="spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md">macOS lifecycle, residue, and crash findings</a>.</p>
+    </section>
+
     <article class="longform" aria-labelledby="chapter-title">
       <header>
         <p class="eyebrow" style="color: var(--next)">Long-form decision chapter</p>
@@ -497,7 +527,8 @@
             <tbody>
               <tr><td>Earlier current alpha</td><td>162 tests passed and zero failed. Three defect groups were fixed. A total of 296 unused lines were removed.</td><td>These facts do not test Determinate Nix integration.</td></tr>
               <tr><td>Accepted target</td><td>Users install pkg only. pkg will verify and run a pinned Determinate Nix Installer. Determinate will own the machine-wide Nix base.</td><td>The target is a decision. It is not delivered code.</td></tr>
-              <tr><td>Delivery pending</td><td>The contract, adapter, clean-host tests, lifecycle tests, and deletion proof are planned.</td><td>No old machine-wide path can be deleted yet.</td></tr>
+              <tr><td>DN-03 evidence</td><td>The standalone Linux and macOS evidence gate is complete. DN-04 can document the result.</td><td>Clean vendor uninstall and successful crash recovery are not proved.</td></tr>
+              <tr><td>Product delivery</td><td>Delivery is NO-GO. Later PRs own Handoff, cleanup, package parity, and cutover.</td><td>No old machine-wide path can be deleted yet.</td></tr>
             </tbody>
           </table>
         </div>
@@ -650,7 +681,7 @@
             </tbody>
           </table>
         </div>
-        <p>The exact vendor CLI flags are not yet fixed. They remain VM-spike work. One flag must not be treated as proof of lifecycle or PATH behavior.</p>
+        <p>DN-03 recorded the exact standalone executable evidence. DN-04 must map the documented contract to the accepted reports. One flag is still not proof of lifecycle, product Handoff, or PATH behavior.</p>
 
         <h4>PATH is a blocking compatibility gate</h4>
         <p>Raw Nix must stay outside the normal pkg PATH and UX. This is a product compatibility rule. It is not secrecy and it is not a security boundary. A local administrator can use an absolute path and can change system configuration.</p>
@@ -702,7 +733,8 @@
         </ul>
 
         <h4>Crash and power-loss behavior</h4>
-        <p>Before execution, pkg writes only a small handoff marker with the pinned contract identity. During execution, Determinate owns its machine transaction. After a crash or reboot, pkg reads the vendor receipt and real machine behavior. It never turns its marker into machine authority. It resumes, repairs, or stops only through the supported vendor lifecycle. VM tests must prove SIGKILL and power-loss boundaries.</p>
+        <p>Before execution, pkg writes only a small handoff marker with the pinned contract identity. During execution, Determinate owns its machine transaction. After a crash or reboot, pkg reads the vendor receipt and real machine behavior. It never turns its marker into machine authority.</p>
+        <p>Crash R1 is an accepted negative observation. The vendor recovery install exited 0, but the later state check failed because <code>_nixbld1</code> was missing. Functional Nix recovery was not reached. DN-06 must not use SIGKILL or accept exit 0 alone. DN-07 must validate Handoff and state. DN-12 can test a supported repair. DN-16 remains blocked until the full crash and reboot lifecycle passes twice.</p>
       </section>
 
       <section aria-labelledby="chapter-delete-title">
@@ -783,18 +815,18 @@
       <section aria-labelledby="chapter-proof-title">
         <span class="evidence-label proof">VM proof required</span>
         <h3 id="chapter-proof-title">11. Clean-host proof matrix</h3>
-        <p>Run the matrix on disposable clean hosts. A developer laptop is not clean-host proof.</p>
+        <p>DN-03 ran the standalone rows on disposable hosts. Linux R12 and macOS R10 prove lifecycle behavior. Crash R1 records the required negative SIGKILL and reboot observation. The later product rows remain open.</p>
         <div class="table-wrap" role="region" tabindex="0" aria-label="Clean-host VM proof matrix">
           <table class="decision-table">
             <caption>Proof required before old code deletion</caption>
             <thead><tr><th>Case</th><th>Required result</th><th>Evidence to keep</th></tr></thead>
             <tbody>
-              <tr><td>Linux x86_64</td><td>Fresh install, package operation, repair, update, and uninstall pass.</td><td>Asset identity, receipt, services, accounts, ownership, PATH, and residue inventory.</td></tr>
-              <tr><td>Linux aarch64</td><td>Same lifecycle passes with the exact architecture asset.</td><td>Same inventory and digest evidence.</td></tr>
-              <tr><td>Apple Silicon macOS</td><td>Fresh install and full lifecycle pass with launch environment checks.</td><td>Receipt, services, users/groups, GUI environment, shell PATH, and residue inventory.</td></tr>
+              <tr><td>Linux x86_64</td><td>DN-03 standalone lifecycle PASS. Vendor cleanup FAIL.</td><td>R12 broad behavior and retained R11 Asset proof.</td></tr>
+              <tr><td>Linux aarch64</td><td>Target Asset proof PASS. Full product lifecycle remains later work.</td><td>Retained R10 Asset proof.</td></tr>
+              <tr><td>Apple Silicon macOS</td><td>DN-03 standalone lifecycle and reboots PASS. Vendor cleanup FAIL.</td><td>R10 lifecycle and residue evidence.</td></tr>
               <tr><td>Verification failure</td><td>A wrong digest never executes.</td><td>Exit status, safe error, no machine change, and untrusted asset cleanup.</td></tr>
               <tr><td>Repeat install</td><td>A Ready base is not reinstalled or damaged.</td><td>Stable receipt, ownership, services, and package behavior.</td></tr>
-              <tr><td>SIGKILL and reboot</td><td>Each tested interruption returns to Ready through supported recovery or stops safely as Unknown.</td><td>Interruption point, receipt state, marker state, service state, and recovery result.</td></tr>
+              <tr><td>SIGKILL and reboot</td><td>Crash R1 negative observation accepted. Recovery did not succeed after exit 0 because <code>_nixbld1</code> was missing.</td><td>DN-06, DN-07, DN-12, and DN-16 own the later product response and proof.</td></tr>
               <tr><td>Ownership</td><td>Every machine-wide file, service, account, and product state has the expected owner.</td><td>Before-and-after inventory.</td></tr>
               <tr><td>Receipt damaged or missing</td><td>pkg does not invent authority or edit the receipt.</td><td>Unknown result, safe guidance, and no automatic takeover.</td></tr>
               <tr><td>Foreign Nix</td><td>pkg refuses automatic install, repair, update, or uninstall.</td><td>Detection evidence and unchanged foreign installation.</td></tr>
@@ -880,10 +912,10 @@
 
       <section aria-labelledby="chapter-docs-title">
         <span class="evidence-label accepted">Accepted direction</span>
-        <h3 id="chapter-docs-title">15. Domain documents need a later update</h3>
+        <h3 id="chapter-docs-title">15. DN-04 can update the domain documents</h3>
         <p>The existing CONTEXT, ADR, and product documents describe the Broker, Root Helper, and private runtime as the current-alpha architecture. They remain valid history for that implementation.</p>
         <p>The Determinate decision supersedes those documents only for the future machine-wide Nix lifecycle. It does not supersede per-user Manifest and Lock, generations, activation, product repair, package policy, catalog, or the package Application direction.</p>
-        <p>After the packaging spike confirms the exact contract, add an ADR for Determinate ownership. Update the domain terms for Pinned Determinate Nix Installer, Determinate Nix, Vendor Receipt, pkg Handoff Marker, Foreign Nix, and the five base states. Do not rewrite the documents as delivered architecture before the spike passes.</p>
+        <p>DN-03 now supplies the standalone evidence. DN-04 can add the ADR for Determinate ownership. It can update the domain terms for Pinned Determinate Nix Installer, Determinate Nix, Vendor Receipt, pkg Handoff Marker, Foreign Nix, and the five base states. The ADR must include the negative cleanup and crash results. It must not describe the product as delivered.</p>
       </section>
 
       <section aria-labelledby="chapter-appendix-title">
@@ -1044,7 +1076,7 @@
           <p class="eyebrow" style="color: var(--complete)">Verification</p>
           <h2 id="tests-title">162 earlier tests passed</h2>
         </div>
-        <p>These tests do not prove the new external-installer path. New tests and review are required.</p>
+        <p>These earlier current-alpha tests are separate from the accepted DN-03 evidence. They do not prove product delivery.</p>
       </div>
       <div class="card test-panel">
         <div class="test-score" aria-label="162 tests passed and 0 failed">
@@ -1217,35 +1249,35 @@
       <div class="section-head">
         <div>
           <p class="eyebrow" style="color: var(--next)">Transition</p>
-          <h2 id="transition-title">The decision starts a new proof cycle</h2>
+          <h2 id="transition-title">DN-04 can document the proved contract</h2>
         </div>
-        <p>Earlier facts stay valid for the earlier alpha. The new path needs new evidence.</p>
+        <p>DN-03 evidence is complete. Product delivery remains NO-GO.</p>
       </div>
       <div class="change-strip transition-strip" aria-label="Architecture transition">
-        <div><strong>1</strong><span>Earlier alpha snapshot</span></div>
-        <div><strong>2</strong><span>Accepted Determinate ownership change</span></div>
-        <div><strong>3</strong><span>New tests and review required</span></div>
+        <div><strong>Done</strong><span>DN-03 standalone evidence</span></div>
+        <div><strong>Next</strong><span>DN-04 domain terms and ADR</span></div>
+        <div><strong>Later</strong><span>DN-16 product cutover proof</span></div>
       </div>
     </section>
 
     <section aria-labelledby="proof-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow" style="color: var(--caution)">Proof before removal</p>
+          <p class="eyebrow" style="color: var(--caution)">Product proof before removal</p>
           <h2 id="proof-title">Do not delete the current installer yet</h2>
         </div>
-        <p>Delete the custom machine-wide installer only after every gate passes.</p>
+        <p>DN-03 is complete. The later product gates still block deletion.</p>
       </div>
       <div class="card">
         <ul class="test-list" aria-label="External installer proof gates">
-          <li><span>Disposable Linux VM</span><strong>Required</strong></li>
-          <li><span>Disposable Apple Silicon macOS VM</span><strong>Required</strong></li>
-          <li><span>Failed verification</span><strong>Fail closed</strong></li>
-          <li><span>Normal PATH</span><strong>No raw Nix</strong></li>
-          <li><span>File ownership</span><strong>Correct</strong></li>
-          <li><span>Repeat run</span><strong>Safe</strong></li>
-          <li><span>SIGKILL and reboot recovery</span><strong>Safe</strong></li>
-          <li><span>Uninstall</span><strong>No owned residue</strong></li>
+          <li><span>DN-03 Linux evidence</span><strong>Complete</strong></li>
+          <li><span>DN-03 macOS evidence</span><strong>Complete</strong></li>
+          <li><span>Clean vendor uninstall</span><strong>FAIL</strong></li>
+          <li><span>Successful crash recovery</span><strong>Unproved</strong></li>
+          <li><span>DN-07 Handoff validation</span><strong>Required</strong></li>
+          <li><span>DN-13 exact cleanup</span><strong>Required</strong></li>
+          <li><span>DN-15 Linux product lifecycle</span><strong>Required</strong></li>
+          <li><span>DN-16 macOS product lifecycle</span><strong>Required twice</strong></li>
         </ul>
       </div>
     </section>
@@ -1256,31 +1288,29 @@
           <p class="eyebrow" style="color: var(--next)">Next</p>
           <h2 id="next-title">Work in this order</h2>
         </div>
-        <p>Prove the external installer contract before removing the current machine-wide path.</p>
+        <p>Document the DN-03 result. Then build the product controls and later cutover proof.</p>
       </div>
       <div class="work-group">
         <h3>Now</h3>
         <ol class="next-list">
-          <li><div><strong>Cancel failed pending installs.</strong><span>Make <code>recover_pending_install</code> cancel the broker operation on every required error path.</span></div></li>
-          <li><div><strong>Reduce the verify-only repair lease.</strong><span>Do not hold an exclusive state lease for a read-only check.</span></div></li>
-          <li><div><strong>Record the pinned Determinate binary contract.</strong><span>Record the version, checksum, input, and fail-safe behavior.</span></div></li>
-          <li><div><strong>Record the ownership and support boundary.</strong><span>Determinate owns base Nix. pkg owns product work. Local administrator tampering is outside support.</span></div></li>
+          <li><div><strong>Start DN-04.</strong><span>Record the proved Base Nix ownership boundary and its limits in the domain documents and ADR.</span></div></li>
+          <li><div><strong>Keep delivery NO-GO.</strong><span>Evidence complete does not mean clean uninstall or successful crash recovery.</span></div></li>
         </ol>
       </div>
       <div class="work-group">
         <h3>Next</h3>
-        <ol class="next-list start-5" start="5">
-          <li><div><strong>Build one thin subprocess adapter.</strong><span>Install Nix automatically after pkg installation.</span></div></li>
-          <li><div><strong>Run disposable VM gates.</strong><span>Test Linux and Apple Silicon macOS.</span></div></li>
-          <li><div><strong>Test the failure and cleanup contract.</strong><span>Test failed verification, no-PATH behavior, repeat run, crash and reboot recovery, ownership, and uninstall.</span></div></li>
+        <ol class="next-list">
+          <li><div><strong>Build a thin process boundary in DN-06.</strong><span>Do not use SIGKILL. Do not accept exit 0 as sufficient proof.</span></div></li>
+          <li><div><strong>Validate Handoff in DN-07.</strong><span>Check the receipt and real machine state. Fail closed when they do not agree.</span></div></li>
+          <li><div><strong>Handle exact residue in DN-13.</strong><span>Revalidate every live identity before any cleanup. Do not use recursive deletion.</span></div></li>
         </ol>
       </div>
       <div class="work-group">
         <h3>Later</h3>
-        <ol class="next-list start-8" start="8">
-          <li><div><strong>Delete only proven redundant machine-wide paths.</strong><span>Remove custom installer, broker, and helper paths only after the proof gates pass.</span></div></li>
-          <li><div><strong>Keep the concrete Application seam.</strong><span>Split pkg-owned workflows from <code>local.rs</code>. Do not move machine-wide Nix lifecycle into it.</span></div></li>
-          <li><div><strong>Fork only if the external contract fails.</strong><span>Use a small full upstream fork only for a verified blocking gap. Do not copy individual upstream source files.</span></div></li>
+        <ol class="next-list">
+          <li><div><strong>Prove the Linux product lifecycle in DN-15.</strong><span>Standalone vendor evidence is not package integration proof.</span></div></li>
+          <li><div><strong>Prove the macOS product lifecycle twice in DN-16.</strong><span>The full crash and reboot lifecycle must pass twice before cutover.</span></div></li>
+          <li><div><strong>Delete only proven redundant paths.</strong><span>Keep the current path until its complete replacement proof passes.</span></div></li>
         </ol>
       </div>
       <div class="caution-box">
@@ -1319,7 +1349,7 @@
   <footer>
     <div class="wrap">
       <p><strong>pkg architecture report</strong></p>
-      <p>Internal alpha · Earlier checks passed · Two current-alpha safety fixes remain open · Determinate Nix change pending</p>
+      <p>Internal alpha · DN-03 evidence complete · Product delivery NO-GO · DN-04 is next</p>
     </div>
   </footer>
 </body>

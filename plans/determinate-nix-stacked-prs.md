@@ -2,6 +2,18 @@
 
 Status: active implementation plan for an alpha product.
 
+Current status: **DN-03 evidence complete; product delivery NO-GO; DN-04 is next.**
+
+DN-03 completed the standalone vendor evidence gate. This does not mean that vendor uninstall is clean. It does not mean that crash recovery succeeds. Linux lifecycle evidence passed, but vendor cleanup still fails. In the accepted macOS crash observation, state validation stops after the recovery install exits 0 because `_nixbld1` is missing.
+
+The public evidence is in the [DN-03 parent decision](../spikes/s6-determinate-installer/FINDINGS.md), the [Linux findings](../spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md), and the [macOS lifecycle, residue, and crash findings](../spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md).
+
+- Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two Linux target Asset records.
+- macOS R10 proves the standalone lifecycle and residue result. Crash R1 completes the required negative SIGKILL and reboot observation.
+- Clean vendor uninstall remains false on both platforms. DN-13 owns exact fail-closed cleanup.
+- Successful crash recovery is unproved. DN-06, DN-07, DN-12, and DN-16 own the required product controls and later proof.
+- DN-04 can now document the proved ownership and executable contract.
+
 This plan replaces the old custom Managed Nix implementation plan. The old plan is preserved in the [dated legacy archive](archive/2026-08-22-custom-managed-nix-v1/README.md). The design reasons and research are in the [architecture report](../architecture-report.html).
 
 This branch contains plans only. It does not integrate Determinate Nix.
@@ -37,7 +49,7 @@ The following items are upstream observations. They are **not integrated product
 - Observed install behavior: the installer can install Determinate Nix.
 - Observed uninstall behavior: the installed executable reads its receipt and reverses recorded work.
 
-DN-03 must prove every product-facing statement about the executable. This includes exact command arguments, argument order, exit status, output, diagnostics control, receipt behavior, update ownership, PATH behavior, platform support, and failure recovery.
+DN-03 recorded the standalone product-facing evidence for the executable. This includes exact command arguments, argument order, exit status, output, diagnostics control, receipt behavior, update ownership, PATH behavior, platform support, and failure observations. DN-04 must map its contract text to that evidence.
 
 The candidate executable call is only a test input. It is not the product contract. No later PR can cite an unproved candidate command as a stable interface.
 
@@ -146,7 +158,7 @@ DN-01 -> DN-02 -> DN-03 [VENDOR CONTRACT STOP GATE]
 
 Stop gates:
 
-- **DN-03** blocks all production integration if the executable contract is unsafe, unstable, or incomplete.
+- **DN-03** is complete for standalone evidence. Its negative results still block product delivery until the owning later gates pass.
 - **DN-07** blocks integration if the minimal Handoff cannot recover without a second vendor journal.
 - **DN-08** blocks integration if one configuration file needs two writers or the vendor has no supported extension point.
 - **DN-09** blocks installer cutover until standard-daemon RealNix package behavior matches the current required behavior.
@@ -235,22 +247,24 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 
 ### DN-03 — Prove the vendor executable contract
 
+- **Status:** complete for standalone evidence. Product delivery remains NO-GO.
 - **Branch:** `dn/03-prove-vendor-contract`.
 - **Base:** DN-02 branch and PR.
 - **Goal:** produce reproducible Linux and Apple Silicon macOS evidence for the exact external executable behavior.
-- **Why now:** every integration decision depends on facts that are not yet product contracts.
+- **Why now:** every integration decision depends on recorded standalone facts. The accepted DN-03 reports now provide those facts for DN-04.
 - **Likely files and symbols:** a bounded spike under `spikes/`, evidence manifests, VM scripts, no production module.
 - **Interface and invariants:** execute a pinned file by absolute path; verify its digest before privilege; never use `curl|sh`; never use PATH lookup; do not parse plan JSON as a product interface.
 - **Implementation steps:** acquire version 3.22.1 for each supported target. Record the full revision and digest. Test exact observed arguments and argument order. Prove diagnostics control. Install the executable on standalone clean hosts. Inspect `/nix/receipt.json` and `/nix/nix-installer`. Test standalone repeat install, SIGKILL, reboot, repair, update, and uninstall behavior. Test foreign and existing Nix only as inputs to the standalone executable. Record Intel macOS asset availability.
-- **Tests:** the full DN-03 rows in the VM matrix in section 10.
-- **Proof and evidence:** immutable asset digests, exact commands, exit codes, redacted logs, vendor-owned file snapshots, service snapshots, receipt hashes, and standalone executable results. DN-03 does not prove `pkg` Handoff, package lifecycle, product repair, product uninstall, or final product residue.
+- **Tests:** the DN-03 rows in the VM matrix in section 10 were observed. Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records. macOS R10 proves lifecycle and residue behavior. Crash R1 records an accepted negative crash result after `_nixbld1` is missing.
+- **Proof and evidence:** the [parent decision](../spikes/s6-determinate-installer/FINDINGS.md) links the accepted public results. The [Linux report](../spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md) owns the Linux evidence. The [macOS report](../spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md) owns R10 and Crash R1. DN-03 does not prove `pkg` Handoff, package lifecycle, product repair, product uninstall, product cleanup, or production cutover.
 - **Deletion:** none.
-- **Rollback or stop rule:** stop the stack if safe noninteractive install, diagnostics control, receipt handling, or uninstall ownership cannot be proved. Choose a small full executable fork only after a written blocking gap. Do not copy selected upstream source files.
+- **Rollback or stop rule:** DN-03 evidence is complete, but delivery stays NO-GO. DN-13 must handle exact vendor residue. DN-06, DN-07, DN-12, and DN-16 must handle the failed crash recovery result. Choose a small full executable fork only after a written blocking gap. Do not copy selected upstream source files.
 - **Review focus:** observations versus conclusions, repeatability, licensing, diagnostics, update owner, and crash recovery.
-- **Child-unblock condition:** the standalone executable contract passes on Linux x86_64 and Apple Silicon macOS. Linux aarch64 asset support is also proved before its release is claimed.
+- **Child-unblock condition:** complete. DN-04 can document the proved contract and its limits. This does not unblock product cutover.
 
 ### DN-04 — Update domain context and add ADR 0004
 
+- **Status:** next. Ready to document the accepted DN-03 evidence.
 - **Branch:** `dn/04-domain-and-adr`.
 - **Base:** DN-03 branch and PR.
 - **Goal:** record the proved Base Nix ownership boundary.
@@ -724,8 +738,8 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 | DN-00 | Archive and links complete; plan reviews pass | link check, `git diff --check` |
 | DN-01 | No failed pending operation remains live | CLI recovery, Broker lifecycle |
 | DN-02 | Verify-only path has no writes | repair, leases, concurrency |
-| DN-03 | Vendor contract proof passes | Linux/macOS VM spike matrix |
-| DN-04 | Every domain claim maps to DN-03 | documentation links and terminology |
+| DN-03 | Complete for standalone evidence; negative cleanup and crash results route to later owners | Linux/macOS VM spike matrix and accepted child reports |
+| DN-04 | Next; every domain claim maps to DN-03 | documentation links and terminology |
 | DN-05 | Exact assets and LGPL inventory complete | release manifest, signing, wrong digest |
 | DN-06 | Exact safe process invocation | fake executable process tests |
 | DN-07 | Crash states classify safely | handoff and receipt fault injection |
