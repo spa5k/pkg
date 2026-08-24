@@ -263,8 +263,11 @@ compare_residue_contract() {
     done
 }
 stable_log_identity() {
+    [ "$(wc -l <"$1" | /usr/bin/tr -d ' ')" -eq 1 ] || return 1
     awk '
         NF != 9 || $2 !~ /^path_hex=[0-9a-f]+$/ { exit 1 }
+        { canonical = $1 " " $2 " " $3 " " $4 " " $5 " " $6 " " $7 " " $8 " " $9 }
+        $0 != canonical { exit 1 }
         $1 == "state=absent" {
             if ($3 != "type=-" || $4 != "mode=-" || $5 != "uid=-" || $6 != "gid=-" || $7 != "size=-" || $8 != "nlink=-" || $9 != "sha256=-") exit 1
             print $1, $2, $3, $4, $5, $6, $8

@@ -143,6 +143,9 @@ active_uninstall_compare_line='    lifecycle-uninstall) compare_active_residue_c
 unsafe_uninstall_compare_line='    lifecycle-uninstall) compare_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;'
 installed_init_log_line='    grep -E '\''^state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$'\'' "$installed_prefix.determinate-nix-init-log.identity" >/dev/null || die "installed snapshot lacks the Determinate init log"'
 installed_daemon_log_line='    grep -E '\''^state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$'\'' "$installed_prefix.determinate-nix-daemon-log.identity" >/dev/null || die "installed snapshot lacks the Determinate daemon log"'
+stable_log_newline_gate='    [ "$(wc -l <"$1" | /usr/bin/tr -d '\'' '\'')" -eq 1 ] || return 1'
+stable_log_canonical_line='        { canonical = $1 " " $2 " " $3 " " $4 " " $5 " " $6 " " $7 " " $8 " " $9 }'
+stable_log_canonical_gate='        $0 != canonical { exit 1 }'
 final_residue_compare_line='    lifecycle-residue) compare_residue_contract "$phase_dir/before" "$phase_dir/after" "final post-reboot residue identity changed during observation" ;;'
 residue_inventory_boundary_is_valid() {
     inventory_find_count=$(grep -F -x -c -- "$inventory_find_line" "$1" || :)
@@ -161,10 +164,15 @@ live_log_boundary_is_valid() {
     active_uninstall_compare_count=$(grep -F -x -c -- "$active_uninstall_compare_line" "$1" || :)
     installed_init_log_count=$(grep -F -x -c -- "$installed_init_log_line" "$1" || :)
     installed_daemon_log_count=$(grep -F -x -c -- "$installed_daemon_log_line" "$1" || :)
+    stable_log_newline_count=$(grep -F -x -c -- "$stable_log_newline_gate" "$1" || :)
+    stable_log_canonical_line_count=$(grep -F -x -c -- "$stable_log_canonical_line" "$1" || :)
+    stable_log_canonical_gate_count=$(grep -F -x -c -- "$stable_log_canonical_gate" "$1" || :)
     [ "$paired_residue_count" -eq 2 ] && [ "$paired_residue_unsafe_count" -eq 0 ] \
         && [ "$single_init_log_count" -eq 1 ] && [ "$single_daemon_log_count" -eq 1 ] \
         && [ "$active_uninstall_compare_count" -eq 1 ] \
-        && [ "$installed_init_log_count" -eq 1 ] && [ "$installed_daemon_log_count" -eq 1 ]
+        && [ "$installed_init_log_count" -eq 1 ] && [ "$installed_daemon_log_count" -eq 1 ] \
+        && [ "$stable_log_newline_count" -eq 1 ] && [ "$stable_log_canonical_line_count" -eq 1 ] \
+        && [ "$stable_log_canonical_gate_count" -eq 1 ]
 }
 installer_process_coverage_is_valid() {
     coverage_file=$1
@@ -431,10 +439,18 @@ if live_log_boundary_is_valid "$boundary_fixture/exact-active-logs.sh"; then die
 awk -v required="$installed_daemon_log_line" '$0 != required { print }' "$guest" >"$boundary_fixture/missing-installed-log.sh"
 if grep -F -x -- "$installed_daemon_log_line" "$boundary_fixture/missing-installed-log.sh" >/dev/null; then die "installed-log presence mutation vanished"; fi
 if live_log_boundary_is_valid "$boundary_fixture/missing-installed-log.sh"; then die "missing installed-log presence gate was accepted"; fi
+awk -v gate="$stable_log_newline_gate" '$0 != gate { print }' "$guest" >"$boundary_fixture/missing-log-newline-gate.sh"
+if grep -F -x -- "$stable_log_newline_gate" "$boundary_fixture/missing-log-newline-gate.sh" >/dev/null; then die "live-log newline-gate mutation vanished"; fi
+if live_log_boundary_is_valid "$boundary_fixture/missing-log-newline-gate.sh"; then die "missing live-log newline gate was accepted"; fi
+awk -v gate="$stable_log_canonical_gate" '$0 != gate { print }' "$guest" >"$boundary_fixture/missing-log-canonical-gate.sh"
+if grep -F -x -- "$stable_log_canonical_gate" "$boundary_fixture/missing-log-canonical-gate.sh" >/dev/null; then die "live-log canonical-gate mutation vanished"; fi
+if live_log_boundary_is_valid "$boundary_fixture/missing-log-canonical-gate.sh"; then die "missing live-log canonical gate was accepted"; fi
 for test_shell do
     "$test_shell" -n "$boundary_fixture/paired-live-logs.sh"
     "$test_shell" -n "$boundary_fixture/exact-active-logs.sh"
     "$test_shell" -n "$boundary_fixture/missing-installed-log.sh"
+    "$test_shell" -n "$boundary_fixture/missing-log-newline-gate.sh"
+    "$test_shell" -n "$boundary_fixture/missing-log-canonical-gate.sh"
 done
 {
     sed -n '/^capture_residue_contract() {$/,/^}$/p' "$guest"
@@ -581,6 +597,27 @@ do
         comparator_status=$?
         set -e
         [ "$comparator_status" -ne 0 ] || die "active live-log comparison allowed $live_safe drift under $comparator_shell"
+    done
+done
+sed 's/^/ /' "$live_left.determinate-nix-init-log.identity" >"$live_log_fixture/leading"
+sed 's/$/ /' "$live_left.determinate-nix-init-log.identity" >"$live_log_fixture/trailing"
+sed 's/ /  /' "$live_left.determinate-nix-init-log.identity" >"$live_log_fixture/doubled"
+live_tab=$(printf '\t')
+sed "s/ /$live_tab/" "$live_left.determinate-nix-init-log.identity" >"$live_log_fixture/tab"
+/usr/bin/tr -d '\n' <"$live_left.determinate-nix-init-log.identity" >"$live_log_fixture/missing-newline"
+/bin/cp "$live_left.determinate-nix-init-log.identity" "$live_log_fixture/extra-record"
+printf '%s\n' 'state=absent path_hex=00 type=- mode=- uid=- gid=- size=- nlink=- sha256=-' >>"$live_log_fixture/extra-record"
+/bin/cp "$live_left.determinate-nix-init-log.identity" "$live_log_fixture/trailing-bytes"
+printf x >>"$live_log_fixture/trailing-bytes"
+sed 's/path_hex=2f/path_hex=3f/' "$live_left.determinate-nix-init-log.identity" >"$live_log_fixture/path-drift"
+for malformed_log in leading trailing doubled tab missing-newline extra-record trailing-bytes path-drift; do
+    /bin/cp "$live_log_fixture/$malformed_log" "$live_right.determinate-nix-init-log.identity"
+    for comparator_shell do
+        set +e
+        "$comparator_shell" "$live_log_fixture/compare.sh" active "$live_left" "$live_right" >/dev/null 2>&1
+        comparator_status=$?
+        set -e
+        [ "$comparator_status" -ne 0 ] || die "active live-log comparison allowed $malformed_log under $comparator_shell"
     done
 done
 rm -R "$live_log_fixture"
