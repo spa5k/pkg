@@ -241,6 +241,50 @@ impl PathObservation {
     }
 }
 
+/// Whether a raw Nix CLI binary is visible through the supplied PATH.
+///
+/// This is a closed UX-only warning signal, not a trust decision. It never
+/// executes `which`, `nix`, or any external tool, never canonicalizes PATH
+/// entries, and never retains or prints a discovered path or entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawNixVisibility {
+    /// No raw Nix CLI binary is visible through a readable absolute entry.
+    Hidden,
+    /// A raw Nix CLI binary is visible through a readable absolute entry.
+    Visible,
+    /// A PATH entry is relative or unreadable; the verdict is not trustworthy.
+    Unknown,
+}
+
+/// Inspect the supplied PATH for raw Nix CLI visibility.
+///
+/// Entries are split with [`std::env::split_paths`] and probed with
+/// `is_executable`, never executed. A relative or unreadable entry yields
+/// [`RawNixVisibility::Unknown`]. An absolute readable entry that contains an
+/// executable `nix` binary yields [`RawNixVisibility::Visible`]. An absolute
+/// readable entry without one is not a signal.
+#[must_use]
+pub fn observe_raw_nix_visibility(path: &str) -> RawNixVisibility {
+    let mut unknown = false;
+    for entry in std::env::split_paths(path) {
+        if !entry.is_absolute() {
+            unknown = true;
+            continue;
+        }
+        match is_executable(&entry.join("nix")) {
+            Ok(true) => return RawNixVisibility::Visible,
+            Ok(false) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => unknown = true,
+        }
+    }
+    if unknown {
+        RawNixVisibility::Unknown
+    } else {
+        RawNixVisibility::Hidden
+    }
+}
+
 fn inspect_shadowing(expected_bin: &Path, earlier_entries: &[PathBuf]) -> (usize, bool) {
     let commands = match fs::read_dir(expected_bin) {
         Ok(commands) => commands,
@@ -403,5 +447,79 @@ mod tests {
         assert_eq!(observation.shadowed_count(), 1);
         assert!(observation.shadow_scan_complete());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn raw_nix_hidden_without_an_executable_in_absolute_readable_dirs() {
+        let root = std::env::temp_dir().join(format!(
+            "pkg-path-nix-hidden-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+
+        let visibility = observe_raw_nix_visibility(&bin.display().to_string());
+        assert_eq!(visibility, RawNixVisibility::Hidden);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn raw_nix_visible_through_an_absolute_readable_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "pkg-path-nix-visible-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let nix = bin.join("nix");
+        fs::write(&nix, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&nix, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // A trailing relative entry must not downgrade the visible signal.
+        let visibility = observe_raw_nix_visibility(&format!("{}:relative", bin.display()));
+        assert_eq!(visibility, RawNixVisibility::Visible);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn raw_nix_unknown_for_relative_path_entries() {
+        assert_eq!(
+            observe_raw_nix_visibility("relative/bin"),
+            RawNixVisibility::Unknown
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn raw_nix_unknown_for_unreadable_directory_entries() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if Uid::effective().is_root() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!(
+            "pkg-path-nix-unreadable-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let visibility = observe_raw_nix_visibility(&bin.display().to_string());
+        assert_eq!(visibility, RawNixVisibility::Unknown);
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn raw_nix_unknown_for_invalid_empty_path() {
+        assert_eq!(observe_raw_nix_visibility(""), RawNixVisibility::Unknown);
     }
 }
