@@ -6,7 +6,8 @@ release:
 - parse a closed release manifest and ask an external authority to authenticate
   distinct release/security attestations while reserving the next sequence;
 - require exactly the descriptor, two managed-Nix archives, two privileged
-  asset manifests, and two per-system indexes as TUF targets;
+  asset manifests, two per-system indexes, and the closed Determinate inventory
+  as TUF targets;
 - keep the two `pkg` binaries and one Linux `pkg-install` binary with their
   Sigstore bundles outside TUF while
   checking every committed checksum and length;
@@ -31,6 +32,30 @@ release:
 The CI workflow uses fresh in-memory Ed25519 test keys. It proves a 2-of-3
 offline root, separate online-role keys, a real signed repository, and a real
 `tough` client verification. Test keys never leave process memory.
+
+The Determinate inventory is fixed to version 3.22.1 and revision
+`4132ad07a15ee7d88c096ac7172b7afb2672866b`. It contains these three installer
+binaries:
+
+| System | Length | SHA-256 |
+| --- | ---: | --- |
+| `aarch64-darwin` | 58427232 | `90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b` |
+| `aarch64-linux` | 69625424 | `9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179` |
+| `x86_64-linux` | 74918096 | `9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c` |
+
+The Linux ARM entry is a release asset. It does not enable Linux ARM product
+support. There is no Intel macOS entry.
+
+The same TUF inventory contains the LGPL-2.1 `LICENSE` from the pinned revision.
+It is 26434 bytes with SHA-256
+`36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89`.
+It also contains the v3.22.1 source archive from the official GitHub codeload
+tag URL. The archive is 214322 bytes with SHA-256
+`e946ce0920e1ac0a76281d1d0d24b5ddb0fa1807f5317d1545130fe8a04ff084`.
+The release tool accepts only the fixed upstream URLs recorded in the closed
+manifest schema. It does not download these files. Put the five verified files
+in the release input `determinate/` directory. The signer checks regular-file
+identity, length, and SHA-256 again before it signs and seals the targets.
 
 The Linux `pkg-install` build embeds the approved root and the immutable HTTPS
 metadata and target directory URLs. The release build sets

@@ -21,7 +21,7 @@ use crate::{
     TimestampAuthority, TimestampAuthorization,
 };
 
-pub(crate) const RELEASE_OBJECT_COUNT: usize = 25;
+pub(crate) const RELEASE_OBJECT_COUNT: usize = 30;
 
 /// One immutable byte object in a release publication.
 #[derive(Debug, Clone)]

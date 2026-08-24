@@ -45,6 +45,7 @@ const NIXPKGS: [(&str, &str); 2] = [
 const SYSTEMS: [&str; 2] = ["aarch64-darwin", "x86_64-linux"];
 const CACHE_URL: &str = "https://cache.nixos.org";
 const CACHE_KEY: &str = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+const DETERMINATE_REVISION: &str = "4132ad07a15ee7d88c096ac7172b7afb2672866b";
 
 #[derive(Clone)]
 struct ProofKey {
@@ -233,6 +234,56 @@ fn copy_file(root: &Path, relative: &str, source: &Path) -> Result<FileRecord, A
     write_file(root, relative, &bytes)
 }
 
+fn prepare_determinate_inventory(
+    artifact_root: &Path,
+    input: &Path,
+) -> Result<serde_json::Value, AnyError> {
+    let mut artifacts = Vec::new();
+    for (kind, system, name, upstream_url) in [
+        (
+            "installer",
+            Some("aarch64-darwin"),
+            "nix-installer-aarch64-darwin",
+            "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-darwin",
+        ),
+        (
+            "installer",
+            Some("aarch64-linux"),
+            "nix-installer-aarch64-linux",
+            "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-linux",
+        ),
+        (
+            "installer",
+            Some("x86_64-linux"),
+            "nix-installer-x86_64-linux",
+            "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-x86_64-linux",
+        ),
+        (
+            "source",
+            None,
+            "nix-installer-v3.22.1.tar.gz",
+            "https://codeload.github.com/DeterminateSystems/nix-installer/tar.gz/refs/tags/v3.22.1",
+        ),
+        (
+            "license",
+            None,
+            "LICENSE",
+            "https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE",
+        ),
+    ] {
+        let target = format!("determinate/3.22.1/{name}");
+        let record = copy_file(artifact_root, &target, &input.join(name))?;
+        artifacts.push(serde_json::json!({
+            "kind":kind, "system":system, "target":target, "source":target,
+            "upstreamUrl":upstream_url, "sha256":record.digest, "length":record.length,
+        }));
+    }
+    Ok(serde_json::json!({
+        "version":"3.22.1", "revision":DETERMINATE_REVISION,
+        "license":"LGPL-2.1", "artifacts":artifacts,
+    }))
+}
+
 fn compress(bytes: &[u8]) -> Result<Vec<u8>, AnyError> {
     let mut reader = brotli::CompressorReader::new(Cursor::new(bytes), 4 * 1024, 5, 22);
     let mut compressed = Vec::new();
@@ -365,6 +416,7 @@ async fn build_preview_publication(
     let channel_sequence = ChannelSequence::from_u64(sequence).ok_or("invalid channel sequence")?;
     let artifacts = tempfile::tempdir()?;
     let artifact_root = artifacts.path();
+    let determinate = prepare_determinate_inventory(artifact_root, &input.join("determinate"))?;
     let mut release_artifacts = Vec::new();
     let mut runtime_entries = BTreeMap::new();
     let mut index_entries = BTreeMap::new();
@@ -469,6 +521,7 @@ async fn build_preview_publication(
     let manifest = serde_json::json!({
         "schemaVersion":1, "releaseId":"v0.1.0-alpha.7", "channelSequence":sequence,
         "timestampVersion":sequence, "trustedRootSha256":root_digest, "policyVersion":1,
+        "determinate":determinate,
         "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
         "approvals":[
             {"actor":"local-release","role":"release","evidence":"local-preview:release"},
@@ -558,6 +611,7 @@ async fn main() -> Result<(), AnyError> {
 
     let artifacts = tempfile::tempdir()?;
     let artifact_root = artifacts.path();
+    let determinate = prepare_determinate_inventory(artifact_root, &binaries.join("determinate"))?;
     let online = read_keys(&signing_state, "online")?;
     let now = Timestamp::now();
     let root_path = signing_state.join("root.json");
@@ -749,6 +803,7 @@ async fn main() -> Result<(), AnyError> {
         "schemaVersion":1, "releaseId":format!("linux-proof-{sequence}"),
         "channelSequence":sequence, "timestampVersion":sequence,
         "trustedRootSha256":root_digest, "policyVersion":1,
+        "determinate":determinate,
         "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
         "approvals":[
             {"actor":"proof-release","role":"release","evidence":"proof:release"},

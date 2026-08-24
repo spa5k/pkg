@@ -617,9 +617,59 @@ mod tests {
                 write_file(root, &bundle, b"fixture installer sigstore bundle\n");
             cli.push(serde_json::json!({"kind":"pkg-install","system":system,"source":source,"sha256":digest,"length":length,"sigstoreBundle":bundle,"sigstoreBundleSha256":bundle_digest,"sigstoreBundleLength":bundle_length}));
         }
+        let mut determinate_artifacts = Vec::new();
+        for (kind, system, target, upstream_url, bytes) in [
+            (
+                "installer",
+                Some("aarch64-darwin"),
+                "determinate/3.22.1/nix-installer-aarch64-darwin",
+                "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-darwin",
+                b"fixture determinate installer aarch64-darwin\n".as_slice(),
+            ),
+            (
+                "installer",
+                Some("aarch64-linux"),
+                "determinate/3.22.1/nix-installer-aarch64-linux",
+                "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-linux",
+                b"fixture determinate installer aarch64-linux\n".as_slice(),
+            ),
+            (
+                "installer",
+                Some("x86_64-linux"),
+                "determinate/3.22.1/nix-installer-x86_64-linux",
+                "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-x86_64-linux",
+                b"fixture determinate installer x86_64-linux\n".as_slice(),
+            ),
+            (
+                "source",
+                None,
+                "determinate/3.22.1/nix-installer-v3.22.1.tar.gz",
+                "https://codeload.github.com/DeterminateSystems/nix-installer/tar.gz/refs/tags/v3.22.1",
+                b"fixture determinate source\n".as_slice(),
+            ),
+            (
+                "license",
+                None,
+                "determinate/3.22.1/LICENSE",
+                "https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE",
+                b"fixture determinate license\n".as_slice(),
+            ),
+        ] {
+            let (digest, length) = write_file(root, target, bytes);
+            determinate_artifacts.push(serde_json::json!({
+                "kind":kind, "system":system, "target":target, "source":target,
+                "upstreamUrl":upstream_url, "sha256":digest, "length":length,
+            }));
+        }
         serde_json::json!({
             "schemaVersion":1,"releaseId":"v0.1.0","channelSequence":1,"timestampVersion":1,"policyVersion":1,
             "trustedRootSha256":trusted_root_sha256,
+            "determinate":{
+                "version":"3.22.1",
+                "revision":"4132ad07a15ee7d88c096ac7172b7afb2672866b",
+                "license":"LGPL-2.1",
+                "artifacts":determinate_artifacts
+            },
             "artifacts":artifacts,"cliArtifacts":cli,
             "approvals":[
                 {"actor":"release-owner","role":"release","evidence":"oidc:release-owner"},
@@ -630,7 +680,7 @@ mod tests {
 
     fn release_fixture(root: &Path) -> crate::ValidatedRelease {
         let manifest = release_fixture_json(root);
-        ReleaseManifest::from_json(
+        ReleaseManifest::from_json_with_determinate_fixture(
             &serde_json::to_vec(&manifest).expect("manifest"),
             root,
             &TestAuthority,
@@ -643,7 +693,7 @@ mod tests {
         trusted_root_sha256: &str,
     ) -> crate::ValidatedRelease {
         let manifest = release_fixture_json_with_root(root, trusted_root_sha256);
-        ReleaseManifest::from_json(
+        ReleaseManifest::from_json_with_determinate_fixture(
             &serde_json::to_vec(&manifest).expect("manifest"),
             root,
             &TestAuthority,
@@ -659,17 +709,19 @@ mod tests {
 
         let mut forged = original.clone();
         forged["approvals"][1]["actor"] = serde_json::json!("release-owner");
-        assert!(ReleaseManifest::from_json(
-            &serde_json::to_vec(&forged).unwrap(),
-            root,
-            &TestAuthority,
-        )
-        .is_err());
+        assert!(
+            ReleaseManifest::from_json_with_determinate_fixture(
+                &serde_json::to_vec(&forged).unwrap(),
+                root,
+                &TestAuthority,
+            )
+            .is_err()
+        );
 
         let mut extended = original.clone();
         extended["unreviewed"] = serde_json::json!(true);
         assert!(
-            ReleaseManifest::from_json(
+            ReleaseManifest::from_json_with_determinate_fixture(
                 &serde_json::to_vec(&extended).unwrap(),
                 root,
                 &TestAuthority,
@@ -680,7 +732,7 @@ mod tests {
         let mut confused = original;
         confused["artifacts"][0]["target"] = serde_json::json!("cli/pkg-aarch64-darwin");
         assert!(
-            ReleaseManifest::from_json(
+            ReleaseManifest::from_json_with_determinate_fixture(
                 &serde_json::to_vec(&confused).unwrap(),
                 root,
                 &TestAuthority,
@@ -694,7 +746,7 @@ mod tests {
             .unwrap()
             .retain(|artifact| artifact["target"] != "installer/x86_64-linux/pkg-root-helper");
         assert!(
-            ReleaseManifest::from_json(
+            ReleaseManifest::from_json_with_determinate_fixture(
                 &serde_json::to_vec(&missing_payload).unwrap(),
                 root,
                 &TestAuthority,
@@ -710,7 +762,7 @@ mod tests {
                 artifact["kind"] != "pkg-install" || artifact["system"] != "x86_64-linux"
             });
         assert!(
-            ReleaseManifest::from_json(
+            ReleaseManifest::from_json_with_determinate_fixture(
                 &serde_json::to_vec(&missing_bootstrap).unwrap(),
                 root,
                 &TestAuthority,
@@ -721,7 +773,7 @@ mod tests {
         let mut unauthenticated = release_fixture_json(root);
         unauthenticated["approvals"][1]["evidence"] = serde_json::json!("oidc:someone-else");
         assert!(
-            ReleaseManifest::from_json(
+            ReleaseManifest::from_json_with_determinate_fixture(
                 &serde_json::to_vec(&unauthenticated).unwrap(),
                 root,
                 &TestAuthority,
@@ -741,8 +793,80 @@ mod tests {
             }
         }
         assert!(
-            ReleaseManifest::from_json(&serde_json::to_vec(&stale).unwrap(), root, &TestAuthority,)
-                .is_err()
+            ReleaseManifest::from_json_with_determinate_fixture(
+                &serde_json::to_vec(&stale).unwrap(),
+                root,
+                &TestAuthority,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn manifest_refuses_changed_determinate_inventory() {
+        let temporary = TempDir::new().expect("temporary release");
+        let root = temporary.path();
+        let original = release_fixture_json(root);
+        let rejects = |manifest: &serde_json::Value| {
+            ReleaseManifest::from_json_with_determinate_fixture(
+                &serde_json::to_vec(manifest).expect("manifest"),
+                root,
+                &TestAuthority,
+            )
+            .is_err()
+        };
+
+        let mut missing = original.clone();
+        missing["determinate"]["artifacts"]
+            .as_array_mut()
+            .expect("artifacts")
+            .pop();
+        assert!(rejects(&missing));
+
+        let mut duplicate = original.clone();
+        let duplicate_artifact = duplicate["determinate"]["artifacts"][0].clone();
+        duplicate["determinate"]["artifacts"]
+            .as_array_mut()
+            .expect("artifacts")
+            .push(duplicate_artifact);
+        assert!(rejects(&duplicate));
+
+        let mut extra = original.clone();
+        let mut extra_artifact = extra["determinate"]["artifacts"][0].clone();
+        extra_artifact["system"] = serde_json::json!("x86_64-darwin");
+        extra_artifact["target"] =
+            serde_json::json!("determinate/3.22.1/nix-installer-x86_64-darwin");
+        extra_artifact["source"] = extra_artifact["target"].clone();
+        extra["determinate"]["artifacts"]
+            .as_array_mut()
+            .expect("artifacts")
+            .push(extra_artifact);
+        assert!(rejects(&extra));
+
+        let mut intel_mac = original.clone();
+        intel_mac["determinate"]["artifacts"][0]["system"] = serde_json::json!("x86_64-darwin");
+        assert!(rejects(&intel_mac));
+
+        let mut wrong_target = original.clone();
+        wrong_target["determinate"]["artifacts"][0]["target"] =
+            serde_json::json!("determinate/3.22.1/unapproved-aarch64-darwin");
+        assert!(rejects(&wrong_target));
+
+        let mut wrong_digest = original.clone();
+        wrong_digest["determinate"]["artifacts"][0]["sha256"] = serde_json::json!("0".repeat(64));
+        assert!(rejects(&wrong_digest));
+
+        let mut wrong_length = original.clone();
+        wrong_length["determinate"]["artifacts"][0]["length"] = serde_json::json!(44);
+        assert!(rejects(&wrong_length));
+
+        assert!(
+            ReleaseManifest::from_json(
+                &serde_json::to_vec(&original).expect("manifest"),
+                root,
+                &TestAuthority,
+            )
+            .is_err()
         );
     }
 
@@ -751,10 +875,12 @@ mod tests {
         let temporary = TempDir::new().expect("temporary release");
         let root = temporary.path();
         let manifest = release_fixture_json(root);
-        fs::rename(root.join("cli"), root.join("cli-real")).expect("move fixture directory");
-        std::os::unix::fs::symlink("cli-real", root.join("cli")).expect("fixture symlink");
+        fs::rename(root.join("determinate"), root.join("determinate-real"))
+            .expect("move fixture directory");
+        std::os::unix::fs::symlink("determinate-real", root.join("determinate"))
+            .expect("fixture symlink");
         assert!(
-            ReleaseManifest::from_json(
+            ReleaseManifest::from_json_with_determinate_fixture(
                 &serde_json::to_vec(&manifest).unwrap(),
                 root,
                 &TestAuthority,
@@ -1032,7 +1158,11 @@ mod tests {
         let artifacts = temporary.path().join("artifacts");
         fs::create_dir(&artifacts).expect("artifacts");
         let release = release_fixture(&artifacts);
-        fs::write(artifacts.join("descriptor.json"), b"mutated\n").expect("mutate fixture");
+        fs::write(
+            artifacts.join("determinate/3.22.1/nix-installer-x86_64-linux"),
+            b"mutated\n",
+        )
+        .expect("mutate fixture");
         let output = temporary.path().join("repository");
         let now = jiff::Timestamp::now();
         let policy = MetadataPolicy {
