@@ -321,6 +321,7 @@ impl RootHelperClient {
     /// # Errors
     ///
     /// Returns a closed adapter error for transport, framing, helper, or validation failure.
+    #[allow(dead_code)] // Inactive typed proxy contract kept for the DN09 contract test.
     pub(crate) fn closure_for_roots(
         &self,
         roots: &[StorePath],
@@ -336,6 +337,7 @@ impl RootHelperClient {
     /// # Errors
     ///
     /// Returns a closed adapter error for transport, framing, helper, or validation failure.
+    #[allow(dead_code)] // Inactive typed proxy contract kept for the DN09 contract test.
     pub(crate) fn repair_plan_proof(
         &self,
         request: &RootRepairPlanRequest,
@@ -1174,8 +1176,14 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn wrong_response_id_is_rejected_after_exact_request() -> Result<(), Box<dyn Error>> {
+    /// Serves one scripted reply to the exact root-publication request and
+    /// returns the mapped client result. The script fixes both the response
+    /// frame id and the response kind, so id correlation failures and kind
+    /// mismatches share one socket setup.
+    fn scripted_reply_result(
+        response_id: u64,
+        response: BrokerHelperResponse,
+    ) -> Result<Result<RootSetReport, HelperTransportErrorCode>, Box<dyn Error>> {
         let temporary = TempDir::new()?;
         let endpoint = temporary.path().join("root-helper.sock");
         let listener = UnixListener::bind(&endpoint)?;
@@ -1205,11 +1213,8 @@ mod tests {
                 ProductFrameCodec::decode_helper_request(&request),
                 Ok((REQUEST_ID, BrokerHelperRequest::PublishRootSet(expected)))
             );
-            let response = ProductFrameCodec::encode_helper_response(
-                REQUEST_ID + 1,
-                &BrokerHelperResponse::RootSetRemoved,
-            )
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+            let response = ProductFrameCodec::encode_helper_response(response_id, &response)
+                .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
             stream
                 .write_all(&response)
                 .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))
@@ -1223,7 +1228,24 @@ mod tests {
             .join()
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
         assert_eq!(served.map_err(HelperTransportError::code), Ok(()));
-        assert_eq!(result, Err(HelperTransportErrorCode::InvalidFrame));
+        Ok(result)
+    }
+
+    #[test]
+    fn wrong_response_id_is_rejected_after_exact_request() -> Result<(), Box<dyn Error>> {
+        assert_eq!(
+            scripted_reply_result(REQUEST_ID + 1, BrokerHelperResponse::RootSetRemoved)?,
+            Err(HelperTransportErrorCode::InvalidFrame)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn wrong_response_kind_is_rejected_after_exact_request() -> Result<(), Box<dyn Error>> {
+        assert_eq!(
+            scripted_reply_result(REQUEST_ID, BrokerHelperResponse::RootSetRemoved)?,
+            Err(HelperTransportErrorCode::InvalidFrame)
+        );
         Ok(())
     }
 

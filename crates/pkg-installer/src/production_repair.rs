@@ -6,8 +6,8 @@ use std::{
 };
 
 use pkg_nix::{
-    AuthenticatedCaller, BuildApprovalReceipt, NixAdapter, NixAdapterError, OperationHandle,
-    RealNixAdapter, RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
+    AuthenticatedCaller, BuildApprovalReceipt, OperationHandle, RealNixAdapter,
+    RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
     RepairGenerationStatus, RootRepairPlanProof, RootRepairPlanRequest, RootSetAttestationRequest,
     StorePath, verify_closure,
 };
@@ -21,7 +21,7 @@ use crate::{
 
 /// Broker-private production owner of generation repair inputs and execution.
 pub struct ProductionRepairAuthority {
-    adapter: Arc<dyn RepairPlanningNix>,
+    adapter: Arc<RealNixAdapter>,
     roots: Arc<RootHelperClient>,
     build_authority: Arc<AuthenticatedBuildAuthority>,
     journals: BrokerRepairJournals,
@@ -30,7 +30,7 @@ pub struct ProductionRepairAuthority {
 impl ProductionRepairAuthority {
     /// Binds repair to the broker's authenticated Nix, root, channel, and journal authorities.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         adapter: Arc<RealNixAdapter>,
         roots: Arc<RootHelperClient>,
         build_authority: Arc<AuthenticatedBuildAuthority>,
@@ -42,40 +42,6 @@ impl ProductionRepairAuthority {
             build_authority,
             journals,
         }
-    }
-}
-
-trait RepairPlanningNix: NixAdapter {
-    fn repair_closure(&self, roots: &[StorePath]) -> Result<Vec<StorePath>, NixAdapterError>;
-    fn repair_proof(
-        &self,
-        request: &RootRepairPlanRequest,
-    ) -> Result<RootRepairPlanProof, NixAdapterError>;
-}
-
-impl RepairPlanningNix for RealNixAdapter {
-    fn repair_closure(&self, roots: &[StorePath]) -> Result<Vec<StorePath>, NixAdapterError> {
-        self.closure_for_roots(roots)
-    }
-
-    fn repair_proof(
-        &self,
-        request: &RootRepairPlanRequest,
-    ) -> Result<RootRepairPlanProof, NixAdapterError> {
-        self.repair_plan_proof(request)
-    }
-}
-
-impl RepairPlanningNix for RootHelperClient {
-    fn repair_closure(&self, roots: &[StorePath]) -> Result<Vec<StorePath>, NixAdapterError> {
-        self.closure_for_roots(roots)
-    }
-
-    fn repair_proof(
-        &self,
-        request: &RootRepairPlanRequest,
-    ) -> Result<RootRepairPlanProof, NixAdapterError> {
-        self.repair_plan_proof(request)
     }
 }
 
@@ -107,7 +73,7 @@ impl RepairAuthorityDispatch for ProductionRepairAuthority {
             .collect::<Vec<_>>();
         let closure = self
             .adapter
-            .repair_closure(&roots)
+            .closure_for_roots(&roots)
             .map_err(|_| RepairGenerationErrorCode::InvalidScope)?;
         let policy_version = self
             .build_authority
@@ -208,7 +174,7 @@ impl ProductionRepairAuthority {
         )
         .ok_or(RepairGenerationErrorCode::InvalidScope)?;
         self.adapter
-            .repair_proof(&request)
+            .repair_plan_proof(&request)
             .map_err(|_| RepairGenerationErrorCode::StillDamaged)
     }
 
@@ -240,7 +206,7 @@ impl ProductionRepairAuthority {
 struct ProductionRepairApproval<'a> {
     caller: &'a AuthenticatedCaller,
     handle: &'a OperationHandle,
-    adapter: &'a dyn RepairPlanningNix,
+    adapter: &'a RealNixAdapter,
     build_authority: &'a AuthenticatedBuildAuthority,
 }
 
@@ -269,7 +235,7 @@ impl RepairApprovalGate for ProductionRepairApproval<'_> {
         .ok_or_else(|| {
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
         })?;
-        let proof = self.adapter.repair_proof(&request).map_err(|_| {
+        let proof = self.adapter.repair_plan_proof(&request).map_err(|_| {
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
         })?;
         let digest = proof.digest();
@@ -298,7 +264,7 @@ impl RepairApprovalGate for ProductionRepairApproval<'_> {
 
 fn report_terminal_result(
     result: RepairResult,
-    adapter: &dyn NixAdapter,
+    adapter: &RealNixAdapter,
     closure: &[StorePath],
 ) -> Result<RepairGenerationReport, RepairGenerationErrorCode> {
     let (status, damaged_paths) = match result {
@@ -323,7 +289,7 @@ fn approval_timestamp() -> Result<String, RepairGenerationErrorCode> {
 }
 
 fn damage_count(
-    adapter: &dyn NixAdapter,
+    adapter: &RealNixAdapter,
     closure: &[StorePath],
 ) -> Result<u32, RepairGenerationErrorCode> {
     let report = verify_closure(adapter, closure.iter().cloned())
