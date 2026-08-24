@@ -328,7 +328,7 @@ impl DoctorReport {
     /// Evaluate all supplied observations without mutating the host.
     #[must_use]
     pub fn evaluate(inputs: &DoctorInputs) -> Self {
-        let checks = vec![
+        let mut checks = vec![
             match inputs.system {
                 Some(system) => DoctorCheck::new(
                     "host.system",
@@ -346,11 +346,15 @@ impl DoctorReport {
             path_check(&inputs.path),
             raw_nix_check(inputs.raw_nix_visibility),
             state_permissions_check(&inputs.state_root, inputs.expected_state_uid),
-            installed_nix_check(inputs.installed_nix),
+        ];
+        if let Some(state) = inputs.installed_nix {
+            checks.push(installed_nix_check(state));
+        }
+        checks.extend([
             unmanaged_check(&inputs.unmanaged_nix),
             subsystem_check("runtime.managed", &inputs.managed_runtime),
             subsystem_check("channel.signed", &inputs.channel),
-        ];
+        ]);
 
         let overall = match &inputs.unmanaged_nix {
             UnmanagedNixObservation::Refused { definite: true, .. } => DoctorOverall::UnmanagedNix,
@@ -535,54 +539,49 @@ fn raw_nix_check(visibility: RawNixVisibility) -> DoctorCheck {
     }
 }
 
-fn installed_nix_check(state: Option<InstalledNixState>) -> DoctorCheck {
+fn installed_nix_check(state: InstalledNixState) -> DoctorCheck {
     let (status, detail, hint) = match state {
-        None => (
-            CheckStatus::Deferred,
-            "the privileged installed-Nix classifier has not supplied an observation",
-            Some("do not install or change Nix until privileged read-only preflight is available"),
-        ),
-        Some(InstalledNixState::Clean) => (
+        InstalledNixState::Clean => (
             CheckStatus::Pass,
             "the host is clean for the managed Nix lifecycle",
             None,
         ),
-        Some(InstalledNixState::Accepted) => (
+        InstalledNixState::Accepted => (
             CheckStatus::Pass,
             "the Determinate Nix handoff and installed state are accepted",
             None,
         ),
-        Some(InstalledNixState::Foreign) => (
+        InstalledNixState::Foreign => (
             CheckStatus::Fail,
             "a foreign Nix installation is present",
             Some("use that installation's authenticated uninstaller; pkg will not change it"),
         ),
-        Some(InstalledNixState::Upstream) => (
+        InstalledNixState::Upstream => (
             CheckStatus::Fail,
             "an upstream Nix installation is present",
             Some("use the upstream installation's uninstaller; pkg will not adopt it"),
         ),
-        Some(InstalledNixState::UnmarkedDeterminate) => (
+        InstalledNixState::UnmarkedDeterminate => (
             CheckStatus::Fail,
             "a Determinate Nix installation has no accepted pkg handoff",
             Some("use an authenticated Determinate uninstaller; automatic adoption is disabled"),
         ),
-        Some(InstalledNixState::DamagedAccepted) => (
+        InstalledNixState::DamagedAccepted => (
             CheckStatus::Fail,
             "the accepted Determinate Nix identity is damaged or inconsistent",
             Some("do not change Nix files; collect pkg doctor --support output for repair"),
         ),
-        Some(InstalledNixState::OldAlpha) => (
+        InstalledNixState::OldAlpha => (
             CheckStatus::Fail,
             "an old pkg alpha installation is present",
             Some("wait for the authenticated old-alpha reset; do not remove files manually"),
         ),
-        Some(InstalledNixState::IncompleteHandoff) => (
+        InstalledNixState::IncompleteHandoff => (
             CheckStatus::Fail,
             "a Determinate Nix handoff did not finish",
             Some("do not rerun the vendor installer directly; resume only through pkg"),
         ),
-        Some(InstalledNixState::Unknown) => (
+        InstalledNixState::Unknown => (
             CheckStatus::Fail,
             "the installed Nix state could not be classified safely",
             Some("rerun privileged read-only preflight; do not remove files"),
@@ -778,6 +777,38 @@ mod tests {
             .unwrap();
         assert_eq!(raw.status(), CheckStatus::Warning);
         assert_eq!(installed.status(), CheckStatus::Fail);
+        assert_eq!(report.overall(), DoctorOverall::NeedsAttention);
+    }
+
+    #[test]
+    fn inactive_classifier_adds_no_row_and_path_warning_does_not_fail_doctor() {
+        let mut inputs = DoctorInputs::local_development(
+            PathBuf::from("/missing"),
+            PathObservation::inspect(Path::new("/expected"), [Path::new("/expected")]),
+        );
+        inputs.system = Some(System::Aarch64Darwin);
+        inputs.raw_nix_visibility = RawNixVisibility::Visible;
+        inputs.unmanaged_nix = UnmanagedNixObservation::Clean;
+        inputs.managed_runtime = SubsystemObservation::Passed("managed runtime is healthy".into());
+        inputs.channel = SubsystemObservation::Passed("signed channel is current".into());
+        let report = DoctorReport::evaluate(&inputs);
+
+        assert_eq!(report.overall(), DoctorOverall::Healthy);
+        assert_eq!(report.exit_code(), ExitCode::Ok);
+        assert!(
+            report
+                .checks()
+                .iter()
+                .all(|check| check.id() != "nix.installed_state")
+        );
+        assert_eq!(
+            report
+                .checks()
+                .iter()
+                .find(|check| check.id() == "shell.raw_nix")
+                .map(DoctorCheck::status),
+            Some(CheckStatus::Warning)
+        );
     }
 
     #[test]
