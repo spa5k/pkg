@@ -6,7 +6,7 @@
 | Pinned source revision | `4132ad07a15ee7d88c096ac7172b7afb2672866b` |
 | Research date | 2026-08-24 |
 | Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, install self-test warnings, residue identity, and live-log capture |
-| Evidence rule | Pinned primary-source analysis plus preserved R4, R5, R6, R7, R8, and R9 observations. No private receipt or log contents were read. No private evidence was changed. |
+| Evidence rule | Pinned primary-source analysis plus preserved R4, R5, R6, R7, R8, R9, and R10 observations. No private receipt or log contents were read. No private evidence was changed. |
 
 In this report, **r2** means the reported first lifecycle attempt. **r3** means
 the evidence-only harness revision. **R4** means the preserved run that used
@@ -15,7 +15,9 @@ fix. **R6** means the preserved run at product revision `4fb8c70`. **R7** means
 the preserved run at product revision `23195d1`. **R8** means the preserved
 run at product revision `650e205`. **R9** means the preserved run at product
 revision `b590c4f` with the first byte-safe residue identity contract. **R10**
-means the required fresh run with the live-log rule described in this report.
+means the preserved run at signed product revision
+`aa5d5beca51d77ae06a672a97c2b5ebfa050d248` with the live-log rule described
+in this report.
 
 ## Short answer
 
@@ -308,11 +310,11 @@ The runtime source is `b590c4f`.
 - R9 does not prove the final exact vendor residue.
 - R9 is a **NO-GO** for DN-03c completion.
 
-## R10 required live-log contract
+## R10 live-log contract used
 
-R10 must run the complete lifecycle from a clean pinned guest. It must
-finalize exactly nine phase archives. It must not copy fstab, log, or receipt
-contents.
+R10 was required to run the complete lifecycle from a clean pinned guest. It
+was required to finalize exactly nine phase archives and not copy fstab, log,
+or receipt contents.
 
 Each snapshot keeps the same four identity files. `/etc/nix` and `/etc/fstab`
 still use paired byte-equal scans. Each known Determinate log is captured once
@@ -331,6 +333,129 @@ replaced, relinked, or changes ownership or mode fails. The final residue
 decision still occurs only after the final `after` snapshot and all final
 comparisons.
 
+## R10 Observed / Inference / Unproved
+
+**Observed:**
+
+- The preserved evidence path is
+  `/private/var/tmp/pkg-s6-dn03c-evidence/lifecycle-diagnostics-aa5d5be-r10`.
+- One `lifecycle-diagnostics` invocation ran from signed source
+  `aa5d5beca51d77ae06a672a97c2b5ebfa050d248`.
+- The accepted run date is 2026-08-24. This date comes from the safe reboot
+  proof fields. The run has no dedicated run-date file.
+
+| Phase | Guest status | Phase result |
+|---|---:|---|
+| baseline | `0` | `PASS` |
+| lifecycle-install | `0` | `PASS` |
+| lifecycle-post-reboot | `0` | `PASS` |
+| lifecycle-repeat-install | `0` | `PASS` |
+| lifecycle-repair | `0` | `PASS` |
+| lifecycle-daemon | `0` | `PASS` |
+| lifecycle-uninstall | `0` | `PASS` |
+| lifecycle-repeat-uninstall | `0` | `PASS` |
+| lifecycle-residue | `1` | `FAIL` |
+
+The only final phase failure was `FAIL: vendor residue remains`. Product
+residue passed.
+
+- Both reboot outcomes are `PASS`. Each shutdown status and timeout pair is
+  `0:0`. Each raw boot-time comparison returned `1`, which proves that the raw
+  boot time changed. Guest identity and the staged installer and inside-script
+  hashes were revalidated after each reboot.
+- At the active `lifecycle-daemon/after` to
+  `lifecycle-uninstall/before` boundary, the init log stayed at size 1,078 and
+  SHA-256
+  `6ca2ae1e2558d3f8a9cbaaf6d4fc367be2637a876078e00e7bcd2efde3960580`.
+  The daemon log changed from size 10,509 and SHA-256
+  `dbbe0e2d0ab271249b2e4bc148b5c4e61ca0594a25292926a2653ee0243a901d`
+  to size 11,200 and SHA-256
+  `1e399520f40810e7cb108711ad4aeff768b156407eb9de0eaa72765e1ec443e3`.
+  Both log records kept the same state, path, type, mode `644`, user `0`,
+  group `0`, and hard-link count `1`.
+- Full byte equality passed across all four post-uninstall boundaries:
+  uninstall-after to repeat-uninstall-before, repeat-uninstall-before to
+  repeat-uninstall-after, repeat-uninstall-after to final-before, and
+  final-before to final-after.
+- The exact final vendor residue path set has six entries:
+  `/etc/nix`, `/etc/nix/macos-keychain.crt`, `/etc/nix/sentry-endpoint`, an
+  empty `/etc/fstab`, `/var/log/determinate-nix-init.log`, and
+  `/var/log/determinate-nix-daemon.log`.
+
+The exact final identity records are:
+
+```text
+path_hex=2f6574632f6e6978 type=d mode=755 uid=0 gid=0 size=128 nlink=4 sha256=- target_hex=-
+path_hex=2f6574632f6e69782f6d61636f732d6b6579636861696e2e637274 type=f mode=644 uid=0 gid=0 size=241049 nlink=1 sha256=ea4be6e77db3daf79e5804947a9376da53765ee6a7dfe03299400cd81d7d6e6e target_hex=-
+path_hex=2f6574632f6e69782f73656e7472792d656e64706f696e74 type=f mode=644 uid=0 gid=0 size=95 nlink=1 sha256=d21f6d21fc5cbf0da38bc72b9a9de8a0c6c1bae72a3727884fd1b84e1a901fc3 target_hex=-
+state=present path_hex=2f6574632f6673746162 type=f mode=644 uid=0 gid=0 size=0 nlink=1 sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=f mode=644 uid=0 gid=0 size=1078 nlink=1 sha256=6ca2ae1e2558d3f8a9cbaaf6d4fc367be2637a876078e00e7bcd2efde3960580
+state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=f mode=644 uid=0 gid=0 size=11200 nlink=1 sha256=1e399520f40810e7cb108711ad4aeff768b156407eb9de0eaa72765e1ec443e3
+```
+
+- The final strict change set was exactly `.etc-nix.inventory`,
+  `.fstab.identity`, `.determinate-nix-init-log.identity`, and
+  `.determinate-nix-daemon-log.identity`.
+- The receipt was absent after uninstall. The keychain probe was absent. The
+  launchd, account, and socket residue probes were empty. The product-residue
+  outcome was `PASS`.
+- All nine archives are regular files with mode `0600` and one hard link.
+  Their entries are only mode-`0700` directories and mode-`0600` regular
+  files. No partial archive remains. Each saved archive hash was revalidated.
+  No archive contains `receipt.json` or raw fstab or log bytes.
+- Protected receipt, fstab, and log contents were not inspected.
+- Exact VM absence passed. The final Tart list was empty. No Tart process
+  remained. The source was clean. The runtime worktree was removed. The
+  retained installer was unchanged.
+
+The nine archive SHA-256 values are:
+
+| Phase | SHA-256 |
+|---|---|
+| baseline | `44709c9202b17cd09c4e61f1a32d36ffa4298200f69fc5add2582c990c6a6017` |
+| lifecycle-install | `47ab2f981d6e04f9c8b7f6601892ddc8cdfc0f49f257930553e7afe04a919e15` |
+| lifecycle-post-reboot | `eb14529b09657c873e4d16039f3ab1ddf959e4e6b0563452b885c49af8893d47` |
+| lifecycle-repeat-install | `8f3c4246b9329c33188903fca8dc24e38d7df195230e15113b4da7caaafaca32` |
+| lifecycle-repair | `0eca9f10db15e05e0598e80249a1cb7eed142f8ed2203c86573f96d2a074e97a` |
+| lifecycle-daemon | `902525e0cb748ee1af736813faffe3dafedf59a0da72a33490480befb9d78973` |
+| lifecycle-uninstall | `d4f9f96fb7efcb6a64f80c7ce2b4364f1caad62c94002f8c41ae1ef11017951a` |
+| lifecycle-repeat-uninstall | `4c884a78b958c9e995fc4e2575cdbb30855f4316e2981ba9ecc082f89cee02ec` |
+| lifecycle-residue | `2455c7d7ea7d79b580355a5488feae72b03a255d1958522c1707861da963ce14` |
+
+The bundle tar-stream SHA-256 is
+`7002457bd64e15fa2bef620a91850b3d683407c4ede6468892593709fbf95435`.
+The canonical relative file-hash manifest SHA-256 is
+`57653027291abd6602892c1be37cb52e80855c39261ebf768a74e895e803bb82`.
+All nine archive hashes and their saved sidecars were recomputed and matched.
+
+**Inference:**
+
+- The size and hash drift is consistent with the active daemon appending to
+  its log before uninstall. The retained boundary fields do not include inode
+  or time fields. Thus, R10 does not distinguish an append from a replacement
+  that kept every retained field.
+- On this pinned clean guest, the vendor uninstall left exactly the six-path
+  manifest above. The full post-uninstall equality chain proves that this
+  manifest stayed stable through repeat uninstall, reboot, and final
+  observation.
+
+**Unproved:**
+
+- R10 does not prove the same residue on another macOS release, installer
+  version, machine, or non-clean starting state.
+- The active comparison intentionally omits log size and SHA-256 from its
+  stable projection. In R10, only the daemon-log size and SHA-256 differed;
+  the init-log record was exact.
+- The hashes identify the local evidence, but no external immutable anchor
+  for that evidence was established.
+- R10 does not run or prove DN-13 cleanup. DN-13 may remove only the exact R10
+  manifest, and only after every live identity is revalidated. It must fail
+  closed if any identity differs.
+
+R10 closes the DN-03c evidence gate despite the expected vendor-residue
+`FAIL`. That failure is the recorded result of the strict residue contract. It
+is not an incomplete run.
+
 ## Decision table
 
 | Decision | Result | Reason |
@@ -343,6 +468,8 @@ comparisons.
 | Should the harness keep its absolute-path Nix checks? | **GO** | They test the installed binary and daemon without depending on shell profile changes. |
 | Is DN-03c complete after R8? | **NO-GO** | R8 completed the lifecycle, but its scanner did not prove exact `/etc/nix`, empty fstab, or Determinate log residue. |
 | Is DN-03c complete after R9? | **NO-GO** | R9 stopped during install because the daemon log grew between paired scans. A fresh R10 run is required. |
+| Is the DN-03c evidence gate complete after R10? | **GO** | One full run produced nine final archives, two reboot proofs, exact post-uninstall equality, and the exact final residue manifest. The expected vendor-residue `FAIL` is evidence, not an incomplete phase. |
+| Does R10 prove DN-13 cleanup? | **NO-GO** | No cleanup ran. DN-13 must revalidate the exact live manifest before it removes anything. |
 
 ## 1. Source and release identity
 
@@ -661,14 +788,18 @@ self-test failures as warnings and still succeeds. With
 `--no-modify-profile`, a bare `nix` lookup can fail even when the absolute Nix
 binary and daemon work.
 
-R8 proved the complete phase and reboot sequence on the pinned guest. It also
-proved that the old scanner was incomplete. R9 added the complete identity
-scope, but it stopped during install because an active daemon log grew between
-paired scans. The vendor install and functional checks had succeeded.
+R8 proved the complete phase and reboot sequence, but not the exact residue.
+R9 preserved the stronger identity scope, but it stopped during install
+because an active daemon log grew between paired scans. R9 remains a
+**NO-GO** and its history is not replaced by R10.
 
-DN-03c remains a **NO-GO** until a fresh R10 run produces all nine final
-archives with the live-log contract. DN-03c must not clean these paths. DN-13
-can later clean only an exact identity that it revalidates.
+R10 completed one full lifecycle with all nine archives and both reboot
+proofs. It proved the exact six-path residue manifest and every required
+post-uninstall equality boundary. Thus, R10 closes the DN-03c evidence gate.
+The final vendor-residue `FAIL` is expected and records the proved residue.
+
+R10 does not prove cleanup. DN-13 may remove only the exact R10 manifest after
+it revalidates every live identity and fails closed on any difference.
 
 ## Primary sources
 

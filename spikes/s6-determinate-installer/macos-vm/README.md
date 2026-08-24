@@ -82,5 +82,31 @@ R8 did not record the contents of `/etc/nix`. It also missed an empty fstab
 file and did not inspect the two Determinate log paths. R9 added the identity
 contract, but it stopped during install. The active daemon log grew between
 the two complete snapshot scans. Both vendor functional checks returned `0`.
-R9 is a **NO-GO** and did not reach a reboot. A new full R10 lifecycle run is
-required with the live-log rule above.
+R9 is a **NO-GO** and did not reach a reboot.
+
+## R10 observed lifecycle result
+
+R10 ran the full lifecycle once from signed source
+`aa5d5beca51d77ae06a672a97c2b5ebfa050d248`. Its private evidence path is
+`/private/var/tmp/pkg-s6-dn03c-evidence/lifecycle-diagnostics-aa5d5be-r10`.
+All phases from baseline through repeat uninstall passed. Both reboots passed.
+The final residue phase returned the expected guest status `1` only because
+proved vendor residue remained. Product residue passed.
+
+The active uninstall boundary kept the init-log identity exact. The daemon log
+grew, but its state, path, type, mode, user, group, and hard-link count stayed
+unchanged. Every post-uninstall identity boundary was byte-for-byte equal.
+
+The exact final vendor residue path set is:
+
+- `/etc/nix`
+- `/etc/nix/macos-keychain.crt`
+- `/etc/nix/sentry-endpoint`
+- `/etc/fstab`
+- `/var/log/determinate-nix-init.log`
+- `/var/log/determinate-nix-daemon.log`
+
+R10 closes the DN-03c evidence gate. The expected vendor-residue failure does
+not make the evidence incomplete. It proves the residue contract. R10 does
+not prove cleanup. DN-13 may remove only this manifest, and only after it
+revalidates every live identity and fails closed on a difference.
