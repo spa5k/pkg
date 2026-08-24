@@ -83,26 +83,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetPublicationRequest,
     ) -> Result<RootSetReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let request = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::PublishRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &request, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetPublished(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -120,26 +104,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetTransitionRequest,
     ) -> Result<RootSetTransitionReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::TransitionRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetTransitioned(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -157,26 +125,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetAttestationRequest,
     ) -> Result<RootSetReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::AttestRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetAttested(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -195,26 +147,10 @@ impl RootHelperClient {
         &self,
         request: &RemoveRootSetRequest,
     ) -> Result<(), HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::RemoveRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetRemoved => Ok(()),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -234,26 +170,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetAttestationRequest,
     ) -> Result<RootSet, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::LoadRepairRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RepairRootSetLoaded(root_set) => Ok(root_set),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -268,26 +188,10 @@ impl RootHelperClient {
     /// Returns a redacted transport error unless the root helper returns the
     /// exact correlated ownership response.
     pub fn verify_managed_ownership(&self, digest: Digest) -> Result<bool, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::VerifyManagedOwnership(digest),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::ManagedOwnership(verified) => Ok(verified),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -304,26 +208,10 @@ impl RootHelperClient {
         &self,
         scope: &VerifiedRepairScope,
     ) -> Result<MaintenanceCapability, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::IssueRepairCapability(scope.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RepairCapabilityIssued(capability) => Ok(capability),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -340,17 +228,30 @@ impl RootHelperClient {
         &self,
         request: &RepairStorePathsRequest,
     ) -> Result<RepairStorePathsReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
-            &BrokerHelperRequest::RepairStorePaths(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
         // The privileged executor owns a bounded process-group deadline. The
         // broker waits beyond that bound so it does not release build or GC
         // admission while the helper can still mutate the store.
-        let deadline = deadline_after(repair_response_timeout()?)?;
-        write_all_until(&mut stream, &frame, deadline)?;
+        match self.round_trip(
+            &BrokerHelperRequest::RepairStorePaths(request.clone()),
+            repair_response_timeout()?,
+        )? {
+            BrokerHelperResponse::RepairCompleted(report) => Ok(report),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    fn round_trip(
+        &self,
+        request: &BrokerHelperRequest,
+        timeout: Duration,
+    ) -> Result<BrokerHelperResponse, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let request = ProductFrameCodec::encode_helper_request(REQUEST_ID, request)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(timeout)?;
+        write_all_until(&mut stream, &request, deadline)?;
         stream
             .shutdown(Shutdown::Write)
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
@@ -362,12 +263,7 @@ impl RootHelperClient {
                 HelperTransportErrorCode::InvalidFrame,
             ));
         }
-        match response {
-            BrokerHelperResponse::RepairCompleted(report) => Ok(report),
-            _ => Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            )),
-        }
+        Ok(response)
     }
 
     fn connect(&self) -> Result<UnixStream, HelperTransportError> {
@@ -812,6 +708,16 @@ mod tests {
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
         assert_eq!(served.map_err(HelperTransportError::code), Ok(()));
         assert_eq!(result, Err(HelperTransportErrorCode::InvalidFrame));
+        Ok(())
+    }
+
+    #[test]
+    fn response_timeouts_remain_fixed() -> Result<(), Box<dyn Error>> {
+        assert_eq!(RESPONSE_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(
+            repair_response_timeout()?,
+            MAX_REPAIR_EXECUTION_DURATION + REPAIR_RESPONSE_GRACE
+        );
         Ok(())
     }
 
