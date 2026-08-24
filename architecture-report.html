@@ -309,9 +309,6 @@
     .next-list span { color: var(--muted); font-size: .9rem; }
     .work-group + .work-group { margin-top: 24px; }
     .work-group h3 { color: var(--next); }
-    .next-list.start-5 { counter-reset: next 4; }
-    .next-list.start-8 { counter-reset: next 7; }
-
     .change-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--line); }
     .change-strip.transition-strip { grid-template-columns: repeat(3, 1fr); }
     .change-strip > div { padding: 18px; background: var(--surface); }
@@ -482,15 +479,15 @@
       <div class="card-grid" aria-label="DN-03 platform and product status">
         <article class="card">
           <span class="tag">Linux evidence</span>
-          <h3>Lifecycle PASS</h3>
-          <p>Linux R12 proves broad x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records.</p>
-          <p><strong>Vendor cleanup: FAIL.</strong></p>
+          <h3>Evidence complete</h3>
+          <p>Linux R12 proves broad x86_64 behavior. The functional behavior checks passed. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records.</p>
+          <p><span class="tag caution">Strict vendor cleanup: FAIL</span></p>
         </article>
         <article class="card">
           <span class="tag">macOS evidence</span>
-          <h3>Lifecycle and reboots PASS</h3>
-          <p>R10 proves lifecycle and residue behavior. Crash R1 records a failed recovery after the installer exits 0 because <code>_nixbld1</code> is missing.</p>
-          <p><strong>Crash recovery: FAIL.</strong></p>
+          <h3>Evidence complete</h3>
+          <p>R10 proves the lifecycle and residue evidence. The functional lifecycle and reboots passed. Crash R1 records a failed recovery after the installer exits 0 because <code>_nixbld1</code> is missing.</p>
+          <p><span class="tag caution">Strict vendor cleanup: FAIL</span> <span class="tag caution">Crash recovery: FAIL</span></p>
         </article>
         <article class="card">
           <span class="tag caution">Product status</span>
@@ -734,7 +731,7 @@
 
         <h4>Crash and power-loss behavior</h4>
         <p>Before execution, pkg writes only a small handoff marker with the pinned contract identity. During execution, Determinate owns its machine transaction. After a crash or reboot, pkg reads the vendor receipt and real machine behavior. It never turns its marker into machine authority.</p>
-        <p>Crash R1 is an accepted negative observation. The vendor recovery install exited 0, but the later state check failed because <code>_nixbld1</code> was missing. Functional Nix recovery was not reached. DN-06 must not use SIGKILL or accept exit 0 alone. DN-07 must validate Handoff and state. DN-12 can test a supported repair. DN-16 remains blocked until the full crash and reboot lifecycle passes twice.</p>
+        <p>Crash R1 is an accepted negative observation. The vendor recovery install exited 0, but the later state check failed because <code>_nixbld1</code> was missing. Functional Nix recovery was not reached. DN-06 must not use SIGKILL or accept exit 0 alone. DN-07 must validate Handoff and state. DN-12 may run an optional <code>repair sequoia</code> proof. DN-16 remains blocked until the full crash and reboot lifecycle passes twice.</p>
       </section>
 
       <section aria-labelledby="chapter-delete-title">
@@ -815,18 +812,18 @@
       <section aria-labelledby="chapter-proof-title">
         <span class="evidence-label proof">VM proof required</span>
         <h3 id="chapter-proof-title">11. Clean-host proof matrix</h3>
-        <p>DN-03 ran the standalone rows on disposable hosts. Linux R12 and macOS R10 prove lifecycle behavior. Crash R1 records the required negative SIGKILL and reboot observation. The later product rows remain open.</p>
+        <p>Run the matrix on disposable clean hosts. A developer laptop is not clean-host proof. DN-03 observations are in the evidence cards above. The required results below remain the future product and deletion gates.</p>
         <div class="table-wrap" role="region" tabindex="0" aria-label="Clean-host VM proof matrix">
           <table class="decision-table">
             <caption>Proof required before old code deletion</caption>
             <thead><tr><th>Case</th><th>Required result</th><th>Evidence to keep</th></tr></thead>
             <tbody>
-              <tr><td>Linux x86_64</td><td>DN-03 standalone lifecycle PASS. Vendor cleanup FAIL.</td><td>R12 broad behavior and retained R11 Asset proof.</td></tr>
-              <tr><td>Linux aarch64</td><td>Target Asset proof PASS. Full product lifecycle remains later work.</td><td>Retained R10 Asset proof.</td></tr>
-              <tr><td>Apple Silicon macOS</td><td>DN-03 standalone lifecycle and reboots PASS. Vendor cleanup FAIL.</td><td>R10 lifecycle and residue evidence.</td></tr>
+              <tr><td>Linux x86_64</td><td>Fresh install, package operation, repair, update, and uninstall pass.</td><td>Asset identity, receipt, services, accounts, ownership, PATH, and residue inventory.</td></tr>
+              <tr><td>Linux aarch64</td><td>Same lifecycle passes with the exact architecture asset.</td><td>Same inventory and digest evidence.</td></tr>
+              <tr><td>Apple Silicon macOS</td><td>Fresh install and full lifecycle pass with launch environment checks.</td><td>Receipt, services, users/groups, GUI environment, shell PATH, and residue inventory.</td></tr>
               <tr><td>Verification failure</td><td>A wrong digest never executes.</td><td>Exit status, safe error, no machine change, and untrusted asset cleanup.</td></tr>
               <tr><td>Repeat install</td><td>A Ready base is not reinstalled or damaged.</td><td>Stable receipt, ownership, services, and package behavior.</td></tr>
-              <tr><td>SIGKILL and reboot</td><td>Crash R1 negative observation accepted. Recovery did not succeed after exit 0 because <code>_nixbld1</code> was missing.</td><td>DN-06, DN-07, DN-12, and DN-16 own the later product response and proof.</td></tr>
+              <tr><td>SIGKILL and reboot</td><td>Each tested interruption returns to Ready through supported recovery or stops safely as Unknown.</td><td>Interruption point, receipt state, marker state, service state, and recovery result.</td></tr>
               <tr><td>Ownership</td><td>Every machine-wide file, service, account, and product state has the expected owner.</td><td>Before-and-after inventory.</td></tr>
               <tr><td>Receipt damaged or missing</td><td>pkg does not invent authority or edit the receipt.</td><td>Unknown result, safe guidance, and no automatic takeover.</td></tr>
               <tr><td>Foreign Nix</td><td>pkg refuses automatic install, repair, update, or uninstall.</td><td>Detection evidence and unchanged foreign installation.</td></tr>
@@ -1272,9 +1269,10 @@
         <ul class="test-list" aria-label="External installer proof gates">
           <li><span>DN-03 Linux evidence</span><strong>Complete</strong></li>
           <li><span>DN-03 macOS evidence</span><strong>Complete</strong></li>
-          <li><span>Clean vendor uninstall</span><strong>FAIL</strong></li>
-          <li><span>Successful crash recovery</span><strong>Unproved</strong></li>
-          <li><span>DN-07 Handoff validation</span><strong>Required</strong></li>
+          <li><span>Clean vendor uninstall</span><span class="tag caution">FAIL</span></li>
+          <li><span>Successful crash recovery</span><span class="tag caution">Unproved</span></li>
+          <li><span>DN-06, DN-07, and DN-16 crash controls</span><strong>Required</strong></li>
+          <li><span>DN-12 <code>repair sequoia</code> proof</span><span class="tag caution">Optional</span></li>
           <li><span>DN-13 exact cleanup</span><strong>Required</strong></li>
           <li><span>DN-15 Linux product lifecycle</span><strong>Required</strong></li>
           <li><span>DN-16 macOS product lifecycle</span><strong>Required twice</strong></li>
