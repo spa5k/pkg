@@ -263,26 +263,39 @@ compare_residue_contract() {
     done
 }
 stable_log_identity() {
-    [ "$(wc -l <"$1" | /usr/bin/tr -d ' ')" -eq 1 ] || return 1
-    awk '
-        NF != 9 || $2 !~ /^path_hex=[0-9a-f]+$/ { exit 1 }
-        { canonical = $1 " " $2 " " $3 " " $4 " " $5 " " $6 " " $7 " " $8 " " $9 }
-        $0 != canonical { exit 1 }
-        $1 == "state=absent" {
-            if ($3 != "type=-" || $4 != "mode=-" || $5 != "uid=-" || $6 != "gid=-" || $7 != "size=-" || $8 != "nlink=-" || $9 != "sha256=-") exit 1
-            print $1, $2, $3, $4, $5, $6, $8
-            valid=1
-            next
-        }
-        $1 == "state=present" {
-            if ($3 != "type=f" || $4 !~ /^mode=[0-7]+$/ || $5 !~ /^uid=[0-9]+$/ || $6 !~ /^gid=[0-9]+$/ || $7 !~ /^size=[0-9]+$/ || $8 !~ /^nlink=1$/ || $9 !~ /^sha256=[0-9a-f]+$/ || length($9) != 71) exit 1
-            print $1, $2, $3, $4, $5, $6, $8
-            valid=1
-            next
-        }
-        { exit 1 }
-        END { if (NR != 1 || !valid) exit 1 }
-    ' "$1"
+    (
+        stable_log_canonical=$1.canonical.$$
+        [ ! -e "$stable_log_canonical" ] && [ ! -L "$stable_log_canonical" ] || exit 1
+        trap '/bin/rm -f "$stable_log_canonical"' EXIT
+        trap 'exit 129' HUP
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        (umask 077; set -C; : >"$stable_log_canonical") 2>/dev/null || exit 1
+        [ "$(wc -l <"$1" | /usr/bin/tr -d ' ')" -eq 1 ] || exit 1
+        LC_ALL=C awk '
+            NF != 9 || $2 !~ /^path_hex=[0-9a-f]+$/ { exit 1 }
+            $1 == "state=absent" {
+                if ($3 != "type=-" || $4 != "mode=-" || $5 != "uid=-" || $6 != "gid=-" || $7 != "size=-" || $8 != "nlink=-" || $9 != "sha256=-") exit 1
+                valid=1
+                next
+            }
+            $1 == "state=present" {
+                if ($3 != "type=f" || $4 !~ /^mode=[0-7]+$/ || $5 !~ /^uid=[0-9]+$/ || $6 !~ /^gid=[0-9]+$/ || $7 !~ /^size=[0-9]+$/ || $8 !~ /^nlink=1$/ || $9 !~ /^sha256=[0-9a-f]+$/ || length($9) != 71) exit 1
+                valid=1
+                next
+            }
+            { exit 1 }
+            END {
+                if (NR != 1 || !valid) exit 1
+                print $1, $2, $3, $4, $5, $6, $7, $8, $9
+            }
+        ' "$1" >"$stable_log_canonical" || exit 1
+        /usr/bin/cmp -s "$1" "$stable_log_canonical" || exit 1
+        if LC_ALL=C awk '{ print $1, $2, $3, $4, $5, $6, $8 }' "$stable_log_canonical"; then stable_log_status=0; else stable_log_status=$?; fi
+        /bin/rm -f "$stable_log_canonical" || exit 1
+        trap - EXIT
+        exit "$stable_log_status"
+    )
 }
 compare_active_residue_contract() {
     active_left=$1 active_right=$2 active_reason=$3
