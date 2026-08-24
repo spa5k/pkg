@@ -1,6 +1,6 @@
 # Package Lifecycle
 
-This context defines the language for turning user package intent into trusted, recoverable package state. It separates what the user requests from what the product realizes and activates.
+This context defines the language for turning user package intent into trusted, recoverable package state. It separates the vendor-owned Base Nix Lifecycle from the product-owned Package Lifecycle.
 
 ## Intent and Identity
 
@@ -47,7 +47,7 @@ The realized state. It binds each Package Selector to its exact Realization.
 _Avoid_: Lock file, resolution
 
 **Lifecycle State**:
-The coherent desired and realized package state for one user.
+The coherent desired and realized package state for one user in the Package Lifecycle.
 _Avoid_: Current state
 
 **Generation**:
@@ -63,27 +63,37 @@ A reference that pins one realized output so garbage collection keeps it.
 _Avoid_: GC pin, keep-alive link
 
 **Lifecycle Operation**:
-One recoverable attempt to change Lifecycle State.
+One recoverable attempt to change Lifecycle State in the Package Lifecycle.
 _Avoid_: Command, transaction, job
 
-**Repair**:
+**Package Repair**:
 The user-initiated, verified restore of damaged store content. It is not atomic.
-_Avoid_: Self-heal, auto-repair
+_Avoid_: Repair, Base Nix repair, self-heal, auto-repair
+
+## Lifecycle Ownership
+
+**Base Nix**:
+The machine-wide Nix installation that provides the shared store and package realization runtime.
+_Avoid_: Managed Nix, private Nix, system Nix
+
+**Base Nix Lifecycle**:
+The install, repair, update, and explicit uninstall of Base Nix.
+_Avoid_: Package Lifecycle, package maintenance
+
+**Package Lifecycle**:
+The product-owned work that selects, realizes, activates, repairs, and removes packages for a user.
+_Avoid_: Base Nix Lifecycle, Nix lifecycle
 
 ## Trust and Authority
 
 **Channel**:
-An authenticated, monotonic release of product policy, Catalog identity, and Managed Nix assets.
+An authenticated, monotonic release of product policy, Catalog identity, and product assets.
 _Avoid_: Repository, feed, branch
 
-**Managed Nix**:
-The product-owned Nix runtime that realizes packages without exposing a raw Nix interface to users.
-_Avoid_: System Nix, user Nix, Nix installation
-
 **Broker**:
-The authenticated authority that mediates Managed Nix work and machine-wide admission.
+The authenticated authority that mediates Package Lifecycle work and machine-wide package admission.
 _Avoid_: Daemon, server, engine
 
 **Root Helper**:
-The authenticated authority for a closed set of privileged host changes.
+The authenticated authority for a closed set of privileged Package Lifecycle host changes.
 _Avoid_: Installer, root process, sudo wrapper

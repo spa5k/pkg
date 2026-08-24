@@ -4,6 +4,8 @@ Status: Accepted
 
 # Broker and Root Helper privilege split
 
+> **Status note:** This decision remains accepted for Package Lifecycle privilege. [ADR 0004](./0004-determinate-base-nix-lifecycle.md) partially supersedes only its Base Nix Lifecycle ownership claim, including Base Nix service control, runtime update, and `/nix` lifecycle mutation.
+
 ## Context
 
 Repair and GC-root writes need privilege, but the Nix daemon protocol cannot execute `repairPath`. Nix 2.34.8 reports it unsupported over the daemon, even for root. A single privileged service would be too broad.
