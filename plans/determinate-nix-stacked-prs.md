@@ -2,9 +2,18 @@
 
 Status: active implementation plan for an alpha product.
 
-Current status: **DN-00 through DN-04 are complete; product delivery is NO-GO; the grouped DN-05–07 delivery PR is next.**
+Current status: **DN-00 through DN-07 are complete. The grouped DN-08–14 PR is active as a partial foundation and evidence PR. DN-15 is blocked.**
 
-This roadmap has 33 stable DN requirement labels in 25 delivery PRs. DN-05 through DN-07 ship in one PR. DN-08 through DN-14 ship in one later PR. The labels remain stable for evidence, ownership, and review references.
+The current migration delivery has exactly four delivery PRs. PR 1 and PR 2 group several work packages. PR 3 has the single delivery label DN-15. PR 4 has the single delivery label DN-16. DN-17 through DN-32 remain work-package IDs inside PR 4. They do not create more delivery PRs.
+
+| Delivery PR | Scope | Status |
+|---|---|---|
+| 1 | DN-00 through DN-07: plan, alpha fixes, evidence, contract, and authenticated vendor foundation | Complete |
+| 2 | DN-08 through DN-14: inactive integration foundation and decision evidence | Active and partial |
+| 3 | DN-15: Linux completion | Blocked by PR 2 gates |
+| 4 | DN-16: Apple Silicon macOS completion; DN-17 through DN-32 are later cleanup, proof, and optional simplification checkpoints inside this PR | Blocked by PR 2 and Linux completion |
+
+PR 2 does not deliver the complete DN-08 through DN-14 lifecycle. It records the safe inactive code and the proved NO-GO decisions. DN-15 must not start until every unresolved PR 2 gate has a named safe owner and enough proof for Linux activation.
 
 DN-03 completed the standalone vendor evidence gate. This does not mean that vendor uninstall is clean. It does not mean that crash recovery succeeds. Linux functional behavior checks passed, but strict vendor cleanup failed. In the accepted macOS crash observation, state validation stops after the recovery install exits 0 because `_nixbld1` is missing.
 
@@ -12,15 +21,13 @@ The public evidence is in the [DN-03 parent decision](../spikes/s6-determinate-i
 
 - Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two Linux target Asset records.
 - macOS R10 completes the standalone lifecycle and residue evidence. Its functional lifecycle and reboots passed, but strict vendor cleanup failed. Crash R1 completes the required negative SIGKILL and reboot observation.
-- Clean vendor uninstall remains false on both platforms. The DN-13 subphase owns exact fail-closed cleanup.
-- Successful crash recovery is unproved. The DN-06 and DN-07 subphases and DN-16 own the required product controls and later proof. The DN-12 subphase may run an optional `repair sequoia` proof.
+- Clean vendor uninstall remains false on both platforms. DN-13 delivers staging only. DN-15 and DN-16 must prove exact platform cleanup.
+- Successful crash recovery is unproved. DN-06 and DN-07 delivered the product controls. DN-16 owns the later crash-recovery proof. The companion DN-12 report concludes that there is no safe general vendor repair route. That report must land in PR 2 before the plan treats this result as accepted evidence.
 - DN-04 documents the proved ownership and executable contract.
 
 This plan replaces the old custom Managed Nix implementation plan. The old plan is preserved in the [dated legacy archive](archive/2026-08-22-custom-managed-nix-v1/README.md). The design reasons and research are in the [architecture report](../architecture-report.html).
 
-This branch contains plans only. It does not integrate Determinate Nix.
-
-This planning branch does not change shipped behavior or current user instructions. DN-15 and DN-16 update the user documents for each platform when that platform changes. DN-20 completes the release documents after the final proof.
+This plan update does not change shipped behavior or current user instructions. DN-15 and DN-16 update the user documents for each platform when that platform changes. DN-20 completes the release documents after the final proof.
 
 ## 1. Accepted ownership
 
@@ -34,7 +41,7 @@ The accepted product boundary is:
 - The plan does not assume that Determinate replaces package roots, package garbage collection, or package repair.
 - Raw Nix can exist on the machine. `pkg` keeps raw Nix out of its normal user experience. This is not a security boundary.
 - Local administrators can change machine-wide Nix. `pkg doctor` must detect important changes and fail closed where ownership is not clear.
-- The old private Managed Nix model has no compatibility bridge. `pkg` detects it, refuses the operation, and tells the user to run the clean old uninstall before a clean new install.
+- The old private Managed Nix model has no compatibility bridge. `pkg` must detect it and refuse the operation. A clean reset needs the still-gated authenticated fallback from DN-14. The product must not tell the user to run a fallback that does not exist.
 
 ## 2. Upstream observed baseline
 
@@ -62,18 +69,17 @@ We use one linear GitHub PR stack.
 ### 3.1 Branch names
 
 - The plan branch is `plan/determinate-nix-stacked-prs`.
-- Core branches use `dn/NN-short-name` for one label or `dn/NN-NN-short-name` for one grouped delivery PR.
-- Optional branches use the same format.
-- The branch label matches the stable DN label or label range in this plan.
-- A DN label is an ordered requirement and commit-checkpoint ID. It is not only a subphase label.
-- A branch contains one reviewable result.
+- Delivery branches use the names recorded in the four-PR table and section 6.
+- A DN label is an ordered work-package and checkpoint ID inside a delivery PR.
+- A DN label does not create a separate delivery PR.
+- Historical branch names in completed checkpoint descriptions record where the evidence originated. They do not add delivery PRs.
 
 ### 3.2 PR bases
 
-- DN-00 targets the repository default branch.
-- DN-01 targets the DN-00 branch.
-- Each later PR targets the previous published branch.
-- The grouped stack segment is `dn/04-determinate-base-nix-contract` -> `dn/05-07-vendor-foundation` -> `dn/08-14-inactive-lifecycle-integration` -> `dn/15-linux-lifecycle-cutover`.
+- PR 1 uses `dn/05-07-vendor-foundation`. DN-00 through DN-04 branch names are historical checkpoint sources inside PR 1.
+- PR 2 uses `dn/08-14-inactive-lifecycle-integration` and targets PR 1.
+- PR 3 uses `dn/15-linux-lifecycle-cutover` and targets PR 2.
+- PR 4 uses `dn/16-macos-lifecycle-cutover` and targets PR 3.
 - There is one published linear stack.
 - Do not publish two competing versions of the same stack.
 - Do not add Graphite or another stacking dependency.
@@ -93,7 +99,7 @@ Each PR description has these fields:
 9. **Risk**: the highest remaining risk.
 10. **Not included**: work that belongs to a later PR.
 
-For a grouped PR, the description also reports each stable DN checkpoint as complete or blocked. Each DN checkpoint ends with exactly one signed commit after its focused checks pass. Each checkpoint commit must be independently reviewable. Reviewers review each checkpoint gate and then the combined result. The PR cannot merge with one blocked checkpoint.
+For a grouped PR, the description reports each stable DN checkpoint as delivered, evidence-only, or blocked. Each code checkpoint ends with one signed commit after its focused checks pass. Evidence and NO-GO decisions can also use signed commits. Reviewers review each checkpoint and the combined result. A partial PR must not claim that blocked behavior exists.
 
 ### 3.4 Parent merge procedure
 
@@ -114,7 +120,7 @@ When a parent PR squash-merges:
 11. Confirm that each PR contains only its own change.
 12. Update every affected parent link in the PR descriptions.
 
-Do not leave a descendant based on an old pre-squash commit. Do not merge a child before its parent. Do not combine published stack entries during merge. DN-05–07 and DN-08–14 are single delivery PRs from the start.
+Do not leave a descendant based on an old pre-squash commit. Do not merge a child before its parent. Do not combine published stack entries during merge. PR 1 and PR 2 are grouped delivery PRs from the start. PR 3 and PR 4 keep the single delivery labels DN-15 and DN-16.
 
 ### 3.5 Local proof policy
 
@@ -129,38 +135,22 @@ GitHub Actions are disabled today. This plan does not enable them.
 ## 4. Dependency diagram and stop gates
 
 ```text
-DN-00
+PR 1: DN-00 through DN-07 [COMPLETE FOUNDATION]
   |
-DN-01 -> DN-02 -> DN-03 [VENDOR CONTRACT STOP GATE]
-                         |
-                       DN-04
-                         |
-                       DN-05–07 [VENDOR FOUNDATION]
-                         |
-                       DN-08–14 [INACTIVE LIFECYCLE INTEGRATION]
-                         |
-                       DN-15 [LINUX LIFECYCLE]
-                         |
-                       DN-16 [MACOS LIFECYCLE]
-                         |
-                       DN-17 -> DN-18 -> DN-19
-                                                |
-                                              DN-20 [CORE DONE]
-                                                |
-                                              DN-21 -> ... -> DN-27
-                                                |
-                                              DN-28 -> DN-29
-                                                |
-                                              DN-30 -> DN-31
-                                                |
-                                              DN-32
+PR 2: DN-08 through DN-14 [ACTIVE PARTIAL FOUNDATION AND EVIDENCE]
+  |
+PR 3: DN-15 [LINUX COMPLETION]
+  |
+PR 4: DN-16 [MACOS COMPLETION]
+      DN-17 through DN-20 [POST-CUTOVER CLEANUP AND CORE PROOF]
+      DN-21 through DN-32 [OPTIONAL SIMPLIFICATION CHECKPOINTS]
 ```
 
 Stop gates:
 
 - **DN-03** is complete for standalone evidence. Its negative results still block product delivery until the owning later gates pass.
 - **DN-05–07** blocks integration if asset authentication, safe process execution, or minimal Handoff recovery fails. It must not add a second vendor journal.
-- **DN-08–14** blocks lifecycle cutover if any subphase gate fails. Its gates cover one-writer configuration, standard-daemon RealNix parity, foreign-Nix refusal, PATH behavior, safe inactive repair and update routing, resumable uninstall, and an authenticated old-alpha reset path.
+- **DN-08–14** is an inactive partial foundation and evidence PR. It blocks DN-15 until its unresolved gates have safe Linux owners and proof. These gates include one-writer configuration, live standard-daemon parity, vendor repair and update ownership, exact uninstall residue cleanup, and an authenticated old-alpha reset path.
 - **DN-15** blocks Linux deletion until the complete Linux lifecycle proof passes.
 - **DN-16** blocks macOS deletion until the complete Apple Silicon macOS lifecycle proof passes.
 - **DN-20** blocks the optional simplification tail until the core cutover is complete.
@@ -190,13 +180,15 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 | Release assets | `tools/release`, channel metadata, runtime manifests | Add the pinned vendor executable first. Keep old assets until both cutovers pass. | DN-19 removes old Base-Nix artifacts. |
 | Tests | package, contract, parity, recovery, and platform tests | Keep and adapt. Move fakes only after the production seam changes. | DN-22 deletes broad fakes after replacement tests pass. |
 
-## 6. Core migration delivery PRs
+## 6. Delivery PR work packages
 
-### DN-00 — Archive the old plan and publish this plan
+DN-00 through DN-32 are work packages and checkpoints inside the four delivery PRs. They are not separate delivery PRs. Completed checkpoint branch names below are historical evidence only.
+
+### DN-00 work package — Archive the old plan and publish this plan
 
 - **Status:** complete.
-- **Branch:** `plan/determinate-nix-stacked-prs`.
-- **Base:** repository default branch.
+- **Historical source branch:** `plan/determinate-nix-stacked-prs`.
+- **Delivery PR:** PR 1 checkpoint.
 - **Goal:** preserve the old plan and publish one active, reviewed stack plan.
 - **Why now:** implementation needs one source of order, ownership, and stop rules.
 - **Likely files and symbols:** `plans/**` plus only the documentation and link-check maintenance required by the archive move.
@@ -204,16 +196,16 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Implementation steps:** move old plan files into the dated archive; add an archive notice; add this plan; check every relative link; record that GitHub Actions stay disabled.
 - **Tests:** run a local Markdown link check or inspect every relative path; run `git diff --check`.
 - **Proof and evidence:** archive file list, active file list, valid links, and clean whitespace check.
-- **Deletion:** none. This PR archives files instead of deleting them.
+- **Deletion:** none. This work package archives files instead of deleting them.
 - **Rollback or stop rule:** stop if any old plan file is missing from the archive.
 - **Review focus:** history preservation, stack completeness, and no runtime edits.
 - **Child-unblock condition:** two plan reviews pass and all blocking comments are resolved.
 
-### DN-01 — Cancel every failed pending-install Broker operation
+### DN-01 work package — Cancel every failed pending-install Broker operation
 
 - **Status:** complete.
-- **Branch:** `dn/01-cancel-pending-install`.
-- **Base:** DN-00 branch and PR.
+- **Historical source branch:** `dn/01-cancel-pending-install`.
+- **Delivery PR:** PR 1 checkpoint after DN-00.
 - **Goal:** close the current alpha cancellation hole in `recover_pending_install`.
 - **Why now:** migration work must not build on a known operation leak.
 - **Likely files and symbols:** `recover_pending_install`, `BrokerLifecycleClient`, pending-install recovery tests in `pkg-cli` and `pkg-installer`.
@@ -226,11 +218,11 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** exact operation state, error precedence, and no unrelated migration code.
 - **Child-unblock condition:** all failed or uncertain paths reconcile or cancel. Successful paths prove Broker completion once.
 
-### DN-02 — Shorten the verify-only repair lease
+### DN-02 work package — Shorten the verify-only repair lease
 
 - **Status:** complete.
-- **Branch:** `dn/02-short-repair-lease`.
-- **Base:** DN-01 branch and PR.
+- **Historical source branch:** `dn/02-short-repair-lease`.
+- **Delivery PR:** PR 1 checkpoint after DN-01.
 - **Goal:** release the exclusive state lease before long verify-only work.
 - **Why now:** this is the second current alpha finding. It can make repair block unrelated work.
 - **Likely files and symbols:** repair command flow, `production_repair.rs`, state lease code, `RepairMode`, `MaintenanceAdapter`.
@@ -243,11 +235,11 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** state consistency, lock boundary, and test determinism.
 - **Child-unblock condition:** verification permits safe mutation while GC and history pruning cannot invalidate its Generation.
 
-### DN-03 — Prove the vendor executable contract
+### DN-03 work package — Prove the vendor executable contract
 
 - **Status:** complete for standalone evidence. Product delivery remains NO-GO.
-- **Branch:** `dn/03-determinate-nix-spike`.
-- **Base:** DN-02 branch and PR.
+- **Historical source branch:** `dn/03-determinate-nix-spike`.
+- **Delivery PR:** PR 1 checkpoint after DN-02.
 - **Goal:** produce reproducible Linux and Apple Silicon macOS evidence for the exact external executable behavior.
 - **Why now:** every integration decision depends on recorded standalone facts. The accepted DN-03 reports now provide those facts for DN-04.
 - **Likely files and symbols:** a bounded spike under `spikes/`, evidence manifests, VM scripts, no production module.
@@ -256,15 +248,15 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Tests:** the DN-03 rows in the VM matrix in section 10 were observed. Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records. macOS R10 proves lifecycle and residue behavior. Crash R1 records an accepted negative crash result after `_nixbld1` is missing.
 - **Proof and evidence:** the [parent decision](../spikes/s6-determinate-installer/FINDINGS.md) links the accepted public results. The [Linux report](../spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md) owns the Linux evidence. The [macOS report](../spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md) owns R10 and Crash R1. DN-03 does not prove `pkg` Handoff, package lifecycle, product repair, product uninstall, product cleanup, or production cutover.
 - **Deletion:** none.
-- **Rollback or stop rule:** DN-03 evidence is complete, but delivery stays NO-GO. The DN-13 subphase must handle exact vendor residue. The DN-06 and DN-07 subphases and DN-16 must handle the failed crash recovery result. The DN-12 subphase may run an optional `repair sequoia` proof. Choose a small full executable fork only after a written blocking gap. Do not copy selected upstream source files.
+- **Rollback or stop rule:** DN-03 evidence is complete, but delivery stays NO-GO. DN-13 must gate exact vendor residue. DN-06, DN-07, and DN-16 must handle the failed crash recovery result. The companion DN-12 report concludes that there is no safe general vendor repair route. It must land in PR 2 before that conclusion is accepted. Choose a small full executable fork only after a written blocking gap. Do not copy selected upstream source files.
 - **Review focus:** observations versus conclusions, repeatability, licensing, diagnostics, update owner, and crash recovery.
 - **Child-unblock condition:** complete. DN-04 can document the proved contract and its limits. This does not unblock product cutover.
 
-### DN-04 — Update domain context and add ADR 0004
+### DN-04 work package — Update domain context and add ADR 0004
 
 - **Status:** complete.
-- **Branch:** `dn/04-determinate-base-nix-contract`.
-- **Base:** DN-03 branch and PR.
+- **Historical source branch:** `dn/04-determinate-base-nix-contract`.
+- **Delivery PR:** PR 1 checkpoint after DN-03.
 - **Goal:** record the proved Base Nix ownership boundary.
 - **Why now:** documentation must follow proof. It must not turn guesses into architecture.
 - **Likely files and symbols:** `CONTEXT.md`, new `docs/adr/0004-determinate-base-nix-lifecycle.md`, ADR 0003 status note.
@@ -277,13 +269,13 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** domain precision and no claim that package work moved to Determinate.
 - **Child-unblock condition:** reviewers agree on one ownership vocabulary.
 
-### DN-05–07 — Ship the authenticated vendor foundation
+### DN-05–07 work-package group — Ship the authenticated vendor foundation
 
-- **Status:** next.
+- **Status:** complete.
 - **Branch:** `dn/05-07-vendor-foundation`.
-- **Base:** DN-04 branch and PR.
+- **Delivery PR:** PR 1, after the DN-04 checkpoint.
 - **Goal:** ship pinned vendor assets, one private process Adapter, and minimal Vendor Receipt and Handoff validation in one review.
-- **Order:** DN-05, DN-06, and DN-07 are ordered requirement and commit-checkpoint IDs. They are not only subphase labels. Implement them in this order. End each checkpoint with one signed, green, independently reviewable commit.
+- **Order:** DN-05, DN-06, and DN-07 are ordered work-package and checkpoint IDs. Implement them in this order. End each checkpoint with one signed, green, independently reviewable commit.
 - **Deletion:** none. Keep old Base Nix assets until both platform cutovers pass. This PR adds no second receipt or vendor action journal.
 - **Combined stop rule:** do not merge if source compliance, a supported target asset, exact safe invocation, or deterministic Handoff recovery is missing.
 
@@ -311,25 +303,36 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Tests and proof:** inject a crash before launch, during launch, and after vendor success but before state update. Test missing or damaged receipts, changed executables, and unknown `/nix`. Every state must fail closed and produce deterministic restart classification.
 - **Gate and review:** stop if safe recovery needs private vendor action replay. Review durability, the opaque seam, and the absence of a parallel ownership ledger.
 
-### DN-08–14 — Build the inactive lifecycle integration
+### DN-08–14 work-package group — Build the inactive lifecycle integration
 
+- **Status:** active and partial. This PR contains inactive foundation code and decision evidence. It does not complete DN-08 through DN-14.
 - **Branch:** `dn/08-14-inactive-lifecycle-integration`.
-- **Base:** `dn/05-07-vendor-foundation` branch and PR.
-- **Goal:** complete the inactive asset, package, detection, PATH, repair, update, uninstall, and old-alpha flow before either platform cutover.
-- **Order:** DN-08 through DN-14 are ordered requirement and commit-checkpoint IDs. They are not only subphase labels. Implement them in order. End each checkpoint with one signed, green, independently reviewable commit. Keep every route inactive in shipped behavior.
+- **Delivery PR:** PR 2, based on PR 1.
+- **Goal:** keep the safe inactive integration foundation and record the decisions that block unsafe lifecycle work.
+- **Order:** DN-08 through DN-14 are ordered work-package and checkpoint IDs. Implement them in order. End each checkpoint with one signed, green, independently reviewable commit. Keep every route inactive in shipped behavior.
 - **Combined deletion:** none. Delete no production code in this grouped PR. Keep old detection and PATH code unchanged. DN-17 through DN-19 own any later deletion of obsolete Base Nix detection or PATH code after platform cutover proof. Add no compatibility bridge.
-- **Combined stop rule:** any failed subphase gate blocks the complete PR and DN-15.
+- **Combined stop rule:** do not call this PR a complete lifecycle delivery. DN-15 must not start until the unresolved gates below have named Linux owners and proof.
+
+Current checkpoint result:
+
+- **DN-08:** partial. The companion PR-2 implementation commit must add the real closed asset-owner field before PR 2 can claim a complete and disjoint partition. A supported vendor configuration extension is NO-GO. The inactive typed Root Helper proxy replaces that rejected design.
+- **DN-09:** partial. The standard Determinate adapter mode and typed Root Helper proxy are inactive. Live Linux and macOS parity still need proof.
+- **DN-10:** partial. Inactive classification and Doctor behavior exist. The privileged producer and platform proof remain gated.
+- **DN-11:** evidence is partial. Production PATH behavior stays unchanged. VM launch-context proof remains gated.
+- **DN-12:** the companion PR-2 evidence report concludes NO-GO for vendor repair and update routing. The report must land before PR 2 can claim this proof. Package Repair stays. No speculative vendor repair framework or update route is added.
+- **DN-13:** partial. Staged vendor uninstall is delivered. Exact residue cleanup remains gated by platform-specific identity and absence proof.
+- **DN-14:** NO-GO. There is no authenticated old-alpha fallback executable. No dead refusal or reset code is added.
 
 **DN-08 subphase — Split product and Base Nix assets**
 
 - **Files and interface:** update `assets.rs`, platform asset lists and managers, `OwnershipExpectation`, `ManagedGroupBindings`, and release manifests. Product assets stay exact and authenticated. Base Nix stays on the old path. Each asset has one owner and one writer. `pkg` does not edit vendor-owned configuration.
-- **Work:** classify every asset and Nix configuration item. Create non-overlapping product and Base Nix views. Identify a supported vendor extension point. Give Broker admission, `trusted-users`, and `allowed-users` one owner. Prove preservation through vendor repair and update without changing production behavior.
-- **Tests and gate:** test complete partition, no overlap, one writer, stable output, Linux and macOS snapshots, and repair/update preservation. Evidence must show that every existing asset appears exactly once. Stop for mixed ownership, no supported extension point, or a required second writer. Review the complete partition and high-impact contract stability.
+- **Work:** the companion PR-2 implementation commit must add one real closed owner field to every platform asset. It must define non-overlapping Product and Base Nix views. The vendor configuration extension is NO-GO. Use the inactive typed Root Helper proxy for package Nix operations. Do not add a second writer for vendor-owned configuration.
+- **Tests and gate:** the companion commit must prove complete partition, no overlap, one writer, and stable output before PR 2 passes. Evidence must show that every existing asset appears exactly once. Linux and macOS live preservation proof remains a cutover gate. Review the complete partition and high-impact contract stability.
 
 **DN-09 subphase — Standard-daemon RealNix parity**
 
 - **Files and interface:** update `RealNixAdapter`, `crates/pkg-nix/src/{real,adapter,build,verify,substitute}.rs`, parity fixtures, and `pkg-testkit`. Use one fixed standard-daemon mode. Add no provider framework. Preserve package trust and outcomes. Use absolute Nix paths or one proved stable rule, never PATH.
-- **Work:** bind proved daemon and store paths. Use only the DN-08 extension point. Prove Broker admission and multi-user access. Probe read, resolve, acquire, substitute, local build, roots, GC, and repair. Run vendor repair and update. Confirm that access and configuration survive.
+- **Work:** bind proved daemon and store paths. Route package Nix operations through the inactive typed Root Helper proxy. Prove Broker admission and multi-user access. Probe read, resolve, acquire, substitute, local build, roots, GC, and package repair. Do not depend on the rejected vendor configuration extension.
 - **Tests and gate:** run real adapter tests, parity tests, and install, remove, update, upgrade, and GC smoke tests on Linux and Apple Silicon macOS. Attach a standard-daemon parity report for both platforms. Stop for unexplained differences in trust, roots, access, build, GC, or configuration ownership. Keep private mode until both cutovers pass. Review package behavior, multi-user safety, and fixed configuration.
 
 **DN-10 subphase — Existing and foreign Nix classification**
@@ -346,28 +349,29 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 
 **DN-12 subphase — Inactive repair and update routing**
 
-- **Files and interface:** update repair routing, `production_repair.rs`, Doctor, the vendor Adapter, Handoff identity updates, and package repair paths. Base Nix and package repair stay separate. Do not name `determinate-nixd` as update owner without DN-03 proof.
-- **Work:** classify requests. Route inactive Base Nix repair only to the proved command. Keep package repair. Implement only the proved update owner and trigger. Revalidate and atomically update `Accepted` after vendor changes. Report unsupported update policy.
-- **Tests and gate:** test inactive gating, Base-only, package-only, and combined damage, failed and interrupted repair, identity updates, N-to-N+1, and proved downgrade policy. State and ownership snapshots must show one owner for every repair class. Stop if vendor repair changes package state, identity update is not atomic, or update ownership is unclear. Review inactive gating, classification, and package repair separation. The optional `repair sequoia` proof remains optional.
+- **Decision:** the companion PR-2 report concludes that vendor repair and update routing is NO-GO. Its evidence does not prove a safe general repair owner or a safe client-disconnect contract. The report must land before this becomes accepted PR-2 evidence. Package Repair stays unchanged.
+- **Work:** keep Package Repair. Add no vendor repair provider, update trigger, or speculative route. Reopen this work only after the vendor has a proved command and interruption contract for each supported platform.
+- **Tests and gate:** retain the research evidence. DN-15 stays blocked until Linux Base Nix repair and update have a safe named owner. The macOS equivalent blocks DN-16.
 
 **DN-13 subphase — Inactive uninstall and exact cleanup**
 
-- **Files and interface:** update `UninstallEngine`, platform uninstall modules, the vendor Adapter, lifecycle state, generations, activation forests, package roots, and product asset managers. Full uninstall has no keep-state mode. It removes Lifecycle State, Generations, Activation Forests, registered roots, product assets, and Base Nix because retained generations cannot survive store removal.
-- **Work:** validate every product and vendor identity before any mutation. An identity mismatch stops all removal. Write durable progress. Stop product services. Run vendor uninstall and record completion. Remove only exact installed product assets and state. Never use recursive deletion. Remove registered roots and activation forests. Prove residue and resume from every durable step. This uninstall behavior does not delete production source code. DN-13 owns exact all-or-nothing residue cleanup, not crash recovery.
-- **Tests and gate:** test inactive gating, clean and repeat uninstall, interruption at each step, missing or damaged receipt, changed executable, foreign-Nix refusal, state and root removal, and exact residue. Attach pre/post ownership reports and restart evidence for every step. Stop if pre-mutation identity, resumable vendor completion, or exact cleanup cannot be proved. Keep old uninstall active until cutover. Review destructive order, durable progress, and the absence of keep-state behavior.
+- **Delivered:** the vendor executable is staged before uninstall starts. The process does not depend on `/nix/nix-installer` while the vendor removes `/nix`.
+- **Gated:** exact residue cleanup is not delivered. It needs platform-specific identity proof, post-uninstall absence proof, one durable lock, and restart evidence. Keep old uninstall active until that proof exists.
+- **Tests and gate:** keep the staged-uninstall tests. DN-15 stays blocked until Linux exact cleanup is proved. DN-16 needs the separate macOS APFS and launchd proof.
 
 **DN-14 subphase — Old-alpha reset and refusal**
 
-- **Files and interface:** update existing-install detection, Doctor, installer preflight, last-alpha assets, and signed uninstaller metadata. Detect old alpha before mutation. Do not import its receipts or journals. Never print an absent recovery command or binary.
-- **Work:** identify a stable marker. Prove the last private-alpha uninstaller exists and works. If the new binary lacks it, publish the signed last-alpha uninstaller with an exact digest and source inventory. Refuse new install until it completes and clean state is proved.
-- **Tests and gate:** test complete and damaged old alpha, present and absent old commands, signed fallback, wrong digest, partial uninstall, and clean final state. The displayed reset action must execute for every supported fixture. Stop if no authenticated executable reset exists or foreign Nix can match the marker. Every fixture must reset or refuse with a real recovery path. Review executable instructions, the signed fallback, and zero silent adoption.
+- **Decision:** NO-GO. There is no authenticated old-alpha fallback executable with an exact digest and source inventory.
+- **Work:** add no reset route and no dead refusal module. Do not print a command that the product cannot execute. Keep the existing alpha handling unchanged until a real authenticated reset artifact exists.
+- **Tests and gate:** DN-15 stays blocked until each supported old-alpha fixture has an executable authenticated reset path or the release explicitly excludes those hosts.
 
-### DN-15 — Cut over the complete Linux Base Nix lifecycle
+### DN-15 delivery label — Cut over the complete Linux Base Nix lifecycle
 
+- **Status:** blocked by the unresolved DN-08–14 gates. Do not start implementation.
 - **Branch:** `dn/15-linux-lifecycle-cutover`.
-- **Base:** `dn/08-14-inactive-lifecycle-integration` branch and PR.
+- **Delivery PR:** PR 3, based on PR 2.
 - **Goal:** switch Linux install, repair, proved update, and uninstall together to the vendor lifecycle.
-- **Why now:** all lifecycle operations, package parity, configuration, detection, PATH, and old-alpha reset are proved.
+- **Why later:** start only after PR 2 resolves the Linux lifecycle, parity, configuration, detection, PATH, cleanup, and old-alpha gates.
 - **Likely files and symbols:** Linux bootstrap, inactive lifecycle routes, Handoff, product asset install, Doctor, release asset selection, and Linux user documents.
 - **Interface and invariants:** no runtime fallback. Product assets remain owned by `pkg`. Vendor owns all Base Nix lifecycle operations. Full uninstall removes all product state as defined in the DN-13 subphase. Unsupported hosts fail before mutation. Linux user documents describe the new Linux behavior in this PR.
 - **Implementation steps:** enable the vendor lifecycle gate for Linux. Verify the authenticated asset. Run install through Handoff. Enable vendor repair and proved update. Enable resumable full uninstall. Run package and product-service smoke tests. Update Linux install, repair, update, and uninstall documents. Keep the old implementation present but unreachable for deletion proof.
@@ -378,12 +382,13 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** one complete lifecycle owner, configuration preservation, Handoff, and full uninstall.
 - **Child-unblock condition:** all blocking Linux lifecycle rows pass twice with no old runtime path used.
 
-### DN-16 — Cut over the complete Apple Silicon macOS Base Nix lifecycle
+### DN-16 delivery label — Cut over the complete Apple Silicon macOS Base Nix lifecycle
 
+- **Status:** blocked by DN-08–14 and Linux completion.
 - **Branch:** `dn/16-macos-lifecycle-cutover`.
-- **Base:** DN-15 branch and PR.
+- **Delivery PR:** PR 4, based on PR 3.
 - **Goal:** switch Apple Silicon macOS install, repair, proved update, and uninstall together to the vendor lifecycle.
-- **Why now:** the shared lifecycle is proved on Linux and macOS-specific proof is complete.
+- **Why later:** start only after PR 2 gates are resolved and the Linux lifecycle is proved.
 - **Likely files and symbols:** macOS bootstrap, APFS detection, inactive lifecycle routes, Handoff, product launchd assets, release target selection, and macOS user documents.
 - **Interface and invariants:** no runtime fallback. Vendor owns Base Nix APFS, daemon, repair, update policy, and uninstall work. `pkg` owns product services and package work. Intel macOS is not claimed without full proof. Apple Silicon user documents describe the new behavior in this PR.
 - **Implementation steps:** enable the vendor lifecycle gate on Apple Silicon. Verify the authenticated asset. Run install through Handoff. Enable repair and proved update. Enable resumable full uninstall. Prove product launchd ownership and package behavior. Update macOS install, repair, update, and uninstall documents.
@@ -394,10 +399,9 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** complete lifecycle ownership, APFS, launchd, target support, and no Intel claim.
 - **Child-unblock condition:** all blocking Apple Silicon lifecycle rows pass twice with no old runtime path used.
 
-### DN-17 — Delete proved Linux Base Nix implementation
+### DN-17 work package — Delete proved Linux Base Nix implementation
 
-- **Branch:** `dn/17-delete-linux-base`.
-- **Base:** DN-16 branch and PR.
+- **Delivery PR:** PR 4, after DN-16 passes.
 - **Goal:** remove only Linux Base Nix installer code made unreachable by the cutover.
 - **Why now:** Linux production and uninstall proof have passed without fallback.
 - **Likely files and symbols:** Base-Nix-only parts of `installer.rs`, `linux_accounts.rs`, `linux_filesystem.rs`, `linux_install_journal*.rs`, `linux_systemd.rs`, `linux_backend.rs`, `linux_platform_assets.rs`, `linux_uninstall.rs`, and `assets.rs`.
@@ -410,10 +414,9 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** proof-before-delete and no whole-file assumptions.
 - **Child-unblock condition:** Linux package and uninstall matrices still pass after deletion.
 
-### DN-18 — Delete proved macOS Base Nix implementation
+### DN-18 work package — Delete proved macOS Base Nix implementation
 
-- **Branch:** `dn/18-delete-macos-base`.
-- **Base:** DN-17 branch and PR.
+- **Delivery PR:** PR 4, after DN-17 passes.
 - **Goal:** remove only macOS Base Nix, APFS, daemon, launchd, asset, and journal code made unreachable by cutover.
 - **Why now:** macOS production and uninstall proof have passed without fallback.
 - **Likely files and symbols:** Base-Nix-only parts of `macos_accounts.rs`, `macos_filesystem.rs`, `macos_install_journal*.rs`, `macos_launchd.rs`, `macos_backend.rs`, `macos_platform_assets.rs`, `macos_uninstall.rs`, `store_apfs.rs`, `store_mount.rs`, and `store_provision_macos.rs`.
@@ -426,10 +429,9 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** mixed ownership and platform residue.
 - **Child-unblock condition:** Apple Silicon package and uninstall matrices pass after deletion.
 
-### DN-19 — Delete shared private Base Nix provisioning and old release assets
+### DN-19 work package — Delete shared private Base Nix provisioning and old release assets
 
-- **Branch:** `dn/19-delete-private-runtime`.
-- **Base:** DN-18 branch and PR.
+- **Delivery PR:** PR 4, after DN-18 passes.
 - **Goal:** remove shared private runtime provisioning, obsolete Base Nix ownership records, obsolete Base Nix journals, installer bundles, and release artifacts.
 - **Why now:** both platforms use the vendor owner, and platform-specific old paths are gone.
 - **Likely files and symbols:** `pkg-nix/src/managed/{runtime_archive,installer_bundle,provision,daemon,accounts,ownership}.rs`, mixed journal code, release manifests, old runtime fixtures, Cargo manifests.
@@ -442,10 +444,9 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** transitive use, release reproducibility, and package-state preservation.
 - **Child-unblock condition:** release metadata contains only the new Base Nix asset model and all core package tests pass.
 
-### DN-20 — Complete core clean-host and release proof
+### DN-20 work package — Complete core clean-host and release proof
 
-- **Branch:** `dn/20-core-proof-docs`.
-- **Base:** DN-19 branch and PR.
+- **Delivery PR:** PR 4, after DN-19 passes.
 - **Goal:** prove the complete core system and update current user documents.
 - **Why now:** code deletion is complete, so the final proof measures the new design before the release documents are finalized.
 - **Likely files and symbols:** VM evidence, `docs/install.md`, `docs/commands.md`, `docs/support.md`, `docs/privacy.md`, release checklist.
@@ -458,18 +459,17 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** end-to-end ownership, docs accuracy, and no hidden old fallback.
 - **Child-unblock condition:** core definition of done in section 13 is complete.
 
-## 7. Optional simplification tail
+## 7. Optional simplification work packages in PR 4
 
-Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. They are not required for the Determinate cutover.
+Do not start DN-21 until DN-20 is complete. DN-21 through DN-32 are optional checkpoints inside delivery PR 4. They are not separate PRs. They are not required for the Determinate cutover.
 
-### DN-21 — Inventory final privilege and process seams
+### DN-21 work package — Inventory final privilege and process seams
 
-- **Branch:** `dn/21-seam-inventory`.
-- **Base:** DN-20 branch and PR.
+- **Delivery PR:** PR 4, after DN-20 passes.
 - **Goal:** record every live process, privilege seam, caller, and duty before simplification.
 - **Why now:** core behavior is stable. Deletion needs a complete baseline.
 - **Likely files and symbols:** Broker, Root Helper, `NixAdapter`, `MaintenanceAdapter`, vendor process, command engines, services, protocols.
-- **Interface and invariants:** this PR observes only. It does not assume that a seam should be removed.
+- **Interface and invariants:** this work package observes only. It does not assume that a seam should be removed.
 - **Implementation steps:** trace every caller. Record authentication, privilege, state, recovery, service, and log duties. Record the high-fan-in graph for each shared contract.
 - **Tests:** inventory consistency checks and existing contract tests.
 - **Proof and evidence:** every live duty has one current owner and named callers.
@@ -478,10 +478,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** completeness and no desired-answer bias.
 - **Child-unblock condition:** reviewers accept the full duty inventory.
 
-### DN-22 — Move broad fakes to existing seams
+### DN-22 work package — Move broad fakes to existing seams
 
-- **Branch:** `dn/22-test-real-seams`.
-- **Base:** DN-21 branch and PR.
+- **Delivery PR:** PR 4, after DN-21 passes.
 - **Goal:** replace broad command fakes with the existing `NixAdapter`, `MaintenanceAdapter`, and vendor-process seams.
 - **Why now:** DN-21 names the stable seams and their duties.
 - **Likely files and symbols:** `pkg-testkit`, `e2e_fake.rs`, fake Nix, fake maintenance, fake executable, CLI tests.
@@ -494,10 +493,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** test fidelity and no new test-only architecture.
 - **Child-unblock condition:** no production behavior depends only on the broad command fake.
 
-### DN-23 — Replace command engines with one concrete Application
+### DN-23 work package — Replace command engines with one concrete Application
 
-- **Branch:** `dn/23-concrete-application`.
-- **Base:** DN-22 branch and PR.
+- **Delivery PR:** PR 4, after DN-22 passes.
 - **Goal:** replace `CommandEngine`, `CoreOperations`, and `CoreEngine` with `Application::execute(request, progress)`.
 - **Why now:** tests now use real seams and can protect the orchestration change.
 - **Likely files and symbols:** the three engines, CLI dispatch, pipeline entry points, progress handling.
@@ -510,10 +508,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** direct replacement and smaller surface.
 - **Child-unblock condition:** all package mutation commands use the concrete entry point.
 
-### DN-24 — Centralize package-mutation recovery
+### DN-24 work package — Centralize package-mutation recovery
 
-- **Branch:** `dn/24-total-recovery`.
-- **Base:** DN-23 branch and PR.
+- **Delivery PR:** PR 4, after DN-23 passes.
 - **Goal:** run all required recovery once before package mutation and delete bypass paths.
 - **Why now:** one application entry point exists.
 - **Likely files and symbols:** lifecycle recovery, package journals, activation, GC, pending operations.
@@ -526,26 +523,24 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** total coverage, idempotence, and lock order.
 - **Child-unblock condition:** no package mutation bypasses total recovery.
 
-### DN-25 — Remove proved direct-Nix duplicates
+### DN-25 work package — Remove proved direct-Nix duplicates
 
-- **Branch:** `dn/25-direct-nix-duplicates`.
-- **Base:** DN-24 branch and PR.
+- **Delivery PR:** PR 4, after DN-24 passes.
 - **Goal:** remove only direct Nix process code duplicated by existing adapters.
 - **Why now:** application and recovery paths are stable.
 - **Likely files and symbols:** direct process callers, `NixAdapter`, `RealNixAdapter`, pipeline acquire paths.
-- **Interface and invariants:** resolution stays in `pkg-resolver`. The adapter exposes product operations, not raw command flags. Skip this PR if no duplicate exists.
+- **Interface and invariants:** resolution stays in `pkg-resolver`. The adapter exposes product operations, not raw command flags. Skip this work package if no duplicate exists.
 - **Implementation steps:** inventory direct Nix calls. Compare each with existing adapter behavior. Move only exact duplicates. Leave resolver policy in `pkg-resolver`.
 - **Tests:** resolver, acquire, parity, and package lifecycle tests.
 - **Proof and evidence:** each deletion has an equal existing adapter path.
 - **Deletion:** proved duplicate process and parsing code only.
-- **Rollback or stop rule:** skip the PR if the inventory finds no duplicate. Stop if moving code changes ownership.
+- **Rollback or stop rule:** skip the work package if the inventory finds no duplicate. Stop if moving code changes ownership.
 - **Review focus:** evidence-gated deletion and resolver boundary.
 - **Child-unblock condition:** inventory is complete and all duplicates are removed or explicitly retained.
 
-### DN-26 — Prove local-build admission and build-duty replacements
+### DN-26 work package — Prove local-build admission and build-duty replacements
 
-- **Branch:** `dn/26-build-admission-proof`.
-- **Base:** DN-25 branch and PR.
+- **Delivery PR:** PR 4, after DN-25 passes or is skipped.
 - **Goal:** prove a replacement for multi-user local-build admission and every related build duty.
 - **Why now:** Broker deletion cannot be considered without this proof.
 - **Likely files and symbols:** build approval receipts, `build_authority*`, Broker build messages, acquisition, logs, cancellation, local command.
@@ -558,10 +553,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** complete build duties and privilege safety.
 - **Child-unblock condition:** every build duty has a proved replacement or explicit Broker retain decision.
 
-### DN-27 — Prove replacement owners for every privileged duty
+### DN-27 work package — Prove replacement owners for every privileged duty
 
-- **Branch:** `dn/27-privilege-duty-proof`.
-- **Base:** DN-26 branch and PR.
+- **Delivery PR:** PR 4, after DN-26 passes.
 - **Goal:** prove a replacement or retain decision for every Broker and Root Helper duty.
 - **Why now:** helper or Broker deletion needs complete evidence, not a partial package smoke test.
 - **Likely files and symbols:** Broker, Root Helper, `MaintenanceAdapter`, services, datastore, logs, all protocol messages.
@@ -574,10 +568,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** matrix completeness and equal security.
 - **Child-unblock condition:** every live duty has a proved owner or retain decision.
 
-### DN-28 — Delete or deepen the Root Helper
+### DN-28 work package — Delete or deepen the Root Helper
 
-- **Branch:** `dn/28-root-helper-decision`.
-- **Base:** DN-27 branch and PR.
+- **Delivery PR:** PR 4, after DN-27 passes.
 - **Goal:** delete the Root Helper only if every helper duty has equal replacement proof.
 - **Why now:** DN-27 completes the duty proof.
 - **Likely files and symbols:** `pkg-root-helper`, helper protocol, service assets, `MaintenanceAdapter` implementation.
@@ -590,10 +583,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** strict use of the stop gate.
 - **Child-unblock condition:** the final helper ownership model is tested and documented.
 
-### DN-29 — Delete or deepen the Broker
+### DN-29 work package — Delete or deepen the Broker
 
-- **Branch:** `dn/29-broker-decision`.
-- **Base:** DN-28 branch and PR.
+- **Delivery PR:** PR 4, after DN-28 passes.
 - **Goal:** delete the Broker only if every Broker duty has equal replacement proof.
 - **Why now:** build and full duty proofs are complete.
 - **Likely files and symbols:** `BrokerLifecycleClient`, Broker binary, service, protocol, datastore, logs, package operations.
@@ -606,10 +598,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** high fan-in, duty completeness, and no forced deletion.
 - **Child-unblock condition:** all package and product service duties work through the final process model.
 
-### DN-30 — Prune dead transport grammar
+### DN-30 work package — Prune dead transport grammar
 
-- **Branch:** `dn/30-prune-transport`.
-- **Base:** DN-29 branch and PR.
+- **Delivery PR:** PR 4, after DN-29 passes.
 - **Goal:** delete only transport messages that have no live producer or consumer.
 - **Why now:** final Broker and Helper topology is known.
 - **Likely files and symbols:** `contract.rs`, `framing.rs`, request, response, and report variants.
@@ -622,14 +613,13 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** transport only and proof by live endpoints.
 - **Child-unblock condition:** every surviving message has a producer, consumer, and test.
 
-### DN-31 — Relocate domain types only for a measured dependency gain
+### DN-31 work package — Relocate domain types only for a measured dependency gain
 
-- **Branch:** `dn/31-domain-edge-reduction`.
-- **Base:** DN-30 branch and PR.
+- **Delivery PR:** PR 4, after DN-30 passes.
 - **Goal:** move high-impact domain types only when the move removes a dependency edge or enables crate deletion.
 - **Why now:** transport is stable and the final dependency graph is measurable.
 - **Likely files and symbols:** `GenerationId`, `MaintenanceAdapter`, `OwnershipExpectation`, `ManagedGroupBindings`, Cargo manifests.
-- **Interface and invariants:** do not move a type for neatness. Preserve validation and semantics. Skip the PR if no measured gain exists.
+- **Interface and invariants:** do not move a type for neatness. Preserve validation and semantics. Skip this work package if no measured gain exists.
 - **Implementation steps:** model candidate moves. Count dependency edges before and after. Select at most one coherent move. Update imports mechanically. Delete an empty dependency only after target tests pass.
 - **Tests:** affected contract, package, platform, and compile checks.
 - **Proof and evidence:** graph evidence shows a removed edge or crate dependency.
@@ -638,10 +628,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** measured value and mechanical semantics.
 - **Child-unblock condition:** the move passes or the recorded skip decision is reviewed.
 
-### DN-32 — Complete simplification proof
+### DN-32 work package — Complete simplification proof
 
-- **Branch:** `dn/32-simplification-proof`.
-- **Base:** DN-31 branch and PR, or DN-30 if DN-31 is skipped.
+- **Delivery PR:** PR 4, after DN-31 passes or is skipped.
 - **Goal:** measure the final design, prune proved-unused dependencies, and update architecture documents.
 - **Why now:** all optional process and topology decisions are complete.
 - **Likely files and symbols:** Cargo manifests, lockfile, code-health evidence, `CONTEXT.md`, ADR status notes, current docs.
@@ -654,18 +643,18 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** evidence, not deletion count.
 - **Child-unblock condition:** optional definition of done is complete.
 
-## 8. Delivery PR dependency and test table
+## 8. Work-package dependency and test table
 
-| PR | Merge blocker | Likely affected tests |
+| Work package | Gate before the next work package | Likely affected tests |
 |---|---|---|
 | DN-00 | Archive and links complete; plan reviews pass | link check, `git diff --check` |
 | DN-01 | No failed pending operation remains live | CLI recovery, Broker lifecycle |
 | DN-02 | Verify-only path has no writes | repair, leases, concurrency |
 | DN-03 | Complete for standalone evidence; negative cleanup and crash results route to later owners | Linux/macOS VM spike matrix and accepted child reports |
 | DN-04 | Complete; every domain claim maps to DN-03 | documentation links and terminology |
-| DN-05–07 | Assets, invocation, and crash-state classification all pass | release trust, fake process, Handoff, and receipt fault injection |
-| DN-08–14 | Every inactive lifecycle subphase gate passes | asset partition, RealNix parity, detection, PATH, repair, update, uninstall, cleanup, and old-alpha reset |
-| DN-15 | Complete Linux lifecycle passes twice | Linux install, repair, update, uninstall, packages |
+| DN-05–07 | Complete; assets, invocation, and crash-state classification pass | release trust, fake process, Handoff, and receipt fault injection |
+| DN-08–14 | Companion asset-owner implementation and DN-12 evidence commits land; partial foundation and NO-GO evidence are accurate; unresolved cutover gates are explicit | asset partition, typed proxy, detection, PATH evidence, staged uninstall, and decision reports |
+| DN-15 | DN-08–14 Linux gates are resolved; then the complete Linux lifecycle passes twice | Linux install, repair, update, uninstall, packages |
 | DN-16 | Complete Apple Silicon lifecycle passes twice | macOS install, repair, update, uninstall, packages |
 | DN-17 | Deleted Linux symbols have no live callers | Linux matrix and package lifecycle |
 | DN-18 | Deleted macOS symbols have no live callers | macOS matrix and security tests |
@@ -681,7 +670,7 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 | DN-28 | Root Helper decision follows DN-27 | helper security, package and service lifecycle |
 | DN-29 | Broker decision follows DN-26 and DN-27 | Broker auth, cancellation, package and service lifecycle |
 | DN-30 | Every transport message has live endpoints | contract and framing round trips |
-| DN-31 | A move removes an edge, or PR is skipped | affected contract and package checks |
+| DN-31 | A move removes an edge, or the work package is skipped | affected contract and package checks |
 | DN-32 | Target dependency proof and final checks pass | builds, affected tests, security, VM smoke |
 
 ## 9. Dependency decisions
@@ -744,17 +733,17 @@ Evidence for each row records platform image, architecture, product revision, ve
 | Modified installed vendor executable | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Detect identity change and refuse or atomically reaccept after proved lifecycle work |
 | Standard-daemon package behavior | DN-08–14 / DN-09 | Blocking | Blocking before target release | Blocking | Required package parity passes |
 | Broker daemon admission | DN-08–14 / DN-09 | Blocking | Sample | Blocking | Multi-user access follows one owned configuration path |
-| Vendor config repair/update preservation | DN-08–14 / DN-09 | Blocking | Sample | Blocking | No vendor-owned file has a second writer |
+| Vendor config one-writer | DN-08 foundation; DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | No vendor-owned file has a second writer |
 | Foreign Nix | DN-08–14 / DN-10 | Blocking | Sample | Blocking | Refuse and preserve all files |
 | Upstream Nix | DN-08–14 / DN-10 | Blocking | Sample | Blocking | Refuse and preserve all files |
 | Unmarked Determinate | DN-08–14 / DN-10 | Blocking | Sample | Blocking | Refuse initial-alpha adoption |
 | Login shell PATH | DN-08–14 / DN-11 | Blocking | Sample | Blocking | `pkg` works and observed raw Nix exposure matches policy |
 | Non-login shell PATH | DN-08–14 / DN-11 | Blocking | Sample | Blocking | `pkg` works without profile assumptions |
 | GUI launch PATH | DN-08–14 / DN-11 | Blocking | Sample | Blocking | `pkg` works from a clean GUI environment |
-| Inactive Base Nix repair | DN-08–14 / DN-12 | Blocking | Sample | Blocking | Vendor-owned repair only |
-| Inactive Base Nix update | DN-08–14 / DN-12 | Blocking | Sample | Blocking | Exact proved owner; no assumed `determinate-nixd` owner |
-| Inactive full uninstall and resume | DN-08–14 / DN-13 | Blocking | Sample | Blocking | Durable full removal steps resume safely |
-| Old private alpha reset | DN-08–14 / DN-14 | Blocking | Sample | Blocking | Refuse and provide an executable authenticated uninstaller |
+| Base Nix repair owner | DN-12 decision; DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | DN-12 is NO-GO; prove a safe platform owner before cutover |
+| Base Nix update owner | DN-12 decision; DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | DN-12 is NO-GO; do not assume a `determinate-nixd` owner |
+| Full uninstall and resume | DN-13 foundation; DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Staging exists; prove exact platform cleanup before cutover |
+| Old private alpha reset | DN-14 decision; DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | DN-14 is NO-GO; require an authenticated reset path or exclude the host |
 | Complete clean install | DN-15 Linux; DN-16 macOS | Blocking | Blocking before target release | Blocking | Accepted Handoff and working product |
 | Complete repeat install | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | Stable complete lifecycle result |
 | Complete repair and update | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Base and package repair stay separate |
@@ -798,7 +787,7 @@ The report and this plan use work from GLM 5.3, DeepSeek Pro, and Qwen 3.8 Max. 
 - Advice to replace the custom installer was narrowed to Base Nix lifecycle. Package roots, GC, repair, generations, and builds remain product work.
 - Advice to simplify `Application` became one concrete `Application::execute` method. No trait or new crate is planned.
 - Advice to adopt existing Determinate installations became fail-closed classification. Automatic adoption is optional after stable identity proof.
-- Advice about update delegation became a DN-03 research question. The plan does not name `determinate-nixd` as owner without proof.
+- Advice about update delegation became DN-12 evidence. The result is NO-GO. The plan does not name `determinate-nixd` as owner without proof.
 
 ### 11.3 Rejected advice
 
@@ -849,7 +838,8 @@ Run this checklist on the plan and on every implementation PR.
 
 - [ ] Does unknown Nix fail closed?
 - [ ] Does the code avoid deleting unknown `/nix` content?
-- [ ] Does the old alpha refuse with clean reset instructions?
+- [ ] Does the old alpha refuse without an invented reset command?
+- [ ] Does each supported old-alpha host have an authenticated reset artifact before cutover?
 - [ ] Are crash, reboot, repeat, wrong-digest, and residue cases covered?
 - [ ] Are package and Base Nix repair separate?
 - [ ] Are privilege changes supported by multi-user proof?
