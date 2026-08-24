@@ -65,6 +65,7 @@ We use one linear GitHub PR stack.
 - Core branches use `dn/NN-short-name` for one label or `dn/NN-NN-short-name` for one grouped delivery PR.
 - Optional branches use the same format.
 - The branch label matches the stable DN label or label range in this plan.
+- A DN label is an ordered requirement and commit-checkpoint ID. It is not only a subphase label.
 - A branch contains one reviewable result.
 
 ### 3.2 PR bases
@@ -92,7 +93,7 @@ Each PR description has these fields:
 9. **Risk**: the highest remaining risk.
 10. **Not included**: work that belongs to a later PR.
 
-For a grouped PR, the description also reports each stable DN subphase as complete or blocked. Reviewers review each subphase gate and then the combined result. The PR cannot merge with one blocked subphase.
+For a grouped PR, the description also reports each stable DN checkpoint as complete or blocked. Each DN checkpoint ends with exactly one signed commit after its focused checks pass. Each checkpoint commit must be independently reviewable. Reviewers review each checkpoint gate and then the combined result. The PR cannot merge with one blocked checkpoint.
 
 ### 3.4 Parent merge procedure
 
@@ -282,7 +283,7 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Branch:** `dn/05-07-vendor-foundation`.
 - **Base:** DN-04 branch and PR.
 - **Goal:** ship pinned vendor assets, one private process Adapter, and minimal Vendor Receipt and Handoff validation in one review.
-- **Order:** the DN-05, DN-06, and DN-07 subphases are stable requirement labels. Implement and review them in this order inside this PR.
+- **Order:** DN-05, DN-06, and DN-07 are ordered requirement and commit-checkpoint IDs. They are not only subphase labels. Implement them in this order. End each checkpoint with one signed, green, independently reviewable commit.
 - **Deletion:** none. Keep old Base Nix assets until both platform cutovers pass. This PR adds no second receipt or vendor action journal.
 - **Combined stop rule:** do not merge if source compliance, a supported target asset, exact safe invocation, or deterministic Handoff recovery is missing.
 
@@ -315,8 +316,8 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Branch:** `dn/08-14-inactive-lifecycle-integration`.
 - **Base:** `dn/05-07-vendor-foundation` branch and PR.
 - **Goal:** complete the inactive asset, package, detection, PATH, repair, update, uninstall, and old-alpha flow before either platform cutover.
-- **Order:** DN-08 through DN-14 remain stable requirement labels. Implement and review each subphase in order inside this PR. Keep every route inactive in shipped behavior.
-- **Combined deletion:** delete no production Base Nix path. Remove only ambiguous detection branches that become unreachable. Remove custom PATH changes only after equivalent launch behavior is proved. Add no compatibility bridge.
+- **Order:** DN-08 through DN-14 are ordered requirement and commit-checkpoint IDs. They are not only subphase labels. Implement them in order. End each checkpoint with one signed, green, independently reviewable commit. Keep every route inactive in shipped behavior.
+- **Combined deletion:** none. Delete no production code in this grouped PR. Keep old detection and PATH code unchanged. DN-17 through DN-19 own any later deletion of obsolete Base Nix detection or PATH code after platform cutover proof. Add no compatibility bridge.
 - **Combined stop rule:** any failed subphase gate blocks the complete PR and DN-15.
 
 **DN-08 subphase — Split product and Base Nix assets**
@@ -334,14 +335,14 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 **DN-10 subphase — Existing and foreign Nix classification**
 
 - **Files and interface:** update managed detection, Doctor, bootstrap preflight, and receipt and executable validation. Accept only a clean host or stable Handoff from the new flow. Report foreign Nix, upstream Nix, unmarked Determinate, damaged accepted state, and old alpha separately. All unsafe states block automatic install.
-- **Work and tests:** classify only observable facts. Add clear Doctor actions and installer refusal. Test clean, accepted, foreign, upstream, unmarked Determinate, damaged accepted, and old-alpha fixtures. Each fixture must map to one stable classification and one safe action. Keep automatic adoption as future work.
+- **Work and tests:** classify only observable facts. Add clear Doctor actions and installer refusal. Test clean, accepted, foreign, upstream, unmarked Determinate, damaged accepted, and old-alpha fixtures. Each fixture must map to one stable classification and one safe action. Keep automatic adoption as future work. Keep all current production detection code in place.
 - **Gate:** every unknown state must fail before privilege or mutation. Stop if two unsafe states can produce accepted identity. Never repair, adopt, or delete unknown state automatically. Review false acceptance, user instructions, and the lack of auto-adoption.
 
 **DN-11 subphase — PATH behavior**
 
 - **Files and interface:** update proved installer options, `crates/pkg-cli/src/path.rs`, shell tests, Doctor output, and VM evidence. `pkg` never locates the vendor executable or Nix through PATH. Normal use must work in login, non-login, clean non-login, and GUI environments. Raw Nix visibility is not a security boundary.
 - **Work and tests:** enforce the DN-03 profile-control result. Inspect supported shells and GUI launch state. Report unexpected raw Nix exposure. Test existing profile content, repeat install, uninstall residue, and every launch context. Record before-and-after environments.
-- **Gate:** stop if `pkg` needs fragile shell mutation or the vendor silently changes profiles. Remove custom PATH changes only after equal behavior is proved. Review the user-experience statement separately from the security statement and confirm absolute path use.
+- **Gate:** stop if `pkg` needs fragile shell mutation or the vendor silently changes profiles. Keep current production PATH code in place. Record any proved-obsolete PATH code for deletion by DN-17 through DN-19 after platform cutover. Review the user-experience statement separately from the security statement and confirm absolute path use.
 
 **DN-12 subphase — Inactive repair and update routing**
 
@@ -352,7 +353,7 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 **DN-13 subphase — Inactive uninstall and exact cleanup**
 
 - **Files and interface:** update `UninstallEngine`, platform uninstall modules, the vendor Adapter, lifecycle state, generations, activation forests, package roots, and product asset managers. Full uninstall has no keep-state mode. It removes Lifecycle State, Generations, Activation Forests, registered roots, product assets, and Base Nix because retained generations cannot survive store removal.
-- **Work:** validate every product and vendor identity before any mutation. An identity mismatch stops all removal. Write durable progress. Stop product services. Run vendor uninstall and record completion. Remove only exact product assets and state. Never use recursive deletion. Remove registered roots and activation forests. Prove residue and resume from every durable step. DN-13 owns exact all-or-nothing residue cleanup, not crash recovery.
+- **Work:** validate every product and vendor identity before any mutation. An identity mismatch stops all removal. Write durable progress. Stop product services. Run vendor uninstall and record completion. Remove only exact installed product assets and state. Never use recursive deletion. Remove registered roots and activation forests. Prove residue and resume from every durable step. This uninstall behavior does not delete production source code. DN-13 owns exact all-or-nothing residue cleanup, not crash recovery.
 - **Tests and gate:** test inactive gating, clean and repeat uninstall, interruption at each step, missing or damaged receipt, changed executable, foreign-Nix refusal, state and root removal, and exact residue. Attach pre/post ownership reports and restart evidence for every step. Stop if pre-mutation identity, resumable vendor completion, or exact cleanup cannot be proved. Keep old uninstall active until cutover. Review destructive order, durable progress, and the absence of keep-state behavior.
 
 **DN-14 subphase — Old-alpha reset and refusal**
