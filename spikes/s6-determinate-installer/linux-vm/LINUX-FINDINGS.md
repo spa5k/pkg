@@ -5,7 +5,7 @@
 | **Report** | DN-03b. Broad Linux x86_64 QEMU behavior evidence plus Linux x86_64 and aarch64 container Asset proofs. |
 | **Date** | 2026-08-24 (report date; R12 ran on 2026-08-23 UTC). |
 | **Parent** | [S6 research findings](../FINDINGS.md), [Linux VM harness](README.md), [stack plan](../../../plans/determinate-nix-stacked-prs.md). |
-| **Status** | Fresh R12 proves the required Linux x86_64 behavior and both Linux target Asset proofs. R10 proves the Apple Silicon lifecycle and residue rows. Crash R1 completes the standalone SIGKILL and reboot observation with a negative result. Parent status: COMPLETE — EVIDENCE COMPLETE; PRODUCT DELIVERY NO-GO. DN-04 may document the proved contract. Linux clean vendor uninstall remains `FAIL`. DN-13 owns exact residue cleanup only. |
+| **Status** | Fresh R12 proves the required broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two Linux target Asset proofs. macOS R10 proves the Apple Silicon lifecycle and residue rows. Crash R1 completes the standalone SIGKILL and reboot observation with a negative result. Parent status: COMPLETE — EVIDENCE COMPLETE; PRODUCT DELIVERY NO-GO. DN-04 may document the proved contract. Linux clean vendor uninstall remains `FAIL`. DN-13 owns exact residue cleanup only. |
 
 ## Terms
 

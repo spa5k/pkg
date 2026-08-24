@@ -47,8 +47,8 @@ tar-stream SHA-256 is
 Its canonical relative file-hash manifest SHA-256 is
 `57653027291abd6602892c1be37cb52e80855c39261ebf768a74e895e803bb82`.
 
-**Observed, macOS Crash R1.** The recorded run date is 2026-08-24. The run
-used signed source `1ad44acf6c7780fa5ed3e135c1fcdc734149402f`.
+**Observed, macOS Crash R1.** The run used signed source
+`1ad44acf6c7780fa5ed3e135c1fcdc734149402f`.
 
 | Crash R1 phase or check | Status | Result |
 |---|---:|---|
