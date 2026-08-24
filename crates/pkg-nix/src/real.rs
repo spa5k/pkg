@@ -51,6 +51,8 @@ pub(crate) const MANAGED_NIX_CONFIG: &str = "include /opt/pkg/etc/pkg/nix.conf";
 pub(crate) const MANAGED_NIX_STATE: &str = "/nix/var/nix";
 pub(crate) const MANAGED_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socket";
 pub(crate) const MANAGED_PATH: &str = "/usr/bin:/bin";
+const STANDARD_DETERMINATE_NIX_BINARY: &str = "/nix/var/nix/profiles/default/bin/nix";
+const STANDARD_DETERMINATE_NIX_VERSION: &str = "2.35.2";
 const MAX_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
 const MAX_INTERNAL_JSON_LINE_BYTES: usize = 256 * 1024;
@@ -75,6 +77,7 @@ pub const MAX_REPAIR_EXECUTION_DURATION: Duration = Duration::from_secs(24 * 60 
 /// Real, version-pinned adapter around the product-managed Nix executable.
 pub struct RealNixAdapter {
     executor: Arc<dyn CommandExecutor>,
+    expected_nix_version: &'static str,
 }
 
 /// Root-helper-only executor for the fixed, capability-validated Nix repair
@@ -113,7 +116,7 @@ impl RootNixRepairExecutor {
             executor: Arc::new(validated_process_executor(
                 nix_binary,
                 private_home,
-                Path::new(MANAGED_DAEMON_SOCKET),
+                Some(Path::new(MANAGED_DAEMON_SOCKET)),
             )?),
         })
     }
@@ -156,7 +159,7 @@ impl RootNixGcExecutor {
             executor: Arc::new(validated_process_executor(
                 nix_binary,
                 private_home,
-                Path::new(MANAGED_DAEMON_SOCKET),
+                Some(Path::new(MANAGED_DAEMON_SOCKET)),
             )?),
         })
     }
@@ -369,8 +372,27 @@ impl RealNixAdapter {
             executor: Arc::new(validated_process_executor(
                 nix_binary,
                 private_home,
-                Path::new(MANAGED_DAEMON_SOCKET),
+                Some(Path::new(MANAGED_DAEMON_SOCKET)),
             )?),
+            expected_nix_version: PINNED_NIX_VERSION,
+        })
+    }
+
+    /// Constructs an adapter for the fixed standard Determinate Nix profile.
+    ///
+    /// This mode uses the vendor configuration unchanged. It accepts no
+    /// caller-selected executable, Nix configuration, daemon socket, state
+    /// directory, or remote.
+    ///
+    /// This constructor is inactive until DN15/DN16 wires it into the root helper.
+    pub fn new_standard_determinate(private_home: &Path) -> Result<Self, NixAdapterError> {
+        Ok(Self {
+            executor: Arc::new(validated_process_executor(
+                Path::new(STANDARD_DETERMINATE_NIX_BINARY),
+                private_home,
+                None,
+            )?),
+            expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
         })
     }
 
@@ -383,8 +405,9 @@ impl RealNixAdapter {
             executor: Arc::new(validated_process_executor(
                 nix_binary,
                 private_home,
-                daemon_socket,
+                Some(daemon_socket),
             )?),
+            expected_nix_version: PINNED_NIX_VERSION,
         })
     }
 
@@ -578,6 +601,15 @@ impl RealNixAdapter {
     fn scripted(executor: impl CommandExecutor + 'static) -> Self {
         Self {
             executor: Arc::new(executor),
+            expected_nix_version: PINNED_NIX_VERSION,
+        }
+    }
+
+    #[cfg(test)]
+    fn scripted_standard_determinate(executor: impl CommandExecutor + 'static) -> Self {
+        Self {
+            executor: Arc::new(executor),
+            expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
         }
     }
 
@@ -993,7 +1025,7 @@ impl NixAdapter for RealNixAdapter {
             self.require_success(MethodKind::Version, vec!["--version".into()], SHORT_TIMEOUT)?;
         let text = std::str::from_utf8(&bytes).map_err(|_| malformed())?.trim();
         let version = text.strip_prefix("nix (Nix) ").ok_or_else(malformed)?;
-        if version != PINNED_NIX_VERSION {
+        if version != self.expected_nix_version {
             return Err(NixAdapterError::UnsupportedUpstreamFormat {
                 command: MethodKind::Version,
                 observed: 0,
@@ -1011,7 +1043,7 @@ impl NixAdapter for RealNixAdapter {
         let legacy_text = std::str::from_utf8(&legacy.stdout)
             .map_err(|_| malformed())?
             .trim();
-        if legacy_text != format!("nix-store (Nix) {PINNED_NIX_VERSION}") {
+        if legacy_text != format!("nix-store (Nix) {}", self.expected_nix_version) {
             return Err(NixAdapterError::UnsupportedUpstreamFormat {
                 command: MethodKind::Version,
                 observed: 0,
@@ -1281,9 +1313,12 @@ trait CommandExecutor: Send + Sync {
 fn validated_process_executor(
     nix_binary: &Path,
     private_home: &Path,
-    daemon_socket: &Path,
+    daemon_socket: Option<&Path>,
 ) -> Result<ProcessExecutor, NixAdapterError> {
-    if !nix_binary.is_absolute() || !private_home.is_absolute() || !daemon_socket.is_absolute() {
+    if !nix_binary.is_absolute()
+        || !private_home.is_absolute()
+        || daemon_socket.is_some_and(|path| !path.is_absolute())
+    {
         return Err(NixAdapterError::ValidationFailure {
             summary: crate::error::BoundedSummary::new("adapter path is not absolute"),
         });
@@ -1311,7 +1346,7 @@ fn validated_process_executor(
         nix_binary: nix_binary.to_path_buf(),
         nix_store_binary,
         private_home: private_home.to_path_buf(),
-        daemon_socket: daemon_socket.to_path_buf(),
+        daemon_socket: daemon_socket.map(Path::to_path_buf),
     })
 }
 
@@ -1382,7 +1417,7 @@ struct ProcessExecutor {
     nix_binary: PathBuf,
     nix_store_binary: PathBuf,
     private_home: PathBuf,
-    daemon_socket: PathBuf,
+    daemon_socket: Option<PathBuf>,
 }
 
 impl CommandExecutor for ProcessExecutor {
@@ -1415,15 +1450,18 @@ impl ProcessExecutor {
             .env_clear()
             .env("HOME", &self.private_home)
             .env("TMPDIR", self.private_home.join("tmp"))
-            .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
-            .env("NIX_DAEMON_SOCKET_PATH", &self.daemon_socket)
-            .env("NIX_REMOTE", "daemon")
-            .env("NIX_STATE_DIR", MANAGED_NIX_STATE)
             .env("NIX_USER_CONF_FILES", "")
             .env("PATH", MANAGED_PATH)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(daemon_socket) = &self.daemon_socket {
+            command
+                .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
+                .env("NIX_DAEMON_SOCKET_PATH", daemon_socket)
+                .env("NIX_REMOTE", "daemon")
+                .env("NIX_STATE_DIR", MANAGED_NIX_STATE);
+        }
         #[cfg(unix)]
         command.process_group(0);
         let mut child = command.spawn().map_err(|_| NixAdapterError::Unavailable)?;
@@ -2294,6 +2332,10 @@ const fn is_private(_metadata: &fs::Metadata) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::collections::BTreeMap;
+    #[cfg(unix)]
+    use std::fs;
     use std::sync::{Arc, Mutex};
 
     use pkg_core::{
@@ -2356,6 +2398,116 @@ mod tests {
         let mut outcome = success(Vec::new());
         outcome.code = Some(code);
         outcome
+    }
+
+    #[cfg(unix)]
+    fn captured_environment(
+        executor: &ProcessExecutor,
+    ) -> Result<BTreeMap<String, String>, Box<dyn std::error::Error>> {
+        let outcome = executor.execute(CommandSpec {
+            program: NixProgram::Modern,
+            args: Vec::new(),
+            timeout: SHORT_TIMEOUT,
+        })?;
+        Ok(String::from_utf8(outcome.stdout)?
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn standard_determinate_executor_uses_fixed_binary_and_clean_nix_environment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "PKG_NIX_STANDARD_EXECUTOR_ENV_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let current_thread = std::thread::current();
+            let test_name = current_thread.name().ok_or("missing test name")?;
+            let status = std::process::Command::new(std::env::current_exe()?)
+                .arg("--exact")
+                .arg(test_name)
+                .env(CHILD, "1")
+                .env("NIX_CONFIG", "ambient-config")
+                .env("NIX_DAEMON_SOCKET_PATH", "/ambient/socket")
+                .env("NIX_REMOTE", "ambient-remote")
+                .env("NIX_STATE_DIR", "/ambient/state")
+                .status()?;
+            assert!(status.success());
+            return Ok(());
+        }
+
+        assert_eq!(
+            Path::new(STANDARD_DETERMINATE_NIX_BINARY),
+            Path::new("/nix/var/nix/profiles/default/bin/nix")
+        );
+
+        let temporary = tempfile::tempdir()?;
+        let home = temporary.path().join("home");
+        fs::create_dir(&home)?;
+        fs::create_dir(home.join("tmp"))?;
+        let binary = temporary.path().join("nix");
+        fs::write(&binary, "#!/bin/sh\nexec /usr/bin/env\n")?;
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
+
+        let standard = ProcessExecutor {
+            nix_binary: binary.clone(),
+            nix_store_binary: binary.clone(),
+            private_home: home.clone(),
+            daemon_socket: None,
+        };
+        let legacy = ProcessExecutor {
+            nix_binary: binary.clone(),
+            nix_store_binary: binary,
+            private_home: home.clone(),
+            daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
+        };
+
+        let standard_environment = captured_environment(&standard)?;
+        assert_eq!(
+            standard_environment.get("HOME"),
+            Some(&home.display().to_string())
+        );
+        assert_eq!(
+            standard_environment.get("TMPDIR"),
+            Some(&home.join("tmp").display().to_string())
+        );
+        assert_eq!(
+            standard_environment.get("NIX_USER_CONF_FILES"),
+            Some(&String::new())
+        );
+        assert_eq!(
+            standard_environment.get("PATH"),
+            Some(&MANAGED_PATH.to_owned())
+        );
+        for key in [
+            "NIX_CONFIG",
+            "NIX_DAEMON_SOCKET_PATH",
+            "NIX_REMOTE",
+            "NIX_STATE_DIR",
+        ] {
+            assert!(!standard_environment.contains_key(key));
+        }
+
+        let legacy_environment = captured_environment(&legacy)?;
+        assert_eq!(
+            legacy_environment.get("NIX_CONFIG"),
+            Some(&MANAGED_NIX_CONFIG.to_owned())
+        );
+        assert_eq!(
+            legacy_environment.get("NIX_DAEMON_SOCKET_PATH"),
+            Some(&MANAGED_DAEMON_SOCKET.to_owned())
+        );
+        assert_eq!(
+            legacy_environment.get("NIX_REMOTE"),
+            Some(&"daemon".to_owned())
+        );
+        assert_eq!(
+            legacy_environment.get("NIX_STATE_DIR"),
+            Some(&MANAGED_NIX_STATE.to_owned())
+        );
+        Ok(())
     }
 
     fn repair_scope(mode: RepairMode) -> Result<VerifiedRepairScope, Box<dyn std::error::Error>> {
@@ -2661,16 +2813,63 @@ mod tests {
     }
 
     #[test]
-    fn version_is_exact_and_environment_runner_is_not_bypassed()
+    fn fixed_mode_versions_are_exact_and_environment_runner_is_not_bypassed()
     -> Result<(), Box<dyn std::error::Error>> {
-        let adapter = RealNixAdapter::scripted(Scripted::new(vec![
+        let legacy = RealNixAdapter::scripted(Scripted::new(vec![
             success("nix (Nix) 2.34.8\n"),
             success("nix-store (Nix) 2.34.8\n"),
         ]));
-        let version = adapter.version()?;
-        assert_eq!(version.nix_version().as_str(), PINNED_NIX_VERSION);
-        assert_eq!(version.accepted_formats().path_info().get(), 2);
+        let legacy_version = legacy.version()?;
+        assert_eq!(legacy_version.nix_version().as_str(), PINNED_NIX_VERSION);
+        assert_eq!(legacy_version.accepted_formats().path_info().get(), 2);
+
+        let standard = RealNixAdapter::scripted_standard_determinate(Scripted::new(vec![
+            success("nix (Nix) 2.35.2\n"),
+            success("nix-store (Nix) 2.35.2\n"),
+        ]));
+        assert_eq!(
+            standard.version()?.nix_version().as_str(),
+            STANDARD_DETERMINATE_NIX_VERSION
+        );
         Ok(())
+    }
+
+    #[test]
+    fn fixed_mode_versions_reject_the_other_mode_for_nix_and_nix_store() {
+        let legacy_nix =
+            RealNixAdapter::scripted(Scripted::new(vec![success("nix (Nix) 2.35.2\n")]));
+        assert!(matches!(
+            legacy_nix.version(),
+            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
+        ));
+
+        let standard_nix =
+            RealNixAdapter::scripted_standard_determinate(Scripted::new(vec![success(
+                "nix (Nix) 2.34.8\n",
+            )]));
+        assert!(matches!(
+            standard_nix.version(),
+            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
+        ));
+
+        let legacy_nix_store = RealNixAdapter::scripted(Scripted::new(vec![
+            success("nix (Nix) 2.34.8\n"),
+            success("nix-store (Nix) 2.35.2\n"),
+        ]));
+        assert!(matches!(
+            legacy_nix_store.version(),
+            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
+        ));
+
+        let standard_nix_store =
+            RealNixAdapter::scripted_standard_determinate(Scripted::new(vec![
+                success("nix (Nix) 2.35.2\n"),
+                success("nix-store (Nix) 2.34.8\n"),
+            ]));
+        assert!(matches!(
+            standard_nix_store.version(),
+            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
+        ));
     }
 
     #[test]
@@ -3145,7 +3344,7 @@ mod tests {
             nix_binary: PathBuf::from("/bin/sh"),
             nix_store_binary: PathBuf::from("/bin/sh"),
             private_home: home.path().to_path_buf(),
-            daemon_socket: PathBuf::from(MANAGED_DAEMON_SOCKET),
+            daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
         };
         let noisy = || CommandSpec {
             program: NixProgram::Modern,
@@ -3343,7 +3542,7 @@ mod tests {
             nix_binary: PathBuf::from("/bin/sh"),
             nix_store_binary: PathBuf::from("/bin/sh"),
             private_home: home.path().to_path_buf(),
-            daemon_socket: PathBuf::from(MANAGED_DAEMON_SOCKET),
+            daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
         };
         for script in ["sleep 30 & wait", "sleep 30 &"] {
             let started = Instant::now();
