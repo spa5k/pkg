@@ -2,7 +2,9 @@
 
 Status: active implementation plan for an alpha product.
 
-Current status: **DN-03 evidence complete; product delivery NO-GO; DN-04 is next.**
+Current status: **DN-00 through DN-04 are complete; product delivery is NO-GO; the grouped DN-05–07 delivery PR is next.**
+
+This roadmap has 33 stable DN requirement labels in 25 delivery PRs. DN-05 through DN-07 ship in one PR. DN-08 through DN-14 ship in one later PR. The labels remain stable for evidence, ownership, and review references.
 
 DN-03 completed the standalone vendor evidence gate. This does not mean that vendor uninstall is clean. It does not mean that crash recovery succeeds. Linux functional behavior checks passed, but strict vendor cleanup failed. In the accepted macOS crash observation, state validation stops after the recovery install exits 0 because `_nixbld1` is missing.
 
@@ -10,9 +12,9 @@ The public evidence is in the [DN-03 parent decision](../spikes/s6-determinate-i
 
 - Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two Linux target Asset records.
 - macOS R10 completes the standalone lifecycle and residue evidence. Its functional lifecycle and reboots passed, but strict vendor cleanup failed. Crash R1 completes the required negative SIGKILL and reboot observation.
-- Clean vendor uninstall remains false on both platforms. DN-13 owns exact fail-closed cleanup.
-- Successful crash recovery is unproved. DN-06, DN-07, and DN-16 own the required product controls and later proof. DN-12 may run an optional `repair sequoia` proof.
-- DN-04 can now document the proved ownership and executable contract.
+- Clean vendor uninstall remains false on both platforms. The DN-13 subphase owns exact fail-closed cleanup.
+- Successful crash recovery is unproved. The DN-06 and DN-07 subphases and DN-16 own the required product controls and later proof. The DN-12 subphase may run an optional `repair sequoia` proof.
+- DN-04 documents the proved ownership and executable contract.
 
 This plan replaces the old custom Managed Nix implementation plan. The old plan is preserved in the [dated legacy archive](archive/2026-08-22-custom-managed-nix-v1/README.md). The design reasons and research are in the [architecture report](../architecture-report.html).
 
@@ -60,9 +62,9 @@ We use one linear GitHub PR stack.
 ### 3.1 Branch names
 
 - The plan branch is `plan/determinate-nix-stacked-prs`.
-- Core branches use `dn/NN-short-name`.
+- Core branches use `dn/NN-short-name` for one label or `dn/NN-NN-short-name` for one grouped delivery PR.
 - Optional branches use the same format.
-- `NN` matches the PR number in this plan.
+- The branch label matches the stable DN label or label range in this plan.
 - A branch contains one reviewable result.
 
 ### 3.2 PR bases
@@ -70,6 +72,7 @@ We use one linear GitHub PR stack.
 - DN-00 targets the repository default branch.
 - DN-01 targets the DN-00 branch.
 - Each later PR targets the previous published branch.
+- The grouped stack segment is `dn/04-determinate-base-nix-contract` -> `dn/05-07-vendor-foundation` -> `dn/08-14-inactive-lifecycle-integration` -> `dn/15-linux-lifecycle-cutover`.
 - There is one published linear stack.
 - Do not publish two competing versions of the same stack.
 - Do not add Graphite or another stacking dependency.
@@ -88,6 +91,8 @@ Each PR description has these fields:
 8. **Rollback**: how to remove the change before merge.
 9. **Risk**: the highest remaining risk.
 10. **Not included**: work that belongs to a later PR.
+
+For a grouped PR, the description also reports each stable DN subphase as complete or blocked. Reviewers review each subphase gate and then the combined result. The PR cannot merge with one blocked subphase.
 
 ### 3.4 Parent merge procedure
 
@@ -108,7 +113,7 @@ When a parent PR squash-merges:
 11. Confirm that each PR contains only its own change.
 12. Update every affected parent link in the PR descriptions.
 
-Do not leave a descendant based on an old pre-squash commit. Do not merge a child before its parent. Do not squash several stack entries into one review unless the entries are documentation-only and reviewers agree.
+Do not leave a descendant based on an old pre-squash commit. Do not merge a child before its parent. Do not combine published stack entries during merge. DN-05–07 and DN-08–14 are single delivery PRs from the start.
 
 ### 3.5 Local proof policy
 
@@ -127,45 +132,34 @@ DN-00
   |
 DN-01 -> DN-02 -> DN-03 [VENDOR CONTRACT STOP GATE]
                          |
-                       DN-04 -> DN-05 -> DN-06 -> DN-07 -> DN-08
-                                                               |
-                                                             DN-09 [PACKAGE PARITY STOP GATE]
-                                                               |
-                                                             DN-10 -> DN-11 [PATH STOP GATE]
-                                                                           |
-                                                                         DN-12 [INACTIVE REPAIR/UPDATE]
-                                                                           |
-                                                                         DN-13 [INACTIVE UNINSTALL]
-                                                                           |
-                                                                         DN-14 [OLD ALPHA RESET]
-                                                                           |
-                                                                         DN-15 [LINUX LIFECYCLE]
-                                                                           |
-                                                                         DN-16 [MACOS LIFECYCLE]
-                                                                                           |
-                                                                         DN-17 -> DN-18 -> DN-19
-                                                                                           |
-                                                                         DN-20 [CORE DONE]
-                                                                                           |
-                                                                         DN-21 -> ... -> DN-27
-                                                                                           |
-                                                                         DN-28 -> DN-29
-                                                                                           |
-                                                                         DN-30 -> DN-31
-                                                                                           |
-                                                                         DN-32
+                       DN-04
+                         |
+                       DN-05–07 [VENDOR FOUNDATION]
+                         |
+                       DN-08–14 [INACTIVE LIFECYCLE INTEGRATION]
+                         |
+                       DN-15 [LINUX LIFECYCLE]
+                         |
+                       DN-16 [MACOS LIFECYCLE]
+                         |
+                       DN-17 -> DN-18 -> DN-19
+                                                |
+                                              DN-20 [CORE DONE]
+                                                |
+                                              DN-21 -> ... -> DN-27
+                                                |
+                                              DN-28 -> DN-29
+                                                |
+                                              DN-30 -> DN-31
+                                                |
+                                              DN-32
 ```
 
 Stop gates:
 
 - **DN-03** is complete for standalone evidence. Its negative results still block product delivery until the owning later gates pass.
-- **DN-07** blocks integration if the minimal Handoff cannot recover without a second vendor journal.
-- **DN-08** blocks integration if one configuration file needs two writers or the vendor has no supported extension point.
-- **DN-09** blocks installer cutover until standard-daemon RealNix package behavior matches the current required behavior.
-- **DN-11** blocks cutover until PATH behavior is proved for login shells, non-login shells, and GUI launches.
-- **DN-12** blocks lifecycle cutover if inactive Base Nix repair or update routing is unsafe.
-- **DN-13** blocks lifecycle cutover if inactive uninstall or resumable product cleanup is unsafe.
-- **DN-14** blocks lifecycle cutover if the old alpha has no executable authenticated reset path.
+- **DN-05–07** blocks integration if asset authentication, safe process execution, or minimal Handoff recovery fails. It must not add a second vendor journal.
+- **DN-08–14** blocks lifecycle cutover if any subphase gate fails. Its gates cover one-writer configuration, standard-daemon RealNix parity, foreign-Nix refusal, PATH behavior, safe inactive repair and update routing, resumable uninstall, and an authenticated old-alpha reset path.
 - **DN-15** blocks Linux deletion until the complete Linux lifecycle proof passes.
 - **DN-16** blocks macOS deletion until the complete Apple Silicon macOS lifecycle proof passes.
 - **DN-20** blocks the optional simplification tail until the core cutover is complete.
@@ -190,15 +184,16 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 | macOS Base Nix install | `macos_*`, `store_apfs.rs`, Base-Nix launchd and filesystem parts | Replace with the vendor executable after macOS cutover proof. | DN-18, and only proved Base-Nix parts. |
 | Private runtime provisioning | `pkg-nix/src/managed/{runtime_archive,installer_bundle,provision,daemon,accounts}.rs` | Keep until both platforms use the vendor lifecycle and package parity passes. | DN-19, by proved symbol and caller set. |
 | Base Nix ownership and journals | `managed/ownership.rs`, platform install journals, store/repair journals | Keep until handoff and vendor receipt behavior are proved. | DN-17 through DN-19. Keep package journals. |
-| Uninstall | `UninstallEngine`, platform uninstall modules | Prove inactive vendor uninstall and full product cleanup before cutover. Full uninstall keeps no product state. | DN-13 starts the inactive path. DN-17 through DN-19 remove obsolete Base-Nix paths. |
+| Uninstall | `UninstallEngine`, platform uninstall modules | Prove inactive vendor uninstall and full product cleanup before cutover. Full uninstall keeps no product state. | The DN-13 subphase starts the inactive path. DN-17 through DN-19 remove obsolete Base-Nix paths. |
 | Wire contracts | `pkg-nix/src/{contract,framing}.rs` | Keep during core migration. These files mix live product grammar with candidate obsolete grammar. | DN-30 deletes only dead messages after caller and test proof. |
 | Release assets | `tools/release`, channel metadata, runtime manifests | Add the pinned vendor executable first. Keep old assets until both cutovers pass. | DN-19 removes old Base-Nix artifacts. |
 | Tests | package, contract, parity, recovery, and platform tests | Keep and adapt. Move fakes only after the production seam changes. | DN-22 deletes broad fakes after replacement tests pass. |
 
-## 6. Core migration PRs
+## 6. Core migration delivery PRs
 
 ### DN-00 — Archive the old plan and publish this plan
 
+- **Status:** complete.
 - **Branch:** `plan/determinate-nix-stacked-prs`.
 - **Base:** repository default branch.
 - **Goal:** preserve the old plan and publish one active, reviewed stack plan.
@@ -215,6 +210,7 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 
 ### DN-01 — Cancel every failed pending-install Broker operation
 
+- **Status:** complete.
 - **Branch:** `dn/01-cancel-pending-install`.
 - **Base:** DN-00 branch and PR.
 - **Goal:** close the current alpha cancellation hole in `recover_pending_install`.
@@ -231,6 +227,7 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 
 ### DN-02 — Shorten the verify-only repair lease
 
+- **Status:** complete.
 - **Branch:** `dn/02-short-repair-lease`.
 - **Base:** DN-01 branch and PR.
 - **Goal:** release the exclusive state lease before long verify-only work.
@@ -248,7 +245,7 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 ### DN-03 — Prove the vendor executable contract
 
 - **Status:** complete for standalone evidence. Product delivery remains NO-GO.
-- **Branch:** `dn/03-prove-vendor-contract`.
+- **Branch:** `dn/03-determinate-nix-spike`.
 - **Base:** DN-02 branch and PR.
 - **Goal:** produce reproducible Linux and Apple Silicon macOS evidence for the exact external executable behavior.
 - **Why now:** every integration decision depends on recorded standalone facts. The accepted DN-03 reports now provide those facts for DN-04.
@@ -258,14 +255,14 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Tests:** the DN-03 rows in the VM matrix in section 10 were observed. Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records. macOS R10 proves lifecycle and residue behavior. Crash R1 records an accepted negative crash result after `_nixbld1` is missing.
 - **Proof and evidence:** the [parent decision](../spikes/s6-determinate-installer/FINDINGS.md) links the accepted public results. The [Linux report](../spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md) owns the Linux evidence. The [macOS report](../spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md) owns R10 and Crash R1. DN-03 does not prove `pkg` Handoff, package lifecycle, product repair, product uninstall, product cleanup, or production cutover.
 - **Deletion:** none.
-- **Rollback or stop rule:** DN-03 evidence is complete, but delivery stays NO-GO. DN-13 must handle exact vendor residue. DN-06, DN-07, and DN-16 must handle the failed crash recovery result. DN-12 may run an optional `repair sequoia` proof. Choose a small full executable fork only after a written blocking gap. Do not copy selected upstream source files.
+- **Rollback or stop rule:** DN-03 evidence is complete, but delivery stays NO-GO. The DN-13 subphase must handle exact vendor residue. The DN-06 and DN-07 subphases and DN-16 must handle the failed crash recovery result. The DN-12 subphase may run an optional `repair sequoia` proof. Choose a small full executable fork only after a written blocking gap. Do not copy selected upstream source files.
 - **Review focus:** observations versus conclusions, repeatability, licensing, diagnostics, update owner, and crash recovery.
 - **Child-unblock condition:** complete. DN-04 can document the proved contract and its limits. This does not unblock product cutover.
 
 ### DN-04 — Update domain context and add ADR 0004
 
-- **Status:** next. Ready to document the accepted DN-03 evidence.
-- **Branch:** `dn/04-domain-and-adr`.
+- **Status:** complete.
+- **Branch:** `dn/04-determinate-base-nix-contract`.
 - **Base:** DN-03 branch and PR.
 - **Goal:** record the proved Base Nix ownership boundary.
 - **Why now:** documentation must follow proof. It must not turn guesses into architecture.
@@ -279,174 +276,99 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 - **Review focus:** domain precision and no claim that package work moved to Determinate.
 - **Child-unblock condition:** reviewers agree on one ownership vocabulary.
 
-### DN-05 — Add the pinned vendor asset to release metadata
+### DN-05–07 — Ship the authenticated vendor foundation
 
-- **Branch:** `dn/05-vendor-release-asset`.
+- **Status:** next.
+- **Branch:** `dn/05-07-vendor-foundation`.
 - **Base:** DN-04 branch and PR.
-- **Goal:** authenticate and inventory the external executable as a product release asset.
-- **Why now:** production code must never download or trust an unpinned executable.
-- **Likely files and symbols:** `tools/release/src/manifest.rs`, `tools/release/src/sign.rs`, channel target fixtures, software inventory, installer release schema.
-- **Interface and invariants:** target and digest are exact; asset is selected by supported system; license and matching source location are recorded; diagnostics policy is explicit; downgrade policy is explicit.
-- **Implementation steps:** add per-target asset records; add digest verification metadata; add LGPL-2.1 notice and corresponding-source inventory; add diagnostics configuration metadata only if DN-03 proves it is stable; update fixtures and release validation.
-- **Tests:** release manifest tests, signature tests, wrong-digest rejection, unsupported-system rejection, inventory completeness test.
-- **Proof and evidence:** generated release metadata identifies one exact executable per target.
-- **Deletion:** none. Keep old Base Nix assets until both cutovers pass.
-- **Rollback or stop rule:** stop if source compliance or a supported target asset is missing.
-- **Review focus:** trust chain, target mapping, license obligations, and no ambient download.
-- **Child-unblock condition:** the release tool rejects any changed executable and publishes complete inventory metadata.
+- **Goal:** ship pinned vendor assets, one private process Adapter, and minimal Vendor Receipt and Handoff validation in one review.
+- **Order:** the DN-05, DN-06, and DN-07 subphases are stable requirement labels. Implement and review them in this order inside this PR.
+- **Deletion:** none. Keep old Base Nix assets until both platform cutovers pass. This PR adds no second receipt or vendor action journal.
+- **Combined stop rule:** do not merge if source compliance, a supported target asset, exact safe invocation, or deterministic Handoff recovery is missing.
 
-### DN-06 — Add one concrete vendor executable module
+**DN-05 subphase — Pinned vendor assets**
 
-- **Branch:** `dn/06-vendor-executable`.
-- **Base:** DN-05 branch and PR.
-- **Goal:** provide one thin process boundary for the proved executable contract.
-- **Why now:** later orchestration needs a small tested seam.
-- **Likely files and symbols:** one new module in `pkg-installer`, `std::process::Command` or current async process support, installer errors, fake-executable tests.
-- **Interface and invariants:** use an absolute authenticated path. Pass only proved arguments. Scrub or set the required environment. Keep both stdout and stderr draining while stored output stays bounded. Private data stays out of logs. Do not kill on timeout unless DN-03 proves recovery. Send only signals proved by DN-03. A lost client never silently orphans or kills a privileged child. Add no trait or provider framework.
-- **Implementation steps:** define one concrete `DeterminateInstaller` value. Define install, repair, update-if-proved, and uninstall calls only as DN-03 supports them. Construct commands in one place. Reject a missing or changed executable. Drain both pipes concurrently into bounded buffers. Model client loss, timeout, and signal outcomes explicitly. Add a fake executable that records arguments and emits controlled output.
-- **Tests:** argument tests; environment tests; exit-code tests; both-pipe back-pressure test; bounded storage test; private-log redaction test; client disconnect test; timeout without unproved kill test; proved signal test; wrong-file test.
-- **Proof and evidence:** tests prove exact invocation without needing root or a VM.
-- **Deletion:** none.
-- **Rollback or stop rule:** remove the module if it needs plan JSON, source embedding, or a broad abstraction to work.
-- **Review focus:** process safety, secret-free logs, cancellation, and minimal surface.
-- **Child-unblock condition:** fake-process tests cover every accepted external outcome.
+- **Goal and files:** authenticate and inventory the executable in `tools/release/src/manifest.rs`, `tools/release/src/sign.rs`, channel target fixtures, software inventory, and the installer release schema.
+- **Interface:** use one exact target and digest for each supported system. Record LGPL-2.1 and the matching source location. State diagnostics and downgrade policy explicitly. Never use an ambient download.
+- **Work:** add per-target records and digest metadata. Add the license notice and corresponding-source inventory. Add diagnostics metadata only when DN-03 proves it stable. Update fixtures and release validation.
+- **Tests and proof:** run release manifest and signature tests. Test wrong digests, unsupported systems, and incomplete inventory. Generated metadata must identify one exact executable per target.
+- **Gate and review:** stop if source compliance or a supported target asset is missing. Review the trust chain, target map, license duties, and rejection of any changed executable.
 
-### DN-07 — Add Vendor Receipt validation and minimal Handoff state
+**DN-06 subphase — Private process Adapter**
 
-- **Branch:** `dn/07-receipt-handoff`.
-- **Base:** DN-06 branch and PR.
-- **Goal:** persist only the minimum Base Nix handoff state needed for safe restart.
-- **Why now:** the vendor receipt is opaque, and `pkg` needs a small crash boundary.
-- **Likely files and symbols:** `pkg-installer` bootstrap state, new opaque receipt validator, current installer recovery entry points.
-- **Interface and invariants:** absence of Handoff state means `NotStarted`. Persist only `Started` and `Accepted`. `Accepted` records the minimum stable identity for the observed executable and receipt. Do not parse or copy the vendor action list. Store no second receipt or action journal.
-- **Implementation steps:** durably write `Started` before execution. Validate the vendor result after execution. Atomically write `Accepted` with the minimum identity. On restart, classify and report. Define the same atomic identity update after repair or update changes the observed executable or receipt. Never delete unknown `/nix` content.
-- **Tests:** crash before launch, crash during launch, success before state update, missing receipt, damaged receipt, changed executable, and unknown `/nix` tests.
-- **Proof and evidence:** each crash point ends in a fail-closed, recoverable state.
-- **Deletion:** none. This is not a second receipt or action journal.
-- **Rollback or stop rule:** stop if safe recovery requires replaying private vendor action types.
-- **Review focus:** durability limits, opaque boundary, and no parallel ownership ledger.
-- **Child-unblock condition:** restart classification is deterministic for all injected states.
+- **Goal and files:** add one concrete vendor process Adapter in `pkg-installer`. Reuse `std::process::Command` or the current async process support. Add installer errors and fake-executable tests.
+- **Interface:** use an absolute authenticated path and only proved arguments. Set or scrub the required environment. Drain stdout and stderr concurrently into bounded storage. Keep private data out of logs. Do not kill on timeout unless DN-03 proves recovery. Send only proved signals. A lost client must not silently orphan or kill a privileged child. Add no trait or provider framework.
+- **Work:** define one concrete `DeterminateInstaller`. Add only the install, repair, proved-update, and uninstall calls supported by DN-03. Build commands in one place. Reject a missing or changed executable. Model client loss, timeout, and signal results explicitly. Use a fake executable that records arguments and controls output.
+- **Tests and proof:** test arguments, environment, exit codes, both-pipe back-pressure, bounded storage, log redaction, client disconnect, timeout without an unproved kill, proved signals, and a wrong file. The tests must prove exact invocation without root or a VM.
+- **Gate and review:** remove the Adapter if it requires plan JSON, source embedding, or a broad abstraction. Review process safety, cancellation, minimal surface, and every accepted external outcome.
 
-### DN-08 — Split product assets from Base Nix assets
+**DN-07 subphase — Vendor Receipt and Handoff**
 
-- **Branch:** `dn/08-split-assets`.
-- **Base:** DN-07 branch and PR.
-- **Goal:** give every installed asset one owner without changing production behavior.
-- **Why now:** standard-daemon parity and platform cutover need a clean asset boundary first.
-- **Likely files and symbols:** `assets.rs`, `linux_install_assets`, `macos_install_assets`, `OwnershipExpectation`, `ManagedGroupBindings`, platform asset managers, release manifests.
-- **Interface and invariants:** product assets remain exact and authenticated. Base Nix assets remain on the old path until cutover. Classifications have no overlap. One file has one writer. `pkg` does not edit a vendor-owned configuration file.
-- **Implementation steps:** classify each current asset. Create explicit product-owned and Base-Nix-owned views. Classify every Nix configuration file or fragment. Identify a supported vendor configuration extension point. Assign Broker daemon admission, `trusted-users`, and `allowed-users` settings to one owner. Prove preservation across vendor repair and update. Retain current production behavior.
-- **Tests:** complete partition test; no-overlap and one-writer tests; stable current output test; Linux and macOS asset snapshots; vendor repair/update configuration preservation tests.
-- **Proof and evidence:** every existing asset appears exactly once in the partition.
-- **Deletion:** no production deletion.
-- **Rollback or stop rule:** stop if an asset has mixed ownership, if no supported vendor configuration extension exists, or if `pkg` must edit a vendor-owned file.
-- **Review focus:** complete partition and high-impact contract stability.
-- **Child-unblock condition:** asset partition tests pass with no behavior change.
+- **Goal and files:** persist only the minimum restart state in `pkg-installer` bootstrap state, an opaque receipt validator, and current installer recovery entry points.
+- **Interface:** no Handoff state means `NotStarted`. Persist only `Started` and `Accepted`. `Accepted` stores the minimum stable executable and receipt identity. Do not parse or copy the vendor action list. Never delete unknown `/nix` content.
+- **Work:** durably write `Started` before execution. Validate the vendor result. Atomically write `Accepted`. Classify and report state on restart. Atomically update identity after a proved repair or update changes the executable or receipt.
+- **Tests and proof:** inject a crash before launch, during launch, and after vendor success but before state update. Test missing or damaged receipts, changed executables, and unknown `/nix`. Every state must fail closed and produce deterministic restart classification.
+- **Gate and review:** stop if safe recovery needs private vendor action replay. Review durability, the opaque seam, and the absence of a parallel ownership ledger.
 
-### DN-09 — Add standard-daemon RealNix parity
+### DN-08–14 — Build the inactive lifecycle integration
 
-- **Branch:** `dn/09-standard-daemon-parity`.
-- **Base:** DN-08 branch and PR.
-- **Goal:** prove product package operations against the standard Determinate daemon layout before installer cutover.
-- **Why now:** the current adapter assumes a private runtime. Cutover before parity would invert the dependency order.
-- **Likely files and symbols:** `RealNixAdapter`, `crates/pkg-nix/src/real.rs`, `adapter.rs`, `build.rs`, `verify.rs`, `substitute.rs`, parity fixtures and `pkg-testkit`.
-- **Interface and invariants:** use one fixed standard-daemon mode. Add no provider framework. Package outcomes and trust checks remain equal. Use absolute Nix executable paths or a proved stable discovery rule. Never use PATH lookup. Broker daemon admission and `trusted-users` or `allowed-users` behavior must be explicit.
-- **Implementation steps:** add the fixed mode. Bind daemon and store paths proved in DN-03. Use only the vendor-supported configuration extension from DN-08. Prove Broker admission and multi-user access. Run read, resolve, acquire, substitute, local build, root, GC, and repair smoke probes. Run vendor repair and update. Confirm that configuration and package access survive.
-- **Tests:** `pkg-nix` real tests, `pkg-testkit` parity tests, package install/remove/update/upgrade/GC smoke tests on both platforms.
-- **Proof and evidence:** a standard-daemon parity report for Linux and Apple Silicon macOS.
-- **Deletion:** none. Keep the private mode until production cutovers pass.
-- **Rollback or stop rule:** stop cutover if package trust, root ownership, multi-user access, build, GC, or configuration ownership differs without an accepted design. Stop if `pkg` must edit a vendor-owned file.
-- **Review focus:** package behavior, multi-user safety, and fixed configuration.
-- **Child-unblock condition:** required package parity passes on both production platforms.
+- **Branch:** `dn/08-14-inactive-lifecycle-integration`.
+- **Base:** `dn/05-07-vendor-foundation` branch and PR.
+- **Goal:** complete the inactive asset, package, detection, PATH, repair, update, uninstall, and old-alpha flow before either platform cutover.
+- **Order:** DN-08 through DN-14 remain stable requirement labels. Implement and review each subphase in order inside this PR. Keep every route inactive in shipped behavior.
+- **Combined deletion:** delete no production Base Nix path. Remove only ambiguous detection branches that become unreachable. Remove custom PATH changes only after equivalent launch behavior is proved. Add no compatibility bridge.
+- **Combined stop rule:** any failed subphase gate blocks the complete PR and DN-15.
 
-### DN-10 — Classify existing and foreign Nix
+**DN-08 subphase — Split product and Base Nix assets**
 
-- **Branch:** `dn/10-classify-existing-nix`.
-- **Base:** DN-09 branch and PR.
-- **Goal:** fail closed when `/nix` exists without stable `pkg` handoff identity.
-- **Why now:** production install must not adopt or destroy an unknown installation.
-- **Likely files and symbols:** managed detection, Doctor command, bootstrap preflight, receipt and executable validation.
-- **Interface and invariants:** initial alpha accepts only a clean host or a stable `pkg` handoff created by the new flow; foreign Nix, upstream Nix, unmarked Determinate, and old private alpha are distinct reports but all block automatic install.
-- **Implementation steps:** define classifications from observable facts; add Doctor messages and user actions; add installer refusal; avoid automatic deletion or repair; keep automatic Determinate adoption as optional future work after stable identity proof.
-- **Tests:** table tests for clean, accepted, foreign, upstream, unmarked Determinate, damaged accepted state, and old alpha.
-- **Proof and evidence:** each fixture maps to one stable classification and one safe action.
-- **Deletion:** remove only ambiguous old detection branches that become unreachable.
-- **Rollback or stop rule:** stop if two unsafe states can produce the accepted identity.
-- **Review focus:** false acceptance, user instructions, and no auto-adoption.
-- **Child-unblock condition:** all unknown states fail before privilege or filesystem mutation.
+- **Files and interface:** update `assets.rs`, platform asset lists and managers, `OwnershipExpectation`, `ManagedGroupBindings`, and release manifests. Product assets stay exact and authenticated. Base Nix stays on the old path. Each asset has one owner and one writer. `pkg` does not edit vendor-owned configuration.
+- **Work:** classify every asset and Nix configuration item. Create non-overlapping product and Base Nix views. Identify a supported vendor extension point. Give Broker admission, `trusted-users`, and `allowed-users` one owner. Prove preservation through vendor repair and update without changing production behavior.
+- **Tests and gate:** test complete partition, no overlap, one writer, stable output, Linux and macOS snapshots, and repair/update preservation. Evidence must show that every existing asset appears exactly once. Stop for mixed ownership, no supported extension point, or a required second writer. Review the complete partition and high-impact contract stability.
 
-### DN-11 — Prove and enforce PATH behavior
+**DN-09 subphase — Standard-daemon RealNix parity**
 
-- **Branch:** `dn/11-path-gate`.
-- **Base:** DN-10 branch and PR.
-- **Goal:** make PATH behavior an explicit user experience compatibility gate.
-- **Why now:** raw Nix visibility is not a security boundary, but unexpected profile edits can break the product experience.
-- **Likely files and symbols:** installer invocation options, `crates/pkg-cli/src/path.rs`, shell tests, Doctor output, VM evidence.
-- **Interface and invariants:** `pkg` never finds the vendor executable or Nix through PATH; normal `pkg` use works in login, non-login, and GUI contexts; no unproved shell profile edit is accepted.
-- **Implementation steps:** test the DN-03 profile-control result; enforce the proved option; inspect all supported shells and GUI launch state; add Doctor reporting for unexpected raw Nix PATH exposure; document that absolute invocation remains possible.
-- **Tests:** login shell, non-login shell, clean environment, GUI app launch, existing profile content, repeated install, and uninstall profile residue.
-- **Proof and evidence:** before-and-after environment snapshots for each supported launch context.
-- **Deletion:** remove custom PATH manipulation only after equivalent product launch behavior is proved.
-- **Rollback or stop rule:** stop cutover if `pkg` needs fragile shell mutation or if the vendor silently changes profiles.
-- **Review focus:** UX statement versus security statement and absolute path use.
-- **Child-unblock condition:** every PATH matrix row has a stable expected result.
+- **Files and interface:** update `RealNixAdapter`, `crates/pkg-nix/src/{real,adapter,build,verify,substitute}.rs`, parity fixtures, and `pkg-testkit`. Use one fixed standard-daemon mode. Add no provider framework. Preserve package trust and outcomes. Use absolute Nix paths or one proved stable rule, never PATH.
+- **Work:** bind proved daemon and store paths. Use only the DN-08 extension point. Prove Broker admission and multi-user access. Probe read, resolve, acquire, substitute, local build, roots, GC, and repair. Run vendor repair and update. Confirm that access and configuration survive.
+- **Tests and gate:** run real adapter tests, parity tests, and install, remove, update, upgrade, and GC smoke tests on Linux and Apple Silicon macOS. Attach a standard-daemon parity report for both platforms. Stop for unexplained differences in trust, roots, access, build, GC, or configuration ownership. Keep private mode until both cutovers pass. Review package behavior, multi-user safety, and fixed configuration.
 
-### DN-12 — Add inactive Base Nix repair and update routing
+**DN-10 subphase — Existing and foreign Nix classification**
 
-- **Branch:** `dn/12-inactive-repair-update`.
-- **Base:** DN-11 branch and PR.
-- **Goal:** implement vendor Base Nix repair and the proved update policy behind an inactive production gate.
-- **Why now:** full lifecycle cutover needs repair and update ready before install changes.
-- **Likely files and symbols:** repair routing, `production_repair.rs`, Doctor, vendor executable module, Handoff identity update, package repair paths.
-- **Interface and invariants:** Base Nix repair and package repair remain separate. The route is inactive in shipped behavior. No statement names `determinate-nixd` as update owner unless DN-03 proved it. A changed receipt or executable updates `Accepted` atomically.
-- **Implementation steps:** classify repair requests. Route inactive Base Nix repair to the proved command. Retain package repair. Implement only the update owner and trigger proved in DN-03. Revalidate and atomically update accepted identity after vendor change. Report unsupported update policy.
-- **Tests:** inactive-gate test; Base-only damage; package-only damage; combined damage; failed and interrupted repair; identity update; N to N+1; proved downgrade policy.
-- **Proof and evidence:** state and ownership snapshots show one owner for each repair class. Shipped behavior remains on the current-alpha route.
-- **Deletion:** none.
-- **Rollback or stop rule:** stop if vendor repair changes package-owned state, identity update is not atomic, or update ownership is unclear.
-- **Review focus:** inactive gating, operation classification, and package repair separation.
-- **Child-unblock condition:** every repair class has one safe owner and the inactive route passes on both platforms.
+- **Files and interface:** update managed detection, Doctor, bootstrap preflight, and receipt and executable validation. Accept only a clean host or stable Handoff from the new flow. Report foreign Nix, upstream Nix, unmarked Determinate, damaged accepted state, and old alpha separately. All unsafe states block automatic install.
+- **Work and tests:** classify only observable facts. Add clear Doctor actions and installer refusal. Test clean, accepted, foreign, upstream, unmarked Determinate, damaged accepted, and old-alpha fixtures. Each fixture must map to one stable classification and one safe action. Keep automatic adoption as future work.
+- **Gate:** every unknown state must fail before privilege or mutation. Stop if two unsafe states can produce accepted identity. Never repair, adopt, or delete unknown state automatically. Review false acceptance, user instructions, and the lack of auto-adoption.
 
-### DN-13 — Add inactive vendor uninstall and full product cleanup
+**DN-11 subphase — PATH behavior**
 
-- **Branch:** `dn/13-inactive-uninstall`.
-- **Base:** DN-12 branch and PR.
-- **Goal:** prove a resumable full uninstall before either platform cuts over.
-- **Why now:** install cannot cut over until its complete reverse operation exists.
-- **Likely files and symbols:** `UninstallEngine`, platform uninstall modules, vendor executable module, lifecycle state, generations, activation forests, package roots, product asset managers.
-- **Interface and invariants:** the route is inactive in shipped behavior. Full uninstall has no keep-state mode. Retained generations are invalid after Base Nix removes the store. Therefore full uninstall removes Lifecycle State, Generations, Activation Forests, registered package roots, product assets, and Base Nix.
-- **Implementation steps:** verify every product and vendor identity before mutation. Write durable uninstall progress. Stop product services. Run the vendor uninstall. Record vendor completion. Remove exact product assets and all product state. Remove registered package roots and activation forests. Prove final residue. Resume safely from every recorded step.
-- **Tests:** inactive-gate test; clean and repeated uninstall; interruption at every durable step; missing or damaged receipt; changed executable; foreign Nix refusal; product state and root removal; exact residue.
-- **Proof and evidence:** pre/post ownership reports and step-by-step restart evidence show full removal and no unknown deletion.
-- **Deletion:** none. Old uninstall remains active until platform cutover.
-- **Rollback or stop rule:** stop if identity cannot be verified before mutation, vendor completion cannot be resumed, or exact product cleanup cannot be proved.
-- **Review focus:** destructive order, durable progress, no keep-state path, and why generations cannot survive store removal.
-- **Child-unblock condition:** both platforms resume every uninstall step and end with the exact empty owned-state result.
+- **Files and interface:** update proved installer options, `crates/pkg-cli/src/path.rs`, shell tests, Doctor output, and VM evidence. `pkg` never locates the vendor executable or Nix through PATH. Normal use must work in login, non-login, clean non-login, and GUI environments. Raw Nix visibility is not a security boundary.
+- **Work and tests:** enforce the DN-03 profile-control result. Inspect supported shells and GUI launch state. Report unexpected raw Nix exposure. Test existing profile content, repeat install, uninstall residue, and every launch context. Record before-and-after environments.
+- **Gate:** stop if `pkg` needs fragile shell mutation or the vendor silently changes profiles. Remove custom PATH changes only after equal behavior is proved. Review the user-experience statement separately from the security statement and confirm absolute path use.
 
-### DN-14 — Add an executable old-alpha reset and refusal path
+**DN-12 subphase — Inactive repair and update routing**
 
-- **Branch:** `dn/14-old-alpha-reset`.
-- **Base:** DN-13 branch and PR.
-- **Goal:** refuse old private alpha state and provide a reset command that is known to exist.
-- **Why now:** the new lifecycle is ready, but users need a real route out of the last alpha.
-- **Likely files and symbols:** existing-install detection, Doctor, installer preflight, last-alpha release assets, signed uninstaller metadata.
-- **Interface and invariants:** old alpha is detected before mutation. New code does not import old receipts or journals. Instructions never print a command or binary that is absent.
-- **Implementation steps:** identify a stable old-alpha marker. Prove that the last private-alpha uninstall command and binary still exist and work. If the new binary lacks that command, publish the signed last-alpha uninstaller with an exact digest and source inventory. Refuse new install until the old uninstaller completes and clean state is proved.
-- **Tests:** old alpha complete; old alpha damaged; available old command; missing old command with signed asset; wrong uninstaller digest; partial uninstall; clean post-uninstall state.
-- **Proof and evidence:** the displayed reset action executes from every supported old-alpha fixture. Foreign Nix cannot match the marker.
-- **Deletion:** no compatibility bridge.
-- **Rollback or stop rule:** stop if no executable and authenticated reset path exists or the old-alpha marker can match foreign Nix.
-- **Review focus:** executable instructions, signed fallback asset, and zero silent adoption.
-- **Child-unblock condition:** every old-alpha fixture either resets with a proved binary or refuses with a real recovery path.
+- **Files and interface:** update repair routing, `production_repair.rs`, Doctor, the vendor Adapter, Handoff identity updates, and package repair paths. Base Nix and package repair stay separate. Do not name `determinate-nixd` as update owner without DN-03 proof.
+- **Work:** classify requests. Route inactive Base Nix repair only to the proved command. Keep package repair. Implement only the proved update owner and trigger. Revalidate and atomically update `Accepted` after vendor changes. Report unsupported update policy.
+- **Tests and gate:** test inactive gating, Base-only, package-only, and combined damage, failed and interrupted repair, identity updates, N-to-N+1, and proved downgrade policy. State and ownership snapshots must show one owner for every repair class. Stop if vendor repair changes package state, identity update is not atomic, or update ownership is unclear. Review inactive gating, classification, and package repair separation. The optional `repair sequoia` proof remains optional.
+
+**DN-13 subphase — Inactive uninstall and exact cleanup**
+
+- **Files and interface:** update `UninstallEngine`, platform uninstall modules, the vendor Adapter, lifecycle state, generations, activation forests, package roots, and product asset managers. Full uninstall has no keep-state mode. It removes Lifecycle State, Generations, Activation Forests, registered roots, product assets, and Base Nix because retained generations cannot survive store removal.
+- **Work:** validate every product and vendor identity before any mutation. An identity mismatch stops all removal. Write durable progress. Stop product services. Run vendor uninstall and record completion. Remove only exact product assets and state. Never use recursive deletion. Remove registered roots and activation forests. Prove residue and resume from every durable step. DN-13 owns exact all-or-nothing residue cleanup, not crash recovery.
+- **Tests and gate:** test inactive gating, clean and repeat uninstall, interruption at each step, missing or damaged receipt, changed executable, foreign-Nix refusal, state and root removal, and exact residue. Attach pre/post ownership reports and restart evidence for every step. Stop if pre-mutation identity, resumable vendor completion, or exact cleanup cannot be proved. Keep old uninstall active until cutover. Review destructive order, durable progress, and the absence of keep-state behavior.
+
+**DN-14 subphase — Old-alpha reset and refusal**
+
+- **Files and interface:** update existing-install detection, Doctor, installer preflight, last-alpha assets, and signed uninstaller metadata. Detect old alpha before mutation. Do not import its receipts or journals. Never print an absent recovery command or binary.
+- **Work:** identify a stable marker. Prove the last private-alpha uninstaller exists and works. If the new binary lacks it, publish the signed last-alpha uninstaller with an exact digest and source inventory. Refuse new install until it completes and clean state is proved.
+- **Tests and gate:** test complete and damaged old alpha, present and absent old commands, signed fallback, wrong digest, partial uninstall, and clean final state. The displayed reset action must execute for every supported fixture. Stop if no authenticated executable reset exists or foreign Nix can match the marker. Every fixture must reset or refuse with a real recovery path. Review executable instructions, the signed fallback, and zero silent adoption.
 
 ### DN-15 — Cut over the complete Linux Base Nix lifecycle
 
 - **Branch:** `dn/15-linux-lifecycle-cutover`.
-- **Base:** DN-14 branch and PR.
+- **Base:** `dn/08-14-inactive-lifecycle-integration` branch and PR.
 - **Goal:** switch Linux install, repair, proved update, and uninstall together to the vendor lifecycle.
 - **Why now:** all lifecycle operations, package parity, configuration, detection, PATH, and old-alpha reset are proved.
 - **Likely files and symbols:** Linux bootstrap, inactive lifecycle routes, Handoff, product asset install, Doctor, release asset selection, and Linux user documents.
-- **Interface and invariants:** no runtime fallback. Product assets remain owned by `pkg`. Vendor owns all Base Nix lifecycle operations. Full uninstall removes all product state as defined in DN-13. Unsupported hosts fail before mutation. Linux user documents describe the new Linux behavior in this PR.
+- **Interface and invariants:** no runtime fallback. Product assets remain owned by `pkg`. Vendor owns all Base Nix lifecycle operations. Full uninstall removes all product state as defined in the DN-13 subphase. Unsupported hosts fail before mutation. Linux user documents describe the new Linux behavior in this PR.
 - **Implementation steps:** enable the vendor lifecycle gate for Linux. Verify the authenticated asset. Run install through Handoff. Enable vendor repair and proved update. Enable resumable full uninstall. Run package and product-service smoke tests. Update Linux install, repair, update, and uninstall documents. Keep the old implementation present but unreachable for deletion proof.
 - **Tests:** fake process integration and complete Linux VM matrix, including full lifecycle and product package operations.
 - **Proof and evidence:** Linux x86_64 and released Linux aarch64 lifecycle reports pass twice from clean snapshots.
@@ -731,7 +653,7 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 - **Review focus:** evidence, not deletion count.
 - **Child-unblock condition:** optional definition of done is complete.
 
-## 8. PR dependency and test table
+## 8. Delivery PR dependency and test table
 
 | PR | Merge blocker | Likely affected tests |
 |---|---|---|
@@ -739,17 +661,9 @@ Do not publish DN-21 until DN-20 is complete. These PRs simplify product code. T
 | DN-01 | No failed pending operation remains live | CLI recovery, Broker lifecycle |
 | DN-02 | Verify-only path has no writes | repair, leases, concurrency |
 | DN-03 | Complete for standalone evidence; negative cleanup and crash results route to later owners | Linux/macOS VM spike matrix and accepted child reports |
-| DN-04 | Next; every domain claim maps to DN-03 | documentation links and terminology |
-| DN-05 | Exact assets and LGPL inventory complete | release manifest, signing, wrong digest |
-| DN-06 | Exact safe process invocation | fake executable process tests |
-| DN-07 | Crash states classify safely | handoff and receipt fault injection |
-| DN-08 | Complete no-overlap asset partition | installer asset snapshots |
-| DN-09 | Standard-daemon package parity | `pkg-nix`, `pkg-testkit`, package smoke |
-| DN-10 | Unknown Nix always fails closed | detection table, Doctor, preflight |
-| DN-11 | PATH matrix passes | shell, clean environment, GUI launch |
-| DN-12 | Inactive repair/update routes are safe | repair classes, identity update, N to N+1 |
-| DN-13 | Inactive full uninstall resumes exactly | uninstall steps, state/root removal, residue |
-| DN-14 | Old-alpha reset action exists and authenticates | old-alpha refusal and signed uninstaller |
+| DN-04 | Complete; every domain claim maps to DN-03 | documentation links and terminology |
+| DN-05–07 | Assets, invocation, and crash-state classification all pass | release trust, fake process, Handoff, and receipt fault injection |
+| DN-08–14 | Every inactive lifecycle subphase gate passes | asset partition, RealNix parity, detection, PATH, repair, update, uninstall, cleanup, and old-alpha reset |
 | DN-15 | Complete Linux lifecycle passes twice | Linux install, repair, update, uninstall, packages |
 | DN-16 | Complete Apple Silicon lifecycle passes twice | macOS install, repair, update, uninstall, packages |
 | DN-17 | Deleted Linux symbols have no live callers | Linux matrix and package lifecycle |
@@ -813,7 +727,7 @@ Use `cargo tree` for each supported target before removal.
 
 Evidence for each row records platform image, architecture, product revision, vendor version, vendor full revision, asset digest, exact invocation, exit status, logs, file ownership, services, receipt state, package state, and residue.
 
-| Case | First proving PR | Linux x86_64 | Linux aarch64 | Apple Silicon macOS | Required result |
+| Case | First proving delivery PR / subphase | Linux x86_64 | Linux aarch64 | Apple Silicon macOS | Required result |
 |---|---|---|---|---|---|
 | Standalone vendor invocation and arguments | DN-03 | Blocking | Asset proof | Blocking | Exact observed arguments and exit behavior |
 | Standalone diagnostics control | DN-03 | Blocking | Asset proof | Blocking | Proved endpoint or build policy |
@@ -822,24 +736,24 @@ Evidence for each row records platform image, architecture, product revision, ve
 | Standalone SIGKILL and reboot | DN-03 | Blocking | Sample | Blocking | Observed vendor recovery behavior |
 | Standalone repair and update | DN-03 | Blocking | Sample | Blocking | Exact vendor behavior and update owner |
 | Standalone uninstall | DN-03 | Blocking | Sample | Blocking | Observed vendor-owned cleanup only |
-| Wrong vendor digest | DN-05 | Blocking | Blocking | Blocking | Refuse before privilege and execution |
-| Handoff crash before launch | DN-07 | Blocking | Sample | Blocking | `Started` persists and restart fails closed |
-| Handoff crash after vendor success | DN-07 | Blocking | Sample | Blocking | Receipt identity can become `Accepted` atomically |
-| Missing or damaged receipt | DN-07 | Blocking | Sample | Blocking | Refuse destructive work; no action-list parsing |
-| Modified installed vendor executable | DN-07 | Blocking | Sample | Blocking | Detect identity change and refuse or atomically reaccept after proved lifecycle work |
-| Standard-daemon package behavior | DN-09 | Blocking | Blocking before target release | Blocking | Required package parity passes |
-| Broker daemon admission | DN-09 | Blocking | Sample | Blocking | Multi-user access follows one owned configuration path |
-| Vendor config repair/update preservation | DN-09 | Blocking | Sample | Blocking | No vendor-owned file has a second writer |
-| Foreign Nix | DN-10 | Blocking | Sample | Blocking | Refuse and preserve all files |
-| Upstream Nix | DN-10 | Blocking | Sample | Blocking | Refuse and preserve all files |
-| Unmarked Determinate | DN-10 | Blocking | Sample | Blocking | Refuse initial-alpha adoption |
-| Login shell PATH | DN-11 | Blocking | Sample | Blocking | `pkg` works and observed raw Nix exposure matches policy |
-| Non-login shell PATH | DN-11 | Blocking | Sample | Blocking | `pkg` works without profile assumptions |
-| GUI launch PATH | DN-11 | Blocking | Sample | Blocking | `pkg` works from a clean GUI environment |
-| Inactive Base Nix repair | DN-12 | Blocking | Sample | Blocking | Vendor-owned repair only |
-| Inactive Base Nix update | DN-12 | Blocking | Sample | Blocking | Exact proved owner; no assumed `determinate-nixd` owner |
-| Inactive full uninstall and resume | DN-13 | Blocking | Sample | Blocking | Durable full removal steps resume safely |
-| Old private alpha reset | DN-14 | Blocking | Sample | Blocking | Refuse and provide an executable authenticated uninstaller |
+| Wrong vendor digest | DN-05–07 / DN-05 | Blocking | Blocking | Blocking | Refuse before privilege and execution |
+| Handoff crash before launch | DN-05–07 / DN-07 | Blocking | Sample | Blocking | `Started` persists and restart fails closed |
+| Handoff crash after vendor success | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Receipt identity can become `Accepted` atomically |
+| Missing or damaged receipt | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Refuse destructive work; no action-list parsing |
+| Modified installed vendor executable | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Detect identity change and refuse or atomically reaccept after proved lifecycle work |
+| Standard-daemon package behavior | DN-08–14 / DN-09 | Blocking | Blocking before target release | Blocking | Required package parity passes |
+| Broker daemon admission | DN-08–14 / DN-09 | Blocking | Sample | Blocking | Multi-user access follows one owned configuration path |
+| Vendor config repair/update preservation | DN-08–14 / DN-09 | Blocking | Sample | Blocking | No vendor-owned file has a second writer |
+| Foreign Nix | DN-08–14 / DN-10 | Blocking | Sample | Blocking | Refuse and preserve all files |
+| Upstream Nix | DN-08–14 / DN-10 | Blocking | Sample | Blocking | Refuse and preserve all files |
+| Unmarked Determinate | DN-08–14 / DN-10 | Blocking | Sample | Blocking | Refuse initial-alpha adoption |
+| Login shell PATH | DN-08–14 / DN-11 | Blocking | Sample | Blocking | `pkg` works and observed raw Nix exposure matches policy |
+| Non-login shell PATH | DN-08–14 / DN-11 | Blocking | Sample | Blocking | `pkg` works without profile assumptions |
+| GUI launch PATH | DN-08–14 / DN-11 | Blocking | Sample | Blocking | `pkg` works from a clean GUI environment |
+| Inactive Base Nix repair | DN-08–14 / DN-12 | Blocking | Sample | Blocking | Vendor-owned repair only |
+| Inactive Base Nix update | DN-08–14 / DN-12 | Blocking | Sample | Blocking | Exact proved owner; no assumed `determinate-nixd` owner |
+| Inactive full uninstall and resume | DN-08–14 / DN-13 | Blocking | Sample | Blocking | Durable full removal steps resume safely |
+| Old private alpha reset | DN-08–14 / DN-14 | Blocking | Sample | Blocking | Refuse and provide an executable authenticated uninstaller |
 | Complete clean install | DN-15 Linux; DN-16 macOS | Blocking | Blocking before target release | Blocking | Accepted Handoff and working product |
 | Complete repeat install | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | Stable complete lifecycle result |
 | Complete repair and update | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Base and package repair stay separate |
