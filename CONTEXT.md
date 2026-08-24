@@ -87,7 +87,7 @@ _Avoid_: Base Nix Lifecycle, Nix lifecycle
 ## Trust and Authority
 
 **Channel**:
-An authenticated, monotonic release of product policy, Catalog identity, and product assets.
+An authenticated, monotonic release of product policy, Catalog identity, and release assets.
 _Avoid_: Repository, feed, branch
 
 **Broker**:

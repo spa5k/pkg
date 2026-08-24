@@ -61,9 +61,10 @@ Vendor uninstall is not a clean uninstall on either tested platform. DN-13 owns 
 
 DN-13 must validate every live path identity before it removes any path. One missing or changed identity stops all cleanup. Cleanup must not use a recursive delete.
 
-The exact accepted final vendor residue was:
+The accepted final vendor residue evidence was:
 
-- Linux: `/etc/nix` containing `/etc/nix/sentry-endpoint`.
+- The retained Linux x86_64 and aarch64 container Asset proofs recorded exactly `/etc/nix` and `/etc/nix/sentry-endpoint`.
+- The broad Linux x86_64 R12 VM proved that `/etc/nix/sentry-endpoint` remained. It did not inventory every `/etc/nix` entry.
 - Apple Silicon macOS: `/etc/nix`, `/etc/nix/macos-keychain.crt`, `/etc/nix/sentry-endpoint`, an empty `/etc/fstab`, `/var/log/determinate-nix-init.log`, and `/var/log/determinate-nix-daemon.log`.
 
 ### Platform boundary
