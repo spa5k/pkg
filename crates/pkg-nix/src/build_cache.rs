@@ -159,6 +159,15 @@ impl CachePathObservation {
             CachePathStatus::Miss => None,
         }
     }
+
+    /// Returns authenticated NAR bytes, or `None` for a miss.
+    #[must_use]
+    pub const fn nar_bytes(&self) -> Option<u64> {
+        match self.status {
+            CachePathStatus::Hit { nar_bytes, .. } => Some(nar_bytes),
+            CachePathStatus::Miss => None,
+        }
+    }
 }
 
 /// Private cache-inspection seam implemented by the managed Real-Nix adapter.
@@ -235,6 +244,12 @@ impl BuildCacheError {
     #[must_use]
     pub const fn code(self) -> BuildCacheErrorCode {
         self.code
+    }
+
+    /// Reconstructs a closed remote cache-probe failure.
+    #[must_use]
+    pub const fn remote(code: BuildCacheErrorCode) -> Self {
+        Self::new(code)
     }
 }
 

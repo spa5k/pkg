@@ -56,6 +56,7 @@ pub mod maintenance;
 pub mod managed;
 pub mod nixpkgs;
 pub mod real;
+pub mod root_nix;
 pub mod substitute;
 pub mod verify;
 
@@ -96,8 +97,8 @@ pub use framing::{
     BuildRootPublicationErrorCode, CacheInstallErrorCode, ChannelRefreshErrorCode,
     ChannelRefreshMode, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, FrameError,
     FrameErrorCode, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, InstallDownloadProgress, ProductFrameCodec,
-    RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
+    GenerationRootTransitionErrorCode, HELPER_FRAME_PAYLOAD_LIMIT, InstallDownloadProgress,
+    ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
     RepairGenerationStatus,
 };
 pub use maintenance::{
@@ -143,13 +144,17 @@ pub use managed::uninstall::{
     prepare_managed_runtime_removal_without_receipt,
 };
 pub use nixpkgs::{
-    NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsPin,
-    NixpkgsSourceError, NixpkgsSourceErrorCode, PinnedNixpkgsSource, VerifiedNixpkgsSource,
-    fetch_pinned_nixpkgs, fetch_verified_nixpkgs,
+    NixpkgsFetchSpec, NixpkgsMetadataRunner, NixpkgsPin, NixpkgsSourceError,
+    NixpkgsSourceErrorCode, PinnedNixpkgsSource, VerifiedNixpkgsSource, fetch_pinned_nixpkgs,
+    fetch_verified_nixpkgs,
 };
 pub use real::{
     MAX_REPAIR_EXECUTION_DURATION, PINNED_NIX_VERSION, RealNixAdapter, RootNixGcExecutor,
     RootNixRepairExecutor,
+};
+pub use root_nix::{
+    RootNixFailure, RootNixOperation, RootNixRequest, RootNixResponse, RootRepairPlanProof,
+    RootRepairPlanRequest,
 };
 pub use substitute::{
     CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,

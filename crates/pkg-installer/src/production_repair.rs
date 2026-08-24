@@ -6,9 +6,10 @@ use std::{
 };
 
 use pkg_nix::{
-    AuthenticatedCaller, BuildApprovalReceipt, OperationHandle, RealNixAdapter, RepairBuildPlan,
-    RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
-    RepairGenerationStatus, RootSetAttestationRequest, StorePath, verify_closure,
+    AuthenticatedCaller, BuildApprovalReceipt, NixAdapter, NixAdapterError, OperationHandle,
+    RealNixAdapter, RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
+    RepairGenerationStatus, RootRepairPlanProof, RootRepairPlanRequest, RootSetAttestationRequest,
+    StorePath, verify_closure,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
 
@@ -20,7 +21,7 @@ use crate::{
 
 /// Broker-private production owner of generation repair inputs and execution.
 pub struct ProductionRepairAuthority {
-    adapter: Arc<RealNixAdapter>,
+    adapter: Arc<dyn RepairPlanningNix>,
     roots: Arc<RootHelperClient>,
     build_authority: Arc<AuthenticatedBuildAuthority>,
     journals: BrokerRepairJournals,
@@ -29,7 +30,7 @@ pub struct ProductionRepairAuthority {
 impl ProductionRepairAuthority {
     /// Binds repair to the broker's authenticated Nix, root, channel, and journal authorities.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         adapter: Arc<RealNixAdapter>,
         roots: Arc<RootHelperClient>,
         build_authority: Arc<AuthenticatedBuildAuthority>,
@@ -41,6 +42,40 @@ impl ProductionRepairAuthority {
             build_authority,
             journals,
         }
+    }
+}
+
+trait RepairPlanningNix: NixAdapter {
+    fn repair_closure(&self, roots: &[StorePath]) -> Result<Vec<StorePath>, NixAdapterError>;
+    fn repair_proof(
+        &self,
+        request: &RootRepairPlanRequest,
+    ) -> Result<RootRepairPlanProof, NixAdapterError>;
+}
+
+impl RepairPlanningNix for RealNixAdapter {
+    fn repair_closure(&self, roots: &[StorePath]) -> Result<Vec<StorePath>, NixAdapterError> {
+        self.closure_for_roots(roots)
+    }
+
+    fn repair_proof(
+        &self,
+        request: &RootRepairPlanRequest,
+    ) -> Result<RootRepairPlanProof, NixAdapterError> {
+        self.repair_plan_proof(request)
+    }
+}
+
+impl RepairPlanningNix for RootHelperClient {
+    fn repair_closure(&self, roots: &[StorePath]) -> Result<Vec<StorePath>, NixAdapterError> {
+        self.closure_for_roots(roots)
+    }
+
+    fn repair_proof(
+        &self,
+        request: &RootRepairPlanRequest,
+    ) -> Result<RootRepairPlanProof, NixAdapterError> {
+        self.repair_plan_proof(request)
     }
 }
 
@@ -72,7 +107,7 @@ impl RepairAuthorityDispatch for ProductionRepairAuthority {
             .collect::<Vec<_>>();
         let closure = self
             .adapter
-            .closure_for_roots(&roots)
+            .repair_closure(&roots)
             .map_err(|_| RepairGenerationErrorCode::InvalidScope)?;
         let policy_version = self
             .build_authority
@@ -89,11 +124,7 @@ impl RepairAuthorityDispatch for ProductionRepairAuthority {
                     return Err(RepairGenerationErrorCode::FreshApprovalRequired);
                 }
                 let plan = self.repair_plan(damage.damaged(), policy_version)?;
-                if plan
-                    .digest()
-                    .map_err(|_| RepairGenerationErrorCode::InvalidScope)?
-                    != approval.build_plan_digest()
-                {
+                if plan.digest() != approval.build_plan_digest() {
                     return Err(RepairGenerationErrorCode::FreshApprovalRequired);
                 }
                 let timestamp = approval_timestamp()?;
@@ -160,7 +191,7 @@ impl ProductionRepairAuthority {
         &self,
         damaged: &[StorePath],
         policy_version: pkg_core::PolicyVersion,
-    ) -> Result<RepairBuildPlan, RepairGenerationErrorCode> {
+    ) -> Result<RootRepairPlanProof, RepairGenerationErrorCode> {
         let (current_policy, facts) = self
             .build_authority
             .repair_build_context()
@@ -168,14 +199,16 @@ impl ProductionRepairAuthority {
         if current_policy != policy_version {
             return Err(RepairGenerationErrorCode::FreshApprovalRequired);
         }
+        let request = RootRepairPlanRequest::new(
+            damaged.to_vec(),
+            policy_version,
+            facts.system(),
+            facts.readiness().clone(),
+            facts.host_cores(),
+        )
+        .ok_or(RepairGenerationErrorCode::InvalidScope)?;
         self.adapter
-            .repair_build_plan(
-                damaged,
-                policy_version,
-                facts.system(),
-                facts.readiness().clone(),
-                facts.host_cores(),
-            )
+            .repair_proof(&request)
             .map_err(|_| RepairGenerationErrorCode::StillDamaged)
     }
 
@@ -196,7 +229,7 @@ impl ProductionRepairAuthority {
             let preview = self
                 .repair_plan(report.damaged(), policy_version)?
                 .preview()
-                .map_err(|_| RepairGenerationErrorCode::InvalidScope)?;
+                .clone();
             return RepairGenerationReport::needs_approval(count, preview)
                 .map_err(|_| RepairGenerationErrorCode::VerifyFailed);
         }
@@ -207,7 +240,7 @@ impl ProductionRepairAuthority {
 struct ProductionRepairApproval<'a> {
     caller: &'a AuthenticatedCaller,
     handle: &'a OperationHandle,
-    adapter: &'a RealNixAdapter,
+    adapter: &'a dyn RepairPlanningNix,
     build_authority: &'a AuthenticatedBuildAuthority,
 }
 
@@ -226,21 +259,20 @@ impl RepairApprovalGate for ProductionRepairApproval<'_> {
                 RepairCoordinatorErrorCode::FreshApprovalRequired,
             ));
         }
-        let plan = self
-            .adapter
-            .repair_build_plan(
-                scope.paths(),
-                scope.policy_version(),
-                facts.system(),
-                facts.readiness().clone(),
-                facts.host_cores(),
-            )
-            .map_err(|_| {
-                RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
-            })?;
-        let digest = plan.digest().map_err(|_| {
+        let request = RootRepairPlanRequest::new(
+            scope.paths().to_vec(),
+            scope.policy_version(),
+            facts.system(),
+            facts.readiness().clone(),
+            facts.host_cores(),
+        )
+        .ok_or_else(|| {
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
         })?;
+        let proof = self.adapter.repair_proof(&request).map_err(|_| {
+            RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
+        })?;
+        let digest = proof.digest();
         if digest != scope.build_plan_digest() {
             return Err(RepairCoordinatorError::new(
                 RepairCoordinatorErrorCode::FreshApprovalRequired,
@@ -266,7 +298,7 @@ impl RepairApprovalGate for ProductionRepairApproval<'_> {
 
 fn report_terminal_result(
     result: RepairResult,
-    adapter: &RealNixAdapter,
+    adapter: &dyn NixAdapter,
     closure: &[StorePath],
 ) -> Result<RepairGenerationReport, RepairGenerationErrorCode> {
     let (status, damaged_paths) = match result {
@@ -291,7 +323,7 @@ fn approval_timestamp() -> Result<String, RepairGenerationErrorCode> {
 }
 
 fn damage_count(
-    adapter: &RealNixAdapter,
+    adapter: &dyn NixAdapter,
     closure: &[StorePath],
 ) -> Result<u32, RepairGenerationErrorCode> {
     let report = verify_closure(adapter, closure.iter().cloned())

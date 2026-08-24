@@ -75,7 +75,6 @@ pub use transcript::TranscriptError;
 // depending on `pkg-nix` directly.
 pub use pkg_nix::{
     BuildReport, BuildRequest, DerivationPlanReport, EvaluateDerivationRequest, GcReport,
-    MethodKind, NixAdapter, NixAdapterError, NixpkgsMetadataCommand, NixpkgsMetadataRunner,
-    NixpkgsSourceError, PathInfoReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest,
-    VersionInfo,
+    MethodKind, NixAdapter, NixAdapterError, NixpkgsMetadataRunner, NixpkgsSourceError,
+    PathInfoReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };

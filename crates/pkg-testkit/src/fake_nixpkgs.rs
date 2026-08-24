@@ -4,10 +4,10 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Mutex;
 
-use pkg_nix::{NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError};
+use pkg_nix::{NixpkgsMetadataRunner, NixpkgsPin, NixpkgsSourceError};
 
 struct Expectation {
-    command: NixpkgsMetadataCommand,
+    pin: NixpkgsPin,
     response: Result<Vec<u8>, NixpkgsSourceError>,
 }
 
@@ -25,13 +25,13 @@ impl FakeNixpkgsRunner {
         }
     }
 
-    /// Appends one exact command and canned owned result.
+    /// Appends one exact pin and canned owned result.
     pub fn expect_metadata(
         &self,
-        command: NixpkgsMetadataCommand,
+        pin: NixpkgsPin,
         response: Result<Vec<u8>, NixpkgsSourceError>,
     ) -> &Self {
-        self.lock().push_back(Expectation { command, response });
+        self.lock().push_back(Expectation { pin, response });
         self
     }
 
@@ -68,14 +68,11 @@ impl fmt::Debug for FakeNixpkgsRunner {
 }
 
 impl NixpkgsMetadataRunner for FakeNixpkgsRunner {
-    fn run_metadata(
-        &self,
-        command: &NixpkgsMetadataCommand,
-    ) -> Result<Vec<u8>, NixpkgsSourceError> {
+    fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError> {
         let Some(expectation) = self.lock().pop_front() else {
             return Err(NixpkgsSourceError::runner_failure());
         };
-        if expectation.command != *command {
+        if expectation.pin != *pin {
             return Err(NixpkgsSourceError::runner_failure());
         }
         expectation.response

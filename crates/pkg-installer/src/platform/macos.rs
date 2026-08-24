@@ -971,6 +971,27 @@ impl BrokerHelperDispatch for MacOsHelperSession {
     ) -> Result<BrokerHelperResponse, MaintenanceError> {
         self.inner.dispatch(request)
     }
+
+    fn dispatch_build(
+        &self,
+        request: &pkg_nix::BuildRequest,
+        deadline: std::time::Instant,
+        cancelled: &std::sync::atomic::AtomicBool,
+        progress: &mut dyn FnMut(
+            pkg_nix::BuildProgressEstimate,
+        ) -> Result<(), pkg_nix::NixAdapterError>,
+    ) -> pkg_nix::RootNixResponse {
+        self.inner
+            .dispatch_build(request, deadline, cancelled, progress)
+    }
+
+    fn dispatch_root_nix(
+        &self,
+        request: pkg_nix::RootNixRequest,
+        deadline: std::time::Instant,
+    ) -> pkg_nix::RootNixResponse {
+        self.inner.dispatch_root_nix(request, deadline)
+    }
 }
 
 /// Whether one fixed macOS object is exact-present or absent.

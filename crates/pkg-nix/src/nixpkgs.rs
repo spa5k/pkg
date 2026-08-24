@@ -155,10 +155,10 @@ impl NixpkgsFetchSpec {
         self.pin.nar_hash()
     }
 
-    /// Builds the only metadata command admitted by this contract.
+    /// Returns the exact authenticated source pin.
     #[must_use]
-    pub fn command(&self) -> NixpkgsMetadataCommand {
-        self.pin.command()
+    pub const fn pin(&self) -> &NixpkgsPin {
+        &self.pin
     }
 }
 
@@ -197,63 +197,13 @@ impl NixpkgsPin {
     pub const fn nar_hash(&self) -> &NarHash {
         &self.nar_hash
     }
-
-    /// Builds the only metadata command admitted by this contract.
-    #[must_use]
-    pub fn command(&self) -> NixpkgsMetadataCommand {
-        let direct_ref = format!(
-            "github:{}/{}/{}?narHash={}",
-            NIXPKGS_OWNER,
-            NIXPKGS_REPO,
-            self.revision.as_str(),
-            self.nar_hash.as_str()
-        );
-        NixpkgsMetadataCommand {
-            argv: vec![
-                "flake".to_owned(),
-                "metadata".to_owned(),
-                "--no-use-registries".to_owned(),
-                direct_ref,
-                "--json".to_owned(),
-            ],
-        }
-    }
-}
-
-/// Exact argv handed to the contained bundled-Nix child launcher.
-#[derive(Clone, PartialEq, Eq)]
-pub struct NixpkgsMetadataCommand {
-    argv: Vec<String>,
-}
-
-impl NixpkgsMetadataCommand {
-    /// Returns the complete fixed argument vector, excluding the immutable
-    /// bundled executable selected by [`crate::ChildContainmentPolicy`].
-    #[must_use]
-    pub fn argv(&self) -> &[String] {
-        &self.argv
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(argv: &[&str]) -> Self {
-        Self {
-            argv: argv.iter().map(|value| (*value).to_owned()).collect(),
-        }
-    }
-}
-
-impl fmt::Debug for NixpkgsMetadataCommand {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("NixpkgsMetadataCommand(<fixed-authenticated-ref>)")
-    }
 }
 
 /// Closed execution seam implemented by FakeNix today and the contained
 /// bundled-Nix subprocess adapter in the Real-Nix lane.
 pub trait NixpkgsMetadataRunner: Send + Sync {
-    /// Executes exactly the supplied closed command and returns JSON stdout.
-    fn run_metadata(&self, command: &NixpkgsMetadataCommand)
-    -> Result<Vec<u8>, NixpkgsSourceError>;
+    /// Executes the one fixed metadata command reconstructed from this pin.
+    fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError>;
 }
 
 /// A Nix-materialized source whose identity matched an exact release pin.
@@ -376,7 +326,7 @@ pub fn fetch_pinned_nixpkgs(
     pin: &NixpkgsPin,
     runner: &dyn NixpkgsMetadataRunner,
 ) -> Result<PinnedNixpkgsSource, NixpkgsSourceError> {
-    let metadata = runner.run_metadata(&pin.command())?;
+    let metadata = runner.run_metadata(pin)?;
     verify_metadata(pin, &metadata)
 }
 
@@ -513,15 +463,12 @@ mod tests {
     }
 
     struct ExactRunner {
-        expected: NixpkgsMetadataCommand,
+        expected: NixpkgsPin,
         response: Mutex<Option<Result<Vec<u8>, NixpkgsSourceError>>>,
     }
 
     impl ExactRunner {
-        fn new(
-            expected: NixpkgsMetadataCommand,
-            response: Result<Vec<u8>, NixpkgsSourceError>,
-        ) -> Self {
+        fn new(expected: NixpkgsPin, response: Result<Vec<u8>, NixpkgsSourceError>) -> Self {
             Self {
                 expected,
                 response: Mutex::new(Some(response)),
@@ -530,11 +477,8 @@ mod tests {
     }
 
     impl NixpkgsMetadataRunner for ExactRunner {
-        fn run_metadata(
-            &self,
-            command: &NixpkgsMetadataCommand,
-        ) -> Result<Vec<u8>, NixpkgsSourceError> {
-            if command != &self.expected {
+        fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError> {
+            if pin != &self.expected {
                 return Err(NixpkgsSourceError::runner_failure());
             }
             self.response
@@ -546,28 +490,16 @@ mod tests {
     }
 
     #[test]
-    fn command_is_exact_and_contains_only_the_authenticated_direct_ref() {
-        let command = spec().command();
-        assert_eq!(
-            command.argv(),
-            vec![
-                "flake".to_owned(),
-                "metadata".to_owned(),
-                "--no-use-registries".to_owned(),
-                format!("github:NixOS/nixpkgs/{REVISION}?narHash={NAR_HASH}"),
-                "--json".to_owned(),
-            ]
-        );
-        let joined = command.argv().join(" ");
-        for forbidden in ["NIX_PATH", "--impure", "--override-input", "--registry"] {
-            assert!(!joined.contains(forbidden));
-        }
+    fn fetch_spec_exposes_only_the_authenticated_pin() {
+        let spec = spec();
+        assert_eq!(spec.pin().revision().as_str(), REVISION);
+        assert_eq!(spec.pin().nar_hash().as_str(), NAR_HASH);
     }
 
     #[test]
     fn top_level_locked_identity_promotes_a_private_source() {
         let spec = spec();
-        let runner = ExactRunner::new(spec.command(), Ok(metadata(REVISION, NAR_HASH)));
+        let runner = ExactRunner::new(spec.pin().clone(), Ok(metadata(REVISION, NAR_HASH)));
         let source = fetch_verified_nixpkgs(&spec, &runner).unwrap();
         assert_eq!(source.revision().as_str(), REVISION);
         assert_eq!(source.nar_hash().as_str(), NAR_HASH);
@@ -581,7 +513,7 @@ mod tests {
     #[test]
     fn release_pin_promotes_the_same_verified_private_source() {
         let pin = NixpkgsPin::new(REVISION, NAR_HASH).unwrap();
-        let runner = ExactRunner::new(pin.command(), Ok(metadata(REVISION, NAR_HASH)));
+        let runner = ExactRunner::new(pin.clone(), Ok(metadata(REVISION, NAR_HASH)));
 
         let source = fetch_pinned_nixpkgs(&pin, &runner).unwrap();
 
@@ -609,7 +541,7 @@ mod tests {
             ),
             top_level_only,
         ] {
-            let runner = ExactRunner::new(spec.command(), Ok(response));
+            let runner = ExactRunner::new(spec.pin().clone(), Ok(response));
             assert_eq!(
                 fetch_verified_nixpkgs(&spec, &runner).unwrap_err().code(),
                 NixpkgsSourceErrorCode::IdentityMismatch
@@ -625,7 +557,7 @@ mod tests {
             replace_ascii(metadata(REVISION, NAR_HASH), "NixOS", "attacker"),
             replace_ascii(metadata(REVISION, NAR_HASH), "nixpkgs", "other"),
         ] {
-            let runner = ExactRunner::new(spec.command(), Ok(response));
+            let runner = ExactRunner::new(spec.pin().clone(), Ok(response));
             assert_eq!(
                 fetch_verified_nixpkgs(&spec, &runner).unwrap_err().code(),
                 NixpkgsSourceErrorCode::IdentityMismatch
@@ -641,7 +573,7 @@ mod tests {
             &format!(r#","revision":"{REVISION}""#),
             "",
         );
-        let runner = ExactRunner::new(spec.command(), Ok(without_revision));
+        let runner = ExactRunner::new(spec.pin().clone(), Ok(without_revision));
         assert!(fetch_verified_nixpkgs(&spec, &runner).is_ok());
     }
 
@@ -668,7 +600,7 @@ mod tests {
             ),
         ];
         for (response, expected) in cases {
-            let runner = ExactRunner::new(spec.command(), Ok(response));
+            let runner = ExactRunner::new(spec.pin().clone(), Ok(response));
             assert_eq!(
                 fetch_verified_nixpkgs(&spec, &runner).unwrap_err().code(),
                 expected
@@ -679,10 +611,13 @@ mod tests {
     #[test]
     fn runner_failure_stays_closed_and_redacted() {
         let spec = spec();
-        let runner = ExactRunner::new(spec.command(), Err(NixpkgsSourceError::runner_failure()));
+        let runner = ExactRunner::new(
+            spec.pin().clone(),
+            Err(NixpkgsSourceError::runner_failure()),
+        );
         let error = fetch_verified_nixpkgs(&spec, &runner).unwrap_err();
         assert_eq!(error.code(), NixpkgsSourceErrorCode::RunnerFailure);
         assert!(!error.to_string().contains(REVISION));
-        assert!(!format!("{:?}", spec.command()).contains(REVISION));
+        assert!(!format!("{:?}", spec.pin()).contains(REVISION));
     }
 }

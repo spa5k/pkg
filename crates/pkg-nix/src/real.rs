@@ -13,6 +13,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -31,12 +32,12 @@ use crate::{
     BuildStatus, CacheDownloadClosure, CachePathObservation, DerivationPath, DerivationPlanReport,
     DerivationSystem, EvaluateDerivationRequest, EvaluatedDerivation, FormatVersion, GcReport,
     GcStatus, MaintenanceError, MethodKind, NarHash, NarIntegrity, NixAdapter, NixAdapterError,
-    NixVersion, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsSourceError, OutputName,
-    PathInfoReport, PathVerifyResult, PinnedNixpkgsSource, RepairBuildPlan, RepairMode,
-    RepairOutcomeKind, RepairPlanDerivation, RepairPlanTarget, Signature, StorePath,
-    SubstituteOutcome, SubstituteReceipt, SubstituteReport, System, TrustStatus,
-    VerifiedRepairExecutor, VerifiedRepairScope, VerifyMode, VerifyReport, VerifyRequest,
-    VersionInfo,
+    NixVersion, NixpkgsMetadataRunner, NixpkgsPin, NixpkgsSourceError, OutputName, PathInfoReport,
+    PathVerifyResult, PinnedNixpkgsSource, RepairBuildPlan, RepairMode, RepairOutcomeKind,
+    RepairPlanDerivation, RepairPlanTarget, RootNixOperation, RootRepairPlanProof,
+    RootRepairPlanRequest, Signature, StorePath, SubstituteOutcome, SubstituteReceipt,
+    SubstituteReport, System, TrustStatus, VerifiedRepairExecutor, VerifiedRepairScope, VerifyMode,
+    VerifyReport, VerifyRequest, VersionInfo,
 };
 
 /// Exact managed Nix version embedded in the V1 runtime contract.
@@ -75,9 +76,11 @@ const GC_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 pub const MAX_REPAIR_EXECUTION_DURATION: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Real, version-pinned adapter around the product-managed Nix executable.
+#[derive(Clone)]
 pub struct RealNixAdapter {
     executor: Arc<dyn CommandExecutor>,
     expected_nix_version: &'static str,
+    operation_deadline: Option<Instant>,
 }
 
 /// Root-helper-only executor for the fixed, capability-validated Nix repair
@@ -182,7 +185,7 @@ impl RootNixGcExecutor {
     /// either fixed command fails, output exceeds its bound, or execution times
     /// out.
     pub fn collect(&self) -> Result<GcReport, NixAdapterError> {
-        collect_garbage(self.executor.as_ref(), os_args(["--store", "local"]))
+        collect_garbage(self.executor.as_ref(), os_args(["--store", "local"]), None)
     }
 
     /// Resolves the exact local closure protected by product GC roots.
@@ -375,6 +378,7 @@ impl RealNixAdapter {
                 Some(Path::new(MANAGED_DAEMON_SOCKET)),
             )?),
             expected_nix_version: PINNED_NIX_VERSION,
+            operation_deadline: None,
         })
     }
 
@@ -393,6 +397,7 @@ impl RealNixAdapter {
                 None,
             )?),
             expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
+            operation_deadline: None,
         })
     }
 
@@ -408,7 +413,38 @@ impl RealNixAdapter {
                 Some(daemon_socket),
             )?),
             expected_nix_version: PINNED_NIX_VERSION,
+            operation_deadline: None,
         })
+    }
+
+    /// Returns a clone constrained by one absolute root-helper operation budget.
+    pub fn for_root_operation(
+        &self,
+        operation: RootNixOperation,
+        operation_deadline: Instant,
+    ) -> Result<Self, NixAdapterError> {
+        let maximum_deadline = Instant::now()
+            .checked_add(operation.server_budget())
+            .ok_or(NixAdapterError::Timeout)?;
+        if operation_deadline > maximum_deadline || operation_deadline <= Instant::now() {
+            return Err(NixAdapterError::Timeout);
+        }
+        Ok(Self {
+            executor: Arc::clone(&self.executor),
+            expected_nix_version: self.expected_nix_version,
+            operation_deadline: Some(operation_deadline),
+        })
+    }
+
+    /// Runs one root-helper build and stops its child process group when the
+    /// authenticated client disconnects.
+    pub fn build_with_progress_cancelled(
+        &self,
+        request: &BuildRequest,
+        cancelled: &AtomicBool,
+        progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<BuildReport, NixAdapterError> {
+        self.run_build_with_progress(request, &|| cancelled.load(Ordering::Acquire), progress)
     }
 
     /// Performs the fixed bounded managed-daemon store readiness check.
@@ -531,6 +567,31 @@ impl RealNixAdapter {
         .map_err(|_| NixAdapterError::OperationFailed)
     }
 
+    /// Produces the only repair-planning data allowed to cross the helper wire.
+    pub fn repair_plan_proof(
+        &self,
+        request: &RootRepairPlanRequest,
+    ) -> Result<RootRepairPlanProof, NixAdapterError> {
+        let plan = self.repair_build_plan(
+            request.damaged(),
+            request.policy_version(),
+            request.system(),
+            request.readiness().clone(),
+            request.host_cores(),
+        )?;
+        let digest = plan
+            .digest()
+            .map_err(|_| NixAdapterError::OperationFailed)?;
+        let preview = plan
+            .preview()
+            .map_err(|_| NixAdapterError::OperationFailed)?;
+        let proof = RootRepairPlanProof::new(preview).ok_or(NixAdapterError::OperationFailed)?;
+        if proof.digest() != digest {
+            return Err(NixAdapterError::OperationFailed);
+        }
+        Ok(proof)
+    }
+
     fn repair_plan_target(
         &self,
         path: StorePath,
@@ -602,6 +663,7 @@ impl RealNixAdapter {
         Self {
             executor: Arc::new(executor),
             expected_nix_version: PINNED_NIX_VERSION,
+            operation_deadline: None,
         }
     }
 
@@ -610,6 +672,7 @@ impl RealNixAdapter {
         Self {
             executor: Arc::new(executor),
             expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
+            operation_deadline: None,
         }
     }
 
@@ -629,6 +692,7 @@ impl RealNixAdapter {
         args: Vec<OsString>,
         timeout: Duration,
     ) -> Result<CommandOutcome, NixAdapterError> {
+        let timeout = bounded_timeout(self.operation_deadline, timeout)?;
         let outcome = execute_checked(self.executor.as_ref(), program, args, timeout)?;
         let _ = method;
         Ok(outcome)
@@ -712,6 +776,7 @@ impl RealNixAdapter {
     fn run_build_with_progress(
         &self,
         request: &BuildRequest,
+        cancelled: &dyn Fn() -> bool,
         progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
     ) -> Result<BuildReport, NixAdapterError> {
         let mut args = base_args();
@@ -726,11 +791,13 @@ impl RealNixAdapter {
             args.push(target.render_private().into());
         }
         let mut parser = InternalBuildProgressParser::default();
+        let timeout = bounded_timeout(self.operation_deadline, BUILD_TIMEOUT)?;
         let outcome = execute_checked_with_stderr(
             self.executor.as_ref(),
             NixProgram::Modern,
             args,
-            BUILD_TIMEOUT,
+            timeout,
+            cancelled,
             &mut |chunk| parser.push(chunk, progress),
         )?;
         parser.finish(progress)?;
@@ -1008,12 +1075,18 @@ impl BuildCacheProbe for RealNixAdapter {
 }
 
 impl NixpkgsMetadataRunner for RealNixAdapter {
-    fn run_metadata(
-        &self,
-        command: &NixpkgsMetadataCommand,
-    ) -> Result<Vec<u8>, NixpkgsSourceError> {
+    fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError> {
         let mut args = base_args();
-        args.extend(command.argv().iter().map(OsString::from));
+        args.extend(os_args(["flake", "metadata", "--no-use-registries"]));
+        args.push(
+            format!(
+                "github:NixOS/nixpkgs/{}?narHash={}",
+                pin.revision().as_str(),
+                pin.nar_hash().as_str()
+            )
+            .into(),
+        );
+        args.push("--json".into());
         self.require_success(MethodKind::EvaluateDerivation, args, EVALUATE_TIMEOUT)
             .map_err(|_| NixpkgsSourceError::runner_failure())
     }
@@ -1205,7 +1278,7 @@ impl NixAdapter for RealNixAdapter {
     }
 
     fn build(&self, request: &BuildRequest) -> Result<BuildReport, NixAdapterError> {
-        self.run_build_with_progress(request, &mut |_| Ok(()))
+        self.run_build_with_progress(request, &|| false, &mut |_| Ok(()))
     }
 
     fn build_with_progress(
@@ -1213,7 +1286,7 @@ impl NixAdapter for RealNixAdapter {
         request: &BuildRequest,
         progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
     ) -> Result<BuildReport, NixAdapterError> {
-        self.run_build_with_progress(request, progress)
+        self.run_build_with_progress(request, &|| false, progress)
     }
 
     fn verify(&self, request: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
@@ -1259,13 +1332,14 @@ impl NixAdapter for RealNixAdapter {
     }
 
     fn gc(&self) -> Result<GcReport, NixAdapterError> {
-        collect_garbage(self.executor.as_ref(), Vec::new())
+        collect_garbage(self.executor.as_ref(), Vec::new(), self.operation_deadline)
     }
 }
 
 fn collect_garbage(
     executor: &dyn CommandExecutor,
     fixed_prefix: Vec<OsString>,
+    operation_deadline: Option<Instant>,
 ) -> Result<GcReport, NixAdapterError> {
     let mut preflight_args = fixed_prefix.clone();
     preflight_args.extend(os_args(["--gc", "--print-dead"]));
@@ -1273,7 +1347,7 @@ fn collect_garbage(
         executor,
         NixProgram::LegacyStore,
         preflight_args,
-        GC_TIMEOUT,
+        bounded_timeout(operation_deadline, GC_TIMEOUT)?,
     )?;
     if preflight.code != Some(0) {
         return Err(NixAdapterError::OperationFailed);
@@ -1288,12 +1362,31 @@ fn collect_garbage(
 
     let mut collect_args = fixed_prefix;
     collect_args.extend(os_args(["--gc"]));
-    let outcome = execute_checked(executor, NixProgram::LegacyStore, collect_args, GC_TIMEOUT)?;
+    let outcome = execute_checked(
+        executor,
+        NixProgram::LegacyStore,
+        collect_args,
+        bounded_timeout(operation_deadline, GC_TIMEOUT)?,
+    )?;
     if outcome.code != Some(0) {
         return Err(NixAdapterError::OperationFailed);
     }
     let collected = parse_gc_deletions(&outcome.stderr)?;
     GcReport::new(GcStatus::Collected, collected, 0)
+}
+
+fn bounded_timeout(
+    deadline: Option<Instant>,
+    timeout: Duration,
+) -> Result<Duration, NixAdapterError> {
+    match deadline {
+        Some(deadline) => deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .map(|remaining| remaining.min(timeout))
+            .ok_or(NixAdapterError::Timeout),
+        None => Ok(timeout),
+    }
 }
 
 trait CommandExecutor: Send + Sync {
@@ -1302,9 +1395,16 @@ trait CommandExecutor: Send + Sync {
     fn execute_with_stderr(
         &self,
         spec: CommandSpec,
+        cancelled: &dyn Fn() -> bool,
         stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
     ) -> Result<CommandOutcome, NixAdapterError> {
+        if cancelled() {
+            return Err(NixAdapterError::Unavailable);
+        }
         let outcome = self.execute(spec)?;
+        if cancelled() {
+            return Err(NixAdapterError::Unavailable);
+        }
         stderr_chunk(&outcome.stderr)?;
         Ok(outcome)
     }
@@ -1384,6 +1484,7 @@ fn execute_checked_with_stderr(
     program: NixProgram,
     args: Vec<OsString>,
     timeout: Duration,
+    cancelled: &dyn Fn() -> bool,
     stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
 ) -> Result<CommandOutcome, NixAdapterError> {
     let outcome = executor.execute_with_stderr(
@@ -1392,6 +1493,7 @@ fn execute_checked_with_stderr(
             args,
             timeout,
         },
+        cancelled,
         stderr_chunk,
     )?;
     if outcome.stdout_oversized || outcome.stderr_oversized {
@@ -1422,15 +1524,16 @@ struct ProcessExecutor {
 
 impl CommandExecutor for ProcessExecutor {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError> {
-        self.execute_process(spec, &mut |_| Ok(()))
+        self.execute_process(spec, &|| false, &mut |_| Ok(()))
     }
 
     fn execute_with_stderr(
         &self,
         spec: CommandSpec,
+        cancelled: &dyn Fn() -> bool,
         stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
     ) -> Result<CommandOutcome, NixAdapterError> {
-        self.execute_process(spec, stderr_chunk)
+        self.execute_process(spec, cancelled, stderr_chunk)
     }
 }
 
@@ -1438,6 +1541,7 @@ impl ProcessExecutor {
     fn execute_process(
         &self,
         spec: CommandSpec,
+        cancelled: &dyn Fn() -> bool,
         stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
     ) -> Result<CommandOutcome, NixAdapterError> {
         let binary = match spec.program {
@@ -1488,6 +1592,9 @@ impl ProcessExecutor {
                 {
                     callback_error = Some(error);
                 }
+            }
+            if callback_error.is_none() && cancelled() {
+                callback_error = Some(NixAdapterError::Unavailable);
             }
             if observed_status.is_none() {
                 observed_status = child
@@ -2400,6 +2507,16 @@ mod tests {
         outcome
     }
 
+    #[test]
+    fn absolute_root_operation_deadline_clamps_all_executor_timeouts() {
+        let deadline = Instant::now().checked_add(Duration::from_mins(1)).unwrap();
+        for local_limit in [SHORT_TIMEOUT, BUILD_TIMEOUT, GC_TIMEOUT] {
+            let timeout = bounded_timeout(Some(deadline), local_limit).unwrap();
+            assert!(timeout <= Duration::from_mins(1));
+            assert!(!timeout.is_zero());
+        }
+    }
+
     #[cfg(unix)]
     fn captured_environment(
         executor: &ProcessExecutor,
@@ -2873,27 +2990,28 @@ mod tests {
     }
 
     #[test]
-    fn nixpkgs_metadata_runner_forwards_only_the_closed_typed_command()
+    fn nixpkgs_metadata_runner_reconstructs_only_the_fixed_command()
     -> Result<(), Box<dyn std::error::Error>> {
-        let command = NixpkgsMetadataCommand::for_test(&[
-            "flake",
-            "metadata",
-            "--no-use-registries",
-            "github:NixOS/nixpkgs/0123456789abcdef0123456789abcdef01234567?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            "--json",
-        ]);
+        let pin = NixpkgsPin::new(
+            "0123456789abcdef0123456789abcdef01234567",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )?;
         let expected = br#"{"locked":{},"path":"private"}"#;
         let executor = Scripted::new(vec![success(expected.as_slice())]);
         let calls = Arc::clone(&executor.calls);
         let adapter = RealNixAdapter::scripted(executor);
 
-        assert_eq!(adapter.run_metadata(&command)?, expected);
+        assert_eq!(adapter.run_metadata(&pin)?, expected);
         let calls = calls.lock().map_err(|_| "poisoned call log")?;
         assert_eq!(calls.len(), 1);
-        let expected_args = base_args()
-            .into_iter()
-            .chain(command.argv().iter().map(OsString::from))
-            .collect::<Vec<_>>();
+        let mut expected_args = base_args();
+        expected_args.extend(os_args([
+            "flake",
+            "metadata",
+            "--no-use-registries",
+            "github:NixOS/nixpkgs/0123456789abcdef0123456789abcdef01234567?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "--json",
+        ]));
         assert_eq!(calls[0], expected_args);
         for forbidden in ["--impure", "--override-input", "--registry"] {
             assert!(!calls[0].iter().any(|argument| argument == forbidden));
@@ -2959,11 +3077,15 @@ mod tests {
 
     #[test]
     fn nixpkgs_metadata_runner_failure_is_closed() {
-        let command = NixpkgsMetadataCommand::for_test(&["flake", "metadata"]);
+        let pin = NixpkgsPin::new(
+            "0123456789abcdef0123456789abcdef01234567",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .unwrap();
         let adapter = RealNixAdapter::scripted(Scripted::new(vec![failure(1)]));
 
         assert_eq!(
-            adapter.run_metadata(&command).unwrap_err().code(),
+            adapter.run_metadata(&pin).unwrap_err().code(),
             crate::NixpkgsSourceErrorCode::RunnerFailure
         );
     }
@@ -3358,6 +3480,7 @@ mod tests {
             NixProgram::Modern,
             noisy().args,
             Duration::from_millis(100),
+            &|| false,
             &mut |_| Ok(()),
         )
         .unwrap_err();
@@ -3366,13 +3489,62 @@ mod tests {
 
         let started = Instant::now();
         let cancelled = executor
-            .execute_with_stderr(noisy(), &mut |_| Err(NixAdapterError::OperationFailed))
+            .execute_with_stderr(noisy(), &|| false, &mut |_| {
+                Err(NixAdapterError::OperationFailed)
+            })
             .unwrap_err();
         assert_eq!(
             cancelled.code(),
             crate::NixAdapterErrorCode::OperationFailed
         );
         assert!(started.elapsed() < Duration::from_secs(5));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn progress_callback_failure_reaps_a_silent_child_process_group()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = tempfile::tempdir()?;
+        fs::create_dir(home.path().join("tmp"))?;
+        let executor = ProcessExecutor {
+            nix_binary: PathBuf::from("/bin/sh"),
+            nix_store_binary: PathBuf::from("/bin/sh"),
+            private_home: home.path().to_path_buf(),
+            daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
+        };
+        let started = Instant::now();
+        let disconnected = AtomicBool::new(false);
+        let mut events = 0;
+        let result = executor.execute_with_stderr(
+            CommandSpec {
+                program: NixProgram::Modern,
+                args: os_args([
+                    "-c",
+                    "printf '%s' $$ > \"$HOME/child.pid\"; printf 'progress\\n' >&2; exec sleep 30",
+                ]),
+                timeout: Duration::from_secs(30),
+            },
+            &|| disconnected.load(Ordering::Acquire),
+            &mut |_| {
+                events += 1;
+                let client_callback = Err::<(), _>(NixAdapterError::OperationFailed);
+                if client_callback.is_err() {
+                    disconnected.store(true, Ordering::Release);
+                }
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            result.unwrap_err().code(),
+            crate::NixAdapterErrorCode::Unavailable
+        );
+        assert_eq!(events, 1);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let pid = fs::read_to_string(home.path().join("child.pid"))?.parse::<i32>()?;
+        let group = Pid::from_raw(pid).ok_or("invalid child process group")?;
+        assert_eq!(kill_process_group(group, Signal::CONT), Err(Errno::SRCH));
         Ok(())
     }
 

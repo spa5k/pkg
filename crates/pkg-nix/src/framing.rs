@@ -23,9 +23,12 @@ use crate::maintenance::{
     VerifiedRepairScope,
 };
 use crate::{
-    ApprovalSource, BuildPreview, BuildProgressEstimate, BuildReport, DerivationPlanReport,
-    EvaluateDerivationRequest, GcReport, InstallEvidence, JsonCodec, PathInfoReport, RootName,
-    RootRef, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    ApprovalSource, BuildCacheErrorCode, BuildPreview, BuildProgressEstimate, BuildReadiness,
+    BuildReport, CacheDownloadClosure, CachePathObservation, DerivationPlanReport,
+    EvaluateDerivationRequest, GcReport, InstallEvidence, JsonCodec, NixpkgsPin,
+    NixpkgsSourceErrorCode, PathInfoReport, RootName, RootNixFailure, RootNixOperation,
+    RootNixRequest, RootNixResponse, RootRef, RootRepairPlanProof, RootRepairPlanRequest,
+    SubstituteReport, System, VerifyReport, VerifyRequest, VersionInfo,
 };
 use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
@@ -33,7 +36,9 @@ use serde_json::value::RawValue;
 const MAGIC: [u8; 4] = *b"PKG1";
 const PROTOCOL_VERSION: u16 = 1;
 const HEADER_BYTES: usize = 20;
-const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
+const MAX_CLI_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
+/// Root Helper payload cap. It matches the largest existing typed DTO codec.
+pub const HELPER_FRAME_PAYLOAD_LIMIT: usize = JsonCodec::PRODUCTION_LIMIT + 1024 * 1024;
 const MAX_ROOT_SET_WIRE_ENTRIES: usize = 4096;
 const MAX_BUILD_SELECTOR_WIRE_ENTRIES: usize = 4096;
 const MAX_CATALOG_INFO_WIRE_ENTRIES: usize = 256;
@@ -700,6 +705,8 @@ pub enum BrokerHelperRequest {
     LoadRepairRootSet(RootSetAttestationRequest),
     /// Verify exact managed-runtime ownership against an authenticated manifest digest.
     VerifyManagedOwnership(Digest),
+    /// Execute one fixed typed Nix operation in the privileged helper.
+    RootNix(RootNixRequest),
 }
 
 /// Closed privileged responses on the helper-to-broker channel.
@@ -721,6 +728,8 @@ pub enum BrokerHelperResponse {
     RepairRootSetLoaded(RootSet),
     /// Whether every managed runtime asset was authenticated.
     ManagedOwnership(bool),
+    /// Return one fixed typed Nix result from the privileged helper.
+    RootNix(Box<RootNixResponse>),
 }
 
 /// Exact V1 product frame codec.
@@ -1645,6 +1654,10 @@ impl ProductFrameCodec {
                     asset_manifest_digest: digest.to_string(),
                 })?,
             ),
+            BrokerHelperRequest::RootNix(request) => (
+                request.operation().method_id(),
+                encode_root_nix_request(request)?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -1698,6 +1711,11 @@ impl ProductFrameCodec {
                     &wire.asset_manifest_digest,
                 )?)
             }
+            20..=32 => BrokerHelperRequest::RootNix(decode_root_nix_request(
+                RootNixOperation::from_method_id(frame.method)
+                    .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
+                frame.payload,
+            )?),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, request))
@@ -1757,6 +1775,10 @@ impl ProductFrameCodec {
                     verified: *verified,
                 })?,
             ),
+            BrokerHelperResponse::RootNix(response) => (
+                response.operation().method_id(),
+                encode_root_nix_response(response)?,
+            ),
         };
         encode_frame(CHANNEL_BROKER_HELPER, method, request_id, &payload)
     }
@@ -1812,9 +1834,635 @@ impl ProductFrameCodec {
                 let wire: ManagedOwnershipWire = decode_json(frame.payload)?;
                 BrokerHelperResponse::ManagedOwnership(wire.verified)
             }
+            20..=32 => BrokerHelperResponse::RootNix(Box::new(decode_root_nix_response(
+                RootNixOperation::from_method_id(frame.method)
+                    .ok_or_else(|| FrameError::new(FrameErrorCode::UnsupportedMessage))?,
+                frame.payload,
+            )?)),
             _ => return Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
         };
         Ok((frame.request_id, response))
+    }
+}
+
+const ROOT_NIX_SUCCESS: u8 = 0;
+const ROOT_NIX_ADAPTER_ERROR: u8 = 1;
+const ROOT_NIX_CACHE_ERROR: u8 = 2;
+const ROOT_NIX_NIXPKGS_ERROR: u8 = 3;
+const ROOT_NIX_BUSY: u8 = 4;
+const ROOT_NIX_INACTIVE: u8 = 5;
+const ROOT_NIX_BUILD_PROGRESS: u8 = 6;
+const MAX_ROOT_NIX_PATHS: usize = 16_384;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RootNixPathsWire<'a> {
+    paths: Vec<&'a str>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootNixPathsOwnedWire {
+    paths: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RootNixPinWire<'a> {
+    revision: &'a str,
+    nar_hash: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootNixPinOwnedWire {
+    revision: String,
+    nar_hash: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootNixReadinessWire {
+    sandbox_enabled: bool,
+    sandbox_fallback: bool,
+    build_users_ready: bool,
+    use_cgroups_enabled: bool,
+    cgroup_v2_ready: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RootRepairPlanWire<'a> {
+    paths: Vec<&'a str>,
+    policy_version: u64,
+    system: &'a str,
+    readiness: RootNixReadinessWire,
+    host_cores: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootRepairPlanOwnedWire {
+    paths: Vec<String>,
+    policy_version: u64,
+    system: String,
+    readiness: RootNixReadinessWire,
+    host_cores: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheObservationWire<'a> {
+    path: &'a str,
+    download_bytes: Option<u64>,
+    nar_bytes: Option<u64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CacheObservationOwnedWire {
+    path: String,
+    download_bytes: Option<u64>,
+    nar_bytes: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheClosureWire<'a> {
+    root: &'a str,
+    paths: Vec<CacheObservationWire<'a>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CacheClosureOwnedWire {
+    root: String,
+    paths: Vec<CacheObservationOwnedWire>,
+}
+
+fn encode_root_nix_request(request: &RootNixRequest) -> Result<Vec<u8>, FrameError> {
+    match request {
+        RootNixRequest::Version | RootNixRequest::Gc => Ok(Vec::new()),
+        RootNixRequest::Evaluate(request) => request.encode().map_err(adapter_payload),
+        RootNixRequest::PathInfo(path) | RootNixRequest::Substitute(path) => {
+            encode_root_paths(std::slice::from_ref(path))
+        }
+        RootNixRequest::SubstituteMany(paths)
+        | RootNixRequest::CacheInspect(paths)
+        | RootNixRequest::CacheInspectClosures(paths)
+        | RootNixRequest::ClosureForRoots(paths) => encode_root_paths(paths),
+        RootNixRequest::Build(request) => request.encode().map_err(adapter_payload),
+        RootNixRequest::Verify(request) => request.encode().map_err(adapter_payload),
+        RootNixRequest::NixpkgsMetadata(pin) => encode_json(&RootNixPinWire {
+            revision: pin.revision().as_str(),
+            nar_hash: pin.nar_hash().as_str(),
+        }),
+        RootNixRequest::RepairPlan(request) => encode_json(&RootRepairPlanWire {
+            paths: request.damaged().iter().map(StorePath::as_str).collect(),
+            policy_version: request.policy_version().get().get(),
+            system: request.system().as_str(),
+            readiness: readiness_wire(request.readiness()),
+            host_cores: request.host_cores(),
+        }),
+    }
+}
+
+fn decode_root_nix_request(
+    operation: RootNixOperation,
+    payload: &[u8],
+) -> Result<RootNixRequest, FrameError> {
+    let codec = JsonCodec::production();
+    match operation {
+        RootNixOperation::Version => {
+            require_empty(payload)?;
+            Ok(RootNixRequest::Version)
+        }
+        RootNixOperation::Evaluate => Ok(RootNixRequest::Evaluate(
+            EvaluateDerivationRequest::decode(&codec, payload).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::PathInfo => Ok(RootNixRequest::PathInfo(decode_one_path(payload)?)),
+        RootNixOperation::Substitute => Ok(RootNixRequest::Substitute(decode_one_path(payload)?)),
+        RootNixOperation::SubstituteMany => {
+            Ok(RootNixRequest::SubstituteMany(decode_root_paths(payload)?))
+        }
+        RootNixOperation::Build => Ok(RootNixRequest::Build(
+            crate::BuildRequest::decode(&codec, payload).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::Verify => Ok(RootNixRequest::Verify(
+            VerifyRequest::decode(&codec, payload).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::Gc => {
+            require_empty(payload)?;
+            Ok(RootNixRequest::Gc)
+        }
+        RootNixOperation::CacheInspect => {
+            Ok(RootNixRequest::CacheInspect(decode_root_paths(payload)?))
+        }
+        RootNixOperation::CacheInspectClosures => Ok(RootNixRequest::CacheInspectClosures(
+            decode_root_paths(payload)?,
+        )),
+        RootNixOperation::NixpkgsMetadata => {
+            let pin: RootNixPinOwnedWire = decode_json(payload)?;
+            Ok(RootNixRequest::NixpkgsMetadata(
+                NixpkgsPin::new(&pin.revision, &pin.nar_hash)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ))
+        }
+        RootNixOperation::ClosureForRoots => {
+            Ok(RootNixRequest::ClosureForRoots(decode_root_paths(payload)?))
+        }
+        RootNixOperation::RepairPlan => {
+            let wire: RootRepairPlanOwnedWire = decode_json(payload)?;
+            let paths = promote_paths(wire.paths)?;
+            let policy_version = PolicyVersion::from_u64(wire.policy_version)
+                .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?;
+            let system = System::from_str(&wire.system)
+                .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+            let readiness = BuildReadiness::new(
+                wire.readiness.sandbox_enabled,
+                wire.readiness.sandbox_fallback,
+                wire.readiness.build_users_ready,
+                wire.readiness.use_cgroups_enabled,
+                wire.readiness.cgroup_v2_ready,
+            );
+            Ok(RootNixRequest::RepairPlan(
+                RootRepairPlanRequest::new(
+                    paths,
+                    policy_version,
+                    system,
+                    readiness,
+                    wire.host_cores,
+                )
+                .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            ))
+        }
+    }
+}
+
+fn encode_root_nix_response(response: &RootNixResponse) -> Result<Vec<u8>, FrameError> {
+    let body = match response {
+        RootNixResponse::Version(value) => value.encode().map_err(adapter_payload)?,
+        RootNixResponse::Evaluate(value) => value.encode().map_err(adapter_payload)?,
+        RootNixResponse::PathInfo(value) => value.encode().map_err(adapter_payload)?,
+        RootNixResponse::Substitute(value) => value.encode().map_err(adapter_payload)?,
+        RootNixResponse::SubstituteMany(values) => encode_chunks(
+            values
+                .iter()
+                .map(|value| value.encode().map_err(adapter_payload))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?,
+        RootNixResponse::BuildProgress(value) => {
+            let mut bytes = vec![ROOT_NIX_BUILD_PROGRESS];
+            bytes.extend_from_slice(&value.millionths().to_be_bytes());
+            return Ok(bytes);
+        }
+        RootNixResponse::Build(value) => value.encode().map_err(adapter_payload)?,
+        RootNixResponse::Verify(value) => value.encode().map_err(adapter_payload)?,
+        RootNixResponse::Gc(value) => value.encode().map_err(adapter_payload)?,
+        RootNixResponse::CacheInspect(values) => encode_cache_observations(values)?,
+        RootNixResponse::CacheInspectClosures(values) => encode_cache_closures(values)?,
+        RootNixResponse::NixpkgsMetadata(bytes) => bytes.clone(),
+        RootNixResponse::ClosureForRoots(paths) => encode_root_paths(paths)?,
+        RootNixResponse::RepairPlan(proof) => proof
+            .preview()
+            .to_json_bytes()
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+        RootNixResponse::Failed { failure, .. } => return encode_root_nix_failure(*failure),
+    };
+    let mut payload = Vec::with_capacity(body.len() + 1);
+    payload.push(ROOT_NIX_SUCCESS);
+    payload.extend_from_slice(&body);
+    Ok(payload)
+}
+
+fn decode_root_nix_response(
+    operation: RootNixOperation,
+    payload: &[u8],
+) -> Result<RootNixResponse, FrameError> {
+    let (&status, body) = payload
+        .split_first()
+        .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?;
+    if status != ROOT_NIX_SUCCESS {
+        return decode_root_nix_non_success(operation, status, body);
+    }
+    let codec = JsonCodec::production();
+    match operation {
+        RootNixOperation::Version => Ok(RootNixResponse::Version(
+            VersionInfo::decode(&codec, body).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::Evaluate => Ok(RootNixResponse::Evaluate(
+            DerivationPlanReport::decode(&codec, body).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::PathInfo => Ok(RootNixResponse::PathInfo(
+            PathInfoReport::decode(&codec, body).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::Substitute => Ok(RootNixResponse::Substitute(
+            SubstituteReport::decode(&codec, body).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::SubstituteMany => Ok(RootNixResponse::SubstituteMany(
+            decode_chunks(body)?
+                .into_iter()
+                .map(|chunk| SubstituteReport::decode(&codec, chunk).map_err(adapter_payload))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        RootNixOperation::Build => Ok(RootNixResponse::Build(
+            BuildReport::decode(&codec, body).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::Verify => Ok(RootNixResponse::Verify(
+            VerifyReport::decode(&codec, body).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::Gc => Ok(RootNixResponse::Gc(
+            GcReport::decode(&codec, body).map_err(adapter_payload)?,
+        )),
+        RootNixOperation::CacheInspect => Ok(RootNixResponse::CacheInspect(
+            decode_cache_observations(body)?,
+        )),
+        RootNixOperation::CacheInspectClosures => Ok(RootNixResponse::CacheInspectClosures(
+            decode_cache_closures(body)?,
+        )),
+        RootNixOperation::NixpkgsMetadata => Ok(RootNixResponse::NixpkgsMetadata(body.to_vec())),
+        RootNixOperation::ClosureForRoots => {
+            Ok(RootNixResponse::ClosureForRoots(decode_root_paths(body)?))
+        }
+        RootNixOperation::RepairPlan => Ok(RootNixResponse::RepairPlan(
+            RootRepairPlanProof::new(
+                BuildPreview::from_json_bytes(body)
+                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+            )
+            .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?,
+        )),
+    }
+}
+
+fn encode_root_nix_failure(failure: RootNixFailure) -> Result<Vec<u8>, FrameError> {
+    let (status, code) = match failure {
+        RootNixFailure::Adapter(code) => (ROOT_NIX_ADAPTER_ERROR, adapter_error_code(code)),
+        RootNixFailure::Cache(code) => (ROOT_NIX_CACHE_ERROR, cache_error_code(code)),
+        RootNixFailure::Nixpkgs(code) => (ROOT_NIX_NIXPKGS_ERROR, nixpkgs_error_code(code)),
+        RootNixFailure::Busy => return Ok(vec![ROOT_NIX_BUSY]),
+        RootNixFailure::Inactive => return Ok(vec![ROOT_NIX_INACTIVE]),
+    };
+    Ok(vec![status, code])
+}
+
+fn decode_root_nix_non_success(
+    operation: RootNixOperation,
+    status: u8,
+    body: &[u8],
+) -> Result<RootNixResponse, FrameError> {
+    if status == ROOT_NIX_BUILD_PROGRESS {
+        if operation != RootNixOperation::Build || body.len() != 4 {
+            return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+        }
+        let value = u32::from_be_bytes(
+            body.try_into()
+                .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
+        );
+        return Ok(RootNixResponse::BuildProgress(
+            BuildProgressEstimate::new(value).map_err(adapter_payload)?,
+        ));
+    }
+    let failure = match status {
+        ROOT_NIX_ADAPTER_ERROR if body.len() == 1 => {
+            RootNixFailure::Adapter(parse_adapter_error_byte(body[0])?)
+        }
+        ROOT_NIX_CACHE_ERROR if body.len() == 1 => {
+            RootNixFailure::Cache(parse_cache_error_code(body[0])?)
+        }
+        ROOT_NIX_NIXPKGS_ERROR if body.len() == 1 => {
+            RootNixFailure::Nixpkgs(parse_nixpkgs_error_code(body[0])?)
+        }
+        ROOT_NIX_BUSY if body.is_empty() => RootNixFailure::Busy,
+        ROOT_NIX_INACTIVE if body.is_empty() => RootNixFailure::Inactive,
+        _ => return Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    };
+    Ok(RootNixResponse::Failed { operation, failure })
+}
+
+fn readiness_wire(readiness: &BuildReadiness) -> RootNixReadinessWire {
+    RootNixReadinessWire {
+        sandbox_enabled: readiness.sandbox_enabled(),
+        sandbox_fallback: readiness.sandbox_fallback(),
+        build_users_ready: readiness.build_users_ready(),
+        use_cgroups_enabled: readiness.use_cgroups_enabled(),
+        cgroup_v2_ready: readiness.cgroup_v2_ready(),
+    }
+}
+
+fn encode_root_paths(paths: &[StorePath]) -> Result<Vec<u8>, FrameError> {
+    validate_paths(paths)?;
+    encode_json(&RootNixPathsWire {
+        paths: paths.iter().map(StorePath::as_str).collect(),
+    })
+}
+
+fn decode_one_path(payload: &[u8]) -> Result<StorePath, FrameError> {
+    let mut paths = decode_root_paths(payload)?;
+    if paths.len() != 1 {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    paths
+        .pop()
+        .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))
+}
+
+fn decode_root_paths(payload: &[u8]) -> Result<Vec<StorePath>, FrameError> {
+    let wire: RootNixPathsOwnedWire = decode_json(payload)?;
+    promote_paths(wire.paths)
+}
+
+fn promote_paths(paths: Vec<String>) -> Result<Vec<StorePath>, FrameError> {
+    let paths = paths
+        .into_iter()
+        .map(|path| {
+            StorePath::new(&path).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_paths(&paths)?;
+    Ok(paths)
+}
+
+fn validate_paths(paths: &[StorePath]) -> Result<(), FrameError> {
+    validate_path_names(paths.iter().map(StorePath::as_str))
+}
+
+fn validate_path_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<(), FrameError> {
+    let mut names = names.into_iter().collect::<Vec<_>>();
+    if names.is_empty() || names.len() > MAX_ROOT_NIX_PATHS {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    names.sort_unstable();
+    if names.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    Ok(())
+}
+
+fn encode_cache_observations(values: &[CachePathObservation]) -> Result<Vec<u8>, FrameError> {
+    validate_path_names(values.iter().map(|value| value.path().as_str()))?;
+    encode_json(
+        &values
+            .iter()
+            .map(|value| CacheObservationWire {
+                path: value.path().as_str(),
+                download_bytes: value.download_bytes(),
+                nar_bytes: value.nar_bytes(),
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn decode_cache_observations(payload: &[u8]) -> Result<Vec<CachePathObservation>, FrameError> {
+    let wires: Vec<CacheObservationOwnedWire> = decode_json(payload)?;
+    let values = wires
+        .into_iter()
+        .map(promote_cache_observation)
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_path_names(values.iter().map(|value| value.path().as_str()))?;
+    Ok(values)
+}
+
+fn promote_cache_observation(
+    wire: CacheObservationOwnedWire,
+) -> Result<CachePathObservation, FrameError> {
+    let path =
+        StorePath::new(&wire.path).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+    match (wire.download_bytes, wire.nar_bytes) {
+        (Some(download), Some(nar)) => Ok(CachePathObservation::hit(path, download, nar)),
+        (None, None) => Ok(CachePathObservation::miss(path)),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+fn encode_cache_closures(values: &[CacheDownloadClosure]) -> Result<Vec<u8>, FrameError> {
+    validate_path_names(values.iter().map(|value| value.root().as_str()))?;
+    encode_json(
+        &values
+            .iter()
+            .map(|value| CacheClosureWire {
+                root: value.root().as_str(),
+                paths: value
+                    .paths()
+                    .iter()
+                    .map(|path| CacheObservationWire {
+                        path: path.path().as_str(),
+                        download_bytes: path.download_bytes(),
+                        nar_bytes: path.nar_bytes(),
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn decode_cache_closures(payload: &[u8]) -> Result<Vec<CacheDownloadClosure>, FrameError> {
+    let wires: Vec<CacheClosureOwnedWire> = decode_json(payload)?;
+    if wires.len() > MAX_ROOT_NIX_PATHS {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    let mut total = 0_usize;
+    let values = wires
+        .into_iter()
+        .map(|wire| {
+            total = total
+                .checked_add(wire.paths.len())
+                .ok_or_else(|| FrameError::new(FrameErrorCode::InvalidPayload))?;
+            if total > MAX_ROOT_NIX_PATHS {
+                return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+            }
+            let root = StorePath::new(&wire.root)
+                .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+            let paths = wire
+                .paths
+                .into_iter()
+                .map(promote_cache_observation)
+                .collect::<Result<Vec<_>, _>>()?;
+            CacheDownloadClosure::new(root, paths)
+                .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_path_names(values.iter().map(|value| value.root().as_str()))?;
+    Ok(values)
+}
+
+fn encode_chunks(chunks: Vec<Vec<u8>>) -> Result<Vec<u8>, FrameError> {
+    if chunks.is_empty() || chunks.len() > MAX_ROOT_NIX_PATHS {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        &u32::try_from(chunks.len())
+            .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?
+            .to_be_bytes(),
+    );
+    for chunk in chunks {
+        body.extend_from_slice(
+            &u32::try_from(chunk.len())
+                .map_err(|_| FrameError::new(FrameErrorCode::FrameTooLarge))?
+                .to_be_bytes(),
+        );
+        body.extend_from_slice(&chunk);
+        if body.len() > HELPER_FRAME_PAYLOAD_LIMIT {
+            return Err(FrameError::new(FrameErrorCode::FrameTooLarge));
+        }
+    }
+    Ok(body)
+}
+
+fn decode_chunks(mut body: &[u8]) -> Result<Vec<&[u8]>, FrameError> {
+    let count = take_u32(&mut body)? as usize;
+    if count == 0 || count > MAX_ROOT_NIX_PATHS {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    let mut chunks = Vec::with_capacity(count);
+    for _ in 0..count {
+        let length = take_u32(&mut body)? as usize;
+        if length == 0 || length > body.len() {
+            return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+        }
+        let (chunk, rest) = body.split_at(length);
+        chunks.push(chunk);
+        body = rest;
+    }
+    if !body.is_empty() {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    Ok(chunks)
+}
+
+fn take_u32(bytes: &mut &[u8]) -> Result<u32, FrameError> {
+    if bytes.len() < 4 {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    let (value, rest) = bytes.split_at(4);
+    *bytes = rest;
+    Ok(u32::from_be_bytes(value.try_into().map_err(|_| {
+        FrameError::new(FrameErrorCode::InvalidPayload)
+    })?))
+}
+
+fn require_empty(payload: &[u8]) -> Result<(), FrameError> {
+    if payload.is_empty() {
+        Ok(())
+    } else {
+        Err(FrameError::new(FrameErrorCode::InvalidPayload))
+    }
+}
+
+const fn adapter_error_code(code: NixAdapterErrorCode) -> u8 {
+    match code {
+        NixAdapterErrorCode::UnexpectedCall => 1,
+        NixAdapterErrorCode::OversizedInput => 2,
+        NixAdapterErrorCode::MalformedPayload => 3,
+        NixAdapterErrorCode::UnsupportedSchemaVersion => 4,
+        NixAdapterErrorCode::UnsupportedUpstreamFormat => 5,
+        NixAdapterErrorCode::ValidationFailure => 6,
+        NixAdapterErrorCode::Timeout => 7,
+        NixAdapterErrorCode::Unavailable => 8,
+        NixAdapterErrorCode::TrustFailure => 9,
+        NixAdapterErrorCode::IntegrityFailure => 10,
+        NixAdapterErrorCode::PermissionDenied => 11,
+        NixAdapterErrorCode::OperationFailed => 12,
+    }
+}
+
+fn parse_adapter_error_byte(code: u8) -> Result<NixAdapterErrorCode, FrameError> {
+    match code {
+        1 => Ok(NixAdapterErrorCode::UnexpectedCall),
+        2 => Ok(NixAdapterErrorCode::OversizedInput),
+        3 => Ok(NixAdapterErrorCode::MalformedPayload),
+        4 => Ok(NixAdapterErrorCode::UnsupportedSchemaVersion),
+        5 => Ok(NixAdapterErrorCode::UnsupportedUpstreamFormat),
+        6 => Ok(NixAdapterErrorCode::ValidationFailure),
+        7 => Ok(NixAdapterErrorCode::Timeout),
+        8 => Ok(NixAdapterErrorCode::Unavailable),
+        9 => Ok(NixAdapterErrorCode::TrustFailure),
+        10 => Ok(NixAdapterErrorCode::IntegrityFailure),
+        11 => Ok(NixAdapterErrorCode::PermissionDenied),
+        12 => Ok(NixAdapterErrorCode::OperationFailed),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+const fn cache_error_code(code: BuildCacheErrorCode) -> u8 {
+    match code {
+        BuildCacheErrorCode::InvalidSubject => 1,
+        BuildCacheErrorCode::ProbeFailed => 2,
+        BuildCacheErrorCode::NoBuildRequired => 3,
+        BuildCacheErrorCode::InvalidEvidence => 4,
+    }
+}
+
+fn parse_cache_error_code(code: u8) -> Result<BuildCacheErrorCode, FrameError> {
+    match code {
+        1 => Ok(BuildCacheErrorCode::InvalidSubject),
+        2 => Ok(BuildCacheErrorCode::ProbeFailed),
+        3 => Ok(BuildCacheErrorCode::NoBuildRequired),
+        4 => Ok(BuildCacheErrorCode::InvalidEvidence),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+const fn nixpkgs_error_code(code: NixpkgsSourceErrorCode) -> u8 {
+    match code {
+        NixpkgsSourceErrorCode::InvalidVerifiedPin => 1,
+        NixpkgsSourceErrorCode::RunnerFailure => 2,
+        NixpkgsSourceErrorCode::MetadataTooLarge => 3,
+        NixpkgsSourceErrorCode::MalformedMetadata => 4,
+        NixpkgsSourceErrorCode::IdentityMismatch => 5,
+        NixpkgsSourceErrorCode::InvalidSourcePath => 6,
+    }
+}
+
+fn parse_nixpkgs_error_code(code: u8) -> Result<NixpkgsSourceErrorCode, FrameError> {
+    match code {
+        1 => Ok(NixpkgsSourceErrorCode::InvalidVerifiedPin),
+        2 => Ok(NixpkgsSourceErrorCode::RunnerFailure),
+        3 => Ok(NixpkgsSourceErrorCode::MetadataTooLarge),
+        4 => Ok(NixpkgsSourceErrorCode::MalformedMetadata),
+        5 => Ok(NixpkgsSourceErrorCode::IdentityMismatch),
+        6 => Ok(NixpkgsSourceErrorCode::InvalidSourcePath),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
     }
 }
 
@@ -1830,14 +2478,13 @@ fn encode_frame(
     request_id: u64,
     payload: &[u8],
 ) -> Result<Vec<u8>, FrameError> {
-    if request_id == 0 || payload.len() > MAX_FRAME_PAYLOAD_BYTES {
-        return Err(FrameError::new(
-            if payload.len() > MAX_FRAME_PAYLOAD_BYTES {
-                FrameErrorCode::FrameTooLarge
-            } else {
-                FrameErrorCode::UnsupportedMessage
-            },
-        ));
+    let limit = channel_payload_limit(channel)?;
+    if request_id == 0 || payload.len() > limit {
+        return Err(FrameError::new(if payload.len() > limit {
+            FrameErrorCode::FrameTooLarge
+        } else {
+            FrameErrorCode::UnsupportedMessage
+        }));
     }
     let payload_len =
         u32::try_from(payload.len()).map_err(|_| FrameError::new(FrameErrorCode::FrameTooLarge))?;
@@ -1856,7 +2503,8 @@ fn decode_frame(bytes: &[u8], expected_channel: u8) -> Result<DecodedFrame<'_>, 
     if bytes.len() < HEADER_BYTES {
         return Err(FrameError::new(FrameErrorCode::MalformedHeader));
     }
-    if bytes.len() > HEADER_BYTES + MAX_FRAME_PAYLOAD_BYTES {
+    let limit = channel_payload_limit(expected_channel)?;
+    if bytes.len() > HEADER_BYTES + limit {
         return Err(FrameError::new(FrameErrorCode::FrameTooLarge));
     }
     if bytes[..4] != MAGIC {
@@ -1882,7 +2530,7 @@ fn decode_frame(bytes: &[u8], expected_channel: u8) -> Result<DecodedFrame<'_>, 
             .try_into()
             .map_err(|_| FrameError::new(FrameErrorCode::MalformedHeader))?,
     ) as usize;
-    if payload_len > MAX_FRAME_PAYLOAD_BYTES {
+    if payload_len > limit {
         return Err(FrameError::new(FrameErrorCode::FrameTooLarge));
     }
     if bytes.len() != HEADER_BYTES + payload_len {
@@ -1893,6 +2541,14 @@ fn decode_frame(bytes: &[u8], expected_channel: u8) -> Result<DecodedFrame<'_>, 
         request_id,
         payload: &bytes[HEADER_BYTES..],
     })
+}
+
+const fn channel_payload_limit(channel: u8) -> Result<usize, FrameError> {
+    match channel {
+        CHANNEL_CLI_BROKER => Ok(MAX_CLI_FRAME_PAYLOAD_BYTES),
+        CHANNEL_BROKER_HELPER => Ok(HELPER_FRAME_PAYLOAD_LIMIT),
+        _ => Err(FrameError::new(FrameErrorCode::UnsupportedMessage)),
+    }
 }
 
 fn encode_json(value: &impl Serialize) -> Result<Vec<u8>, FrameError> {
@@ -3607,19 +4263,124 @@ struct RepairOutcomeOwnedWire {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU64;
+    use std::{collections::BTreeMap, num::NonZeroU64};
 
     use pkg_core::state::body_digest;
 
     use super::*;
     use crate::{
-        AcceptedFormats, BuildOutput, BuildOutputProvenance, BuildStatus, FormatVersion, NixVersion,
+        AcceptedFormats, AttributePath, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance,
+        BuildStatus, DerivationPath, DerivedOutputTarget, EvaluatedDerivation, FormatVersion,
+        GcStatus, NarHash, NarIntegrity, NixVersion, NixpkgsRevision, OperationId, PackageVersion,
+        PathVerifyResult, Signature, SubstituteOutcome, TrustStatus, VerifyMode,
     };
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
 
     fn path(name: &str) -> StorePath {
         StorePath::new(&format!("/nix/store/{STORE_HASH}-{name}")).unwrap()
+    }
+
+    fn nar_hash() -> NarHash {
+        NarHash::new("sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=").unwrap()
+    }
+
+    fn evaluation_request() -> EvaluateDerivationRequest {
+        EvaluateDerivationRequest::new(
+            AttributePath::new("hello").unwrap(),
+            System::X8664Linux,
+            NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567").unwrap(),
+            nar_hash(),
+            OutputSelection::default_selection(),
+        )
+        .unwrap()
+    }
+
+    fn build_request() -> crate::BuildRequest {
+        crate::BuildRequest::new(
+            vec![
+                DerivedOutputTarget::new(
+                    DerivationPath::from_str(&format!("/nix/store/{STORE_HASH}-hello.drv"))
+                        .unwrap(),
+                    vec![OutputName::new("out").unwrap()],
+                )
+                .unwrap(),
+            ],
+            System::X8664Linux,
+            BuildApprovalReceipt::new(
+                OperationId::new("op-framing").unwrap(),
+                Digest::from_bytes([0x42; 32]),
+                PolicyVersion::from_u64(7).unwrap(),
+            ),
+        )
+        .unwrap()
+    }
+
+    fn repair_request() -> RootRepairPlanRequest {
+        RootRepairPlanRequest::new(
+            vec![path("hello")],
+            PolicyVersion::from_u64(7).unwrap(),
+            System::X8664Linux,
+            BuildReadiness::new(true, false, true, true, true),
+            8,
+        )
+        .unwrap()
+    }
+
+    fn derivation_report() -> DerivationPlanReport {
+        let derivation =
+            DerivationPath::from_str(&format!("/nix/store/{STORE_HASH}-hello.drv")).unwrap();
+        let output = OutputName::new("out").unwrap();
+        DerivationPlanReport::new(
+            4,
+            derivation.clone(),
+            vec![output.clone()],
+            vec![
+                EvaluatedDerivation::new(
+                    derivation,
+                    "hello-1.0".into(),
+                    System::X8664Linux,
+                    BTreeMap::from([(output, path("hello"))]),
+                    Digest::from_bytes([1; 32]),
+                    false,
+                )
+                .unwrap(),
+            ],
+            Digest::from_bytes([2; 32]),
+            "hello".into(),
+            PackageVersion::new("1.0"),
+        )
+        .unwrap()
+    }
+
+    fn path_info_report() -> PathInfoReport {
+        PathInfoReport::new(
+            path("hello"),
+            nar_hash(),
+            vec![Signature::new("cache:BBBBBBBB").unwrap()],
+            vec![path("glibc")],
+            None,
+            1024,
+            4096,
+        )
+        .unwrap()
+    }
+
+    fn verify_report() -> VerifyReport {
+        VerifyReport::new(vec![PathVerifyResult::new(
+            path("hello"),
+            NarIntegrity::Intact,
+            TrustStatus::Trusted,
+        )])
+        .unwrap()
+    }
+
+    fn repair_proof() -> RootRepairPlanProof {
+        let preview = BuildPreview::from_json_bytes(
+            br#"{"schemaVersion":1,"platform":{"os":"linux","arch":"x86_64"},"policyVersion":7,"buildPlanDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","targets":[{"selector":"hello","packageName":"hello","version":"1.0","outputsToInstall":["out"],"localBuildRequired":false}],"build":{"count":0,"names":[],"hasFixedOutput":false},"cache":{"knownDownloadBytes":0,"knownContentBytes":0},"unknownLocalOutputs":0,"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null},"readiness":{"sandboxed":true,"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","perBuildResourceCap":false,"notice":"Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation."}},"approvalRequired":false}"#,
+        )
+        .unwrap();
+        RootRepairPlanProof::new(preview).unwrap()
     }
 
     fn root_set() -> RootSet {
@@ -4275,6 +5036,199 @@ mod tests {
         assert_eq!(
             ProductFrameCodec::decode_helper_request(&encoded),
             Ok((1, request))
+        );
+    }
+
+    #[test]
+    fn root_nix_complete_grammar_round_trips_all_requests_results_and_failures() {
+        let pin = NixpkgsPin::new(
+            "0123456789abcdef0123456789abcdef01234567",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .unwrap();
+        let requests = [
+            RootNixRequest::Version,
+            RootNixRequest::Evaluate(evaluation_request()),
+            RootNixRequest::PathInfo(path("hello-1.0")),
+            RootNixRequest::Substitute(path("hello-1.0")),
+            RootNixRequest::SubstituteMany(vec![path("hello-1.0"), path("glibc-2.39")]),
+            RootNixRequest::Build(build_request()),
+            RootNixRequest::Verify(
+                VerifyRequest::new(vec![path("hello")], VerifyMode::Recursive).unwrap(),
+            ),
+            RootNixRequest::Gc,
+            RootNixRequest::CacheInspect(vec![path("hello-1.0")]),
+            RootNixRequest::CacheInspectClosures(vec![path("hello-1.0")]),
+            RootNixRequest::NixpkgsMetadata(pin),
+            RootNixRequest::ClosureForRoots(vec![path("hello-1.0")]),
+            RootNixRequest::RepairPlan(repair_request()),
+        ];
+        for (index, request) in requests.into_iter().enumerate() {
+            let request_id = index as u64 + 1;
+            let request = BrokerHelperRequest::RootNix(request);
+            let encoded = ProductFrameCodec::encode_helper_request(request_id, &request).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_helper_request(&encoded),
+                Ok((request_id, request))
+            );
+        }
+
+        let observation = CachePathObservation::hit(path("hello"), 1024, 4096);
+        let proof = repair_proof();
+        assert_eq!(
+            proof.preview().build_plan_digest(),
+            proof.digest().to_string().replacen("sha256-", "sha256:", 1)
+        );
+        let responses = [
+            RootNixResponse::Version(VersionInfo::new(
+                NixVersion::new("2.34.8").unwrap(),
+                AcceptedFormats::new(FormatVersion::new(1).unwrap()),
+            )),
+            RootNixResponse::Evaluate(derivation_report()),
+            RootNixResponse::PathInfo(path_info_report()),
+            RootNixResponse::Substitute(
+                SubstituteReport::miss(path("hello"), SubstituteOutcome::NoBinaryAvailable)
+                    .unwrap(),
+            ),
+            RootNixResponse::SubstituteMany(vec![
+                SubstituteReport::miss(path("hello"), SubstituteOutcome::NoBinaryAvailable)
+                    .unwrap(),
+            ]),
+            RootNixResponse::Build(
+                BuildReport::new(
+                    BuildStatus::Built,
+                    vec![BuildOutput::new(
+                        path("hello"),
+                        BuildOutputProvenance::LocalBuild,
+                    )],
+                )
+                .unwrap(),
+            ),
+            RootNixResponse::Verify(verify_report()),
+            RootNixResponse::Gc(
+                GcReport::new(GcStatus::Collected, vec![path("old")], 1024).unwrap(),
+            ),
+            RootNixResponse::CacheInspect(vec![observation.clone()]),
+            RootNixResponse::CacheInspectClosures(vec![
+                CacheDownloadClosure::new(path("hello"), vec![observation]).unwrap(),
+            ]),
+            RootNixResponse::NixpkgsMetadata(br#"{"locked":{}}"#.to_vec()),
+            RootNixResponse::ClosureForRoots(vec![path("hello"), path("glibc")]),
+            RootNixResponse::RepairPlan(proof),
+        ];
+        for (index, response) in responses.into_iter().enumerate() {
+            let request_id = index as u64 + 40;
+            let response = BrokerHelperResponse::RootNix(Box::new(response));
+            let encoded = ProductFrameCodec::encode_helper_response(request_id, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_helper_response(&encoded),
+                Ok((request_id, response))
+            );
+        }
+
+        for failure in [
+            RootNixFailure::Adapter(NixAdapterErrorCode::Timeout),
+            RootNixFailure::Cache(BuildCacheErrorCode::ProbeFailed),
+            RootNixFailure::Nixpkgs(NixpkgsSourceErrorCode::RunnerFailure),
+            RootNixFailure::Busy,
+            RootNixFailure::Inactive,
+        ] {
+            let response = BrokerHelperResponse::RootNix(Box::new(RootNixResponse::Failed {
+                operation: RootNixOperation::Version,
+                failure,
+            }));
+            let encoded = ProductFrameCodec::encode_helper_response(77, &response).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_helper_response(&encoded),
+                Ok((77, response))
+            );
+        }
+        let progress = BrokerHelperResponse::RootNix(Box::new(RootNixResponse::BuildProgress(
+            BuildProgressEstimate::new(123).unwrap(),
+        )));
+        let encoded = ProductFrameCodec::encode_helper_response(78, &progress).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_helper_response(&encoded),
+            Ok((78, progress))
+        );
+    }
+
+    #[test]
+    fn root_nix_path_lists_reject_empty_duplicate_invalid_and_excessive_values() {
+        for payload in [
+            br#"{"paths":[]}"#.to_vec(),
+            format!(
+                r#"{{"paths":["{}","{}"]}}"#,
+                path("same").as_str(),
+                path("same").as_str()
+            )
+            .into_bytes(),
+            br#"{"paths":["/tmp/not-store"]}"#.to_vec(),
+        ] {
+            let frame = encode_frame(
+                CHANNEL_BROKER_HELPER,
+                RootNixOperation::SubstituteMany.method_id(),
+                90,
+                &payload,
+            )
+            .unwrap();
+            assert!(ProductFrameCodec::decode_helper_request(&frame).is_err());
+        }
+
+        let excessive_paths = (0..=MAX_ROOT_NIX_PATHS)
+            .map(|_| path("hello-1.0"))
+            .collect::<Vec<_>>();
+        let excessive = serde_json::to_vec(&RootNixPathsWire {
+            paths: excessive_paths.iter().map(StorePath::as_str).collect(),
+        })
+        .unwrap();
+        let frame = encode_frame(
+            CHANNEL_BROKER_HELPER,
+            RootNixOperation::SubstituteMany.method_id(),
+            91,
+            &excessive,
+        )
+        .unwrap();
+        assert!(ProductFrameCodec::decode_helper_request(&frame).is_err());
+
+        let duplicate = CachePathObservation::miss(path("same"));
+        let response =
+            BrokerHelperResponse::RootNix(Box::new(RootNixResponse::CacheInspect(vec![
+                duplicate.clone(),
+                duplicate,
+            ])));
+        assert!(ProductFrameCodec::encode_helper_response(92, &response).is_err());
+    }
+
+    #[test]
+    fn root_nix_result_kind_is_exact_and_helper_cap_includes_report_overhead() {
+        let wrong_body = GcReport::new(GcStatus::RefusedUnderLease, vec![], 0)
+            .unwrap()
+            .encode()
+            .unwrap();
+        let mut payload = vec![ROOT_NIX_SUCCESS];
+        payload.extend_from_slice(&wrong_body);
+        let frame = encode_frame(
+            CHANNEL_BROKER_HELPER,
+            RootNixOperation::Version.method_id(),
+            92,
+            &payload,
+        )
+        .unwrap();
+        assert!(ProductFrameCodec::decode_helper_response(&frame).is_err());
+
+        let metadata = vec![b' '; HELPER_FRAME_PAYLOAD_LIMIT - 1];
+        let response =
+            BrokerHelperResponse::RootNix(Box::new(RootNixResponse::NixpkgsMetadata(metadata)));
+        let frame = ProductFrameCodec::encode_helper_response(93, &response).unwrap();
+        assert_eq!(frame.len(), HEADER_BYTES + HELPER_FRAME_PAYLOAD_LIMIT);
+
+        let oversized = BrokerHelperResponse::RootNix(Box::new(RootNixResponse::NixpkgsMetadata(
+            vec![b' '; HELPER_FRAME_PAYLOAD_LIMIT],
+        )));
+        assert_eq!(
+            ProductFrameCodec::encode_helper_response(94, &oversized),
+            Err(FrameError::new(FrameErrorCode::FrameTooLarge))
         );
     }
 

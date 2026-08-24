@@ -1,6 +1,8 @@
 //! Production service entry points with fixed socket and identity contracts.
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::helper::ConnectionLimiter;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::{
     BrokerApprovalAudit, BrokerRepairJournals, ChannelRefreshDispatch, ProductionRepairAuthority,
     RootHelperClient, serve_broker_connection_with_product_authority, serve_helper_connection,
@@ -36,13 +38,7 @@ use std::{
     os::unix::fs::{FileTypeExt, MetadataExt},
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::{
-    io,
-    os::unix::net::UnixListener,
-    path::Path,
-    sync::{Arc, Mutex},
-    thread,
-};
+use std::{io, os::unix::net::UnixListener, path::Path, sync::Arc, thread};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::runtime::{Builder, Handle};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -50,6 +46,8 @@ use url::Url;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const BROKER_ACCOUNT: &str = "pkg-nix-broker";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_HELPER_WORKERS: usize = 8;
 /// Fixed Linux CLI-to-broker endpoint installed by pkg.
 pub const LINUX_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
 #[cfg(target_os = "linux")]
@@ -369,12 +367,23 @@ pub fn run_linux_root_helper_from_activation() -> Result<(), ServiceError> {
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
     let roots = LinuxRootSetStore::production()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let session = LinuxHelperSession::new(authenticated, roots);
+    let session = Arc::new(LinuxHelperSession::new(authenticated, roots));
+    let workers = ConnectionLimiter::new(MAX_HELPER_WORKERS);
 
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                let _ = serve_helper_connection(stream, broker_uid, &session);
+                let Some(permit) = workers.try_acquire() else {
+                    continue;
+                };
+                let session = Arc::clone(&session);
+                thread::Builder::new()
+                    .name("pkg-root-helper".to_owned())
+                    .spawn(move || {
+                        let _permit = permit;
+                        let _ = serve_helper_connection(stream, broker_uid, session.as_ref());
+                    })
+                    .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return Err(ServiceError::new(ServiceErrorCode::ListenerFailed)),
@@ -478,12 +487,23 @@ pub fn run_macos_root_helper() -> Result<(), ServiceError> {
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
     let roots = MacOsRootSetStore::production()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let session = MacOsHelperSession::new(authenticated, roots);
+    let session = Arc::new(MacOsHelperSession::new(authenticated, roots));
+    let workers = ConnectionLimiter::new(MAX_HELPER_WORKERS);
 
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                let _ = serve_helper_connection(stream, identity.uid, &session);
+                let Some(permit) = workers.try_acquire() else {
+                    continue;
+                };
+                let session = Arc::clone(&session);
+                thread::Builder::new()
+                    .name("pkg-root-helper".to_owned())
+                    .spawn(move || {
+                        let _permit = permit;
+                        let _ = serve_helper_connection(stream, identity.uid, session.as_ref());
+                    })
+                    .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return Err(ServiceError::new(ServiceErrorCode::ListenerFailed)),
@@ -670,54 +690,6 @@ fn validate_listener_path(listener: &UnixListener, expected: &Path) -> Result<()
         Ok(())
     } else {
         Err(ServiceError::new(ServiceErrorCode::InvalidActivatedSocket))
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct ConnectionLimiter {
-    active: Mutex<usize>,
-    limit: usize,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl ConnectionLimiter {
-    fn new(limit: usize) -> Arc<Self> {
-        Arc::new(Self {
-            active: Mutex::new(0),
-            limit,
-        })
-    }
-
-    fn try_acquire(self: &Arc<Self>) -> Option<ConnectionPermit> {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *active >= self.limit {
-            return None;
-        }
-        *active += 1;
-        drop(active);
-        Some(ConnectionPermit {
-            limiter: Arc::clone(self),
-        })
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct ConnectionPermit {
-    limiter: Arc<ConnectionLimiter>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl Drop for ConnectionPermit {
-    fn drop(&mut self) {
-        let mut active = self
-            .limiter
-            .active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *active = active.saturating_sub(1);
     }
 }
 

@@ -212,6 +212,36 @@ impl BuildReadiness {
         }
     }
 
+    /// Returns whether sandboxing is enabled.
+    #[must_use]
+    pub const fn sandbox_enabled(&self) -> bool {
+        self.sandbox.enabled
+    }
+
+    /// Returns whether sandbox fallback is enabled.
+    #[must_use]
+    pub const fn sandbox_fallback(&self) -> bool {
+        self.sandbox.fallback
+    }
+
+    /// Returns whether the fixed build-user pool is ready.
+    #[must_use]
+    pub const fn build_users_ready(&self) -> bool {
+        self.build_users_ready
+    }
+
+    /// Returns whether cgroup enforcement is enabled.
+    #[must_use]
+    pub const fn use_cgroups_enabled(&self) -> bool {
+        self.use_cgroups_enabled
+    }
+
+    /// Returns whether cgroup v2 is ready.
+    #[must_use]
+    pub const fn cgroup_v2_ready(&self) -> bool {
+        self.cgroup_v2_ready
+    }
+
     fn validate(&self, system: System) -> Result<(), BuildEngineError> {
         if !self.sandbox.enabled
             || self.sandbox.fallback
