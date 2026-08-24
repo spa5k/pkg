@@ -5,8 +5,8 @@
 | Installer release | `v3.22.1` |
 | Pinned source revision | `4132ad07a15ee7d88c096ac7172b7afb2672866b` |
 | Research date | 2026-08-24 |
-| Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, install self-test warnings, residue identity, and live-log capture |
-| Evidence rule | Pinned primary-source analysis plus preserved R4, R5, R6, R7, R8, R9, and R10 observations. No private receipt or log contents were read. No private evidence was changed. |
+| Scope | macOS encrypted APFS `/nix` mount, `/etc/fstab`, install self-test warnings, residue identity, live-log capture, and crash-recovery evidence |
+| Evidence rule | Pinned primary-source analysis plus preserved R4, R5, R6, R7, R8, R9, R10, and Crash R1 observations. No private receipt or log contents were read. No private evidence was changed. |
 
 In this report, **r2** means the reported first lifecycle attempt. **r3** means
 the evidence-only harness revision. **R4** means the preserved run that used
@@ -17,7 +17,9 @@ run at product revision `650e205`. **R9** means the preserved run at product
 revision `b590c4f` with the first byte-safe residue identity contract. **R10**
 means the preserved run at signed product revision
 `aa5d5beca51d77ae06a672a97c2b5ebfa050d248` with the live-log rule described
-in this report.
+in this report. **Crash R1** means the preserved standalone SIGKILL, reboot,
+and recovery run at signed product revision
+`1ad44acf6c7780fa5ed3e135c1fcdc734149402f`.
 
 ## Short answer
 
@@ -453,9 +455,115 @@ All nine archive hashes and their saved sidecars were recomputed and matched.
   manifest, and only after every live identity is revalidated. It must fail
   closed if any identity differs.
 
-R10 closes the DN-03c evidence gate despite the expected vendor-residue
-`FAIL`. That failure is the recorded result of the strict residue contract. It
-is not an incomplete run.
+R10 closes the DN-03c lifecycle and residue evidence gate despite the expected
+vendor-residue `FAIL`. That failure is the recorded result of the strict
+residue contract. It is not an incomplete run. R10 does not complete the
+separate standalone SIGKILL and reboot row.
+
+## Crash R1 Observed / Decision / Unproved
+
+**Observed:**
+
+- The preserved evidence path is
+  `/private/var/tmp/pkg-s6-dn03c-evidence/crash-recovery-1ad44ac-r1`.
+- One crash-recovery invocation ran from signed source
+  `1ad44acf6c7780fa5ed3e135c1fcdc734149402f`.
+- The vendor revision is
+  `4132ad07a15ee7d88c096ac7172b7afb2672866b`.
+- The installer SHA-256 is
+  `90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b`.
+- The staged inside-script SHA-256 is
+  `1d27a4369d21d5fd3bcb56bd2a6a0ca0605545fe2138dbdeba538badf88af08e`.
+
+| Phase | Guest status | Phase result |
+|---|---:|---|
+| baseline | `0` | `PASS` |
+| crash-kill | `0` | `PASS` |
+| crash-recover | `1` | `FAIL` |
+
+- The validated installer child ended with status `137` after SIGKILL.
+- Reboot returned `PASS`. Its shutdown status and timeout pair was `0:0`.
+  The raw boot time changed. Guest identity, the staged installer hash, and
+  the staged inside-script hash were revalidated after reboot.
+- The recovery install command returned `0`.
+- Post-install validation recorded the `nixbld` group with GID `350` and
+  exactly these 31 explicit members:
+
+```text
+_nixbld2
+_nixbld3
+_nixbld4
+_nixbld5
+_nixbld6
+_nixbld7
+_nixbld8
+_nixbld9
+_nixbld10
+_nixbld11
+_nixbld12
+_nixbld13
+_nixbld14
+_nixbld15
+_nixbld16
+_nixbld17
+_nixbld18
+_nixbld19
+_nixbld20
+_nixbld21
+_nixbld22
+_nixbld23
+_nixbld24
+_nixbld25
+_nixbld26
+_nixbld27
+_nixbld28
+_nixbld29
+_nixbld30
+_nixbld31
+_nixbld32
+```
+
+- `_nixbld1` was missing from the explicit group members.
+- The lane stopped before the functional Nix recovery check.
+
+The three archive SHA-256 values are:
+
+| Phase | SHA-256 |
+|---|---|
+| baseline | `8a16ffa2906b8977e5f0ddbba8691d7297007e7df82ed467df4a4a1d9e7759d2` |
+| crash-kill | `2897121be03af30bbfcc86f36e073f2c3323ed3ab59f8e8aefa3371e95c1fab7` |
+| crash-recover | `a5afa9f432da4dbcebe69662467d5c437281870a2079d0b6e400f8228d1ff469` |
+
+The bundle tar-stream SHA-256 is
+`82e1d1a0291f2cbcade8d5e768433a0163ae2e066406335745f2045091e3a80d`.
+The canonical relative file-hash manifest SHA-256 is
+`d17797f2394f037fdb145b24cbe3253cefb3b9af98eacd778fbeb4522f4011f3`.
+
+- All three private archives passed safe archive validation. No partial
+  archive remains. No archive contains protected content.
+- The exact VM was absent. No matching Tart process remained. The source was
+  clean.
+
+**Decision:**
+
+- This accepted negative observation completes the standalone SIGKILL and
+  reboot evidence row.
+- The DN-03c evidence set is complete. Product delivery remains **NO-GO**.
+- DN-04 must document this negative result.
+- DN-06 must not use SIGKILL. It must not accept vendor exit status `0` as
+  sufficient proof of a valid installed state.
+- DN-07 owns fail-closed Handoff and state validation.
+- DN-12 may add an optional `repair sequoia` proof.
+- DN-16 cutover remains blocked until two crash and reboot lifecycles pass.
+- DN-13 does not own this crash-recovery failure.
+
+**Unproved:**
+
+- Successful recovery is unproved.
+- Functional Nix recovery is unproved because the functional check was not
+  reached.
+- Crash R1 does not prove that another run, guest, or installer version has
+  the same group state.
 
 ## Decision table
 
@@ -469,7 +577,11 @@ is not an incomplete run.
 | Should the harness keep its absolute-path Nix checks? | **GO** | They test the installed binary and daemon without depending on shell profile changes. |
 | Is DN-03c complete after R8? | **NO-GO** | R8 completed the lifecycle, but its scanner did not prove exact `/etc/nix`, empty fstab, or Determinate log residue. |
 | Is DN-03c complete after R9? | **NO-GO** | R9 stopped during install because the daemon log grew between paired scans. A fresh R10 run is required. |
-| Is the DN-03c evidence gate complete after R10? | **GO** | One full run produced nine final archives, two reboot proofs, exact post-uninstall equality, and the exact final residue manifest. The expected vendor-residue `FAIL` is evidence, not an incomplete phase. |
+| Is the DN-03c lifecycle and residue evidence gate complete after R10? | **GO** | One full run produced nine final archives, two reboot proofs, exact post-uninstall equality, and the exact final residue manifest. The expected vendor-residue `FAIL` is evidence, not an incomplete phase. |
+| Does R10 alone complete all Apple Silicon evidence rows? | **NO-GO** | The standalone SIGKILL and reboot row is separate. |
+| Does Crash R1 complete the standalone SIGKILL and reboot evidence row? | **GO** | The accepted negative observation records the kill, reboot, recovery-install status, and failed installed-state validation. |
+| Is the DN-03c evidence set complete after Crash R1? | **GO** | The negative result completes the remaining evidence row. It is not a successful-recovery claim. |
+| Does Crash R1 prove successful or functional recovery? | **NO-GO** | The group state failed validation before the functional Nix check. |
 | Does R10 prove DN-13 cleanup? | **NO-GO** | No cleanup ran. DN-13 must revalidate the exact live manifest before it removes anything. |
 
 ## 1. Source and release identity
@@ -796,8 +908,15 @@ because an active daemon log grew between paired scans. R9 remains a
 
 R10 completed one full lifecycle with all nine archives and both reboot
 proofs. It proved the exact six-path residue manifest and every required
-post-uninstall equality boundary. Thus, R10 closes the DN-03c evidence gate.
-The final vendor-residue `FAIL` is expected and records the proved residue.
+post-uninstall equality boundary. Thus, R10 closes the DN-03c lifecycle and
+residue evidence gate. It does not complete the separate standalone SIGKILL
+and reboot row. The final vendor-residue `FAIL` is expected and records the
+proved residue.
+
+Crash R1 completes that standalone evidence row with an accepted negative
+observation. The reboot and recovery install completed, but installed-state
+validation failed before functional Nix recovery. The DN-03c evidence set is
+complete. Successful recovery and product delivery remain **NO-GO**.
 
 R10 does not prove cleanup. DN-13 may remove only the exact R10 manifest after
 it revalidates every live identity and fails closed on any difference.

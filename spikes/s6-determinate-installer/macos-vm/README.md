@@ -106,7 +106,30 @@ The exact final vendor residue path set is:
 - `/var/log/determinate-nix-init.log`
 - `/var/log/determinate-nix-daemon.log`
 
-R10 closes the DN-03c evidence gate. The expected vendor-residue failure does
-not make the evidence incomplete. It proves the residue contract. R10 does
-not prove cleanup. DN-13 may remove only this manifest, and only after it
-revalidates every live identity and fails closed on a difference.
+R10 closes the DN-03c lifecycle and residue evidence gate. The expected
+vendor-residue failure does not make that evidence incomplete. It proves the
+residue contract. R10 does not complete the separate standalone SIGKILL and
+reboot row. R10 also does not prove cleanup. DN-13 may remove only this
+manifest, and only after it revalidates every live identity and fails closed
+on a difference.
+
+## Crash R1 observed negative result
+
+**Observed.** Crash R1 ran from signed source
+`1ad44acf6c7780fa5ed3e135c1fcdc734149402f`. Baseline and crash-kill passed.
+The validated installer child ended with status `137` after SIGKILL. Reboot
+passed with shutdown status and timeout `0:0`. The raw boot time changed, and
+the staged hashes were revalidated. Recovery install returned `0`.
+
+The final crash-recover phase returned guest status `1` and `FAIL`. The
+`nixbld` group had GID `350`. It had 31 explicit members, from `_nixbld2`
+through `_nixbld32`. `_nixbld1` was missing. The lane stopped before a
+functional Nix recovery check.
+
+**Decision.** This accepted negative observation completes the standalone
+SIGKILL and reboot evidence row. The DN-03c evidence set is complete. Product
+delivery remains **NO-GO**.
+
+**Unproved.** Crash R1 does not prove successful recovery or functional Nix
+recovery. DN-16 remains blocked until two crash and reboot lifecycles pass.
+DN-13 does not own this failure.
