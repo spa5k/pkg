@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Spike** | S6 — Verify the facts `pkg` needs about the Determinate Nix Installer at release **v3.22.1**, against primary sources only. |
-| **Scope** | This file records S6 research only. Raw downloads and extracted evidence were not committed. The checked-in S6 harness, where present, is separate from the research evidence. This file makes no claims about DN-03b or DN-03c lifecycle work; those results remain Unproved here. |
+| **Scope** | This file records the S6 research and the final DN-03 parent decision. Raw downloads and extracted evidence were not committed. The checked-in S6 harness and the public child reports record the accepted Linux and macOS evidence. |
 | **Research date** | 2026-08-22 (UTC). Evidence files were kept outside the repo (temp dir), not committed. |
 | **Method** | GitHub tag/release API, release asset downloads with local SHA-256, source tree of the tag, LICENSE file, the shipped aarch64-darwin binary executed with `--help`, the embedded `determinate-nixd` binary extracted and executed, official docs at docs.determinate.systems, and the live install.determinate.systems CDN. |
 
@@ -12,6 +12,149 @@
 - **Observed** — seen directly in a primary source cited next to the claim, or executed locally.
 - **Inferred** — a conclusion drawn from observed facts. Not stated by the source.
 - **Unproved** — could not be verified from primary sources. Do not build on it.
+
+---
+
+## DN-03 parent decision
+
+| Item | Decision |
+|---|---|
+| Status | COMPLETE — EVIDENCE COMPLETE; PRODUCT DELIVERY NO-GO. |
+| Next step | DN-04 may document the proved contract. |
+| Vendor | Determinate Nix Installer v3.22.1 at full revision `4132ad07a15ee7d88c096ac7172b7afb2672866b` |
+| Accepted children | [DN-03b Linux report](linux-vm/LINUX-FINDINGS.md) and [DN-03c macOS report](macos-vm/FSTAB-CONTRACT-RESEARCH.md) |
+| Tested product sources | Linux R12: `33b386dd473e66c7772c4392d7f56953e1398595`; macOS R10: `aa5d5beca51d77ae06a672a97c2b5ebfa050d248`; macOS Crash R1: `1ad44acf6c7780fa5ed3e135c1fcdc734149402f` |
+
+### Observed runtime evidence
+
+**Observed, Linux R12.** R12 ran on 2026-08-23 UTC. It recorded five broad
+Linux x86_64 behavior lanes. The retained Linux x86_64 and aarch64 container
+lanes record both target Asset proofs. These are the five R12 complete bundle
+SHA-256 values:
+
+| R12 lane | Complete bundle SHA-256 |
+|---|---|
+| lifecycle | `1b0128ba5f4a3e9c913c3778471734dcfe8031dd7539b965e2d1307ca4a6828a` |
+| diagnostics-disabled | `b3a5cebc7975be8e04f409592228443afa52fa4428f9be34d5c3bf1b27ad8af0` |
+| crash-recovery | `c2ead304a217c214805dee43f1cadbdb857225d4ad31ab434e96d5be4385a682` |
+| foreign-nix | `c5deb44b9175110986ebb026ae7ce082b03f02fd043a1bca6234c3a16e8ab966` |
+| upstream-input | `a2c92c9b4bab26f0be88b83ba83eba1ae73bf7af3d4083b905e9d8cfdeed9d42` |
+
+**Observed, macOS R10.** R10 ran on 2026-08-24. It recorded one full Apple
+Silicon lifecycle, all nine phase archives, and both reboot proofs. Its bundle
+tar-stream SHA-256 is
+`7002457bd64e15fa2bef620a91850b3d683407c4ede6468892593709fbf95435`.
+Its canonical relative file-hash manifest SHA-256 is
+`57653027291abd6602892c1be37cb52e80855c39261ebf768a74e895e803bb82`.
+
+**Observed, macOS Crash R1.** The recorded run date is 2026-08-24. The run
+used signed source `1ad44acf6c7780fa5ed3e135c1fcdc734149402f`.
+
+| Crash R1 phase or check | Status | Result |
+|---|---:|---|
+| baseline | `0` | `PASS` |
+| crash-kill | `0` | `PASS` |
+| validated installer child after SIGKILL | `137` | expected killed child |
+| reboot | `0:0` | `PASS`; raw boot time changed and staged hashes were revalidated |
+| recovery install | `0` | vendor command returned success |
+| crash-recover | `1` | `FAIL` |
+
+The recovered `nixbld` group had GID `350`. It had 31 explicit members from
+`_nixbld2` through `_nixbld32`. `_nixbld1` was missing. The lane stopped
+before the functional Nix recovery check.
+
+| Crash R1 archive | SHA-256 |
+|---|---|
+| baseline | `8a16ffa2906b8977e5f0ddbba8691d7297007e7df82ed467df4a4a1d9e7759d2` |
+| crash-kill | `2897121be03af30bbfcc86f36e073f2c3323ed3ab59f8e8aefa3371e95c1fab7` |
+| crash-recover | `a5afa9f432da4dbcebe69662467d5c437281870a2079d0b6e400f8228d1ff469` |
+
+The Crash R1 bundle tar-stream SHA-256 is
+`82e1d1a0291f2cbcade8d5e768433a0163ae2e066406335745f2045091e3a80d`.
+Its canonical relative file-hash manifest SHA-256 is
+`d17797f2394f037fdb145b24cbe3253cefb3b9af98eacd778fbeb4522f4011f3`.
+All three private archives passed safe archive validation. No partial archive
+remained. No archive contained protected content. The exact VM and matching
+process were absent. The source was clean.
+
+**Observed, vendor uninstall.** The vendor uninstall command completed on
+Linux and macOS. Strict residue checks found paths on both platforms.
+
+The exact public Linux final path set in both retained container Asset proofs
+is:
+
+- `/etc/nix`
+- `/etc/nix/sentry-endpoint`
+
+The inventory of entries under `/etc/nix` contains only `sentry-endpoint`.
+The broad Linux x86_64 R12 lifecycle proves that this file remained. It did
+not count every `/etc/nix` entry.
+
+The exact public macOS R10 final path set is:
+
+- `/etc/nix`
+- `/etc/nix/macos-keychain.crt`
+- `/etc/nix/sentry-endpoint`
+- empty `/etc/fstab`
+- `/var/log/determinate-nix-init.log`
+- `/var/log/determinate-nix-daemon.log`
+
+### Inference
+
+- The clean starting state and the post-uninstall observations support
+  attribution of the recorded Linux and macOS paths to vendor execution.
+- Crash R1 shows that vendor exit status `0` is not sufficient proof of a
+  valid recovered installed state. The group check failed before functional
+  Nix recovery.
+
+### Unproved
+
+- Successful crash recovery is unproved.
+- Functional Nix recovery is unproved because the functional check was not
+  reached.
+
+### Decision: platform scope
+
+- Broad Linux behavior is accepted for x86_64.
+- Linux Asset proofs are accepted for x86_64 and aarch64.
+- The macOS lifecycle and crash observations cover Apple Silicon.
+- Intel macOS is unsupported. Release v3.22.1 has no x86_64-darwin asset.
+
+### Decision
+
+- The parent accepts the broad Linux x86_64 behavior evidence and both Linux
+  target Asset proofs.
+- R10 completes the Apple Silicon lifecycle and residue evidence rows.
+- The accepted Crash R1 negative observation completes the standalone
+  SIGKILL and reboot evidence row.
+- The DN-03 evidence set is complete. Product delivery remains **NO-GO**.
+- There is no clean vendor-uninstall claim for Linux or macOS.
+- DN-04 may document this proved contract and its negative result.
+- DN-06 must not use SIGKILL. It must not accept vendor exit status `0` as
+  sufficient proof of a valid installed state.
+- DN-07 owns fail-closed Handoff and state validation.
+- DN-12 may add an optional `repair sequoia` proof.
+- DN-16 remains blocked until the full crash and reboot lifecycle passes
+  twice.
+- DN-13 owns only exact residue cleanup. It does not own crash recovery.
+
+DN-13 must revalidate every live identity before it removes any path.
+Any missing or different identity must stop all cleanup and keep the strict
+result as `FAIL`. DN-13 must not use a recursive delete for these manifests.
+
+### Decision limits
+
+DN-03 does not prove:
+
+- successful or functional crash recovery;
+- Handoff behavior;
+- package parity;
+- product cleanup; or
+- cutover readiness.
+
+Those proofs remain with their later owners. This decision is evidence
+complete. It is not a product-delivery approval or a clean vendor-uninstall
+claim.
 
 ---
 

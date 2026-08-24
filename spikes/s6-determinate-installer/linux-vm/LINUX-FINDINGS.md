@@ -5,7 +5,7 @@
 | **Report** | DN-03b. Broad Linux x86_64 QEMU behavior evidence plus Linux x86_64 and aarch64 container Asset proofs. |
 | **Date** | 2026-08-24 (report date; R12 ran on 2026-08-23 UTC). |
 | **Parent** | [S6 research findings](../FINDINGS.md), [Linux VM harness](README.md), [stack plan](../../../plans/determinate-nix-stacked-prs.md). |
-| **Status** | Fresh R12 evidence makes the required Linux x86_64 behavior and both Linux target Asset proofs reviewable. Strict vendor cleanup still fails because `sentry-endpoint` remains. DN-13 owns product cleanup. DN-03 still waits for macOS R8. No clean vendor uninstall is claimed. |
+| **Status** | Fresh R12 proves the required Linux x86_64 behavior and both Linux target Asset proofs. R10 proves the Apple Silicon lifecycle and residue rows. Crash R1 completes the standalone SIGKILL and reboot observation with a negative result. Parent status: COMPLETE — EVIDENCE COMPLETE; PRODUCT DELIVERY NO-GO. DN-04 may document the proved contract. Linux clean vendor uninstall remains `FAIL`. DN-13 owns exact residue cleanup only. |
 
 ## Terms
 
@@ -37,7 +37,11 @@ This is an ARM64 Linux container on an ARM64 Docker server. It is not a bare-met
 
 **Observed result.** The strict clean-uninstall residue contract failed in the fresh broad x86_64 R12 run and both retained container Asset proofs. R12 proves that at least `sentry-endpoint` remained. R12 did not count every `/etc/nix` entry. The retained x86_64 R11 and aarch64 R10 container inventories prove that `sentry-endpoint` was the only `/etc/nix` entry in those guests.
 
-**Linux gate result.** The required Linux behavior and the Linux aarch64 and x86_64 Asset evidence are reviewable. The strict sentry residue remains a real vendor clean-uninstall FAIL. Fresh guest state, creation during vendor execution, and unchanged private bytes and digest values after uninstall prove vendor ownership in R12. DN-13 owns exact product cleanup; DN-03 does not apply it. The DN-03 parent and DN-04 still wait for macOS R8.
+**Observed, Linux.** The strict sentry residue remains a real clean-uninstall `FAIL`. Fresh guest state, creation during vendor execution, and unchanged private bytes and digest values after uninstall are recorded in R12.
+
+**Inference.** These runtime facts support attribution of the sentry residue to vendor execution.
+
+**Decision.** The required Linux behavior and the Linux aarch64 and x86_64 Asset evidence are accepted. R10 proves the Apple Silicon lifecycle and residue rows. Crash R1 completes the standalone SIGKILL and reboot observation with a negative result. The parent status is **COMPLETE — EVIDENCE COMPLETE; PRODUCT DELIVERY NO-GO.** DN-04 may document the proved contract. DN-13 owns exact residue cleanup only; DN-03 does not apply it.
 
 **Inference.** The observed install and recovery behavior supports using the pinned vendor executable as a private helper after the DN-03 gate passes. It does not support a clean vendor-uninstall claim. Section 12 gives the recommendation and the future DN-13 cleanup proposal.
 
@@ -404,9 +408,15 @@ The lane completes all three Linux aarch64 `Asset proof` rows. It does not run t
 
 ### Parent gate
 
-The required Linux behavior and both Linux target Asset proofs are reviewable. The strict sentry residue is still a real FAIL, and vendor ownership is proven for the tested lanes. DN-13 owns the future exact cleanup. This report does not apply that cleanup. DN-03 still waits for the separate macOS R8 result. The parent owner must combine both child reports before closing DN-03 or starting DN-04. Intel macOS asset availability is observed: release v3.22.1 has no standalone Intel macOS executable.
+**Observed.** The strict sentry residue is still a real `FAIL`. Release v3.22.1 has no standalone Intel macOS executable.
 
-DN-04 cannot start before the DN-03 parent passes. DN-13 later owns exact product cleanup. This ordering is not a dependency cycle because DN-03 proves vendor behavior and ownership; DN-13 implements and proves product-owned cleanup after integration support exists.
+**Inference.** The tested Linux lanes support attribution of the sentry residue to vendor execution.
+
+**Unproved.** Successful crash recovery and functional Nix recovery are unproved.
+
+**Decision.** The required Linux behavior and both Linux target Asset proofs are accepted. R10 proves the Apple Silicon lifecycle and residue rows. Crash R1 completes the standalone SIGKILL and reboot observation with a negative result. The parent status is **COMPLETE — EVIDENCE COMPLETE; PRODUCT DELIVERY NO-GO.** DN-04 may document the proved contract. DN-13 later owns exact residue cleanup only. It does not own crash recovery. This report does not apply cleanup. Intel macOS remains unsupported.
+
+**Inference.** This ordering is not a dependency cycle. DN-03 records vendor behavior and the ownership boundary. DN-13 implements and proves product-owned residue cleanup after integration support exists.
 
 Do not call any Linux residue lane a clean-uninstall PASS. Do not claim clean vendor uninstall.
 
@@ -497,7 +507,7 @@ Limitations of this spike:
 12. `determinate-nixd upgrade --version v3.22.1` was a same-version probe. A real N to N+1 upgrade was not run.
 13. The container Asset proofs did not run systemd, reboot, repair, update, crash recovery, repeat install, or repeat uninstall.
 14. Both Linux target Asset proofs recorded the roadmap-required private receipt hash. The x86_64 proof used architecture emulation and disabled the Nix syscall filter for that disposable unsandboxed container.
-15. macOS R8 still owns the blocking Apple Silicon rows. Intel macOS asset availability is observed, but no Intel lifecycle ran because v3.22.1 has no standalone Intel macOS executable.
+15. macOS R10 proves the lifecycle and residue rows. Crash R1 completes the standalone SIGKILL and reboot observation with a negative result. Successful and functional recovery remain unproved, and product delivery remains `NO-GO`. Intel macOS asset availability is observed, but no Intel lifecycle ran because v3.22.1 has no standalone Intel macOS executable.
 16. The prior aarch64 r9 run did not preserve immediate cleanup evidence. The final r10 run replaces it for Asset-row acceptance and preserves the exact cleanup record.
 17. The container entry and target-selection corrections were not rerun in R10 or R11. Static checks prove those guards. Fresh R12 did run the corrected QEMU receipt path. R12 adds no new container runtime fact.
 
