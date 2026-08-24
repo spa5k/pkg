@@ -519,7 +519,7 @@ async fn build_preview_publication(
     }
 
     let manifest = serde_json::json!({
-        "schemaVersion":1, "releaseId":"v0.1.0-alpha.7", "channelSequence":sequence,
+        "schemaVersion":2, "releaseId":"v0.1.0-alpha.7", "channelSequence":sequence,
         "timestampVersion":sequence, "trustedRootSha256":root_digest, "policyVersion":1,
         "determinate":determinate,
         "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
@@ -800,7 +800,7 @@ async fn main() -> Result<(), AnyError> {
         }));
     }
     let manifest = serde_json::json!({
-        "schemaVersion":1, "releaseId":format!("linux-proof-{sequence}"),
+        "schemaVersion":2, "releaseId":format!("linux-proof-{sequence}"),
         "channelSequence":sequence, "timestampVersion":sequence,
         "trustedRootSha256":root_digest, "policyVersion":1,
         "determinate":determinate,

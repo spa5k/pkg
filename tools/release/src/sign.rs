@@ -662,7 +662,7 @@ mod tests {
             }));
         }
         serde_json::json!({
-            "schemaVersion":1,"releaseId":"v0.1.0","channelSequence":1,"timestampVersion":1,"policyVersion":1,
+            "schemaVersion":2,"releaseId":"v0.1.0","channelSequence":1,"timestampVersion":1,"policyVersion":1,
             "trustedRootSha256":trusted_root_sha256,
             "determinate":{
                 "version":"3.22.1",
@@ -706,6 +706,17 @@ mod tests {
         let temporary = TempDir::new().expect("temporary release");
         let root = temporary.path();
         let original = release_fixture_json(root);
+
+        let mut old_schema = original.clone();
+        old_schema["schemaVersion"] = serde_json::json!(1);
+        assert!(
+            ReleaseManifest::from_json_with_determinate_fixture(
+                &serde_json::to_vec(&old_schema).unwrap(),
+                root,
+                &TestAuthority,
+            )
+            .is_err()
+        );
 
         let mut forged = original.clone();
         forged["approvals"][1]["actor"] = serde_json::json!("release-owner");

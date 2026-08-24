@@ -33,7 +33,8 @@ The CI workflow uses fresh in-memory Ed25519 test keys. It proves a 2-of-3
 offline root, separate online-role keys, a real signed repository, and a real
 `tough` client verification. Test keys never leave process memory.
 
-The Determinate inventory is fixed to version 3.22.1 and revision
+Release-manifest schema 2 requires the Determinate inventory. The inventory is
+fixed to version 3.22.1 and revision
 `4132ad07a15ee7d88c096ac7172b7afb2672866b`. It contains these three installer
 binaries:
 

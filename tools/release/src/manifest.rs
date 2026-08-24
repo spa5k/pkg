@@ -497,7 +497,7 @@ impl ReleaseManifest {
         authority: &dyn ReleaseAuthority,
         determinate_catalog: &[ExpectedDeterminateArtifact],
     ) -> Result<ValidatedRelease, ValidationError> {
-        if self.schema_version != 1
+        if self.schema_version != 2
             || self.channel_sequence == 0
             || self.timestamp_version == 0
             || self.policy_version == 0

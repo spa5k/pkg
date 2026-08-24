@@ -55,12 +55,39 @@ jobs:
               -p pkg-installer --bin pkg-root-helper \
               -p pkg-installer --bin pkg-install
 
-          install -d -m 0700 "$binaries" "$bundle"
+          install -d -m 0700 "$binaries" "$binaries/determinate" "$bundle"
           for name in pkg pkg-nix-broker pkg-root-helper pkg-install; do
             install -m 0755 "target/release/$name" "$binaries/$name"
             codesign --force --sign - --options runtime --timestamp=none "$binaries/$name"
             codesign --verify --strict --verbose=2 "$binaries/$name"
           done
+
+          stage_determinate() {
+            name="$1"
+            expected_length="$2"
+            expected_sha256="$3"
+            url="$4"
+            path="$binaries/determinate/$name"
+            curl --fail --location --retry 3 --proto '=https' \
+              --proto-redir '=https' --tlsv1.2 --output "$path" "$url"
+            test "$(stat -f '%z' "$path")" = "$expected_length"
+            printf '%s  %s\n' "$expected_sha256" "$path" | shasum -a 256 --check
+          }
+          stage_determinate nix-installer-aarch64-darwin 58427232 \
+            90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b \
+            https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-darwin
+          stage_determinate nix-installer-aarch64-linux 69625424 \
+            9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179 \
+            https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-linux
+          stage_determinate nix-installer-x86_64-linux 74918096 \
+            9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c \
+            https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-x86_64-linux
+          stage_determinate nix-installer-v3.22.1.tar.gz 214322 \
+            e946ce0920e1ac0a76281d1d0d24b5ddb0fa1807f5317d1545130fe8a04ff084 \
+            https://codeload.github.com/DeterminateSystems/nix-installer/tar.gz/refs/tags/v3.22.1
+          stage_determinate LICENSE 26434 \
+            36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89 \
+            https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE
 
           curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
             --output "$nix_archive" \
