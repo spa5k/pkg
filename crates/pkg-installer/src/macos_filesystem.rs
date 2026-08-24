@@ -173,6 +173,7 @@ fn map(asset: MacOsInstallAsset) -> Result<LinuxInstallAsset, MacOsError> {
         asset.mode().ok_or_else(MacOsError::backend_failure)?,
         owner,
         group,
+        asset.install_owner(),
     ))
 }
 
@@ -182,5 +183,36 @@ const fn map_principal(principal: MacOsAssetPrincipal) -> Result<LinuxAssetPrinc
         MacOsAssetPrincipal::Broker => Ok(LinuxAssetPrincipal::Broker),
         MacOsAssetPrincipal::Build => Ok(LinuxAssetPrincipal::BuildUsers),
         MacOsAssetPrincipal::Admin => Err(MacOsError::backend_failure()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{assets::InstallAssetOwner, macos_install_assets};
+
+    #[test]
+    fn map_preserves_base_nix_install_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = macos_install_assets()
+            .iter()
+            .copied()
+            .find(|asset| asset.id() == "nix-root")
+            .ok_or_else(|| std::io::Error::other("missing Base Nix test asset"))?;
+
+        assert_eq!(
+            map(source)?,
+            LinuxInstallAsset::platform_filesystem(
+                source.id(),
+                LinuxAssetKind::Directory,
+                source.path_or_name(),
+                source
+                    .mode()
+                    .ok_or_else(|| std::io::Error::other("missing Base Nix test mode"))?,
+                LinuxAssetPrincipal::Root,
+                LinuxAssetPrincipal::Root,
+                InstallAssetOwner::BaseNix,
+            )
+        );
+        Ok(())
     }
 }
