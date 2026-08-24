@@ -750,7 +750,7 @@
               <tr><td>Custom base repair</td><td>Determinate owns base Nix repair.</td><td>Damage and receipt-state repair tests pass, including safe refusal for Unknown and foreign Nix.</td></tr>
               <tr><td>Custom base uninstall</td><td>Determinate owns removal of its Nix base.</td><td>Explicit uninstall leaves no owned service, account, PATH, receipt, installer, or store residue.</td></tr>
               <tr><td>System assets and accounts</td><td>Determinate owns daemon services, integration files, and build accounts.</td><td>Ownership inventory before and after install, repair, and uninstall is exact on Linux and macOS.</td></tr>
-              <tr><td>Base-Nix installer journals</td><td>The vendor receipt and lifecycle replace pkg journals for machine-wide installation.</td><td>Supported interruption, reboot, repeat run, and receipt damage tests show safe vendor recovery.</td></tr>
+              <tr><td>Base-Nix installer journals</td><td>The vendor receipt and lifecycle replace pkg journals for machine-wide installation.</td><td>SIGKILL, reboot, repeat run, and receipt damage tests show safe vendor recovery.</td></tr>
             </tbody>
           </table>
         </div>
@@ -823,7 +823,7 @@
               <tr><td>Apple Silicon macOS</td><td>Fresh install and full lifecycle pass with launch environment checks.</td><td>Receipt, services, users/groups, GUI environment, shell PATH, and residue inventory.</td></tr>
               <tr><td>Verification failure</td><td>A wrong digest never executes.</td><td>Exit status, safe error, no machine change, and untrusted asset cleanup.</td></tr>
               <tr><td>Repeat install</td><td>A Ready base is not reinstalled or damaged.</td><td>Stable receipt, ownership, services, and package behavior.</td></tr>
-              <tr><td>Supported interruption and reboot</td><td>Each tested interruption returns to Ready through supported recovery or stops safely as Unknown.</td><td>Interruption point, receipt state, marker state, service state, and recovery result.</td></tr>
+              <tr><td>SIGKILL and reboot</td><td>Each tested interruption returns to Ready through supported recovery or stops safely as Unknown.</td><td>Interruption point, receipt state, marker state, service state, and recovery result.</td></tr>
               <tr><td>Ownership</td><td>Every machine-wide file, service, account, and product state has the expected owner.</td><td>Before-and-after inventory.</td></tr>
               <tr><td>Receipt damaged or missing</td><td>pkg does not invent authority or edit the receipt.</td><td>Unknown result, safe guidance, and no automatic takeover.</td></tr>
               <tr><td>Foreign Nix</td><td>pkg refuses automatic install, repair, update, or uninstall.</td><td>Detection evidence and unchanged foreign installation.</td></tr>
@@ -1299,6 +1299,7 @@
       </div>
       <div class="work-group">
         <h3>Next: one inactive DN-08–14 delivery PR</h3>
+        <p>This PR deletes no production code.</p>
         <ol class="next-list">
           <li><div><strong>DN-08 checkpoint: split product and Base Nix assets.</strong><span>Keep one writer for each owned asset.</span></div></li>
           <li><div><strong>DN-09 checkpoint: prove standard-daemon package parity.</strong><span>Keep the new route inactive.</span></div></li>
