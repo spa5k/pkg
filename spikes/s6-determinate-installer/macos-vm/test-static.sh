@@ -135,6 +135,14 @@ inventory_find_line='    LC_ALL=C /usr/bin/find -P /etc/nix -xdev -exec /bin/sh 
 inventory_find_unsafe_line='    LC_ALL=C /usr/bin/find -L /etc/nix -xdev -exec /bin/sh "$0" --inventory-entries /etc/nix "$inventory_root_device" "$inventory_raw" {} + || die "could not inventory /etc/nix"'
 inventory_root_directory_gate='    [ "$stat_type" = Directory ] || die "/etc/nix inventory root is not a real directory"'
 inventory_regular_link_gate='                [ "$inventory_nlink" -eq 1 ] || die "regular inventory file has multiple hard links"'
+paired_residue_suffix_line='    for residue_suffix in etc-nix.inventory fstab.identity; do'
+paired_residue_unsafe_line='    for residue_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do'
+single_init_log_line='    capture_fixed_identity /var/log/determinate-nix-init.log "$residue_prefix.determinate-nix-init-log.identity"'
+single_daemon_log_line='    capture_fixed_identity /var/log/determinate-nix-daemon.log "$residue_prefix.determinate-nix-daemon-log.identity"'
+active_uninstall_compare_line='    lifecycle-uninstall) compare_active_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;'
+unsafe_uninstall_compare_line='    lifecycle-uninstall) compare_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;'
+installed_init_log_line='    grep -E '\''^state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$'\'' "$installed_prefix.determinate-nix-init-log.identity" >/dev/null || die "installed snapshot lacks the Determinate init log"'
+installed_daemon_log_line='    grep -E '\''^state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$'\'' "$installed_prefix.determinate-nix-daemon-log.identity" >/dev/null || die "installed snapshot lacks the Determinate daemon log"'
 final_residue_compare_line='    lifecycle-residue) compare_residue_contract "$phase_dir/before" "$phase_dir/after" "final post-reboot residue identity changed during observation" ;;'
 residue_inventory_boundary_is_valid() {
     inventory_find_count=$(grep -F -x -c -- "$inventory_find_line" "$1" || :)
@@ -144,6 +152,19 @@ residue_inventory_boundary_is_valid() {
     final_residue_compare_count=$(grep -F -x -c -- "$final_residue_compare_line" "$1" || :)
     [ "$inventory_find_count" -eq 1 ] && [ "$inventory_find_unsafe_count" -eq 0 ] && [ "$inventory_root_directory_count" -eq 1 ] \
         && [ "$inventory_regular_link_count" -eq 1 ] && [ "$final_residue_compare_count" -eq 1 ]
+}
+live_log_boundary_is_valid() {
+    paired_residue_count=$(grep -F -x -c -- "$paired_residue_suffix_line" "$1" || :)
+    paired_residue_unsafe_count=$(grep -F -x -c -- "$paired_residue_unsafe_line" "$1" || :)
+    single_init_log_count=$(grep -F -x -c -- "$single_init_log_line" "$1" || :)
+    single_daemon_log_count=$(grep -F -x -c -- "$single_daemon_log_line" "$1" || :)
+    active_uninstall_compare_count=$(grep -F -x -c -- "$active_uninstall_compare_line" "$1" || :)
+    installed_init_log_count=$(grep -F -x -c -- "$installed_init_log_line" "$1" || :)
+    installed_daemon_log_count=$(grep -F -x -c -- "$installed_daemon_log_line" "$1" || :)
+    [ "$paired_residue_count" -eq 2 ] && [ "$paired_residue_unsafe_count" -eq 0 ] \
+        && [ "$single_init_log_count" -eq 1 ] && [ "$single_daemon_log_count" -eq 1 ] \
+        && [ "$active_uninstall_compare_count" -eq 1 ] \
+        && [ "$installed_init_log_count" -eq 1 ] && [ "$installed_daemon_log_count" -eq 1 ]
 }
 installer_process_coverage_is_valid() {
     coverage_file=$1
@@ -401,6 +422,26 @@ if residue_inventory_boundary_is_valid "$boundary_fixture/inventory-hardlinks.sh
 awk -v comparison="$final_residue_compare_line" '$0 != comparison { print }' "$guest" >"$boundary_fixture/final-residue-comparison.sh"
 if grep -F -x -- "$final_residue_compare_line" "$boundary_fixture/final-residue-comparison.sh" >/dev/null; then die "final residue comparison mutation vanished"; fi
 if residue_inventory_boundary_is_valid "$boundary_fixture/final-residue-comparison.sh"; then die "missing final residue comparison was accepted"; fi
+awk -v safe="$paired_residue_suffix_line" -v unsafe="$paired_residue_unsafe_line" '$0 == safe { print unsafe; next } { print }' "$guest" >"$boundary_fixture/paired-live-logs.sh"
+[ "$(grep -F -x -c -- "$paired_residue_unsafe_line" "$boundary_fixture/paired-live-logs.sh" || :)" -eq 2 ] || die "paired live-log mutation vanished"
+if live_log_boundary_is_valid "$boundary_fixture/paired-live-logs.sh"; then die "paired live-log mutation was accepted"; fi
+awk -v safe="$active_uninstall_compare_line" -v unsafe="$unsafe_uninstall_compare_line" '$0 == safe { print unsafe; next } { print }' "$guest" >"$boundary_fixture/exact-active-logs.sh"
+need_exact "$boundary_fixture/exact-active-logs.sh" "$unsafe_uninstall_compare_line" "exact active-log mutation vanished"
+if live_log_boundary_is_valid "$boundary_fixture/exact-active-logs.sh"; then die "exact active-log mutation was accepted"; fi
+awk -v required="$installed_daemon_log_line" '$0 != required { print }' "$guest" >"$boundary_fixture/missing-installed-log.sh"
+if grep -F -x -- "$installed_daemon_log_line" "$boundary_fixture/missing-installed-log.sh" >/dev/null; then die "installed-log presence mutation vanished"; fi
+if live_log_boundary_is_valid "$boundary_fixture/missing-installed-log.sh"; then die "missing installed-log presence gate was accepted"; fi
+for test_shell do
+    "$test_shell" -n "$boundary_fixture/paired-live-logs.sh"
+    "$test_shell" -n "$boundary_fixture/exact-active-logs.sh"
+    "$test_shell" -n "$boundary_fixture/missing-installed-log.sh"
+done
+{
+    sed -n '/^capture_residue_contract() {$/,/^}$/p' "$guest"
+    sed -n '/^stable_log_identity() {$/,/^}$/p' "$guest"
+    sed -n '/^compare_active_residue_contract() {$/,/^}$/p' "$guest"
+} >"$boundary_fixture/live-log-contract.block"
+reject '(^|[;&|[:space:]])sleep([[:space:]]|$)|launchctl.*(stop|unload|bootout)|retry' "live-log capture must not retry, sleep, or pause a daemon" "$boundary_fixture/live-log-contract.block"
 rm -R "$boundary_fixture"
 trap - EXIT HUP INT TERM
 
@@ -410,8 +451,8 @@ residue_inventory_boundary_is_valid "$guest" || die "residue inventory safety bo
 need_exact "$guest" '        printf '\''path_hex=%s type=%s mode=%s uid=%s gid=%s size=%s nlink=%s sha256=%s target_hex=%s\n'\'' \' "inventory record format changed"
 need_exact "$guest" '        printf '\''state=absent path_hex=%s type=- mode=- uid=- gid=- size=- nlink=- sha256=-\n'\'' "$identity_path_hex" >"$identity_file"' "fixed-path absence format changed"
 need_exact "$guest" '    capture_fixed_identity /etc/fstab "$residue_stem.fstab.identity"' "fstab identity capture missing"
-need_exact "$guest" '    capture_fixed_identity /var/log/determinate-nix-init.log "$residue_stem.determinate-nix-init-log.identity"' "init-log identity capture missing"
-need_exact "$guest" '    capture_fixed_identity /var/log/determinate-nix-daemon.log "$residue_stem.determinate-nix-daemon-log.identity"' "daemon-log identity capture missing"
+need_exact "$guest" "$single_init_log_line" "single init-log identity capture missing"
+need_exact "$guest" "$single_daemon_log_line" "single daemon-log identity capture missing"
 need "$guest" 'stat_state_line=$(LC_ALL=C /usr/bin/stat -f '\''%d:%i:%p:%u:%g:%z:%l:%m:%c:%Lp:%HT'\'' "$stat_path")' "lstat stability identity missing"
 need "$guest" '[ "$inventory_device" = "$inventory_root_device" ] || die "inventory path crossed a device boundary"' "inventory device gate missing"
 need "$guest" '[ "$stat_state_line" = "$inventory_before" ] || die "inventory path changed while it was inspected"' "inventory stat stability gate missing"
@@ -422,8 +463,11 @@ need "$guest" '[ "$identity_nlink" -eq 1 ] || die "fixed identity file has multi
 need "$guest" '[ "$stat_state_line" = "$identity_before" ] || die "fixed identity changed while it was inspected"' "fixed-path stability gate missing"
 need "$guest" '/usr/bin/cmp -s "$residue_first.$residue_suffix" "$residue_second.$residue_suffix" || die "residue identity was not stable across two scans: $residue_suffix"' "double-scan comparison missing"
 need "$guest" '/bin/mv "$residue_first.$residue_suffix" "$residue_prefix.$residue_suffix" || die "could not finalize residue identity: $residue_suffix"' "stable-first inventory finalization missing"
+live_log_boundary_is_valid "$guest" || die "live-log residue boundary changed"
+need_exact "$guest" "$installed_init_log_line" "installed init-log presence gate missing"
+need_exact "$guest" "$installed_daemon_log_line" "installed daemon-log presence gate missing"
 need_exact "$guest" '    lifecycle-install) compare_residue_contract "$evidence/baseline/after" "$phase_dir/before" "install pre-state differs from clean baseline" ;;' "install/baseline comparison missing"
-need_exact "$guest" '    lifecycle-uninstall) compare_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;' "uninstall/daemon comparison missing"
+need_exact "$guest" "$active_uninstall_compare_line" "active uninstall/daemon comparison missing"
 need_exact "$guest" '    lifecycle-repeat-uninstall) compare_residue_contract "$evidence/lifecycle-uninstall/after" "$phase_dir/before" "repeat-uninstall pre-state differs from uninstall post-state" ;;' "repeat/uninstall comparison missing"
 need_exact "$guest" '        compare_residue_contract "$evidence/lifecycle-repeat-uninstall/after" "$phase_dir/before" "post-reboot residue pre-state differs from repeat-uninstall post-state"' "post-reboot/repeat comparison missing"
 need_exact "$guest" "$final_residue_compare_line" "final residue stability comparison missing"
@@ -435,7 +479,7 @@ reject '(^|[[:space:]/])(python|python3|perl|rustc|cargo|mtree)([[:space:]]|$)' 
 reject '(^|[;&|])[[:space:]]*((/bin|/usr/bin)/)?rm[[:space:]]+-[^[:space:]]*[rR][^[:space:]]*[[:space:]]+(/etc/nix|/etc/fstab|/var/log/determinate)' "recursive fixed-path cleanup found" "$guest"
 reject 'find[[:space:]]+/etc/nix[^\n]*-delete' "recursive /etc/nix deletion found" "$guest"
 
-# The real internal scanner handles directories, files, links, and newlines under sh and dash.
+# The real internal scanner handles directories, files, links, and newlines under each available shell.
 inventory_fixture=$(mktemp -d "/private/var/tmp/pkg-dn03c-inventory.XXXXXX") || die "could not create inventory fixture"
 trap 'rm -R "$inventory_fixture"' EXIT HUP INT TERM
 mkdir "$inventory_fixture/root" "$inventory_fixture/root/dir"
@@ -483,6 +527,63 @@ set -e
 [ "$inventory_status" -ne 0 ] || die "inventory special file passed"
 grep -F 'inventory contains an unsupported file type' "$inventory_fixture/fifo.stderr" >/dev/null || die "inventory special-file failure changed"
 rm -R "$inventory_fixture"
+trap - EXIT HUP INT TERM
+
+# The active boundary allows only live-log size and hash drift.
+live_log_fixture=$(mktemp -d "/private/var/tmp/pkg-dn03c-live-log.XXXXXX") || die "could not create live-log fixture"
+trap 'rm -R "$live_log_fixture"' EXIT HUP INT TERM
+{
+    printf '%s\n' '#!/bin/sh' 'set -eu' 'die() { printf "not ok - %s\n" "$*" >&2; exit 1; }'
+    sed -n '/^compare_residue_contract() {$/,/^}$/p' "$guest"
+    sed -n '/^stable_log_identity() {$/,/^}$/p' "$guest"
+    sed -n '/^compare_active_residue_contract() {$/,/^}$/p' "$guest"
+    printf '%s\n' 'case $1 in' \
+        '    active) shift; compare_active_residue_contract "$1" "$2" fixture ;;' \
+        '    full) shift; compare_residue_contract "$1" "$2" fixture ;;' \
+        '    *) exit 2 ;;' \
+        'esac'
+} >"$live_log_fixture/compare.sh"
+chmod 0700 "$live_log_fixture/compare.sh"
+live_left=$live_log_fixture/left
+live_right=$live_log_fixture/right
+printf '%s\n' 'state=absent path_hex=2f6574632f6e6978' >"$live_left.etc-nix.inventory"
+printf '%s\n' 'state=absent path_hex=2f6574632f6673746162 type=- mode=- uid=- gid=- size=- nlink=- sha256=-' >"$live_left.fstab.identity"
+live_sha_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+live_sha_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+printf 'state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=f mode=600 uid=0 gid=0 size=10 nlink=1 sha256=%s\n' "$live_sha_a" >"$live_left.determinate-nix-init-log.identity"
+printf 'state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=f mode=600 uid=0 gid=0 size=20 nlink=1 sha256=%s\n' "$live_sha_a" >"$live_left.determinate-nix-daemon-log.identity"
+/bin/cp "$live_left.etc-nix.inventory" "$live_right.etc-nix.inventory"
+/bin/cp "$live_left.fstab.identity" "$live_right.fstab.identity"
+printf 'state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=f mode=600 uid=0 gid=0 size=11 nlink=1 sha256=%s\n' "$live_sha_b" >"$live_right.determinate-nix-init-log.identity"
+printf 'state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=f mode=600 uid=0 gid=0 size=21 nlink=1 sha256=%s\n' "$live_sha_b" >"$live_right.determinate-nix-daemon-log.identity"
+for comparator_shell do
+    "$comparator_shell" "$live_log_fixture/compare.sh" active "$live_left" "$live_right" || die "active live-log drift failed under $comparator_shell"
+    set +e
+    "$comparator_shell" "$live_log_fixture/compare.sh" full "$live_left" "$live_right" >/dev/null 2>&1
+    comparator_status=$?
+    set -e
+    [ "$comparator_status" -ne 0 ] || die "full post-uninstall comparison allowed live-log drift under $comparator_shell"
+done
+for live_mutation in \
+    'state=present state=absent' \
+    'type=f type=l' \
+    'mode=600 mode=640' \
+    'uid=0 uid=1' \
+    'gid=0 gid=1' \
+    'nlink=1 nlink=2'
+do
+    live_safe=${live_mutation% *}
+    live_unsafe=${live_mutation#* }
+    sed "s/$live_safe/$live_unsafe/" "$live_left.determinate-nix-init-log.identity" >"$live_right.determinate-nix-init-log.identity"
+    for comparator_shell do
+        set +e
+        "$comparator_shell" "$live_log_fixture/compare.sh" active "$live_left" "$live_right" >/dev/null 2>&1
+        comparator_status=$?
+        set -e
+        [ "$comparator_status" -ne 0 ] || die "active live-log comparison allowed $live_safe drift under $comparator_shell"
+    done
+done
+rm -R "$live_log_fixture"
 trap - EXIT HUP INT TERM
 
 # Receipt contents stay opaque. Metadata and SHA-256 identity are allowed.

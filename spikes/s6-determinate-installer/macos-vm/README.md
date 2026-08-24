@@ -50,19 +50,28 @@ link targets are hexadecimal bytes. Regular file contents are represented
 only by SHA-256. The evidence does not contain fstab bytes, log bytes, or
 receipt bytes.
 
-Each snapshot runs the four scans twice. It sorts the `/etc/nix` records with
-the C locale. It keeps the first scan only when both scans are byte-for-byte
-equal. A changing path, an unsupported file type, a root symbolic link, a file
-with multiple hard links, or a cross-device entry stops the phase.
+Each snapshot scans `/etc/nix` and `/etc/fstab` twice. It sorts the `/etc/nix`
+records with the C locale. It keeps the first scan only when both scans are
+byte-for-byte equal. A changing path, an unsupported file type, a root
+symbolic link, a file with multiple hard links, or a cross-device entry stops
+the phase. Each Determinate log is captured once. Its one capture still uses
+the stable lstat-hash-lstat, regular-file, and one-hard-link gates. The harness
+does not retry, sleep, or pause a daemon to capture a live log.
 
 The lifecycle lane compares these identities across the exact boundaries:
 
 1. The clean baseline stays unchanged and all four paths are absent.
 2. Install starts from the baseline and creates `/etc/nix` and `/etc/fstab`.
-3. Uninstall starts from the daemon phase state.
+3. Uninstall starts from the daemon phase state. `/etc/nix` and `/etc/fstab`
+   must match exactly. Each validated log must keep its state, path, type,
+   mode, user, group, and hard-link count. Only log size and SHA-256 can drift
+   at this active boundary.
 4. Repeat uninstall starts from the uninstall state and changes nothing.
 5. The final post-reboot state equals the repeat-uninstall state and stays
    unchanged during the final phase.
+
+Both logs must be present after install. All clean-baseline and post-uninstall
+boundaries compare all four identity files byte for byte.
 
 The lifecycle produces nine phase archives. The final residue decision occurs
 only after the final `after` snapshot and all final comparisons. DN-03c does
@@ -70,6 +79,8 @@ not delete `/etc/nix`, `/etc/fstab`, or the Determinate logs. DN-13 can later
 remove only residue whose complete identity is proved again at cleanup time.
 
 R8 did not record the contents of `/etc/nix`. It also missed an empty fstab
-file and did not inspect the two Determinate log paths. Thus, R8 does not prove
-the exact vendor residue. A new full R9 lifecycle run is required with this
-identity contract.
+file and did not inspect the two Determinate log paths. R9 added the identity
+contract, but it stopped during install. The active daemon log grew between
+the two complete snapshot scans. Both vendor functional checks returned `0`.
+R9 is a **NO-GO** and did not reach a reboot. A new full R10 lifecycle run is
+required with the live-log rule above.

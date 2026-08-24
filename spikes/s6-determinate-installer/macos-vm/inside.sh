@@ -241,25 +241,55 @@ capture_residue_contract_once() {
     residue_stem=$1
     capture_inventory_once "$residue_stem.etc-nix.inventory"
     capture_fixed_identity /etc/fstab "$residue_stem.fstab.identity"
-    capture_fixed_identity /var/log/determinate-nix-init.log "$residue_stem.determinate-nix-init-log.identity"
-    capture_fixed_identity /var/log/determinate-nix-daemon.log "$residue_stem.determinate-nix-daemon-log.identity"
 }
 capture_residue_contract() {
     residue_prefix=$1 residue_first=$1.residue-scan-1 residue_second=$1.residue-scan-2
     capture_residue_contract_once "$residue_first"
     capture_residue_contract_once "$residue_second"
-    for residue_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
+    for residue_suffix in etc-nix.inventory fstab.identity; do
         /usr/bin/cmp -s "$residue_first.$residue_suffix" "$residue_second.$residue_suffix" || die "residue identity was not stable across two scans: $residue_suffix"
     done
-    for residue_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
+    for residue_suffix in etc-nix.inventory fstab.identity; do
         /bin/mv "$residue_first.$residue_suffix" "$residue_prefix.$residue_suffix" || die "could not finalize residue identity: $residue_suffix"
         /bin/rm -f "$residue_second.$residue_suffix" || die "could not remove second residue scan: $residue_suffix"
     done
+    capture_fixed_identity /var/log/determinate-nix-init.log "$residue_prefix.determinate-nix-init-log.identity"
+    capture_fixed_identity /var/log/determinate-nix-daemon.log "$residue_prefix.determinate-nix-daemon-log.identity"
 }
 compare_residue_contract() {
     contract_left=$1 contract_right=$2 contract_reason=$3
     for contract_suffix in etc-nix.inventory fstab.identity determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
         /usr/bin/cmp -s "$contract_left.$contract_suffix" "$contract_right.$contract_suffix" || die "$contract_reason: $contract_suffix"
+    done
+}
+stable_log_identity() {
+    awk '
+        NF != 9 || $2 !~ /^path_hex=[0-9a-f]+$/ { exit 1 }
+        $1 == "state=absent" {
+            if ($3 != "type=-" || $4 != "mode=-" || $5 != "uid=-" || $6 != "gid=-" || $7 != "size=-" || $8 != "nlink=-" || $9 != "sha256=-") exit 1
+            print $1, $2, $3, $4, $5, $6, $8
+            valid=1
+            next
+        }
+        $1 == "state=present" {
+            if ($3 != "type=f" || $4 !~ /^mode=[0-7]+$/ || $5 !~ /^uid=[0-9]+$/ || $6 !~ /^gid=[0-9]+$/ || $7 !~ /^size=[0-9]+$/ || $8 !~ /^nlink=1$/ || $9 !~ /^sha256=[0-9a-f]+$/ || length($9) != 71) exit 1
+            print $1, $2, $3, $4, $5, $6, $8
+            valid=1
+            next
+        }
+        { exit 1 }
+        END { if (NR != 1 || !valid) exit 1 }
+    ' "$1"
+}
+compare_active_residue_contract() {
+    active_left=$1 active_right=$2 active_reason=$3
+    for active_suffix in etc-nix.inventory fstab.identity; do
+        /usr/bin/cmp -s "$active_left.$active_suffix" "$active_right.$active_suffix" || die "$active_reason: $active_suffix"
+    done
+    for active_suffix in determinate-nix-init-log.identity determinate-nix-daemon-log.identity; do
+        active_left_identity=$(stable_log_identity "$active_left.$active_suffix") || die "invalid active log identity: $active_suffix"
+        active_right_identity=$(stable_log_identity "$active_right.$active_suffix") || die "invalid active log identity: $active_suffix"
+        [ "$active_left_identity" = "$active_right_identity" ] || die "$active_reason: $active_suffix"
     done
 }
 identity_is_exact() {
@@ -277,6 +307,8 @@ require_installed_residue_contract() {
     installed_prefix=$1
     grep -E '^path_hex=2f6574632f6e6978 type=d mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=[0-9]+ sha256=- target_hex=-$' "$installed_prefix.etc-nix.inventory" >/dev/null || die "installed snapshot lacks the /etc/nix root directory"
     grep -E '^state=present path_hex=2f6574632f6673746162 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$' "$installed_prefix.fstab.identity" >/dev/null || die "installed snapshot lacks stable /etc/fstab identity"
+    grep -E '^state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d696e69742e6c6f67 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$' "$installed_prefix.determinate-nix-init-log.identity" >/dev/null || die "installed snapshot lacks the Determinate init log"
+    grep -E '^state=present path_hex=2f7661722f6c6f672f64657465726d696e6174652d6e69782d6461656d6f6e2e6c6f67 type=f mode=[0-7]+ uid=[0-9]+ gid=[0-9]+ size=[0-9]+ nlink=1 sha256=[0-9a-f]{64}$' "$installed_prefix.determinate-nix-daemon-log.identity" >/dev/null || die "installed snapshot lacks the Determinate daemon log"
 }
 snapshot() {
     snapshot_name=$1 snapshot_prefix=$phase_dir/$snapshot_name
@@ -688,7 +720,7 @@ record_free_disk
 snapshot before
 case $phase in
     lifecycle-install) compare_residue_contract "$evidence/baseline/after" "$phase_dir/before" "install pre-state differs from clean baseline" ;;
-    lifecycle-uninstall) compare_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;
+    lifecycle-uninstall) compare_active_residue_contract "$evidence/lifecycle-daemon/after" "$phase_dir/before" "uninstall pre-state differs from daemon post-state" ;;
     lifecycle-repeat-uninstall) compare_residue_contract "$evidence/lifecycle-uninstall/after" "$phase_dir/before" "repeat-uninstall pre-state differs from uninstall post-state" ;;
 esac
 
