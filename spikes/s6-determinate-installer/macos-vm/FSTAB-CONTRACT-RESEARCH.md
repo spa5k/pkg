@@ -359,10 +359,11 @@ comparisons.
 The only final phase failure was `FAIL: vendor residue remains`. Product
 residue passed.
 
-- Both reboot outcomes are `PASS`. Each shutdown status and timeout pair is
-  `0:0`. Each raw boot-time comparison returned `1`, which proves that the raw
-  boot time changed. Guest identity and the staged installer and inside-script
-  hashes were revalidated after each reboot.
+- Both reboot outcomes are `PASS`. The after-install shutdown status and
+  timeout pair is `0:0`. The after-uninstall pair is `124:1`. Each raw
+  boot-time comparison returned `1`, which proves that the raw boot time
+  changed. Guest identity and the staged installer and inside-script hashes
+  were revalidated after each reboot.
 - At the active `lifecycle-daemon/after` to
   `lifecycle-uninstall/before` boundary, the init log stayed at size 1,078 and
   SHA-256
