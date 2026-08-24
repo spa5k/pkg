@@ -344,7 +344,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::commands::doctor::{DoctorInputs, SubsystemObservation, UnmanagedNixObservation};
-    use crate::path::PathObservation;
+    use crate::path::{PathObservation, RawNixVisibility};
     use pkg_core::System;
 
     use super::*;
@@ -358,18 +358,20 @@ mod tests {
     }
 
     fn report(root: &Path) -> DoctorReport {
-        DoctorReport::evaluate(&DoctorInputs {
-            system: Some(System::Aarch64Darwin),
-            path: PathObservation::inspect(
+        let mut inputs = DoctorInputs::local_development(
+            root.to_path_buf(),
+            PathObservation::inspect(
                 root.join("current/bin").as_path(),
                 [root.join("current/bin")],
             ),
-            state_root: root.to_path_buf(),
-            expected_state_uid: None,
-            unmanaged_nix: UnmanagedNixObservation::Clean,
-            managed_runtime: SubsystemObservation::Passed("managed runtime is healthy".into()),
-            channel: SubsystemObservation::Passed("signed channel is current".into()),
-        })
+        );
+        inputs.system = Some(System::Aarch64Darwin);
+        inputs.raw_nix_visibility = RawNixVisibility::Hidden;
+        inputs.installed_nix = Some(crate::commands::doctor::InstalledNixState::Accepted);
+        inputs.unmanaged_nix = UnmanagedNixObservation::Clean;
+        inputs.managed_runtime = SubsystemObservation::Passed("managed runtime is healthy".into());
+        inputs.channel = SubsystemObservation::Passed("signed channel is current".into());
+        DoctorReport::evaluate(&inputs)
     }
 
     #[test]

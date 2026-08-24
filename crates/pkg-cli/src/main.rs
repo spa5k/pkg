@@ -13,7 +13,10 @@ use pkg_cli::completion::write_completion;
 use pkg_cli::crash::{CrashContext, CrashPhase, CrashReporter};
 use pkg_cli::exit::ExitCode;
 use pkg_cli::log::{LogConfig, LogLevel, LogRecord, StructuredLog};
-use pkg_cli::path::{self, HostFamily, PathObservation, StateLocation, StateLocationError};
+use pkg_cli::path::{
+    self, HostFamily, PathObservation, RawNixVisibility, StateLocation, StateLocationError,
+    observe_raw_nix_visibility,
+};
 use pkg_cli::support::SupportBundle;
 use pkg_cli::ux::{CommandError, OutputMode, write_error};
 use pkg_installer::{UninstallErrorCode, uninstall_linux_production, uninstall_macos_production};
@@ -238,13 +241,19 @@ fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
     };
     let state_root = location.state_root().to_owned();
     let expected_bin = state_root.join("current/bin");
-    let path_entries = std::env::var_os("PATH")
-        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+    let path = std::env::var_os("PATH");
+    let path_entries = path
+        .as_ref()
+        .map(|value| std::env::split_paths(value).collect::<Vec<_>>())
         .unwrap_or_default();
     let mut inputs = DoctorInputs::local_development(
         state_root,
         PathObservation::inspect(&expected_bin, &path_entries),
     );
+    inputs.raw_nix_visibility = path
+        .as_deref()
+        .and_then(std::ffi::OsStr::to_str)
+        .map_or(RawNixVisibility::Unknown, observe_raw_nix_visibility);
     inputs.expected_state_uid = Some(Uid::effective().as_raw());
     let (managed_runtime, channel, managed_ownership) = observe_production_subsystems();
     (inputs.managed_runtime, inputs.channel) = (managed_runtime, channel);

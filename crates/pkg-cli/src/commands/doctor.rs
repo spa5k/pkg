@@ -5,12 +5,13 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use pkg_core::System;
+use pkg_installer::{DeterminateHandoffError, DeterminateHandoffState};
 use pkg_nix::BrokerOperationKind;
 use serde::Serialize;
 
 use crate::broker::BrokerLifecycleClient;
 use crate::exit::ExitCode;
-use crate::path::PathObservation;
+use crate::path::{PathObservation, RawNixVisibility};
 use crate::ux::{PUBLIC_SCHEMA_VERSION, sanitize_public_text, write_json_line};
 
 /// Status of one independently actionable doctor check.
@@ -119,6 +120,61 @@ pub enum UnmanagedNixObservation {
     Deferred,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstalledNixState {
+    Clean,
+    Accepted,
+    Foreign,
+    Upstream,
+    UnmarkedDeterminate,
+    DamagedAccepted,
+    OldAlpha,
+    IncompleteHandoff,
+    Unknown,
+}
+
+#[allow(dead_code)] // Inactive until the privileged DN10 evidence producer exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstalledNixEvidence {
+    Absent,
+    ProvedDeterminate,
+    ProvedForeign,
+    ProvedUpstream,
+    ProvedOldAlpha,
+    Unknown,
+}
+
+#[allow(dead_code)] // Inactive until the privileged DN10 evidence producer exists.
+const fn classify_installed_nix(
+    handoff: Result<DeterminateHandoffState, DeterminateHandoffError>,
+    evidence: InstalledNixEvidence,
+) -> InstalledNixState {
+    match handoff {
+        Err(
+            DeterminateHandoffError::InvalidReceipt
+            | DeterminateHandoffError::InvalidInstaller
+            | DeterminateHandoffError::IdentityMismatch,
+        ) => InstalledNixState::DamagedAccepted,
+        Err(_) => InstalledNixState::Unknown,
+        Ok(DeterminateHandoffState::Accepted) => {
+            if matches!(evidence, InstalledNixEvidence::ProvedDeterminate) {
+                InstalledNixState::Accepted
+            } else {
+                InstalledNixState::DamagedAccepted
+            }
+        }
+        Ok(DeterminateHandoffState::Started) => InstalledNixState::IncompleteHandoff,
+        Ok(DeterminateHandoffState::NotStarted) => match evidence {
+            InstalledNixEvidence::Absent => InstalledNixState::Clean,
+            InstalledNixEvidence::ProvedDeterminate => InstalledNixState::UnmarkedDeterminate,
+            InstalledNixEvidence::ProvedForeign => InstalledNixState::Foreign,
+            InstalledNixEvidence::ProvedUpstream => InstalledNixState::Upstream,
+            InstalledNixEvidence::ProvedOldAlpha => InstalledNixState::OldAlpha,
+            InstalledNixEvidence::Unknown => InstalledNixState::Unknown,
+        },
+    }
+}
+
 /// Inputs consumed by the read-only report assembler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DoctorInputs {
@@ -126,6 +182,8 @@ pub struct DoctorInputs {
     pub system: Option<System>,
     /// Invoking user's activation-bin PATH observation.
     pub path: PathObservation,
+    /// UX-only observation of a raw Nix CLI on PATH.
+    pub raw_nix_visibility: RawNixVisibility,
     /// Invoking user's state root.
     pub state_root: PathBuf,
     /// Expected state owner uid when the caller can establish it.
@@ -136,6 +194,7 @@ pub struct DoctorInputs {
     pub managed_runtime: SubsystemObservation,
     /// Signed channel observation from the channel client.
     pub channel: SubsystemObservation,
+    pub(crate) installed_nix: Option<InstalledNixState>,
 }
 
 impl DoctorInputs {
@@ -145,6 +204,7 @@ impl DoctorInputs {
         Self {
             system: detect_system(),
             path,
+            raw_nix_visibility: RawNixVisibility::Unknown,
             state_root,
             expected_state_uid: None,
             unmanaged_nix: UnmanagedNixObservation::Deferred,
@@ -156,6 +216,7 @@ impl DoctorInputs {
                 detail: "signed channel check is not wired".into(),
                 hint: "complete the signed channel client before relying on doctor".into(),
             },
+            installed_nix: None,
         }
     }
 }
@@ -283,7 +344,9 @@ impl DoctorReport {
                 ),
             },
             path_check(&inputs.path),
+            raw_nix_check(inputs.raw_nix_visibility),
             state_permissions_check(&inputs.state_root, inputs.expected_state_uid),
+            installed_nix_check(inputs.installed_nix),
             unmanaged_check(&inputs.unmanaged_nix),
             subsystem_check("runtime.managed", &inputs.managed_runtime),
             subsystem_check("channel.signed", &inputs.channel),
@@ -449,6 +512,85 @@ fn path_check(observation: &PathObservation) -> DoctorCheck {
     }
 }
 
+fn raw_nix_check(visibility: RawNixVisibility) -> DoctorCheck {
+    match visibility {
+        RawNixVisibility::Hidden => DoctorCheck::new(
+            "shell.raw_nix",
+            CheckStatus::Pass,
+            "raw Nix commands are not visible on PATH",
+            None::<String>,
+        ),
+        RawNixVisibility::Visible => DoctorCheck::new(
+            "shell.raw_nix",
+            CheckStatus::Warning,
+            "a raw Nix command is visible on PATH",
+            Some("this is a UX warning only; pkg does not trust commands found on PATH"),
+        ),
+        RawNixVisibility::Unknown => DoctorCheck::new(
+            "shell.raw_nix",
+            CheckStatus::Warning,
+            "raw Nix visibility on PATH could not be checked completely",
+            Some("check that PATH contains only absolute, readable directories"),
+        ),
+    }
+}
+
+fn installed_nix_check(state: Option<InstalledNixState>) -> DoctorCheck {
+    let (status, detail, hint) = match state {
+        None => (
+            CheckStatus::Deferred,
+            "the privileged installed-Nix classifier has not supplied an observation",
+            Some("do not install or change Nix until privileged read-only preflight is available"),
+        ),
+        Some(InstalledNixState::Clean) => (
+            CheckStatus::Pass,
+            "the host is clean for the managed Nix lifecycle",
+            None,
+        ),
+        Some(InstalledNixState::Accepted) => (
+            CheckStatus::Pass,
+            "the Determinate Nix handoff and installed state are accepted",
+            None,
+        ),
+        Some(InstalledNixState::Foreign) => (
+            CheckStatus::Fail,
+            "a foreign Nix installation is present",
+            Some("use that installation's authenticated uninstaller; pkg will not change it"),
+        ),
+        Some(InstalledNixState::Upstream) => (
+            CheckStatus::Fail,
+            "an upstream Nix installation is present",
+            Some("use the upstream installation's uninstaller; pkg will not adopt it"),
+        ),
+        Some(InstalledNixState::UnmarkedDeterminate) => (
+            CheckStatus::Fail,
+            "a Determinate Nix installation has no accepted pkg handoff",
+            Some("use an authenticated Determinate uninstaller; automatic adoption is disabled"),
+        ),
+        Some(InstalledNixState::DamagedAccepted) => (
+            CheckStatus::Fail,
+            "the accepted Determinate Nix identity is damaged or inconsistent",
+            Some("do not change Nix files; collect pkg doctor --support output for repair"),
+        ),
+        Some(InstalledNixState::OldAlpha) => (
+            CheckStatus::Fail,
+            "an old pkg alpha installation is present",
+            Some("wait for the authenticated old-alpha reset; do not remove files manually"),
+        ),
+        Some(InstalledNixState::IncompleteHandoff) => (
+            CheckStatus::Fail,
+            "a Determinate Nix handoff did not finish",
+            Some("do not rerun the vendor installer directly; resume only through pkg"),
+        ),
+        Some(InstalledNixState::Unknown) => (
+            CheckStatus::Fail,
+            "the installed Nix state could not be classified safely",
+            Some("rerun privileged read-only preflight; do not remove files"),
+        ),
+    };
+    DoctorCheck::new("nix.installed_state", status, detail, hint)
+}
+
 fn state_permissions_check(path: &Path, expected_uid: Option<u32>) -> DoctorCheck {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -578,12 +720,64 @@ mod tests {
                 Path::new("/user/pkg/current/bin"),
                 [Path::new("/user/pkg/current/bin")],
             ),
+            raw_nix_visibility: RawNixVisibility::Hidden,
             state_root,
             expected_state_uid: None,
             unmanaged_nix: UnmanagedNixObservation::Clean,
             managed_runtime: SubsystemObservation::Passed("managed runtime is healthy".into()),
             channel: SubsystemObservation::Passed("signed channel is current".into()),
+            installed_nix: Some(InstalledNixState::Accepted),
         }
+    }
+
+    #[test]
+    fn installed_nix_classifier_is_closed_and_fail_closed() {
+        use DeterminateHandoffError::IdentityMismatch;
+        use DeterminateHandoffState::{Accepted, NotStarted, Started};
+        use InstalledNixEvidence::{
+            Absent, ProvedDeterminate, ProvedForeign, ProvedOldAlpha, ProvedUpstream,
+            Unknown as UnknownEvidence,
+        };
+        use InstalledNixState::{
+            Accepted as AcceptedState, Clean as CleanState, DamagedAccepted,
+            Foreign as ForeignState, IncompleteHandoff, OldAlpha as OldAlphaState, Unknown,
+            UnmarkedDeterminate, Upstream as UpstreamState,
+        };
+
+        for (handoff, evidence, expected) in [
+            (Ok(NotStarted), Absent, CleanState),
+            (Ok(Accepted), ProvedDeterminate, AcceptedState),
+            (Ok(NotStarted), ProvedForeign, ForeignState),
+            (Ok(NotStarted), ProvedUpstream, UpstreamState),
+            (Ok(NotStarted), ProvedDeterminate, UnmarkedDeterminate),
+            (Err(IdentityMismatch), ProvedDeterminate, DamagedAccepted),
+            (Ok(NotStarted), ProvedOldAlpha, OldAlphaState),
+            (Ok(Started), ProvedDeterminate, IncompleteHandoff),
+            (Ok(Accepted), ProvedForeign, DamagedAccepted),
+            (Ok(NotStarted), UnknownEvidence, Unknown),
+        ] {
+            assert_eq!(classify_installed_nix(handoff, evidence), expected);
+        }
+    }
+
+    #[test]
+    fn installed_state_and_raw_nix_are_separate_doctor_rows() {
+        let mut inputs = healthy_inputs(PathBuf::from("/missing"));
+        inputs.raw_nix_visibility = RawNixVisibility::Visible;
+        inputs.installed_nix = Some(InstalledNixState::Foreign);
+        let report = DoctorReport::evaluate(&inputs);
+        let raw = report
+            .checks()
+            .iter()
+            .find(|check| check.id() == "shell.raw_nix")
+            .unwrap();
+        let installed = report
+            .checks()
+            .iter()
+            .find(|check| check.id() == "nix.installed_state")
+            .unwrap();
+        assert_eq!(raw.status(), CheckStatus::Warning);
+        assert_eq!(installed.status(), CheckStatus::Fail);
     }
 
     #[test]
