@@ -6,7 +6,6 @@
 //! signing/notarization applies to product runtime artifacts only, never to
 //! locally built Nix store outputs.
 
-use crate::assets::InstallAssetOwner;
 use crate::{BrokerHelperDispatch, LinuxHelperSession, platform::linux::LinuxRootSetStore};
 #[cfg(target_os = "macos")]
 use nix::unistd::getpeereid;
@@ -182,24 +181,10 @@ pub struct MacOsInstallAsset {
     mode: Option<u32>,
     owner: Option<MacOsAssetPrincipal>,
     group: Option<MacOsAssetPrincipal>,
-    install_owner: InstallAssetOwner,
 }
 
 impl MacOsInstallAsset {
-    const fn product_account(id: &'static str, kind: MacOsAssetKind, name: &'static str) -> Self {
-        Self::account(id, kind, name, InstallAssetOwner::Product)
-    }
-
-    const fn base_nix_account(id: &'static str, kind: MacOsAssetKind, name: &'static str) -> Self {
-        Self::account(id, kind, name, InstallAssetOwner::BaseNix)
-    }
-
-    const fn account(
-        id: &'static str,
-        kind: MacOsAssetKind,
-        name: &'static str,
-        install_owner: InstallAssetOwner,
-    ) -> Self {
+    const fn account(id: &'static str, kind: MacOsAssetKind, name: &'static str) -> Self {
         Self {
             id,
             kind,
@@ -207,46 +192,7 @@ impl MacOsInstallAsset {
             mode: None,
             owner: None,
             group: None,
-            install_owner,
         }
-    }
-
-    const fn product_path(
-        id: &'static str,
-        kind: MacOsAssetKind,
-        path: &'static str,
-        mode: u32,
-        owner: MacOsAssetPrincipal,
-        group: MacOsAssetPrincipal,
-    ) -> Self {
-        Self::path(
-            id,
-            kind,
-            path,
-            mode,
-            owner,
-            group,
-            InstallAssetOwner::Product,
-        )
-    }
-
-    const fn base_nix_path(
-        id: &'static str,
-        kind: MacOsAssetKind,
-        path: &'static str,
-        mode: u32,
-        owner: MacOsAssetPrincipal,
-        group: MacOsAssetPrincipal,
-    ) -> Self {
-        Self::path(
-            id,
-            kind,
-            path,
-            mode,
-            owner,
-            group,
-            InstallAssetOwner::BaseNix,
-        )
     }
 
     const fn path(
@@ -256,7 +202,6 @@ impl MacOsInstallAsset {
         mode: u32,
         owner: MacOsAssetPrincipal,
         group: MacOsAssetPrincipal,
-        install_owner: InstallAssetOwner,
     ) -> Self {
         Self {
             id,
@@ -265,7 +210,6 @@ impl MacOsInstallAsset {
             mode: Some(mode),
             owner: Some(owner),
             group: Some(group),
-            install_owner,
         }
     }
 
@@ -304,51 +248,45 @@ impl MacOsInstallAsset {
     pub const fn group(self) -> Option<MacOsAssetPrincipal> {
         self.group
     }
-
-    /// Returns the lifecycle owner recorded in the static inventory.
-    #[must_use]
-    pub(crate) const fn install_owner(self) -> InstallAssetOwner {
-        self.install_owner
-    }
 }
 
 const MACOS_ASSETS: &[MacOsInstallAsset] = &[
-    MacOsInstallAsset::product_account("broker-group", MacOsAssetKind::Group, "pkg-nix-broker"),
-    MacOsInstallAsset::product_account("broker-user", MacOsAssetKind::User, "pkg-nix-broker"),
-    MacOsInstallAsset::base_nix_account("build-group", MacOsAssetKind::Group, "nixbld"),
-    MacOsInstallAsset::base_nix_account("build-user-01", MacOsAssetKind::User, "_nixbld1"),
-    MacOsInstallAsset::base_nix_account("build-user-02", MacOsAssetKind::User, "_nixbld2"),
-    MacOsInstallAsset::base_nix_account("build-user-03", MacOsAssetKind::User, "_nixbld3"),
-    MacOsInstallAsset::base_nix_account("build-user-04", MacOsAssetKind::User, "_nixbld4"),
-    MacOsInstallAsset::base_nix_account("build-user-05", MacOsAssetKind::User, "_nixbld5"),
-    MacOsInstallAsset::base_nix_account("build-user-06", MacOsAssetKind::User, "_nixbld6"),
-    MacOsInstallAsset::base_nix_account("build-user-07", MacOsAssetKind::User, "_nixbld7"),
-    MacOsInstallAsset::base_nix_account("build-user-08", MacOsAssetKind::User, "_nixbld8"),
-    MacOsInstallAsset::base_nix_account("build-user-09", MacOsAssetKind::User, "_nixbld9"),
-    MacOsInstallAsset::base_nix_account("build-user-10", MacOsAssetKind::User, "_nixbld10"),
-    MacOsInstallAsset::base_nix_account("build-user-11", MacOsAssetKind::User, "_nixbld11"),
-    MacOsInstallAsset::base_nix_account("build-user-12", MacOsAssetKind::User, "_nixbld12"),
-    MacOsInstallAsset::base_nix_account("build-user-13", MacOsAssetKind::User, "_nixbld13"),
-    MacOsInstallAsset::base_nix_account("build-user-14", MacOsAssetKind::User, "_nixbld14"),
-    MacOsInstallAsset::base_nix_account("build-user-15", MacOsAssetKind::User, "_nixbld15"),
-    MacOsInstallAsset::base_nix_account("build-user-16", MacOsAssetKind::User, "_nixbld16"),
-    MacOsInstallAsset::base_nix_account("build-user-17", MacOsAssetKind::User, "_nixbld17"),
-    MacOsInstallAsset::base_nix_account("build-user-18", MacOsAssetKind::User, "_nixbld18"),
-    MacOsInstallAsset::base_nix_account("build-user-19", MacOsAssetKind::User, "_nixbld19"),
-    MacOsInstallAsset::base_nix_account("build-user-20", MacOsAssetKind::User, "_nixbld20"),
-    MacOsInstallAsset::base_nix_account("build-user-21", MacOsAssetKind::User, "_nixbld21"),
-    MacOsInstallAsset::base_nix_account("build-user-22", MacOsAssetKind::User, "_nixbld22"),
-    MacOsInstallAsset::base_nix_account("build-user-23", MacOsAssetKind::User, "_nixbld23"),
-    MacOsInstallAsset::base_nix_account("build-user-24", MacOsAssetKind::User, "_nixbld24"),
-    MacOsInstallAsset::base_nix_account("build-user-25", MacOsAssetKind::User, "_nixbld25"),
-    MacOsInstallAsset::base_nix_account("build-user-26", MacOsAssetKind::User, "_nixbld26"),
-    MacOsInstallAsset::base_nix_account("build-user-27", MacOsAssetKind::User, "_nixbld27"),
-    MacOsInstallAsset::base_nix_account("build-user-28", MacOsAssetKind::User, "_nixbld28"),
-    MacOsInstallAsset::base_nix_account("build-user-29", MacOsAssetKind::User, "_nixbld29"),
-    MacOsInstallAsset::base_nix_account("build-user-30", MacOsAssetKind::User, "_nixbld30"),
-    MacOsInstallAsset::base_nix_account("build-user-31", MacOsAssetKind::User, "_nixbld31"),
-    MacOsInstallAsset::base_nix_account("build-user-32", MacOsAssetKind::User, "_nixbld32"),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::account("broker-group", MacOsAssetKind::Group, "pkg-nix-broker"),
+    MacOsInstallAsset::account("broker-user", MacOsAssetKind::User, "pkg-nix-broker"),
+    MacOsInstallAsset::account("build-group", MacOsAssetKind::Group, "nixbld"),
+    MacOsInstallAsset::account("build-user-01", MacOsAssetKind::User, "_nixbld1"),
+    MacOsInstallAsset::account("build-user-02", MacOsAssetKind::User, "_nixbld2"),
+    MacOsInstallAsset::account("build-user-03", MacOsAssetKind::User, "_nixbld3"),
+    MacOsInstallAsset::account("build-user-04", MacOsAssetKind::User, "_nixbld4"),
+    MacOsInstallAsset::account("build-user-05", MacOsAssetKind::User, "_nixbld5"),
+    MacOsInstallAsset::account("build-user-06", MacOsAssetKind::User, "_nixbld6"),
+    MacOsInstallAsset::account("build-user-07", MacOsAssetKind::User, "_nixbld7"),
+    MacOsInstallAsset::account("build-user-08", MacOsAssetKind::User, "_nixbld8"),
+    MacOsInstallAsset::account("build-user-09", MacOsAssetKind::User, "_nixbld9"),
+    MacOsInstallAsset::account("build-user-10", MacOsAssetKind::User, "_nixbld10"),
+    MacOsInstallAsset::account("build-user-11", MacOsAssetKind::User, "_nixbld11"),
+    MacOsInstallAsset::account("build-user-12", MacOsAssetKind::User, "_nixbld12"),
+    MacOsInstallAsset::account("build-user-13", MacOsAssetKind::User, "_nixbld13"),
+    MacOsInstallAsset::account("build-user-14", MacOsAssetKind::User, "_nixbld14"),
+    MacOsInstallAsset::account("build-user-15", MacOsAssetKind::User, "_nixbld15"),
+    MacOsInstallAsset::account("build-user-16", MacOsAssetKind::User, "_nixbld16"),
+    MacOsInstallAsset::account("build-user-17", MacOsAssetKind::User, "_nixbld17"),
+    MacOsInstallAsset::account("build-user-18", MacOsAssetKind::User, "_nixbld18"),
+    MacOsInstallAsset::account("build-user-19", MacOsAssetKind::User, "_nixbld19"),
+    MacOsInstallAsset::account("build-user-20", MacOsAssetKind::User, "_nixbld20"),
+    MacOsInstallAsset::account("build-user-21", MacOsAssetKind::User, "_nixbld21"),
+    MacOsInstallAsset::account("build-user-22", MacOsAssetKind::User, "_nixbld22"),
+    MacOsInstallAsset::account("build-user-23", MacOsAssetKind::User, "_nixbld23"),
+    MacOsInstallAsset::account("build-user-24", MacOsAssetKind::User, "_nixbld24"),
+    MacOsInstallAsset::account("build-user-25", MacOsAssetKind::User, "_nixbld25"),
+    MacOsInstallAsset::account("build-user-26", MacOsAssetKind::User, "_nixbld26"),
+    MacOsInstallAsset::account("build-user-27", MacOsAssetKind::User, "_nixbld27"),
+    MacOsInstallAsset::account("build-user-28", MacOsAssetKind::User, "_nixbld28"),
+    MacOsInstallAsset::account("build-user-29", MacOsAssetKind::User, "_nixbld29"),
+    MacOsInstallAsset::account("build-user-30", MacOsAssetKind::User, "_nixbld30"),
+    MacOsInstallAsset::account("build-user-31", MacOsAssetKind::User, "_nixbld31"),
+    MacOsInstallAsset::account("build-user-32", MacOsAssetKind::User, "_nixbld32"),
+    MacOsInstallAsset::path(
         "nix-root",
         MacOsAssetKind::Directory,
         "/nix",
@@ -356,7 +294,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Root,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "nix-store",
         MacOsAssetKind::Directory,
         "/nix/store",
@@ -364,7 +302,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Build,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "nix-var",
         MacOsAssetKind::Directory,
         "/nix/var",
@@ -372,7 +310,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Build,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "nix-state",
         MacOsAssetKind::Directory,
         "/nix/var/nix",
@@ -380,7 +318,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Build,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "daemon-socket-dir",
         MacOsAssetKind::Directory,
         "/nix/var/nix/daemon-socket",
@@ -388,7 +326,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "product-root",
         MacOsAssetKind::Directory,
         "/opt/pkg",
@@ -396,7 +334,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "product-config-root",
         MacOsAssetKind::Directory,
         "/opt/pkg/etc",
@@ -404,7 +342,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "product-config-dir",
         MacOsAssetKind::Directory,
         "/opt/pkg/etc/pkg",
@@ -412,7 +350,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "product-bin",
         MacOsAssetKind::Directory,
         "/opt/pkg/bin",
@@ -420,7 +358,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "uninstall-root",
         MacOsAssetKind::Directory,
         "/opt/pkg/uninstall",
@@ -428,7 +366,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "runtime-root",
         MacOsAssetKind::Directory,
         "/opt/pkg/nix",
@@ -436,7 +374,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "service-root",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg",
@@ -444,7 +382,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "managed-nix-state",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/managed-nix",
@@ -452,7 +390,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "run-root",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/run",
@@ -460,7 +398,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "broker-socket-dir",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/run/broker",
@@ -468,7 +406,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "helper-socket-dir",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/run/helper",
@@ -476,7 +414,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "log-root",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/log",
@@ -484,7 +422,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "broker-log-dir",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/log/broker",
@@ -492,7 +430,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "helper-log-dir",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/log/helper",
@@ -500,7 +438,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "broker-home",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/broker-home",
@@ -508,7 +446,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "broker-channel-state",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/broker-home/channel",
@@ -516,7 +454,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "broker-tmp",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/broker-home/tmp",
@@ -524,7 +462,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "helper-home",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/helper-home",
@@ -532,7 +470,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "helper-tmp",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/helper-home/tmp",
@@ -540,7 +478,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "broker-binary",
         MacOsAssetKind::File,
         "/opt/pkg/bin/pkg-nix-broker",
@@ -548,7 +486,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "helper-binary",
         MacOsAssetKind::File,
         "/opt/pkg/bin/pkg-root-helper",
@@ -556,7 +494,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "product-cli",
         MacOsAssetKind::File,
         "/usr/local/bin/pkg",
@@ -564,7 +502,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "nix-config",
         MacOsAssetKind::File,
         "/opt/pkg/etc/pkg/nix.conf",
@@ -572,7 +510,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Broker,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "store-volume-plist",
         MacOsAssetKind::File,
         "/Library/LaunchDaemons/org.pkg.store-volume.plist",
@@ -580,7 +518,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::base_nix_path(
+    MacOsInstallAsset::path(
         "daemon-plist",
         MacOsAssetKind::File,
         "/Library/LaunchDaemons/org.pkg.nix-daemon.plist",
@@ -588,7 +526,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "helper-plist",
         MacOsAssetKind::File,
         "/Library/LaunchDaemons/org.pkg.root-helper.plist",
@@ -596,7 +534,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "broker-plist",
         MacOsAssetKind::File,
         "/Library/LaunchDaemons/org.pkg.nix-broker.plist",
@@ -604,7 +542,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "path-file",
         MacOsAssetKind::File,
         "/private/etc/paths.d/pkg",
@@ -612,7 +550,7 @@ const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Root,
         MacOsAssetPrincipal::Wheel,
     ),
-    MacOsInstallAsset::product_path(
+    MacOsInstallAsset::path(
         "uninstall-manifest",
         MacOsAssetKind::File,
         "/opt/pkg/uninstall/manifest.json",
@@ -1652,79 +1590,6 @@ mod tests {
             assert_eq!(asset.owner, Some(owner));
         }
         Ok(())
-    }
-
-    #[test]
-    fn lifecycle_ownership_is_a_complete_partition() {
-        let product: BTreeSet<_> = MACOS_ASSETS
-            .iter()
-            .copied()
-            .filter(|asset| asset.install_owner() == InstallAssetOwner::Product)
-            .map(|asset| asset.id().to_owned())
-            .collect();
-        let base_nix: BTreeSet<_> = MACOS_ASSETS
-            .iter()
-            .copied()
-            .filter(|asset| asset.install_owner() == InstallAssetOwner::BaseNix)
-            .map(|asset| asset.id().to_owned())
-            .collect();
-        let mut expected_base_nix = BTreeSet::from([
-            "build-group",
-            "daemon-plist",
-            "daemon-socket-dir",
-            "managed-nix-state",
-            "nix-config",
-            "nix-root",
-            "nix-state",
-            "nix-store",
-            "nix-var",
-            "runtime-root",
-            "store-volume-plist",
-        ])
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-        for index in 1..=32 {
-            expected_base_nix.insert(format!("build-user-{index:02}"));
-        }
-        let expected_product = [
-            "broker-binary",
-            "broker-channel-state",
-            "broker-group",
-            "broker-home",
-            "broker-log-dir",
-            "broker-plist",
-            "broker-socket-dir",
-            "broker-tmp",
-            "broker-user",
-            "helper-binary",
-            "helper-home",
-            "helper-log-dir",
-            "helper-plist",
-            "helper-socket-dir",
-            "helper-tmp",
-            "log-root",
-            "path-file",
-            "product-bin",
-            "product-cli",
-            "product-config-dir",
-            "product-config-root",
-            "product-root",
-            "run-root",
-            "service-root",
-            "uninstall-manifest",
-            "uninstall-root",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-
-        assert!(!product.is_empty());
-        assert!(!base_nix.is_empty());
-        assert!(product.is_disjoint(&base_nix));
-        assert_eq!(product.len() + base_nix.len(), MACOS_ASSETS.len());
-        assert_eq!(base_nix, expected_base_nix);
-        assert_eq!(product, expected_product);
     }
 
     #[test]

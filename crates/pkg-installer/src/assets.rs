@@ -24,15 +24,6 @@ pub enum LinuxAssetPrincipal {
     BuildUsers,
 }
 
-/// The lifecycle that owns one install asset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallAssetOwner {
-    /// Product binaries, services, sockets, product configuration, and state.
-    Product,
-    /// The vendor-owned machine-wide Base Nix installation.
-    BaseNix,
-}
-
 /// One static Linux install artifact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinuxInstallAsset {
@@ -42,7 +33,6 @@ pub struct LinuxInstallAsset {
     mode: Option<u32>,
     owner: Option<LinuxAssetPrincipal>,
     group: Option<LinuxAssetPrincipal>,
-    install_owner: InstallAssetOwner,
 }
 
 impl LinuxInstallAsset {
@@ -53,27 +43,15 @@ impl LinuxInstallAsset {
         mode: u32,
         owner: LinuxAssetPrincipal,
         group: LinuxAssetPrincipal,
-        install_owner: InstallAssetOwner,
     ) -> Self {
-        Self::new(id, kind, path, Some(mode), install_owner).with_ownership(owner, group)
-    }
-
-    const fn product(
-        id: &'static str,
-        kind: LinuxAssetKind,
-        path_or_name: &'static str,
-        mode: Option<u32>,
-    ) -> Self {
-        Self::new(id, kind, path_or_name, mode, InstallAssetOwner::Product)
-    }
-
-    const fn base_nix(
-        id: &'static str,
-        kind: LinuxAssetKind,
-        path_or_name: &'static str,
-        mode: Option<u32>,
-    ) -> Self {
-        Self::new(id, kind, path_or_name, mode, InstallAssetOwner::BaseNix)
+        Self {
+            id,
+            kind,
+            path_or_name: path,
+            mode: Some(mode),
+            owner: Some(owner),
+            group: Some(group),
+        }
     }
 
     const fn new(
@@ -81,7 +59,6 @@ impl LinuxInstallAsset {
         kind: LinuxAssetKind,
         path_or_name: &'static str,
         mode: Option<u32>,
-        install_owner: InstallAssetOwner,
     ) -> Self {
         let filesystem = matches!(kind, LinuxAssetKind::Directory | LinuxAssetKind::File);
         Self {
@@ -99,7 +76,6 @@ impl LinuxInstallAsset {
             } else {
                 None
             },
-            install_owner,
         }
     }
 
@@ -151,244 +127,244 @@ impl LinuxInstallAsset {
 }
 
 const ASSETS: &[LinuxInstallAsset] = &[
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-group",
         LinuxAssetKind::Group,
         "pkg-nix-broker",
         None,
     ),
-    LinuxInstallAsset::product("broker-user", LinuxAssetKind::User, "pkg-nix-broker", None),
-    LinuxInstallAsset::base_nix("build-group", LinuxAssetKind::Group, "nixbld", None),
-    LinuxInstallAsset::base_nix("build-user-01", LinuxAssetKind::User, "nixbld1", None),
-    LinuxInstallAsset::base_nix("build-user-02", LinuxAssetKind::User, "nixbld2", None),
-    LinuxInstallAsset::base_nix("build-user-03", LinuxAssetKind::User, "nixbld3", None),
-    LinuxInstallAsset::base_nix("build-user-04", LinuxAssetKind::User, "nixbld4", None),
-    LinuxInstallAsset::base_nix("build-user-05", LinuxAssetKind::User, "nixbld5", None),
-    LinuxInstallAsset::base_nix("build-user-06", LinuxAssetKind::User, "nixbld6", None),
-    LinuxInstallAsset::base_nix("build-user-07", LinuxAssetKind::User, "nixbld7", None),
-    LinuxInstallAsset::base_nix("build-user-08", LinuxAssetKind::User, "nixbld8", None),
-    LinuxInstallAsset::base_nix("build-user-09", LinuxAssetKind::User, "nixbld9", None),
-    LinuxInstallAsset::base_nix("build-user-10", LinuxAssetKind::User, "nixbld10", None),
-    LinuxInstallAsset::base_nix("build-user-11", LinuxAssetKind::User, "nixbld11", None),
-    LinuxInstallAsset::base_nix("build-user-12", LinuxAssetKind::User, "nixbld12", None),
-    LinuxInstallAsset::base_nix("build-user-13", LinuxAssetKind::User, "nixbld13", None),
-    LinuxInstallAsset::base_nix("build-user-14", LinuxAssetKind::User, "nixbld14", None),
-    LinuxInstallAsset::base_nix("build-user-15", LinuxAssetKind::User, "nixbld15", None),
-    LinuxInstallAsset::base_nix("build-user-16", LinuxAssetKind::User, "nixbld16", None),
-    LinuxInstallAsset::base_nix("nix-root", LinuxAssetKind::Directory, "/nix", Some(0o755)),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new("broker-user", LinuxAssetKind::User, "pkg-nix-broker", None),
+    LinuxInstallAsset::new("build-group", LinuxAssetKind::Group, "nixbld", None),
+    LinuxInstallAsset::new("build-user-01", LinuxAssetKind::User, "nixbld1", None),
+    LinuxInstallAsset::new("build-user-02", LinuxAssetKind::User, "nixbld2", None),
+    LinuxInstallAsset::new("build-user-03", LinuxAssetKind::User, "nixbld3", None),
+    LinuxInstallAsset::new("build-user-04", LinuxAssetKind::User, "nixbld4", None),
+    LinuxInstallAsset::new("build-user-05", LinuxAssetKind::User, "nixbld5", None),
+    LinuxInstallAsset::new("build-user-06", LinuxAssetKind::User, "nixbld6", None),
+    LinuxInstallAsset::new("build-user-07", LinuxAssetKind::User, "nixbld7", None),
+    LinuxInstallAsset::new("build-user-08", LinuxAssetKind::User, "nixbld8", None),
+    LinuxInstallAsset::new("build-user-09", LinuxAssetKind::User, "nixbld9", None),
+    LinuxInstallAsset::new("build-user-10", LinuxAssetKind::User, "nixbld10", None),
+    LinuxInstallAsset::new("build-user-11", LinuxAssetKind::User, "nixbld11", None),
+    LinuxInstallAsset::new("build-user-12", LinuxAssetKind::User, "nixbld12", None),
+    LinuxInstallAsset::new("build-user-13", LinuxAssetKind::User, "nixbld13", None),
+    LinuxInstallAsset::new("build-user-14", LinuxAssetKind::User, "nixbld14", None),
+    LinuxInstallAsset::new("build-user-15", LinuxAssetKind::User, "nixbld15", None),
+    LinuxInstallAsset::new("build-user-16", LinuxAssetKind::User, "nixbld16", None),
+    LinuxInstallAsset::new("nix-root", LinuxAssetKind::Directory, "/nix", Some(0o755)),
+    LinuxInstallAsset::new(
         "nix-store",
         LinuxAssetKind::Directory,
         "/nix/store",
         Some(0o1775),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::BuildUsers),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new(
         "nix-var",
         LinuxAssetKind::Directory,
         "/nix/var",
         Some(0o755),
     ),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new(
         "nix-state",
         LinuxAssetKind::Directory,
         "/nix/var/nix",
         Some(0o755),
     ),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new(
         "nix-gcroots",
         LinuxAssetKind::Directory,
         "/nix/var/nix/gcroots",
         Some(0o755),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "product-root",
         LinuxAssetKind::Directory,
         "/opt/pkg",
         Some(0o755),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "product-config-root",
         LinuxAssetKind::Directory,
         "/opt/pkg/etc",
         Some(0o755),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "product-config-dir",
         LinuxAssetKind::Directory,
         "/opt/pkg/etc/pkg",
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "uninstall-root",
         LinuxAssetKind::Directory,
         "/opt/pkg/uninstall",
         Some(0o700),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "service-bin-dir",
         LinuxAssetKind::Directory,
         "/opt/pkg/bin",
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "service-root",
         LinuxAssetKind::Directory,
         "/var/lib/pkg",
         Some(0o710),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new(
         "daemon-socket-dir",
         LinuxAssetKind::Directory,
         "/nix/var/nix/daemon-socket",
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "helper-socket-dir",
         LinuxAssetKind::Directory,
         "/run/pkg-helper",
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-socket-dir",
         LinuxAssetKind::Directory,
         "/run/pkg",
         Some(0o755),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "log-root",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/log",
         Some(0o710),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-log-dir",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/log/broker",
         Some(0o700),
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "helper-log-dir",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/log/helper",
         Some(0o700),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-home",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/broker-home",
         Some(0o700),
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-channel-state",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/broker-home/channel",
         Some(0o700),
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "helper-home",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/helper-home",
         Some(0o700),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "helper-tmp",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/helper-home/tmp",
         Some(0o700),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-tmp",
         LinuxAssetKind::Directory,
         "/var/lib/pkg/broker-home/tmp",
         Some(0o700),
     )
     .with_ownership(LinuxAssetPrincipal::Broker, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "root-helper-binary",
         LinuxAssetKind::File,
         "/opt/pkg/bin/pkg-root-helper",
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-binary",
         LinuxAssetKind::File,
         "/opt/pkg/bin/pkg-nix-broker",
         Some(0o750),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new(
         "nix-config",
         LinuxAssetKind::File,
         "/opt/pkg/etc/pkg/nix.conf",
         Some(0o640),
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new(
         "daemon-socket-unit",
         LinuxAssetKind::File,
         "/usr/lib/systemd/system/pkg-nix-daemon.socket",
         Some(0o644),
     ),
-    LinuxInstallAsset::base_nix(
+    LinuxInstallAsset::new(
         "daemon-service-unit",
         LinuxAssetKind::File,
         "/usr/lib/systemd/system/pkg-nix-daemon.service",
         Some(0o644),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "helper-socket-unit",
         LinuxAssetKind::File,
         "/usr/lib/systemd/system/pkg-root-helper.socket",
         Some(0o644),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "helper-service-unit",
         LinuxAssetKind::File,
         "/usr/lib/systemd/system/pkg-root-helper.service",
         Some(0o644),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-socket-unit",
         LinuxAssetKind::File,
         "/usr/lib/systemd/system/pkg-nix-broker.socket",
         Some(0o644),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "broker-service-unit",
         LinuxAssetKind::File,
         "/usr/lib/systemd/system/pkg-nix-broker.service",
         Some(0o644),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "runtime-tmpfiles",
         LinuxAssetKind::File,
         "/usr/lib/tmpfiles.d/pkg.conf",
         Some(0o644),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "profile-snippet",
         LinuxAssetKind::File,
         "/etc/profile.d/pkg.sh",
         Some(0o644),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "product-cli",
         LinuxAssetKind::File,
         "/usr/local/bin/pkg",
         Some(0o755),
     ),
-    LinuxInstallAsset::product(
+    LinuxInstallAsset::new(
         "uninstall-manifest",
         LinuxAssetKind::File,
         "/opt/pkg/uninstall/manifest.json",
@@ -473,80 +449,6 @@ mod tests {
             .collect::<String>();
         assert!(!unit_text.contains(".timer"));
         assert!(!unit_text.to_ascii_lowercase().contains("auto-gc"));
-    }
-
-    #[test]
-    fn lifecycle_ownership_is_a_complete_partition() {
-        let product: BTreeSet<_> = ASSETS
-            .iter()
-            .copied()
-            .filter(|asset| asset.install_owner == InstallAssetOwner::Product)
-            .map(|asset| asset.id().to_owned())
-            .collect();
-        let base_nix: BTreeSet<_> = ASSETS
-            .iter()
-            .copied()
-            .filter(|asset| asset.install_owner == InstallAssetOwner::BaseNix)
-            .map(|asset| asset.id().to_owned())
-            .collect();
-        let mut expected_base_nix = BTreeSet::from([
-            "build-group",
-            "daemon-service-unit",
-            "daemon-socket-dir",
-            "daemon-socket-unit",
-            "nix-config",
-            "nix-gcroots",
-            "nix-root",
-            "nix-state",
-            "nix-store",
-            "nix-var",
-        ])
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-        for index in 1..=16 {
-            expected_base_nix.insert(format!("build-user-{index:02}"));
-        }
-        let expected_product = [
-            "broker-binary",
-            "broker-channel-state",
-            "broker-group",
-            "broker-home",
-            "broker-log-dir",
-            "broker-service-unit",
-            "broker-socket-dir",
-            "broker-socket-unit",
-            "broker-tmp",
-            "broker-user",
-            "helper-home",
-            "helper-log-dir",
-            "helper-service-unit",
-            "helper-socket-dir",
-            "helper-socket-unit",
-            "helper-tmp",
-            "log-root",
-            "product-cli",
-            "product-config-dir",
-            "product-config-root",
-            "product-root",
-            "profile-snippet",
-            "root-helper-binary",
-            "runtime-tmpfiles",
-            "service-bin-dir",
-            "service-root",
-            "uninstall-manifest",
-            "uninstall-root",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-
-        assert!(!product.is_empty());
-        assert!(!base_nix.is_empty());
-        assert!(product.is_disjoint(&base_nix));
-        assert_eq!(product.len() + base_nix.len(), ASSETS.len());
-        assert_eq!(base_nix, expected_base_nix);
-        assert_eq!(product, expected_product);
     }
 
     #[test]

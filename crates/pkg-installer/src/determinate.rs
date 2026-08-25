@@ -11,7 +11,7 @@ use std::{
         fs::{MetadataExt, OpenOptionsExt},
         process::{CommandExt, ExitStatusExt},
     },
-    path::{Component, Path},
+    path::Path,
     process::{Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
@@ -57,23 +57,10 @@ impl DeterminateInstaller {
         run_production(staged_executable, self, Operation::Install)
     }
 
-    /// Runs the vendor's closed default repair operation, which repairs hooks.
-    pub fn repair_hooks(&self) -> Result<DeterminateProcessOutcome, DeterminateProcessError> {
-        run_production(Path::new(INSTALLED_INSTALLER), self, Operation::RepairHooks)
-    }
-
-    /// Runs the closed uninstall operation from its staged executable against
-    /// the fixed vendor receipt. The staged executable must be the
-    /// authenticated release binary outside the /nix tree; the installed
-    /// helper /nix/nix-installer would re-enable the vendor self-copy.
-    pub fn uninstall(
-        &self,
-        staged_executable: &Path,
-    ) -> Result<DeterminateProcessOutcome, DeterminateProcessError> {
-        let captured = run_staged_uninstall(staged_executable, self, &production_settings())?;
-        drop(captured.stdout);
-        drop(captured.stderr);
-        Ok(captured.public)
+    /// Runs the closed uninstall operation through the fixed installed vendor
+    /// executable and fixed opaque receipt.
+    pub fn uninstall(&self) -> Result<DeterminateProcessOutcome, DeterminateProcessError> {
+        run_production(Path::new(INSTALLED_INSTALLER), self, Operation::Uninstall)
     }
 }
 
@@ -141,7 +128,6 @@ impl std::error::Error for DeterminateProcessError {}
 #[derive(Clone, Copy)]
 enum Operation {
     Install,
-    RepairHooks,
     Uninstall,
 }
 
@@ -155,12 +141,6 @@ impl Operation {
                 "--determinate",
                 "--no-confirm",
                 "--no-modify-profile",
-            ],
-            Self::RepairHooks => &[
-                "--diagnostic-endpoint",
-                DIAGNOSTIC_ENDPOINT,
-                "repair",
-                "--no-confirm",
             ],
             Self::Uninstall => &[
                 "--diagnostic-endpoint",
@@ -213,18 +193,6 @@ fn run_production(
     drop(captured.stdout);
     drop(captured.stderr);
     Ok(captured.public)
-}
-
-/// The staged-path check plus the closed uninstall runner. The public method
-/// passes production settings; non-root tests pass test settings, so both
-/// exercise the same rejection and operation selection.
-fn run_staged_uninstall(
-    staged_executable: &Path,
-    installer: &DeterminateInstaller,
-    settings: &ProcessSettings<'_>,
-) -> Result<CapturedOutcome, DeterminateProcessError> {
-    reject_nix_tree_path(staged_executable)?;
-    run(staged_executable, installer, Operation::Uninstall, settings)
 }
 
 fn run(
@@ -303,35 +271,6 @@ fn run(
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
-}
-
-/// Rejects any staged path that lexically resolves into the /nix tree. The
-/// installed helper /nix/nix-installer must never run uninstall: the vendor
-/// matches `std::env::current_exe()` against that path and then self-copies
-/// to a random TMPDIR binary. The rule normalizes path components only; it
-/// never touches the filesystem, so a hostile path is not canonicalized and
-/// dot or parent aliases such as /nix/./nix-installer and
-/// /nix/store/../nix-installer are caught before any metadata read.
-/// Symlinked-ancestor aliases into /nix are rejected by the no-symlink
-/// parent-chain walk in `authenticate_executable`.
-fn reject_nix_tree_path(path: &Path) -> Result<(), DeterminateProcessError> {
-    if !path.is_absolute() {
-        return Err(DeterminateProcessError::InvalidExecutable);
-    }
-    let mut normalized: Vec<&OsStr> = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(name) => normalized.push(name),
-            Component::CurDir | Component::Prefix(_) | Component::RootDir => {}
-        }
-    }
-    if normalized.first().copied() == Some(OsStr::new("nix")) {
-        return Err(DeterminateProcessError::InvalidExecutable);
-    }
-    Ok(())
 }
 
 /// Root ownership plus a non-writable full parent chain is the immutability
@@ -515,10 +454,6 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
                 "ARG=<--diagnostic-endpoint>\nARG=<http://127.0.0.1:18080>\nARG=<install>\nARG=<--determinate>\nARG=<--no-confirm>\nARG=<--no-modify-profile>\n",
             ),
             (
-                Operation::RepairHooks,
-                "ARG=<--diagnostic-endpoint>\nARG=<http://127.0.0.1:18080>\nARG=<repair>\nARG=<--no-confirm>\n",
-            ),
-            (
                 Operation::Uninstall,
                 "ARG=<--diagnostic-endpoint>\nARG=<http://127.0.0.1:18080>\nARG=<uninstall>\nARG=<--no-confirm>\nARG=</nix/receipt.json>\n",
             ),
@@ -534,87 +469,6 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             assert_eq!(result.public.terminal, DeterminateTerminal::Exited(0));
         }
         Ok(())
-    }
-
-    #[test]
-    fn staged_uninstall_selects_the_staged_executable() -> Result<(), Box<dyn std::error::Error>> {
-        let temporary = tempfile::tempdir()?;
-        let staged = write_script(
-            temporary.path(),
-            "printf 'argv0=%s\\n' \"$0\"; for argument in \"$@\"; do printf 'ARG=<%s>\\n' \"$argument\"; done",
-        )?;
-        let result = run_staged_uninstall(
-            &staged,
-            &identity(&staged)?,
-            &settings(temporary.path(), Duration::from_secs(2))?,
-        )?;
-        let output = String::from_utf8(result.stdout)?;
-        // The child argv0 is the path Command::new received. This shell
-        // observation proves only Command selection: this seam ran the staged
-        // executable, not the installed helper. The signed source report
-        // proves the vendor current_exe self-copy behavior.
-        assert_eq!(
-            output,
-            format!(
-                "argv0={}\n{}",
-                staged.display(),
-                "ARG=<--diagnostic-endpoint>\nARG=<http://127.0.0.1:18080>\nARG=<uninstall>\nARG=<--no-confirm>\nARG=</nix/receipt.json>\n"
-            )
-        );
-        assert!(result.stderr.is_empty());
-        assert_eq!(result.public.terminal, DeterminateTerminal::Exited(0));
-        Ok(())
-    }
-
-    #[test]
-    fn staged_uninstall_rejects_the_installed_helper() -> Result<(), Box<dyn std::error::Error>> {
-        let temporary = tempfile::tempdir()?;
-        let staged = write_script(temporary.path(), "exit 0")?;
-        let valid = identity(&staged)?;
-        let settings = settings(temporary.path(), Duration::from_secs(2))?;
-        let Err(error) = run_staged_uninstall(Path::new(INSTALLED_INSTALLER), &valid, &settings)
-        else {
-            return Err(format!("staged uninstall accepted {INSTALLED_INSTALLER:?}").into());
-        };
-        assert_eq!(error, DeterminateProcessError::InvalidExecutable);
-        Ok(())
-    }
-
-    #[test]
-    fn nix_tree_rejection_is_lexical_and_precise() {
-        for hostile in [
-            "/nix",
-            "/nix/",
-            "/nix/nix-installer",
-            "/nix/store/xyz",
-            "//nix/nix-installer",
-            "/nix/./nix-installer",
-            "/nix/a/../nix-installer",
-            "/nix/../nix/nix-installer",
-            "/../nix/nix-installer",
-            "/nix/a/../../nix/nix-installer",
-        ] {
-            assert_eq!(
-                reject_nix_tree_path(Path::new(hostile)),
-                Err(DeterminateProcessError::InvalidExecutable),
-                "expected {hostile:?} to be rejected",
-            );
-        }
-        for allowed in [
-            "/",
-            "/tmp/staged",
-            "/nixx",
-            "/nixx/nix-installer",
-            "/tmp/nix/nix-installer",
-            "/nix/../tmp/nix-installer",
-            "/nix/..",
-            "/var/lib/pkg-install/tmp/staged",
-        ] {
-            assert!(
-                reject_nix_tree_path(Path::new(allowed)).is_ok(),
-                "expected {allowed:?} to be accepted",
-            );
-        }
     }
 
     #[test]
@@ -727,7 +581,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         let result = run(
             &executable,
             &identity(&executable)?,
-            Operation::RepairHooks,
+            Operation::Install,
             &settings(temporary.path(), Duration::from_secs(10))?,
         )?;
         assert_eq!(result.stdout.len(), OUTPUT_LIMIT);
@@ -745,7 +599,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         let nonzero = run(
             &executable,
             &identity(&executable)?,
-            Operation::RepairHooks,
+            Operation::Install,
             &settings(temporary.path(), Duration::from_secs(2))?,
         )?;
         assert_eq!(nonzero.public.terminal, DeterminateTerminal::Exited(23));
@@ -754,7 +608,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         let signaled = run(
             &executable,
             &identity(&executable)?,
-            Operation::RepairHooks,
+            Operation::Install,
             &settings(temporary.path(), Duration::from_secs(2))?,
         )?;
         assert_eq!(signaled.public.terminal, DeterminateTerminal::Signaled(15));
@@ -769,7 +623,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         let result = run(
             &executable,
             &identity(&executable)?,
-            Operation::RepairHooks,
+            Operation::Install,
             &settings(temporary.path(), Duration::from_millis(10))?,
         )?;
         assert!(started.elapsed() >= Duration::from_millis(90));
@@ -821,7 +675,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         let result = run(
             &executable,
             &identity(&executable)?,
-            Operation::RepairHooks,
+            Operation::Install,
             &settings(temporary.path(), Duration::from_secs(2))?,
         )?;
         let output = String::from_utf8(result.stdout)?;
@@ -842,7 +696,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         let result = run(
             &executable,
             &identity(&executable)?,
-            Operation::RepairHooks,
+            Operation::Install,
             &settings(temporary.path(), Duration::from_secs(2))?,
         )?;
         for rendered in [format!("{:?}", result.public), result.public.to_string()] {
@@ -864,12 +718,8 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
 
     #[test]
     fn operation_surface_has_no_update_route() {
-        let operations = [
-            Operation::Install,
-            Operation::RepairHooks,
-            Operation::Uninstall,
-        ];
-        assert_eq!(operations.len(), 3);
+        let operations = [Operation::Install, Operation::Uninstall];
+        assert_eq!(operations.len(), 2);
         assert!(
             operations
                 .iter()
