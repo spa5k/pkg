@@ -64,24 +64,19 @@ metadata and target directory URLs. The release build sets
 `PKG_RELEASE_CHANNEL_TARGETS_URL`. The public installer accepts no replacement
 values.
 
+The shared release schema still requires authenticated Nix 2.34.8 runtime
+archives and asset manifests for both supported systems. These targets remain
+temporarily for the macOS flow through PR4. The Linux installer ignores them.
+Linux installs and removes Base Nix only through the authenticated Determinate
+installer target.
+
 `stage_linux_alpha.py` accepts one already-built x86-64 Linux `pkg-install`,
 places it under `v0.1.0-alpha.7/`, computes its SHA-256, and renders the small
 bootstrap template with one fixed HTTPS release path. It does not build, sign,
 or publish. The retained CI artifact uses an ephemeral test root. Production
 staging waits for the external key ceremony and hosting activation.
 
-`package_alpha_candidate.py` builds deterministic Linux x86-64 and macOS arm64
-archives from prepared proof files. Each archive contains checksums, the
-Apache-2.0 license, Rust dependency licenses, the Nix 2.34.8 LGPL-2.1 text,
-exact Nix source information, and fixed release notes. It rejects the wrong
-binary format, symlinks, a changed Nix source archive, and existing output.
-
-The candidate archives stay outside TUF. They contain no TUF metadata, proof
-keys, proof certificates, or proof service files. Their release notes say
-`TEST KEYS. LOOPBACK SERVICE. NOT FOR PUBLICATION.` Production signing and
-fixed hosting remain required.
-
-Build one native index on a release host that has the managed pkg runtime:
+Build one native index on a release host that has the installed vendor Nix:
 
 ```sh
 cargo run -p pkg-release --bin pkg-release-index -- \
@@ -89,45 +84,63 @@ cargo run -p pkg-release --bin pkg-release-index -- \
   2026-08-18T00:00:00Z index.aarch64-darwin.json.br
 ```
 
-The command uses the fixed managed Nix binary, home, daemon, and projection.
+The command uses `/nix/var/nix/profiles/default/bin/nix` with the fixed home,
+daemon, and projection.
 It accepts no Nix command, expression, installable, store path, option, URL,
 or trust root. The output file must not exist.
 The output is the deterministic Brotli target used by the signed channel.
 
-Install cargo-about 0.9.1. The candidate packager runs it with the fixed
-configuration and the locked workspace:
+Build and prove the Linux artifacts with this command:
 
 ```sh
 cargo install --locked cargo-about --version 0.9.1 --features cli \
   --root target/release-tools
-```
-
-Download the exact Nix source archive before candidate packaging:
-
-```sh
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  --output nix-2.34.8.tar.gz \
-  https://github.com/NixOS/nix/archive/refs/tags/2.34.8.tar.gz
-printf '%s  %s\n' \
-  ecc2f226a1ba27ad56eb85f42af8f078067fe5a219fceb82cb3fda9ba24387a5 \
-  nix-2.34.8.tar.gz | shasum -a 256 --check
-```
-
-Build, package, and prove the exact Linux candidate with this command:
-
-```sh
+cargo fetch --locked
 PKG_CARGO_ABOUT=target/release-tools/bin/cargo-about \
-PKG_NIX_SOURCE_ARCHIVE=$PWD/nix-2.34.8.tar.gz \
 tests/linux-clean-host/run.sh --keep-artifacts \
   target/release-candidates/linux
 ```
 
-The proof extracts the new archive. It runs only with those extracted payload
-files. The two environment variables are required with `--keep-artifacts`.
+The retained directory contains
+`pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz` and a separate `evidence/` directory.
+The candidate contains only the product bootstrap, the product installer, the
+project license, generated Rust dependency licenses, release notes, and
+checksums. It does not contain Determinate or Nix. The installed product
+authenticates and downloads Determinate through the signed release targets.
 
-Use `macos-aarch64` with a prepared macOS payload. The macOS payload must
-contain `v0.1.0-alpha.7/pkg-install` and
-`v0.1.0-alpha.7/pkg-0.1.0-alpha.7-preview.pkg`.
+The proof evidence contains the staged product files, the pinned Determinate
+inventory, test-key metadata, proof service files, and the temporary shared Nix
+runtime targets. The clean host uses only these files. Linux does not install
+from the shared runtime targets. The Linux candidate requires Cargo About 0.9.1
+and the locked Rust dependency graph. It does not require a Nix source archive.
+
+Determinate owns its supported native update. `pkg` exposes no Base Nix update
+action in this alpha. The Docker proof does not invoke or validate
+`determinate-nixd upgrade`. General Base Nix repair has no supported vendor
+command or product action.
+
+Linux uninstall has a terminal process boundary. `pkg` first completes and
+verifies product-owned cleanup. It then revalidates the exact installed
+Determinate helper and opaque receipt. It consumes the Accepted Handoff
+immediately before `exec`. After a successful `exec`, no `pkg` uninstall process
+remains. The vendor command owns signals and the status returned to the calling
+shell. Determinate also owns its temporary directory, self-copy behavior, and
+native residue.
+
+A synchronous `exec` error restores the exact Accepted Handoff in production
+tests. A `SIGKILL` between Handoff consumption and `exec` leaves Base Nix
+unmarked and the Handoff absent. Alpha does not infer success, adopt that Nix,
+retry uninstall, or repair this state. Recovery is unsupported. A vendor failure
+after `exec` also has no `pkg` recovery path.
+
+`/run/pkg-install-handoff.lock` is a deliberate volatile coordination exception.
+It is root-owned with mode `0600`. It is not lifecycle state. A reboot normally
+clears it.
+
+The existing macOS candidate flow stays separate until the macOS cutover in
+PR4. Its legacy packager mode still requires Cargo About 0.9.1 and the checked
+Nix 2.34.8 source archive. The Linux mode accepts Cargo About but does not
+accept a Nix source archive.
 
 Production deployment must provide KMS/HSM-backed `KeySource`, `ReleaseAuthority`,
 and `Publisher` adapters. The authority must verify approval attestations,

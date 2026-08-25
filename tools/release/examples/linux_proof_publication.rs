@@ -15,7 +15,7 @@ use aws_lc_rs::signature::Ed25519KeyPair;
 use jiff::Timestamp;
 use olpc_cjson::CanonicalFormatter;
 use pkg_core::{ChannelSequence, NixpkgsRevision, System};
-use pkg_index::{BuildMetadata, IndexCandidate, build_index, verify_index_release_input};
+use pkg_index::{BuildMetadata, IndexCandidate, build_index};
 use pkg_nix::{NixVersion, build_upstream_runtime_asset_manifest};
 use pkg_release::{
     Approval, MetadataPolicy, ReleaseAuthority, ReleaseAuthorization, ReleaseManifest,
@@ -101,9 +101,6 @@ impl KeySource for ProofKey {
 struct ProofAuthority;
 struct ProofAuthorization;
 
-struct LocalPreviewAuthority;
-struct LocalPreviewAuthorization;
-
 impl ReleaseAuthorization for ProofAuthorization {
     fn lease_id(&self) -> &str {
         "linux-proof-lease"
@@ -153,58 +150,6 @@ impl ReleaseAuthority for ProofAuthority {
             return Err(ValidationError::InvalidPolicy);
         }
         Ok(Box::new(ProofAuthorization))
-    }
-}
-
-impl ReleaseAuthorization for LocalPreviewAuthorization {
-    fn lease_id(&self) -> &str {
-        "local-preview-v1"
-    }
-
-    fn signing_actor(&self) -> &str {
-        "local-preview"
-    }
-
-    fn bind_transaction(&mut self, digest: &str) -> Result<(), ValidationError> {
-        (digest.len() == 64)
-            .then_some(())
-            .ok_or(ValidationError::InvalidPolicy)
-    }
-
-    fn commit(&mut self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl ReleaseAuthority for LocalPreviewAuthority {
-    fn authorize(
-        &self,
-        digest: &str,
-        sequence: u64,
-        timestamp_version: u64,
-        approvals: &[Approval],
-    ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
-        let evidence = approvals.iter().map(Approval::evidence).collect::<Vec<_>>();
-        if digest.len() != 64
-            || sequence != 11
-            || timestamp_version != 11
-            || evidence != ["local-preview:release", "local-preview:security"]
-        {
-            return Err(ValidationError::InvalidPolicy);
-        }
-        Ok(Box::new(LocalPreviewAuthorization))
-    }
-
-    fn resume(
-        &self,
-        digest: &str,
-        transaction_digest: &str,
-        lease_id: &str,
-    ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
-        if digest.len() != 64 || transaction_digest.len() != 64 || lease_id != "local-preview-v1" {
-            return Err(ValidationError::InvalidPolicy);
-        }
-        Ok(Box::new(LocalPreviewAuthorization))
     }
 }
 
@@ -397,170 +342,6 @@ async fn prepare_signing_state(state: &Path) -> Result<(), AnyError> {
     Ok(())
 }
 
-async fn build_preview_publication(
-    output: PathBuf,
-    input: PathBuf,
-    signing_state: PathBuf,
-    sequence: u64,
-) -> Result<(), AnyError> {
-    if output.exists() || sequence != 11 {
-        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 11".into());
-    }
-
-    let online = read_keys(&signing_state, "online")?;
-    let now = Timestamp::now();
-    let root_path = signing_state.join("root.json");
-    let root_bytes = fs::read(&root_path)?;
-    let root_digest = hex::encode(Sha256::digest(&root_bytes));
-    let (nixpkgs_revision, nixpkgs_nar_hash) = NIXPKGS[1];
-    let channel_sequence = ChannelSequence::from_u64(sequence).ok_or("invalid channel sequence")?;
-    let artifacts = tempfile::tempdir()?;
-    let artifact_root = artifacts.path();
-    let determinate = prepare_determinate_inventory(artifact_root, &input.join("determinate"))?;
-    let mut release_artifacts = Vec::new();
-    let mut runtime_entries = BTreeMap::new();
-    let mut index_entries = BTreeMap::new();
-
-    for candidate in SYSTEMS {
-        eprintln!("Prepare {candidate} runtime.");
-        let system = System::from_str(candidate)?;
-        let runtime_target = format!("nix/{NIX_VERSION}/{candidate}.tar.xz");
-        let manifest_target = format!("nix/{NIX_VERSION}/{candidate}.assets.json");
-        let index_target = format!("index/{sequence}/{candidate}.json.br");
-        let runtime_source = input.join("runtime").join(format!("{candidate}.tar.xz"));
-        let runtime = copy_file(artifact_root, &runtime_target, &runtime_source)?;
-        let runtime_manifest = build_upstream_runtime_asset_manifest(
-            &runtime_source,
-            system,
-            &NixVersion::new(NIX_VERSION)?,
-        )?;
-        eprintln!("Prepare {candidate} index and binaries.");
-        let manifest = write_file(artifact_root, &manifest_target, &runtime_manifest)?;
-        let index_source = input.join("index").join(format!("{candidate}.json.br"));
-        verify_index_release_input(
-            &fs::read(&index_source)?,
-            channel_sequence,
-            system,
-            nixpkgs_revision,
-        )?;
-        let index = copy_file(artifact_root, &index_target, &index_source)?;
-        runtime_entries.insert(
-            candidate,
-            serde_json::json!({
-                "url": format!("https://releases.nixos.org/nix/nix-{NIX_VERSION}/nix-{NIX_VERSION}-{candidate}.tar.xz"),
-                "sha256": runtime.digest,
-                "assetManifestTarget": manifest_target,
-                "assetManifestSha256": manifest.digest,
-            }),
-        );
-        index_entries.insert(
-            candidate,
-            serde_json::json!({"target":index_target, "sha256":index.digest}),
-        );
-        for (kind, target, record) in [
-            ("managed-nix", runtime_target, runtime),
-            ("managed-nix-assets", manifest_target, manifest),
-            ("index", index_target, index),
-        ] {
-            release_artifacts.push(serde_json::json!({
-                "kind":kind, "system":candidate, "target":target, "source":target,
-                "sha256":record.digest, "length":record.length,
-            }));
-        }
-        for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
-            let target = format!("installer/{candidate}/{name}");
-            let record = copy_file(artifact_root, &target, &input.join(candidate).join(name))?;
-            release_artifacts.push(serde_json::json!({
-                "kind":"installer-payload", "system":candidate, "target":target,
-                "source":target, "sha256":record.digest, "length":record.length,
-            }));
-        }
-    }
-
-    let build_policy = SYSTEMS
-        .into_iter()
-        .map(|candidate| (candidate, serde_json::json!({"mode":"allow-with-gates"})))
-        .collect::<BTreeMap<_, _>>();
-    let descriptor = serde_json::to_vec_pretty(&serde_json::json!({
-        "schemaVersion":1, "channel":"preview", "policyVersion":1, "sequence":sequence,
-        "expiresAt":(now + jiff::SignedDuration::from_hours(24 * 30)).to_string(),
-        "supportedSystems":SYSTEMS,
-        "buildPolicy":{"nativeLocalBuilds":build_policy},
-        "nixRuntime":{"version":NIX_VERSION,"perSystem":runtime_entries},
-        "nixpkgs":{"owner":"NixOS","repo":"nixpkgs","rev":nixpkgs_revision,"narHash":nixpkgs_nar_hash},
-        "index":{"source":"self-built","perSystem":index_entries},
-        "substituters":{"urls":[CACHE_URL],"trustedPublicKeys":[CACHE_KEY]},
-    }))?;
-    let descriptor_record = write_file(artifact_root, "descriptor.json", &descriptor)?;
-    release_artifacts.push(serde_json::json!({
-        "kind":"descriptor", "system":null, "target":"descriptor.json", "source":"descriptor.json",
-        "sha256":descriptor_record.digest, "length":descriptor_record.length,
-    }));
-
-    let mut cli_artifacts = Vec::new();
-    for (kind, candidate, binary) in [
-        ("pkg", "aarch64-darwin", "pkg"),
-        ("pkg", "x86_64-linux", "pkg"),
-        ("pkg-install", "x86_64-linux", "pkg-install"),
-    ] {
-        let source = match kind {
-            "pkg" => format!("cli/pkg-{candidate}"),
-            _ => format!("cli/pkg-installer-{candidate}"),
-        };
-        let record = copy_file(artifact_root, &source, &input.join(candidate).join(binary))?;
-        let bundle = format!("{source}.sigstore.json");
-        let bundle_record = copy_file(artifact_root, &bundle, &input.join(&bundle))?;
-        cli_artifacts.push(serde_json::json!({
-            "kind":kind, "system":candidate, "source":source,
-            "sha256":record.digest, "length":record.length,
-            "sigstoreBundle":bundle, "sigstoreBundleSha256":bundle_record.digest,
-            "sigstoreBundleLength":bundle_record.length,
-        }));
-    }
-
-    let manifest = serde_json::json!({
-        "schemaVersion":2, "releaseId":"v0.1.0-alpha.7", "channelSequence":sequence,
-        "timestampVersion":sequence, "trustedRootSha256":root_digest, "policyVersion":1,
-        "determinate":determinate,
-        "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
-        "approvals":[
-            {"actor":"local-release","role":"release","evidence":"local-preview:release"},
-            {"actor":"local-security","role":"security","evidence":"local-preview:security"}
-        ]
-    });
-    let release = ReleaseManifest::from_json(
-        &serde_json::to_vec(&manifest)?,
-        artifact_root,
-        &LocalPreviewAuthority,
-    )?;
-    eprintln!("Sign preview metadata.");
-    let online_sources = online
-        .into_iter()
-        .map(|key| Box::new(key) as Box<dyn KeySource>)
-        .collect::<Vec<_>>();
-    let signed = sign_channel(
-        release,
-        &root_path,
-        &online_sources,
-        MetadataPolicy {
-            targets_version: NonZeroU64::new(sequence).expect("nonzero targets version"),
-            snapshot_version: NonZeroU64::new(sequence).expect("nonzero snapshot version"),
-            timestamp_version: NonZeroU64::new(sequence).expect("nonzero timestamp version"),
-            targets_expires: now + jiff::SignedDuration::from_hours(24 * 30),
-            snapshot_expires: now + jiff::SignedDuration::from_hours(24 * 7),
-            timestamp_expires: now + jiff::SignedDuration::from_hours(48),
-        },
-        &output,
-    )
-    .await?;
-    let output = fs::canonicalize(output)?;
-    fs::write(output.join("root.json"), root_bytes)?;
-    eprintln!("Seal {} preview objects.", signed.objects().len());
-    signed.persist(&output.join("transaction"))?;
-    println!("{}", output.display());
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<(), AnyError> {
     let mut arguments = std::env::args().skip(1);
@@ -572,23 +353,8 @@ async fn main() -> Result<(), AnyError> {
         }
         return prepare_signing_state(&state).await;
     }
-    if first == "--preview" {
-        let output = required_argument(&mut arguments)?;
-        let input = required_argument(&mut arguments)?;
-        let signing_state = required_argument(&mut arguments)?;
-        let sequence = arguments
-            .next()
-            .ok_or("missing channel sequence")?
-            .parse::<u64>()?;
-        if arguments.next().is_some() {
-            return Err(
-                "usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 11".into(),
-            );
-        }
-        return build_preview_publication(output, input, signing_state, sequence).await;
-    }
     let output = PathBuf::from(first);
-    let archive = required_argument(&mut arguments)?;
+    let runtimes = required_argument(&mut arguments)?;
     let binaries = required_argument(&mut arguments)?;
     let system_name = arguments.next().ok_or("missing system")?;
     let signing_state = required_argument(&mut arguments)?;
@@ -602,7 +368,7 @@ async fn main() -> Result<(), AnyError> {
         || !(1..=2).contains(&sequence)
     {
         return Err(
-            "usage: linux_proof_publication OUTPUT ARCHIVE BIN_DIR SYSTEM STATE_DIR SEQUENCE"
+            "usage: linux_proof_publication OUTPUT RUNTIME_DIR BIN_DIR SYSTEM STATE_DIR SEQUENCE"
                 .into(),
         );
     }
@@ -618,8 +384,6 @@ async fn main() -> Result<(), AnyError> {
     let root_bytes = fs::read(&root_path)?;
     let root_digest = hex::encode(Sha256::digest(&root_bytes));
 
-    let runtime_manifest =
-        build_upstream_runtime_asset_manifest(&archive, system, &NixVersion::new(NIX_VERSION)?)?;
     let metadata = BuildMetadata::new(
         ChannelSequence::from_u64(sequence).ok_or("invalid sequence")?,
         system,
@@ -693,26 +457,26 @@ async fn main() -> Result<(), AnyError> {
         let runtime_target = format!("nix/{NIX_VERSION}/{candidate}.tar.xz");
         let manifest_target = format!("nix/{NIX_VERSION}/{candidate}.assets.json");
         let index_target = format!("index/{sequence}/{candidate}.json.br");
-        let (runtime, manifest, index_record) = if candidate == system_name {
-            (
-                copy_file(artifact_root, &runtime_target, &archive)?,
-                write_file(artifact_root, &manifest_target, &runtime_manifest)?,
-                write_file(artifact_root, &index_target, &index)?,
-            )
+        let runtime_source = runtimes.join(format!("{candidate}.tar.xz"));
+        let runtime_manifest = build_upstream_runtime_asset_manifest(
+            &runtime_source,
+            System::from_str(candidate)?,
+            &NixVersion::new(NIX_VERSION)?,
+        )?;
+        let runtime_record = copy_file(artifact_root, &runtime_target, &runtime_source)?;
+        let manifest_record = write_file(artifact_root, &manifest_target, &runtime_manifest)?;
+        let index_record = if candidate == system_name {
+            write_file(artifact_root, &index_target, &index)?
         } else {
-            (
-                write_file(artifact_root, &runtime_target, candidate.as_bytes())?,
-                write_file(artifact_root, &manifest_target, candidate.as_bytes())?,
-                write_file(artifact_root, &index_target, candidate.as_bytes())?,
-            )
+            write_file(artifact_root, &index_target, candidate.as_bytes())?
         };
         runtime_entries.insert(
             candidate,
-                serde_json::json!({
-                    "url": format!("https://releases.nixos.org/nix/nix-{NIX_VERSION}/nix-{NIX_VERSION}-{candidate}.tar.xz"),
-                    "sha256": runtime.digest,
-                    "assetManifestTarget": manifest_target,
-                "assetManifestSha256": manifest.digest,
+            serde_json::json!({
+                "url":format!("https://releases.nixos.org/nix/nix-{NIX_VERSION}/nix-{NIX_VERSION}-{candidate}.tar.xz"),
+                "sha256":runtime_record.digest,
+                "assetManifestTarget":manifest_target,
+                "assetManifestSha256":manifest_record.digest,
             }),
         );
         index_entries.insert(
@@ -720,13 +484,13 @@ async fn main() -> Result<(), AnyError> {
             serde_json::json!({"target": index_target, "sha256": index_record.digest}),
         );
         for (kind, target, record) in [
-            ("managed-nix", runtime_target, runtime),
-            ("managed-nix-assets", manifest_target, manifest),
+            ("managed-nix", runtime_target, runtime_record),
+            ("managed-nix-assets", manifest_target, manifest_record),
             ("index", index_target, index_record),
         ] {
             release_artifacts.push(serde_json::json!({
-                "kind": kind, "system": candidate, "target": target, "source": target,
-                "sha256": record.digest, "length": record.length,
+                "kind":kind, "system":candidate, "target":target, "source":target,
+                "sha256":record.digest, "length":record.length,
             }));
         }
         for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {

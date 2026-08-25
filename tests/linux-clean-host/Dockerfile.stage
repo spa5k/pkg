@@ -61,23 +61,31 @@ RUN set -eu; \
     stage_determinate LICENSE 26434 \
         36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89 \
         https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE
-RUN curl -fL --retry 3 \
-    --output /tmp/nix.tar.xz \
-    https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-x86_64-linux.tar.xz \
-    && printf '%s  %s\n' \
-        2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464 \
-        /tmp/nix.tar.xz \
-        | sha256sum --check --strict
+RUN set -eu; \
+    mkdir /runtime; \
+    stage_runtime() { \
+        system="$1"; expected_sha256="$2"; \
+        path="/runtime/$system.tar.xz"; \
+        curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
+            --output "$path" \
+            "https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-$system.tar.xz"; \
+        printf '%s  %s\n' "$expected_sha256" "$path" \
+            | sha256sum --check --strict; \
+    }; \
+    stage_runtime aarch64-darwin \
+        ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf; \
+    stage_runtime x86_64-linux \
+        2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-1 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 1
+        /publication-1 /runtime /binaries x86_64-linux /proof-signing 1
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-2 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 2
+        /publication-2 /runtime /binaries x86_64-linux /proof-signing 2
 RUN mkdir /out \
     && cp -a /publication-1 /publication-2 /out/ \
     && mkdir /out/binaries \

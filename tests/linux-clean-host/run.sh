@@ -52,15 +52,17 @@ fi
 
 if [ -n "$artifact_output" ]; then
     : "${PKG_CARGO_ABOUT:?set PKG_CARGO_ABOUT for a candidate archive}"
-    : "${PKG_NIX_SOURCE_ARCHIVE:?set PKG_NIX_SOURCE_ARCHIVE for a candidate archive}"
-    mkdir -p "$artifact_output"
-    candidate="$artifact_output/pkg-v0.1.0-alpha.7-x86_64-linux.tar.gz"
+    if [ -e "$artifact_output" ] || [ -L "$artifact_output" ]; then
+        echo "artifact output must not exist: $artifact_output" >&2
+        exit 1
+    fi
+    mkdir -p -m 0700 "$artifact_output"
+    candidate="$artifact_output/pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz"
     python3 "$repo/tools/release/package_alpha_candidate.py" \
         linux-x86_64 \
         "$artifact_context" \
         "$repo/LICENSE" \
         "$PKG_CARGO_ABOUT" \
-        "$PKG_NIX_SOURCE_ARCHIVE" \
         "$candidate"
     candidate_context="$stage_root/candidate"
     mkdir "$candidate_context"
@@ -79,6 +81,10 @@ cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
     "$artifact_context/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-1/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-2/"
+if [ -n "$artifact_output" ]; then
+    mkdir "$artifact_output/evidence"
+    cp -a "$artifact_context/." "$artifact_output/evidence/"
+fi
 
 echo "+ build clean host from staged artifacts only"
 docker build \
@@ -139,53 +145,6 @@ docker exec "$container" sh -eu -c '
 '
 stop_container
 
-echo "+ interrupted install recovery"
-start_container
-docker exec --detach "$container" sh -c \
-    "echo \$\$ > /tmp/pkg-install.pid; exec $shipping_installer > /tmp/pkg-install-interrupted.log 2>&1"
-journal_ready=0
-attempt=0
-while [ "$attempt" -lt 600 ]; do
-    if docker exec "$container" sh -c 'test -s /var/lib/pkg-install/transaction-v1.json' \
-        && docker exec "$container" sh -c 'kill -STOP "$(cat /tmp/pkg-install.pid)"'; then
-        if docker exec "$container" python3 -c '
-import json, sys
-entries = json.load(open("/var/lib/pkg-install/transaction-v1.json"))["entries"]
-build_users = [
-    entry for entry in entries
-    if entry.get("mutation", {}).get("kind") == "asset"
-    and entry["mutation"].get("id", "").startswith("build-user-")
-]
-sys.exit(not build_users)
-'; then
-            journal_ready=1
-            break
-        fi
-        docker exec "$container" sh -c 'kill -CONT "$(cat /tmp/pkg-install.pid)"'
-    fi
-    attempt=$((attempt + 1))
-    sleep 0.05
-done
-if [ "$journal_ready" -ne 1 ]; then
-    docker exec "$container" cat /tmp/pkg-install-interrupted.log >&2 || true
-    echo "The install journal never recorded a durable build-user creation." >&2
-    exit 1
-fi
-docker kill "$container" >/dev/null
-docker start "$container" >/dev/null
-wait_container_ready
-docker exec "$container" sh -eu -c '
-    grep -Eq "^nixbld[0-9]+:" /etc/passwd
-    test -s /var/lib/pkg-install/transaction-v1.json
-'
-docker exec "$container" "$shipping_installer"
-docker exec "$container" sh -eu -c '
-    test ! -e /var/lib/pkg-install/transaction-v1.json
-    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.7"
-    systemctl is-active --quiet pkg-nix-broker.socket
-'
-stop_container
-
 echo "+ authenticated ownership drift refusal"
 start_container
 docker exec "$container" /usr/local/sbin/pkg-bootstrap
@@ -198,6 +157,8 @@ test "$drift_output" = "pkg installation failed."
 test "$(docker exec "$container" stat -c %a /opt/pkg/bin/pkg-nix-broker)" = 777
 stop_container
 
+prove_lifecycle() {
+echo "+ lifecycle run $1 of 2"
 start_container
 
 echo "+ verify clean host"
@@ -216,22 +177,42 @@ docker exec "$container" /usr/local/sbin/pkg-bootstrap
 echo "+ bootstrap retry"
 docker exec "$container" /usr/local/sbin/pkg-bootstrap
 
-echo "+ verify services and ordinary-user isolation"
+echo "+ verify vendor Nix, product services, and ordinary-user isolation"
 docker exec "$container" sh -eu -c '
-    systemctl is-active --quiet pkg-nix-daemon.socket
+    python3 -c '\''
+import json, sys
+record = json.load(open("/var/lib/pkg-install/determinate-handoff-v1.json"))
+sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind") != "accepted")
+'\''
+    test -f /nix/nix-installer
+    test ! -L /nix/nix-installer
+    test "$(stat -c %u:%g:%a /nix/nix-installer)" = 0:0:755
+    test "$(stat -c %s /nix/nix-installer)" = 74918096
+    printf "%s  %s\n" \
+        9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c \
+        /nix/nix-installer \
+        | sha256sum --check --strict
+    test -f /nix/receipt.json
+    test ! -L /nix/receipt.json
+    test "$(stat -c %u:%g:%a /nix/receipt.json)" = 0:0:600
+    receipt_size=$(stat -c %s /nix/receipt.json)
+    test "$receipt_size" -gt 0
+    test "$receipt_size" -le 1048576
+    stat -c "vendor receipt: owner=%u:%g mode=%a bytes=%s" /nix/receipt.json
+    systemctl is-active --quiet nix-daemon.service
+    systemctl is-active --quiet nix-daemon.socket
+    /nix/var/nix/profiles/default/bin/nix --version \
+        | grep -F "nix (Determinate Nix 3.22.1) 2.35.2"
+    /nix/var/nix/profiles/default/bin/nix store ping --store daemon
     systemctl is-active --quiet pkg-root-helper.socket
     systemctl is-active --quiet pkg-nix-broker.socket
     test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.7"
     ! su -s /bin/sh proof-user -c "command -v nix"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-root-helper"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-nix-broker"
-    ! su -s /bin/sh proof-user -c "/opt/pkg/nix/current/bin/nix --version"
     su -s /bin/sh proof-user -c "test -w /run/pkg/broker.sock"
     ! su -s /bin/sh proof-user -c "test -w /run/pkg-helper/root-helper.sock"
-    ! su -s /bin/sh proof-user -c "test -w /nix/var/nix/daemon-socket/socket"
     ! su -s /bin/sh proof-user -c "test -r /opt/pkg/etc/pkg/nix.conf"
-    cp /usr/local/bin/pkg /tmp/pkg-after-uninstall
-    chmod 0755 /tmp/pkg-after-uninstall
 '
 
 echo "+ pkg install hello"
@@ -332,22 +313,78 @@ docker exec "$container" su - proof-user -c \
     "/usr/local/bin/pkg --json list" \
     | grep -F '"entries":[]' >/dev/null
 
-echo "+ pkg --yes uninstall"
-docker exec "$container" /usr/local/bin/pkg --yes uninstall
-
-echo "+ idempotent uninstall and final absence"
+echo "+ verify terminal-exec uninstall inputs"
 docker exec "$container" sh -eu -c '
-    /tmp/pkg-after-uninstall --yes uninstall
-    test ! -e /opt/pkg
-    test ! -e /var/lib/pkg
-    test ! -e /run/pkg
-    test ! -e /nix
-    test ! -e /home/proof-user/.local/share/pkg
-    ! getent passwd pkg-nix-broker
-    ! getent group pkg-nix-broker
-    ! getent group nixbld
-  ! systemctl list-unit-files --no-legend \
-    | grep -Eq "^pkg-(nix-daemon|root-helper|nix-broker)\\.(service|socket)"
+    python3 -c '\''
+import json, sys
+record = json.load(open("/var/lib/pkg-install/determinate-handoff-v1.json"))
+sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind") != "accepted")
+'\''
+    test -f /nix/nix-installer
+    test ! -L /nix/nix-installer
+    test "$(stat -c %u:%g:%a /nix/nix-installer)" = 0:0:755
+    test "$(stat -c %s /nix/nix-installer)" = 74918096
+    printf "%s  %s\n" \
+        9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c \
+        /nix/nix-installer \
+        | sha256sum --check --strict
+    test -f /nix/receipt.json
+    test ! -L /nix/receipt.json
+    test "$(stat -c %u:%g:%a /nix/receipt.json)" = 0:0:600
+    receipt_size=$(stat -c %s /nix/receipt.json)
+    test "$receipt_size" -gt 0
+    test "$receipt_size" -le 1048576
 '
 
-echo "Linux product install checkpoint passed."
+echo "+ pkg terminal-exec uninstall"
+set +e
+docker exec "$container" /usr/local/bin/pkg --yes uninstall
+uninstall_status=$?
+set -e
+if [ "$uninstall_status" -ne 0 ]; then
+    echo "Vendor uninstall failed with status $uninstall_status." >&2
+    exit "$uninstall_status"
+fi
+
+echo "+ verify final product absence and vendor success postconditions"
+docker exec "$container" sh -eu -c '
+    ! systemctl is-active --quiet nix-daemon.service
+    ! systemctl is-active --quiet nix-daemon.socket
+    ! /nix/var/nix/profiles/default/bin/nix store ping --store daemon
+    test ! -e /usr/local/bin/pkg
+    test ! -e /opt/pkg
+    test ! -e /var/lib/pkg
+    test ! -e /var/lib/pkg-install
+    test ! -e /run/pkg
+    test ! -e /run/pkg-helper
+    test ! -e /home/proof-user/.local/share/pkg
+    test ! -e /nix/var/nix/gcroots/pkg
+    test ! -L /nix/var/nix/gcroots/pkg
+    ! getent passwd pkg-nix-broker
+    ! getent group pkg-nix-broker
+    ! systemctl list-unit-files --no-legend \
+        | grep -Eq "^pkg-(root-helper|nix-broker)\\.(service|socket)"
+'
+
+echo "+ record vendor-owned uninstall residue"
+docker exec "$container" sh -eu -c '
+    if test -e /nix; then
+        find /nix -xdev -maxdepth 3 -printf "vendor residue: %M %u:%g %p\n" | sort
+    fi
+    if test -e /etc/nix; then
+        find /etc/nix -xdev -printf "vendor residue: %M %u:%g %p\n" | sort
+    fi
+    getent passwd | awk -F: '\''$1 ~ /^nixbld/ { print "vendor residue: user=" $1 }'\''
+    getent group | awk -F: '\''$1 == "nixbld" { print "vendor residue: group=" $1 }'\''
+    systemctl list-unit-files --no-legend \
+        | awk '\''$1 ~ /(nix|determinate)/ { print "vendor residue: unit=" $1 " state=" $2 }'\''
+'
+stop_container
+}
+
+for lifecycle_run in 1 2; do
+    prove_lifecycle "$lifecycle_run"
+done
+
+echo "Linux vendor install/uninstall and product package lifecycle proof passed."
+echo "Docker limits: no host boot or reboot, SELinux, foreign-host coexistence, or full distribution matrix."

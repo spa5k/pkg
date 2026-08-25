@@ -366,8 +366,41 @@ def write_archive(files: dict[str, tuple[bytes, int]], output: pathlib.Path) -> 
                     archive.addfile(info, fileobj=io.BytesIO(data))
 
 
-def package_candidate(
-    platform: str,
+def package_linux_candidate(
+    staged: pathlib.Path,
+    project_license: pathlib.Path,
+    cargo_about: pathlib.Path,
+    output: pathlib.Path,
+    published_preview: bool = False,
+) -> None:
+    payload: dict[str, tuple[bytes, int]] = {}
+    for name in PLATFORM_FILES["linux-x86_64"]:
+        data = require_regular(staged / name, name)
+        payload[name] = (data, 0o755)
+    require_linux_installer(payload[f"{RELEASE}/{LINUX_ARTIFACT}"][0])
+
+    license_text = require_regular(project_license, "Apache-2.0 license")
+    if b"Apache License\n                           Version 2.0" not in license_text:
+        raise ValueError("project license is not Apache-2.0")
+    notices = generate_third_party(cargo_about)
+    payload.update(
+        {
+            "LICENSE": (license_text, 0o644),
+            "RELEASE_NOTES.md": (
+                release_notes("linux-x86_64", published_preview),
+                0o644,
+            ),
+            "THIRD_PARTY_LICENSES.html": (notices, 0o644),
+        }
+    )
+    checksums = "".join(
+        f"{sha256_bytes(data)}  {name}\n" for name, (data, _) in sorted(payload.items())
+    ).encode("ascii")
+    payload["SHA256SUMS"] = (checksums, 0o644)
+    write_archive(payload, output)
+
+
+def package_macos_candidate(
     staged: pathlib.Path,
     project_license: pathlib.Path,
     cargo_about: pathlib.Path,
@@ -376,16 +409,18 @@ def package_candidate(
     published_preview: bool = False,
 ) -> None:
     payload: dict[str, tuple[bytes, int]] = {}
-    for name in PLATFORM_FILES[platform]:
+    for name in PLATFORM_FILES["macos-aarch64"]:
         data = require_regular(staged / name, name)
-        payload[name] = (data, 0o755 if name.endswith(("install.sh", "pkg-install", LINUX_ARTIFACT)) else 0o644)
+        payload[name] = (
+            data,
+            0o755
+            if name.endswith(("install.sh", "pkg-install", LINUX_ARTIFACT))
+            else 0o644,
+        )
 
-    if platform == "linux-x86_64":
-        require_linux_installer(payload[f"{RELEASE}/{LINUX_ARTIFACT}"][0])
-    else:
-        installer = payload[f"{RELEASE}/{MACOS_INSTALLER}"][0]
-        require_macos_installer(installer)
-        require_macos_package(payload[f"{RELEASE}/{MACOS_PACKAGE}"][0], installer)
+    installer = payload[f"{RELEASE}/{MACOS_INSTALLER}"][0]
+    require_macos_installer(installer)
+    require_macos_package(payload[f"{RELEASE}/{MACOS_PACKAGE}"][0], installer)
 
     license_text = require_regular(project_license, "Apache-2.0 license")
     if b"Apache License\n                           Version 2.0" not in license_text:
@@ -397,7 +432,10 @@ def package_candidate(
             "LICENSE": (license_text, 0o644),
             "NIX-LICENSE": (require_nix_copying(nix_source), 0o644),
             "NIX-SOURCE.md": (nix_source_notice(), 0o644),
-            "RELEASE_NOTES.md": (release_notes(platform, published_preview), 0o644),
+            "RELEASE_NOTES.md": (
+                release_notes("macos-aarch64", published_preview),
+                0o644,
+            ),
             "THIRD_PARTY_LICENSES.html": (notices, 0o644),
         }
     )
@@ -410,24 +448,39 @@ def package_candidate(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("platform", choices=sorted(PLATFORM_FILES))
-    parser.add_argument("staged", type=pathlib.Path)
-    parser.add_argument("project_license", type=pathlib.Path)
-    parser.add_argument("cargo_about", type=pathlib.Path)
-    parser.add_argument("nix_source", type=pathlib.Path)
-    parser.add_argument("output", type=pathlib.Path)
-    parser.add_argument("--published-preview", action="store_true")
+    modes = parser.add_subparsers(dest="platform", required=True)
+    linux = modes.add_parser("linux-x86_64")
+    linux.add_argument("staged", type=pathlib.Path)
+    linux.add_argument("project_license", type=pathlib.Path)
+    linux.add_argument("cargo_about", type=pathlib.Path)
+    linux.add_argument("output", type=pathlib.Path)
+    linux.add_argument("--published-preview", action="store_true")
+    macos = modes.add_parser("macos-aarch64")
+    macos.add_argument("staged", type=pathlib.Path)
+    macos.add_argument("project_license", type=pathlib.Path)
+    macos.add_argument("cargo_about", type=pathlib.Path)
+    macos.add_argument("nix_source", type=pathlib.Path)
+    macos.add_argument("output", type=pathlib.Path)
+    macos.add_argument("--published-preview", action="store_true")
     args = parser.parse_args()
     try:
-        package_candidate(
-            args.platform,
-            args.staged,
-            args.project_license,
-            args.cargo_about,
-            args.nix_source,
-            args.output,
-            args.published_preview,
-        )
+        if args.platform == "linux-x86_64":
+            package_linux_candidate(
+                args.staged,
+                args.project_license,
+                args.cargo_about,
+                args.output,
+                args.published_preview,
+            )
+        else:
+            package_macos_candidate(
+                args.staged,
+                args.project_license,
+                args.cargo_about,
+                args.nix_source,
+                args.output,
+                args.published_preview,
+            )
     except (OSError, subprocess.CalledProcessError, tarfile.TarError, ValueError) as error:
         print(f"package-alpha-candidate: {error}", file=sys.stderr)
         return 1

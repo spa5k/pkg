@@ -11,7 +11,6 @@ use pkg_nix::{NixpkgsPin, RealNixAdapter, fetch_pinned_nixpkgs};
 use sha2::{Digest as _, Sha256};
 use tempfile::NamedTempFile;
 
-const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 #[cfg(target_os = "linux")]
 const PRIVATE_HOME: &str = "/var/lib/pkg/broker-home";
 #[cfg(target_os = "macos")]
@@ -33,8 +32,8 @@ fn main() {
 
 fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), &'static str> {
     let input = parse(arguments)?;
-    let adapter = RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(PRIVATE_HOME))
-        .map_err(|_| "pkg release index refused: managed runtime unavailable")?;
+    let adapter = RealNixAdapter::new_standard_determinate(Path::new(PRIVATE_HOME))
+        .map_err(|_| "pkg release index refused: vendor runtime unavailable")?;
     let source = fetch_pinned_nixpkgs(&input.pin, &adapter)
         .map_err(|_| "pkg release index refused: source authentication failed")?;
     let projection = adapter

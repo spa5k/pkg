@@ -42,7 +42,7 @@ jobs:
           binaries="$RUNNER_TEMP/pkg-proof-binaries"
           bundle="$RUNNER_TEMP/pkg-macos-alpha-proof"
           archive="$RUNNER_TEMP/pkg-macos-alpha-proof.tar.gz"
-          nix_archive="$RUNNER_TEMP/nix-2.34.8-aarch64-darwin.tar.xz"
+          runtimes="$RUNNER_TEMP/pkg-proof-runtimes"
 
           cargo run --locked --release -p pkg-release \
             --example linux_proof_publication -- --prepare "$signing"
@@ -55,7 +55,7 @@ jobs:
               -p pkg-installer --bin pkg-root-helper \
               -p pkg-installer --bin pkg-install
 
-          install -d -m 0700 "$binaries" "$binaries/determinate" "$bundle"
+          install -d -m 0700 "$binaries" "$binaries/determinate" "$bundle" "$runtimes"
           for name in pkg pkg-nix-broker pkg-root-helper pkg-install; do
             install -m 0755 "target/release/$name" "$binaries/$name"
             codesign --force --sign - --options runtime --timestamp=none "$binaries/$name"
@@ -89,20 +89,28 @@ jobs:
             36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89 \
             https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE
 
-          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
-            --output "$nix_archive" \
-            https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-aarch64-darwin.tar.xz
-          printf '%s  %s\n' \
-            ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf \
-            "$nix_archive" | shasum -a 256 --check
+          stage_runtime() {
+            candidate="$1"
+            expected_sha256="$2"
+            path="$runtimes/$candidate.tar.xz"
+            curl --fail --location --retry 3 --proto '=https' \
+              --proto-redir '=https' --tlsv1.2 --output "$path" \
+              "https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-$candidate.tar.xz"
+            printf '%s  %s\n' "$expected_sha256" "$path" \
+              | shasum -a 256 --check
+          }
+          stage_runtime aarch64-darwin \
+            ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf
+          stage_runtime x86_64-linux \
+            2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464
 
           cargo run --locked --release -p pkg-release \
             --example linux_proof_publication -- \
-            "$bundle/publication-1" "$nix_archive" "$binaries" \
+            "$bundle/publication-1" "$runtimes" "$binaries" \
             aarch64-darwin "$signing" 1
           cargo run --locked --release -p pkg-release \
             --example linux_proof_publication -- \
-            "$bundle/publication-2" "$nix_archive" "$binaries" \
+            "$bundle/publication-2" "$runtimes" "$binaries" \
             aarch64-darwin "$signing" 2
 
           packaging/macos/build-preview.sh \

@@ -9,6 +9,10 @@ WORKFLOW = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 PUBLISH_WORKFLOW = (ROOT / ".github/workflows/publish-release.yml").read_text(
     encoding="utf-8"
 )
+LINUX_HARNESS = (ROOT / "tests/linux-clean-host/run.sh").read_text(encoding="utf-8")
+MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
+    encoding="utf-8"
+)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -40,10 +44,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
             WORKFLOW,
         )
         self.assertIn("PKG_CARGO_ABOUT:", WORKFLOW)
-        self.assertIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
+        self.assertIn("cargo-about --version 0.9.1", WORKFLOW)
         self.assertIn("cargo fetch --locked", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux-candidate", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux.tar.gz", WORKFLOW)
+        self.assertNotIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
+        self.assertNotIn("nix-2.34.8", WORKFLOW)
+        candidate = "pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz"
+        self.assertIn(f"proof-artifacts/{candidate}", WORKFLOW)
+        self.assertIn('"pkg-${RELEASE_TAG}-linux-x86_64.tar.gz"', PUBLISH_WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.7-linux-x86_64-candidate", WORKFLOW)
+        self.assertIn("proof-artifacts/evidence/", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux-proof", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
 
     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
@@ -57,6 +67,52 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertIn("pkg-v0.1.0-alpha.7-production-linux-input", WORKFLOW)
         self.assertIn("pkg-release-index", WORKFLOW)
+
+    def test_linux_uninstall_uses_plain_terminal_exec_status(self) -> None:
+        self.assertEqual(
+            LINUX_HARNESS.count(
+                'docker exec "$container" /usr/local/bin/pkg --yes uninstall'
+            ),
+            1,
+        )
+        self.assertIn("uninstall_status=$?", LINUX_HARNESS)
+        self.assertIn('exit "$uninstall_status"', LINUX_HARNESS)
+        for line in LINUX_HARNESS.splitlines():
+            if "uninstall" in line:
+                self.assertNotIn("--json", line)
+        self.assertNotIn("pkg-after-uninstall", LINUX_HARNESS)
+        self.assertNotIn("idempotent uninstall", LINUX_HARNESS)
+
+    def test_macos_proof_stages_both_shared_runtime_archives(self) -> None:
+        self.assertIn('runtimes="$RUNNER_TEMP/pkg-proof-runtimes"', MACOS_WORKFLOW)
+        self.assertIn('path="$runtimes/$candidate.tar.xz"', MACOS_WORKFLOW)
+        self.assertIn(
+            '"https://releases.nixos.org/nix/nix-2.34.8/'
+            'nix-2.34.8-$candidate.tar.xz"',
+            MACOS_WORKFLOW,
+        )
+        self.assertIn(
+            'printf \'%s  %s\\n\' "$expected_sha256" "$path" \\\n'
+            "              | shasum -a 256 --check",
+            MACOS_WORKFLOW,
+        )
+        for candidate, digest in (
+            (
+                "aarch64-darwin",
+                "ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf",
+            ),
+            (
+                "x86_64-linux",
+                "2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464",
+            ),
+        ):
+            self.assertIn(f"stage_runtime {candidate} \\\n            {digest}", MACOS_WORKFLOW)
+        self.assertIn(
+            '"$bundle/publication-1" "$runtimes" "$binaries"', MACOS_WORKFLOW
+        )
+        self.assertIn(
+            '"$bundle/publication-2" "$runtimes" "$binaries"', MACOS_WORKFLOW
+        )
 
     def test_production_signing_is_keyless_protected_and_closed(self) -> None:
         self.assertIn("environment: release", PUBLISH_WORKFLOW)

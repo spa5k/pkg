@@ -127,14 +127,21 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             for patch in patches:
                 stack.enter_context(patch)
-            PACKAGER.package_candidate(
-                platform,
-                staged,
-                ROOT / "LICENSE",
-                self.root / "cargo-about",
-                self.nix_source,
-                output,
-            )
+            if platform == "linux-x86_64":
+                PACKAGER.package_linux_candidate(
+                    staged,
+                    ROOT / "LICENSE",
+                    self.root / "cargo-about",
+                    output,
+                )
+            else:
+                PACKAGER.package_macos_candidate(
+                    staged,
+                    ROOT / "LICENSE",
+                    self.root / "cargo-about",
+                    self.nix_source,
+                    output,
+                )
 
     def write_expanded(self, root: pathlib.Path, installer: bytes) -> None:
         scripts = root / "Scripts"
@@ -157,6 +164,57 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         )
         self.assertIsNotNone(version)
         self.assertEqual(PACKAGER.RELEASE, f"v{version.group(1)}")
+
+    def test_cli_has_distinct_linux_and_legacy_macos_inputs(self) -> None:
+        with (
+            mock.patch.object(
+                PACKAGER.sys,
+                "argv",
+                [
+                    "package",
+                    "linux-x86_64",
+                    "staged",
+                    "LICENSE",
+                    "cargo-about",
+                    "linux.tar.gz",
+                ],
+            ),
+            mock.patch.object(PACKAGER, "package_linux_candidate") as package_linux,
+        ):
+            self.assertEqual(PACKAGER.main(), 0)
+        package_linux.assert_called_once_with(
+            pathlib.Path("staged"),
+            pathlib.Path("LICENSE"),
+            pathlib.Path("cargo-about"),
+            pathlib.Path("linux.tar.gz"),
+            False,
+        )
+
+        with (
+            mock.patch.object(
+                PACKAGER.sys,
+                "argv",
+                [
+                    "package",
+                    "macos-aarch64",
+                    "staged",
+                    "LICENSE",
+                    "cargo-about",
+                    "nix-source.tar.gz",
+                    "macos.tar.gz",
+                ],
+            ),
+            mock.patch.object(PACKAGER, "package_macos_candidate") as package_macos,
+        ):
+            self.assertEqual(PACKAGER.main(), 0)
+        package_macos.assert_called_once_with(
+            pathlib.Path("staged"),
+            pathlib.Path("LICENSE"),
+            pathlib.Path("cargo-about"),
+            pathlib.Path("nix-source.tar.gz"),
+            pathlib.Path("macos.tar.gz"),
+            False,
+        )
 
     def test_published_preview_notes_do_not_claim_local_proof(self) -> None:
         notes = PACKAGER.release_notes("linux-x86_64", published_preview=True)
@@ -188,8 +246,6 @@ class PackageAlphaCandidateTests(unittest.TestCase):
             members = {member.name: member for member in archive.getmembers() if member.isfile()}
             expected = {
                 "LICENSE",
-                "NIX-LICENSE",
-                "NIX-SOURCE.md",
                 "RELEASE_NOTES.md",
                 "SHA256SUMS",
                 "THIRD_PARTY_LICENSES.html",
@@ -236,7 +292,11 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         (staged / PACKAGER.RELEASE / PACKAGER.MACOS_PACKAGE).write_bytes(xar())
         output = self.root / "macos-valid.tar.gz"
         self.package("macos-aarch64", staged, output)
-        self.assertTrue(output.is_file())
+        with tarfile.open(output, "r:gz") as archive:
+            members = {member.name for member in archive.getmembers() if member.isfile()}
+        self.assertIn("NIX-LICENSE", members)
+        self.assertIn("NIX-SOURCE.md", members)
+        self.assertIn("THIRD_PARTY_LICENSES.html", members)
 
     def test_expanded_macos_package_refuses_changed_payloads(self) -> None:
         expanded = self.root / "expanded"
