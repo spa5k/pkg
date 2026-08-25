@@ -208,6 +208,21 @@ fn semantic_usage_failure_uses_the_selected_machine_format() {
     assert_eq!(value["error"]["symbol"], "USAGE");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn live_structured_uninstall_refuses_before_privilege_or_mutation() {
+    for flag in ["--json", "--jsonl"] {
+        let output = pkg().args([flag, "uninstall", "--yes"]).output().unwrap();
+        assert_eq!(output.status.code(), Some(78));
+        assert!(output.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            value["error"]["message"],
+            "live uninstall requires plain output"
+        );
+    }
+}
+
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[test]
 fn uninstall_refuses_an_unsupported_host_before_privilege() {

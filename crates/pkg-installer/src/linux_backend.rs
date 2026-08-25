@@ -1,19 +1,18 @@
 //! Complete production binding for the closed Linux installer transaction.
 
 use crate::{
-    InstallError, LinuxAssetPresence, LinuxInstallAsset, LinuxInstallBackend,
-    LinuxPlatformAssetManager, LinuxSystemdManager,
+    DeterminateHandoffState, InstallError, LinuxAssetPresence, LinuxInstallAsset,
+    LinuxInstallBackend, LinuxPlatformAssetManager, LinuxSystemdManager,
+    determinate_handoff::DeterminateHandoff,
 };
 use nix::unistd::{Gid, Uid};
-use pkg_core::System;
+use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, DetectionDisposition,
-    ManagedGroupBindings, OwnershipExpectation, RealNixAdapter, detect_unmanaged_nix,
-    verify_authenticated_managed_install,
+    ManagedGroupBindings, RealNixAdapter, detect_unmanaged_nix,
 };
 use std::{env, path::Path};
 
-const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
 
 /// Production implementation of the closed Linux installer backend.
@@ -22,7 +21,7 @@ pub struct ProductionLinuxInstallBackend {
     system: System,
     assets: LinuxPlatformAssetManager,
     services: LinuxSystemdManager,
-    ownership_expectation: Option<OwnershipExpectation>,
+    release_identity: Option<Digest>,
     existing_managed_install: bool,
 }
 
@@ -41,7 +40,7 @@ impl ProductionLinuxInstallBackend {
             assets: LinuxPlatformAssetManager::new(groups),
             services: LinuxSystemdManager::production()
                 .map_err(|_| InstallError::backend_failure())?,
-            ownership_expectation: None,
+            release_identity: None,
             existing_managed_install: false,
         })
     }
@@ -80,23 +79,17 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         self.assets.bind_authenticated_nix_config(config)
     }
 
-    fn bind_authenticated_ownership_expectation(
+    fn bind_authenticated_release_identity(
         &mut self,
-        expectation: &OwnershipExpectation,
+        system: System,
+        digest: Digest,
     ) -> Result<(), InstallError> {
-        if expectation.system() != self.system
-            || self
-                .ownership_expectation
-                .as_ref()
-                .is_some_and(|bound| bound != expectation)
-        {
+        if system != self.system || self.release_identity.is_some_and(|bound| bound != digest) {
             return Err(InstallError::backend_failure());
         }
-        self.assets.bind_authenticated_ownership_manifest(
-            expectation.system(),
-            expectation.asset_manifest_digest(),
-        )?;
-        self.ownership_expectation = Some(expectation.clone());
+        self.assets
+            .bind_authenticated_release_identity(system, digest)?;
+        self.release_identity = Some(digest);
         Ok(())
     }
 
@@ -119,21 +112,21 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             .map(|value| env::split_paths(&value).collect::<Vec<_>>())
             .unwrap_or_default();
         let environment_keys = env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
-        let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
-        if report.disposition() == DetectionDisposition::Clean {
-            self.existing_managed_install = false;
-            return Ok(());
+        match DeterminateHandoff::production()
+            .and_then(|handoff| handoff.state())
+            .map_err(|_| InstallError::backend_failure())?
+        {
+            DeterminateHandoffState::NotStarted => {
+                let report =
+                    detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
+                if report.disposition() != DetectionDisposition::Clean {
+                    return Err(InstallError::backend_failure());
+                }
+                self.existing_managed_install = false;
+            }
+            DeterminateHandoffState::Started => self.existing_managed_install = false,
+            DeterminateHandoffState::Accepted => self.existing_managed_install = true,
         }
-        verify_authenticated_managed_install(
-            Path::new("/"),
-            self.ownership_expectation
-                .as_ref()
-                .ok_or_else(InstallError::backend_failure)?,
-            &path_entries,
-            &environment_keys,
-        )
-        .map_err(|_| InstallError::backend_failure())?;
-        self.existing_managed_install = true;
         Ok(())
     }
 
@@ -231,7 +224,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         self.services
             .verify_active()
             .map_err(|_| InstallError::backend_failure())?;
-        RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(BROKER_HOME))
+        RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
             .and_then(|adapter| adapter.ping_managed_store())
             .map_err(|_| InstallError::backend_failure())?;
         crate::broker::probe_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))

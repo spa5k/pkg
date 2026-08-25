@@ -5,7 +5,7 @@ use std::{error::Error, fmt, str::FromStr};
 use pkg_core::{System, state::Digest};
 use serde::{Deserialize, Serialize};
 
-use crate::{LinuxAssetKind, linux_install_assets};
+use crate::{LinuxAssetKind, assets::linux_product_mutation_assets};
 
 const SCHEMA_VERSION: u32 = 2;
 const PRODUCT: &str = "pkg";
@@ -368,8 +368,7 @@ impl LinuxInstallJournal {
 }
 
 fn install_sequence() -> Vec<LinuxInstallMutation> {
-    let mut sequence = linux_install_assets()
-        .iter()
+    let mut sequence = linux_product_mutation_assets()
         .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
         .map(|asset| LinuxInstallMutation::Asset {
             id: asset.id().to_owned(),
@@ -380,8 +379,7 @@ fn install_sequence() -> Vec<LinuxInstallMutation> {
     });
     sequence.push(LinuxInstallMutation::ManagedRuntime);
     sequence.extend(
-        linux_install_assets()
-            .iter()
+        linux_product_mutation_assets()
             .filter(|asset| {
                 asset.id() == "nix-gcroots"
                     || (asset.kind() == LinuxAssetKind::File
@@ -571,12 +569,14 @@ mod tests {
                 LinuxInstallMutation::ManagedRuntime | LinuxInstallMutation::Services => None,
             })
             .collect::<std::collections::BTreeSet<_>>();
-        let expected = linux_install_assets()
-            .iter()
-            .map(|asset| asset.id())
+        let expected = crate::assets::linux_product_mutation_assets()
+            .map(crate::LinuxInstallAsset::id)
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(actual, expected);
-        assert_eq!(sequence.len(), linux_install_assets().len() + 2);
+        assert_eq!(
+            sequence.len(),
+            crate::assets::linux_product_mutation_assets().count() + 2
+        );
         let runtime = sequence
             .iter()
             .position(|mutation| mutation == &LinuxInstallMutation::ManagedRuntime);

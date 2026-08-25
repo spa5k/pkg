@@ -2,15 +2,16 @@
 
 use crate::{
     LinuxAssetPresence,
-    assets::{LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets},
+    assets::{
+        LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, linux_install_assets,
+        linux_product_mutation_assets,
+    },
     linux_install_journal::{
         LinuxInstallJournal, LinuxInstallMutation, LinuxInstallRecoveryAction,
     },
 };
-use pkg_core::System;
-use pkg_nix::{
-    AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, OwnershipExpectation,
-};
+use pkg_core::{System, state::Digest};
+use pkg_nix::{AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig};
 use std::{error::Error, fmt};
 
 /// Stable Linux installation failure classes.
@@ -97,16 +98,17 @@ pub trait LinuxInstallBackend {
         config: &AuthenticatedManagedNixConfig,
     ) -> Result<(), InstallError>;
 
-    /// Binds the authenticated runtime ownership expectation used by preflight and uninstall.
+    /// Binds the authenticated release identity used by Linux receipts and uninstall.
     ///
     /// This must not mutate the host. It runs before privileged preflight.
     ///
     /// # Errors
     ///
     /// Returns a redacted backend error for a wrong-platform or conflicting binding.
-    fn bind_authenticated_ownership_expectation(
+    fn bind_authenticated_release_identity(
         &mut self,
-        expectation: &OwnershipExpectation,
+        system: System,
+        digest: Digest,
     ) -> Result<(), InstallError>;
 
     /// Verifies this process has the fixed privileged installer authority.
@@ -331,12 +333,11 @@ pub fn install_linux_preflighted(
     let mut created_artifacts = 0_usize;
     let mut existing = 0_usize;
     let result = (|| {
-        for asset in linux_install_assets()
-            .iter()
+        for asset in linux_product_mutation_assets()
             .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
         {
-            mutations.push(InstallMutation::Asset(*asset));
-            let was_created = backend.ensure_asset(*asset)?;
+            mutations.push(InstallMutation::Asset(asset));
+            let was_created = backend.ensure_asset(asset)?;
             if was_created {
                 created_artifacts = created_artifacts.saturating_add(1);
             } else {
@@ -344,12 +345,9 @@ pub fn install_linux_preflighted(
                 existing = existing.saturating_add(1);
             }
         }
-        for asset in linux_install_assets()
-            .iter()
-            .filter(|asset| asset.id() == "nix-config")
-        {
-            mutations.push(InstallMutation::Asset(*asset));
-            if backend.ensure_asset(*asset)? {
+        for asset in linux_product_mutation_assets().filter(|asset| asset.id() == "nix-config") {
+            mutations.push(InstallMutation::Asset(asset));
+            if backend.ensure_asset(asset)? {
                 created_artifacts = created_artifacts.saturating_add(1);
             } else {
                 let _ = mutations.pop();
@@ -360,17 +358,17 @@ pub fn install_linux_preflighted(
         if !backend.provision_managed_runtime()? {
             let _ = mutations.pop();
         }
-        for asset in linux_install_assets().iter().filter(|asset| {
+        for asset in linux_product_mutation_assets().filter(|asset| {
             asset.id() == "nix-gcroots"
                 || (asset.kind() == LinuxAssetKind::File
                     && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
         }) {
-            mutations.push(InstallMutation::Asset(*asset));
+            mutations.push(InstallMutation::Asset(asset));
             let was_created = {
-                if let Some(contents) = static_asset_contents(*asset) {
-                    backend.install_systemd_unit(*asset, contents)?
+                if let Some(contents) = static_asset_contents(asset) {
+                    backend.install_systemd_unit(asset, contents)?
                 } else {
-                    backend.ensure_asset(*asset)?
+                    backend.ensure_asset(asset)?
                 }
             };
             if was_created {
@@ -486,10 +484,8 @@ fn asset_by_id(id: &str) -> Result<LinuxInstallAsset, InstallError> {
 }
 
 fn require_exact_service_assets(backend: &mut dyn LinuxInstallBackend) -> Result<(), InstallError> {
-    for asset in linux_install_assets()
-        .iter()
-        .copied()
-        .filter(|asset| static_asset_contents(*asset).is_some())
+    for asset in
+        linux_product_mutation_assets().filter(|asset| static_asset_contents(*asset).is_some())
     {
         if backend.classify_asset(asset)? != LinuxAssetPresence::ExactPresent {
             return Err(InstallError::backend_failure());
@@ -592,8 +588,7 @@ mod tests {
             Digest::from_bytes([digest; 32]),
             Digest::from_bytes([digest.wrapping_add(1); 32]),
         )?;
-        for asset in linux_install_assets()
-            .iter()
+        for asset in linux_product_mutation_assets()
             .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
         {
             journal.record_preexisting(LinuxInstallMutation::Asset {
@@ -612,7 +607,7 @@ mod tests {
         journal.record_preexisting(LinuxInstallMutation::Asset {
             id: "nix-gcroots".to_owned(),
         })?;
-        for asset in linux_install_assets().iter().filter(|asset| {
+        for asset in linux_product_mutation_assets().filter(|asset| {
             asset.kind() == LinuxAssetKind::File
                 && !matches!(asset.id(), "nix-config" | "uninstall-manifest")
         }) {
@@ -631,9 +626,10 @@ mod tests {
             Ok(())
         }
 
-        fn bind_authenticated_ownership_expectation(
+        fn bind_authenticated_release_identity(
             &mut self,
-            _expectation: &OwnershipExpectation,
+            _system: System,
+            _digest: Digest,
         ) -> Result<(), InstallError> {
             Ok(())
         }
@@ -763,13 +759,19 @@ mod tests {
     fn install_is_receipt_last_and_idempotent() -> Result<(), Box<dyn Error>> {
         let mut backend = FakeBackend::clean();
         let report = install_linux(System::X8664Linux, &mut backend)?;
-        assert_eq!(report.created_artifacts(), linux_install_assets().len());
+        assert_eq!(
+            report.created_artifacts(),
+            linux_product_mutation_assets().count()
+        );
         assert!(backend.states.contains("receipt"));
         assert!(backend.states.contains("runtime"));
         assert!(backend.rolled_back.is_empty());
         let second = install_linux(System::X8664Linux, &mut backend)?;
         assert_eq!(second.created_artifacts(), 0);
-        assert_eq!(second.existing_artifacts(), linux_install_assets().len());
+        assert_eq!(
+            second.existing_artifacts(),
+            linux_product_mutation_assets().count()
+        );
         Ok(())
     }
 
@@ -854,10 +856,9 @@ mod tests {
         let mut backend = FakeBackend::clean();
         backend.states.insert("services");
         backend.existing.extend(
-            linux_install_assets()
-                .iter()
-                .filter(|asset| static_asset_contents(**asset).is_some())
-                .map(|asset| asset.id()),
+            linux_product_mutation_assets()
+                .filter(|asset| static_asset_contents(*asset).is_some())
+                .map(LinuxInstallAsset::id),
         );
 
         recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))?;
@@ -898,7 +899,7 @@ mod tests {
         let mut journal = journal_before_runtime(0x89)?;
         journal.intend(LinuxInstallMutation::ManagedRuntime)?;
         journal.complete_created()?;
-        for asset in linux_install_assets().iter().filter(|asset| {
+        for asset in linux_product_mutation_assets().filter(|asset| {
             asset.id() == "nix-gcroots"
                 || (asset.kind() == LinuxAssetKind::File
                     && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
@@ -912,10 +913,9 @@ mod tests {
         let mut backend = FakeBackend::clean();
         backend.states.insert("services");
         backend.existing.extend(
-            linux_install_assets()
-                .iter()
-                .filter(|asset| static_asset_contents(**asset).is_some())
-                .map(|asset| asset.id()),
+            linux_product_mutation_assets()
+                .filter(|asset| static_asset_contents(*asset).is_some())
+                .map(LinuxInstallAsset::id),
         );
         let mut persisted = 0_usize;
 
@@ -987,8 +987,7 @@ mod tests {
             .iter()
             .position(|event| *event == "runtime")
             .ok_or_else(|| io::Error::other("runtime rollback missing"))?;
-        let post_runtime_asset_count = linux_install_assets()
-            .iter()
+        let post_runtime_asset_count = linux_product_mutation_assets()
             .filter(|asset| {
                 asset.id() == "nix-gcroots"
                     || (asset.kind() == LinuxAssetKind::File

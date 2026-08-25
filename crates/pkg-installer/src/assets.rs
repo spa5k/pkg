@@ -378,6 +378,51 @@ pub const fn linux_install_assets() -> &'static [LinuxInstallAsset] {
     ASSETS
 }
 
+/// Returns true for the Linux assets that remain owned by the product after
+/// Determinate takes ownership of native Nix.
+#[must_use]
+pub fn is_linux_product_asset(asset: LinuxInstallAsset) -> bool {
+    !matches!(
+        asset.id(),
+        "build-group"
+            | "build-user-01"
+            | "build-user-02"
+            | "build-user-03"
+            | "build-user-04"
+            | "build-user-05"
+            | "build-user-06"
+            | "build-user-07"
+            | "build-user-08"
+            | "build-user-09"
+            | "build-user-10"
+            | "build-user-11"
+            | "build-user-12"
+            | "build-user-13"
+            | "build-user-14"
+            | "build-user-15"
+            | "build-user-16"
+            | "nix-store"
+            | "nix-var"
+            | "nix-state"
+            | "daemon-socket-dir"
+            | "daemon-socket-unit"
+            | "daemon-service-unit"
+    )
+}
+
+pub fn linux_product_install_assets() -> impl DoubleEndedIterator<Item = LinuxInstallAsset> + Clone
+{
+    ASSETS
+        .iter()
+        .copied()
+        .filter(|asset| is_linux_product_asset(*asset))
+}
+
+pub fn linux_product_mutation_assets() -> impl DoubleEndedIterator<Item = LinuxInstallAsset> + Clone
+{
+    linux_product_install_assets().filter(|asset| asset.id() != "nix-root")
+}
+
 /// Exact systemd unit bytes installed by the Linux backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinuxSystemdAssets;
@@ -403,14 +448,12 @@ impl LinuxSystemdAssets {
     pub const BROKER_SOCKET: &'static str = "[Unit]\nDescription=pkg broker socket\n\n[Socket]\nListenStream=/run/pkg/broker.sock\nSocketUser=root\nSocketGroup=root\nSocketMode=0666\nDirectoryMode=0755\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
 
     /// Singleton unprivileged broker service.
-    pub const BROKER_SERVICE: &'static str = "[Unit]\nDescription=pkg package broker\nRequires=pkg-nix-daemon.socket pkg-root-helper.socket\nAfter=pkg-nix-daemon.socket pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-nix-broker\nUser=pkg-nix-broker\nGroup=pkg-nix-broker\nEnvironment=HOME=/var/lib/pkg/broker-home\nEnvironment=TMPDIR=/var/lib/pkg/broker-home/tmp\nWorkingDirectory=/var/lib/pkg/broker-home\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/var/lib/pkg/log/broker /var/lib/pkg/broker-home\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
+    pub const BROKER_SERVICE: &'static str = "[Unit]\nDescription=pkg package broker\nRequires=nix-daemon.socket pkg-root-helper.socket\nAfter=nix-daemon.socket pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-nix-broker\nUser=pkg-nix-broker\nGroup=pkg-nix-broker\nEnvironment=HOME=/var/lib/pkg/broker-home\nEnvironment=TMPDIR=/var/lib/pkg/broker-home/tmp\nWorkingDirectory=/var/lib/pkg/broker-home\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/var/lib/pkg/log/broker /var/lib/pkg/broker-home\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
 
     /// Returns all unit names and exact text in deterministic order.
     #[must_use]
-    pub const fn all() -> [(&'static str, &'static str); 6] {
+    pub const fn all() -> [(&'static str, &'static str); 4] {
         [
-            ("pkg-nix-daemon.socket", Self::DAEMON_SOCKET),
-            ("pkg-nix-daemon.service", Self::DAEMON_SERVICE),
             ("pkg-root-helper.socket", Self::HELPER_SOCKET),
             ("pkg-root-helper.service", Self::HELPER_SERVICE),
             ("pkg-nix-broker.socket", Self::BROKER_SOCKET),
@@ -449,6 +492,34 @@ mod tests {
             .collect::<String>();
         assert!(!unit_text.contains(".timer"));
         assert!(!unit_text.to_ascii_lowercase().contains("auto-gc"));
+    }
+
+    #[test]
+    fn linux_cutover_keeps_vendor_nix_out_of_product_assets_and_services() {
+        let assets = linux_product_install_assets()
+            .map(LinuxInstallAsset::id)
+            .collect::<BTreeSet<_>>();
+        let mutations = linux_product_mutation_assets()
+            .map(LinuxInstallAsset::id)
+            .collect::<BTreeSet<_>>();
+        assert!(assets.contains("nix-root"));
+        assert!(!mutations.contains("nix-root"));
+        for vendor_owned in [
+            "build-group",
+            "build-user-01",
+            "nix-store",
+            "nix-var",
+            "nix-state",
+            "daemon-socket-dir",
+            "daemon-socket-unit",
+            "daemon-service-unit",
+        ] {
+            assert!(!assets.contains(vendor_owned));
+        }
+        let units = LinuxSystemdAssets::all();
+        assert!(units.iter().all(|(name, _)| !name.contains("nix-daemon")));
+        assert!(LinuxSystemdAssets::BROKER_SERVICE.contains("Requires=nix-daemon.socket"));
+        assert!(!LinuxSystemdAssets::BROKER_SERVICE.contains("pkg-nix-daemon.socket"));
     }
 
     #[test]

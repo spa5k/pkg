@@ -580,7 +580,9 @@ impl UninstallBackend for ProductionMacOsUninstallBackend {
                     .map_err(|_| UninstallError::backend_failure())
             }),
             UninstallAction::RemoveUserRoots => self.remove_user_roots(),
-            UninstallAction::CollectGarbage => Err(UninstallError::backend_failure()),
+            UninstallAction::CollectGarbage | UninstallAction::ExecDeterminateUninstall => {
+                Err(UninstallError::backend_failure())
+            }
             UninstallAction::RemoveManagedStoreIfExclusive => self.remove_managed_store(),
             UninstallAction::RemoveManagedRuntimePreservingStore => {
                 if self.preserve_nix != Some(true) {

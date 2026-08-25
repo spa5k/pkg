@@ -10,15 +10,14 @@ use std::{
     fmt,
     fs::{self, File, OpenOptions, Permissions},
     io::{Read, Write},
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 const SCHEMA_VERSION: u32 = 1;
-const MAX_HANDOFF_BYTES: u64 = 8 * 1024;
+const MAX_HANDOFF_BYTES: u64 = 64 * 1024;
 const MAX_RECEIPT_BYTES: u64 = 1024 * 1024;
-const LOCK: &str = ".determinate-handoff-v1.lock";
 const TEMPORARY: &str = ".determinate-handoff-v1.json.next";
 const INSTALLED_INSTALLER: &str = "/nix/nix-installer";
 const RECEIPT: &str = "/nix/receipt.json";
@@ -27,6 +26,10 @@ const RECEIPT: &str = "/nix/receipt.json";
 const HANDOFF: &str = "/var/lib/pkg-install/determinate-handoff-v1.json";
 #[cfg(target_os = "macos")]
 const HANDOFF: &str = "/private/var/db/pkg-install/determinate-handoff-v1.json";
+#[cfg(target_os = "linux")]
+const LOCK: &str = "/run/pkg-install-handoff.lock";
+#[cfg(target_os = "macos")]
+const LOCK: &str = "/private/var/db/pkg-install-handoff.lock";
 #[cfg(target_os = "linux")]
 const RECEIPT_MODE: u32 = 0o600;
 #[cfg(target_os = "macos")]
@@ -62,6 +65,14 @@ pub enum DeterminateHandoffError {
     InvalidTransition,
     InstalledStateUnproved,
     PersistenceFailed,
+    ClearAndRestoreFailed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalUninstallError {
+    Handoff,
+    ExecFailedRestored,
+    ExecAndRestoreFailed,
 }
 
 impl fmt::Display for DeterminateHandoffError {
@@ -75,6 +86,7 @@ impl fmt::Display for DeterminateHandoffError {
             Self::InvalidTransition => "invalid Determinate handoff transition",
             Self::InstalledStateUnproved => "Determinate installed state is not proved",
             Self::PersistenceFailed => "could not persist Determinate handoff state",
+            Self::ClearAndRestoreFailed => "could not clear or restore Determinate handoff state",
         })
     }
 }
@@ -122,6 +134,7 @@ struct WireIdentity {
 
 pub struct DeterminateHandoff {
     handoff: PathBuf,
+    lock: PathBuf,
     receipt: PathBuf,
     installer: PathBuf,
     trust_root: PathBuf,
@@ -131,6 +144,12 @@ pub struct DeterminateHandoff {
     installer_identity: FileIdentity,
     #[cfg(test)]
     pause_after_temp: Option<(Arc<Barrier>, Arc<Barrier>)>,
+    #[cfg(test)]
+    pause_before_clear: Option<(Arc<Barrier>, Arc<Barrier>)>,
+    #[cfg(test)]
+    pause_after_handoff_unlink: Option<(Arc<Barrier>, Arc<Barrier>)>,
+    #[cfg(test)]
+    fail_clear_at: Option<ClearFailurePoint>,
 }
 
 impl DeterminateHandoff {
@@ -138,6 +157,7 @@ impl DeterminateHandoff {
         let installer_identity = pinned_installer_identity()?;
         Ok(Self {
             handoff: PathBuf::from(HANDOFF),
+            lock: PathBuf::from(LOCK),
             receipt: PathBuf::from(RECEIPT),
             installer: PathBuf::from(INSTALLED_INSTALLER),
             trust_root: PathBuf::from("/"),
@@ -147,11 +167,37 @@ impl DeterminateHandoff {
             installer_identity,
             #[cfg(test)]
             pause_after_temp: None,
+            #[cfg(test)]
+            pause_before_clear: None,
+            #[cfg(test)]
+            pause_after_handoff_unlink: None,
+            #[cfg(test)]
+            fail_clear_at: None,
         })
     }
 
     pub fn state(&self) -> Result<DeterminateHandoffState, DeterminateHandoffError> {
         let _lock = self.lock_operation()?;
+        let parent = self
+            .handoff
+            .parent()
+            .ok_or(DeterminateHandoffError::InvalidState)?;
+        match fs::symlink_metadata(parent) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let existing_parent = parent
+                    .parent()
+                    .ok_or(DeterminateHandoffError::InvalidState)?;
+                validate_parent_chain(
+                    existing_parent,
+                    &self.trust_root,
+                    self.owner,
+                    DeterminateHandoffError::InvalidState,
+                )?;
+                return Ok(DeterminateHandoffState::NotStarted);
+            }
+            Err(_) => return Err(DeterminateHandoffError::InvalidState),
+            Ok(_) => {}
+        }
         match self.load_locked()? {
             None => Ok(DeterminateHandoffState::NotStarted),
             Some(Record::Started) => Ok(DeterminateHandoffState::Started),
@@ -187,13 +233,142 @@ impl DeterminateHandoff {
     }
 
     // DN09 can call this only after its standard-daemon installed-state proof passes.
-    fn accept_after_installed_state_proof(&self) -> Result<(), DeterminateHandoffError> {
+    pub fn accept_after_installed_state_proof(&self) -> Result<(), DeterminateHandoffError> {
         let _lock = self.lock_operation()?;
         if self.load_locked()? != Some(Record::Started) {
             return Err(DeterminateHandoffError::InvalidTransition);
         }
         let (installer, receipt) = self.observe_vendor_identity()?;
         self.persist_locked(Record::Accepted { installer, receipt }, false)
+    }
+
+    /// Removes product Handoff state after an installation rollback vendor uninstall.
+    pub fn clear_after_vendor_uninstall(&self) -> Result<(), DeterminateHandoffError> {
+        let lock = self.lock_operation()?;
+        if self.load_locked()? != Some(Record::Started) {
+            return Err(DeterminateHandoffError::InvalidTransition);
+        }
+        self.clear_locked(&lock)
+    }
+
+    /// Revalidates and consumes Accepted state while the stable operation lock is held,
+    /// then invokes the terminal vendor `exec` boundary.
+    pub(crate) fn run_terminal_uninstall<F, E>(&self, exec: F) -> Result<(), TerminalUninstallError>
+    where
+        F: FnOnce() -> Result<(), E>,
+    {
+        let consumed = self
+            .consume_for_terminal_uninstall()
+            .map_err(|_| TerminalUninstallError::Handoff)?;
+        match exec() {
+            Ok(()) => Ok(()),
+            Err(_) => match consumed.restore() {
+                Ok(()) => Err(TerminalUninstallError::ExecFailedRestored),
+                Err(_) => Err(TerminalUninstallError::ExecAndRestoreFailed),
+            },
+        }
+    }
+
+    fn consume_for_terminal_uninstall(
+        &self,
+    ) -> Result<ConsumedAcceptedHandoff<'_>, DeterminateHandoffError> {
+        let lock = self.lock_operation()?;
+        let Some(accepted @ Record::Accepted { installer, receipt }) = self.load_locked()? else {
+            return Err(DeterminateHandoffError::InvalidTransition);
+        };
+        if self.observe_vendor_identity()? != (installer, receipt) {
+            return Err(DeterminateHandoffError::IdentityMismatch);
+        }
+        if let Err(clear_error) = self.clear_locked(&lock) {
+            return match self.restore_accepted_locked(&lock, accepted) {
+                Ok(()) => Err(clear_error),
+                Err(_) => Err(DeterminateHandoffError::ClearAndRestoreFailed),
+            };
+        }
+        Ok(ConsumedAcceptedHandoff {
+            handoff: self,
+            lock,
+            accepted,
+        })
+    }
+
+    fn restore_accepted_locked(
+        &self,
+        _lock: &File,
+        accepted: Record,
+    ) -> Result<(), DeterminateHandoffError> {
+        let Record::Accepted { installer, receipt } = accepted else {
+            return Err(DeterminateHandoffError::InvalidTransition);
+        };
+        if self.observe_vendor_identity()? != (installer, receipt) {
+            return Err(DeterminateHandoffError::IdentityMismatch);
+        }
+        let parent = self
+            .handoff
+            .parent()
+            .ok_or(DeterminateHandoffError::PersistenceFailed)?;
+        if parent != self.trust_root {
+            ensure_private_directory(parent, &self.trust_root, self.owner, self.group)?;
+        }
+        match self.load_locked()? {
+            None => self.persist_locked(accepted, true),
+            Some(current) if current == accepted => Ok(()),
+            Some(_) => Err(DeterminateHandoffError::InvalidTransition),
+        }
+    }
+
+    fn clear_locked(&self, _lock: &File) -> Result<(), DeterminateHandoffError> {
+        #[cfg(test)]
+        if let Some((ready, release)) = self.pause_before_clear.as_ref() {
+            ready.wait();
+            release.wait();
+        }
+        let parent = self
+            .handoff
+            .parent()
+            .ok_or(DeterminateHandoffError::PersistenceFailed)?;
+        if parent != self.trust_root {
+            let temporary_directory = parent.join("tmp");
+            match fs::remove_dir(&temporary_directory) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(DeterminateHandoffError::PersistenceFailed),
+            }
+        }
+        fs::remove_file(&self.handoff).map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+        #[cfg(test)]
+        if let Some((ready, release)) = self.pause_after_handoff_unlink.as_ref() {
+            ready.wait();
+            release.wait();
+        }
+        #[cfg(test)]
+        self.fail_clear(ClearFailurePoint::ParentSync)?;
+        File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+        if parent != self.trust_root {
+            #[cfg(test)]
+            self.fail_clear(ClearFailurePoint::ParentRemoval)?;
+            fs::remove_dir(parent).map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+            let grandparent = parent
+                .parent()
+                .ok_or(DeterminateHandoffError::PersistenceFailed)?;
+            #[cfg(test)]
+            self.fail_clear(ClearFailurePoint::GrandparentSync)?;
+            File::open(grandparent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn fail_clear(&self, point: ClearFailurePoint) -> Result<(), DeterminateHandoffError> {
+        if self.fail_clear_at == Some(point) {
+            Err(DeterminateHandoffError::PersistenceFailed)
+        } else {
+            Ok(())
+        }
     }
 
     // DN12 can call this only after a proved repair or update and fresh DN09 proof.
@@ -237,30 +412,28 @@ impl DeterminateHandoff {
     }
 
     fn lock_operation(&self) -> Result<File, DeterminateHandoffError> {
-        let parent = self
-            .handoff
-            .parent()
-            .ok_or(DeterminateHandoffError::InvalidState)?;
         validate_parent_chain(
-            parent,
+            self.lock
+                .parent()
+                .ok_or(DeterminateHandoffError::InvalidState)?,
             &self.trust_root,
             self.owner,
             DeterminateHandoffError::InvalidState,
         )?;
-        let path = lock_path(parent);
+        let path = &self.lock;
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .mode(0o600)
             .custom_flags(nix::libc::O_CLOEXEC | nix::libc::O_NOFOLLOW)
-            .open(&path)
+            .open(path)
             .map_err(|_| DeterminateHandoffError::InvalidState)?;
         let opened = file
             .metadata()
             .map_err(|_| DeterminateHandoffError::InvalidState)?;
         let current =
-            fs::symlink_metadata(&path).map_err(|_| DeterminateHandoffError::InvalidState)?;
+            fs::symlink_metadata(path).map_err(|_| DeterminateHandoffError::InvalidState)?;
         if !valid_file_metadata(&opened, self.owner, self.group, 0o600, 0, 1)
             || !valid_file_metadata(&current, self.owner, self.group, 0o600, 0, 1)
             || opened.dev() != current.dev()
@@ -271,7 +444,9 @@ impl DeterminateHandoff {
         file.lock()
             .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
         validate_parent_chain(
-            parent,
+            self.lock
+                .parent()
+                .ok_or(DeterminateHandoffError::InvalidState)?,
             &self.trust_root,
             self.owner,
             DeterminateHandoffError::InvalidState,
@@ -280,7 +455,7 @@ impl DeterminateHandoff {
             .metadata()
             .map_err(|_| DeterminateHandoffError::InvalidState)?;
         if !valid_file_metadata(&opened, self.owner, self.group, 0o600, 0, 1)
-            || !same_path(&path, &opened, 1, DeterminateHandoffError::InvalidState)?
+            || !same_path(path, &opened, 1, DeterminateHandoffError::InvalidState)?
         {
             return Err(DeterminateHandoffError::InvalidState);
         }
@@ -342,7 +517,7 @@ impl DeterminateHandoff {
             self.owner,
             DeterminateHandoffError::PersistenceFailed,
         )?;
-        let bytes = encode(record)?;
+        let bytes = encode(&record)?;
         let temporary = temporary_path(parent);
         write_private_file(&temporary, &self.trust_root, &bytes, self.owner, self.group)?;
         #[cfg(test)]
@@ -381,6 +556,7 @@ impl DeterminateHandoff {
         let metadata = fs::metadata(root)?;
         Ok(Self {
             handoff: root.join("determinate-handoff-v1.json"),
+            lock: root.join("determinate-handoff-v1.lock"),
             receipt: root.join("receipt.json"),
             installer: root.join("nix-installer"),
             trust_root: root.to_path_buf(),
@@ -389,7 +565,40 @@ impl DeterminateHandoff {
             receipt_mode,
             installer_identity,
             pause_after_temp: None,
+            pause_before_clear: None,
+            pause_after_handoff_unlink: None,
+            fail_clear_at: None,
         })
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClearFailurePoint {
+    ParentSync,
+    ParentRemoval,
+    GrandparentSync,
+}
+
+struct ConsumedAcceptedHandoff<'a> {
+    handoff: &'a DeterminateHandoff,
+    lock: File,
+    accepted: Record,
+}
+
+impl fmt::Debug for ConsumedAcceptedHandoff<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConsumedAcceptedHandoff")
+            .field("accepted", &self.accepted)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ConsumedAcceptedHandoff<'_> {
+    fn restore(self) -> Result<(), DeterminateHandoffError> {
+        self.handoff
+            .restore_accepted_locked(&self.lock, self.accepted)
     }
 }
 
@@ -416,12 +625,12 @@ fn pinned_installer_identity() -> Result<FileIdentity, DeterminateHandoffError> 
     Err(DeterminateHandoffError::UnsupportedSystem)
 }
 
-fn encode(record: Record) -> Result<Vec<u8>, DeterminateHandoffError> {
+fn encode(record: &Record) -> Result<Vec<u8>, DeterminateHandoffError> {
     let state = match record {
         Record::Started => WireState::Started {},
         Record::Accepted { installer, receipt } => WireState::Accepted {
-            installer: installer.into(),
-            receipt: receipt.into(),
+            installer: (*installer).into(),
+            receipt: (*receipt).into(),
         },
     };
     serde_json::to_vec(&WireRecord {
@@ -578,6 +787,81 @@ fn validate_parent_chain(
     }
 }
 
+fn ensure_private_directory(
+    path: &Path,
+    trust_root: &Path,
+    owner: u32,
+    group: u32,
+) -> Result<(), DeterminateHandoffError> {
+    let parent = path
+        .parent()
+        .ok_or(DeterminateHandoffError::PersistenceFailed)?;
+    validate_parent_chain(
+        parent,
+        trust_root,
+        owner,
+        DeterminateHandoffError::PersistenceFailed,
+    )?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.is_dir()
+                && !metadata.file_type().is_symlink()
+                && metadata.uid() == owner
+                && metadata.gid() == group
+                && metadata.mode() & 0o7777 == 0o700
+            {
+                return Ok(());
+            }
+            return Err(DeterminateHandoffError::PersistenceFailed);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(DeterminateHandoffError::PersistenceFailed),
+    }
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(path)
+        .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_CLOEXEC | nix::libc::O_NOFOLLOW | nix::libc::O_DIRECTORY)
+        .open(path)
+        .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+    fchown(
+        &directory,
+        Some(Uid::from_raw(owner)),
+        Some(Gid::from_raw(group)),
+    )
+    .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+    directory
+        .set_permissions(Permissions::from_mode(0o700))
+        .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+    full_sync(&directory)?;
+    sync_directory(parent)?;
+    let metadata = directory
+        .metadata()
+        .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != owner
+        || metadata.gid() != group
+        || metadata.mode() & 0o7777 != 0o700
+        || !same_directory(path, &metadata)?
+    {
+        return Err(DeterminateHandoffError::PersistenceFailed);
+    }
+    Ok(())
+}
+
+fn same_directory(path: &Path, opened: &fs::Metadata) -> Result<bool, DeterminateHandoffError> {
+    let current =
+        fs::symlink_metadata(path).map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
+    Ok(current.is_dir()
+        && !current.file_type().is_symlink()
+        && current.dev() == opened.dev()
+        && current.ino() == opened.ino()
+        && current.mode() == opened.mode())
+}
+
 fn file_digest(
     file: &mut File,
     error: DeterminateHandoffError,
@@ -703,10 +987,6 @@ fn temporary_path(parent: &Path) -> PathBuf {
     parent.join(TEMPORARY)
 }
 
-fn lock_path(parent: &Path) -> PathBuf {
-    parent.join(LOCK)
-}
-
 fn sync_directory(path: &Path) -> Result<(), DeterminateHandoffError> {
     let directory = File::open(path).map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
     full_sync(&directory)
@@ -737,7 +1017,7 @@ mod tests {
     const INSTALLER_BYTES: &[u8] = b"test pinned determinate installer";
 
     struct Fixture {
-        _temporary: TempDir,
+        temporary: TempDir,
         handoff: DeterminateHandoff,
         unrelated: PathBuf,
     }
@@ -773,7 +1053,46 @@ mod tests {
             DeterminateHandoff::for_test(temporary.path(), receipt_mode, identity(INSTALLER_BYTES))
                 .unwrap();
         Fixture {
-            _temporary: temporary,
+            temporary,
+            handoff,
+            unrelated,
+        }
+    }
+
+    fn production_parent_fixture(receipt_mode: u32) -> Fixture {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::set_permissions(temporary.path(), Permissions::from_mode(0o700)).unwrap();
+        for relative in ["nix", "var", "var/lib", "var/lib/pkg-install", "run"] {
+            let path = temporary.path().join(relative);
+            fs::create_dir(&path).unwrap();
+            fs::set_permissions(&path, Permissions::from_mode(0o700)).unwrap();
+        }
+        let staging = temporary.path().join("var/lib/pkg-install/tmp");
+        fs::create_dir(&staging).unwrap();
+        fs::set_permissions(&staging, Permissions::from_mode(0o700)).unwrap();
+        write_mode(
+            &temporary.path().join("nix/nix-installer"),
+            INSTALLER_BYTES,
+            0o755,
+        );
+        write_mode(
+            &temporary.path().join("nix/receipt.json"),
+            RECEIPT_SECRET,
+            receipt_mode,
+        );
+        let unrelated = temporary.path().join("unknown-nix-content");
+        fs::write(&unrelated, b"never delete this").unwrap();
+        let mut handoff =
+            DeterminateHandoff::for_test(temporary.path(), receipt_mode, identity(INSTALLER_BYTES))
+                .unwrap();
+        handoff.handoff = temporary
+            .path()
+            .join("var/lib/pkg-install/determinate-handoff-v1.json");
+        handoff.lock = temporary.path().join("run/pkg-install-handoff.lock");
+        handoff.receipt = temporary.path().join("nix/receipt.json");
+        handoff.installer = temporary.path().join("nix/nix-installer");
+        Fixture {
+            temporary,
             handoff,
             unrelated,
         }
@@ -828,6 +1147,241 @@ mod tests {
             DeterminateHandoffState::Accepted
         );
         assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
+    }
+
+    #[test]
+    fn successful_vendor_uninstall_clears_started_product_state_only() {
+        let fixture = fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+
+        fixture.handoff.clear_after_vendor_uninstall().unwrap();
+
+        assert!(!fixture.handoff.handoff.exists());
+        assert!(fixture.handoff.lock.exists());
+        assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
+    }
+
+    #[test]
+    fn terminal_uninstall_consumes_handoff_only_after_identity_revalidation() {
+        let fixture = fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        write_mode(&fixture.handoff.receipt, b"changed receipt", 0o600);
+
+        assert_eq!(
+            fixture
+                .handoff
+                .consume_for_terminal_uninstall()
+                .unwrap_err(),
+            DeterminateHandoffError::IdentityMismatch
+        );
+        assert!(fixture.handoff.handoff.exists());
+
+        fixture
+            .handoff
+            .replace_after_installed_state_proof()
+            .unwrap();
+        let consumed = fixture.handoff.consume_for_terminal_uninstall().unwrap();
+        assert!(!fixture.handoff.handoff.exists());
+        assert!(fixture.handoff.lock.exists());
+        let contender = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fixture.handoff.lock)
+            .unwrap();
+        assert!(contender.try_lock().is_err());
+        drop(consumed);
+        contender.try_lock().unwrap();
+    }
+
+    #[test]
+    fn synchronous_exec_error_restores_exact_accepted_handoff() {
+        let fixture = production_parent_fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let original = fs::read(&fixture.handoff.handoff).unwrap();
+
+        assert_eq!(
+            fixture.handoff.run_terminal_uninstall(|| Err::<(), ()>(())),
+            Err(TerminalUninstallError::ExecFailedRestored)
+        );
+
+        assert_eq!(fs::read(&fixture.handoff.handoff).unwrap(), original);
+        assert_eq!(
+            fixture.handoff.state().unwrap(),
+            DeterminateHandoffState::Accepted
+        );
+        let parent = fs::metadata(fixture.handoff.handoff.parent().unwrap()).unwrap();
+        assert_eq!(parent.mode() & 0o7777, 0o700);
+        assert_eq!(parent.uid(), fixture.handoff.owner);
+        assert_eq!(parent.gid(), fixture.handoff.group);
+    }
+
+    #[test]
+    fn synchronous_exec_and_restore_failure_is_fail_closed() {
+        let fixture = production_parent_fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let parent = fixture.handoff.handoff.parent().unwrap().to_path_buf();
+
+        assert_eq!(
+            fixture.handoff.run_terminal_uninstall(|| {
+                fs::write(&parent, b"not a private state directory").unwrap();
+                Err::<(), ()>(())
+            }),
+            Err(TerminalUninstallError::ExecAndRestoreFailed)
+        );
+        assert!(!fixture.handoff.handoff.exists());
+        assert!(fixture.handoff.state().is_err());
+    }
+
+    #[test]
+    fn every_post_unlink_clear_failure_restores_exact_accepted_handoff() {
+        for point in [
+            ClearFailurePoint::ParentSync,
+            ClearFailurePoint::ParentRemoval,
+            ClearFailurePoint::GrandparentSync,
+        ] {
+            let mut fixture = production_parent_fixture(0o600);
+            fixture.handoff.record_started().unwrap();
+            fixture
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap();
+            let original = fs::read(&fixture.handoff.handoff).unwrap();
+            fixture.handoff.fail_clear_at = Some(point);
+
+            assert_eq!(
+                fixture
+                    .handoff
+                    .consume_for_terminal_uninstall()
+                    .unwrap_err(),
+                DeterminateHandoffError::PersistenceFailed,
+                "failure point: {point:?}"
+            );
+            assert_eq!(fs::read(&fixture.handoff.handoff).unwrap(), original);
+            assert_eq!(
+                fixture.handoff.state().unwrap(),
+                DeterminateHandoffState::Accepted
+            );
+        }
+    }
+
+    #[test]
+    fn clear_and_restore_failure_is_distinct_and_fail_closed() {
+        let mut fixture = production_parent_fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let (ready, release) = (Arc::new(Barrier::new(2)), Arc::new(Barrier::new(2)));
+        fixture.handoff.pause_after_handoff_unlink = Some((ready.clone(), release.clone()));
+        let handoff = Arc::new(fixture.handoff);
+        let worker_handoff = handoff.clone();
+        let worker =
+            thread::spawn(move || worker_handoff.consume_for_terminal_uninstall().map(|_| ()));
+        ready.wait();
+        fs::create_dir(&handoff.handoff).unwrap();
+        release.wait();
+
+        assert_eq!(
+            worker.join().unwrap().unwrap_err(),
+            DeterminateHandoffError::ClearAndRestoreFailed
+        );
+        assert!(handoff.state().is_err());
+    }
+
+    #[test]
+    fn kill_after_consume_leaves_unmarked_determinate_state_for_install_refusal() {
+        use pkg_core::System;
+        use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
+
+        let fixture = production_parent_fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let vendor_calls = 0;
+
+        let consumed = fixture.handoff.consume_for_terminal_uninstall().unwrap();
+        drop(consumed); // Simulates termination after state consumption and before `exec`.
+
+        assert_eq!(vendor_calls, 0);
+        assert!(!fixture.handoff.handoff.exists());
+        assert_eq!(
+            fixture.handoff.state().unwrap(),
+            DeterminateHandoffState::NotStarted
+        );
+        let report = detect_unmanaged_nix(fixture.temporary.path(), System::X8664Linux, &[], &[]);
+        assert_ne!(report.disposition(), DetectionDisposition::Clean);
+        assert!(report.has_unmanaged_evidence());
+        assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
+    }
+
+    #[test]
+    fn terminal_uninstall_never_infers_success_from_missing_vendor_files() {
+        let fixture = fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        fs::remove_file(&fixture.handoff.installer).unwrap();
+        fs::remove_file(&fixture.handoff.receipt).unwrap();
+
+        assert!(fixture.handoff.consume_for_terminal_uninstall().is_err());
+        assert!(fixture.handoff.handoff.exists());
+    }
+
+    #[test]
+    fn stable_lock_serializes_clear_state_and_new_start() {
+        let mut fixture = fixture(0o600);
+        fixture.handoff.record_started().unwrap();
+        let observer = DeterminateHandoff::for_test(
+            fixture.handoff.trust_root.as_path(),
+            0o600,
+            fixture.handoff.installer_identity,
+        )
+        .unwrap();
+        let starter = DeterminateHandoff::for_test(
+            fixture.handoff.trust_root.as_path(),
+            0o600,
+            fixture.handoff.installer_identity,
+        )
+        .unwrap();
+        let ready = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        fixture.handoff.pause_before_clear = Some((Arc::clone(&ready), Arc::clone(&release)));
+
+        let (cleared, state_after_clear, started_after_clear) = thread::scope(|scope| {
+            let clear = scope.spawn(|| fixture.handoff.clear_after_vendor_uninstall());
+            ready.wait();
+            let state_and_start = scope.spawn(|| {
+                let state = observer.state();
+                let start_result = starter.record_started();
+                (state, start_result)
+            });
+            release.wait();
+            let (state, start_result) = state_and_start.join().unwrap();
+            (clear.join().unwrap(), state, start_result)
+        });
+
+        assert_eq!(cleared, Ok(()));
+        assert_eq!(state_after_clear, Ok(DeterminateHandoffState::NotStarted));
+        assert_eq!(started_after_clear, Ok(()));
+        assert_eq!(starter.state(), Ok(DeterminateHandoffState::Started));
+        assert!(starter.lock.exists());
     }
 
     #[test]
@@ -903,7 +1457,7 @@ mod tests {
         write_private_file(
             &temporary,
             parent,
-            &encode(Record::Started).unwrap(),
+            &encode(&Record::Started).unwrap(),
             fixture.handoff.owner,
             fixture.handoff.group,
         )
@@ -917,7 +1471,7 @@ mod tests {
         write_private_file(
             &temporary,
             parent,
-            &encode(Record::Started).unwrap(),
+            &encode(&Record::Started).unwrap(),
             fixture.handoff.owner,
             fixture.handoff.group,
         )
@@ -949,7 +1503,7 @@ mod tests {
             ready.wait();
             let directory = File::open(parent).unwrap();
             assert!(directory.try_lock().is_ok());
-            let probe = File::open(lock_path(parent)).unwrap();
+            let probe = File::open(&fixture.handoff.lock).unwrap();
             assert!(matches!(
                 probe.try_lock(),
                 Err(std::fs::TryLockError::WouldBlock)
@@ -967,7 +1521,7 @@ mod tests {
         );
         assert!(!temporary_path(parent).exists());
         assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
-        let lock = fs::symlink_metadata(lock_path(parent)).unwrap();
+        let lock = fs::symlink_metadata(&fixture.handoff.lock).unwrap();
         assert!(valid_file_metadata(
             &lock,
             fixture.handoff.owner,

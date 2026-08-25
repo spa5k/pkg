@@ -1328,8 +1328,7 @@ mod tests {
         fixture
             .manager
             .verify_asset(Fixture::asset("daemon-service-unit"))?;
-        let records = linux_install_assets()
-            .iter()
+        let records = crate::assets::linux_product_install_assets()
             .map(|asset| crate::RecordedAsset::new(asset.id(), crate::RecordedAssetState::Created))
             .collect::<Result<Vec<_>, _>>()?;
         let manifest =

@@ -12,8 +12,7 @@ use pkg_core::StorePath;
 use pkg_store::{STATE_OWNERSHIP_MARKER_BYTES, STATE_OWNERSHIP_MARKER_NAME};
 use rustix::fd::OwnedFd;
 use rustix::fs::{
-    AtFlags, Dir, FileType, Mode, OFlags, Stat, fstat, fsync, mkdirat, open, openat, statat,
-    symlinkat, unlinkat,
+    AtFlags, Dir, FileType, Mode, OFlags, Stat, fstat, fsync, open, openat, statat, unlinkat,
 };
 #[cfg(target_os = "linux")]
 use rustix::fs::{StatxFlags, statx};
@@ -232,30 +231,6 @@ impl LinuxUserCleanup {
         self.store_roots = store_roots.into_values().collect();
         self.root_snapshot = root_snapshot;
         Ok(())
-    }
-
-    /// Restores the exact product root tree captured before removal.
-    ///
-    /// Existing entries must match the snapshot. Missing entries are recreated
-    /// descriptor-relative in parent-before-child order.
-    ///
-    /// # Errors
-    ///
-    /// Returns a closed error for a collision, unsafe ancestor, changed mount,
-    /// invalid snapshot, or incomplete recreation.
-    pub fn restore_user_roots(&mut self) -> Result<(), LinuxUserCleanupError> {
-        if self.root_snapshot.is_empty() {
-            return Ok(());
-        }
-        let path = rooted(&self.root, Path::new(USER_ROOTS));
-        let root = open_absolute_directory(&path, self.root_owner_uid)?.ok_or_else(unsafe_state)?;
-        let boundary = mount_boundary_fd(&root)?;
-        self.root_snapshot
-            .sort_by_key(|entry| entry.relative.components().count());
-        for entry in &self.root_snapshot {
-            restore_root_entry(&root, entry, self.root_owner_uid, boundary)?;
-        }
-        fsync(&root).map_err(|_| operation_failed())
     }
 
     /// Removes the fixed state tree for every UID captured from product roots.
@@ -599,105 +574,6 @@ fn collect_store_targets(
     Ok(())
 }
 
-fn restore_root_entry(
-    root: &OwnedFd,
-    entry: &RootSnapshotEntry,
-    owner_uid: u32,
-    expected_mount: u64,
-) -> Result<(), LinuxUserCleanupError> {
-    let (parent, name) = open_relative_parent(root, &entry.relative, owner_uid)?;
-    match statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(stat) => verify_restored_entry(&parent, &name, &stat, entry, owner_uid, expected_mount),
-        Err(Errno::NOENT) => {
-            match &entry.kind {
-                RootSnapshotKind::Directory { mode } => {
-                    #[cfg(target_os = "linux")]
-                    let mode = u32::from(*mode);
-                    #[cfg(not(target_os = "linux"))]
-                    let mode = *mode;
-                    mkdirat(&parent, &name, Mode::from_raw_mode(mode))
-                        .map_err(|_| operation_failed())?;
-                }
-                RootSnapshotKind::Symlink { target } => {
-                    symlinkat(target.as_str(), &parent, &name).map_err(|_| operation_failed())?;
-                }
-            }
-            let stat = statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)
-                .map_err(|_| operation_failed())?;
-            verify_restored_entry(&parent, &name, &stat, entry, owner_uid, expected_mount)?;
-            fsync(&parent).map_err(|_| operation_failed())
-        }
-        Err(_) => Err(operation_failed()),
-    }
-}
-
-fn open_relative_parent(
-    root: &OwnedFd,
-    relative: &Path,
-    owner_uid: u32,
-) -> Result<(OwnedFd, OsString), LinuxUserCleanupError> {
-    let mut components = relative.components().peekable();
-    let mut parent =
-        openat(root, ".", directory_flags(), Mode::empty()).map_err(|_| operation_failed())?;
-    loop {
-        let component = components.next().ok_or_else(unsafe_state)?;
-        let Component::Normal(name) = component else {
-            return Err(unsafe_state());
-        };
-        if components.peek().is_none() {
-            return Ok((parent, name.to_os_string()));
-        }
-        parent =
-            openat(&parent, name, directory_flags(), Mode::empty()).map_err(|_| unsafe_state())?;
-        validate_directory(&fstat(&parent).map_err(|_| operation_failed())?, owner_uid)?;
-    }
-}
-
-fn verify_restored_entry(
-    parent: &OwnedFd,
-    name: &OsStr,
-    stat: &Stat,
-    entry: &RootSnapshotEntry,
-    owner_uid: u32,
-    expected_mount: u64,
-) -> Result<(), LinuxUserCleanupError> {
-    let observed_mount = mount_boundary_at(parent, name)?;
-    validate_entry(stat, owner_uid, observed_mount, expected_mount)?;
-    match &entry.kind {
-        RootSnapshotKind::Directory { mode } => {
-            #[cfg(target_os = "linux")]
-            let observed_mode = u16::try_from(stat.st_mode & 0o7777).map_err(|_| unsafe_state())?;
-            #[cfg(not(target_os = "linux"))]
-            let observed_mode = stat.st_mode & 0o7777;
-            if FileType::from_raw_mode(stat.st_mode) != FileType::Directory
-                || observed_mode != *mode
-            {
-                return Err(unsafe_state());
-            }
-            let directory = openat(parent, name, directory_flags(), Mode::empty())
-                .map_err(|_| unsafe_state())?;
-            if !same_identity(stat, &fstat(&directory).map_err(|_| operation_failed())?)
-                || mount_boundary_fd(&directory)? != expected_mount
-            {
-                return Err(identity_changed());
-            }
-            Ok(())
-        }
-        RootSnapshotKind::Symlink { target } => {
-            if FileType::from_raw_mode(stat.st_mode) != FileType::Symlink {
-                return Err(unsafe_state());
-            }
-            let observed =
-                rustix::fs::readlinkat(parent, name, Vec::new()).map_err(|_| operation_failed())?;
-            if observed.to_str() == Ok(target.as_str()) {
-                Ok(())
-            } else {
-                Err(identity_changed())
-            }
-        }
-    }
-}
-
 fn verify_name_identity(
     parent: &OwnedFd,
     name: &OsStr,
@@ -914,36 +790,6 @@ mod tests {
             )?]
         );
         assert_eq!(fs::read(outside)?, b"keep");
-        Ok(())
-    }
-
-    #[test]
-    fn restores_exact_product_roots_without_overwriting_a_collision()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = TempDir::new()?;
-        let home = temp.path().join("home");
-        let roots = rooted(temp.path(), Path::new(USER_ROOTS));
-        fs::create_dir_all(&home)?;
-        fs::create_dir_all(&roots)?;
-        let uid = fs::metadata(&home)?.uid();
-        let root = roots.join(uid.to_string());
-        let target = "/nix/store/22222222222222222222222222222222-example";
-        symlink(target, &root)?;
-        let mut cleaner = cleaner(&temp, &home)?;
-
-        cleaner.remove_user_roots()?;
-        assert!(fs::symlink_metadata(&root).is_err());
-        cleaner.restore_user_roots()?;
-        cleaner.restore_user_roots()?;
-        assert_eq!(fs::read_link(&root)?, Path::new(target));
-
-        fs::remove_file(&root)?;
-        symlink("/nix/store/11111111111111111111111111111111-foreign", &root)?;
-        assert!(cleaner.restore_user_roots().is_err());
-        assert_eq!(
-            fs::read_link(&root)?,
-            Path::new("/nix/store/11111111111111111111111111111111-foreign")
-        );
         Ok(())
     }
 

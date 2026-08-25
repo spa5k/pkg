@@ -204,6 +204,12 @@ fn run_broker_listener(
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
     let repair_journals = BrokerRepairJournals::open(log, expected_uid)
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    #[cfg(target_os = "linux")]
+    let adapter = Arc::new(
+        RealNixAdapter::new_standard_determinate(home)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+    );
+    #[cfg(target_os = "macos")]
     let adapter = Arc::new(
         RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), home)
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
@@ -357,8 +363,11 @@ pub fn run_linux_root_helper_from_activation() -> Result<(), ServiceError> {
     let broker_uid = broker_identity()?.uid;
     let listener = activated_unix_listener(LINUX_HELPER_SOCKET)?;
     let repair_executor: Arc<dyn VerifiedRepairExecutor> = Arc::new(
-        RootNixRepairExecutor::new(Path::new(MANAGED_NIX_BINARY), Path::new(LINUX_HELPER_HOME))
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+        RootNixRepairExecutor::new(
+            Path::new("/nix/var/nix/profiles/default/bin/nix"),
+            Path::new(LINUX_HELPER_HOME),
+        )
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
     let helper = InProcessHelper::with_repair_executor(broker_uid, repair_executor)
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;

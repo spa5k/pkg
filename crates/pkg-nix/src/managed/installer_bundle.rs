@@ -14,7 +14,7 @@ use pkg_channel::{
     AcceptedChannel, ChannelError, RefreshOutcome, TrustedRoot, VerifiedChannel,
     validate_https_repository_url, validate_private_datastore, verify_authenticated_descriptor,
 };
-use pkg_core::{ChannelSequence, PolicyVersion, System};
+use pkg_core::{ChannelSequence, PolicyVersion, System, state::Digest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tough::{
@@ -31,6 +31,7 @@ const MAX_INDEX_TARGET_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_RUNTIME_TARGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_RUNTIME_MANIFEST_TARGET_BYTES: u64 = 1024 * 1024;
 const MAX_INSTALLER_BINARY_BYTES: u64 = 128 * 1024 * 1024;
+const DETERMINATE_VERSION: &str = "3.22.1";
 const LIMITS: Limits = Limits {
     max_root_size: 64 * 1024,
     max_targets_size: 256 * 1024,
@@ -73,14 +74,25 @@ pub(super) struct VerifiedRuntimeBundle {
     channel: VerifiedChannel,
     system: System,
     index: Option<Vec<u8>>,
-    archive: File,
-    asset_manifest: File,
+    base_nix: VerifiedBaseNix,
     installer_payloads: BTreeMap<String, File>,
-    runtime_target: String,
-    asset_manifest_target: String,
     accepted_state: AcceptedChannel,
     accepted: AcceptedChannelStore,
     _datastore_lease: File,
+}
+
+enum VerifiedBaseNix {
+    Managed {
+        archive: File,
+        asset_manifest: File,
+        runtime_target: String,
+        asset_manifest_target: String,
+    },
+    Determinate {
+        installer: Option<File>,
+        length: u64,
+        sha256: Digest,
+    },
 }
 
 impl std::fmt::Debug for VerifiedRuntimeBundle {
@@ -113,14 +125,21 @@ impl VerifiedRuntimeBundle {
     }
 
     pub(super) fn open_target(&self, target: &str) -> Result<File, ChannelError> {
-        let source = if target == self.runtime_target {
-            &self.archive
-        } else if target == self.asset_manifest_target {
-            &self.asset_manifest
-        } else if let Some(payload) = self.installer_payloads.get(target) {
-            payload
-        } else {
-            return Err(ChannelError::InstallerBundleUnavailable);
+        let source = match &self.base_nix {
+            VerifiedBaseNix::Managed {
+                archive,
+                runtime_target,
+                ..
+            } if target == runtime_target => archive,
+            VerifiedBaseNix::Managed {
+                asset_manifest,
+                asset_manifest_target,
+                ..
+            } if target == asset_manifest_target => asset_manifest,
+            VerifiedBaseNix::Managed { .. } | VerifiedBaseNix::Determinate { .. } => self
+                .installer_payloads
+                .get(target)
+                .ok_or(ChannelError::InstallerBundleUnavailable)?,
         };
         let mut file = source
             .try_clone()
@@ -128,6 +147,29 @@ impl VerifiedRuntimeBundle {
         file.seek(std::io::SeekFrom::Start(0))
             .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
         Ok(file)
+    }
+
+    pub(super) fn take_determinate_installer(
+        &mut self,
+    ) -> Result<(File, u64, Digest), ChannelError> {
+        match &mut self.base_nix {
+            VerifiedBaseNix::Determinate {
+                installer,
+                length,
+                sha256,
+            } => installer
+                .take()
+                .map(|file| (file, *length, *sha256))
+                .ok_or(ChannelError::InstallerBundleUnavailable),
+            VerifiedBaseNix::Managed { .. } => Err(ChannelError::InstallerBundleUnavailable),
+        }
+    }
+
+    pub(super) fn determinate_installer_identity(&self) -> Option<(u64, Digest)> {
+        match &self.base_nix {
+            VerifiedBaseNix::Determinate { length, sha256, .. } => Some((*length, *sha256)),
+            VerifiedBaseNix::Managed { .. } => None,
+        }
     }
 
     pub(super) fn commit_accepted_channel(&self) -> Result<(), ChannelError> {
@@ -240,26 +282,53 @@ async fn load_verified_repository(
     let channel = match outcome {
         RefreshOutcome::Updated(channel) | RefreshOutcome::Unchanged(channel) => channel,
     };
-    let runtime = channel.descriptor().runtime();
-    let runtime_sha256 = parse_authenticated_sha256(runtime.sha256())?;
-    let asset_manifest_sha256 = parse_authenticated_sha256(runtime.asset_manifest_sha256())?;
     let index = read_required_index_target(&repository, channel.descriptor().index().target())
         .await
         .map_err(redact_repository_error)?;
-    let archive = snapshot_exact_target(
-        &repository,
-        runtime.target(),
-        MAX_RUNTIME_TARGET_BYTES,
-        Some(runtime_sha256),
-    )
-    .await?;
-    let asset_manifest = snapshot_exact_target(
-        &repository,
-        runtime.asset_manifest_target(),
-        MAX_RUNTIME_MANIFEST_TARGET_BYTES,
-        Some(asset_manifest_sha256),
-    )
-    .await?;
+    let base_nix = match host {
+        System::X8664Linux | System::Aarch64Linux => {
+            let (target, length, sha256) = determinate_installer_identity(host)?;
+            let installer =
+                snapshot_exact_target(&repository, target, length, Some(*sha256.as_bytes()))
+                    .await?;
+            if installer
+                .metadata()
+                .map_err(|_| ChannelError::InstallerBundleUnavailable)?
+                .len()
+                != length
+            {
+                return Err(ChannelError::InstallerBundleUnavailable);
+            }
+            VerifiedBaseNix::Determinate {
+                installer: Some(installer),
+                length,
+                sha256,
+            }
+        }
+        System::X8664Darwin | System::Aarch64Darwin => {
+            let runtime = channel.descriptor().runtime();
+            let archive = snapshot_exact_target(
+                &repository,
+                runtime.target(),
+                MAX_RUNTIME_TARGET_BYTES,
+                Some(parse_authenticated_sha256(runtime.sha256())?),
+            )
+            .await?;
+            let asset_manifest = snapshot_exact_target(
+                &repository,
+                runtime.asset_manifest_target(),
+                MAX_RUNTIME_MANIFEST_TARGET_BYTES,
+                Some(parse_authenticated_sha256(runtime.asset_manifest_sha256())?),
+            )
+            .await?;
+            VerifiedBaseNix::Managed {
+                archive,
+                asset_manifest,
+                runtime_target: runtime.target().to_owned(),
+                asset_manifest_target: runtime.asset_manifest_target().to_owned(),
+            }
+        }
+    };
     let mut installer_payloads = BTreeMap::new();
     for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
         let target = format!("installer/{host}/{name}");
@@ -269,17 +338,39 @@ async fn load_verified_repository(
     }
     Ok(VerifiedRuntimeBundle {
         accepted_state: channel.accepted_state(),
-        runtime_target: runtime.target().to_owned(),
-        asset_manifest_target: runtime.asset_manifest_target().to_owned(),
         channel,
         system: host,
         index: Some(index),
-        archive,
-        asset_manifest,
+        base_nix,
         installer_payloads,
         accepted,
         _datastore_lease: datastore_lease,
     })
+}
+
+fn determinate_installer_identity(
+    host: System,
+) -> Result<(&'static str, u64, Digest), ChannelError> {
+    let (target, length, sha256) = match host {
+        System::X8664Linux => (
+            "determinate/3.22.1/nix-installer-x86_64-linux",
+            74_918_096,
+            "9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c",
+        ),
+        System::Aarch64Linux => (
+            "determinate/3.22.1/nix-installer-aarch64-linux",
+            69_625_424,
+            "9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179",
+        ),
+        System::X8664Darwin | System::Aarch64Darwin => {
+            return Err(ChannelError::InstallerBundleUnavailable);
+        }
+    };
+    debug_assert!(target.starts_with(&format!("determinate/{DETERMINATE_VERSION}/")));
+    let digest = format!("sha256-{sha256}")
+        .parse()
+        .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    Ok((target, length, digest))
 }
 
 async fn read_descriptor_target(repository: &tough::Repository) -> Result<Vec<u8>, ChannelError> {
@@ -807,6 +898,30 @@ mod tests {
     use tempfile::TempDir;
 
     const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
+
+    #[test]
+    fn platform_route_selects_only_the_two_linux_determinate_targets() {
+        let (x86_target, x86_length, x86_digest) =
+            determinate_installer_identity(System::X8664Linux).unwrap();
+        assert_eq!(x86_target, "determinate/3.22.1/nix-installer-x86_64-linux");
+        assert_eq!(x86_length, 74_918_096);
+        assert_eq!(
+            x86_digest.to_string(),
+            "sha256-9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c"
+        );
+
+        let (arm_target, arm_length, arm_digest) =
+            determinate_installer_identity(System::Aarch64Linux).unwrap();
+        assert_eq!(arm_target, "determinate/3.22.1/nix-installer-aarch64-linux");
+        assert_eq!(arm_length, 69_625_424);
+        assert_eq!(
+            arm_digest.to_string(),
+            "sha256-9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179"
+        );
+
+        assert!(determinate_installer_identity(System::X8664Darwin).is_err());
+        assert!(determinate_installer_identity(System::Aarch64Darwin).is_err());
+    }
 
     #[tokio::test]
     async fn remote_repository_refuses_unsafe_urls_before_state_creation() {

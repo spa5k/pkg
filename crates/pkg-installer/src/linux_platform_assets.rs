@@ -10,7 +10,7 @@ use pkg_nix::{
 use crate::{
     InstallError, LinuxAccountManager, LinuxFilesystemManager, LinuxInstallAsset,
     LinuxReleasePayloads, RecordedAsset, RecordedAssetState, UninstallManifest,
-    linux_install_assets,
+    assets::is_linux_product_asset, linux_install_assets,
 };
 
 /// Whether one fixed asset is exact-present or absent before a write-ahead intent.
@@ -108,12 +108,12 @@ impl LinuxPlatformAssetManager {
         Ok(())
     }
 
-    /// Binds the authenticated runtime asset-manifest identity without mutation.
+    /// Binds the authenticated descriptor identity without mutation.
     ///
     /// # Errors
     ///
     /// Returns a redacted backend failure for a non-Linux or conflicting binding.
-    pub fn bind_authenticated_ownership_manifest(
+    pub fn bind_authenticated_release_identity(
         &mut self,
         system: System,
         digest: Digest,
@@ -233,8 +233,12 @@ impl LinuxPlatformAssetManager {
 
         let records = linux_install_assets()
             .iter()
+            .copied()
+            .filter(|asset| is_linux_product_asset(*asset))
             .map(|asset| {
-                let state = if asset.id() == "uninstall-manifest" {
+                let state = if asset.id() == "nix-root" {
+                    RecordedAssetState::PreExisting
+                } else if asset.id() == "uninstall-manifest" {
                     RecordedAssetState::Created
                 } else {
                     *self

@@ -16,7 +16,10 @@ use crate::{
     MacOsAssetPresence, MacOsBuildReadiness, MacOsError, MacOsInstallAsset, MacOsInstallBackend,
     MacOsInstallJournal, MacOsInstallJournalStorage, MacOsInstallMutation, MacOsInstallReport,
     ProductionLinuxUninstallBackend, ProductionMacOsUninstallBackend, UninstallError,
-    UninstallErrorCode, execute_uninstall, install_macos,
+    UninstallErrorCode,
+    determinate::{DeterminateInstaller, DeterminateProcessOutcome, DeterminateTerminal},
+    determinate_handoff::{DeterminateHandoff, DeterminateHandoffState},
+    execute_uninstall, install_macos,
     installer::{install_linux_preflighted, recover_linux_install},
     linux_uninstall::verify_linux_install_absent,
     macos_uninstall::verify_macos_install_absent,
@@ -40,6 +43,8 @@ use sha2::{Digest as _, Sha256};
 const LINUX_AUTH_DATASTORE: &str = "/run/pkg-install-auth";
 const LINUX_CHANNEL_DATASTORE: &str = "/var/lib/pkg/broker-home/channel";
 const LINUX_SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
+const LINUX_DETERMINATE_STATE: &str = "/var/lib/pkg-install";
+const LINUX_DETERMINATE_TMP: &str = "/var/lib/pkg-install/tmp";
 const MACOS_AUTH_DATASTORE: &str = "/private/var/db/pkg-install-auth";
 const MACOS_CHANNEL_DATASTORE: &str = "/Library/Application Support/pkg/broker-home/channel";
 const MACOS_SCRATCH_PARENT: &str = "/Library/Application Support/pkg/helper-home/tmp";
@@ -118,16 +123,14 @@ pub fn install_linux_from_bundle<'a>(
     let bundle = load_linux_bundle_for_recovery(trusted_root.clone(), request)?;
     backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
-    backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
-    let recovery_context_digest =
-        linux_recovery_context_digest(bundle.asset_manifest_digest(), request);
+    let release_digest = bundle.release_identity_digest();
+    backend.bind_authenticated_release_identity(bundle.system(), release_digest)?;
+    let recovery_context_digest = linux_recovery_context_digest(release_digest, request);
     recover_linux_bundle_install(
         system,
-        bundle.asset_manifest_digest(),
+        release_digest,
         recovery_context_digest,
         request,
-        daemon,
-        bundle.ownership_expectation(),
         backend,
     )?;
     backend
@@ -137,18 +140,11 @@ pub fn install_linux_from_bundle<'a>(
     // absent before this attempt could create it.
     verify_provision_workspace_absent(request.scratch_parent)
         .map_err(|_| InstallError::backend_failure())?;
-    let storage = LinuxInstallJournalStorage::prepare(
-        system,
-        bundle.asset_manifest_digest(),
-        recovery_context_digest,
-    )
-    .map_err(|_| InstallError::backend_failure())?;
-    let journal = LinuxInstallJournal::new(
-        system,
-        bundle.asset_manifest_digest(),
-        recovery_context_digest,
-    )
-    .map_err(|_| InstallError::backend_failure())?;
+    let storage =
+        LinuxInstallJournalStorage::prepare(system, release_digest, recovery_context_digest)
+            .map_err(|_| InstallError::backend_failure())?;
+    let journal = LinuxInstallJournal::new(system, release_digest, recovery_context_digest)
+        .map_err(|_| InstallError::backend_failure())?;
     storage
         .create(&journal)
         .map_err(|_| InstallError::backend_failure())?;
@@ -225,12 +221,18 @@ pub fn uninstall_linux_production(dry_run: bool) -> Result<usize, UninstallError
     };
     let bundle = load_linux_bundle_for_recovery(trusted_root, &request)
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
+    let (determinate_length, determinate_sha256) = bundle
+        .determinate_installer_identity()
+        .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
     let payloads = LinuxReleasePayloads::from_authenticated_bundle(bundle.installer_payloads())
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
     let mut backend = ProductionLinuxUninstallBackend::new(
+        bundle.system(),
+        bundle.release_identity_digest(),
+        request.groups,
         bundle.managed_nix_config(),
-        bundle.ownership_expectation(),
         payloads,
+        DeterminateInstaller::new(determinate_length, determinate_sha256),
     )?;
     let manifest = backend
         .installed_manifest()?
@@ -282,7 +284,9 @@ pub fn uninstall_macos_production(dry_run: bool) -> Result<usize, UninstallError
         .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?;
     let mut backend = ProductionMacOsUninstallBackend::new(
         bundle.managed_nix_config(),
-        bundle.ownership_expectation(),
+        bundle
+            .ownership_expectation()
+            .map_err(|_| UninstallError::new(UninstallErrorCode::OwnershipRefused))?,
         bundle.installer_payloads(),
     )?;
     let manifest = backend
@@ -529,8 +533,6 @@ fn recover_linux_bundle_install(
     digest: pkg_core::state::Digest,
     recovery_context_digest: Digest,
     request: &InstallerProvisionRequest<'_>,
-    daemon: &dyn ManagedDaemon,
-    expectation: &OwnershipExpectation,
     backend: &mut dyn LinuxInstallBackend,
 ) -> Result<(), InstallError> {
     let Some(storage) =
@@ -548,37 +550,11 @@ fn recover_linux_bundle_install(
         // Cleanup is independent of runtime presence, including reinstalls.
         recover_interrupted_provision_workspace(request.scratch_parent)
             .map_err(|_| InstallError::backend_failure())?;
-        recover_linux_install(
-            &mut journal,
-            backend,
-            &mut || {
-                if let Some(removal) = prepare_managed_runtime_removal_without_receipt(
-                    request.installation_root,
-                    expectation,
-                )
-                .map_err(|_| InstallError::backend_failure())?
-                {
-                    daemon
-                        .rollback_runtime_registration()
-                        .map_err(|_| InstallError::backend_failure())?;
-                    if removal
-                        .remove()
-                        .map_err(|_| InstallError::backend_failure())?
-                        != ManagedRuntimeRemovalOutcome::Removed
-                    {
-                        return Err(InstallError::backend_failure());
-                    }
-                }
-                // Empty outer /nix directories are fixed platform assets. The
-                // later reverse journal actions remove them after this step.
-                Ok(())
-            },
-            &mut |journal| {
-                storage
-                    .replace(journal)
-                    .map_err(|_| InstallError::backend_failure())
-            },
-        )?;
+        recover_linux_install(&mut journal, backend, &mut || Ok(()), &mut |journal| {
+            storage
+                .replace(journal)
+                .map_err(|_| InstallError::backend_failure())
+        })?;
     }
     storage
         .remove()
@@ -620,33 +596,31 @@ pub fn install_macos_from_bundle<'a>(
     let bundle = load_macos_bundle_for_recovery(trusted_root.clone(), request)?;
     backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
-    backend.bind_authenticated_ownership_expectation(bundle.ownership_expectation())?;
-    let recovery_context_digest =
-        macos_recovery_context_digest(bundle.asset_manifest_digest(), request);
+    let ownership = bundle
+        .ownership_expectation()
+        .map_err(|_| MacOsError::backend_failure())?;
+    let asset_manifest_digest = bundle
+        .asset_manifest_digest()
+        .map_err(|_| MacOsError::backend_failure())?;
+    backend.bind_authenticated_ownership_expectation(ownership)?;
+    let recovery_context_digest = macos_recovery_context_digest(asset_manifest_digest, request);
     recover_macos_bundle_install(
         system,
-        bundle.asset_manifest_digest(),
+        asset_manifest_digest,
         recovery_context_digest,
         request,
         daemon,
-        bundle.ownership_expectation(),
+        ownership,
         backend,
     )?;
     backend.preflight_clean_host(system)?;
     verify_provision_workspace_absent(request.scratch_parent)
         .map_err(|_| MacOsError::backend_failure())?;
-    let storage = MacOsInstallJournalStorage::prepare(
-        system,
-        bundle.asset_manifest_digest(),
-        recovery_context_digest,
-    )
-    .map_err(|_| MacOsError::backend_failure())?;
-    let journal = MacOsInstallJournal::new(
-        system,
-        bundle.asset_manifest_digest(),
-        recovery_context_digest,
-    )
-    .map_err(|_| MacOsError::backend_failure())?;
+    let storage =
+        MacOsInstallJournalStorage::prepare(system, asset_manifest_digest, recovery_context_digest)
+            .map_err(|_| MacOsError::backend_failure())?;
+    let journal = MacOsInstallJournal::new(system, asset_manifest_digest, recovery_context_digest)
+        .map_err(|_| MacOsError::backend_failure())?;
     storage
         .create(&journal)
         .map_err(|_| MacOsError::backend_failure())?;
@@ -788,6 +762,12 @@ fn macos_recovery_context_digest(
 
 enum BootstrapOutcome<'a> {
     Pending(Box<ProvisionedBootstrapTransaction<'a>>),
+    DeterminatePending {
+        bundle: Box<AuthenticatedInstallerBundle>,
+        handoff: Box<DeterminateHandoff>,
+        installer: DeterminateInstaller,
+    },
+    DeterminateComplete,
     Complete(ProvisionedBootstrap),
     Existing,
     #[cfg(test)]
@@ -798,8 +778,10 @@ impl BootstrapOutcome<'_> {
     fn into_linux_bootstrap(self) -> Result<Option<ProvisionedBootstrap>, InstallError> {
         match self {
             Self::Complete(bootstrap) => Ok(Some(bootstrap)),
-            Self::Existing => Ok(None),
-            Self::Pending(_) => Err(InstallError::backend_failure()),
+            Self::Existing | Self::DeterminateComplete => Ok(None),
+            Self::Pending(_) | Self::DeterminatePending { .. } => {
+                Err(InstallError::backend_failure())
+            }
             #[cfg(test)]
             Self::Stub(_) => Err(InstallError::backend_failure()),
         }
@@ -809,7 +791,9 @@ impl BootstrapOutcome<'_> {
         match self {
             Self::Complete(bootstrap) => Ok(Some(bootstrap)),
             Self::Existing => Ok(None),
-            Self::Pending(_) => Err(MacOsError::backend_failure()),
+            Self::Pending(_) | Self::DeterminatePending { .. } | Self::DeterminateComplete => {
+                Err(MacOsError::backend_failure())
+            }
             #[cfg(test)]
             Self::Stub(_) => Err(MacOsError::backend_failure()),
         }
@@ -820,8 +804,22 @@ impl BootstrapOutcome<'_> {
             Self::Pending(transaction) => transaction
                 .rollback()
                 .map_err(|_| InstallError::backend_failure()),
+            Self::DeterminatePending {
+                handoff, installer, ..
+            } => {
+                let outcome = installer
+                    .uninstall()
+                    .map_err(|_| InstallError::rollback_incomplete())?;
+                if determinate_succeeded(outcome) {
+                    handoff
+                        .clear_after_vendor_uninstall()
+                        .map_err(|_| InstallError::rollback_incomplete())
+                } else {
+                    Err(InstallError::rollback_incomplete())
+                }
+            }
             Self::Existing => Ok(()),
-            Self::Complete(_) => Err(InstallError::backend_failure()),
+            Self::Complete(_) | Self::DeterminateComplete => Err(InstallError::backend_failure()),
             #[cfg(test)]
             Self::Stub(rolled_back) => {
                 rolled_back.set(true);
@@ -836,7 +834,9 @@ impl BootstrapOutcome<'_> {
                 .rollback()
                 .map_err(|_| MacOsError::backend_failure()),
             Self::Existing => Ok(()),
-            Self::Complete(_) => Err(MacOsError::backend_failure()),
+            Self::Complete(_) | Self::DeterminatePending { .. } | Self::DeterminateComplete => {
+                Err(MacOsError::backend_failure())
+            }
             #[cfg(test)]
             Self::Stub(rolled_back) => {
                 rolled_back.set(true);
@@ -963,7 +963,36 @@ impl BundleProvisioner for AuthenticatedProvisioner {
         request: &InstallerProvisionRequest<'_>,
         daemon: &'a dyn ManagedDaemon,
     ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
-        let bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
+        let mut bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
+        if matches!(request.system, System::X8664Linux | System::Aarch64Linux) {
+            prepare_private_directory_at(Path::new(LINUX_DETERMINATE_STATE), 0, 0)
+                .and_then(|()| prepare_private_directory_at(Path::new(LINUX_DETERMINATE_TMP), 0, 0))
+                .map_err(|_| BundleProvisionError::Failed)?;
+            let staged = bundle
+                .stage_determinate_installer(Path::new(LINUX_DETERMINATE_TMP))
+                .map_err(|_| BundleProvisionError::Failed)?;
+            let installer = DeterminateInstaller::new(staged.length(), staged.sha256());
+            let handoff =
+                DeterminateHandoff::production().map_err(|_| BundleProvisionError::Failed)?;
+            match handoff.state().map_err(|_| BundleProvisionError::Failed)? {
+                DeterminateHandoffState::NotStarted => handoff
+                    .record_started()
+                    .map_err(|_| BundleProvisionError::Failed)?,
+                DeterminateHandoffState::Started => {}
+                DeterminateHandoffState::Accepted => return Err(BundleProvisionError::Failed),
+            }
+            let outcome = installer
+                .install(staged.path())
+                .map_err(|_| BundleProvisionError::Failed)?;
+            if !determinate_succeeded(outcome) {
+                return Err(BundleProvisionError::RollbackIncomplete);
+            }
+            return Ok(BootstrapOutcome::DeterminatePending {
+                bundle: Box::new(bundle),
+                handoff: Box::new(handoff),
+                installer,
+            });
+        }
         provision_authenticated_installer_bundle_transaction(bundle, request, daemon)
             .map(Box::new)
             .map(BootstrapOutcome::Pending)
@@ -1059,12 +1088,13 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         self.inner.bind_authenticated_nix_config(config)
     }
 
-    fn bind_authenticated_ownership_expectation(
+    fn bind_authenticated_release_identity(
         &mut self,
-        expectation: &OwnershipExpectation,
+        system: System,
+        digest: Digest,
     ) -> Result<(), InstallError> {
         self.inner
-            .bind_authenticated_ownership_expectation(expectation)
+            .bind_authenticated_release_identity(system, digest)
     }
 
     fn preflight_privilege(&mut self) -> Result<(), InstallError> {
@@ -1154,6 +1184,11 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 .commit_channel()
                 .map_err(|_| InstallError::backend_failure())?;
         }
+        if let Some(BootstrapOutcome::DeterminatePending { bundle, .. }) = self.outcome.as_ref() {
+            bundle
+                .commit_authenticated_channel()
+                .map_err(|_| InstallError::backend_failure())?;
+        }
         let mutation = LinuxInstallMutation::Services;
         let presence = self.inner.classify_services()?;
         begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
@@ -1207,6 +1242,43 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 self.outcome = Some(BootstrapOutcome::Complete(bootstrap));
                 Ok(receipt_created)
             }
+            BootstrapOutcome::DeterminatePending {
+                bundle,
+                handoff,
+                installer,
+            } => {
+                let changed = match self.inner.publish_ownership_receipt() {
+                    Ok(changed) => changed,
+                    Err(error) => {
+                        self.outcome = Some(BootstrapOutcome::DeterminatePending {
+                            bundle,
+                            handoff,
+                            installer,
+                        });
+                        return Err(error);
+                    }
+                };
+                if let Err(error) =
+                    complete_linux_mutation(&mut self.journal, mutation, presence, changed)
+                {
+                    self.outcome = Some(BootstrapOutcome::DeterminatePending {
+                        bundle,
+                        handoff,
+                        installer,
+                    });
+                    return Err(error);
+                }
+                if handoff.accept_after_installed_state_proof().is_err() {
+                    self.outcome = Some(BootstrapOutcome::DeterminatePending {
+                        bundle,
+                        handoff,
+                        installer,
+                    });
+                    return Err(InstallError::backend_failure());
+                }
+                self.outcome = Some(BootstrapOutcome::DeterminateComplete);
+                Ok(changed)
+            }
             #[cfg(test)]
             BootstrapOutcome::Stub(rolled_back) => {
                 let result = self.inner.publish_ownership_receipt();
@@ -1216,6 +1288,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 Ok(changed)
             }
             BootstrapOutcome::Complete(_) => Err(InstallError::backend_failure()),
+            BootstrapOutcome::DeterminateComplete => Err(InstallError::backend_failure()),
             BootstrapOutcome::Existing => {
                 let result = self.inner.publish_ownership_receipt();
                 self.outcome = Some(BootstrapOutcome::Existing);
@@ -1228,6 +1301,10 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
         self.inner.rollback_asset(asset)
     }
+}
+
+fn determinate_succeeded(outcome: DeterminateProcessOutcome) -> bool {
+    !outcome.timed_out && outcome.terminal == DeterminateTerminal::Exited(0)
 }
 
 fn asset_mutation(asset: LinuxInstallAsset) -> LinuxInstallMutation {
@@ -1607,7 +1684,9 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
                 complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
                 Ok(changed)
             }
-            BootstrapOutcome::Complete(_) => Err(MacOsError::backend_failure()),
+            BootstrapOutcome::Complete(_)
+            | BootstrapOutcome::DeterminatePending { .. }
+            | BootstrapOutcome::DeterminateComplete => Err(MacOsError::backend_failure()),
             BootstrapOutcome::Existing => {
                 let changed = self.inner.publish_ownership_receipt()?;
                 self.outcome = Some(BootstrapOutcome::Existing);
@@ -1983,9 +2062,10 @@ mod tests {
             Ok(())
         }
 
-        fn bind_authenticated_ownership_expectation(
+        fn bind_authenticated_release_identity(
             &mut self,
-            _expectation: &OwnershipExpectation,
+            _system: System,
+            _digest: Digest,
         ) -> Result<(), InstallError> {
             Ok(())
         }
@@ -2100,10 +2180,10 @@ mod tests {
         assert!(matches!(outcome, BootstrapOutcome::Stub(_)));
         assert_eq!(
             report.created_artifacts(),
-            crate::linux_install_assets().len()
+            crate::assets::linux_product_mutation_assets().count()
         );
         let snapshots = persistence.snapshots.borrow();
-        assert!(snapshots.len() > crate::linux_install_assets().len());
+        assert!(snapshots.len() > crate::assets::linux_product_mutation_assets().count());
         assert!(
             snapshots
                 .last()
@@ -2256,7 +2336,7 @@ mod tests {
         assert_eq!(report.created_artifacts(), 0);
         assert_eq!(
             report.existing_artifacts(),
-            crate::linux_install_assets().len()
+            crate::assets::linux_product_mutation_assets().count()
         );
         assert!(
             persistence

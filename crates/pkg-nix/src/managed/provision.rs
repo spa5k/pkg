@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, chown, lchown, symlink};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use lzma_rust2::XzReader;
 use pkg_channel::{TrustedRoot, VerifiedChannel};
 use sha2::{Digest as _, Sha256};
 use tar::{Archive, EntryType};
+use tempfile::NamedTempFile;
 use url::Url;
 
 use super::daemon::{DaemonErrorCode, ManagedDaemon};
@@ -22,12 +23,16 @@ use super::ownership::{
     decode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
     verify_ownership_receipt_against_manifest, verify_with_owner_uid,
 };
+
 use super::runtime_archive::{
     MAX_ARCHIVE_ENTRIES, MAX_REGISTRATION_BYTES, UpstreamArchiveMember,
     classify_upstream_archive_member, is_runtime_bin,
 };
 use crate::{Digest, NixVersion, System, render_managed_build_nix_conf};
 
+const DETERMINATE_STAGING_PREFIX: &str = ".determinate-installer-";
+const DETERMINATE_STAGING_SUFFIX_LENGTH: usize = 16;
+const MAX_DETERMINATE_STAGING_ENTRIES: usize = 8;
 const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ASSET_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_INSTALLER_BINARY_BYTES: u64 = 128 * 1024 * 1024;
@@ -238,23 +243,52 @@ impl std::fmt::Debug for AuthenticatedManagedNixConfig {
 /// the exact bundle identity authenticated before platform mutation.
 pub struct AuthenticatedInstallerBundle {
     source: VerifiedRuntimeBundle,
-    spec: ProvisionSpec,
+    base_nix: AuthenticatedBaseNix,
     managed_nix_config: AuthenticatedManagedNixConfig,
     installer_payloads: AuthenticatedInstallerPayloads,
-    ownership_expectation: OwnershipExpectation,
     installation_root: PathBuf,
     scratch_parent: PathBuf,
     groups: ManagedGroupBindings,
 }
 
+enum AuthenticatedBaseNix {
+    Managed(Box<AuthenticatedManagedBaseNix>),
+    Determinate,
+}
+
+struct AuthenticatedManagedBaseNix {
+    spec: ProvisionSpec,
+    ownership: OwnershipExpectation,
+}
+
 impl AuthenticatedInstallerBundle {
-    fn identity(&self) -> AuthenticatedInstallerIdentity<'_> {
+    fn identity(&self) -> AuthenticatedInstallerIdentity {
         AuthenticatedInstallerIdentity {
-            spec: &self.spec,
-            config: &self.managed_nix_config,
-            payloads: &self.installer_payloads,
-            ownership: &self.ownership_expectation,
+            base_nix: match &self.base_nix {
+                AuthenticatedBaseNix::Managed(managed) => AuthenticatedBaseNixIdentity::Managed {
+                    spec: managed.spec.clone(),
+                    ownership: managed.ownership.clone(),
+                },
+                AuthenticatedBaseNix::Determinate => AuthenticatedBaseNixIdentity::Determinate {
+                    descriptor_sha256: self.source.descriptor_sha256(),
+                    installer: self.source.determinate_installer_identity(),
+                },
+            },
+            config: self.managed_nix_config.clone(),
+            payloads: self.installer_payloads.clone(),
         }
+    }
+
+    /// Returns the native system authenticated by this closed bundle.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.source.system()
+    }
+
+    /// Returns the authenticated descriptor digest used as the Linux release identity.
+    #[must_use]
+    pub const fn release_identity_digest(&self) -> Digest {
+        Digest::from_bytes(self.source.descriptor_sha256())
     }
 
     /// Returns the exact authenticated configuration for the platform backend.
@@ -270,31 +304,147 @@ impl AuthenticatedInstallerBundle {
     }
 
     /// Returns the exact authenticated managed-runtime asset-manifest digest.
-    #[must_use]
-    pub const fn asset_manifest_digest(&self) -> Digest {
-        self.spec.asset_manifest_sha256
+    pub fn asset_manifest_digest(&self) -> Result<Digest, ProvisionError> {
+        match &self.base_nix {
+            AuthenticatedBaseNix::Managed(managed) => Ok(managed.spec.asset_manifest_sha256),
+            AuthenticatedBaseNix::Determinate => Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            )),
+        }
     }
 
     /// Returns the exact authenticated runtime ownership expectation.
+    pub fn ownership_expectation(&self) -> Result<&OwnershipExpectation, ProvisionError> {
+        match &self.base_nix {
+            AuthenticatedBaseNix::Managed(managed) => Ok(&managed.ownership),
+            AuthenticatedBaseNix::Determinate => Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            )),
+        }
+    }
+
+    /// Materializes the fixed authenticated Determinate installer once in a
+    /// private root-owned directory. The file is removed when the returned
+    /// capability is dropped.
+    pub fn stage_determinate_installer(
+        &mut self,
+        directory: &Path,
+    ) -> Result<StagedDeterminateInstaller, ProvisionError> {
+        if !matches!(&self.base_nix, AuthenticatedBaseNix::Determinate) {
+            return Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            ));
+        }
+        validate_private_directory(directory, 0)?;
+        reconcile_determinate_installer_staging_at(directory, 0, 0)?;
+        let (mut source, length, sha256) = self
+            .source
+            .take_determinate_installer()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+        source
+            .seek(std::io::SeekFrom::Start(0))
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        let mut file = tempfile::Builder::new()
+            .prefix(DETERMINATE_STAGING_PREFIX)
+            .rand_bytes(DETERMINATE_STAGING_SUFFIX_LENGTH)
+            .tempfile_in(directory)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        std::io::copy(&mut source, file.as_file_mut())
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        file.as_file_mut()
+            .set_permissions(fs::Permissions::from_mode(0o700))
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        file.as_file_mut()
+            .sync_all()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        if file
+            .as_file()
+            .metadata()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?
+            .len()
+            != length
+        {
+            return Err(ProvisionError::new(ProvisionErrorCode::FetchFailed));
+        }
+        Ok(StagedDeterminateInstaller {
+            file,
+            length,
+            sha256,
+        })
+    }
+
+    /// Commits the authenticated release rollback floor after installation.
+    pub fn commit_authenticated_channel(&self) -> Result<(), ProvisionError> {
+        self.source
+            .commit_accepted_channel()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
+    }
+
+    /// Returns the fixed authenticated Determinate executable identity without
+    /// exposing its private snapshot or a filesystem path.
+    pub fn determinate_installer_identity(&self) -> Result<(u64, Digest), ProvisionError> {
+        if !matches!(&self.base_nix, AuthenticatedBaseNix::Determinate) {
+            return Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            ));
+        }
+        self.source
+            .determinate_installer_identity()
+            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))
+    }
+}
+
+/// One private, authenticated Determinate installer executable.
+pub struct StagedDeterminateInstaller {
+    file: NamedTempFile,
+    length: u64,
+    sha256: Digest,
+}
+
+impl StagedDeterminateInstaller {
+    /// Returns the private executable path for the closed process adapter.
     #[must_use]
-    pub const fn ownership_expectation(&self) -> &OwnershipExpectation {
-        &self.ownership_expectation
+    pub fn path(&self) -> &Path {
+        self.file.path()
+    }
+
+    /// Returns the authenticated executable length.
+    #[must_use]
+    pub const fn length(&self) -> u64 {
+        self.length
+    }
+
+    /// Returns the authenticated executable digest.
+    #[must_use]
+    pub const fn sha256(&self) -> Digest {
+        self.sha256
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct AuthenticatedInstallerIdentity<'a> {
-    spec: &'a ProvisionSpec,
-    config: &'a AuthenticatedManagedNixConfig,
-    payloads: &'a AuthenticatedInstallerPayloads,
-    ownership: &'a OwnershipExpectation,
+struct AuthenticatedInstallerIdentity {
+    base_nix: AuthenticatedBaseNixIdentity,
+    config: AuthenticatedManagedNixConfig,
+    payloads: AuthenticatedInstallerPayloads,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AuthenticatedBaseNixIdentity {
+    Managed {
+        spec: ProvisionSpec,
+        ownership: OwnershipExpectation,
+    },
+    Determinate {
+        descriptor_sha256: [u8; 32],
+        installer: Option<(u64, Digest)>,
+    },
 }
 
 impl std::fmt::Debug for AuthenticatedInstallerBundle {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("AuthenticatedInstallerBundle")
-            .field("system", &self.spec.system)
+            .field("system", &self.source.system())
             .finish_non_exhaustive()
     }
 }
@@ -570,21 +720,36 @@ pub async fn authenticate_installer_bundle(
     request: &InstallerProvisionRequest<'_>,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     let bundle = load_authenticated_installer_bundle(trusted_root, request).await?;
-    let provision_request = ProvisionRequest {
-        installation_root: request.installation_root,
-        scratch_parent: request.scratch_parent,
-        spec: &bundle.spec,
-        groups: request.groups,
-    };
     let (path_entries, environment_keys) = current_host_inputs();
-    require_host_state(
-        &provision_request,
-        &path_entries,
-        &environment_keys,
-        HostStatePolicy::Strict,
-        Some(&bundle.ownership_expectation),
-        0,
-    )?;
+    match &bundle.base_nix {
+        AuthenticatedBaseNix::Managed(managed) => {
+            let provision_request = ProvisionRequest {
+                installation_root: request.installation_root,
+                scratch_parent: request.scratch_parent,
+                spec: &managed.spec,
+                groups: request.groups,
+            };
+            require_host_state(
+                &provision_request,
+                &path_entries,
+                &environment_keys,
+                HostStatePolicy::Strict,
+                Some(&managed.ownership),
+                0,
+            )?;
+        }
+        AuthenticatedBaseNix::Determinate => {
+            let report = detect_unmanaged_nix(
+                request.installation_root,
+                request.system,
+                &path_entries,
+                &environment_keys,
+            );
+            if report.disposition() != DetectionDisposition::Clean {
+                return Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused));
+            }
+        }
+    }
     Ok(bundle)
 }
 
@@ -614,8 +779,7 @@ async fn load_authenticated_installer_bundle_with_owner(
     )
     .await
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
-    let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
-    let installer_payloads = load_authenticated_installer_payloads(&source, spec.system)?;
+    let installer_payloads = load_authenticated_installer_payloads(&source, source.system())?;
     let managed_nix_config = AuthenticatedManagedNixConfig {
         system: source.system(),
         contents: render_managed_build_nix_conf(
@@ -624,25 +788,31 @@ async fn load_authenticated_installer_bundle_with_owner(
         )
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?,
     };
-    let manifest_bytes = read_target_bytes(
-        &source,
-        &spec.asset_manifest_target,
-        MAX_ASSET_MANIFEST_BYTES,
-    )?;
-    let ownership_expectation = decode_ownership_asset_manifest(
-        &manifest_bytes,
-        spec.system,
-        &spec.nix_version,
-        spec.asset_manifest_sha256,
-        request.groups,
-    )
-    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAssetManifest))?;
+    let base_nix = match source.system() {
+        System::X8664Linux | System::Aarch64Linux => AuthenticatedBaseNix::Determinate,
+        System::X8664Darwin | System::Aarch64Darwin => {
+            let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
+            let manifest_bytes = read_target_bytes(
+                &source,
+                &spec.asset_manifest_target,
+                MAX_ASSET_MANIFEST_BYTES,
+            )?;
+            let ownership = decode_ownership_asset_manifest(
+                &manifest_bytes,
+                spec.system,
+                &spec.nix_version,
+                spec.asset_manifest_sha256,
+                request.groups,
+            )
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAssetManifest))?;
+            AuthenticatedBaseNix::Managed(Box::new(AuthenticatedManagedBaseNix { spec, ownership }))
+        }
+    };
     Ok(AuthenticatedInstallerBundle {
         source,
-        spec,
+        base_nix,
         managed_nix_config,
         installer_payloads,
-        ownership_expectation,
         installation_root: request.installation_root.to_path_buf(),
         scratch_parent: request.scratch_parent.to_path_buf(),
         groups: request.groups,
@@ -664,7 +834,7 @@ pub async fn reauthenticate_installer_bundle(
     authenticated: AuthenticatedInstallerBundle,
     broker_uid: u32,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
-    if request.system != authenticated.spec.system
+    if request.system != authenticated.source.system()
         || request.installation_root != authenticated.installation_root
         || request.scratch_parent != authenticated.scratch_parent
         || request.groups != authenticated.groups
@@ -675,24 +845,12 @@ pub async fn reauthenticate_installer_bundle(
     }
     let owner = DatastoreOwner::new(broker_uid, request.groups.broker_gid())
         .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
-    let AuthenticatedInstallerBundle {
-        source,
-        spec,
-        managed_nix_config,
-        installer_payloads,
-        ownership_expectation,
-        ..
-    } = authenticated;
+    let original_identity = authenticated.identity();
+    let source = authenticated.source;
     // Release the original datastore lease before reopening it for the broker.
     drop(source);
     let replacement =
         load_authenticated_installer_bundle_with_owner(trusted_root, request, Some(owner)).await?;
-    let original_identity = AuthenticatedInstallerIdentity {
-        spec: &spec,
-        config: &managed_nix_config,
-        payloads: &installer_payloads,
-        ownership: &ownership_expectation,
-    };
     if original_identity != replacement.identity() {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
@@ -807,8 +965,13 @@ pub fn provision_authenticated_installer_bundle_transaction<'a>(
     request: &InstallerProvisionRequest<'_>,
     daemon: &'a dyn ManagedDaemon,
 ) -> Result<ProvisionedBootstrapTransaction<'a>, ProvisionError> {
-    if request.system != bundle.spec.system
-        || bundle.source.system() != bundle.spec.system
+    let AuthenticatedBaseNix::Managed(managed) = &bundle.base_nix else {
+        return Err(ProvisionError::new(
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ));
+    };
+    if request.system != managed.spec.system
+        || bundle.source.system() != managed.spec.system
         || request.installation_root != bundle.installation_root
         || request.scratch_parent != bundle.scratch_parent
         || request.groups != bundle.groups
@@ -824,7 +987,7 @@ pub fn provision_authenticated_installer_bundle_transaction<'a>(
     let provision_request = ProvisionRequest {
         installation_root: request.installation_root,
         scratch_parent: request.scratch_parent,
-        spec: &bundle.spec,
+        spec: &managed.spec,
         groups: request.groups,
     };
     let (path_entries, environment_keys) = current_host_inputs();
@@ -837,7 +1000,7 @@ pub fn provision_authenticated_installer_bundle_transaction<'a>(
         &environment_keys,
         HostStateRequirements::new(
             HostStatePolicy::FixedPlatformPrerequisites,
-            Some(&bundle.ownership_expectation),
+            Some(&managed.ownership),
         ),
     )?;
     Ok(ProvisionedBootstrapTransaction {
@@ -2050,6 +2213,57 @@ fn validate_private_directory(path: &Path, owner_uid: u32) -> Result<(), Provisi
     Ok(())
 }
 
+/// Removes only exact product-created Determinate staging files.
+///
+/// The caller must first authenticate the directory against the same expected
+/// owner. Every accepted entry is a private, single-link regular file.
+fn reconcile_determinate_installer_staging_at(
+    directory: &Path,
+    owner_uid: u32,
+    owner_gid: u32,
+) -> Result<(), ProvisionError> {
+    let mut paths = Vec::new();
+    let entries = fs::read_dir(directory)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+        if paths.len() >= MAX_DETERMINATE_STAGING_ENTRIES {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        };
+        let suffix = name.strip_prefix(DETERMINATE_STAGING_PREFIX);
+        let Some(suffix) = suffix else {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        };
+        if suffix.len() != DETERMINATE_STAGING_SUFFIX_LENGTH
+            || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        }
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+        if !metadata.file_type().is_file()
+            || metadata.uid() != owner_uid
+            || metadata.gid() != owner_gid
+            || !matches!(metadata.mode() & 0o7777, 0o600 | 0o700)
+            || metadata.nlink() != 1
+        {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        }
+        paths.push(entry.path());
+    }
+    for path in paths {
+        fs::remove_file(path)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+    }
+    sync_directory(directory)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))
+}
+
 /// Refuses when the fixed production provisioning workspace already exists.
 ///
 /// Call this before a durable install journal records ownership of the next
@@ -2213,6 +2427,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn determinate_crash_staging_reconciles_only_exact_private_files() {
+        let temporary = TempDir::new().unwrap();
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let metadata = fs::metadata(temporary.path()).unwrap();
+        let staged = temporary
+            .path()
+            .join(".determinate-installer-AbCdEf0123456789");
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&staged)
+            .unwrap();
+        file.sync_all().unwrap();
+
+        reconcile_determinate_installer_staging_at(
+            temporary.path(),
+            metadata.uid(),
+            metadata.gid(),
+        )
+        .unwrap();
+        assert!(!staged.exists());
+
+        let unexpected = temporary.path().join("unrelated");
+        fs::write(&unexpected, b"keep").unwrap();
+        assert!(
+            reconcile_determinate_installer_staging_at(
+                temporary.path(),
+                metadata.uid(),
+                metadata.gid(),
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(&unexpected).unwrap(), b"keep");
+        fs::remove_file(&unexpected).unwrap();
+
+        let linked = temporary
+            .path()
+            .join(".determinate-installer-Link012345678901");
+        std::os::unix::fs::symlink("missing", &linked).unwrap();
+        assert!(
+            reconcile_determinate_installer_staging_at(
+                temporary.path(),
+                metadata.uid(),
+                metadata.gid(),
+            )
+            .is_err()
+        );
+        assert!(
+            fs::symlink_metadata(linked)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
     fn blocking_installer_runtime_enables_time() {
         let runtime = installer_runtime().unwrap();
         assert!(
@@ -2259,23 +2530,36 @@ mod tests {
             load_authenticated_installer_payloads(&fixture.source, expected_spec.system).unwrap();
         let expected_ownership = fixture.expectation();
 
-        let expected_identity = AuthenticatedInstallerIdentity {
-            spec: &expected_spec,
-            config: &expected_config,
-            payloads: &expected_payloads,
-            ownership: &expected_ownership,
-        };
+        let identity =
+            |spec: &ProvisionSpec,
+             config: &AuthenticatedManagedNixConfig,
+             payloads: &AuthenticatedInstallerPayloads,
+             ownership: &OwnershipExpectation| AuthenticatedInstallerIdentity {
+                base_nix: AuthenticatedBaseNixIdentity::Managed {
+                    spec: spec.clone(),
+                    ownership: ownership.clone(),
+                },
+                config: config.clone(),
+                payloads: payloads.clone(),
+            };
+
+        let expected_identity = identity(
+            &expected_spec,
+            &expected_config,
+            &expected_payloads,
+            &expected_ownership,
+        );
         assert_eq!(expected_identity, expected_identity);
         let mut changed_spec = expected_spec.clone();
         changed_spec.runtime_sha256 = Digest::from_bytes([9; 32]);
         assert_ne!(
             expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &changed_spec,
-                config: &expected_config,
-                payloads: &expected_payloads,
-                ownership: &expected_ownership,
-            }
+            identity(
+                &changed_spec,
+                &expected_config,
+                &expected_payloads,
+                &expected_ownership,
+            )
         );
         let changed_config = AuthenticatedManagedNixConfig {
             system: expected_spec.system,
@@ -2283,23 +2567,23 @@ mod tests {
         };
         assert_ne!(
             expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &expected_spec,
-                config: &changed_config,
-                payloads: &expected_payloads,
-                ownership: &expected_ownership,
-            }
+            identity(
+                &expected_spec,
+                &changed_config,
+                &expected_payloads,
+                &expected_ownership,
+            )
         );
         let mut changed_payloads = expected_payloads.clone();
         changed_payloads.product_cli = Arc::from(b"changed pkg".as_slice());
         assert_ne!(
             expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &expected_spec,
-                config: &expected_config,
-                payloads: &changed_payloads,
-                ownership: &expected_ownership,
-            }
+            identity(
+                &expected_spec,
+                &expected_config,
+                &changed_payloads,
+                &expected_ownership,
+            )
         );
         let changed_ownership = OwnershipExpectation::new(
             expected_ownership.system(),
@@ -2311,12 +2595,12 @@ mod tests {
         .unwrap();
         assert_ne!(
             expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &expected_spec,
-                config: &expected_config,
-                payloads: &expected_payloads,
-                ownership: &changed_ownership,
-            }
+            identity(
+                &expected_spec,
+                &expected_config,
+                &expected_payloads,
+                &changed_ownership,
+            )
         );
     }
 

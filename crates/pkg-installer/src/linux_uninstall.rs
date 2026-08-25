@@ -1,15 +1,10 @@
 //! Production Linux binding for the closed uninstall transaction.
 
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use nix::unistd::{Gid, Uid};
-use pkg_core::System;
-use pkg_nix::{
-    AuthenticatedManagedNixConfig, ManagedRuntimeRemoval, ManagedRuntimeRemovalOutcome,
-    OwnershipExpectation, RootNixGcExecutor, prepare_managed_runtime_removal,
-    verify_authenticated_managed_install,
-};
+use pkg_core::{System, state::Digest};
+use pkg_nix::{AuthenticatedManagedNixConfig, ManagedGroupBindings};
 use rustix::fs::{Mode, OFlags, open, openat};
 use rustix::io::Errno;
 
@@ -18,11 +13,13 @@ use crate::linux_user_cleanup::LinuxUserCleanup;
 use crate::{
     LinuxAccountManager, LinuxAssetKind, LinuxFilesystemManager, LinuxInstallAsset,
     LinuxReleasePayloads, LinuxSystemdManager, RecordedAssetState, UninstallAction,
-    UninstallAssetKind, UninstallBackend, UninstallError, UninstallManifest, linux_install_assets,
+    UninstallAssetKind, UninstallBackend, UninstallError, UninstallManifest,
+    assets::linux_product_install_assets,
+    determinate::DeterminateInstaller,
+    determinate_handoff::{DeterminateHandoff, DeterminateHandoffState},
+    linux_install_assets,
 };
 
-const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
-const HELPER_HOME: &str = "/var/lib/pkg/helper-home";
 const MANAGED_RUNTIME_ROOT: &str = "/opt/pkg/nix";
 
 trait LinuxUninstallRuntime {
@@ -58,16 +55,25 @@ impl ProductionLinuxUninstallBackend {
     /// inputs, unsafe account state, missing systemd tools, or an unavailable
     /// managed Nix executable.
     pub fn new(
+        system: System,
+        release_digest: Digest,
+        groups: ManagedGroupBindings,
         config: &AuthenticatedManagedNixConfig,
-        expectation: &OwnershipExpectation,
         payloads: LinuxReleasePayloads,
+        determinate: DeterminateInstaller,
     ) -> Result<Self, UninstallError> {
-        let system = expectation.system();
         if !matches!(system, System::X8664Linux | System::Aarch64Linux) || config.system() != system
         {
             return Err(UninstallError::backend_failure());
         }
-        let runtime = ProductionRuntime::new(config, expectation, payloads)?;
+        let runtime = ProductionRuntime::new(
+            system,
+            release_digest,
+            groups,
+            config,
+            payloads,
+            determinate,
+        )?;
         Ok(Self {
             system,
             runtime: Box::new(runtime),
@@ -125,17 +131,17 @@ impl UninstallBackend for ProductionLinuxUninstallBackend {
 
 struct ProductionRuntime {
     system: System,
-    expectation: OwnershipExpectation,
+    release_digest: Digest,
     accounts: LinuxAccountManager,
     filesystem: LinuxFilesystemManager,
     services: LinuxSystemdManager,
     user_cleanup: LinuxUserCleanup,
-    gc: RootNixGcExecutor,
-    runtime_removal: Option<ManagedRuntimeRemoval>,
+    determinate: DeterminateInstaller,
+    handoff: DeterminateHandoff,
     manifest: Option<UninstallManifest>,
     preserve_nix: Option<bool>,
     user_roots_removed: bool,
-    store_preserved: bool,
+    product_cleanup_verified: bool,
 }
 
 impl std::fmt::Debug for ProductionRuntime {
@@ -143,140 +149,59 @@ impl std::fmt::Debug for ProductionRuntime {
         formatter
             .debug_struct("ProductionRuntime")
             .field("system", &self.system)
-            .field("ownership_prepared", &self.runtime_removal.is_some())
             .field("manifest_bound", &self.manifest.is_some())
             .field("preserve_nix", &self.preserve_nix)
             .field("user_roots_removed", &self.user_roots_removed)
-            .field("store_preserved", &self.store_preserved)
+            .field("product_cleanup_verified", &self.product_cleanup_verified)
             .finish_non_exhaustive()
     }
 }
 
 impl ProductionRuntime {
     fn new(
+        system: System,
+        release_digest: Digest,
+        groups: ManagedGroupBindings,
         config: &AuthenticatedManagedNixConfig,
-        expectation: &OwnershipExpectation,
         payloads: LinuxReleasePayloads,
+        determinate: DeterminateInstaller,
     ) -> Result<Self, UninstallError> {
-        let mut accounts = LinuxAccountManager::new(expectation.groups());
+        let mut accounts = LinuxAccountManager::new(groups);
         let broker_uid = accounts
             .broker_uid()
             .map_err(|_| UninstallError::backend_failure())?;
-        let mut filesystem =
-            LinuxFilesystemManager::new(expectation.groups(), broker_uid, payloads)
-                .map_err(|_| UninstallError::backend_failure())?;
+        let mut filesystem = LinuxFilesystemManager::new(groups, broker_uid, payloads)
+            .map_err(|_| UninstallError::backend_failure())?;
         filesystem
             .bind_authenticated_nix_config(config)
             .map_err(|_| UninstallError::backend_failure())?;
         Ok(Self {
-            system: expectation.system(),
-            expectation: expectation.clone(),
+            system,
+            release_digest,
             accounts,
             filesystem,
             services: LinuxSystemdManager::production()
                 .map_err(|_| UninstallError::backend_failure())?,
             user_cleanup: LinuxUserCleanup::production(),
-            gc: RootNixGcExecutor::new(Path::new(MANAGED_NIX_BINARY), Path::new(HELPER_HOME))
+            determinate,
+            handoff: DeterminateHandoff::production()
                 .map_err(|_| UninstallError::backend_failure())?,
-            runtime_removal: None,
             manifest: None,
             preserve_nix: None,
             user_roots_removed: false,
-            store_preserved: false,
+            product_cleanup_verified: false,
         })
     }
 
-    fn environment_evidence() -> (Vec<PathBuf>, Vec<std::ffi::OsString>) {
-        let path_entries = env::var_os("PATH")
-            .map(|value| env::split_paths(&value).collect())
-            .unwrap_or_default();
-        let environment_keys = env::vars_os().map(|(key, _)| key).collect();
-        (path_entries, environment_keys)
-    }
-
-    fn verify_managed_install(&self) -> Result<(), UninstallError> {
-        let (path_entries, environment_keys) = Self::environment_evidence();
-        verify_authenticated_managed_install(
-            Path::new("/"),
-            &self.expectation,
-            &path_entries,
-            &environment_keys,
-        )
-        .map_err(|_| UninstallError::backend_failure())?;
-        Ok(())
-    }
-
-    fn restore_roots_and_preserve(&mut self) -> Result<(), UninstallError> {
-        self.store_preserved = true;
-        self.user_roots_removed = false;
-        self.user_cleanup
-            .restore_user_roots()
-            .map_err(|_| UninstallError::backend_failure())
-    }
-
     fn execute_remove_user_roots(&mut self) -> Result<(), UninstallError> {
-        if self.preserve_nix == Some(false) {
-            return Err(UninstallError::backend_failure());
-        }
-        if self.user_cleanup.remove_user_roots().is_ok() {
-            self.user_roots_removed = true;
-            return Ok(());
-        }
-        self.restore_roots_and_preserve()?;
-        Err(UninstallError::backend_failure())
-    }
-
-    fn execute_remove_managed_store(&mut self) -> Result<(), UninstallError> {
-        if self.preserve_nix != Some(false) || self.user_roots_removed {
+        if self.preserve_nix != Some(true) {
             return Err(UninstallError::backend_failure());
         }
         self.user_cleanup
-            .capture_user_roots()
+            .remove_user_roots()
             .map_err(|_| UninstallError::backend_failure())?;
-        let closure = self
-            .gc
-            .closure_for_roots(self.user_cleanup.store_roots())
-            .map_err(|_| UninstallError::backend_failure())?;
-        let registered_paths = self
-            .gc
-            .registered_paths()
-            .map_err(|_| UninstallError::backend_failure())?;
-        let removal = self
-            .runtime_removal
-            .take()
-            .ok_or_else(UninstallError::backend_failure)?;
-        let mut authority = removal
-            .begin_exclusive_removal()
-            .map_err(|_| UninstallError::backend_failure())?;
-        authority
-            .capture_product_closure(&closure, &registered_paths)
-            .map_err(|_| UninstallError::backend_failure())?;
-        if self.user_cleanup.remove_user_roots().is_err() {
-            self.user_cleanup
-                .restore_user_roots()
-                .map_err(|_| UninstallError::backend_failure())?;
-            return Err(UninstallError::backend_failure());
-        }
         self.user_roots_removed = true;
-        self.store_preserved = true;
-        match authority.remove() {
-            Ok(ManagedRuntimeRemovalOutcome::Removed) => {
-                self.store_preserved = false;
-                Ok(())
-            }
-            Ok(ManagedRuntimeRemovalOutcome::StorePreserved) => {
-                self.user_cleanup
-                    .restore_user_roots()
-                    .map_err(|_| UninstallError::backend_failure())?;
-                Err(UninstallError::backend_failure())
-            }
-            Err(_) => {
-                self.user_cleanup
-                    .restore_user_roots()
-                    .map_err(|_| UninstallError::backend_failure())?;
-                Err(UninstallError::backend_failure())
-            }
-        }
+        Ok(())
     }
 
     fn verify_created_assets(
@@ -309,17 +234,6 @@ impl ProductionRuntime {
         let asset = linux_asset(id).ok_or_else(UninstallError::backend_failure)?;
         if uninstall_kind(asset.kind()) != kind || asset.path_or_name() != target {
             return Err(UninstallError::backend_failure());
-        }
-        if self.preserve_nix == Some(false) && self.store_preserved {
-            // A failed exclusivity or GC proof preserves the complete managed
-            // installation. Removing any later asset could strand `/nix`.
-            return Ok(());
-        }
-        if (self.preserve_nix == Some(true) || self.store_preserved) && is_nix_asset(asset) {
-            // ManagedRuntimeRemoval deliberately preserves the complete Nix
-            // tree when the store is shared. A later generic asset action must
-            // not weaken that stronger preservation decision.
-            return Ok(());
         }
         if LinuxAccountManager::handles(asset) {
             self.accounts
@@ -363,9 +277,6 @@ impl ProductionRuntime {
             .filter(|record| record.state() == RecordedAssetState::Created)
         {
             let asset = linux_asset(record.id()).ok_or_else(UninstallError::backend_failure)?;
-            if (self.preserve_nix == Some(true) || self.store_preserved) && is_nix_asset(asset) {
-                continue;
-            }
             if LinuxAccountManager::handles(asset) {
                 self.accounts
                     .verify_asset_absent(asset)
@@ -376,7 +287,9 @@ impl ProductionRuntime {
                     .map_err(|_| UninstallError::backend_failure())?;
             }
         }
-        verify_fixed_path_absent(Path::new(MANAGED_RUNTIME_ROOT))
+        verify_fixed_path_absent(Path::new(MANAGED_RUNTIME_ROOT))?;
+        self.product_cleanup_verified = true;
+        Ok(())
     }
 }
 
@@ -397,16 +310,14 @@ impl LinuxUninstallRuntime for ProductionRuntime {
 
     fn verify_ownership(&mut self, manifest: &UninstallManifest) -> Result<(), UninstallError> {
         if manifest.system() != self.system
-            || manifest.ownership_manifest_digest() != self.expectation.asset_manifest_digest()
+            || manifest.ownership_manifest_digest() != self.release_digest
             || self
                 .manifest
                 .as_ref()
                 .is_some_and(|bound| bound != manifest)
-            || self.runtime_removal.is_some()
         {
             return Err(UninstallError::backend_failure());
         }
-        self.verify_managed_install()?;
         self.filesystem
             .bind_uninstall_manifest(manifest)
             .map_err(|_| UninstallError::backend_failure())?;
@@ -419,23 +330,26 @@ impl LinuxUninstallRuntime for ProductionRuntime {
         {
             return Err(UninstallError::backend_failure());
         }
+        if self
+            .handoff
+            .state()
+            .map_err(|_| UninstallError::backend_failure())?
+            != DeterminateHandoffState::Accepted
+        {
+            return Err(UninstallError::backend_failure());
+        }
         self.verify_created_assets(manifest)?;
-        self.runtime_removal = Some(
-            prepare_managed_runtime_removal(Path::new("/"), &self.expectation)
-                .map_err(|_| UninstallError::backend_failure())?,
-        );
         let preserve_nix = manifest_preserves_nix(manifest)?;
         self.preserve_nix = Some(preserve_nix);
-        self.store_preserved = preserve_nix;
         self.manifest = Some(manifest.clone());
         Ok(())
     }
 
     fn preflight_unmanaged_nix(&mut self) -> Result<(), UninstallError> {
-        if self.runtime_removal.is_none() || self.manifest.is_none() {
+        if self.manifest.is_none() {
             return Err(UninstallError::backend_failure());
         }
-        self.verify_managed_install()
+        Ok(())
     }
 
     fn execute(&mut self, action: UninstallAction) -> Result<(), UninstallError> {
@@ -446,26 +360,23 @@ impl LinuxUninstallRuntime for ProductionRuntime {
                 .map_err(|_| UninstallError::backend_failure()),
             UninstallAction::RemoveUserRoots => self.execute_remove_user_roots(),
             UninstallAction::CollectGarbage => Err(UninstallError::backend_failure()),
-            UninstallAction::RemoveManagedStoreIfExclusive => self.execute_remove_managed_store(),
-            UninstallAction::RemoveManagedRuntimePreservingStore => {
-                if self.preserve_nix != Some(true) {
+            UninstallAction::RemoveManagedStoreIfExclusive
+            | UninstallAction::RemoveManagedRuntimePreservingStore => {
+                Err(UninstallError::backend_failure())
+            }
+            UninstallAction::ExecDeterminateUninstall => {
+                if self.preserve_nix != Some(true)
+                    || !self.user_roots_removed
+                    || !self.product_cleanup_verified
+                {
                     return Err(UninstallError::backend_failure());
                 }
-                self.store_preserved = true;
-                let removal = self
-                    .runtime_removal
-                    .take()
-                    .ok_or_else(UninstallError::backend_failure)?;
-                self.store_preserved = removal
-                    .remove_preserving_store()
-                    .map_err(|_| UninstallError::backend_failure())?
-                    == ManagedRuntimeRemovalOutcome::StorePreserved;
-                Ok(())
+                self.handoff
+                    .run_terminal_uninstall(|| self.determinate.exec_uninstall())
+                    .map_err(|_| UninstallError::backend_failure())
             }
             UninstallAction::RemoveRegisteredUserState => {
-                if !self.user_roots_removed
-                    || self.preserve_nix == Some(false) && self.store_preserved
-                {
+                if !self.user_roots_removed {
                     return Err(UninstallError::backend_failure());
                 }
                 self.user_cleanup
@@ -506,10 +417,6 @@ fn is_systemd_unit(asset: LinuxInstallAsset) -> bool {
     )
 }
 
-fn is_nix_asset(asset: LinuxInstallAsset) -> bool {
-    Path::new(asset.path_or_name()).starts_with("/nix")
-}
-
 fn manifest_preserves_nix(manifest: &UninstallManifest) -> Result<bool, UninstallError> {
     manifest
         .assets()
@@ -529,12 +436,13 @@ pub fn verify_linux_install_absent() -> Result<(), UninstallError> {
         return Err(UninstallError::backend_failure());
     }
     verify_linux_accounts_absent().map_err(|_| UninstallError::backend_failure())?;
-    for asset in linux_install_assets() {
-        if !LinuxAccountManager::handles(*asset) {
+    for asset in linux_product_install_assets() {
+        if asset.id() != "nix-root" && !LinuxAccountManager::handles(asset) {
             verify_fixed_path_absent(Path::new(asset.path_or_name()))?;
         }
     }
     verify_fixed_path_absent(Path::new(MANAGED_RUNTIME_ROOT))?;
+    verify_fixed_path_absent(Path::new("/var/lib/pkg-install"))?;
     verify_fixed_path_absent(Path::new("/run/pkg-install-auth"))
 }
 
@@ -638,8 +546,7 @@ mod tests {
     fn manifest_with_nix_root(
         nix_root_state: RecordedAssetState,
     ) -> Result<UninstallManifest, UninstallError> {
-        let records = linux_install_assets()
-            .iter()
+        let records = crate::assets::linux_product_install_assets()
             .map(|asset| {
                 RecordedAsset::new(
                     asset.id(),
@@ -703,16 +610,6 @@ mod tests {
     fn fixed_path_absence_refuses_an_existing_or_symlinked_target() {
         assert!(verify_fixed_path_absent(Path::new("/definitely/not/a/pkg/path")).is_ok());
         assert!(verify_fixed_path_absent(Path::new("/tmp")).is_err());
-    }
-
-    #[test]
-    fn shared_store_preservation_covers_only_the_nix_tree() -> Result<(), UninstallError> {
-        let nix_state = linux_asset("nix-state").ok_or_else(UninstallError::backend_failure)?;
-        let product_root =
-            linux_asset("product-root").ok_or_else(UninstallError::backend_failure)?;
-        assert!(is_nix_asset(nix_state));
-        assert!(!is_nix_asset(product_root));
-        Ok(())
     }
 
     #[test]

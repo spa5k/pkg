@@ -23,11 +23,9 @@ const TMPFILES_PATHS: &[&str] = &[
 const TMPFILES_CONFIG: &str = "/usr/lib/tmpfiles.d/pkg.conf";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
-const UNITS: [&str; 6] = [
-    "pkg-nix-daemon.socket",
+const UNITS: [&str; 4] = [
     "pkg-root-helper.socket",
     "pkg-nix-broker.socket",
-    "pkg-nix-daemon.service",
     "pkg-root-helper.service",
     "pkg-nix-broker.service",
 ];
@@ -589,11 +587,11 @@ mod tests {
         assert_eq!(state.calls[0], "daemon-reload");
         assert_eq!(state.calls[1], "tmpfiles");
         assert_eq!(
-            &state.calls[2..8],
+            &state.calls[2..2 + UNITS.len()],
             UNITS.map(|unit| format!("enable:{unit}"))
         );
         assert_eq!(
-            &state.calls[8..14],
+            &state.calls[2 + UNITS.len()..2 + UNITS.len() * 2],
             UNITS.map(|unit| format!("start:{unit}"))
         );
         Ok(())
@@ -741,7 +739,7 @@ mod tests {
                 .borrow()
                 .calls
                 .iter()
-                .any(|call| call == "disable:pkg-nix-daemon.socket")
+                .any(|call| call == "disable:pkg-root-helper.socket")
         );
         shared.borrow_mut().fail_call = None;
         manager.rollback()?;
@@ -768,21 +766,23 @@ mod tests {
                 .all(|unit| !unit.enabled && !unit.active)
         );
         let reverse = UNITS.into_iter().rev().collect::<Vec<_>>();
+        let stop_end = 1 + UNITS.len();
+        let disable_end = stop_end + UNITS.len();
         assert_eq!(
-            &state.calls[1..7],
+            &state.calls[1..stop_end],
             reverse
                 .iter()
                 .map(|unit| format!("stop:{unit}"))
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            &state.calls[7..13],
+            &state.calls[stop_end..disable_end],
             reverse
                 .iter()
                 .map(|unit| format!("disable:{unit}"))
                 .collect::<Vec<_>>()
         );
-        assert_eq!(state.calls[13], "daemon-reload");
+        assert_eq!(state.calls[disable_end], "daemon-reload");
         Ok(())
     }
 
@@ -807,7 +807,7 @@ mod tests {
                 .borrow()
                 .calls
                 .iter()
-                .any(|call| call == "disable:pkg-nix-daemon.socket")
+                .any(|call| call == "disable:pkg-root-helper.socket")
         );
     }
 }

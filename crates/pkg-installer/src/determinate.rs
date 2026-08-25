@@ -58,9 +58,26 @@ impl DeterminateInstaller {
     }
 
     /// Runs the closed uninstall operation through the fixed installed vendor
-    /// executable and fixed opaque receipt.
+    /// executable and fixed opaque receipt for install rollback only.
     pub fn uninstall(&self) -> Result<DeterminateProcessOutcome, DeterminateProcessError> {
         run_production(Path::new(INSTALLED_INSTALLER), self, Operation::Uninstall)
+    }
+
+    /// Replaces the current process with the fixed vendor uninstall operation.
+    ///
+    /// This terminal boundary is used only after all product state is removed.
+    /// On success, this function does not return.
+    pub fn exec_uninstall(&self) -> Result<(), DeterminateProcessError> {
+        let executable = Path::new(INSTALLED_INSTALLER);
+        authenticate_executable(executable, self, 0, Path::new("/"))?;
+        let error =
+            terminal_uninstall_command(executable, OsStr::new(HOME), OsStr::new(PATH)).exec();
+        Err(match error.kind() {
+            io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
+                DeterminateProcessError::InvalidExecutable
+            }
+            _ => DeterminateProcessError::SpawnFailed,
+        })
     }
 }
 
@@ -273,6 +290,17 @@ fn run(
     })
 }
 
+fn terminal_uninstall_command(executable: &Path, home: &OsStr, path: &OsStr) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", path)
+        .env("DETSYS_IDS_TELEMETRY", "disabled")
+        .args(["uninstall", "--no-confirm", RECEIPT]);
+    command
+}
+
 /// Root ownership plus a non-writable full parent chain is the immutability
 /// boundary between this check and spawn. A hostile root process is out of the
 /// product threat model because it can control either operation.
@@ -433,6 +461,62 @@ mod tests {
             owner: nix::unistd::Uid::effective().as_raw(),
             timeout,
         })
+    }
+
+    #[test]
+    fn terminal_uninstall_uses_exact_fixed_argv_and_environment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let command = terminal_uninstall_command(
+            Path::new(INSTALLED_INSTALLER),
+            OsStr::new(HOME),
+            OsStr::new(PATH),
+        );
+        assert_eq!(command.get_program(), OsStr::new(INSTALLED_INSTALLER));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                OsStr::new("uninstall"),
+                OsStr::new("--no-confirm"),
+                OsStr::new(RECEIPT),
+            ]
+        );
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            [
+                (
+                    OsStr::new("DETSYS_IDS_TELEMETRY"),
+                    Some(OsStr::new("disabled"))
+                ),
+                (OsStr::new("HOME"), Some(OsStr::new(HOME))),
+                (OsStr::new("PATH"), Some(OsStr::new(PATH))),
+            ]
+        );
+        assert!(
+            command
+                .get_envs()
+                .all(|(name, _)| name != OsStr::new("TMPDIR"))
+        );
+
+        let temporary = tempfile::tempdir()?;
+        let executable = write_script(
+            temporary.path(),
+            r#"
+printf 'HOME=%s\nPATH=%s\nTMPDIR=%s\nTELEMETRY=%s\nAMBIENT=%s\n' "$HOME" "$PATH" "${TMPDIR-unset}" "$DETSYS_IDS_TELEMETRY" "${CARGO_MANIFEST_DIR-unset}"
+for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
+"#,
+        )?;
+        let output = terminal_uninstall_command(
+            &executable,
+            OsStr::new("/fixed-root-home"),
+            OsStr::new("/fixed-path"),
+        )
+        .output()?;
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout)?,
+            "HOME=/fixed-root-home\nPATH=/fixed-path\nTMPDIR=unset\nTELEMETRY=disabled\nAMBIENT=unset\nARG=<uninstall>\nARG=<--no-confirm>\nARG=</nix/receipt.json>\n"
+        );
+        Ok(())
     }
 
     #[test]

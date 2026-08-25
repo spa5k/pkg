@@ -125,6 +125,9 @@ impl CommandEngine for UninstallEngine {
 }
 
 fn run_uninstall(cli: &Cli) -> ProcessExitCode {
+    if let Err(error) = validate_live_uninstall_output(cli) {
+        return write_command_error(cli, &error);
+    }
     match execute_command(
         cli,
         &mut UninstallEngine,
@@ -134,6 +137,17 @@ fn run_uninstall(cli: &Cli) -> ProcessExitCode {
         Ok(exit) => exit.into(),
         Err(_) => ProcessExitCode::FAILURE,
     }
+}
+
+fn validate_live_uninstall_output(cli: &Cli) -> Result<(), CommandError> {
+    if cfg!(target_os = "linux") && !cli.dry_run() && (cli.json() || cli.jsonl()) {
+        return Err(CommandError::new(
+            ExitCode::Config,
+            "live uninstall requires plain output",
+            "remove --json or --jsonl, or use --dry-run",
+        ));
+    }
+    Ok(())
 }
 
 fn uninstall_command_error(code: UninstallErrorCode) -> CommandError {
@@ -326,6 +340,23 @@ mod tests {
             for forbidden in ["nix", "/opt/", "/var/", "http", "store path", "trust root"] {
                 assert!(!public.to_ascii_lowercase().contains(forbidden));
             }
+        }
+    }
+
+    #[test]
+    fn live_uninstall_accepts_only_plain_output() {
+        let plain = Cli::try_parse_from(["pkg", "uninstall", "--yes"]).unwrap();
+        assert!(validate_live_uninstall_output(&plain).is_ok());
+
+        for flag in ["--json", "--jsonl"] {
+            let live = Cli::try_parse_from(["pkg", flag, "uninstall", "--yes"]).unwrap();
+            assert_eq!(
+                validate_live_uninstall_output(&live).is_err(),
+                cfg!(target_os = "linux")
+            );
+
+            let dry_run = Cli::try_parse_from(["pkg", flag, "--dry-run", "uninstall"]).unwrap();
+            assert!(validate_live_uninstall_output(&dry_run).is_ok());
         }
     }
 
