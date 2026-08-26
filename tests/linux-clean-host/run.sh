@@ -10,6 +10,12 @@ case "${1-}" in
     *) echo "usage: $0 [--keep-artifacts DIR]" >&2; exit 2 ;;
 esac
 
+docker_arch=$(docker version --format '{{.Server.Arch}}')
+case "$docker_arch" in
+    amd64|x86_64) ;;
+    *) echo "Linux clean-host proof requires a native x86_64/amd64 Docker server; found $docker_arch." >&2; exit 1 ;;
+esac
+
 repo=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 stage_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-linux-alpha.XXXXXXXX")
 raw_stage="$stage_root/raw"

@@ -45,4 +45,5 @@ clears it.
 This is a privileged Docker and systemd proof. It does not prove host boot or
 reboot, SELinux behavior, foreign-host coexistence, or a complete Linux
 distribution matrix. The retained artifacts use test keys. They are not a
-production release.
+production release. The proof requires a native x86-64 (`amd64`) Docker server.
+It refuses ARM servers instead of using x86-64 emulation.
