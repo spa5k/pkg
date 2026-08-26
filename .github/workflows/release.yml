@@ -149,16 +149,36 @@ jobs:
           cargo fetch --locked
 
       - name: Prove the staged artifact on a host without build inputs
+        shell: bash
         env:
           PKG_CARGO_ABOUT: ${{ github.workspace }}/target/release-tools/bin/cargo-about
-        run: tests/linux-clean-host/run.sh --keep-artifacts proof-artifacts
+        run: |
+          set -o pipefail
+          tests/linux-clean-host/run.sh --keep-artifacts proof-artifacts 2>&1 \
+            | tee "$RUNNER_TEMP/dn15-runtime.log"
+
+      - name: Add the complete runtime log to the retained evidence
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p proof-artifacts/evidence
+          if test -f "$RUNNER_TEMP/dn15-runtime.log"; then
+            cp "$RUNNER_TEMP/dn15-runtime.log" \
+              proof-artifacts/evidence/dn15-runtime.log
+          else
+            printf '%s\n' 'DN-15 proof did not start.' \
+              > proof-artifacts/evidence/dn15-runtime.log
+          fi
 
       - name: Verify the retained candidate name
+        if: ${{ success() }}
         run: |
           test -f proof-artifacts/pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz
           test -d proof-artifacts/evidence
 
       - name: Retain the candidate without publishing it
+        if: ${{ success() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pkg-v0.1.0-alpha.7-linux-x86_64-candidate
@@ -167,6 +187,7 @@ jobs:
           retention-days: 7
 
       - name: Retain the proof evidence without publishing it
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pkg-v0.1.0-alpha.7-x86_64-linux-proof

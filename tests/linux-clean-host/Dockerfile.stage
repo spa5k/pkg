@@ -6,7 +6,7 @@ WORKDIR /workspace
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-        gcc-x86-64-linux-gnu libc6-dev-amd64-cross \
+        gcc-x86-64-linux-gnu libc6-dev-amd64-cross python3 \
     && rm -rf /var/lib/apt/lists/* \
     && rustup target add x86_64-unknown-linux-gnu
 
@@ -36,6 +36,34 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
         /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
         /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
         /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries/
+RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
+    CARGO_TARGET_DIR=/target cargo test --locked --release \
+        --target x86_64-unknown-linux-gnu \
+        -p pkg-installer --lib --no-run --message-format=json \
+        > /tmp/pkg-installer-test.json \
+    && mkdir /test-binaries \
+    && python3 - <<'PY'
+import json
+import pathlib
+import shutil
+
+artifacts = []
+for line in pathlib.Path("/tmp/pkg-installer-test.json").read_text().splitlines():
+    message = json.loads(line)
+    target = message.get("target", {})
+    if (
+        message.get("reason") == "compiler-artifact"
+        and target.get("name") == "pkg_installer"
+        and target.get("kind") == ["lib"]
+        and message.get("profile", {}).get("test")
+        and message.get("executable")
+    ):
+        artifacts.append(pathlib.Path(message["executable"]))
+if len(artifacts) != 1:
+    raise SystemExit(f"expected one pkg-installer lib test executable, found {artifacts!r}")
+shutil.copy2(artifacts[0], "/test-binaries/pkg-installer-lib-tests")
+PY
 RUN set -eu; \
     stage_determinate() { \
         name="$1"; expected_length="$2"; expected_sha256="$3"; url="$4"; \
@@ -89,7 +117,8 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
 RUN mkdir /out \
     && cp -a /publication-1 /publication-2 /out/ \
     && mkdir /out/binaries \
-    && cp /binaries/pkg-install /out/binaries/
+    && cp /binaries/pkg-install /out/binaries/ \
+    && cp -a /test-binaries /out/
 
 FROM scratch
 COPY --from=builder /out /

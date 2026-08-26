@@ -3,7 +3,7 @@ FROM debian:bookworm-slim
 ENV container=docker
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-        ca-certificates curl dbus openssl passwd procps python3 sudo systemd systemd-sysv \
+        binutils ca-certificates curl dbus file openssl passwd procps python3 sudo systemd systemd-sysv \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/sh proof-user \
     && mkdir -p /etc/pkg-proof /usr/local/libexec \
@@ -37,6 +37,7 @@ COPY publication-2 /srv/pkg-releases/2
 COPY install.sh /usr/local/sbin/pkg-bootstrap
 COPY pkg-proof-server.py /usr/local/libexec/pkg-proof-server.py
 COPY pkg-proof-release.service /etc/systemd/system/pkg-proof-release.service
+COPY test-binaries/pkg-installer-lib-tests /usr/local/libexec/pkg-installer-lib-tests
 RUN ln -s /srv/pkg-releases/1 /srv/pkg-release \
     && systemctl enable pkg-proof-release.service
 

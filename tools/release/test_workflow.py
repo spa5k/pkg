@@ -10,6 +10,10 @@ PUBLISH_WORKFLOW = (ROOT / ".github/workflows/publish-release.yml").read_text(
     encoding="utf-8"
 )
 LINUX_HARNESS = (ROOT / "tests/linux-clean-host/run.sh").read_text(encoding="utf-8")
+LINUX_STAGE = (ROOT / "tests/linux-clean-host/Dockerfile.stage").read_text(
+    encoding="utf-8"
+)
+LINUX_HOST = (ROOT / "tests/linux-clean-host/Dockerfile").read_text(encoding="utf-8")
 MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
     encoding="utf-8"
 )
@@ -55,6 +59,21 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("proof-artifacts/evidence/", WORKFLOW)
         self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux-proof", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
+        self.assertIn("set -o pipefail", WORKFLOW)
+        self.assertIn('tee "$RUNNER_TEMP/dn15-runtime.log"', WORKFLOW)
+        self.assertIn("proof-artifacts/evidence/dn15-runtime.log", WORKFLOW)
+        self.assertIn("if: ${{ always() }}", WORKFLOW)
+        self.assertIn("if: ${{ success() }}", WORKFLOW)
+        self.assertIn(
+            "- name: Retain the candidate without publishing it\n"
+            "        if: ${{ success() }}",
+            WORKFLOW,
+        )
+        self.assertIn(
+            "- name: Retain the proof evidence without publishing it\n"
+            "        if: ${{ always() }}",
+            WORKFLOW,
+        )
 
     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
         self.assertIn("production-linux:", WORKFLOW)
@@ -77,11 +96,109 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertIn("uninstall_status=$?", LINUX_HARNESS)
         self.assertIn('exit "$uninstall_status"', LINUX_HARNESS)
-        for line in LINUX_HARNESS.splitlines():
-            if "uninstall" in line:
-                self.assertNotIn("--json", line)
+        self.assertIn("flag=--json", LINUX_HARNESS)
+        self.assertIn("flag=--jsonl", LINUX_HARNESS)
+        self.assertEqual(
+            LINUX_HARNESS.count(
+                'docker exec "$container" /usr/local/bin/pkg "$flag" --yes uninstall'
+            ),
+            1,
+        )
+        self.assertIn('test "$status" -eq 78', LINUX_HARNESS)
+        self.assertIn('test ! -s "$stderr"', LINUX_HARNESS)
+        self.assertIn('cmp "$before" "$after"', LINUX_HARNESS)
         self.assertNotIn("pkg-after-uninstall", LINUX_HARNESS)
         self.assertNotIn("idempotent uninstall", LINUX_HARNESS)
+
+    def test_linux_proof_binary_is_isolated_and_every_blocker_runs_twice(self) -> None:
+        build = (
+            "cargo test --locked --release \\\n"
+            "        --target x86_64-unknown-linux-gnu \\\n"
+            "        -p pkg-installer --lib --no-run --message-format=json"
+        )
+        self.assertEqual(LINUX_STAGE.count(build), 1)
+        self.assertIn(
+            'COPY test-binaries/pkg-installer-lib-tests '
+            '/usr/local/libexec/pkg-installer-lib-tests',
+            LINUX_HOST,
+        )
+        self.assertIn('cp -a "$raw_stage/test-binaries" "$artifact_context/"', LINUX_HARNESS)
+        self.assertGreater(
+            LINUX_HARNESS.index('package_alpha_candidate.py'),
+            LINUX_HARNESS.index('docker build'),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index('package_alpha_candidate.py'),
+            LINUX_HARNESS.index('cp -a "$raw_stage/test-binaries"'),
+        )
+        self.assertIn('test_binary_sha256', LINUX_HARNESS)
+        self.assertIn("meta\\tsigned_commit", LINUX_HARNESS)
+        self.assertIn("meta\\tdocker_server_arch", LINUX_HARNESS)
+        self.assertIn("file /usr/local/libexec/pkg-installer-lib-tests", LINUX_HARNESS)
+        self.assertIn(
+            "readelf --file-header /usr/local/libexec/pkg-installer-lib-tests",
+            LINUX_HARNESS,
+        )
+        self.assertIn("ldd /usr/local/libexec/pkg-installer-lib-tests", LINUX_HARNESS)
+        for case in (
+            "persisted-started-refusal",
+            "structured-json",
+            "structured-jsonl",
+            "sync-exec-restore",
+            "sync-exec-restore-failure",
+            "post-unlink-clear-restore",
+            "real-sigkill-unmarked",
+            "later-outcome-unknown",
+            "vendor-action-last",
+            "install-process-controls",
+            "package-operations",
+            "package-repair",
+            "terminal-uninstall",
+        ):
+            self.assertIn(case, LINUX_HARNESS)
+        self.assertIn('"$results")" -eq 26', LINUX_HARNESS)
+
+        block = LINUX_HARNESS.split('cat > "$filters" <<\'EOF\'\n', 1)[1].split(
+            "\nEOF\n", 1
+        )[0]
+        filters = [line.split("\t", 1)[1] for line in block.splitlines()]
+        expected_filters = {
+            "linux_backend::tests::production_preflight_refuses_persisted_started_without_later_mutation",
+            "bootstrap::tests::started_handoff_preflight_prevents_product_mutation_and_vendor_start",
+            "determinate_handoff::tests::handoff_record_is_atomic_private_strict_and_contains_no_receipt_data",
+            "determinate_handoff::tests::synchronous_exec_error_restores_exact_accepted_handoff",
+            "determinate_handoff::tests::synchronous_exec_and_restore_failure_is_fail_closed",
+            "determinate_handoff::tests::every_post_unlink_clear_failure_restores_exact_accepted_handoff",
+            "determinate_handoff::tests::sigkill_after_consume_leaves_unmarked_determinate_state_for_install_refusal",
+            "determinate_handoff::tests::sigkill_after_vendor_exec_keeps_later_outcome_unknown_and_refuses_retry",
+            "determinate_handoff::tests::terminal_uninstall_consumes_handoff_only_after_identity_revalidation",
+            "uninstall::tests::linux_vendor_uninstall_is_the_terminal_action",
+            "uninstall::tests::service_stop_is_a_cleanup_barrier",
+            "uninstall::tests::cleanup_failures_do_not_skip_residue_verification",
+            "uninstall::tests::linux_product_cleanup_failure_never_dispatches_terminal_vendor",
+            "uninstall::tests::residue_failure_has_priority_and_success_is_total",
+            "determinate::tests::operations_use_exact_argv_and_cleared_environment",
+            "determinate::tests::terminal_uninstall_uses_exact_fixed_argv_and_environment",
+            "determinate::tests::executable_authentication_rejects_every_invalid_shape",
+            "determinate::tests::both_large_streams_are_drained_and_capped",
+            "determinate::tests::exit_nonzero_and_signal_are_distinct",
+            "determinate::tests::late_success_is_not_reclassified_as_failure",
+            "determinate::tests::synchronous_supervisor_reaps_child_before_return",
+            "determinate::tests::diagnostics_never_expose_captured_bytes_or_paths",
+            "bootstrap::tests::only_exit_zero_is_vendor_success",
+            "determinate::tests::spawn_failure_is_reported_without_terminal_outcome",
+            "determinate::tests::wait_failure_is_reported_after_one_vendor_start",
+            "bootstrap::tests::simulated_caller_and_supervisor_loss_preserves_started_and_refuses_second_start",
+            "bootstrap::tests::crash_before_vendor_start_preserves_started_and_refuses_retry",
+            "bootstrap::tests::crash_after_exit_zero_before_acceptance_preserves_started",
+            "bootstrap::tests::failed_installed_state_validation_preserves_started",
+            "bootstrap::tests::exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once",
+            "bootstrap::tests::spawn_and_wait_uncertainty_preserves_started_and_refuses_retry",
+            "bootstrap::tests::failed_product_receipt_publication_preserves_started",
+        }
+        self.assertEqual(len(filters), 32)
+        self.assertEqual(len(set(filters)), 32)
+        self.assertEqual(set(filters), expected_filters)
 
     def test_macos_proof_stages_both_shared_runtime_archives(self) -> None:
         self.assertIn('runtimes="$RUNNER_TEMP/pkg-proof-runtimes"', MACOS_WORKFLOW)

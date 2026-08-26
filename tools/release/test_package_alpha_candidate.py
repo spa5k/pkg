@@ -237,8 +237,10 @@ class PackageAlphaCandidateTests(unittest.TestCase):
     def test_linux_archive_has_exact_checked_contents(self) -> None:
         staged = self.root / "linux"
         (staged / PACKAGER.RELEASE).mkdir(parents=True)
+        (staged / "test-binaries").mkdir()
         (staged / "install.sh").write_text("#!/bin/sh\n")
         (staged / PACKAGER.RELEASE / PACKAGER.LINUX_ARTIFACT).write_bytes(elf())
+        (staged / "test-binaries/pkg-installer-lib-tests").write_bytes(elf())
         output = self.root / "linux.tar.gz"
         self.package("linux-x86_64", staged, output)
 
@@ -263,6 +265,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
                 any(
                     name.endswith(("root.json", ".key", ".pk8", ".sigstore.json"))
                     or "publication-" in name
+                    or "test-binaries" in name
                     for name in members
                 )
             )

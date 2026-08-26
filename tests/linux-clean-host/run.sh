@@ -17,9 +17,14 @@ case "$docker_arch" in
 esac
 
 repo=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
+if [ -n "$(git -C "$repo" status --porcelain --untracked-files=all)" ]; then
+    echo "Linux clean-host proof requires an exact clean commit." >&2
+    exit 1
+fi
 stage_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-linux-alpha.XXXXXXXX")
 raw_stage="$stage_root/raw"
 artifact_context="$stage_root/artifact"
+evidence_root="$stage_root/evidence"
 docker_platform=linux/amd64
 
 image=pkg-linux-clean-host:local
@@ -78,10 +83,15 @@ if [ -n "$artifact_output" ]; then
     else
         (cd "$candidate_context" && shasum -a 256 --check SHA256SUMS)
     fi
+    if tar -tzf "$candidate" | grep -Eq '(^|/)test-binaries(/|$)'; then
+        echo "proof-only test binary was included in the candidate" >&2
+        exit 1
+    fi
     artifact_context=$candidate_context
 fi
 
 cp -a "$raw_stage/publication-1" "$raw_stage/publication-2" "$artifact_context/"
+cp -a "$raw_stage/test-binaries" "$artifact_context/"
 cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
     "$repo/tests/linux-clean-host/pkg-proof-release.service" \
     "$artifact_context/"
@@ -89,8 +99,61 @@ cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-1/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-2/"
 if [ -n "$artifact_output" ]; then
     mkdir "$artifact_output/evidence"
-    cp -a "$artifact_context/." "$artifact_output/evidence/"
+    evidence_root="$artifact_output/evidence"
 fi
+mkdir -p "$evidence_root"
+cp -a "$artifact_context/." "$evidence_root/"
+
+test_binary="$artifact_context/test-binaries/pkg-installer-lib-tests"
+test -f "$test_binary"
+test -x "$test_binary"
+cmp "$test_binary" "$evidence_root/test-binaries/pkg-installer-lib-tests"
+if command -v sha256sum >/dev/null 2>&1; then
+    test_binary_sha256=$(sha256sum "$test_binary" | awk '{print $1}')
+else
+    test_binary_sha256=$(shasum -a 256 "$test_binary" | awk '{print $1}')
+fi
+signed_commit=$(git -C "$repo" rev-parse HEAD)
+results="$evidence_root/dn15-results.tsv"
+filters="$evidence_root/dn15-filters.tsv"
+printf 'record\tcase\trun\tdetail\n' > "$results"
+printf 'meta\tsigned_commit\t-\t%s\n' "$signed_commit" >> "$results"
+printf 'meta\tdocker_server_arch\t-\t%s\n' "$docker_arch" >> "$results"
+printf 'meta\ttest_binary_sha256\t-\t%s\n' "$test_binary_sha256" >> "$results"
+cat > "$filters" <<'EOF'
+persisted-started-refusal	linux_backend::tests::production_preflight_refuses_persisted_started_without_later_mutation
+persisted-started-refusal	bootstrap::tests::started_handoff_preflight_prevents_product_mutation_and_vendor_start
+persisted-started-refusal	determinate_handoff::tests::handoff_record_is_atomic_private_strict_and_contains_no_receipt_data
+sync-exec-restore	determinate_handoff::tests::synchronous_exec_error_restores_exact_accepted_handoff
+sync-exec-restore-failure	determinate_handoff::tests::synchronous_exec_and_restore_failure_is_fail_closed
+post-unlink-clear-restore	determinate_handoff::tests::every_post_unlink_clear_failure_restores_exact_accepted_handoff
+real-sigkill-unmarked	determinate_handoff::tests::sigkill_after_consume_leaves_unmarked_determinate_state_for_install_refusal
+later-outcome-unknown	determinate_handoff::tests::sigkill_after_vendor_exec_keeps_later_outcome_unknown_and_refuses_retry
+vendor-action-last	determinate_handoff::tests::terminal_uninstall_consumes_handoff_only_after_identity_revalidation
+vendor-action-last	uninstall::tests::linux_vendor_uninstall_is_the_terminal_action
+vendor-action-last	uninstall::tests::service_stop_is_a_cleanup_barrier
+vendor-action-last	uninstall::tests::cleanup_failures_do_not_skip_residue_verification
+vendor-action-last	uninstall::tests::linux_product_cleanup_failure_never_dispatches_terminal_vendor
+vendor-action-last	uninstall::tests::residue_failure_has_priority_and_success_is_total
+install-process-controls	determinate::tests::operations_use_exact_argv_and_cleared_environment
+install-process-controls	determinate::tests::terminal_uninstall_uses_exact_fixed_argv_and_environment
+install-process-controls	determinate::tests::executable_authentication_rejects_every_invalid_shape
+install-process-controls	determinate::tests::both_large_streams_are_drained_and_capped
+install-process-controls	determinate::tests::exit_nonzero_and_signal_are_distinct
+install-process-controls	determinate::tests::late_success_is_not_reclassified_as_failure
+install-process-controls	determinate::tests::synchronous_supervisor_reaps_child_before_return
+install-process-controls	determinate::tests::diagnostics_never_expose_captured_bytes_or_paths
+install-process-controls	bootstrap::tests::only_exit_zero_is_vendor_success
+install-process-controls	determinate::tests::spawn_failure_is_reported_without_terminal_outcome
+install-process-controls	determinate::tests::wait_failure_is_reported_after_one_vendor_start
+install-process-controls	bootstrap::tests::simulated_caller_and_supervisor_loss_preserves_started_and_refuses_second_start
+install-process-controls	bootstrap::tests::crash_before_vendor_start_preserves_started_and_refuses_retry
+install-process-controls	bootstrap::tests::crash_after_exit_zero_before_acceptance_preserves_started
+install-process-controls	bootstrap::tests::failed_installed_state_validation_preserves_started
+install-process-controls	bootstrap::tests::exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once
+install-process-controls	bootstrap::tests::spawn_and_wait_uncertainty_preserves_started_and_refuses_retry
+install-process-controls	bootstrap::tests::failed_product_receipt_publication_preserves_started
+EOF
 
 echo "+ build clean host from staged artifacts only"
 docker build \
@@ -128,6 +191,176 @@ start_container() {
         --tmpfs /run/lock \
         "$image" >/dev/null
     wait_container_ready
+}
+
+record_pass() {
+    printf 'pass\t%s\t%s\t%s\n' "$1" "$2" "$3" >> "$results"
+}
+
+run_filter_group() {
+    case_name=$1
+    lifecycle_run=$2
+    log_directory="$evidence_root/test-logs/run-$lifecycle_run"
+    mkdir -p "$log_directory"
+    filter_index=0
+    found=0
+    tab=$(printf '\t')
+    while IFS="$tab" read -r listed_case filter; do
+        [ "$listed_case" = "$case_name" ] || continue
+        found=1
+        filter_index=$((filter_index + 1))
+        log="$log_directory/$case_name-$filter_index.log"
+        echo "+ exact test $filter"
+        if docker exec "$container" /usr/local/libexec/pkg-installer-lib-tests \
+            --exact "$filter" --nocapture > "$log" 2>&1; then
+            cat "$log"
+        else
+            status=$?
+            cat "$log" >&2
+            return "$status"
+        fi
+        grep -F "test $filter ... ok" "$log" >/dev/null
+        grep -F "test result: ok. 1 passed; 0 failed;" "$log" >/dev/null
+    done < "$filters"
+    test "$found" -eq 1
+    record_pass "$case_name" "$lifecycle_run" "$filter_index exact filters"
+}
+
+inspect_test_binary() {
+    lifecycle_run=$1
+    inspection="$evidence_root/test-binary-run-$lifecycle_run.txt"
+    docker exec "$container" sh -eu -c '
+        actual=$(sha256sum /usr/local/libexec/pkg-installer-lib-tests)
+        actual=${actual%% *}
+        test "$actual" = "$1"
+        printf "sha256: %s\n" "$actual"
+        file_output=$(file /usr/local/libexec/pkg-installer-lib-tests)
+        printf "%s\n" "$file_output"
+        printf "%s\n" "$file_output" | grep -F "ELF 64-bit" >/dev/null
+        printf "%s\n" "$file_output" | grep -F "x86-64" >/dev/null
+        readelf_output=$(readelf --file-header /usr/local/libexec/pkg-installer-lib-tests)
+        printf "%s\n" "$readelf_output"
+        printf "%s\n" "$readelf_output" \
+            | grep -Eq "^[[:space:]]*Machine:[[:space:]]+Advanced Micro Devices X86-64$"
+        ldd_output=$(ldd /usr/local/libexec/pkg-installer-lib-tests)
+        printf "%s\n" "$ldd_output"
+        ! printf "%s\n" "$ldd_output" | grep -F "not found" >/dev/null
+    ' sh "$test_binary_sha256" > "$inspection" 2>&1
+    cat "$inspection"
+}
+
+snapshot_uninstall_state() {
+    snapshot=$1
+    docker exec -i "$container" python3 - > "$snapshot" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import subprocess
+import sys
+
+paths = [
+    "/var/lib/pkg-install/determinate-handoff-v1.json",
+    "/run/pkg-install-handoff.lock",
+    "/nix/nix-installer",
+    "/nix/receipt.json",
+    "/opt/pkg/uninstall/manifest.json",
+    "/opt/pkg/bin/pkg-root-helper",
+    "/opt/pkg/bin/pkg-nix-broker",
+    "/usr/local/bin/pkg",
+    "/nix/var/nix/daemon-socket/socket",
+    "/run/pkg-helper/root-helper.sock",
+    "/run/pkg/broker.sock",
+]
+units = [
+    "nix-daemon.service",
+    "nix-daemon.socket",
+    "pkg-root-helper.service",
+    "pkg-root-helper.socket",
+    "pkg-nix-broker.service",
+    "pkg-nix-broker.socket",
+]
+
+
+def path_state(path):
+    metadata = os.lstat(path)
+    value = {
+        "device": metadata.st_dev,
+        "gid": metadata.st_gid,
+        "inode": metadata.st_ino,
+        "mode": format(stat.S_IMODE(metadata.st_mode), "04o"),
+        "mtime_ns": metadata.st_mtime_ns,
+        "nlink": metadata.st_nlink,
+        "size": metadata.st_size,
+        "type": stat.S_IFMT(metadata.st_mode),
+        "uid": metadata.st_uid,
+    }
+    if stat.S_ISREG(metadata.st_mode):
+        digest = hashlib.sha256()
+        with open(path, "rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        value["sha256"] = digest.hexdigest()
+    elif stat.S_ISLNK(metadata.st_mode):
+        value["target"] = os.readlink(path)
+    return value
+
+
+state = {"paths": {path: path_state(path) for path in paths}, "units": {}}
+for unit in units:
+    result = subprocess.run(
+        [
+            "systemctl",
+            "show",
+            "--no-pager",
+            "--property=ActiveState,SubState,UnitFileState,MainPID",
+            unit,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    state["units"][unit] = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+json.dump(state, sys.stdout, indent=2, sort_keys=True)
+print()
+PY
+}
+
+prove_structured_uninstall_refusal() {
+    mode=$1
+    lifecycle_run=$2
+    directory="$evidence_root/structured-uninstall/run-$lifecycle_run"
+    mkdir -p "$directory"
+    before="$directory/$mode-before.json"
+    after="$directory/$mode-after.json"
+    stdout="$directory/$mode.stdout"
+    stderr="$directory/$mode.stderr"
+    expected="$directory/$mode.expected"
+    snapshot_uninstall_state "$before"
+    case "$mode" in
+        json)
+            flag=--json
+            printf '%s\n' '{"schemaVersion":1,"ok":false,"command":"uninstall","error":{"symbol":"CONFIG","code":78,"message":"live uninstall requires plain output","hint":"remove --json or --jsonl, or use --dry-run"}}' > "$expected"
+            ;;
+        jsonl)
+            flag=--jsonl
+            printf '%s\n' '{"schemaVersion":1,"type":"result","ok":false,"command":"uninstall","error":{"symbol":"CONFIG","code":78,"message":"live uninstall requires plain output","hint":"remove --json or --jsonl, or use --dry-run"}}' > "$expected"
+            ;;
+        *) return 2 ;;
+    esac
+    set +e
+    docker exec "$container" /usr/local/bin/pkg "$flag" --yes uninstall \
+        > "$stdout" 2> "$stderr"
+    status=$?
+    set -e
+    test "$status" -eq 78
+    test ! -s "$stderr"
+    cmp "$expected" "$stdout"
+    snapshot_uninstall_state "$after"
+    cmp "$before" "$after"
+    record_pass "structured-$mode" "$lifecycle_run" "exit 78; exact CONFIG; zero mutation"
 }
 
 shipping_installer=/srv/pkg-release/v0.1.0-alpha.7/pkg-installer-x86_64-linux
@@ -221,6 +454,22 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
     ! su -s /bin/sh proof-user -c "test -r /opt/pkg/etc/pkg/nix.conf"
 '
 
+echo "+ inspect the proof-only test executable"
+inspect_test_binary "$1"
+
+for blocking_case in \
+    persisted-started-refusal \
+    sync-exec-restore \
+    sync-exec-restore-failure \
+    post-unlink-clear-restore \
+    real-sigkill-unmarked \
+    later-outcome-unknown \
+    vendor-action-last \
+    install-process-controls
+do
+    run_filter_group "$blocking_case" "$1"
+done
+
 echo "+ pkg install hello"
 docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --yes install hello"
 docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
@@ -311,6 +560,7 @@ printf '%s\n' "$repair_output" | grep -F '"status":"repaired-from-cache"' >/dev/
 docker exec "$container" su - proof-user -c \
     "/home/proof-user/.local/share/pkg/current/bin/hello" \
     | grep -F "Hello, world!" >/dev/null
+record_pass package-repair "$1" "live cache repair"
 
 echo "+ pkg remove all installed packages"
 docker exec "$container" su - proof-user -c \
@@ -318,6 +568,13 @@ docker exec "$container" su - proof-user -c \
 docker exec "$container" su - proof-user -c \
     "/usr/local/bin/pkg --json list" \
     | grep -F '"entries":[]' >/dev/null
+record_pass package-operations "$1" "live install, update, upgrade, rollback, remove"
+
+echo "+ refuse live JSON uninstall without mutation"
+prove_structured_uninstall_refusal json "$1"
+
+echo "+ refuse live JSONL uninstall without mutation"
+prove_structured_uninstall_refusal jsonl "$1"
 
 echo "+ verify terminal-exec uninstall inputs"
 docker exec "$container" sh -eu -c '
@@ -371,8 +628,10 @@ docker exec "$container" sh -eu -c '
     ! systemctl list-unit-files --no-legend \
         | grep -Eq "^pkg-(root-helper|nix-broker)\\.(service|socket)"
 '
+record_pass terminal-uninstall "$1" "plain exec status and postconditions"
 
 echo "+ record vendor-owned uninstall residue"
+residue_report="$evidence_root/vendor-residue-run-$1.txt"
 docker exec "$container" sh -eu -c '
     if test -e /nix; then
         find /nix -xdev -maxdepth 3 -printf "vendor residue: %M %u:%g %p\n" | sort
@@ -384,13 +643,40 @@ docker exec "$container" sh -eu -c '
     getent group | awk -F: '\''$1 == "nixbld" { print "vendor residue: group=" $1 }'\''
     systemctl list-unit-files --no-legend \
         | awk '\''$1 ~ /(nix|determinate)/ { print "vendor residue: unit=" $1 " state=" $2 }'\''
-'
+' > "$residue_report"
+cat "$residue_report"
 stop_container
 }
 
 for lifecycle_run in 1 2; do
     prove_lifecycle "$lifecycle_run"
 done
+
+for blocking_case in \
+    persisted-started-refusal \
+    structured-json \
+    structured-jsonl \
+    sync-exec-restore \
+    sync-exec-restore-failure \
+    post-unlink-clear-restore \
+    real-sigkill-unmarked \
+    later-outcome-unknown \
+    vendor-action-last \
+    install-process-controls \
+    package-operations \
+    package-repair \
+    terminal-uninstall
+do
+    test "$(awk -F '\t' -v case_name="$blocking_case" \
+        '$1 == "pass" && $2 == case_name { count += 1 } END { print count + 0 }' \
+        "$results")" -eq 2
+    for lifecycle_run in 1 2; do
+        test "$(awk -F '\t' -v case_name="$blocking_case" -v run="$lifecycle_run" \
+            '$1 == "pass" && $2 == case_name && $3 == run { count += 1 } END { print count + 0 }' \
+            "$results")" -eq 1
+    done
+done
+test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 26
 
 echo "Linux vendor install/uninstall and product package lifecycle proof passed."
 echo "Docker limits: no host boot or reboot, SELinux, foreign-host coexistence, or full distribution matrix."
