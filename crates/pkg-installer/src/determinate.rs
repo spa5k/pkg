@@ -14,14 +14,12 @@ use std::{
     path::Path,
     process::{Command, ExitStatus, Stdio},
     thread,
-    time::{Duration, Instant},
 };
 
 const DIAGNOSTIC_ENDPOINT: &str = "http://127.0.0.1:18080";
 const INSTALLED_INSTALLER: &str = "/nix/nix-installer";
 const RECEIPT: &str = "/nix/receipt.json";
 const OUTPUT_LIMIT: usize = 256 * 1024;
-const COMMAND_TIMEOUT: Duration = Duration::from_hours(2);
 
 #[cfg(target_os = "linux")]
 const HOME: &str = "/root";
@@ -95,8 +93,6 @@ pub enum DeterminateTerminal {
 pub struct DeterminateProcessOutcome {
     /// The final process terminal state.
     pub terminal: DeterminateTerminal,
-    /// Whether the process was still running when the fixed deadline passed.
-    pub timed_out: bool,
     /// Whether standard output exceeded the retained 256 KiB diagnostic cap.
     pub stdout_truncated: bool,
     /// Whether standard error exceeded the retained 256 KiB diagnostic cap.
@@ -107,8 +103,8 @@ impl fmt::Display for DeterminateProcessOutcome {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "terminal={:?}, timed_out={}, stdout_truncated={}, stderr_truncated={}",
-            self.terminal, self.timed_out, self.stdout_truncated, self.stderr_truncated
+            "terminal={:?}, stdout_truncated={}, stderr_truncated={}",
+            self.terminal, self.stdout_truncated, self.stderr_truncated
         )
     }
 }
@@ -176,7 +172,6 @@ struct ProcessSettings<'a> {
     tmpdir: &'a Path,
     trust_root: &'a Path,
     owner: u32,
-    timeout: Duration,
 }
 
 struct CapturedOutcome {
@@ -197,7 +192,6 @@ fn production_settings() -> ProcessSettings<'static> {
         tmpdir: Path::new(TMPDIR),
         trust_root: Path::new("/"),
         owner: 0,
-        timeout: COMMAND_TIMEOUT,
     }
 }
 
@@ -234,12 +228,10 @@ fn run(
         .args(operation.arguments())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+        .stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|_| DeterminateProcessError::SpawnFailed)?;
-    let started = Instant::now();
     let (stdout, stderr) = match (child.stdout.take(), child.stderr.take()) {
         (Some(stdout), Some(stderr)) => (stdout, stderr),
         pipes => {
@@ -265,7 +257,6 @@ fn run(
         return Err(DeterminateProcessError::OutputFailed);
     };
     let waited = child.wait();
-    let timed_out = started.elapsed() >= settings.timeout;
     let stdout = stdout_reader
         .join()
         .map_err(|_| DeterminateProcessError::OutputFailed)
@@ -281,7 +272,6 @@ fn run(
     Ok(CapturedOutcome {
         public: DeterminateProcessOutcome {
             terminal,
-            timed_out,
             stdout_truncated: stdout.truncated,
             stderr_truncated: stderr.truncated,
         },
@@ -451,7 +441,7 @@ mod tests {
         ))
     }
 
-    fn settings(root: &Path, timeout: Duration) -> Result<ProcessSettings<'_>, io::Error> {
+    fn settings(root: &Path) -> Result<ProcessSettings<'_>, io::Error> {
         fs::set_permissions(root, fs::Permissions::from_mode(0o700))?;
         Ok(ProcessSettings {
             home: OsStr::new("/fixed-root-home"),
@@ -459,7 +449,6 @@ mod tests {
             tmpdir: root,
             trust_root: root,
             owner: nix::unistd::Uid::effective().as_raw(),
-            timeout,
         })
     }
 
@@ -531,7 +520,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
 "#,
         )?;
         let identity = identity(&executable)?;
-        let settings = settings(temporary.path(), Duration::from_secs(2))?;
+        let settings = settings(temporary.path())?;
         for (operation, expected) in [
             (
                 Operation::Install,
@@ -666,7 +655,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             &executable,
             &identity(&executable)?,
             Operation::Install,
-            &settings(temporary.path(), Duration::from_secs(10))?,
+            &settings(temporary.path())?,
         )?;
         assert_eq!(result.stdout.len(), OUTPUT_LIMIT);
         assert_eq!(result.stderr.len(), OUTPUT_LIMIT);
@@ -684,7 +673,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             &executable,
             &identity(&executable)?,
             Operation::Install,
-            &settings(temporary.path(), Duration::from_secs(2))?,
+            &settings(temporary.path())?,
         )?;
         assert_eq!(nonzero.public.terminal, DeterminateTerminal::Exited(23));
 
@@ -693,33 +682,30 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             &executable,
             &identity(&executable)?,
             Operation::Install,
-            &settings(temporary.path(), Duration::from_secs(2))?,
+            &settings(temporary.path())?,
         )?;
         assert_eq!(signaled.public.terminal, DeterminateTerminal::Signaled(15));
         Ok(())
     }
 
     #[test]
-    fn timeout_observes_without_signaling_and_reaps() -> Result<(), Box<dyn std::error::Error>> {
+    fn late_success_is_not_reclassified_as_failure() -> Result<(), Box<dyn std::error::Error>> {
         let temporary = tempfile::tempdir()?;
-        let executable = write_script(temporary.path(), "printf '%s' $$; sleep 0.1; exit 7")?;
-        let started = Instant::now();
+        let executable = write_script(temporary.path(), "sleep 0.1; exit 0")?;
+        let started = std::time::Instant::now();
         let result = run(
             &executable,
             &identity(&executable)?,
             Operation::Install,
-            &settings(temporary.path(), Duration::from_millis(10))?,
+            &settings(temporary.path())?,
         )?;
-        assert!(started.elapsed() >= Duration::from_millis(90));
-        let pid = String::from_utf8(result.stdout)?.parse::<i32>()?;
-        assert!(result.public.timed_out);
-        assert_eq!(result.public.terminal, DeterminateTerminal::Exited(7));
-        assert_eq!(kill(Pid::from_raw(pid), None), Err(Errno::ESRCH));
+        assert!(started.elapsed() >= std::time::Duration::from_millis(90));
+        assert_eq!(result.public.terminal, DeterminateTerminal::Exited(0));
         Ok(())
     }
 
     #[test]
-    fn dropping_a_returned_result_cannot_orphan_the_child() -> Result<(), Box<dyn std::error::Error>>
+    fn synchronous_supervisor_reaps_child_before_return() -> Result<(), Box<dyn std::error::Error>>
     {
         let temporary = tempfile::tempdir()?;
         let executable = write_script(temporary.path(), "printf '%s' $$; exit 0")?;
@@ -727,10 +713,9 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             &executable,
             &identity(&executable)?,
             Operation::Install,
-            &settings(temporary.path(), Duration::from_secs(2))?,
+            &settings(temporary.path())?,
         )?;
         let pid = std::str::from_utf8(&result.stdout)?.parse::<i32>()?;
-        drop(result);
         assert_eq!(kill(Pid::from_raw(pid), None), Err(Errno::ESRCH));
         Ok(())
     }
@@ -750,26 +735,6 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
     }
 
     #[test]
-    fn child_starts_as_its_own_process_group() -> Result<(), Box<dyn std::error::Error>> {
-        let temporary = tempfile::tempdir()?;
-        let executable = write_script(
-            temporary.path(),
-            "pid=$$; pgid=$(ps -o pgid= -p \"$pid\" | tr -d ' '); printf '%s %s' \"$pid\" \"$pgid\"",
-        )?;
-        let result = run(
-            &executable,
-            &identity(&executable)?,
-            Operation::Install,
-            &settings(temporary.path(), Duration::from_secs(2))?,
-        )?;
-        let output = String::from_utf8(result.stdout)?;
-        let mut fields = output.split_whitespace();
-        assert_eq!(fields.next(), fields.next());
-        assert_eq!(fields.next(), None);
-        Ok(())
-    }
-
-    #[test]
     fn diagnostics_never_expose_captured_bytes_or_paths() -> Result<(), Box<dyn std::error::Error>>
     {
         let temporary = tempfile::tempdir()?;
@@ -781,7 +746,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             &executable,
             &identity(&executable)?,
             Operation::Install,
-            &settings(temporary.path(), Duration::from_secs(2))?,
+            &settings(temporary.path())?,
         )?;
         for rendered in [format!("{:?}", result.public), result.public.to_string()] {
             assert!(!rendered.contains("fake-secret"));

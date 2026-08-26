@@ -974,16 +974,17 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             let installer = DeterminateInstaller::new(staged.length(), staged.sha256());
             let handoff =
                 DeterminateHandoff::production().map_err(|_| BundleProvisionError::Failed)?;
-            match handoff.state().map_err(|_| BundleProvisionError::Failed)? {
-                DeterminateHandoffState::NotStarted => handoff
-                    .record_started()
-                    .map_err(|_| BundleProvisionError::Failed)?,
-                DeterminateHandoffState::Started => {}
-                DeterminateHandoffState::Accepted => return Err(BundleProvisionError::Failed),
-            }
-            let outcome = installer
-                .install(staged.path())
-                .map_err(|_| BundleProvisionError::Failed)?;
+            let outcome = run_with_new_determinate_handoff(
+                handoff.state().map_err(|_| BundleProvisionError::Failed)?,
+                || {
+                    handoff
+                        .record_started()
+                        .map_err(|_| BundleProvisionError::Failed)?;
+                    installer
+                        .install(staged.path())
+                        .map_err(|_| BundleProvisionError::Failed)
+                },
+            )?;
             if !determinate_succeeded(outcome) {
                 return Err(BundleProvisionError::RollbackIncomplete);
             }
@@ -1169,8 +1170,6 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         );
         let changed = presence == LinuxAssetPresence::Absent;
         complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
-        // Reused runtimes still start a temporary daemon. On Linux it has a
-        // parent-death signal. A later start removes only its stale root socket.
         Ok(true)
     }
     fn rollback_managed_runtime(&mut self) -> Result<(), InstallError> {
@@ -1304,7 +1303,19 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
 }
 
 fn determinate_succeeded(outcome: DeterminateProcessOutcome) -> bool {
-    !outcome.timed_out && outcome.terminal == DeterminateTerminal::Exited(0)
+    outcome.terminal == DeterminateTerminal::Exited(0)
+}
+
+fn run_with_new_determinate_handoff<T>(
+    state: DeterminateHandoffState,
+    start: impl FnOnce() -> Result<T, BundleProvisionError>,
+) -> Result<T, BundleProvisionError> {
+    match state {
+        DeterminateHandoffState::NotStarted => start(),
+        DeterminateHandoffState::Started | DeterminateHandoffState::Accepted => {
+            Err(BundleProvisionError::Failed)
+        }
+    }
 }
 
 fn asset_mutation(asset: LinuxInstallAsset) -> LinuxInstallMutation {
@@ -2044,6 +2055,42 @@ mod tests {
         ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
             Err(BundleProvisionError::RollbackIncomplete)
         }
+    }
+
+    #[test]
+    fn existing_handoff_refuses_before_vendor_spawn() {
+        for state in [
+            DeterminateHandoffState::Started,
+            DeterminateHandoffState::Accepted,
+        ] {
+            let spawned = std::cell::Cell::new(false);
+            let result = run_with_new_determinate_handoff(state, || {
+                spawned.set(true);
+                Ok(())
+            });
+
+            assert!(matches!(result, Err(BundleProvisionError::Failed)));
+            assert!(!spawned.get());
+        }
+    }
+
+    #[test]
+    fn only_exit_zero_is_vendor_success() {
+        let outcome = |terminal| DeterminateProcessOutcome {
+            terminal,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+
+        assert!(determinate_succeeded(outcome(DeterminateTerminal::Exited(
+            0
+        ))));
+        assert!(!determinate_succeeded(outcome(
+            DeterminateTerminal::Exited(1)
+        )));
+        assert!(!determinate_succeeded(outcome(
+            DeterminateTerminal::Signaled(15)
+        )));
     }
 
     #[derive(Default)]
