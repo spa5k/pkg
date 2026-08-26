@@ -5,7 +5,7 @@ release:
 
 - parse a closed release manifest and ask an external authority to authenticate
   distinct release/security attestations while reserving the next sequence;
-- require exactly the descriptor, two managed-Nix archives, two privileged
+- require exactly the descriptor, two legacy Base Nix archives, two privileged
   asset manifests, two per-system indexes, and the closed Determinate inventory
   as TUF targets;
 - keep the two `pkg` binaries and one Linux `pkg-install` binary with their
@@ -119,19 +119,26 @@ action in this alpha. The Docker proof does not invoke or validate
 `determinate-nixd upgrade`. General Base Nix repair has no supported vendor
 command or product action.
 
-Linux uninstall has a terminal process boundary. `pkg` first completes and
-verifies product-owned cleanup. It then revalidates the exact installed
-Determinate helper and opaque receipt. It consumes the Accepted Handoff
-immediately before `exec`. After a successful `exec`, no `pkg` uninstall process
-remains. The vendor command owns signals and the status returned to the calling
-shell. Determinate also owns its temporary directory, self-copy behavior, and
-native residue.
+Linux uninstall follows
+[ADR 0004](../../docs/adr/0004-determinate-base-nix-lifecycle.md). `pkg` first
+completes and verifies product-owned cleanup. It then revalidates the exact
+installed Determinate executable and opaque receipt. It consumes the Accepted
+Base Nix Handoff immediately before `exec`.
 
-A synchronous `exec` error restores the exact Accepted Handoff in production
-tests. A `SIGKILL` between Handoff consumption and `exec` leaves Base Nix
-unmarked and the Handoff absent. Alpha does not infer success, adopt that Nix,
-retry uninstall, or repair this state. Recovery is unsupported. A vendor failure
-after `exec` also has no `pkg` recovery path.
+After `exec` starts the vendor program, no `pkg` uninstall process remains. The
+vendor command owns signals and the status returned to the calling shell.
+Determinate also owns its temporary directory, self-copy behavior, native
+cleanup, and residue.
+
+A synchronous `exec` error restores the exact Accepted Base Nix Handoff. A
+`SIGKILL` between Base Nix Handoff consumption and `exec` leaves Base Nix
+unmarked and the Base Nix Handoff absent. `pkg` refuses this state.
+
+After the vendor program starts, `pkg` does not reconstruct its later outcome.
+A lost vendor result is an Unknown Base Nix Outcome. The later absence of Base
+Nix, the installed executable, the receipt, a service, or another vendor-owned
+path never proves uninstall success. `pkg` does not automatically retry, adopt,
+resume, or repair either unknown state.
 
 `/run/pkg-install-handoff.lock` is a deliberate volatile coordination exception.
 It is root-owned with mode `0600`. It is not lifecycle state. A reboot normally

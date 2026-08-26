@@ -66,6 +66,14 @@ _Avoid_: GC pin, keep-alive link
 One recoverable attempt to change Lifecycle State in the Package Lifecycle.
 _Avoid_: Command, transaction, job
 
+**Base Nix Handoff**:
+The durable product evidence that a Base Nix installation is accepted or is not safe to trust.
+_Avoid_: Handoff, install journal, Vendor Receipt
+
+**Unknown Base Nix Outcome**:
+A Base Nix result for which the product cannot prove success or failure.
+_Avoid_: Failure, interrupted install, recoverable install
+
 **Package Repair**:
 The user-initiated, verified restore of damaged store content. It is not atomic.
 _Avoid_: Repair, Base Nix repair, self-heal, auto-repair

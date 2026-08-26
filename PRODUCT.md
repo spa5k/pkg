@@ -8,14 +8,13 @@ Linux and macOS (terminal CLI).
 
 ## Stack
 
-**Current alpha:** Rust. `pkg` is a Rust CLI for Linux and macOS. It drives a
-bundled, pinned Nix runtime as a subprocess. Breaking changes can occur before
-v1.
+**Current source:** Rust. `pkg` is a Rust CLI for Linux and macOS. Linux installs
+Base Nix through pinned Determinate Nix Installer 3.22.1. macOS still uses the
+existing bundled Base Nix path until separate real-host proof passes. Breaking
+changes can occur before v1.
 
-**Accepted target:** `pkg` will install Base Nix through a pinned Determinate
-Nix Installer. This target is not delivered. The
-[active plan](plans/determinate-nix-stacked-prs.md) defines the proof and
-cutover work.
+The [active plan](plans/determinate-nix-stacked-prs.md) defines the remaining
+Linux proof, macOS cutover, and later cleanup.
 
 ## Users
 
@@ -23,13 +22,15 @@ Developers and terminal users who want familiar brew/paru-style package manageme
 
 ## Product Purpose
 
-Give terminal users safe, familiar package workflows by hiding a product-managed, pinned Nix runtime behind commands they already know. Success means a user can search, install, upgrade, and recover without ever touching raw Nix.
+Give terminal users safe, familiar package workflows while Base Nix stays
+outside the normal product interface. Success means a user can search, install,
+upgrade, and recover without using raw Nix.
 
 ## Positioning
 
-A product-managed, pinned Nix runtime hidden behind safe familiar commands. In
-the accepted target, Determinate will own Base Nix installation. `pkg` will
-continue to own package policy, locks, generations, UX, and package recovery.
+Familiar package commands over a machine-wide Base Nix runtime. Determinate owns
+the current Linux Base Nix install and uninstall behavior. `pkg` owns package
+policy, locks, Generations, the user experience, and package recovery.
 
 ## Operating Context
 
@@ -37,6 +38,10 @@ Daily terminal tasks: search, info, install, remove, update, upgrade, pin, histo
 
 ## Current Alpha Capabilities and Constraints
 
+- On Linux, `pkg` authenticates and starts one pinned Determinate Nix Installer 3.22.1 process. One supervisor drains bounded output, waits, and reaps. After vendor start, there is no safe product cancellation, signal, hard timeout, or parent-death guarantee.
+- A persisted `Started` Base Nix Handoff means an Unknown Base Nix Outcome. The product fails closed and does not retry. Only vendor exit status `0` plus installed-state validation can become `Accepted`.
+- Live Linux uninstall requires plain output. `pkg` removes and verifies product-owned state first. It then replaces itself with the authenticated vendor uninstaller. Determinate owns its signals, status, temporary files, native cleanup, and residue. Vendor-owned residue is accepted for alpha.
+- Base Nix repair and update are not product actions in this alpha. Package Repair remains a separate product-owned operation.
 - No raw Nix surface is ever exposed: no flake URLs, overlays, `NIX_PATH`, `--impure`, user substituters, or trust keys.
 - The catalog is exactly pinned Nixpkgs revisions; no floating channels or overlays.
 - `cache.nixos.org` is the only artifact cache in V1.

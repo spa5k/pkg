@@ -2,18 +2,21 @@
 
 Status: active implementation plan for an alpha product.
 
-Current status: **DN-00 through DN-07 are complete. The grouped DN-08–14 PR is active as a partial foundation and evidence PR. Clean-host DN-15 can start after PR 2 lands.**
+Current status: **Delivery PR 1 and PR 2 are complete. DN-15 Linux code is active. Its native x86-64 proof is not complete.**
 
 The current migration delivery has exactly four delivery PRs. PR 1 and PR 2 group several work packages. PR 3 has the single delivery label DN-15. PR 4 has the single delivery label DN-16. DN-17 through DN-32 remain work-package IDs inside PR 4. They do not create more delivery PRs.
 
 | Delivery PR | Scope | Status |
 |---|---|---|
 | 1 | DN-00 through DN-07: plan, alpha fixes, evidence, contract, and authenticated vendor foundation | Complete |
-| 2 | DN-08 through DN-14: inactive integration foundation and decision evidence | Active and partial |
-| 3 | DN-15: Linux completion | Ready for clean-host Linux after PR 2 |
+| 2 | DN-08 through DN-14: inactive integration foundation and decision evidence | Complete |
+| 3 | DN-15: Linux completion | Active; native x86-64 proof remains |
 | 4 | DN-16: Apple Silicon macOS completion; DN-17 through DN-32 are later cleanup, proof, and optional simplification checkpoints inside this PR | Blocked by Linux completion and macOS proof |
 
-PR 2 does not deliver the complete DN-08 through DN-14 lifecycle. It records safe inactive code, evidence limits, and the accepted ownership policy. After PR 2 lands, DN-15 can start on a clean Linux host. DN-12, DN-13, and DN-14 do not block that clean-host work.
+PR 2 does not deliver a platform cutover. It records safe inactive code,
+evidence limits, and the accepted ownership policy. PR 3 activates that work on
+Linux. DN-15 remains incomplete until the native x86-64 proof passes and its
+evidence is independently reviewed.
 
 DN-03 completed the standalone vendor evidence gate. This does not mean that vendor uninstall is clean. It does not mean that crash recovery succeeds. Linux functional behavior checks passed, but strict vendor cleanup failed. In the accepted macOS crash observation, state validation stops after the recovery install exits 0 because `_nixbld1` is missing.
 
@@ -22,14 +25,17 @@ The public evidence is in the [DN-03 parent decision](../spikes/s6-determinate-i
 - Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two Linux target Asset records.
 - macOS R10 completes the standalone lifecycle and residue evidence. Its functional lifecycle and reboots passed, but strict vendor cleanup failed. Crash R1 completes the required negative SIGKILL and reboot observation.
 - Clean vendor uninstall remains false on both platforms. DN-13 uses the fixed installed vendor executable and receipt paths. Determinate owns any self-copy and vendor residue. Vendor-owned residue is an accepted alpha limit. `pkg` removes only product-owned residue.
-- Successful crash recovery is unproved. DN-06 and DN-07 delivered the product controls. DN-16 owns the later crash-recovery proof. The companion DN-12 report concludes that there is no safe general vendor repair route. That report must land in PR 2 before the plan treats this result as accepted evidence.
-- Linux alpha proof can use a disposable privileged Docker container with systemd. It does not prove boot, reboot, SELinux, foreign-host behavior, or a full distribution matrix.
+- Successful crash recovery is unproved. DN-06 and DN-07 delivered the product controls. DN-16 owns the later macOS crash proof. The landed DN-12 report concludes that there is no safe general vendor repair route.
+- Linux alpha proof can use a disposable native x86-64 GitHub-hosted runner. The checked-in harness uses privileged Docker with systemd. The result proves only that runner and container environment. It does not prove boot, reboot, SELinux, foreign-host behavior, or a full distribution matrix.
 - macOS proof needs an Apple Silicon macOS VM or another disposable Mac. Docker cannot prove launchd, APFS, or `diskutil` behavior.
 - DN-04 documents the proved ownership and executable contract.
 
 This plan replaces the old custom Managed Nix implementation plan. The old plan is preserved in the [dated legacy archive](archive/2026-08-22-custom-managed-nix-v1/README.md). The design reasons and research are in the [architecture report](../architecture-report.html).
 
-This plan update does not change shipped behavior or current user instructions. DN-15 and DN-16 update the user documents for each platform when that platform changes. DN-20 completes the release documents after the final proof.
+DN-15 changes the current Linux source and candidate behavior. Its user
+documents describe that Linux behavior now. The published alpha release remains
+separate. DN-16 updates macOS behavior and documents after real macOS proof.
+DN-20 completes the release documents after final proof.
 
 ## 1. Accepted ownership
 
@@ -37,8 +43,13 @@ The accepted product boundary is:
 
 - Determinate owns the machine-wide **Base Nix lifecycle**.
 - Base Nix lifecycle means Base Nix install, supported repair, update, Base Nix service setup and initialization, and uninstall.
-- For Base Nix install, `pkg` owns pinned executable authentication, invocation, bounded progress, process supervision, cancellation, installed-state validation, Handoff, and redacted error reporting.
-- For live Base Nix uninstall, `pkg` owns only pre-`exec` format rejection, complete verified product-owned cleanup, exact installed executable and opaque receipt revalidation, Accepted Handoff and product-state consumption immediately before `exec`, and terminal vendor uninstall invocation.
+- For Base Nix install, `pkg` authenticates the pinned Determinate Nix Installer 3.22.1 executable and starts it once through an absolute path and fixed environment.
+- One supervisor drains bounded vendor diagnostic output, waits for the vendor process, and reaps it.
+- Vendor stdout and stderr are not a stable progress or completion protocol.
+- Before vendor start, `pkg` can refuse or stop. After vendor start, there is no proved safe cancellation, signal, hard timeout, or parent-death guarantee.
+- A persisted `Started` Base Nix Handoff means an Unknown Base Nix Outcome. It fails closed and does not authorize retry, resume, adoption, or reconstruction.
+- Only vendor exit status `0` plus successful installed-state validation can become Accepted Base Nix Handoff.
+- For live Base Nix uninstall, `pkg` owns only pre-`exec` format rejection, complete verified product-owned cleanup, exact installed executable and opaque receipt revalidation, Accepted Base Nix Handoff and product-state consumption immediately before `exec`, and terminal vendor uninstall invocation.
 - Determinate owns vendor uninstall signals, exit status, self-copy, native cleanup, temporary files, and residue.
 - `pkg` does not supervise, cancel, resume, retry, or reconstruct the vendor uninstall phase.
 - `pkg` does not implement a second Base Nix lifecycle engine or exact cleanup for vendor-owned residue.
@@ -50,28 +61,38 @@ The accepted product boundary is:
 - Local administrators can change machine-wide Nix. `pkg doctor` must detect important changes and fail closed where ownership is not clear.
 - Old private-alpha installations are a separate migration case. They do not block clean-host work. `pkg` must detect them and refuse unsafe automatic mutation. The product must not show a reset command that it cannot authenticate and run.
 
-Live structured JSON or JSONL uninstall is rejected before mutation. Dry-run uninstall can remain structured. A synchronous `exec` return means the vendor did not start; `pkg` restores exact Accepted Handoff under the same stable lock and revalidates identities. Restore failure fails closed. `SIGKILL` or crash after state consumption but before `exec` leaves Base Nix unmarked and Handoff absent. `pkg` refuses this state and does not infer success, retry, adopt, resume, repair, or reconstruct it. Alpha recovery is unsupported. After successful `exec`, Determinate owns signals and exit status. Later loss of vendor outcome remains `Unknown`.
+Live Base Nix uninstall requires plain terminal output. Structured JSON or JSONL
+output is rejected before mutation. Dry-run uninstall can remain structured. A
+synchronous `exec` return means the vendor did not start. `pkg` restores exact
+Accepted Base Nix Handoff under the same stable lock and revalidates identities.
+Restore failure fails closed. `SIGKILL` or crash after state consumption but
+before `exec` leaves Base Nix unmarked and Base Nix Handoff absent. `pkg` refuses
+this state and does not infer success, retry, adopt, resume, repair, or
+reconstruct it. Alpha recovery is unsupported. After `exec` starts the vendor
+program, Determinate owns signals and exit status. Later loss of the vendor result is an
+Unknown Base Nix Outcome.
 
 `/run/pkg-install-handoff.lock` is the one deliberate product coordination exception to product-residue removal. It is root-owned with mode `0600`. It is volatile coordination, not lifecycle state. It normally disappears at reboot.
 
-The trust rule for any future post-alpha update route is explicit. `pkg` authenticates the pinned outer Determinate installer and invokes vendor programs through fixed command paths. If that route uses `determinate-nixd upgrade`, `pkg` accepts Determinate's inner download and update trust chain. It does not pre-bind or re-authenticate the downloaded daemon or profile payload. After update, `pkg` runs functional installed-state health validation and reports failure. It does not create a second update ledger or extend Handoff only to mirror vendor update state. This security trade-off trusts Determinate for the inner payload and keeps one update engine. This rule does not approve or expose an update action by itself.
+The trust rule for any future post-alpha update route is explicit. `pkg` authenticates the pinned outer Determinate installer and invokes vendor programs through fixed command paths. If that route uses `determinate-nixd upgrade`, `pkg` accepts Determinate's inner download and update trust chain. It does not pre-bind or re-authenticate the downloaded daemon or profile payload. After update, `pkg` runs functional installed-state health validation and reports failure. It does not create a second update ledger or extend Base Nix Handoff only to mirror vendor update state. This security trade-off trusts Determinate for the inner payload and keeps one update engine. This rule does not approve or expose an update action by itself.
 
-## 2. Upstream observed baseline
+## 2. Pinned upstream baseline
 
-The following items are upstream observations. They are **not integrated product facts**.
+The product release metadata pins the following version, revision, license, and
+asset paths. Behavior statements remain limited to the recorded observations.
 
-- Observed package: `nix-installer` 3.22.1.
-- Observed full revision: `4132ad07a15ee7d88c096ac7172b7afb2672866b`.
-- Observed revision date: 2026-08-19.
-- Observed license: LGPL-2.1.
-- Observed receipt path: `/nix/receipt.json`.
-- Observed installed executable path: `/nix/nix-installer`.
+- Pinned package: `nix-installer` 3.22.1.
+- Pinned full revision: `4132ad07a15ee7d88c096ac7172b7afb2672866b`.
+- Revision date: 2026-08-19.
+- Pinned license: LGPL-2.1.
+- Fixed receipt path: `/nix/receipt.json`.
+- Fixed installed executable path: `/nix/nix-installer`.
 - Observed default: diagnostics are enabled.
 - Observed library status: the Rust library interface is experimental.
 - Observed install behavior: the installer can install Determinate Nix.
 - Observed uninstall behavior: the installed executable reads its receipt and reverses recorded work.
 
-DN-03 recorded the standalone product-facing evidence for the executable. This includes exact command arguments, argument order, exit status, output, diagnostics control, receipt behavior, update ownership, PATH behavior, platform support, and failure observations. DN-04 must map its contract text to that evidence.
+DN-03 recorded the standalone product-facing evidence for the executable. This includes exact command arguments, argument order, exit status, output, diagnostics control, receipt behavior, update ownership, PATH behavior, platform support, and failure observations. DN-04 maps its contract text to that evidence.
 
 The candidate executable call is only a test input. It is not the product contract. No later PR can cite an unproved candidate command as a stable interface.
 
@@ -135,22 +156,32 @@ When a parent PR squash-merges:
 
 Do not leave a descendant based on an old pre-squash commit. Do not merge a child before its parent. Do not combine published stack entries during merge. PR 1 and PR 2 are grouped delivery PRs from the start. PR 3 and PR 4 keep the single delivery labels DN-15 and DN-16.
 
-### 3.5 Local proof policy
+### 3.5 Platform proof policy
 
-GitHub Actions are disabled today. This plan does not enable them.
+Each PR records the exact command and result for each proof. A platform result
+includes the image, architecture, date, input asset digest, output logs, results
+matrix, and residue report. A reviewer must be able to repeat it.
 
-- Each PR records exact local commands and exact results.
-- Platform evidence includes the image, architecture, date, input asset digest, output logs, and residue report.
-- A reviewer must be able to repeat the proof.
-- A skipped platform check blocks a production cutover for that platform.
-- Local proof is not optional because remote Actions are disabled.
+A disposable native x86-64 GitHub-hosted runner can satisfy the Linux proof. It
+must run the checked-in privileged Docker and systemd harness against one exact
+signed commit. The complete logs, results matrix, and retained artifacts must be
+available after the run. At least one reviewer who did not run the proof must
+review that evidence before acceptance. A temporary proof branch does not
+become a release branch.
+
+A local native x86-64 host can also satisfy Linux proof when it produces the
+same evidence. An emulated x86-64 Docker server cannot satisfy the proof.
+
+macOS proof still requires an Apple Silicon macOS VM or another disposable Mac.
+A GitHub-hosted Linux result and Docker do not satisfy any macOS row. A skipped
+platform check blocks production cutover for that platform.
 
 ## 4. Dependency diagram and stop gates
 
 ```text
 PR 1: DN-00 through DN-07 [COMPLETE FOUNDATION]
   |
-PR 2: DN-08 through DN-14 [ACTIVE PARTIAL FOUNDATION AND EVIDENCE]
+PR 2: DN-08 through DN-14 [COMPLETE FOUNDATION AND EVIDENCE]
   |
 PR 3: DN-15 [LINUX COMPLETION]
   |
@@ -162,9 +193,9 @@ PR 4: DN-16 [MACOS COMPLETION]
 Stop gates:
 
 - **DN-03** is complete for standalone evidence. Its negative results define product limits and later platform proof.
-- **DN-05–07** blocks integration if asset authentication, safe process execution, or minimal Handoff recovery fails. It must not add a second vendor journal.
-- **DN-08–14** is an inactive partial foundation and evidence PR. PR 2 removes the unused ownership partition and its exact-partition tests while preserving the normalized install inventory. It must land its evidence reports and accurate inactive behavior. The accepted policy supersedes the old DN-12, DN-13, and DN-14 clean-host blockers. Determinate owns supported repair, update, and uninstall. Vendor residue is accepted for alpha. Old private-alpha migration is separate.
-- **DN-15** blocks Linux deletion until clean-host Base Nix install, terminal vendor uninstall, package behavior, and the documented failure cases pass the Linux proof.
+- **DN-05–07** blocks integration if asset authentication, safe process execution, or minimal Base Nix Handoff handling fails. It must not add a second vendor journal.
+- **DN-08–14** is a complete inactive foundation and evidence PR. PR 2 removes the unused ownership partition and its exact-partition tests while preserving the normalized install inventory. Determinate owns supported repair, update, and uninstall. Vendor residue is accepted for alpha. Old private-alpha migration is separate.
+- **DN-15** blocks Linux deletion until clean-host Base Nix install, terminal vendor uninstall, package behavior, and the honest process cases pass on a native x86-64 proof host. The complete evidence must receive independent review.
 - **DN-16** blocks macOS deletion until Apple Silicon proves Base Nix install, terminal vendor uninstall, package operations, interruption and crash behavior, real reboot behavior, and the documented failure cases.
 - **DN-20** blocks the optional simplification tail until the core cutover is complete.
 - **DN-26** blocks local-build admission changes until every build duty has a proved replacement.
@@ -187,8 +218,8 @@ Deletion always follows proof. A file name in the candidate-delete column is not
 | Linux Base Nix install | `installer.rs`, `linux_*`, Base-Nix parts of `assets.rs` and `bootstrap.rs` | Replace with the vendor executable after Linux cutover proof. | DN-17, and only proved Base-Nix parts. |
 | macOS Base Nix install | `macos_*`, `store_apfs.rs`, Base-Nix launchd and filesystem parts | Replace with the vendor executable after macOS cutover proof. | DN-18, and only proved Base-Nix parts. |
 | Private runtime provisioning | `pkg-nix/src/managed/{runtime_archive,installer_bundle,provision,daemon,accounts}.rs` | Keep until both platforms use the vendor lifecycle and package parity passes. | DN-19, by proved symbol and caller set. |
-| Base Nix ownership and journals | `managed/ownership.rs`, platform install journals, store/repair journals | Keep until handoff and vendor receipt behavior are proved. | DN-17 through DN-19. Keep package journals. |
-| Uninstall | `UninstallEngine`, platform uninstall modules | Reject live structured output. Finish and verify product cleanup. Under the stable lock, revalidate identity, consume Accepted state immediately before `exec`, and start terminal vendor uninstall. Restore Accepted state on synchronous `exec` return. Refuse the unmarked crash window. | The DN-13 subphase starts the inactive path. DN-17 through DN-19 remove obsolete Base-Nix paths. |
+| Base Nix ownership and journals | `managed/ownership.rs`, platform install journals, store/repair journals | Keep until Base Nix Handoff and vendor receipt behavior are proved. | DN-17 through DN-19. Keep package journals. |
+| Uninstall | `UninstallEngine`, platform uninstall modules | Require plain output. Finish and verify product cleanup. Under the stable lock, revalidate identity, consume Accepted Base Nix Handoff immediately before `exec`, and start terminal vendor uninstall. Restore Accepted state on synchronous `exec` return. Refuse the unmarked crash window. | The DN-13 subphase starts the inactive path. DN-17 through DN-19 remove obsolete Base-Nix paths. |
 | Wire contracts | `pkg-nix/src/{contract,framing}.rs` | Keep during core migration. These files mix live product grammar with candidate obsolete grammar. | DN-30 deletes only dead messages after caller and test proof. |
 | Release assets | `tools/release`, channel metadata, runtime manifests | Add the pinned vendor executable first. Keep old assets until both cutovers pass. | DN-19 removes old Base-Nix artifacts. |
 | Tests | package, contract, parity, recovery, and platform tests | Keep and adapt. Move fakes only after the production seam changes. | DN-22 deletes broad fakes after replacement tests pass. |
@@ -259,7 +290,7 @@ DN-00 through DN-32 are work packages and checkpoints inside the four delivery P
 - **Interface and invariants:** execute a pinned file by absolute path; verify its digest before privilege; never use `curl|sh`; never use PATH lookup; do not parse plan JSON as a product interface.
 - **Implementation steps:** acquire version 3.22.1 for each supported target. Record the full revision and digest. Test exact observed arguments and argument order. Prove diagnostics control. Install the executable on standalone clean hosts. Inspect `/nix/receipt.json` and `/nix/nix-installer`. Test standalone repeat install, SIGKILL, reboot, repair, update, and uninstall behavior. Test foreign and existing Nix only as inputs to the standalone executable. Record Intel macOS asset availability.
 - **Tests:** the DN-03 rows in the platform matrix in section 10 were observed. Linux R12 proves broad Linux x86_64 behavior. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records. macOS R10 proves lifecycle and residue behavior. Crash R1 records an accepted negative crash result after `_nixbld1` is missing.
-- **Proof and evidence:** the [parent decision](../spikes/s6-determinate-installer/FINDINGS.md) links the accepted public results. The [Linux report](../spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md) owns the Linux evidence. The [macOS report](../spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md) owns R10 and Crash R1. DN-03 does not prove `pkg` Handoff, package lifecycle, product repair, product uninstall, product cleanup, or production cutover.
+- **Proof and evidence:** the [parent decision](../spikes/s6-determinate-installer/FINDINGS.md) links the accepted public results. The [Linux report](../spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md) owns the Linux evidence. The [macOS report](../spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md) owns R10 and Crash R1. DN-03 does not prove `pkg` Base Nix Handoff, package lifecycle, product repair, product uninstall, product cleanup, or production cutover.
 - **Deletion:** none.
 - **Rollback or stop rule:** DN-03 evidence is complete. DN-06 and DN-07 own fail-closed product controls. DN-16 owns later macOS crash-recovery proof. DN-13 records accepted vendor residue instead of creating a cleanup engine. The companion DN-12 report must land in PR 2 before its capability limits are accepted. Do not copy or fork vendor source.
 - **Review focus:** observations versus conclusions, repeatability, licensing, diagnostics, update owner, and crash recovery.
@@ -274,7 +305,7 @@ DN-00 through DN-32 are work packages and checkpoints inside the four delivery P
 - **Why now:** documentation must follow proof. It must not turn guesses into architecture.
 - **Likely files and symbols:** `CONTEXT.md`, new `docs/adr/0004-determinate-base-nix-lifecycle.md`, ADR 0003 status note.
 - **Interface and invariants:** `CONTEXT.md` uses product-visible terms only. ADR 0003 remains valid for product package privilege. It is marked partially superseded for Base Nix lifecycle work only.
-- **Implementation steps:** add Base Nix, Base Nix Lifecycle, and Package Lifecycle to `CONTEXT.md`. Add Handoff only if users or product behavior expose it. Put the Determinate executable, Vendor Receipt and path, diagnostics, pinning, upstream revision, and rejected alternatives in ADR 0004. Link DN-03 evidence. Mark ADR 0003 partially superseded without rewriting history.
+- **Implementation steps:** add Base Nix, Base Nix Lifecycle, Package Lifecycle, Base Nix Handoff, and Unknown Base Nix Outcome to `CONTEXT.md`. Put the Determinate executable, Vendor Receipt and path, diagnostics, pinning, upstream revision, and rejected alternatives in ADR 0004. Link DN-03 evidence. Mark ADR 0003 partially superseded without rewriting history.
 - **Tests:** documentation link check; terminology search for contradictory active definitions.
 - **Proof and evidence:** every ADR claim maps to a DN-03 result.
 - **Deletion:** remove obsolete current-context statements only. Do not delete old ADRs.
@@ -287,10 +318,10 @@ DN-00 through DN-32 are work packages and checkpoints inside the four delivery P
 - **Status:** complete.
 - **Branch:** `dn/05-07-vendor-foundation`.
 - **Delivery PR:** PR 1, after the DN-04 checkpoint.
-- **Goal:** ship pinned vendor assets, one private install process Adapter, and minimal Vendor Receipt and Handoff validation in one review.
+- **Goal:** ship pinned vendor assets, one private install process Adapter, and minimal Vendor Receipt and Base Nix Handoff validation in one review.
 - **Order:** DN-05, DN-06, and DN-07 are ordered work-package and checkpoint IDs. Implement them in this order. End each checkpoint with one signed, green, independently reviewable commit.
 - **Deletion:** none. Keep old Base Nix assets until both platform cutovers pass. This PR adds no second receipt or vendor action journal.
-- **Combined stop rule:** do not merge if source compliance, a supported target asset, exact safe invocation, or deterministic Handoff recovery is missing.
+- **Combined stop rule:** do not merge if source compliance, a supported target asset, exact safe invocation, or fail-closed Base Nix Handoff handling is missing.
 
 **DN-05 subphase — Pinned vendor assets**
 
@@ -303,28 +334,28 @@ DN-00 through DN-32 are work packages and checkpoints inside the four delivery P
 **DN-06 subphase — Private install process Adapter**
 
 - **Goal and files:** add one concrete vendor install process Adapter in `pkg-installer`. Reuse `std::process::Command` or the current async process support. Add installer errors and fake-executable tests.
-- **Interface:** for install, use an absolute authenticated path and only proved arguments. Set or scrub the required environment. Drain stdout and stderr concurrently into bounded storage. Keep private data out of logs. Do not kill on timeout unless DN-03 proves recovery. Send only proved signals. A lost client must not silently orphan or kill a privileged install child. Terminal uninstall does not use this child-process boundary. Add no trait or provider framework.
-- **Work:** define one concrete `DeterminateInstaller` for install. Build the install command in one place. Reject a missing or changed executable. Model install client loss, timeout, and signal results explicitly. Use a fake executable that records arguments and controls output. Add no alpha Base Nix repair or update route. DN-13 owns terminal uninstall.
-- **Tests and proof:** test install arguments, environment, exit codes, both-pipe back-pressure, bounded storage, log redaction, client disconnect, timeout without an unproved kill, proved signals, and a wrong file. The tests must prove exact install invocation without root or a VM.
-- **Gate and review:** remove the Adapter if it requires plan JSON, source embedding, or a broad abstraction. Review process safety, cancellation, minimal surface, and every accepted external outcome.
+- **Interface:** for install, use an absolute authenticated path and only proved arguments. Set or scrub the required environment. Start one vendor process. Drain stdout and stderr concurrently into bounded diagnostic storage. Keep private data out of logs. Do not use vendor output as a stable progress or completion protocol. One supervisor waits for and reaps the process. Before start, the product can refuse or stop. After start, it has no proved safe cancellation, signal, hard timeout, or parent-death guarantee. Terminal uninstall does not use this child-process interface. Add no trait or provider framework.
+- **Work:** define one concrete `DeterminateInstaller` for install. Build the install command in one place. Reject a missing or changed executable. Keep one supervisor alive until wait and output drain finish. Report the observed terminal result without converting it to installed-state success. Use a fake executable that records arguments and controls output. Add no alpha Base Nix repair or update route. DN-13 owns terminal uninstall.
+- **Tests and proof:** test install arguments, environment, exit codes, signaled exit, both-pipe back-pressure, bounded storage, log redaction, caller loss, supervisor wait and reap, spawn failure, wait failure, and a wrong file. Prove that caller loss does not cause a second start. Record that no post-start cancellation, signal, hard timeout, or parent-death promise exists. The tests must prove exact install invocation without root or a VM.
+- **Gate and review:** remove the Adapter if it requires plan JSON, source embedding, or a broad abstraction. Review process safety, one-start behavior, wait and reap behavior, minimal surface, and every observed external outcome.
 
-**DN-07 subphase — Vendor Receipt and Handoff**
+**DN-07 subphase — Vendor Receipt and Base Nix Handoff**
 
 - **Goal and files:** persist only the minimum restart state in `pkg-installer` bootstrap state, an opaque receipt validator, and current installer recovery entry points.
-- **Interface:** no Handoff state means `NotStarted`. Persist only `Started` and `Accepted`. `Accepted` stores the minimum stable executable and receipt identity. Do not parse or copy the vendor action list. Never delete unknown `/nix` content.
-- **Work:** durably write `Started` before execution. Validate the vendor result. Atomically write `Accepted`. Classify and report state on restart. Atomically update identity after a proved repair or update changes the executable or receipt.
-- **Tests and proof:** inject a crash before launch, during launch, and after vendor success but before state update. Test missing or damaged receipts, changed executables, and unknown `/nix`. Every state must fail closed and produce deterministic restart classification.
+- **Interface:** no Base Nix Handoff state means `NotStarted`. Persist only `Started` and `Accepted`. A persisted `Started` state means an Unknown Base Nix Outcome. It fails closed and does not authorize retry. Only exit status `0` plus installed-state validation can become `Accepted`. `Accepted` stores the minimum stable executable and receipt identity. Do not parse or copy the vendor action list. Never delete unknown `/nix` content.
+- **Work:** durably write `Started` before vendor start. Start the vendor once. Keep `Started` after any nonzero exit, signal, lost supervisor, wait failure, or failed installed-state validation. Atomically write `Accepted` only after exit status `0` and successful validation. Classify and report state on restart. Atomically update identity after a proved repair or update changes the executable or receipt.
+- **Tests and proof:** inject a crash before vendor start, while it runs, and after exit status `0` but before acceptance. Test nonzero exit, signal, a persisted `Started` state after simulated supervisor loss, failed validation, missing or damaged receipts, changed executables, and unknown `/nix`. Each persisted `Started` case must be an Unknown Base Nix Outcome, fail closed, and never start the vendor again.
 - **Gate and review:** stop if safe recovery needs private vendor action replay. Review durability, the opaque seam, and the absence of a parallel ownership ledger.
 
 ### DN-08–14 work-package group — Build the inactive lifecycle integration
 
-- **Status:** active and partial. This PR contains inactive foundation code and decision evidence. It does not complete DN-08 through DN-14.
+- **Status:** complete as an inactive foundation and evidence PR. It does not claim a platform cutover.
 - **Branch:** `dn/08-14-lifecycle-integration`.
 - **Delivery PR:** PR 2, based on PR 1.
 - **Goal:** keep the safe inactive integration foundation and record the accepted lifecycle ownership policy and its evidence limits.
 - **Execution:** DN-08 through DN-14 are logical work areas inside one delivery PR. They are not required commit boundaries or a required chronological commit order. Implementation can combine or reorder them when dependencies remain safe. Keep every route inactive in shipped behavior. The final PR must be green, signed, and reviewed as a whole.
 - **Combined deletion:** delete the unused ownership partition and its exact-partition tests. Preserve the normalized install inventory. Keep old detection and PATH code unchanged. DN-17 through DN-19 own any later deletion of obsolete Base Nix detection or PATH code after platform cutover proof. Add no compatibility bridge.
-- **Combined stop rule:** do not call this PR a complete lifecycle delivery. PR 2 must preserve the normalized inventory and include its evidence reports. After it lands, clean-host DN-15 can start. Platform behavior remains inactive until DN-15 or DN-16 proves and enables it.
+- **Combined stop rule:** do not call this PR a platform cutover. PR 2 preserves the normalized inventory and includes its evidence reports. Platform behavior remains inactive until DN-15 or DN-16 proves and enables it.
 
 Current work-area result:
 
@@ -333,7 +364,7 @@ Current work-area result:
 - **DN-10:** partial. Inactive classification and Doctor behavior exist. The privileged producer and platform proof remain gated.
 - **DN-11:** evidence is partial. Production PATH behavior stays unchanged. Platform launch-context proof remains gated.
 - **DN-12:** the companion PR-2 evidence report records the vendor capability limits. The report must land before PR 2 can claim this proof. Determinate owns supported Base Nix repair and update. Package Repair stays product-owned. No speculative product repair or update engine is added.
-- **DN-13:** partial. The inactive path finishes and verifies product cleanup, revalidates fixed `/nix/nix-installer` and opaque `/nix/receipt.json`, consumes Accepted Handoff and product state, then uses terminal `exec`. Determinate owns the vendor phase and residue.
+- **DN-13:** partial. The inactive path finishes and verifies product cleanup, revalidates fixed `/nix/nix-installer` and opaque `/nix/receipt.json`, consumes Accepted Base Nix Handoff and product state, then uses terminal `exec`. Determinate owns the vendor phase and residue.
 - **DN-14:** NO-GO for an old-alpha reset route. There is no authenticated fallback executable. Old private-alpha migration is separate and does not block clean hosts. No dead refusal or reset code is added.
 
 **DN-08 subphase — Remove the unused ownership partition**
@@ -350,7 +381,7 @@ Current work-area result:
 
 **DN-10 subphase — Existing and foreign Nix classification**
 
-- **Files and interface:** update managed detection, Doctor, bootstrap preflight, and receipt and executable validation. Accept only a clean host or stable Handoff from the new flow. Report foreign Nix, upstream Nix, unmarked Determinate, damaged accepted state, and old alpha separately. All unsafe states block automatic install.
+- **Files and interface:** update managed detection, Doctor, bootstrap preflight, and receipt and executable validation. Accept only a clean host or Accepted Base Nix Handoff from the new flow. Report foreign Nix, upstream Nix, unmarked Determinate, damaged accepted state, and old alpha separately. All unsafe states block automatic install.
 - **Work and tests:** classify only observable facts. Add clear Doctor actions and installer refusal. Test clean, accepted, foreign, upstream, unmarked Determinate, damaged accepted, and old-alpha fixtures. Each fixture must map to one stable classification and one safe action. Keep automatic adoption as future work. Keep all current production detection code in place.
 - **Gate:** every unknown state must fail before privilege or mutation. Stop if two unsafe states can produce accepted identity. Never repair, adopt, or delete unknown state automatically. Review false acceptance, user instructions, and the lack of auto-adoption.
 
@@ -364,18 +395,18 @@ Current work-area result:
 
 - **Decision:** Determinate owns supported Base Nix repair and update. The companion PR-2 report shows that there is no general repair command and that update interruption is not a proved product contract. These are support limits, not reasons to build a second engine. The report must land before PR 2 claims this evidence. Package Repair stays product-owned.
 - **Work:** expose no Base Nix repair or update action on any alpha platform. A future post-alpha product route needs separate approval. If that route uses `determinate-nixd upgrade`, it must use the fixed command path and the accepted vendor inner trust chain. It must run functional installed-state health validation. Add no product Base Nix repair provider, update engine, or speculative route.
-- **Tests and gate:** retain the research evidence. Check that Package Repair remains separate. Check that PR 3 exposes no Base Nix repair or update action. Do not create a second update ledger or extend Handoff only to mirror vendor update state. This evidence does not block clean-host DN-15 after PR 2 lands.
+- **Tests and gate:** retain the research evidence. Check that Package Repair remains separate. Check that PR 3 exposes no Base Nix repair or update action. Do not create a second update ledger or extend Base Nix Handoff only to mirror vendor update state. This evidence does not block clean-host DN-15 after PR 2 lands.
 
 **DN-13 subphase — Terminal vendor uninstall**
 
-- **Invocation:** reject live structured JSON or JSONL before mutation. Dry-run can remain structured. Finish and verify all product-owned cleanup. Revalidate exact `/nix/nix-installer` and opaque `/nix/receipt.json`. Consume Accepted Handoff and product state. Use `exec` to replace the `pkg` process with the fixed vendor uninstall invocation.
-- **Ordering and lock:** all product cleanup finishes before the vendor action. Then hold stable `/run/pkg-install-handoff.lock`, revalidate identities, consume exact Accepted Handoff immediately before `exec`, and start terminal vendor uninstall. The lock is root-owned mode `0600`, volatile coordination, not lifecycle state, and the one deliberate product-residue exception. It normally disappears at reboot.
+- **Invocation:** require plain output and reject live structured JSON or JSONL before mutation. Dry-run can remain structured. Finish and verify all product-owned cleanup. Revalidate exact `/nix/nix-installer` and opaque `/nix/receipt.json`. Consume Accepted Base Nix Handoff and product state. Use `exec` to replace the `pkg` process with the fixed vendor uninstall invocation.
+- **Ordering and lock:** all product cleanup finishes before the vendor action. Then hold stable `/run/pkg-install-handoff.lock`, revalidate identities, consume exact Accepted Base Nix Handoff immediately before `exec`, and start terminal vendor uninstall. The lock is root-owned mode `0600`, volatile coordination, not lifecycle state, and the one deliberate product-residue exception. It normally disappears at reboot.
 - **Policy:** Determinate owns signals and exit status after `exec`, plus self-copy, native cleanup, temporary files, and residue. `pkg` does not supervise, cancel, resume, retry, or reconstruct that phase. Product cleanup always finishes before vendor cleanup. The vendor action is last.
-- **Synchronous return:** if `exec` returns, the vendor did not start. Under the same stable lock, restore exact Accepted Handoff and revalidate executable and receipt identities. Restore or identity-validation failure fails closed.
-- **Crash window:** `SIGKILL` or crash between Accepted-state consumption and `exec` leaves Base Nix unmarked and Handoff absent. The vendor did not start. Refuse the state. Do not infer success, retry, adopt, resume, repair, or reconstruct it. Alpha recovery is unsupported.
-- **Later loss:** after successful `exec`, Determinate owns signals and status. Crash or loss of vendor outcome can remain `Unknown`. Recovery requires reinstall or vendor support.
-- **No success inference:** never infer vendor uninstall success from later absence of `/nix`, the installed helper, the opaque receipt, a vendor temporary file, a service, or another vendor-owned path. Absence can be observed and reported. After crash or loss of `exec` outcome, the result remains `Unknown`.
-- **Tests and gate:** test structured live-output rejection before mutation, dry-run output, all product actions before vendor action, exact identity revalidation, immediate Handoff consumption, and terminal vendor uninstall. Test synchronous `exec` return restores exact Accepted Handoff under the same lock. Test restore failure fails closed. Test `SIGKILL` after consumption leaves Handoff absent, Base Nix unmarked, refusal on restart, and no vendor start. Prove that no code converts vendor-path absence into uninstall success. DN-15 proves this in disposable Linux. DN-16 needs separate macOS APFS, launchd, crash, and real reboot proof. Exact vendor-residue cleanup is not a cutover gate.
+- **Synchronous return:** if `exec` returns, the vendor did not start. Under the same stable lock, restore exact Accepted Base Nix Handoff and revalidate executable and receipt identities. Restore or identity-validation failure fails closed.
+- **Crash window:** `SIGKILL` or crash between Accepted-state consumption and `exec` leaves Base Nix unmarked and Base Nix Handoff absent. The vendor did not start. Refuse the state. Do not infer success, retry, adopt, resume, repair, or reconstruct it. Alpha recovery is unsupported.
+- **Later loss:** after `exec` starts the vendor program, Determinate owns signals and status. Crash or loss of the vendor result is an Unknown Base Nix Outcome. Recovery requires reinstall or vendor support.
+- **No success inference:** never infer vendor uninstall success from later absence of `/nix`, the installed helper, the opaque receipt, a vendor temporary file, a service, or another vendor-owned path. Absence can be observed and reported. After crash or loss of `exec` outcome, the result remains an Unknown Base Nix Outcome.
+- **Tests and gate:** test structured live-output rejection before mutation, dry-run output, all product actions before vendor action, exact identity revalidation, immediate Base Nix Handoff consumption, and terminal vendor uninstall. Test synchronous `exec` return restores exact Accepted Base Nix Handoff under the same lock. Test restore failure fails closed. Test `SIGKILL` after consumption leaves Base Nix Handoff absent, Base Nix unmarked, refusal on restart, and no vendor start. Prove that no code converts vendor-path absence into uninstall success. DN-15 proves this in disposable Linux. DN-16 needs separate macOS APFS, launchd, crash, and real reboot proof. Exact vendor-residue cleanup is not a cutover gate.
 
 **DN-14 subphase — Old-alpha reset and refusal**
 
@@ -385,20 +416,20 @@ Current work-area result:
 
 ### DN-15 delivery label — Cut over Linux Base Nix install and uninstall
 
-- **Status:** ready for clean-host implementation after PR 2 lands.
+- **Status:** active. Linux code is present. Native x86-64 lifecycle proof and independent evidence review remain.
 - **Branch:** `dn/15-linux-lifecycle-cutover`.
 - **Delivery PR:** PR 3, based on PR 2.
 - **Goal:** activate and prove clean-host Linux Base Nix install and uninstall through Determinate.
 - **Why later:** start after PR 2 lands its inactive foundation and evidence. Old private-alpha migration is outside this clean-host cutover.
-- **Likely files and symbols:** Linux bootstrap, inactive lifecycle routes, Handoff, product asset install, Doctor, release asset selection, and Linux user documents.
-- **Interface and invariants:** no runtime fallback. Product assets remain owned by `pkg`. Determinate owns any supported native Base Nix repair and update behavior. `pkg` exposes no Base Nix repair or update action on any alpha platform. A post-alpha product route needs separate approval. Package Repair remains product-owned. Install keeps `pkg` authentication, progress, supervision, cancellation, Handoff, health, validation, and errors. Live uninstall uses the terminal boundary from DN-13. Vendor-owned residue is accepted for alpha. Unsupported hosts fail before mutation. Linux user documents describe the new behavior in this PR.
-- **Implementation steps:** enable Base Nix install and terminal vendor uninstall for clean Linux hosts. Run authenticated install through Handoff with current progress and cancellation controls. For live uninstall, reject structured JSON or JSONL, finish and verify every product action, hold the stable lock, revalidate exact `/nix/nix-installer` and opaque `/nix/receipt.json`, consume Accepted Handoff immediately before `exec`, then start terminal vendor uninstall as the last action. Restore Accepted state on synchronous `exec` return. Refuse the unmarked crash window. Run package and product-service smoke tests. Update Linux install and uninstall documents. Keep the old implementation present but unreachable for deletion proof. Add no Base Nix repair or update product action.
-- **Tests:** run fake install-process integration and the Linux install, terminal vendor uninstall, synchronous-restore, restore-failure, unmarked-`SIGKILL`, `Unknown` outcome, Package Repair, and package-operation matrix in a disposable privileged Docker container with systemd.
-- **Proof and evidence:** repeat clean-host Linux install and terminal vendor uninstall proof. Prove live structured-output refusal before mutation. Prove vendor action is last. Prove synchronous `exec` return restores exact Accepted state. Prove restore failure is fail-closed. Prove `SIGKILL` after consumption leaves Handoff absent, Base Nix unmarked, restart refusal, and no vendor start. Prove later loss of vendor outcome remains `Unknown`. State that container proof does not prove host boot, reboot, SELinux, foreign-host coexistence, or a complete distribution matrix. Do not claim Base Nix repair or update proof.
+- **Likely files and symbols:** Linux bootstrap, inactive lifecycle routes, Base Nix Handoff, product asset install, Doctor, release asset selection, and Linux user documents.
+- **Interface and invariants:** no runtime fallback. Product assets remain owned by `pkg`. Determinate owns any supported native Base Nix repair and update behavior. `pkg` exposes no Base Nix repair or update action on any alpha platform. A post-alpha product route needs separate approval. Package Repair remains product-owned. Install authenticates pinned Determinate Nix Installer 3.22.1 and starts it once. One supervisor waits and reaps. After start, there is no product cancellation, signal, hard timeout, or parent-death guarantee. A persisted `Started` Base Nix Handoff is an Unknown Base Nix Outcome and cannot retry. Only exit status `0` plus installed-state validation can become `Accepted`. Live uninstall uses the terminal boundary from DN-13 and requires plain output. Vendor-owned residue is accepted for alpha. Unsupported hosts fail before mutation. Linux user documents describe the new behavior in this PR.
+- **Implementation steps:** enable Base Nix install and terminal vendor uninstall for clean Linux hosts. Authenticate the vendor executable. Persist `Started`, start it once, drain bounded output, and keep one supervisor until wait and reap complete. Keep `Started` for any uncertain result. Write `Accepted` only after exit status `0` and installed-state validation. For live uninstall, reject structured JSON or JSONL, finish and verify every product action, hold the stable lock, revalidate exact `/nix/nix-installer` and opaque `/nix/receipt.json`, consume Accepted Base Nix Handoff immediately before `exec`, then start terminal vendor uninstall as the last action. Restore Accepted state on synchronous `exec` return. Refuse the unmarked crash window. Run package and product-service smoke tests. Update Linux install and uninstall documents. Keep the old implementation present but unreachable for deletion proof. Add no Base Nix repair or update product action.
+- **Tests:** run fake install-process tests for exact authentication and arguments, one start, bounded output drain, wait and reap, spawn failure, nonzero exit, signal, lost caller, persisted `Started` after simulated supervisor loss, and failed installed-state validation. Each persisted `Started` case must remain an Unknown Base Nix Outcome and must not retry. Prove that only exit status `0` plus validation becomes `Accepted`. Run the Linux install, terminal plain-output uninstall, synchronous-restore, restore-failure, unmarked-`SIGKILL`, Unknown Base Nix Outcome, Package Repair, and package-operation matrix on a disposable native x86-64 host. The checked-in privileged Docker and systemd harness can run locally or on a GitHub-hosted runner.
+- **Proof and evidence:** repeat clean-host Linux install and terminal vendor uninstall proof. Prove live structured-output refusal before mutation. Prove vendor action is last. Prove synchronous `exec` return restores exact Accepted state. Prove restore failure is fail-closed. Prove `SIGKILL` after consumption leaves Base Nix Handoff absent, Base Nix unmarked, restart refusal, and no vendor start. Prove later loss of vendor outcome remains an Unknown Base Nix Outcome. A GitHub-hosted result must name the exact signed commit and retain complete logs, the results matrix, and artifacts for independent review. State that this proof does not prove host boot, reboot, SELinux, foreign-host coexistence, or a complete distribution matrix. Do not claim Base Nix repair or update proof.
 - **Deletion:** none. Old Linux Base Nix code remains until DN-17.
 - **Rollback or stop rule:** revert before release if any lifecycle row fails. Do not add a runtime fallback.
-- **Review focus:** authenticated supervised install, terminal vendor uninstall, vendor-action-last ordering, synchronous restore, unmarked crash refusal, `Unknown` outcome handling, Handoff consumption, accepted vendor residue, and no Base Nix repair or update product route.
-- **Child-unblock condition:** all blocking Linux install, terminal vendor uninstall, synchronous-restore, unmarked-crash, `Unknown` outcome, and package rows pass twice with no old runtime path used.
+- **Review focus:** authenticated one-start install, supervisor wait and reap, honest post-start limits, Base Nix Handoff acceptance, terminal vendor uninstall, vendor-action-last ordering, synchronous restore, unmarked crash refusal, Unknown Base Nix Outcome handling, accepted vendor residue, and no Base Nix repair or update product route.
+- **Child-unblock condition:** all blocking Linux install, terminal vendor uninstall, synchronous-restore, unmarked-crash, Unknown Base Nix Outcome, and package rows pass twice with no old runtime path used. The native x86-64 evidence receives independent review.
 
 ### DN-16 delivery label — Cut over Apple Silicon macOS Base Nix install and uninstall
 
@@ -407,15 +438,15 @@ Current work-area result:
 - **Delivery PR:** PR 4, based on PR 3.
 - **Goal:** activate and prove Apple Silicon macOS Base Nix install and uninstall through Determinate.
 - **Why later:** start after Linux completion. Use an Apple Silicon macOS VM or another disposable Mac. Docker cannot prove launchd, APFS, or `diskutil` behavior.
-- **Likely files and symbols:** macOS bootstrap, APFS detection, inactive lifecycle routes, Handoff, product launchd assets, release target selection, and macOS user documents.
-- **Interface and invariants:** no runtime fallback. Determinate owns Base Nix APFS setup, daemon setup, any supported native repair or update behavior, and uninstall. `pkg` exposes no Base Nix repair or update action on any alpha platform. Package Repair remains product-owned. Install keeps the product process controls. The macOS store-preserving uninstall action remains distinct until PR 4 proves and adopts the terminal vendor uninstall boundary. Keep the shared runtime schema and artifacts until the later PR 4 cleanup work. Intel macOS is not claimed without full proof. Apple Silicon user documents describe the new behavior in this PR.
-- **Implementation steps:** enable Base Nix install and terminal vendor uninstall on Apple Silicon after real proof. Run authenticated install through Handoff. For live uninstall, reject structured JSON or JSONL, finish and verify every product action, hold the stable lock, revalidate the exact installed executable and opaque receipt, consume Accepted Handoff immediately before `exec`, then start terminal vendor uninstall as the last action. Prove synchronous restore, restore failure, unmarked crash refusal, product launchd ownership, Package Repair, package behavior, and real reboot behavior. Update macOS install and uninstall documents. Add no Base Nix repair or update product action.
-- **Tests:** run fake install-process integration and the Apple Silicon macOS install, terminal vendor uninstall, synchronous-restore, restore-failure, unmarked-`SIGKILL`, `Unknown` outcome, Package Repair, package-operation, crash, and real reboot matrix on a macOS VM or another disposable Mac.
-- **Proof and evidence:** clean install, repeat install, interruption, crash, real reboot, Package Repair, package update, product upgrade, terminal vendor uninstall, synchronous restore, restore failure, unmarked refusal, `Unknown` outcome, and residue reports pass twice. Vendor action is last. Do not claim Base Nix repair or update proof.
+- **Likely files and symbols:** macOS bootstrap, APFS detection, inactive lifecycle routes, Base Nix Handoff, product launchd assets, release target selection, and macOS user documents.
+- **Interface and invariants:** no runtime fallback. Determinate owns Base Nix APFS setup, daemon setup, any supported native repair or update behavior, and uninstall. `pkg` exposes no Base Nix repair or update action on any alpha platform. Package Repair remains product-owned. Install uses the same one-start, one-supervisor, fail-closed Base Nix Handoff contract as Linux. The macOS store-preserving uninstall action remains distinct until PR 4 proves and adopts the terminal vendor uninstall boundary. Keep the shared runtime schema and artifacts until the later PR 4 cleanup work. Intel macOS is not claimed without full proof. Apple Silicon user documents describe the new behavior in this PR.
+- **Implementation steps:** enable Base Nix install and terminal vendor uninstall on Apple Silicon after real proof. Authenticate the vendor executable. Persist `Started`, start it once, wait and reap, and accept only exit status `0` plus installed-state validation. For live uninstall, reject structured JSON or JSONL, finish and verify every product action, hold the stable lock, revalidate the exact installed executable and opaque receipt, consume Accepted Base Nix Handoff immediately before `exec`, then start terminal vendor uninstall as the last action. Prove synchronous restore, restore failure, unmarked crash refusal, product launchd ownership, Package Repair, package behavior, and real reboot behavior. Update macOS install and uninstall documents. Add no Base Nix repair or update product action.
+- **Tests:** run fake install-process integration and the Apple Silicon macOS one-start install, supervisor wait and reap, persisted-`Started` refusal, terminal plain-output vendor uninstall, synchronous-restore, restore-failure, unmarked-`SIGKILL`, Unknown Base Nix Outcome, Package Repair, package-operation, crash, and real reboot matrix on a macOS VM or another disposable Mac.
+- **Proof and evidence:** clean install, repeat install, one-start supervision, persisted-`Started` refusal, crash, real reboot, Package Repair, package update, product upgrade, terminal vendor uninstall, synchronous restore, restore failure, unmarked refusal, Unknown Base Nix Outcome, and residue reports pass twice. Vendor action is last. Do not claim Base Nix repair or update proof. Linux or Docker evidence cannot satisfy this gate.
 - **Deletion:** none. Old macOS Base Nix code remains until DN-18.
 - **Rollback or stop rule:** revert before release if APFS, launchd, installed-executable or receipt identity, package, terminal-uninstall, interruption, crash, or real-reboot proof fails.
-- **Review focus:** authenticated supervised install, distinct pre-PR4 store-preserving action, terminal vendor uninstall, vendor-action-last ordering, synchronous restore, unmarked crash refusal, `Unknown` outcome handling, APFS, launchd, real reboot, accepted vendor residue, target support, and no Base Nix repair or update product route.
-- **Child-unblock condition:** all blocking Apple Silicon install, terminal vendor uninstall, synchronous-restore, unmarked-crash, `Unknown` outcome, package, crash, and real reboot rows pass twice with no old runtime path used.
+- **Review focus:** authenticated one-start install, supervisor wait and reap, honest post-start limits, distinct pre-PR4 store-preserving action, terminal vendor uninstall, vendor-action-last ordering, synchronous restore, unmarked crash refusal, Unknown Base Nix Outcome handling, APFS, launchd, real reboot, accepted vendor residue, target support, and no Base Nix repair or update product route.
+- **Child-unblock condition:** all blocking Apple Silicon install, terminal vendor uninstall, synchronous-restore, unmarked-crash, Unknown Base Nix Outcome, package, crash, and real reboot rows pass twice with no old runtime path used.
 
 ### DN-17 work package — Delete proved Linux Base Nix implementation
 
@@ -670,10 +701,10 @@ Do not start DN-21 until DN-20 is complete. DN-21 through DN-32 are optional che
 | DN-02 | Verify-only path has no writes | repair, leases, concurrency |
 | DN-03 | Complete for standalone evidence; negative cleanup and crash results route to later owners | Linux/macOS platform spike matrix and accepted child reports |
 | DN-04 | Complete; every domain claim maps to DN-03 | documentation links and terminology |
-| DN-05–07 | Complete; assets, invocation, and crash-state classification pass | release trust, fake process, Handoff, and receipt fault injection |
+| DN-05–07 | Complete; assets, one-start invocation, wait and reap, and fail-closed state classification pass | release trust, fake process, Base Nix Handoff, and receipt fault injection |
 | DN-08–14 | Unused ownership partition and exact-partition tests are removed; normalized inventory and evidence reports remain accurate | normalized inventory, typed proxy, detection, PATH evidence, terminal vendor uninstall, and decision reports |
-| DN-15 | PR 2 lands; then clean-host Linux install and terminal vendor uninstall pass in disposable privileged/systemd Docker | supervised install; synchronous restore; restore failure; unmarked `SIGKILL`; `Unknown` outcome; Package Repair and package operations |
-| DN-16 | Apple Silicon install and terminal vendor uninstall pass twice in a macOS VM or on another disposable Mac | supervised install; synchronous restore; restore failure; unmarked `SIGKILL`; `Unknown` outcome; Package Repair, package operations, crash, and real reboot |
+| DN-15 | Native x86-64 clean-host Linux install and terminal vendor uninstall pass; complete evidence receives independent review | one-start install; wait and reap; persisted-`Started` refusal; exit-0-plus-validation acceptance; synchronous restore; restore failure; unmarked `SIGKILL`; Unknown Base Nix Outcome; Package Repair and package operations |
+| DN-16 | Apple Silicon install and terminal vendor uninstall pass twice in a macOS VM or on another disposable Mac | one-start install; wait and reap; persisted-`Started` refusal; exit-0-plus-validation acceptance; synchronous restore; restore failure; unmarked `SIGKILL`; Unknown Base Nix Outcome; Package Repair, package operations, crash, and real reboot |
 | DN-17 | Deleted Linux symbols have no live callers | Linux matrix and package lifecycle |
 | DN-18 | Deleted macOS symbols have no live callers | macOS matrix and security tests |
 | DN-19 | Old runtime absent from release graph | release, parity, dependency tree |
@@ -733,7 +764,15 @@ Use `cargo tree` for each supported target before removal.
 
 ## 10. Platform proof matrix
 
-Evidence for each row records platform image, architecture, product revision, vendor version, vendor full revision, asset digest, exact invocation, exit status, logs, file ownership, services, receipt state, package state, and residue. Linux alpha rows can run in disposable privileged Docker with systemd. They prove only that container environment. macOS rows require an Apple Silicon macOS VM or another disposable Mac.
+Evidence for each row records the platform image, architecture, exact signed
+product commit, vendor version, vendor full revision, asset digest, exact
+invocation, exit status, complete logs, results matrix, file ownership,
+services, receipt state, package state, residue, and retained artifacts. Linux
+alpha rows can run through the privileged Docker and systemd harness on a
+disposable native x86-64 GitHub-hosted runner. An independent reviewer must
+accept the evidence. The result proves only that runner and container
+environment. macOS rows require an Apple Silicon macOS VM or another disposable
+Mac.
 
 | Case | First proving delivery PR / subphase | Linux x86_64 | Linux aarch64 | Apple Silicon macOS | Required result |
 |---|---|---|---|---|---|
@@ -745,8 +784,10 @@ Evidence for each row records platform image, architecture, product revision, ve
 | Standalone repair and update | DN-03 | Blocking | Sample | Blocking | Exact vendor behavior and update owner |
 | Standalone uninstall | DN-03 | Blocking | Sample | Blocking | Observed vendor-owned cleanup only |
 | Wrong vendor digest | DN-05–07 / DN-05 | Blocking | Blocking | Blocking | Refuse before privilege and execution |
-| Handoff crash before launch | DN-05–07 / DN-07 | Blocking | Sample | Blocking | `Started` persists and restart fails closed |
-| Handoff crash after vendor success | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Receipt identity can become `Accepted` atomically |
+| Authenticated install start | DN-05–07 / DN-06 | Blocking | Sample | Blocking | Start one pinned 3.22.1 executable through its absolute path and fixed environment |
+| Install supervisor | DN-05–07 / DN-06 | Blocking | Sample | Blocking | One supervisor drains bounded diagnostic output, waits, and reaps; stdout and stderr are not a stable progress or completion protocol; no post-start cancellation, signal, hard timeout, parent-death, or second-start promise |
+| Started Base Nix Handoff | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Persisted `Started` is an Unknown Base Nix Outcome; restart fails closed and never retries |
+| Accepted Base Nix Handoff | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Only exit status `0` plus installed-state validation becomes `Accepted` atomically |
 | Missing or damaged receipt | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Refuse destructive work; no action-list parsing |
 | Modified installed vendor executable | DN-05–07 / DN-07 | Blocking | Sample | Blocking | Detect identity change and refuse or atomically reaccept after proved lifecycle work |
 | Standard-daemon package behavior | DN-08–14 / DN-09 | Blocking | Blocking before target release | Blocking | Required package parity passes |
@@ -760,12 +801,12 @@ Evidence for each row records platform image, architecture, product revision, ve
 | GUI launch PATH | DN-08–14 / DN-11 | Blocking | Sample | Blocking | `pkg` works from a clean GUI environment |
 | Base Nix repair policy | DN-12 policy; a post-alpha product route needs separate approval | No alpha action | No alpha action | No alpha action | Determinate owns supported native behavior; `pkg` exposes no alpha action; Package Repair stays product-owned |
 | Base Nix update policy | DN-12 policy; a post-alpha product route needs separate approval | No alpha action | No alpha action | No alpha action | Determinate owns supported native behavior; `pkg` exposes no alpha action or product ledger |
-| Terminal vendor uninstall | DN-13 foundation; DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Product actions first; lock; revalidate; consume immediately; `exec` last; restore sync return; refuse unmarked crash; never infer success |
+| Terminal vendor uninstall | DN-13 foundation; DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Plain output only; product actions first; lock; revalidate; consume immediately; `exec` last; restore sync return; refuse unmarked crash; never infer success |
 | Old private alpha migration | DN-14 decision | Separate | Separate | Separate | Fail closed; do not block clean-host work or invent an unauthenticated reset route |
-| Complete clean install | DN-15 Linux; DN-16 macOS | Blocking | Blocking before target release | Blocking | Accepted Handoff and working product |
+| Complete clean install | DN-15 Linux; DN-16 macOS | Blocking | Blocking before target release | Blocking | Accepted Base Nix Handoff and working product |
 | Complete repeat install | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | Stable install, package, and uninstall result |
 | Package Repair after Base Nix cutover | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Product-owned Package Repair works; no Base Nix repair or update action is exposed on any alpha platform |
-| N to N+1 product upgrade | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | State, packages, Handoff, and identity remain valid |
+| N to N+1 product upgrade | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | State, packages, Base Nix Handoff, and identity remain valid |
 | Product downgrade | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Follow the explicit proved product policy; do not invoke Base Nix update |
 | Explicit terminal uninstall | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | Remove and verify product-owned state first, then terminally `exec` vendor uninstall; do not promise vendor completion |
 | Install, remove, and update package | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | Generation and state transitions work |
@@ -780,7 +821,7 @@ Evidence for each row records platform image, architecture, product revision, ve
 | Optional transport and dependency pruning | DN-30 through DN-32 | Blocking | Target check | Blocking | Only dead grammar, edges, and dependencies are removed |
 | Intel macOS | DN-03 asset probe; full proof not scheduled | Not applicable | Not applicable | Unsupported-target probe | Do not claim support without a full asset and lifecycle matrix |
 
-`Blocking` means the PR cannot merge without the result. `Sample` means the architecture result must match the blocking platforms, but the release owner can define the exact repeated sample count. `Separate` means the old private-alpha migration is outside the clean-host cutover. Linux aarch64 becomes fully blocking for all rows before a Linux aarch64 release. Linux container results do not prove host boot, reboot, SELinux, foreign-host behavior, or a complete distribution matrix. Docker does not satisfy any macOS row.
+`Blocking` means the PR cannot merge without the result. `Sample` means the architecture result must match the blocking platforms, but the release owner can define the exact repeated sample count. `Separate` means the old private-alpha migration is outside the clean-host cutover. Linux aarch64 becomes fully blocking for all rows before a Linux aarch64 release. Linux runner and container results do not prove host boot, reboot, SELinux, foreign-host behavior, or a complete distribution matrix. Docker and Linux-hosted proof do not satisfy any macOS row.
 
 ## 11. Agent review synthesis
 
@@ -869,7 +910,7 @@ Run this checklist on the plan and on every implementation PR.
 - [ ] Is the result reviewable without the child?
 - [ ] Is the stop rule explicit?
 - [ ] Is rollback possible before merge?
-- [ ] Are local commands and exact results recorded?
+- [ ] Are exact commands and results recorded?
 - [ ] Does the PR avoid unrelated cleanup?
 
 ### Simple language and document checks
@@ -888,18 +929,20 @@ Run this checklist on the plan and on every implementation PR.
 - Linux x86_64, released Linux aarch64, and Apple Silicon macOS pass the required matrix.
 - The release system authenticates the exact executable and records LGPL-2.1 and source inventory.
 - Diagnostics behavior is explicit and proved.
-- Install Handoff recovery and pre-uninstall executable, receipt, and Accepted-state validation fail closed. There is no vendor-phase recovery promise after terminal `exec`.
+- Install uses one authenticated vendor start and one supervisor that waits and reaps. There is no safe post-start cancellation, signal, hard timeout, or parent-death promise.
+- A persisted `Started` Base Nix Handoff is an Unknown Base Nix Outcome and fails closed without retry. Only exit status `0` plus installed-state validation becomes `Accepted`.
+- Pre-uninstall executable, receipt, and Accepted Base Nix Handoff validation fail closed. There is no vendor-phase recovery promise after terminal `exec`.
 - Standard-daemon package parity passes before and after cutover.
 - Existing foreign, upstream, and unmarked Determinate Nix refuse safely. Old private-alpha state is a separate fail-closed migration case.
 - PATH behavior matches the documented user experience.
 - Determinate owns supported native Base Nix repair and update behavior. `pkg` exposes no repair or update action on any alpha platform. A post-alpha product route needs separate approval.
-- Determinate owns Base Nix uninstall. `pkg` finishes product cleanup, consumes Accepted state, and terminally `exec`s the authenticated installed uninstaller. Vendor completion is not promised. Vendor residue is accepted.
+- Determinate owns Base Nix uninstall. `pkg` requires plain output, finishes product cleanup, consumes Accepted state, and terminally `exec`s the authenticated installed uninstaller. Vendor completion is not promised. Vendor residue is accepted.
 - Vendor-owned residue is accepted for alpha. `pkg` removes all product-owned lifecycle residue. Root-owned mode-`0600` `/run/pkg-install-handoff.lock` is the one volatile coordination exception. It is not lifecycle state and normally disappears at reboot.
 - Package repair, builds, generations, roots, GC, and state remain correct.
 - Old Linux, macOS, and shared private Base Nix code is deleted only where replacement proof exists.
 - Broker, Root Helper, and high-fan-in contracts remain where package work still needs them.
 - Current user documents match the observed product.
-- All local proof results are attached because GitHub Actions remain disabled.
+- Every accepted proof result has complete logs, a results matrix, and retained artifacts. GitHub-hosted Linux proof also identifies the exact signed commit and receives independent review.
 
 ### Optional simplification is done after DN-32 when:
 

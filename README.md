@@ -6,8 +6,9 @@
 `pkg` is a package manager for Linux and macOS. It has a simple command
 interface like Homebrew and paru.
 
-Nix is the private package and build engine. You do not need to install,
-configure, or operate Nix.
+Base Nix is the machine-wide package and build engine. You do not need to
+install or configure it yourself. In the current Linux source, `pkg`
+authenticates and starts the pinned Determinate Nix Installer 3.22.1 executable.
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
@@ -25,8 +26,14 @@ sh install.sh
 pkg doctor
 ```
 
-The script downloads the pinned installer, checks its SHA-256 digest, and then
-requests administrator access.
+The script downloads the pinned `pkg` installer, checks its SHA-256 digest, and
+then requests administrator access. The current Linux candidate authenticates
+the pinned Determinate Nix Installer 3.22.1 executable before it starts Base Nix
+installation.
+
+After the vendor installer starts, `pkg` waits for it. The current vendor
+contract has no safe cancellation, signal, hard timeout, or parent-death
+guarantee. If the result is unknown, `pkg` fails closed and does not retry.
 
 ### macOS Apple silicon
 
@@ -66,22 +73,30 @@ one exact, one-time approval.
 
 ## Uninstall
 
-Preview the files that `pkg` will remove. Then uninstall it.
+Preview the files that `pkg` will remove. Then uninstall it. Live Linux
+uninstall requires plain terminal output.
 
 ```sh
 pkg uninstall --dry-run
 pkg uninstall
 ```
 
-The uninstaller removes only authenticated `pkg` state. It keeps changed,
-unrecorded, or foreign state for manual review.
+In the current Linux source, `pkg` first removes and verifies authenticated
+product-owned state. It then replaces itself with the authenticated installed
+Determinate uninstaller. The vendor command returns its status directly to the
+shell.
+
+`pkg` keeps changed, unrecorded, or foreign state for manual review. Determinate
+can leave vendor-owned residue. `pkg` does not delete that residue or infer
+success from its absence.
 
 ## Security
 
-`pkg` uses this fixed local boundary:
+`pkg` exposes package commands through this product interface:
 
 ```text
-pkg CLI -> local broker -> non-root broker -> privileged helper -> managed runtime
+pkg package commands -> Broker -> Root Helper -> Package Lifecycle
+pkg installer -> authenticated Determinate executable -> Base Nix Lifecycle
 ```
 
 - Package metadata and release inputs are authenticated.
@@ -89,26 +104,30 @@ pkg CLI -> local broker -> non-root broker -> privileged helper -> managed runti
 - Privileged operations use a narrow helper interface.
 - Public commands do not accept Nix commands, expressions, installables, store
   paths, trust roots, or arbitrary Nix options.
-- A normal user cannot access the private runtime, daemon, helper, or trust
-  controls.
+- The Root Helper accepts only closed product operations.
 
-This section describes the current alpha. The accepted target replaces Base
-Nix installation with Determinate after its proof gates pass. See the
-[active implementation plan](plans/determinate-nix-stacked-prs.md). Present-tense
-user documentation changes in the same PR as each proved platform cutover.
-DN-20 completes the release documentation.
+Raw Nix availability is not a security boundary. Base Nix daemon access is not
+a product security boundary. Local administrators can access or change Base
+Nix. `pkg doctor` checks important changes and fails closed when ownership is
+not clear.
+
+This section describes the current source. Linux uses pinned Determinate Nix
+Installer 3.22.1 for Base Nix install and terminal uninstall. macOS keeps the
+existing Base Nix path until its separate real-host proof passes. See the
+[active implementation plan](plans/determinate-nix-stacked-prs.md).
 
 ## Platform status
 
 | Platform | Preview status |
 | --- | --- |
-| Linux x86-64 | Supported and tested with the public installer |
-| macOS Apple silicon | Available; Developer ID signing and notarization are TODO items |
+| Linux x86-64 | Published alpha available; current Determinate candidate needs native x86-64 proof |
+| macOS Apple silicon | Published alpha available; Determinate cutover and Apple signing remain pending |
 | Linux arm64 | Not available in this preview |
 
-The clean-host proofs cover install, retry, cached package installation, one
-approved local build, upgrade, rollback, repair, ownership drift, isolation,
-and uninstall.
+The checked-in clean-host matrix covers install, cached package installation,
+one approved local build, upgrade, rollback, Package Repair, ownership drift,
+isolation, and uninstall. The current Linux candidate is not accepted until its
+native x86-64 result and retained evidence receive independent review.
 
 ## Contribute
 
@@ -117,7 +136,7 @@ review rules.
 
 The [plan index](plans/README.md) identifies the one active
 [stacked-PR implementation plan](plans/determinate-nix-stacked-prs.md). The
-earlier custom private-Nix design is archived and is not normative.
+earlier custom Base Nix design is archived and is not normative.
 
 ## License
 
