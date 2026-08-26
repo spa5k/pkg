@@ -1009,12 +1009,28 @@ fn full_sync(file: &File) -> Result<(), DeterminateHandoffError> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
-    use std::thread;
+    use pkg_testkit::{ChaosCheckpoint, ChaosCommand, FsyncMode, publish_checkpoint};
+    use std::{
+        os::unix::{fs::symlink, process::ExitStatusExt as _},
+        process::Command,
+        thread,
+        time::Duration,
+    };
     use tempfile::TempDir;
 
     const RECEIPT_SECRET: &[u8] = b"opaque vendor action data must stay private";
     const INSTALLER_BYTES: &[u8] = b"test pinned determinate installer";
+    const CRASH_CHILD_ENV: &str = "PKG_TEST_DN15_CRASH_CHILD";
+    const CRASH_ROOT_ENV: &str = "PKG_TEST_DN15_CRASH_ROOT";
+    const TEST_EXECUTABLE_ENV: &str = "PKG_TEST_DN15_TEST_EXECUTABLE";
+    const VENDOR_CALLED_ENV: &str = "PKG_TEST_DN15_VENDOR_CALLED";
+    const VENDOR_INSTALLER_ENV: &str = "PKG_TEST_DN15_VENDOR_INSTALLER";
+    const VENDOR_RECEIPT_ENV: &str = "PKG_TEST_DN15_VENDOR_RECEIPT";
+    const FAKE_VENDOR_INSTALLER: &[u8] = br#"#!/bin/sh
+set -eu
+/bin/rm -f "$PKG_TEST_DN15_VENDOR_INSTALLER" "$PKG_TEST_DN15_VENDOR_RECEIPT"
+PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --exact determinate_handoff::tests::sigkill_after_vendor_exec_keeps_later_outcome_unknown_and_refuses_retry --nocapture
+"#;
 
     struct Fixture {
         temporary: TempDir,
@@ -1060,6 +1076,13 @@ mod tests {
     }
 
     fn production_parent_fixture(receipt_mode: u32) -> Fixture {
+        production_parent_fixture_with_installer(receipt_mode, INSTALLER_BYTES)
+    }
+
+    fn production_parent_fixture_with_installer(
+        receipt_mode: u32,
+        installer_bytes: &[u8],
+    ) -> Fixture {
         let temporary = tempfile::tempdir().unwrap();
         fs::set_permissions(temporary.path(), Permissions::from_mode(0o700)).unwrap();
         for relative in ["nix", "var", "var/lib", "var/lib/pkg-install", "run"] {
@@ -1072,7 +1095,7 @@ mod tests {
         fs::set_permissions(&staging, Permissions::from_mode(0o700)).unwrap();
         write_mode(
             &temporary.path().join("nix/nix-installer"),
-            INSTALLER_BYTES,
+            installer_bytes,
             0o755,
         );
         write_mode(
@@ -1082,20 +1105,27 @@ mod tests {
         );
         let unrelated = temporary.path().join("unknown-nix-content");
         fs::write(&unrelated, b"never delete this").unwrap();
-        let mut handoff =
-            DeterminateHandoff::for_test(temporary.path(), receipt_mode, identity(INSTALLER_BYTES))
-                .unwrap();
-        handoff.handoff = temporary
-            .path()
-            .join("var/lib/pkg-install/determinate-handoff-v1.json");
-        handoff.lock = temporary.path().join("run/pkg-install-handoff.lock");
-        handoff.receipt = temporary.path().join("nix/receipt.json");
-        handoff.installer = temporary.path().join("nix/nix-installer");
+        let handoff =
+            production_parent_handoff(temporary.path(), receipt_mode, identity(installer_bytes));
         Fixture {
             temporary,
             handoff,
             unrelated,
         }
+    }
+
+    fn production_parent_handoff(
+        root: &Path,
+        receipt_mode: u32,
+        installer_identity: FileIdentity,
+    ) -> DeterminateHandoff {
+        let mut handoff =
+            DeterminateHandoff::for_test(root, receipt_mode, installer_identity).unwrap();
+        handoff.handoff = root.join("var/lib/pkg-install/determinate-handoff-v1.json");
+        handoff.lock = root.join("run/pkg-install-handoff.lock");
+        handoff.receipt = root.join("nix/receipt.json");
+        handoff.installer = root.join("nix/nix-installer");
+        handoff
     }
 
     #[test]
@@ -1302,9 +1332,23 @@ mod tests {
     }
 
     #[test]
-    fn kill_after_consume_leaves_unmarked_determinate_state_for_install_refusal() {
+    fn sigkill_after_consume_leaves_unmarked_determinate_state_for_install_refusal()
+    -> Result<(), Box<dyn std::error::Error>> {
         use pkg_core::System;
         use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
+
+        let checkpoint = ChaosCheckpoint::new("accepted-consumed")?;
+        if std::env::var_os(CRASH_CHILD_ENV).as_deref()
+            == Some(std::ffi::OsStr::new("before-vendor"))
+        {
+            let root = PathBuf::from(std::env::var_os(CRASH_ROOT_ENV).unwrap());
+            let handoff = production_parent_handoff(&root, 0o600, identity(INSTALLER_BYTES));
+            let _consumed = handoff.consume_for_terminal_uninstall().unwrap();
+            let vendor_call = || fs::write(std::env::var_os(VENDOR_CALLED_ENV).unwrap(), b"called");
+            let _ = publish_checkpoint(&checkpoint)?;
+            vendor_call()?;
+            return Ok(());
+        }
 
         let fixture = production_parent_fixture(0o600);
         fixture.handoff.record_started().unwrap();
@@ -1312,21 +1356,111 @@ mod tests {
             .handoff
             .accept_after_installed_state_proof()
             .unwrap();
-        let vendor_calls = 0;
+        let vendor_called = fixture.temporary.path().join("vendor-called");
+        let mut command = ChaosCommand::new(
+            std::env::current_exe()?,
+            checkpoint,
+            fixture.temporary.path().join("accepted-consumed"),
+            FsyncMode::Enabled,
+        )?;
+        command
+            .arg("--exact")
+            .arg(
+                "determinate_handoff::tests::sigkill_after_consume_leaves_unmarked_determinate_state_for_install_refusal",
+            )
+            .arg("--nocapture")
+            .env(CRASH_CHILD_ENV, "before-vendor")
+            .env(CRASH_ROOT_ENV, fixture.temporary.path())
+            .env(VENDOR_CALLED_ENV, &vendor_called);
+        let mut child = command.spawn()?;
+        let status = child.kill_at_checkpoint(Duration::from_secs(10))?;
 
-        let consumed = fixture.handoff.consume_for_terminal_uninstall().unwrap();
-        drop(consumed); // Simulates termination after state consumption and before `exec`.
-
-        assert_eq!(vendor_calls, 0);
+        assert_eq!(status.signal(), Some(9));
+        assert!(!vendor_called.exists());
         assert!(!fixture.handoff.handoff.exists());
+        let state = fixture.handoff.state().unwrap();
+        assert_eq!(state, DeterminateHandoffState::NotStarted);
+        assert_eq!(
+            crate::linux_backend::validate_determinate_handoff_preflight(state),
+            Ok(false)
+        );
+        assert_eq!(fs::read(&fixture.handoff.installer)?, INSTALLER_BYTES);
+        assert_eq!(fs::read(&fixture.handoff.receipt)?, RECEIPT_SECRET);
+        let report = detect_unmanaged_nix(fixture.temporary.path(), System::X8664Linux, &[], &[]);
+        assert_eq!(report.disposition(), DetectionDisposition::Refuse);
+        assert!(report.has_unmanaged_evidence());
+        assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
+        Ok(())
+    }
+
+    #[test]
+    fn sigkill_after_vendor_exec_keeps_later_outcome_unknown_and_refuses_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let checkpoint = ChaosCheckpoint::new("vendor-started")?;
+        match std::env::var_os(CRASH_CHILD_ENV).as_deref() {
+            Some(mode) if mode == std::ffi::OsStr::new("exec-vendor") => {
+                use std::os::unix::process::CommandExt as _;
+
+                let root = PathBuf::from(std::env::var_os(CRASH_ROOT_ENV).unwrap());
+                let handoff =
+                    production_parent_handoff(&root, 0o600, identity(FAKE_VENDOR_INSTALLER));
+                let _consumed = handoff.consume_for_terminal_uninstall().unwrap();
+                let error = Command::new(&handoff.installer).exec();
+                return Err(error.into());
+            }
+            Some(mode) if mode == std::ffi::OsStr::new("vendor-park") => {
+                let _ = publish_checkpoint(&checkpoint)?;
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        let fixture = production_parent_fixture_with_installer(0o600, FAKE_VENDOR_INSTALLER);
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let later_vendor_called = fixture.temporary.path().join("later-vendor-called");
+        let test_executable = std::env::current_exe()?;
+        let mut command = ChaosCommand::new(
+            &test_executable,
+            checkpoint,
+            fixture.temporary.path().join("vendor-started"),
+            FsyncMode::Enabled,
+        )?;
+        command
+            .arg("--exact")
+            .arg(
+                "determinate_handoff::tests::sigkill_after_vendor_exec_keeps_later_outcome_unknown_and_refuses_retry",
+            )
+            .arg("--nocapture")
+            .env(CRASH_CHILD_ENV, "exec-vendor")
+            .env(CRASH_ROOT_ENV, fixture.temporary.path())
+            .env(TEST_EXECUTABLE_ENV, &test_executable)
+            .env(VENDOR_INSTALLER_ENV, &fixture.handoff.installer)
+            .env(VENDOR_RECEIPT_ENV, &fixture.handoff.receipt);
+        let mut child = command.spawn()?;
+        let status = child.kill_at_checkpoint(Duration::from_secs(10))?;
+
+        assert_eq!(status.signal(), Some(9));
+        assert!(!fixture.handoff.handoff.exists());
+        assert!(!fixture.handoff.installer.exists());
+        assert!(!fixture.handoff.receipt.exists());
         assert_eq!(
             fixture.handoff.state().unwrap(),
             DeterminateHandoffState::NotStarted
         );
-        let report = detect_unmanaged_nix(fixture.temporary.path(), System::X8664Linux, &[], &[]);
-        assert_ne!(report.disposition(), DetectionDisposition::Clean);
-        assert!(report.has_unmanaged_evidence());
+        assert_eq!(
+            fixture.handoff.run_terminal_uninstall(|| {
+                fs::write(&later_vendor_called, b"called").unwrap();
+                Ok::<(), ()>(())
+            }),
+            Err(TerminalUninstallError::Handoff)
+        );
+        assert!(!later_vendor_called.exists());
         assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
+        Ok(())
     }
 
     #[test]
