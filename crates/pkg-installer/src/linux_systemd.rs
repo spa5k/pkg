@@ -129,6 +129,17 @@ impl LinuxSystemdManager {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn inert_for_preflight_test() -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        (
+            Self::with_system(Box::new(PreflightTestSystem {
+                calls: calls.clone(),
+            })),
+            calls,
+        )
+    }
+
     /// Reloads systemd and applies, enables, and starts the fixed service set.
     ///
     /// The complete prior state is captured before the first enable/start
@@ -317,6 +328,51 @@ impl LinuxSystemdManager {
     /// Returns a redacted command failure when systemd cannot reload.
     pub fn reload_units(&mut self) -> Result<(), LinuxSystemdError> {
         self.system.daemon_reload()
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct PreflightTestSystem {
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+#[cfg(test)]
+impl PreflightTestSystem {
+    fn refuse<T>(&self) -> Result<T, LinuxSystemdError> {
+        self.calls.set(self.calls.get().saturating_add(1));
+        Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))
+    }
+}
+
+#[cfg(test)]
+impl SystemdSystem for PreflightTestSystem {
+    fn daemon_reload(&mut self) -> Result<(), LinuxSystemdError> {
+        self.refuse()
+    }
+
+    fn apply_tmpfiles(&mut self) -> Result<(), LinuxSystemdError> {
+        self.refuse()
+    }
+
+    fn unit_state(&mut self, _unit: &'static str) -> Result<UnitState, LinuxSystemdError> {
+        self.refuse()
+    }
+
+    fn enable(&mut self, _unit: &'static str) -> Result<(), LinuxSystemdError> {
+        self.refuse()
+    }
+
+    fn disable(&mut self, _unit: &'static str) -> Result<(), LinuxSystemdError> {
+        self.refuse()
+    }
+
+    fn start(&mut self, _unit: &'static str) -> Result<(), LinuxSystemdError> {
+        self.refuse()
+    }
+
+    fn stop(&mut self, _unit: &'static str) -> Result<(), LinuxSystemdError> {
+        self.refuse()
     }
 }
 

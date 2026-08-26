@@ -23,6 +23,15 @@ pub struct ProductionLinuxInstallBackend {
     services: LinuxSystemdManager,
     release_identity: Option<Digest>,
     existing_managed_install: bool,
+    #[cfg(test)]
+    preflight_fixture: Option<ProductionPreflightFixture>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct ProductionPreflightFixture {
+    effective_ids: (u32, u32),
+    handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
 }
 
 impl ProductionLinuxInstallBackend {
@@ -42,6 +51,8 @@ impl ProductionLinuxInstallBackend {
                 .map_err(|_| InstallError::backend_failure())?,
             release_identity: None,
             existing_managed_install: false,
+            #[cfg(test)]
+            preflight_fixture: None,
         })
     }
 
@@ -55,6 +66,72 @@ impl ProductionLinuxInstallBackend {
                 | "broker-socket-unit"
                 | "broker-service-unit"
         )
+    }
+
+    #[cfg(test)]
+    fn handoff_state(
+        fixture: Option<&ProductionPreflightFixture>,
+    ) -> Result<DeterminateHandoffState, InstallError> {
+        if let Some(fixture) = fixture {
+            return fixture
+                .handoff_snapshots
+                .borrow()
+                .last()
+                .copied()
+                .ok_or_else(InstallError::backend_failure);
+        }
+        Self::production_handoff_state()
+    }
+
+    fn production_handoff_state() -> Result<DeterminateHandoffState, InstallError> {
+        DeterminateHandoff::production()
+            .and_then(|handoff| handoff.state())
+            .map_err(|_| InstallError::backend_failure())
+    }
+
+    #[cfg(test)]
+    fn effective_ids(fixture: Option<&ProductionPreflightFixture>) -> (u32, u32) {
+        if let Some(fixture) = fixture {
+            return fixture.effective_ids;
+        }
+        Self::production_effective_ids()
+    }
+
+    fn production_effective_ids() -> (u32, u32) {
+        (Uid::effective().as_raw(), Gid::effective().as_raw())
+    }
+
+    #[cfg(test)]
+    fn for_preflight_test(
+        system: System,
+        groups: ManagedGroupBindings,
+        handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
+    ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let (services, service_calls) = LinuxSystemdManager::inert_for_preflight_test();
+        (
+            Self {
+                system,
+                assets: LinuxPlatformAssetManager::new(groups),
+                services,
+                release_identity: None,
+                existing_managed_install: false,
+                preflight_fixture: Some(ProductionPreflightFixture {
+                    effective_ids: (0, 0),
+                    handoff_snapshots,
+                }),
+            },
+            service_calls,
+        )
+    }
+}
+
+pub const fn validate_determinate_handoff_preflight(
+    state: DeterminateHandoffState,
+) -> Result<bool, InstallError> {
+    match state {
+        DeterminateHandoffState::NotStarted => Ok(false),
+        DeterminateHandoffState::Started => Err(InstallError::backend_failure()),
+        DeterminateHandoffState::Accepted => Ok(true),
     }
 }
 
@@ -94,9 +171,18 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn preflight_privilege(&mut self) -> Result<(), InstallError> {
-        if !Uid::effective().is_root() || Gid::effective().as_raw() != 0 {
+        #[cfg(test)]
+        let (uid, gid) = Self::effective_ids(self.preflight_fixture.as_ref());
+        #[cfg(not(test))]
+        let (uid, gid) = Self::production_effective_ids();
+        if uid != 0 || gid != 0 {
             return Err(InstallError::backend_failure());
         }
+        #[cfg(test)]
+        let state = Self::handoff_state(self.preflight_fixture.as_ref())?;
+        #[cfg(not(test))]
+        let state = Self::production_handoff_state()?;
+        validate_determinate_handoff_preflight(state)?;
         Ok(())
     }
 
@@ -112,21 +198,19 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             .map(|value| env::split_paths(&value).collect::<Vec<_>>())
             .unwrap_or_default();
         let environment_keys = env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
-        match DeterminateHandoff::production()
-            .and_then(|handoff| handoff.state())
-            .map_err(|_| InstallError::backend_failure())?
-        {
-            DeterminateHandoffState::NotStarted => {
-                let report =
-                    detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
-                if report.disposition() != DetectionDisposition::Clean {
-                    return Err(InstallError::backend_failure());
-                }
-                self.existing_managed_install = false;
-            }
-            DeterminateHandoffState::Started => self.existing_managed_install = false,
-            DeterminateHandoffState::Accepted => self.existing_managed_install = true,
+        #[cfg(test)]
+        let state = Self::handoff_state(self.preflight_fixture.as_ref())?;
+        #[cfg(not(test))]
+        let state = Self::production_handoff_state()?;
+        if validate_determinate_handoff_preflight(state)? {
+            self.existing_managed_install = true;
+            return Ok(());
         }
+        let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
+        if report.disposition() != DetectionDisposition::Clean {
+            return Err(InstallError::backend_failure());
+        }
+        self.existing_managed_install = false;
         Ok(())
     }
 
@@ -242,6 +326,52 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
                 .reload_units()
                 .map_err(|_| InstallError::backend_failure())?;
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn started_handoff_is_the_only_refused_linux_preflight_state() {
+        assert_eq!(
+            validate_determinate_handoff_preflight(DeterminateHandoffState::NotStarted)
+                .map_err(InstallError::code),
+            Ok(false)
+        );
+        assert!(validate_determinate_handoff_preflight(DeterminateHandoffState::Started).is_err());
+        assert_eq!(
+            validate_determinate_handoff_preflight(DeterminateHandoffState::Accepted)
+                .map_err(InstallError::code),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn production_preflight_refuses_persisted_started_without_later_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let snapshots = std::rc::Rc::new(std::cell::RefCell::new(vec![
+            DeterminateHandoffState::Started,
+        ]));
+        let (mut backend, service_calls) = ProductionLinuxInstallBackend::for_preflight_test(
+            System::X8664Linux,
+            ManagedGroupBindings::new(100, 101)?,
+            snapshots.clone(),
+        );
+
+        assert_eq!(
+            crate::install_linux(System::X8664Linux, &mut backend).map_err(InstallError::code),
+            Err(crate::InstallErrorCode::BackendFailure)
+        );
+        assert_eq!(
+            snapshots.borrow().as_slice(),
+            &[DeterminateHandoffState::Started]
+        );
+        assert_eq!(service_calls.get(), 0);
+        assert!(backend.release_identity.is_none());
+        assert!(!backend.existing_managed_install);
         Ok(())
     }
 }

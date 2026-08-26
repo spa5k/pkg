@@ -765,13 +765,20 @@ enum BootstrapOutcome<'a> {
     DeterminatePending {
         bundle: Box<AuthenticatedInstallerBundle>,
         handoff: Box<DeterminateHandoff>,
-        installer: DeterminateInstaller,
     },
     DeterminateComplete,
     Complete(ProvisionedBootstrap),
     Existing,
     #[cfg(test)]
     Stub(std::rc::Rc<std::cell::Cell<bool>>),
+    #[cfg(test)]
+    DeterminateStub(std::rc::Rc<DeterminateStubState>),
+}
+
+#[cfg(test)]
+struct DeterminateStubState {
+    handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
+    fail_acceptance: bool,
 }
 
 impl BootstrapOutcome<'_> {
@@ -784,6 +791,8 @@ impl BootstrapOutcome<'_> {
             }
             #[cfg(test)]
             Self::Stub(_) => Err(InstallError::backend_failure()),
+            #[cfg(test)]
+            Self::DeterminateStub(_) => Err(InstallError::backend_failure()),
         }
     }
 
@@ -796,6 +805,8 @@ impl BootstrapOutcome<'_> {
             }
             #[cfg(test)]
             Self::Stub(_) => Err(MacOsError::backend_failure()),
+            #[cfg(test)]
+            Self::DeterminateStub(_) => Err(MacOsError::backend_failure()),
         }
     }
 
@@ -804,20 +815,9 @@ impl BootstrapOutcome<'_> {
             Self::Pending(transaction) => transaction
                 .rollback()
                 .map_err(|_| InstallError::backend_failure()),
-            Self::DeterminatePending {
-                handoff, installer, ..
-            } => {
-                let outcome = installer
-                    .uninstall()
-                    .map_err(|_| InstallError::rollback_incomplete())?;
-                if determinate_succeeded(outcome) {
-                    handoff
-                        .clear_after_vendor_uninstall()
-                        .map_err(|_| InstallError::rollback_incomplete())
-                } else {
-                    Err(InstallError::rollback_incomplete())
-                }
-            }
+            // Vendor success is already past the recoverable boundary. Keep
+            // Started as an Unknown Base Nix Outcome and roll back only product state.
+            Self::DeterminatePending { .. } => Ok(()),
             Self::Existing => Ok(()),
             Self::Complete(_) | Self::DeterminateComplete => Err(InstallError::backend_failure()),
             #[cfg(test)]
@@ -825,6 +825,8 @@ impl BootstrapOutcome<'_> {
                 rolled_back.set(true);
                 Ok(())
             }
+            #[cfg(test)]
+            Self::DeterminateStub(_) => Ok(()),
         }
     }
 
@@ -842,6 +844,8 @@ impl BootstrapOutcome<'_> {
                 rolled_back.set(true);
                 Ok(())
             }
+            #[cfg(test)]
+            Self::DeterminateStub(_) => Err(MacOsError::backend_failure()),
         }
     }
 }
@@ -991,7 +995,6 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             return Ok(BootstrapOutcome::DeterminatePending {
                 bundle: Box::new(bundle),
                 handoff: Box::new(handoff),
-                installer,
             });
         }
         provision_authenticated_installer_bundle_transaction(bundle, request, daemon)
@@ -1241,38 +1244,23 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 self.outcome = Some(BootstrapOutcome::Complete(bootstrap));
                 Ok(receipt_created)
             }
-            BootstrapOutcome::DeterminatePending {
-                bundle,
-                handoff,
-                installer,
-            } => {
+            BootstrapOutcome::DeterminatePending { bundle, handoff } => {
                 let changed = match self.inner.publish_ownership_receipt() {
                     Ok(changed) => changed,
                     Err(error) => {
-                        self.outcome = Some(BootstrapOutcome::DeterminatePending {
-                            bundle,
-                            handoff,
-                            installer,
-                        });
+                        self.outcome =
+                            Some(BootstrapOutcome::DeterminatePending { bundle, handoff });
                         return Err(error);
                     }
                 };
                 if let Err(error) =
                     complete_linux_mutation(&mut self.journal, mutation, presence, changed)
                 {
-                    self.outcome = Some(BootstrapOutcome::DeterminatePending {
-                        bundle,
-                        handoff,
-                        installer,
-                    });
+                    self.outcome = Some(BootstrapOutcome::DeterminatePending { bundle, handoff });
                     return Err(error);
                 }
                 if handoff.accept_after_installed_state_proof().is_err() {
-                    self.outcome = Some(BootstrapOutcome::DeterminatePending {
-                        bundle,
-                        handoff,
-                        installer,
-                    });
+                    self.outcome = Some(BootstrapOutcome::DeterminatePending { bundle, handoff });
                     return Err(InstallError::backend_failure());
                 }
                 self.outcome = Some(BootstrapOutcome::DeterminateComplete);
@@ -1285,6 +1273,26 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 let changed = result?;
                 complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
                 Ok(changed)
+            }
+            #[cfg(test)]
+            BootstrapOutcome::DeterminateStub(stub) => {
+                let result = (|| {
+                    let changed = self.inner.publish_ownership_receipt()?;
+                    complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
+                    if stub.fail_acceptance {
+                        return Err(InstallError::backend_failure());
+                    }
+                    stub.handoff_snapshots
+                        .borrow_mut()
+                        .push(DeterminateHandoffState::Accepted);
+                    Ok(changed)
+                })();
+                self.outcome = Some(if result.is_ok() {
+                    BootstrapOutcome::DeterminateComplete
+                } else {
+                    BootstrapOutcome::DeterminateStub(stub)
+                });
+                result
             }
             BootstrapOutcome::Complete(_) => Err(InstallError::backend_failure()),
             BootstrapOutcome::DeterminateComplete => Err(InstallError::backend_failure()),
@@ -1698,6 +1706,8 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
             BootstrapOutcome::Complete(_)
             | BootstrapOutcome::DeterminatePending { .. }
             | BootstrapOutcome::DeterminateComplete => Err(MacOsError::backend_failure()),
+            #[cfg(test)]
+            BootstrapOutcome::DeterminateStub(_) => Err(MacOsError::backend_failure()),
             BootstrapOutcome::Existing => {
                 let changed = self.inner.publish_ownership_receipt()?;
                 self.outcome = Some(BootstrapOutcome::Existing);
@@ -2057,6 +2067,32 @@ mod tests {
         }
     }
 
+    struct DeterminateStubProvisioner {
+        vendor_starts: std::rc::Rc<std::cell::Cell<usize>>,
+        handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
+        fail_acceptance: bool,
+    }
+
+    impl BundleProvisioner for DeterminateStubProvisioner {
+        fn provision<'a>(
+            &mut self,
+            _request: &InstallerProvisionRequest<'_>,
+            _daemon: &'a dyn ManagedDaemon,
+        ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
+            self.vendor_starts
+                .set(self.vendor_starts.get().saturating_add(1));
+            self.handoff_snapshots
+                .borrow_mut()
+                .push(DeterminateHandoffState::Started);
+            Ok(BootstrapOutcome::DeterminateStub(std::rc::Rc::new(
+                DeterminateStubState {
+                    handoff_snapshots: self.handoff_snapshots.clone(),
+                    fail_acceptance: self.fail_acceptance,
+                },
+            )))
+        }
+    }
+
     #[test]
     fn existing_handoff_refuses_before_vendor_spawn() {
         for state in [
@@ -2093,12 +2129,23 @@ mod tests {
         )));
     }
 
+    #[derive(Default, PartialEq, Eq)]
+    enum LinuxBackendFailure {
+        #[default]
+        None,
+        Asset,
+        Health,
+        Receipt,
+    }
+
     #[derive(Default)]
     struct LinuxBackend {
         raw_provision_calls: usize,
-        fail_health: bool,
         create: bool,
-        fail_asset: bool,
+        failure: LinuxBackendFailure,
+        preflight_handoff: Option<DeterminateHandoffState>,
+        mutation_calls: usize,
+        rollback_calls: usize,
     }
 
     impl LinuxInstallBackend for LinuxBackend {
@@ -2121,7 +2168,9 @@ mod tests {
             Ok(())
         }
         fn preflight_clean_host(&mut self, _system: System) -> Result<(), InstallError> {
-            Ok(())
+            self.preflight_handoff.map_or(Ok(()), |state| {
+                crate::linux_backend::validate_determinate_handoff_preflight(state).map(|_| ())
+            })
         }
         fn classify_asset(
             &mut self,
@@ -2148,7 +2197,8 @@ mod tests {
             })
         }
         fn ensure_asset(&mut self, _asset: LinuxInstallAsset) -> Result<bool, InstallError> {
-            if self.fail_asset {
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
+            if self.failure == LinuxBackendFailure::Asset {
                 Err(InstallError::backend_failure())
             } else {
                 Ok(self.create)
@@ -2159,34 +2209,139 @@ mod tests {
             _asset: LinuxInstallAsset,
             _contents: &'static str,
         ) -> Result<bool, InstallError> {
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
             Ok(self.create)
         }
         fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
             self.raw_provision_calls = self.raw_provision_calls.saturating_add(1);
             Err(InstallError::backend_failure())
         }
         fn rollback_managed_runtime(&mut self) -> Result<(), InstallError> {
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
+            self.rollback_calls = self.rollback_calls.saturating_add(1);
             Ok(())
         }
         fn activate_services(&mut self) -> Result<bool, InstallError> {
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
             Ok(self.create)
         }
         fn rollback_services(&mut self) -> Result<(), InstallError> {
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
+            self.rollback_calls = self.rollback_calls.saturating_add(1);
             Ok(())
         }
         fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
-            if self.fail_health {
+            if self.failure == LinuxBackendFailure::Health {
                 Err(InstallError::backend_failure())
             } else {
                 Ok(())
             }
         }
         fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
-            Ok(self.create)
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
+            if self.failure == LinuxBackendFailure::Receipt {
+                Err(InstallError::backend_failure())
+            } else {
+                Ok(self.create)
+            }
         }
         fn rollback_asset(&mut self, _asset: LinuxInstallAsset) -> Result<(), InstallError> {
+            self.mutation_calls = self.mutation_calls.saturating_add(1);
+            self.rollback_calls = self.rollback_calls.saturating_add(1);
             Ok(())
         }
+    }
+
+    #[test]
+    fn started_handoff_preflight_prevents_product_mutation_and_vendor_start()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let rolled_back = std::rc::Rc::new(std::cell::Cell::new(false));
+        let mut provisioner = StubProvisioner {
+            calls: 0,
+            rolled_back: rolled_back.clone(),
+        };
+        let mut backend = LinuxBackend {
+            create: true,
+            preflight_handoff: Some(DeterminateHandoffState::Started),
+            ..LinuxBackend::default()
+        };
+
+        let result = install_linux_with_provisioner(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+        )
+        .map(|_| ());
+
+        assert_eq!(
+            result.map_err(InstallError::code),
+            Err(crate::InstallErrorCode::UnmanagedNix)
+        );
+        assert_eq!(backend.mutation_calls, 0);
+        assert_eq!(provisioner.calls, 0);
+        assert!(!rolled_back.get());
+        Ok(())
+    }
+
+    #[test]
+    fn post_vendor_validation_failures_preserve_started_without_vendor_rollback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+
+        for (failure, fail_acceptance) in [
+            (LinuxBackendFailure::Health, false),
+            (LinuxBackendFailure::Receipt, false),
+            (LinuxBackendFailure::None, true),
+        ] {
+            let vendor_starts = std::rc::Rc::new(std::cell::Cell::new(0));
+            let handoff_snapshots = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let mut provisioner = DeterminateStubProvisioner {
+                vendor_starts: vendor_starts.clone(),
+                handoff_snapshots: handoff_snapshots.clone(),
+                fail_acceptance,
+            };
+            let mut backend = LinuxBackend {
+                create: true,
+                failure,
+                ..LinuxBackend::default()
+            };
+
+            assert!(
+                install_linux_with_provisioner(
+                    request.system,
+                    &request,
+                    &StubDaemon,
+                    &mut backend,
+                    &mut provisioner,
+                )
+                .is_err()
+            );
+            assert_eq!(
+                handoff_snapshots.borrow().as_slice(),
+                &[DeterminateHandoffState::Started]
+            );
+            assert_eq!(vendor_starts.get(), 1);
+            assert!(backend.rollback_calls > 0);
+        }
+        Ok(())
     }
 
     #[test]
@@ -2250,7 +2405,7 @@ mod tests {
         )?;
         let mut backend = LinuxBackend {
             create: true,
-            fail_asset: true,
+            failure: LinuxBackendFailure::Asset,
             ..LinuxBackend::default()
         };
         let request = InstallerProvisionRequest {
@@ -2418,7 +2573,7 @@ mod tests {
             rolled_back: rolled_back.clone(),
         };
         let mut backend = LinuxBackend {
-            fail_health: true,
+            failure: LinuxBackendFailure::Health,
             ..LinuxBackend::default()
         };
 
@@ -2665,7 +2820,7 @@ mod tests {
             rolled_back: rolled_back.clone(),
         };
         let mut backend = LinuxBackend {
-            fail_health: true,
+            failure: LinuxBackendFailure::Health,
             ..LinuxBackend::default()
         };
 
