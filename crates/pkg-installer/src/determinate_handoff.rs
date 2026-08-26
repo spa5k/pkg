@@ -570,6 +570,22 @@ impl DeterminateHandoff {
             fail_clear_at: None,
         })
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test_bytes(
+        root: &Path,
+        receipt_mode: u32,
+        installer: &[u8],
+    ) -> Result<Self, std::io::Error> {
+        Self::for_test(
+            root,
+            receipt_mode,
+            FileIdentity {
+                length: installer.len() as u64,
+                sha256: Digest::from_bytes(Sha256::digest(installer).into()),
+            },
+        )
+    }
 }
 
 #[cfg(test)]

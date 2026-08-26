@@ -212,6 +212,24 @@ fn run(
     operation: Operation,
     settings: &ProcessSettings<'_>,
 ) -> Result<CapturedOutcome, DeterminateProcessError> {
+    run_with_process(
+        executable,
+        installer,
+        operation,
+        settings,
+        Command::spawn,
+        std::process::Child::wait,
+    )
+}
+
+fn run_with_process(
+    executable: &Path,
+    installer: &DeterminateInstaller,
+    operation: Operation,
+    settings: &ProcessSettings<'_>,
+    spawn: impl FnOnce(&mut Command) -> io::Result<std::process::Child>,
+    wait: impl FnOnce(&mut std::process::Child) -> io::Result<ExitStatus>,
+) -> Result<CapturedOutcome, DeterminateProcessError> {
     authenticate_executable(executable, installer, settings.owner, settings.trust_root)?;
     validate_private_tmpdir(settings.tmpdir, settings.owner, settings.trust_root)
         .map_err(|()| DeterminateProcessError::InvalidEnvironment)?;
@@ -229,9 +247,7 @@ fn run(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|_| DeterminateProcessError::SpawnFailed)?;
+    let mut child = spawn(&mut command).map_err(|_| DeterminateProcessError::SpawnFailed)?;
     let (stdout, stderr) = match (child.stdout.take(), child.stderr.take()) {
         (Some(stdout), Some(stderr)) => (stdout, stderr),
         pipes => {
@@ -256,7 +272,10 @@ fn run(
         let _ = stdout_reader.join();
         return Err(DeterminateProcessError::OutputFailed);
     };
-    let waited = child.wait();
+    let waited = wait(&mut child);
+    if waited.is_err() {
+        let _ = child.wait();
+    }
     let stdout = stdout_reader
         .join()
         .map_err(|_| DeterminateProcessError::OutputFailed)
@@ -278,6 +297,35 @@ fn run(
         stdout: stdout.bytes,
         stderr: stderr.bytes,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::redundant_pub_crate)]
+pub(super) fn run_test_install_with_process(
+    executable: &Path,
+    installer: &DeterminateInstaller,
+    root: &Path,
+    spawn: impl FnOnce(&mut Command) -> io::Result<std::process::Child>,
+    wait: impl FnOnce(&mut std::process::Child) -> io::Result<ExitStatus>,
+) -> Result<DeterminateProcessOutcome, DeterminateProcessError> {
+    let owner = fs::metadata(root)
+        .map_err(|_| DeterminateProcessError::InvalidEnvironment)?
+        .uid();
+    run_with_process(
+        executable,
+        installer,
+        Operation::Install,
+        &ProcessSettings {
+            home: OsStr::new("/root"),
+            path: OsStr::new("/usr/bin:/bin"),
+            tmpdir: root,
+            trust_root: root,
+            owner,
+        },
+        spawn,
+        wait,
+    )
+    .map(|captured| captured.public)
 }
 
 fn terminal_uninstall_command(executable: &Path, home: &OsStr, path: &OsStr) -> Command {
@@ -541,6 +589,51 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             assert!(result.stderr.is_empty());
             assert_eq!(result.public.terminal, DeterminateTerminal::Exited(0));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn spawn_failure_is_reported_without_terminal_outcome() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temporary = tempfile::tempdir()?;
+        let executable = write_script(
+            temporary.path(),
+            "printf ran > \"$TMPDIR/unexpected-start\"",
+        )?;
+
+        let result = run_with_process(
+            &executable,
+            &identity(&executable)?,
+            Operation::Install,
+            &settings(temporary.path())?,
+            |_| Err(io::Error::other("simulated spawn failure")),
+            std::process::Child::wait,
+        );
+
+        assert!(matches!(result, Err(DeterminateProcessError::SpawnFailed)));
+        assert!(!temporary.path().join("unexpected-start").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn wait_failure_is_reported_after_one_vendor_start() -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let executable = write_script(
+            temporary.path(),
+            "printf '%s' $$ > \"$TMPDIR/vendor.pid\"; sleep 0.05; exit 0",
+        )?;
+        let result = run_with_process(
+            &executable,
+            &identity(&executable)?,
+            Operation::Install,
+            &settings(temporary.path())?,
+            Command::spawn,
+            |_| Err(io::Error::other("simulated wait failure")),
+        );
+
+        assert!(matches!(result, Err(DeterminateProcessError::WaitFailed)));
+        let pid = fs::read_to_string(temporary.path().join("vendor.pid"))?.parse::<i32>()?;
+        assert_eq!(kill(Pid::from_raw(pid), None), Err(Errno::ESRCH));
         Ok(())
     }
 

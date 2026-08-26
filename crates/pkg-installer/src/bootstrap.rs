@@ -772,13 +772,7 @@ enum BootstrapOutcome<'a> {
     #[cfg(test)]
     Stub(std::rc::Rc<std::cell::Cell<bool>>),
     #[cfg(test)]
-    DeterminateStub(std::rc::Rc<DeterminateStubState>),
-}
-
-#[cfg(test)]
-struct DeterminateStubState {
-    handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
-    fail_acceptance: bool,
+    DeterminateTestPending(Box<DeterminateHandoff>),
 }
 
 impl BootstrapOutcome<'_> {
@@ -792,7 +786,7 @@ impl BootstrapOutcome<'_> {
             #[cfg(test)]
             Self::Stub(_) => Err(InstallError::backend_failure()),
             #[cfg(test)]
-            Self::DeterminateStub(_) => Err(InstallError::backend_failure()),
+            Self::DeterminateTestPending(_) => Err(InstallError::backend_failure()),
         }
     }
 
@@ -806,7 +800,7 @@ impl BootstrapOutcome<'_> {
             #[cfg(test)]
             Self::Stub(_) => Err(MacOsError::backend_failure()),
             #[cfg(test)]
-            Self::DeterminateStub(_) => Err(MacOsError::backend_failure()),
+            Self::DeterminateTestPending(_) => Err(MacOsError::backend_failure()),
         }
     }
 
@@ -826,7 +820,7 @@ impl BootstrapOutcome<'_> {
                 Ok(())
             }
             #[cfg(test)]
-            Self::DeterminateStub(_) => Ok(()),
+            Self::DeterminateTestPending(_) => Ok(()),
         }
     }
 
@@ -845,7 +839,7 @@ impl BootstrapOutcome<'_> {
                 Ok(())
             }
             #[cfg(test)]
-            Self::DeterminateStub(_) => Err(MacOsError::backend_failure()),
+            Self::DeterminateTestPending(_) => Err(MacOsError::backend_failure()),
         }
     }
 }
@@ -978,17 +972,11 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             let installer = DeterminateInstaller::new(staged.length(), staged.sha256());
             let handoff =
                 DeterminateHandoff::production().map_err(|_| BundleProvisionError::Failed)?;
-            let outcome = run_with_new_determinate_handoff(
-                handoff.state().map_err(|_| BundleProvisionError::Failed)?,
-                || {
-                    handoff
-                        .record_started()
-                        .map_err(|_| BundleProvisionError::Failed)?;
-                    installer
-                        .install(staged.path())
-                        .map_err(|_| BundleProvisionError::Failed)
-                },
-            )?;
+            let outcome = run_with_new_determinate_handoff(&handoff, || {
+                installer
+                    .install(staged.path())
+                    .map_err(|_| BundleProvisionError::Failed)
+            })?;
             if !determinate_succeeded(outcome) {
                 return Err(BundleProvisionError::RollbackIncomplete);
             }
@@ -1245,7 +1233,13 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 Ok(receipt_created)
             }
             BootstrapOutcome::DeterminatePending { bundle, handoff } => {
-                let changed = match self.inner.publish_ownership_receipt() {
+                let changed = match publish_and_accept_determinate(
+                    self.inner,
+                    &mut self.journal,
+                    mutation,
+                    presence,
+                    &handoff,
+                ) {
                     Ok(changed) => changed,
                     Err(error) => {
                         self.outcome =
@@ -1253,16 +1247,6 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                         return Err(error);
                     }
                 };
-                if let Err(error) =
-                    complete_linux_mutation(&mut self.journal, mutation, presence, changed)
-                {
-                    self.outcome = Some(BootstrapOutcome::DeterminatePending { bundle, handoff });
-                    return Err(error);
-                }
-                if handoff.accept_after_installed_state_proof().is_err() {
-                    self.outcome = Some(BootstrapOutcome::DeterminatePending { bundle, handoff });
-                    return Err(InstallError::backend_failure());
-                }
                 self.outcome = Some(BootstrapOutcome::DeterminateComplete);
                 Ok(changed)
             }
@@ -1275,22 +1259,18 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 Ok(changed)
             }
             #[cfg(test)]
-            BootstrapOutcome::DeterminateStub(stub) => {
-                let result = (|| {
-                    let changed = self.inner.publish_ownership_receipt()?;
-                    complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
-                    if stub.fail_acceptance {
-                        return Err(InstallError::backend_failure());
-                    }
-                    stub.handoff_snapshots
-                        .borrow_mut()
-                        .push(DeterminateHandoffState::Accepted);
-                    Ok(changed)
-                })();
+            BootstrapOutcome::DeterminateTestPending(handoff) => {
+                let result = publish_and_accept_determinate(
+                    self.inner,
+                    &mut self.journal,
+                    mutation,
+                    presence,
+                    &handoff,
+                );
                 self.outcome = Some(if result.is_ok() {
                     BootstrapOutcome::DeterminateComplete
                 } else {
-                    BootstrapOutcome::DeterminateStub(stub)
+                    BootstrapOutcome::DeterminateTestPending(handoff)
                 });
                 result
             }
@@ -1314,12 +1294,32 @@ fn determinate_succeeded(outcome: DeterminateProcessOutcome) -> bool {
     outcome.terminal == DeterminateTerminal::Exited(0)
 }
 
+fn publish_and_accept_determinate(
+    backend: &mut dyn LinuxInstallBackend,
+    journal: &mut Option<LinuxJournalTransaction<'_>>,
+    mutation: LinuxInstallMutation,
+    presence: LinuxAssetPresence,
+    handoff: &DeterminateHandoff,
+) -> Result<bool, InstallError> {
+    let changed = backend.publish_ownership_receipt()?;
+    complete_linux_mutation(journal, mutation, presence, changed)?;
+    handoff
+        .accept_after_installed_state_proof()
+        .map_err(|_| InstallError::backend_failure())?;
+    Ok(changed)
+}
+
 fn run_with_new_determinate_handoff<T>(
-    state: DeterminateHandoffState,
+    handoff: &DeterminateHandoff,
     start: impl FnOnce() -> Result<T, BundleProvisionError>,
 ) -> Result<T, BundleProvisionError> {
-    match state {
-        DeterminateHandoffState::NotStarted => start(),
+    match handoff.state().map_err(|_| BundleProvisionError::Failed)? {
+        DeterminateHandoffState::NotStarted => {
+            handoff
+                .record_started()
+                .map_err(|_| BundleProvisionError::Failed)?;
+            start()
+        }
         DeterminateHandoffState::Started | DeterminateHandoffState::Accepted => {
             Err(BundleProvisionError::Failed)
         }
@@ -1707,7 +1707,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
             | BootstrapOutcome::DeterminatePending { .. }
             | BootstrapOutcome::DeterminateComplete => Err(MacOsError::backend_failure()),
             #[cfg(test)]
-            BootstrapOutcome::DeterminateStub(_) => Err(MacOsError::backend_failure()),
+            BootstrapOutcome::DeterminateTestPending(_) => Err(MacOsError::backend_failure()),
             BootstrapOutcome::Existing => {
                 let changed = self.inner.publish_ownership_receipt()?;
                 self.outcome = Some(BootstrapOutcome::Existing);
@@ -2067,47 +2067,299 @@ mod tests {
         }
     }
 
-    struct DeterminateStubProvisioner {
-        vendor_starts: std::rc::Rc<std::cell::Cell<usize>>,
-        handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
-        fail_acceptance: bool,
+    const TEST_INSTALLED_INSTALLER: &[u8] = b"test installed Determinate helper";
+
+    struct RealDeterminateFixture {
+        temporary: tempfile::TempDir,
     }
 
-    impl BundleProvisioner for DeterminateStubProvisioner {
+    impl RealDeterminateFixture {
+        fn new() -> Result<Self, Box<dyn std::error::Error>> {
+            let temporary = tempfile::tempdir()?;
+            fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700))?;
+            let installer = temporary.path().join("nix-installer");
+            fs::write(&installer, TEST_INSTALLED_INSTALLER)?;
+            fs::set_permissions(&installer, fs::Permissions::from_mode(0o755))?;
+            Ok(Self { temporary })
+        }
+
+        fn handoff(&self) -> Result<DeterminateHandoff, Box<dyn std::error::Error>> {
+            Ok(DeterminateHandoff::for_test_bytes(
+                self.temporary.path(),
+                0o600,
+                TEST_INSTALLED_INSTALLER,
+            )?)
+        }
+
+        fn receipt(&self) -> std::path::PathBuf {
+            self.temporary.path().join("receipt.json")
+        }
+
+        fn marker(&self, name: &str) -> std::path::PathBuf {
+            self.temporary.path().join(name)
+        }
+
+        fn write_receipt(&self) -> Result<(), Box<dyn std::error::Error>> {
+            fs::write(self.receipt(), b"opaque test receipt")?;
+            fs::set_permissions(self.receipt(), fs::Permissions::from_mode(0o600))?;
+            Ok(())
+        }
+    }
+
+    fn vendor_exit_zero(
+        handoff: &DeterminateHandoff,
+        receipt: &Path,
+        marker: &Path,
+    ) -> Result<DeterminateProcessOutcome, BundleProvisionError> {
+        if handoff.state() != Ok(DeterminateHandoffState::Started) {
+            return Err(BundleProvisionError::Failed);
+        }
+        let status = std::process::Command::new("/bin/sh")
+            .args([
+                std::ffi::OsStr::new("-c"),
+                std::ffi::OsStr::new(
+                    "umask 077; printf 'opaque test receipt' > \"$1\"; printf '%s\\n' $$ >> \"$2\"",
+                ),
+                std::ffi::OsStr::new("determinate-test"),
+            ])
+            .arg(receipt)
+            .arg(marker)
+            .status()
+            .map_err(|_| BundleProvisionError::Failed)?;
+        let terminal = status.code().map_or_else(
+            || {
+                std::os::unix::process::ExitStatusExt::signal(&status)
+                    .map(DeterminateTerminal::Signaled)
+                    .ok_or(BundleProvisionError::Failed)
+            },
+            |code| Ok(DeterminateTerminal::Exited(code)),
+        )?;
+        Ok(DeterminateProcessOutcome {
+            terminal,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        })
+    }
+
+    struct RealDeterminateProvisioner {
+        handoff: Option<DeterminateHandoff>,
+        receipt: std::path::PathBuf,
+        marker: std::path::PathBuf,
+    }
+
+    impl BundleProvisioner for RealDeterminateProvisioner {
         fn provision<'a>(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
             _daemon: &'a dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
-            self.vendor_starts
-                .set(self.vendor_starts.get().saturating_add(1));
-            self.handoff_snapshots
-                .borrow_mut()
-                .push(DeterminateHandoffState::Started);
-            Ok(BootstrapOutcome::DeterminateStub(std::rc::Rc::new(
-                DeterminateStubState {
-                    handoff_snapshots: self.handoff_snapshots.clone(),
-                    fail_acceptance: self.fail_acceptance,
-                },
-            )))
+            let handoff = self.handoff.take().ok_or(BundleProvisionError::Failed)?;
+            let outcome = run_with_new_determinate_handoff(&handoff, || {
+                vendor_exit_zero(&handoff, &self.receipt, &self.marker)
+            })?;
+            if !determinate_succeeded(outcome) {
+                return Err(BundleProvisionError::RollbackIncomplete);
+            }
+            Ok(BootstrapOutcome::DeterminateTestPending(Box::new(handoff)))
         }
     }
 
-    #[test]
-    fn existing_handoff_refuses_before_vendor_spawn() {
-        for state in [
-            DeterminateHandoffState::Started,
-            DeterminateHandoffState::Accepted,
-        ] {
-            let spawned = std::cell::Cell::new(false);
-            let result = run_with_new_determinate_handoff(state, || {
-                spawned.set(true);
-                Ok(())
-            });
+    fn write_vendor_script(
+        fixture: &RealDeterminateFixture,
+        name: &str,
+        body: &str,
+    ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        let directory = fixture.temporary.path().join("bin");
+        fs::create_dir_all(&directory)?;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        let executable = directory.join(name);
+        fs::write(&executable, format!("#!/bin/sh\n{body}\n"))?;
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o500))?;
+        Ok(executable)
+    }
 
-            assert!(matches!(result, Err(BundleProvisionError::Failed)));
-            assert!(!spawned.get());
+    fn staged_installer_identity(
+        path: &Path,
+    ) -> Result<DeterminateInstaller, Box<dyn std::error::Error>> {
+        let bytes = fs::read(path)?;
+        Ok(DeterminateInstaller::new(
+            u64::try_from(bytes.len())?,
+            Digest::from_bytes(Sha256::digest(bytes).into()),
+        ))
+    }
+
+    fn restart_refuses_vendor_start(handoff: &DeterminateHandoff, marker: &Path) -> bool {
+        let retry = run_with_new_determinate_handoff(handoff, || {
+            fs::write(marker, b"second start").map_err(|_| BundleProvisionError::Failed)?;
+            Ok(())
+        });
+        matches!(retry, Err(BundleProvisionError::Failed)) && !marker.exists()
+    }
+
+    fn assert_restart_refuses_vendor_start(handoff: &DeterminateHandoff, marker: &Path) {
+        assert!(restart_refuses_vendor_start(handoff, marker));
+    }
+
+    #[test]
+    fn existing_handoff_refuses_before_vendor_spawn() -> Result<(), Box<dyn std::error::Error>> {
+        for accepted in [false, true] {
+            let fixture = RealDeterminateFixture::new()?;
+            let handoff = fixture.handoff()?;
+            handoff.record_started()?;
+            if accepted {
+                fixture.write_receipt()?;
+                handoff.accept_after_installed_state_proof()?;
+            }
+            assert_restart_refuses_vendor_start(&handoff, &fixture.marker("unexpected-start"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn spawn_and_wait_uncertainty_preserves_started_and_refuses_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let spawn_fixture = RealDeterminateFixture::new()?;
+        let spawn_handoff = spawn_fixture.handoff()?;
+        let spawn_executable = write_vendor_script(
+            &spawn_fixture,
+            "spawn-installer",
+            "printf ran > \"$TMPDIR/spawn-ran\"",
+        )?;
+        let spawn_result = run_with_new_determinate_handoff(&spawn_handoff, || {
+            crate::determinate::run_test_install_with_process(
+                &spawn_executable,
+                &staged_installer_identity(&spawn_executable)
+                    .map_err(|_| BundleProvisionError::Failed)?,
+                spawn_fixture.temporary.path(),
+                |_| Err(std::io::Error::other("simulated spawn failure")),
+                std::process::Child::wait,
+            )
+            .map_err(|_| BundleProvisionError::Failed)
+        });
+        assert!(matches!(spawn_result, Err(BundleProvisionError::Failed)));
+        assert_eq!(spawn_handoff.state()?, DeterminateHandoffState::Started);
+        assert!(!spawn_fixture.marker("spawn-ran").exists());
+        assert_restart_refuses_vendor_start(
+            &spawn_fixture.handoff()?,
+            &spawn_fixture.marker("spawn-retry"),
+        );
+
+        let wait_fixture = RealDeterminateFixture::new()?;
+        let wait_handoff = wait_fixture.handoff()?;
+        let wait_executable = write_vendor_script(
+            &wait_fixture,
+            "wait-installer",
+            "printf '%s' $$ > \"$TMPDIR/wait.pid\"; sleep 0.05; exit 0",
+        )?;
+        let wait_result = run_with_new_determinate_handoff(&wait_handoff, || {
+            crate::determinate::run_test_install_with_process(
+                &wait_executable,
+                &staged_installer_identity(&wait_executable)
+                    .map_err(|_| BundleProvisionError::Failed)?,
+                wait_fixture.temporary.path(),
+                std::process::Command::spawn,
+                |_| Err(std::io::Error::other("simulated wait failure")),
+            )
+            .map_err(|_| BundleProvisionError::Failed)
+        });
+        assert!(matches!(wait_result, Err(BundleProvisionError::Failed)));
+        assert_eq!(wait_handoff.state()?, DeterminateHandoffState::Started);
+        let pid = fs::read_to_string(wait_fixture.marker("wait.pid"))?.parse::<i32>()?;
+        assert_eq!(kill(Pid::from_raw(pid), None), Err(Errno::ESRCH));
+        assert_restart_refuses_vendor_start(
+            &wait_fixture.handoff()?,
+            &wait_fixture.marker("wait-retry"),
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn crash_before_vendor_start_preserves_started_and_refuses_retry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = RealDeterminateFixture::new()?;
+        let handoff = fixture.handoff()?;
+        let first = run_with_new_determinate_handoff(&handoff, || {
+            Err::<(), _>(BundleProvisionError::Failed)
+        });
+        assert!(matches!(first, Err(BundleProvisionError::Failed)));
+        assert_eq!(
+            fixture.handoff()?.state()?,
+            DeterminateHandoffState::Started
+        );
+        assert_restart_refuses_vendor_start(&fixture.handoff()?, &fixture.marker("vendor-ran"));
+        Ok(())
+    }
+
+    #[test]
+    fn simulated_caller_and_supervisor_loss_preserves_started_and_refuses_second_start()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = RealDeterminateFixture::new()?;
+        let handoff = fixture.handoff()?;
+        let pid_path = fixture.marker("supervisor-loss.pid");
+        let first = run_with_new_determinate_handoff(&handoff, || {
+            if handoff.state() != Ok(DeterminateHandoffState::Started) {
+                return Err(BundleProvisionError::Failed);
+            }
+            let mut child = std::process::Command::new("/bin/sh")
+                .args([
+                    std::ffi::OsStr::new("-c"),
+                    std::ffi::OsStr::new(
+                        "printf '%s' $$ > \"$1\"; printf 'ready\\n'; IFS= read -r _ || true",
+                    ),
+                    std::ffi::OsStr::new("determinate-test"),
+                ])
+                .arg(&pid_path)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .map_err(|_| BundleProvisionError::Failed)?;
+            let observed_while_running = (|| {
+                let stdout = child.stdout.take().ok_or(BundleProvisionError::Failed)?;
+                let mut ready = String::new();
+                std::io::BufRead::read_line(&mut std::io::BufReader::new(stdout), &mut ready)
+                    .map_err(|_| BundleProvisionError::Failed)?;
+                if ready != "ready\n" || handoff.state() != Ok(DeterminateHandoffState::Started) {
+                    return Err(BundleProvisionError::Failed);
+                }
+                let pid = fs::read_to_string(&pid_path)
+                    .map_err(|_| BundleProvisionError::Failed)?
+                    .parse::<i32>()
+                    .map_err(|_| BundleProvisionError::Failed)?;
+                if pid != i32::try_from(child.id()).map_err(|_| BundleProvisionError::Failed)?
+                    || kill(Pid::from_raw(pid), None).is_err()
+                {
+                    return Err(BundleProvisionError::Failed);
+                }
+                if !restart_refuses_vendor_start(
+                    &fixture
+                        .handoff()
+                        .map_err(|_| BundleProvisionError::Failed)?,
+                    &fixture.marker("second-supervisor-start"),
+                ) {
+                    return Err(BundleProvisionError::Failed);
+                }
+                Ok(())
+            })();
+            drop(child.stdin.take());
+            let waited = child.wait();
+            if waited.is_err() {
+                let _ = child.wait();
+            }
+            observed_while_running?;
+            if !waited.map_err(|_| BundleProvisionError::Failed)?.success() {
+                return Err(BundleProvisionError::Failed);
+            }
+            Err::<(), _>(BundleProvisionError::Failed)
+        });
+        assert!(matches!(first, Err(BundleProvisionError::Failed)));
+        assert_eq!(
+            fixture.handoff()?.state()?,
+            DeterminateHandoffState::Started
+        );
+        let pid = fs::read_to_string(pid_path)?.parse::<i32>()?;
+        assert_eq!(kill(Pid::from_raw(pid), None), Err(Errno::ESRCH));
+        assert!(!fixture.marker("second-supervisor-start").exists());
+        Ok(())
     }
 
     #[test]
@@ -2253,6 +2505,78 @@ mod tests {
         }
     }
 
+    struct RealDeterminateInstallObservation {
+        fixture: RealDeterminateFixture,
+        result: Result<(), InstallError>,
+        rollback_calls: usize,
+        accepted_before_journal_completion: bool,
+    }
+
+    struct DeterminateJournalPersistence {
+        handoff: DeterminateHandoff,
+        accepted_before_completion: std::cell::Cell<bool>,
+    }
+
+    impl LinuxJournalPersistence for DeterminateJournalPersistence {
+        fn replace(&self, journal: &LinuxInstallJournal) -> Result<(), InstallError> {
+            if !journal.is_committed()
+                && self.handoff.state() == Ok(DeterminateHandoffState::Accepted)
+            {
+                self.accepted_before_completion.set(true);
+            }
+            Ok(())
+        }
+    }
+
+    fn run_real_determinate_install(
+        failure: LinuxBackendFailure,
+    ) -> Result<RealDeterminateInstallObservation, Box<dyn std::error::Error>> {
+        let fixture = RealDeterminateFixture::new()?;
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let mut provisioner = RealDeterminateProvisioner {
+            handoff: Some(fixture.handoff()?),
+            receipt: fixture.receipt(),
+            marker: fixture.marker("vendor-starts"),
+        };
+        let persistence = DeterminateJournalPersistence {
+            handoff: fixture.handoff()?,
+            accepted_before_completion: std::cell::Cell::new(false),
+        };
+        let journal = LinuxInstallJournal::new(
+            request.system,
+            Digest::from_bytes([0xb1; 32]),
+            Digest::from_bytes([0xb2; 32]),
+        )?;
+        let mut backend = LinuxBackend {
+            create: true,
+            failure,
+            ..LinuxBackend::default()
+        };
+        let result = install_linux_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            &persistence,
+            journal,
+        )
+        .map(|_| ());
+        Ok(RealDeterminateInstallObservation {
+            fixture,
+            result,
+            rollback_calls: backend.rollback_calls,
+            accepted_before_journal_completion: persistence.accepted_before_completion.get(),
+        })
+    }
+
     #[test]
     fn started_handoff_preflight_prevents_product_mutation_and_vendor_start()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2295,52 +2619,109 @@ mod tests {
     }
 
     #[test]
-    fn post_vendor_validation_failures_preserve_started_without_vendor_rollback()
+    fn crash_after_exit_zero_before_acceptance_preserves_started()
     -> Result<(), Box<dyn std::error::Error>> {
-        let request = InstallerProvisionRequest {
-            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
-            datastore: Path::new("/state"),
-            installation_root: Path::new("/"),
-            scratch_parent: Path::new("/scratch"),
-            system: System::X8664Linux,
-            groups: ManagedGroupBindings::new(100, 101)?,
-        };
+        let fixture = RealDeterminateFixture::new()?;
+        let handoff = fixture.handoff()?;
+        let outcome = run_with_new_determinate_handoff(&handoff, || {
+            vendor_exit_zero(
+                &handoff,
+                &fixture.receipt(),
+                &fixture.marker("vendor-starts"),
+            )
+        })
+        .map_err(|_| "vendor run failed")?;
+        assert!(determinate_succeeded(outcome));
+        assert_eq!(
+            fixture.handoff()?.state()?,
+            DeterminateHandoffState::Started
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.marker("vendor-starts"))?
+                .lines()
+                .count(),
+            1
+        );
+        assert_restart_refuses_vendor_start(
+            &fixture.handoff()?,
+            &fixture.marker("post-exit-retry"),
+        );
+        Ok(())
+    }
 
-        for (failure, fail_acceptance) in [
-            (LinuxBackendFailure::Health, false),
-            (LinuxBackendFailure::Receipt, false),
-            (LinuxBackendFailure::None, true),
-        ] {
-            let vendor_starts = std::rc::Rc::new(std::cell::Cell::new(0));
-            let handoff_snapshots = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-            let mut provisioner = DeterminateStubProvisioner {
-                vendor_starts: vendor_starts.clone(),
-                handoff_snapshots: handoff_snapshots.clone(),
-                fail_acceptance,
-            };
-            let mut backend = LinuxBackend {
-                create: true,
-                failure,
-                ..LinuxBackend::default()
-            };
+    #[test]
+    fn failed_installed_state_validation_preserves_started()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let observation = run_real_determinate_install(LinuxBackendFailure::Health)?;
+        assert!(observation.result.is_err());
+        assert_eq!(
+            observation.fixture.handoff()?.state()?,
+            DeterminateHandoffState::Started
+        );
+        assert_eq!(
+            fs::read_to_string(observation.fixture.marker("vendor-starts"))?
+                .lines()
+                .count(),
+            1
+        );
+        assert_restart_refuses_vendor_start(
+            &observation.fixture.handoff()?,
+            &observation.fixture.marker("health-retry"),
+        );
+        assert!(observation.rollback_calls > 0);
+        Ok(())
+    }
 
-            assert!(
-                install_linux_with_provisioner(
-                    request.system,
-                    &request,
-                    &StubDaemon,
-                    &mut backend,
-                    &mut provisioner,
-                )
-                .is_err()
-            );
-            assert_eq!(
-                handoff_snapshots.borrow().as_slice(),
-                &[DeterminateHandoffState::Started]
-            );
-            assert_eq!(vendor_starts.get(), 1);
-            assert!(backend.rollback_calls > 0);
-        }
+    #[test]
+    fn failed_product_receipt_publication_preserves_started()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let observation = run_real_determinate_install(LinuxBackendFailure::Receipt)?;
+        assert!(observation.result.is_err());
+        assert_eq!(
+            observation.fixture.handoff()?.state()?,
+            DeterminateHandoffState::Started
+        );
+        assert_eq!(
+            fs::read_to_string(observation.fixture.marker("vendor-starts"))?
+                .lines()
+                .count(),
+            1
+        );
+        assert_restart_refuses_vendor_start(
+            &observation.fixture.handoff()?,
+            &observation.fixture.marker("receipt-retry"),
+        );
+        assert!(observation.rollback_calls > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let observation = run_real_determinate_install(LinuxBackendFailure::None)?;
+        assert!(observation.result.is_ok());
+        assert_eq!(
+            observation.fixture.handoff()?.state()?,
+            DeterminateHandoffState::Accepted
+        );
+        assert_eq!(
+            fs::read_to_string(observation.fixture.marker("vendor-starts"))?
+                .lines()
+                .count(),
+            1
+        );
+        let handoff_bytes =
+            fs::read_to_string(observation.fixture.marker("determinate-handoff-v1.json"))?;
+        assert_eq!(handoff_bytes.matches("\"accepted\"").count(), 1);
+        assert_eq!(
+            observation
+                .fixture
+                .handoff()?
+                .accept_after_installed_state_proof(),
+            Err(crate::determinate_handoff::DeterminateHandoffError::InvalidTransition)
+        );
+        assert_eq!(observation.rollback_calls, 0);
+        assert!(!observation.accepted_before_journal_completion);
         Ok(())
     }
 
