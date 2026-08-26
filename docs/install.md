@@ -56,7 +56,7 @@ Use `tests/linux-clean-host/run.sh` in a disposable Linux Docker host. Use
 `tests/macos-clean-host/prove.sh` only in a disposable Tart virtual machine.
 Both proofs stop on the first failed check.
 
-The Linux proof covers foreign-state refusal, interrupted install recovery,
+The Linux proof covers foreign-state refusal,
 ownership drift, install, retry, cached installs, one approved local build,
 update, upgrade, rollback, repair, isolation, and uninstall.
 
