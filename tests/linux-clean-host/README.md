@@ -105,10 +105,17 @@ test-executable SHA-256, `file`, `readelf`, and `ldd` reports, the exact test
 filter manifest and output, structured refusal snapshots, two residue reports,
 and the complete runtime log. On failure, it also contains Docker logs, Docker
 state, container service and process state, and a residue inventory captured
-before cleanup. If that original snapshot has the exact Started Handoff and no
-`/nix`, a separate fresh container runs the hash-pinned vendor executable once
-with trace logging. Its private one-MiB process capture and bounded systemd
-journal are diagnostic evidence only. They never replace the original failure
+before cleanup. The original root-only install journal and Started Handoff are
+retained with bounded descriptor reads.
+If that snapshot has the exact Started Handoff and no `/nix`, a separate fresh
+container runs the exact hash-pinned vendor executable once with the production
+cleared environment and arguments. This untraced replay is not a full filesystem
+reproduction. It omits the Nix configuration, Handoff, install journal, and
+populated channel state. The captured original bootstrap output, Handoff, and
+install journal remain authoritative.
+The replay has a one-hour diagnostic-only cleanup cap. Its private one-MiB
+process capture and bounded systemd journal are diagnostic evidence only. They
+never replace the original failure
 or run after success. `dn15-results.tsv` has exactly two pass rows for each of 17
 blocking cases. The workflow uploads evidence even when the proof fails.
 It uploads the candidate only after the complete proof succeeds.

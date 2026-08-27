@@ -13,6 +13,7 @@ CAPTURE = HERE / "pkg_bounded_capture.py"
 spec = importlib.util.spec_from_file_location("pkg_bounded_capture", CAPTURE)
 bounded_capture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bounded_capture)
+capture_source = CAPTURE.read_text()
 
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory) / "private"
@@ -28,7 +29,8 @@ with tempfile.TemporaryDirectory() as directory:
         "-c",
         'import sys; print("o" * 900); print("e" * 900, file=sys.stderr); raise SystemExit(7)',
     ]
-    subprocess.run(command, check=True)
+    result = subprocess.run(command, check=False)
+    assert result.returncode == 7
     assert sum((root / name).stat().st_size for name in ("stdout", "stderr")) == 1024
     assert "exit_status=7" in (root / "status").read_text()
     assert "truncated=true" in (root / "status").read_text()
@@ -59,6 +61,12 @@ with tempfile.TemporaryDirectory() as directory:
             pass
         else:
             raise AssertionError(f"unsafe source was accepted: {hostile.name}")
+        copied = subprocess.run(
+            [sys.executable, str(CAPTURE), "copy", str(hostile), str(limit)],
+            check=False,
+            capture_output=True,
+        )
+        assert copied.returncode == 1 and copied.stdout == b""
 
 run = (HERE / "run.sh").read_text()
 dockerfile = (HERE / "Dockerfile").read_text()
@@ -83,16 +91,24 @@ for descriptor_check in (
     "os.read(descriptor, 1) == b\"\"",
 ):
     assert descriptor_check in run
-assert 'diagnostic_container="${container}-vendor-trace"' in run
+assert 'diagnostic_container="${container}-vendor-replay"' in run
 assert replay.count('docker rm --force "$diagnostic_container"') >= 1
 assert "DETSYS_IDS_TELEMETRY=disabled" in replay
-assert "timeout --signal=TERM --kill-after=10s 1200s" in replay
+assert "timeout --signal=TERM --kill-after=10s 3600s" in replay
 assert "HOME=/root" in replay
 assert "TMPDIR=/var/lib/pkg-install/tmp" in replay
 assert "--diagnostic-endpoint" in replay and "http://127.0.0.1:18080" in replay
-assert "--logger pretty --log-directive nix_installer=trace -vv" in replay
-assert "--log-directives" not in replay
-assert "install --determinate --no-confirm --no-modify-profile" in replay
+for forbidden in ("--logger", "--log-directive", "--log-directives", "-vv", "RUST_LOG"):
+    assert forbidden not in replay
+production_command = """env -i \\
+        HOME=/root \\
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \\
+        TMPDIR=/var/lib/pkg-install/tmp \\
+        DETSYS_IDS_TELEMETRY=disabled \\
+        /var/lib/pkg-install/tmp/nix-installer \\
+        --diagnostic-endpoint http://127.0.0.1:18080 \\
+        install --determinate --no-confirm --no-modify-profile"""
+assert production_command in replay
 assert "74918096" in replay
 assert replay.count("9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c") >= 3
 assert "0:0:644:74918096" in replay
@@ -100,20 +116,52 @@ assert "0:0:700:74918096" in replay
 assert 'install -m 0700 -o root -g root "$resolved" /var/lib/pkg-install/tmp/nix-installer' in replay
 assert "groupadd --gid 30033 --system pkg-nix-broker" in replay
 assert "useradd --uid 30033 --gid 30033 --system" in replay
-assert "install -d -m 0700 -o 30033 -g 30033 /var/lib/pkg/broker-home" in replay
 assert 'stat -c %u:%g:%a /var/lib/pkg/broker-home' in replay
-assert "install -d -m 0700 -o root -g root /var/lib/pkg-install/tmp" in replay
-assert 'stat -c %u:%g:%a /var/lib/pkg-install/tmp' in replay
+assert "install -d -m 0700 -o root -g root" in replay
+assert "/var/lib/pkg-install /var/lib/pkg-install/tmp" in replay
+assert 'test "$(stat -c %u:%g:%a /var/lib/pkg-install)" = 0:0:700' in replay
+assert 'test "$(stat -c %u:%g:%a /var/lib/pkg-install/tmp)" = 0:0:700' in replay
 assert 'pkg_bounded_capture.py 1048576' in replay
 assert 'pkg_bounded_capture.py 262144' in replay
 assert "timeout --signal=TERM --kill-after=5s 30s" in replay
-assert "stdin=subprocess.DEVNULL" in CAPTURE.read_text()
+assert "stdin=subprocess.DEVNULL" in capture_source
 assert "head -c" not in capture
 assert "head -c" not in replay
 assert "/usr/local/libexec/pkg_bounded_capture.py" in replay
 assert 'copy "$source" "$limit"' in run
 assert 'capture_vendor_replay "$failure" || true' in capture
 assert run.count('capture_vendor_replay "$failure"') == 1
+assert capture.index("transaction-journal.json") < capture.index('capture_vendor_replay "$failure"')
+assert "/var/lib/pkg-install/transaction-v1.json" in capture
+assert "/run/pkg-install/transaction-v1.json" not in run
+assert "65536" in capture
+assert "def verified_read(path, limit, expected_uid=0, expected_gid=0)" in capture_source
+for metadata_check in (
+    "stat.S_ISREG(metadata.st_mode)", "metadata.st_uid != expected_uid",
+    "metadata.st_gid != expected_gid", "stat.S_IMODE(metadata.st_mode) != 0o600",
+    "metadata.st_nlink != 1", "metadata.st_size > limit",
+):
+    assert metadata_check in capture_source
+for product_path in (
+    "/opt/pkg", "/opt/pkg/etc", "/opt/pkg/etc/pkg", "/opt/pkg/uninstall", "/opt/pkg/bin",
+    "/var/lib/pkg", "/var/lib/pkg/log", "/var/lib/pkg/log/broker",
+    "/var/lib/pkg/log/helper", "/var/lib/pkg/broker-home",
+    "/var/lib/pkg/broker-home/channel", "/var/lib/pkg/broker-home/tmp",
+    "/var/lib/pkg/helper-home", "/var/lib/pkg/helper-home/tmp", "/run/pkg-helper", "/run/pkg",
+):
+    assert product_path in replay
+assert "/opt/pkg/etc/pkg/nix.conf" not in replay
+assert "product_prestate=partial-non-file-metadata-only" in replay
+for omission in ("nix_config", "handoff", "journal", "channel_contents"):
+    assert f"{omission}=omitted" in replay
+bootstrap = run.split('echo "+ authenticated ownership drift refusal"', 1)[1].split("stop_container", 1)[0]
+assert "/run/pkg-bootstrap-capture/status.txt" in bootstrap
+assert "/run/pkg-bootstrap-capture/stdout" in bootstrap
+assert "/run/pkg-bootstrap-capture/stderr" in bootstrap
+assert bootstrap.index("pkg_bounded_capture.py 262144") < bootstrap.index("/usr/local/sbin/pkg-bootstrap")
+assert ">/dev/null 2>&1" in bootstrap
+assert "|| true" not in bootstrap and "|| :" not in bootstrap
+assert 'bootstrap=$failure/bootstrap' in capture
 cleanup = run.split("cleanup() {", 1)[1].split("\n}", 1)[0]
 assert cleanup.index("trap 'cleanup_after_signal 130' INT") < cleanup.index('capture_failure "$status"')
 assert cleanup.index("trap 'cleanup_after_signal 143' TERM") < cleanup.index('capture_failure "$status"')
@@ -126,7 +174,7 @@ ready = run.split("wait_container_ready() {", 1)[1].split("\n}", 1)[0]
 assert 'docker logs "$target_container"' in ready
 assert "return 1" in ready
 assert "exit 1" not in ready
-proof_check = 'python3 "$repo/tests/linux-clean-host/test_vendor_trace.py" >/dev/null'
+proof_check = 'python3 "$repo/tests/linux-clean-host/test_untraced_vendor_replay.py" >/dev/null'
 assert run.index(proof_check) < run.index('echo "+ stage x86_64 Linux release inputs"')
 assert run.index("package_alpha_candidate.py") < run.index('"$repo/tests/linux-clean-host/pkg_bounded_capture.py"')
 assert "COPY pkg_bounded_capture.py /usr/local/libexec/" in dockerfile
@@ -136,4 +184,4 @@ for shipping_path in (ROOT / "crates", ROOT / "docs" / "install.sh"):
         if path.is_file():
             assert "pkg_bounded_capture" not in path.read_text(errors="ignore")
 
-print("bounded fresh-container vendor trace gating passed")
+print("bounded fresh-container untraced vendor replay gating passed")

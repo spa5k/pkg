@@ -90,6 +90,7 @@ def capture():
             f"exit_status={exit_status}\ncaptured_bytes={captured}\ntruncated={str(truncated).lower()}\n".encode()
         )
         os.fsync(status.fileno())
+    return exit_status
 
 
 def main():
@@ -99,9 +100,9 @@ def main():
         except (OSError, ValueError):
             raise SystemExit(1)
         sys.stdout.buffer.write(data)
-        return
-    capture()
+        return 0
+    return capture()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
