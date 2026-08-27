@@ -2460,12 +2460,15 @@ mod tests {
     struct LinuxBackend {
         raw_provision_calls: usize,
         create: bool,
+        replace_files: bool,
+        service_mutation: bool,
         failure: LinuxBackendFailure,
         preflight_handoff: Option<DeterminateHandoffState>,
         mutation_calls: usize,
         rollback_calls: usize,
         finalize_calls: usize,
         finalize_requires_commit: Option<std::rc::Rc<std::cell::Cell<bool>>>,
+        events: Vec<&'static str>,
     }
 
     impl LinuxInstallBackend for LinuxBackend {
@@ -2494,13 +2497,17 @@ mod tests {
         }
         fn classify_asset(
             &mut self,
-            _asset: LinuxInstallAsset,
+            asset: LinuxInstallAsset,
         ) -> Result<crate::LinuxAssetPresence, InstallError> {
-            Ok(if self.create {
-                crate::LinuxAssetPresence::Absent
-            } else {
-                crate::LinuxAssetPresence::ExactPresent
-            })
+            Ok(
+                if self.create
+                    || (self.replace_files && asset.kind() == crate::LinuxAssetKind::File)
+                {
+                    crate::LinuxAssetPresence::Absent
+                } else {
+                    crate::LinuxAssetPresence::ExactPresent
+                },
+            )
         }
         fn classify_managed_runtime(&mut self) -> Result<crate::LinuxAssetPresence, InstallError> {
             Ok(if self.create {
@@ -2516,21 +2523,25 @@ mod tests {
                 crate::LinuxAssetPresence::ExactPresent
             })
         }
-        fn ensure_asset(&mut self, _asset: LinuxInstallAsset) -> Result<bool, InstallError> {
+        fn services_need_mutation(&self, _prior_active: bool) -> bool {
+            self.create || self.service_mutation
+        }
+        fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
             if self.failure == LinuxBackendFailure::Asset {
                 Err(InstallError::backend_failure())
             } else {
-                Ok(self.create)
+                Ok(self.create
+                    || (self.replace_files && asset.kind() == crate::LinuxAssetKind::File))
             }
         }
         fn install_systemd_unit(
             &mut self,
-            _asset: LinuxInstallAsset,
+            asset: LinuxInstallAsset,
             _contents: &'static str,
         ) -> Result<bool, InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
-            Ok(self.create)
+            Ok(self.create || (self.replace_files && asset.kind() == crate::LinuxAssetKind::File))
         }
         fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
@@ -2544,14 +2555,21 @@ mod tests {
         }
         fn activate_services(&mut self) -> Result<bool, InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
-            Ok(self.create)
+            self.events.push("activate-services");
+            Ok(self.create || self.service_mutation)
         }
         fn rollback_services(&mut self) -> Result<(), InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
             self.rollback_calls = self.rollback_calls.saturating_add(1);
+            self.events.push("quiesce-services");
+            Ok(())
+        }
+        fn finish_services_rollback(&mut self) -> Result<(), InstallError> {
+            self.events.push("resume-services");
             Ok(())
         }
         fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
+            self.events.push("validate-services");
             if self.failure == LinuxBackendFailure::Health {
                 Err(InstallError::backend_failure())
             } else {
@@ -2560,10 +2578,11 @@ mod tests {
         }
         fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
+            self.events.push("publish-receipt");
             if self.failure == LinuxBackendFailure::Receipt {
                 Err(InstallError::backend_failure())
             } else {
-                Ok(self.create)
+                Ok(self.create || self.replace_files)
             }
         }
         fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
@@ -2582,6 +2601,7 @@ mod tests {
         fn rollback_asset(&mut self, _asset: LinuxInstallAsset) -> Result<(), InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
             self.rollback_calls = self.rollback_calls.saturating_add(1);
+            self.events.push("rollback-asset");
             Ok(())
         }
     }
@@ -3069,6 +3089,145 @@ mod tests {
                 .last()
                 .is_some_and(LinuxInstallJournal::is_committed)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn journaled_existing_product_update_restarts_validates_and_never_starts_determinate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let persistence = MemoryJournalPersistence::default();
+        let journal = LinuxInstallJournal::new(
+            System::X8664Linux,
+            Digest::from_bytes([0xd1; 32]),
+            Digest::from_bytes([0xd2; 32]),
+        )?;
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let mut backend = LinuxBackend {
+            replace_files: true,
+            service_mutation: true,
+            preflight_handoff: Some(DeterminateHandoffState::Accepted),
+            ..LinuxBackend::default()
+        };
+        let mut provisioner = ReauthProvisioner {
+            calls: 0,
+            reauthenticated: false,
+            reuse_existing: true,
+        };
+
+        let (_, outcome) = install_linux_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            &persistence,
+            journal,
+        )?;
+
+        assert!(matches!(outcome, BootstrapOutcome::Existing));
+        drop(outcome);
+        assert_eq!(provisioner.calls, 0);
+        assert_eq!(backend.raw_provision_calls, 0);
+        let activate = backend
+            .events
+            .iter()
+            .position(|event| *event == "activate-services")
+            .ok_or_else(|| std::io::Error::other("missing service activation"))?;
+        let validate = backend
+            .events
+            .iter()
+            .position(|event| *event == "validate-services")
+            .ok_or_else(|| std::io::Error::other("missing service validation"))?;
+        let receipt = backend
+            .events
+            .iter()
+            .position(|event| *event == "publish-receipt")
+            .ok_or_else(|| std::io::Error::other("missing receipt publication"))?;
+        assert!(activate < validate && validate < receipt);
+        let committed = persistence
+            .snapshots
+            .borrow()
+            .last()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("missing committed journal"))?;
+        assert!(committed.is_committed());
+        assert_eq!(
+            committed.mutation_state(&LinuxInstallMutation::Services)?,
+            Some(crate::LinuxInstallMutationState::Created)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_existing_product_update_quiesces_then_restores_files_and_prior_services()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let persistence = MemoryJournalPersistence::default();
+        let journal = LinuxInstallJournal::new(
+            System::X8664Linux,
+            Digest::from_bytes([0xe1; 32]),
+            Digest::from_bytes([0xe2; 32]),
+        )?;
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let mut backend = LinuxBackend {
+            replace_files: true,
+            service_mutation: true,
+            failure: LinuxBackendFailure::Health,
+            preflight_handoff: Some(DeterminateHandoffState::Accepted),
+            ..LinuxBackend::default()
+        };
+        let mut provisioner = ReauthProvisioner {
+            calls: 0,
+            reauthenticated: false,
+            reuse_existing: true,
+        };
+
+        let result = install_linux_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            &persistence,
+            journal,
+        );
+
+        assert_eq!(
+            result.map(|_| ()).map_err(InstallError::code),
+            Err(crate::InstallErrorCode::ServiceUnhealthy)
+        );
+        assert_eq!(provisioner.calls, 0);
+        assert_eq!(backend.raw_provision_calls, 0);
+        let quiesce = backend
+            .events
+            .iter()
+            .position(|event| *event == "quiesce-services")
+            .ok_or_else(|| std::io::Error::other("missing service quiesce"))?;
+        let restore = backend
+            .events
+            .iter()
+            .position(|event| *event == "rollback-asset")
+            .ok_or_else(|| std::io::Error::other("missing file rollback"))?;
+        let resume = backend
+            .events
+            .iter()
+            .position(|event| *event == "resume-services")
+            .ok_or_else(|| std::io::Error::other("missing service resume"))?;
+        assert!(quiesce < restore && restore < resume);
+        assert!(!backend.events.contains(&"publish-receipt"));
         Ok(())
     }
 

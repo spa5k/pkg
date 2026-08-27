@@ -759,17 +759,24 @@ impl LinuxPlatformAssetManager {
             return Ok(None);
         }
         if self.ensure_filesystem()?.verify_asset_absent(asset).is_ok() {
-            let authority = self.replacement_authority(asset, &manifest)?;
-            return match authority {
-                ReplacementAuthority::RepairExisting => {
-                    Ok(Some(ReplacementAuthority::RepairMissing))
-                }
-                ReplacementAuthority::Upgrade { .. } | ReplacementAuthority::RepairMissing => {
-                    Err(InstallError::backend_failure())
-                }
-            };
+            return self
+                .missing_file_replacement_authority(asset, &manifest)
+                .map(Some);
         }
         self.replacement_authority(asset, &manifest).map(Some)
+    }
+
+    fn missing_file_replacement_authority(
+        &self,
+        asset: LinuxInstallAsset,
+        manifest: &UninstallManifest,
+    ) -> Result<ReplacementAuthority, InstallError> {
+        match self.replacement_authority(asset, manifest)? {
+            ReplacementAuthority::RepairExisting => Ok(ReplacementAuthority::RepairMissing),
+            ReplacementAuthority::Upgrade { .. } | ReplacementAuthority::RepairMissing => {
+                Err(InstallError::backend_failure())
+            }
+        }
     }
 
     fn current_records(
@@ -958,6 +965,10 @@ mod tests {
             manager.replacement_authority(target, &owned)?,
             ReplacementAuthority::RepairExisting
         );
+        assert_eq!(
+            manager.missing_file_replacement_authority(target, &owned)?,
+            ReplacementAuthority::RepairMissing
+        );
 
         let prior_release = manifest(
             system,
@@ -980,6 +991,11 @@ mod tests {
             Digest::from_bytes([3; 32]),
         )?;
         assert!(manager.replacement_authority(target, &preexisting).is_err());
+        assert!(
+            manager
+                .missing_file_replacement_authority(target, &preexisting)
+                .is_err()
+        );
         Ok(())
     }
 }

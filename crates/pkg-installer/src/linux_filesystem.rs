@@ -1713,6 +1713,22 @@ mod tests {
             )?,
             LinuxFilesystemErrorCode::Conflict
         );
+
+        let mut wrong_owner = Fixture::new()?;
+        wrong_owner.manager.principals.root_uid = wrong_owner
+            .manager
+            .principals
+            .root_uid
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("uid overflow"))?;
+        assert_eq!(
+            failure_code(
+                &wrong_owner
+                    .manager
+                    .ensure_asset(Fixture::asset("product-root"))
+            )?,
+            LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
         Ok(())
     }
 
@@ -1976,6 +1992,34 @@ mod tests {
         );
         assert_eq!(fs::read(path)?, prior);
         assert_eq!(fs::read(backup)?, b"partial candidate");
+        Ok(())
+    }
+
+    #[test]
+    fn repair_recovery_refuses_unknown_staging_metadata_as_live_prior_bytes()
+    -> Result<(), Box<dyn Error>> {
+        let fixture = Fixture::new()?;
+        let asset = Fixture::asset("broker-service-unit");
+        let parent = fixture.temporary.path().join("usr/lib/systemd/system");
+        let path = parent.join("pkg-nix-broker.service");
+        let backup = parent.join(rollback_name(asset));
+        fs::write(&path, LinuxSystemdAssets::BROKER_SERVICE)?;
+        fs::write(&backup, b"unknown prior bytes")?;
+        fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))?;
+
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .reconcile_owned_file(asset, None, true, false)
+            )?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+        assert_eq!(
+            fs::read(path)?,
+            LinuxSystemdAssets::BROKER_SERVICE.as_bytes()
+        );
+        assert_eq!(fs::read(backup)?, b"unknown prior bytes");
         Ok(())
     }
 
