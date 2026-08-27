@@ -288,6 +288,26 @@ impl LinuxFilesystemManager {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_existing_preflight_test(
+        root: PathBuf,
+        payloads: LinuxReleasePayloads,
+    ) -> Self {
+        let user_id = nix::unistd::Uid::effective().as_raw();
+        let group_id = nix::unistd::Gid::effective().as_raw();
+        Self::with_root(
+            root,
+            PrincipalBindings {
+                root_uid: user_id,
+                root_gid: group_id,
+                broker_uid: user_id,
+                broker_gid: group_id,
+                build_users_gid: group_id,
+            },
+            payloads,
+        )
+    }
+
     /// Returns true for every closed file or directory asset.
     #[must_use]
     pub const fn handles(asset: LinuxInstallAsset) -> bool {

@@ -189,7 +189,7 @@ impl LinuxInstallJournalStorage {
     }
 
     #[cfg(test)]
-    fn open_existing_for_test(
+    pub(crate) fn open_existing_for_test(
         base: &Path,
         expected_user_id: u32,
         expected_group_id: u32,
@@ -208,7 +208,7 @@ impl LinuxInstallJournalStorage {
     }
 
     #[cfg(test)]
-    fn prepare_for_test(
+    pub(crate) fn prepare_for_test(
         base: &Path,
         expected_user_id: u32,
         expected_group_id: u32,

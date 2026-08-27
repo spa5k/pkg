@@ -238,7 +238,7 @@ pub trait LinuxInstallBackend {
         self.classify_asset(asset)
     }
 
-    /// Classifies the authenticated managed runtime without mutation.
+    /// Classifies the authenticated Base Nix installation without mutation.
     ///
     /// # Errors
     ///
@@ -320,7 +320,7 @@ pub trait LinuxInstallBackend {
     /// [`Self::rollback_managed_runtime`].
     fn provision_managed_runtime(&mut self) -> Result<bool, InstallError>;
 
-    /// Reverts a managed runtime created by this exact attempt.
+    /// Reverts Base Nix created by this exact attempt.
     ///
     /// # Errors
     ///
@@ -331,7 +331,7 @@ pub trait LinuxInstallBackend {
     ///
     /// # Errors
     ///
-    /// Returns a backend error unless the installed managed Nix store responds correctly.
+    /// Returns a backend error unless the installed Base Nix store responds correctly.
     fn validate_base_nix(&mut self) -> Result<(), InstallError>;
 
     /// Accepts the Base Nix handoff after installed-state proof and before product activation.
@@ -682,16 +682,14 @@ fn asset_by_id(id: &str) -> Result<LinuxInstallAsset, InstallError> {
 }
 
 fn require_exact_service_assets(backend: &mut dyn LinuxInstallBackend) -> Result<(), InstallError> {
-    for asset in linux_product_mutation_assets().filter(|asset| is_service_runtime_asset(*asset)) {
+    for asset in
+        linux_product_mutation_assets().filter(|asset| is_linux_service_runtime_asset(*asset))
+    {
         if backend.classify_asset(asset)? != LinuxAssetPresence::ExactPresent {
             return Err(InstallError::backend_failure());
         }
     }
     Ok(())
-}
-
-fn is_service_runtime_asset(asset: LinuxInstallAsset) -> bool {
-    is_linux_service_runtime_asset(asset)
 }
 
 fn publish_linux_receipt(
@@ -1130,7 +1128,7 @@ mod tests {
         backend.states.insert("services");
         backend.existing.extend(
             linux_product_mutation_assets()
-                .filter(|asset| is_service_runtime_asset(*asset))
+                .filter(|asset| is_linux_service_runtime_asset(*asset))
                 .map(LinuxInstallAsset::id),
         );
 
@@ -1180,7 +1178,7 @@ mod tests {
         backend.states.insert("services");
         backend.existing.extend(
             linux_product_mutation_assets()
-                .filter(|asset| is_service_runtime_asset(*asset))
+                .filter(|asset| is_linux_service_runtime_asset(*asset))
                 .map(LinuxInstallAsset::id),
         );
         let mut persisted = 0_usize;

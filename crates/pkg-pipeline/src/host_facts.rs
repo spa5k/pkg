@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn managed_daemon_command_accepts_only_direct_or_exact_rosetta_execution() {
         assert!(is_managed_daemon_command(
-            b"/opt/pkg/nix/current/bin/nix-daemon\0--daemon\0"
+            b"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nix-2.31.2/bin/nix-daemon\0--daemon\0"
         ));
         assert!(is_managed_daemon_command(
             b"/run/rosetta/rosetta\0/opt/pkg/nix/current/bin/nix-daemon\0nix-daemon\0--daemon\0"

@@ -126,13 +126,33 @@ pub fn install_linux_from_bundle<'a>(
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     let release_digest = bundle.release_identity_digest();
     backend.bind_authenticated_release_identity(bundle.system(), release_digest)?;
+    let mut provisioner = AuthenticatedProvisioner::with_reauthentication(trusted_root, bundle);
+    continue_linux_bundle_install(
+        request,
+        daemon,
+        backend,
+        &mut provisioner,
+        release_digest,
+        &LinuxJournalLocation::Production,
+    )
+}
+
+fn continue_linux_bundle_install<'a, P: BundleProvisioner>(
+    request: &'a InstallerProvisionRequest<'a>,
+    daemon: &'a dyn ManagedDaemon,
+    backend: &'a mut dyn LinuxInstallBackend,
+    provisioner: &'a mut P,
+    release_digest: Digest,
+    journal_location: &LinuxJournalLocation,
+) -> Result<LinuxBundleInstallReport, InstallError> {
     let recovery_context_digest = linux_recovery_context_digest(release_digest, request);
     let recovery = recover_linux_bundle_install(
-        system,
+        request.system,
         release_digest,
         recovery_context_digest,
         request,
         backend,
+        journal_location,
     )?;
     if matches!(&recovery, LinuxBundleRecovery::Committed) {
         return Ok(LinuxBundleInstallReport {
@@ -140,7 +160,7 @@ pub fn install_linux_from_bundle<'a>(
             bootstrap: None,
         });
     }
-    backend.preflight_clean_host(system)?;
+    backend.preflight_clean_host(request.system)?;
     // Journal creation is the durable proof that the fixed workspace was
     // absent before this attempt could create it.
     verify_provision_workspace_absent(request.scratch_parent)
@@ -148,15 +168,12 @@ pub fn install_linux_from_bundle<'a>(
     let (storage, journal) = match recovery {
         LinuxBundleRecovery::Fresh { storage, journal } => (storage, *journal),
         LinuxBundleRecovery::None => {
-            let storage = LinuxInstallJournalStorage::prepare(
-                system,
-                release_digest,
-                recovery_context_digest,
-            )
-            .map_err(|_| InstallError::backend_failure())?;
+            let storage = journal_location
+                .prepare(request.system, release_digest, recovery_context_digest)
+                .map_err(|_| InstallError::backend_failure())?;
             let journal = LinuxInstallJournal::new(
                 backend.install_mode(),
-                system,
+                request.system,
                 release_digest,
                 recovery_context_digest,
             )
@@ -170,13 +187,12 @@ pub fn install_linux_from_bundle<'a>(
     };
     // Keep the original request so final state is broker-owned and durable,
     // instead of root-owned and temporary under /run.
-    let mut provisioner = AuthenticatedProvisioner::with_reauthentication(trusted_root, bundle);
     let installation = install_linux_with_provisioner_journaled(
-        system,
+        request.system,
         request,
         daemon,
         backend,
-        &mut provisioner,
+        provisioner,
         &storage,
         journal,
     );
@@ -547,16 +563,81 @@ enum LinuxBundleRecovery {
     },
 }
 
+enum LinuxJournalLocation {
+    Production,
+    #[cfg(test)]
+    At {
+        base: PathBuf,
+        user_id: u32,
+        group_id: u32,
+    },
+}
+
+impl LinuxJournalLocation {
+    fn open_existing(
+        &self,
+        system: System,
+        digest: Digest,
+        recovery_context_digest: Digest,
+    ) -> Result<Option<LinuxInstallJournalStorage>, LinuxInstallJournalFileError> {
+        match self {
+            Self::Production => {
+                LinuxInstallJournalStorage::open_existing(system, digest, recovery_context_digest)
+            }
+            #[cfg(test)]
+            Self::At {
+                base,
+                user_id,
+                group_id,
+            } => LinuxInstallJournalStorage::open_existing_for_test(
+                base,
+                *user_id,
+                *group_id,
+                system,
+                digest,
+                recovery_context_digest,
+            ),
+        }
+    }
+
+    fn prepare(
+        &self,
+        system: System,
+        digest: Digest,
+        recovery_context_digest: Digest,
+    ) -> Result<LinuxInstallJournalStorage, LinuxInstallJournalFileError> {
+        match self {
+            Self::Production => {
+                LinuxInstallJournalStorage::prepare(system, digest, recovery_context_digest)
+            }
+            #[cfg(test)]
+            Self::At {
+                base,
+                user_id,
+                group_id,
+            } => LinuxInstallJournalStorage::prepare_for_test(
+                base,
+                *user_id,
+                *group_id,
+                system,
+                digest,
+                recovery_context_digest,
+            ),
+        }
+    }
+}
+
 fn recover_linux_bundle_install(
     system: System,
     digest: pkg_core::state::Digest,
     recovery_context_digest: Digest,
     request: &InstallerProvisionRequest<'_>,
     backend: &mut dyn LinuxInstallBackend,
+    journal_location: &LinuxJournalLocation,
 ) -> Result<LinuxBundleRecovery, InstallError> {
-    let Some(storage) =
-        LinuxInstallJournalStorage::open_existing(system, digest, recovery_context_digest)
-            .map_err(|_| InstallError::backend_failure())?
+    let Some(storage) = journal_location
+        .open_existing(system, digest, recovery_context_digest)
+        .map_err(|_| InstallError::backend_failure())?
     else {
         return Ok(LinuxBundleRecovery::None);
     };
@@ -3110,6 +3191,9 @@ mod tests {
     #[test]
     fn accepted_fresh_install_continues_with_the_same_journal_on_the_next_invocation()
     -> Result<(), Box<dyn std::error::Error>> {
+        // The public entry authenticates before calling this core. The small signed
+        // fixture has no production-pinned Determinate target, so a positive load
+        // remains part of the native real-release-bundle proof.
         for failure in [
             LinuxBackendFailure::Activation,
             LinuxBackendFailure::Health,
@@ -3124,21 +3208,25 @@ mod tests {
         first_failure: LinuxBackendFailure,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let fixture = RealDeterminateFixture::new()?;
+        let journal_root = tempfile::tempdir()?;
+        let user_id = nix::unistd::Uid::effective().as_raw();
+        let group_id = nix::unistd::Gid::effective().as_raw();
+        let journal_location = LinuxJournalLocation::At {
+            base: journal_root.path().to_path_buf(),
+            user_id,
+            group_id,
+        };
+        let scratch_parent = journal_root.path().join("scratch");
         let request = InstallerProvisionRequest {
             repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
-            datastore: Path::new("/state"),
+            datastore: journal_root.path(),
             installation_root: Path::new("/"),
-            scratch_parent: Path::new("/scratch"),
+            scratch_parent: &scratch_parent,
             system: System::X8664Linux,
             groups: ManagedGroupBindings::new(100, 101)?,
         };
-        let persistence = MemoryJournalPersistence::default();
-        let journal = LinuxInstallJournal::new(
-            crate::LinuxInstallMode::FreshInstall,
-            request.system,
-            Digest::from_bytes([0xc1; 32]),
-            Digest::from_bytes([0xc2; 32]),
-        )?;
+        let release_digest = Digest::from_bytes([0xc1; 32]);
+        let recovery_context_digest = linux_recovery_context_digest(release_digest, &request);
         let mut backend = LinuxBackend {
             create: true,
             failure: first_failure,
@@ -3152,14 +3240,13 @@ mod tests {
         };
 
         assert_eq!(
-            install_linux_with_provisioner_journaled(
-                request.system,
+            continue_linux_bundle_install(
                 &request,
                 &StubDaemon,
                 &mut backend,
                 &mut first_provisioner,
-                &persistence,
-                journal,
+                release_digest,
+                &journal_location,
             )
             .map(|_| ())
             .map_err(InstallError::code),
@@ -3170,53 +3257,46 @@ mod tests {
             DeterminateHandoffState::Accepted
         );
         assert_eq!(vendor_start_count(&fixture)?, 1);
-        let mut retained = persistence
-            .snapshots
-            .borrow()
-            .last()
-            .cloned()
+        assert_eq!(backend.service_state, TestServiceState::Offline);
+        let retained_storage = journal_location
+            .open_existing(request.system, release_digest, recovery_context_digest)?
+            .ok_or_else(|| std::io::Error::other("missing retained Fresh journal storage"))?;
+        let retained = retained_storage
+            .load()?
             .ok_or_else(|| std::io::Error::other("missing retained Fresh journal"))?;
+        assert_eq!(retained.mode(), crate::LinuxInstallMode::FreshInstall);
         assert!(!retained.is_committed());
         assert!(retained.fresh_services_deactivated());
+        drop(retained_storage);
 
         backend.failure = LinuxBackendFailure::None;
         backend.managed_runtime_present = Some(true);
         backend.preflight_handoff = Some(DeterminateHandoffState::Accepted);
-        recover_linux_install(
-            &mut retained,
-            &mut backend,
-            &mut || Ok(()),
-            &mut |journal| persistence.replace(journal),
-        )?;
-        assert!(!retained.fresh_services_deactivated());
-        assert!(retained.recovery_actions().is_empty());
 
         let mut second_provisioner = ReauthProvisioner {
             calls: 0,
             reauthenticated: false,
             reuse_existing: true,
         };
-        let (_, outcome) = install_linux_with_provisioner_journaled(
-            request.system,
+        let report = continue_linux_bundle_install(
             &request,
             &StubDaemon,
             &mut backend,
             &mut second_provisioner,
-            &persistence,
-            retained,
+            release_digest,
+            &journal_location,
         )?;
 
-        assert!(matches!(outcome, BootstrapOutcome::Existing));
-        drop(outcome);
+        assert!(report.bootstrap().is_none());
         assert_eq!(second_provisioner.calls, 0);
         assert_eq!(backend.raw_provision_calls, 0);
         assert_eq!(vendor_start_count(&fixture)?, 1);
+        assert_eq!(backend.service_state, TestServiceState::Stable);
+        assert_eq!(backend.events.last(), Some(&"publish-receipt"));
         assert!(
-            persistence
-                .snapshots
-                .borrow()
-                .last()
-                .is_some_and(LinuxInstallJournal::is_committed)
+            journal_location
+                .open_existing(request.system, release_digest, recovery_context_digest)?
+                .is_none()
         );
         Ok(())
     }

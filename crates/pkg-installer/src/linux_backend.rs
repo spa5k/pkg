@@ -37,6 +37,14 @@ struct ProductionPreflightFixture {
     handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
 }
 
+#[cfg(test)]
+struct ExistingNonFilePreflightBackend {
+    backend: ProductionLinuxInstallBackend,
+    temporary: tempfile::TempDir,
+    account_mutation_calls: std::rc::Rc<std::cell::Cell<usize>>,
+    service_calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
 impl ProductionLinuxInstallBackend {
     /// Creates a backend for one authenticated native Linux installation.
     ///
@@ -148,6 +156,40 @@ impl ProductionLinuxInstallBackend {
             },
             service_calls,
         )
+    }
+
+    #[cfg(test)]
+    fn for_existing_non_file_preflight_test(
+        system: System,
+        groups: ManagedGroupBindings,
+        release: Digest,
+        missing_id: &str,
+    ) -> Result<ExistingNonFilePreflightBackend, Box<dyn std::error::Error>> {
+        let assets = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            groups, system, release, missing_id,
+        )?;
+        let (services, service_calls) = LinuxSystemdManager::inert_for_preflight_test();
+        Ok(ExistingNonFilePreflightBackend {
+            backend: Self {
+                system,
+                assets: assets.manager,
+                services,
+                release_identity: Some(release),
+                requested_product_asset_intent: LinuxProductAssetIntent::InstallOrUpgrade,
+                mode: crate::LinuxInstallMode::FreshInstall,
+                existing_managed_install: false,
+                recovered_fresh_install: false,
+                preflight_fixture: Some(ProductionPreflightFixture {
+                    effective_ids: (0, 0),
+                    handoff_snapshots: std::rc::Rc::new(std::cell::RefCell::new(vec![
+                        DeterminateHandoffState::Accepted,
+                    ])),
+                }),
+            },
+            temporary: assets.temporary,
+            account_mutation_calls: assets.account_mutation_calls,
+            service_calls,
+        })
     }
 }
 
@@ -321,11 +363,16 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn preflight_clean_host(&mut self, system: System) -> Result<(), InstallError> {
-        if system != self.system
-            || !self.assets.authenticated_inputs_bound(system)
-            || !Uid::effective().is_root()
-            || Gid::effective().as_raw() != 0
-        {
+        #[cfg(test)]
+        let effective_ids = Self::effective_ids(self.preflight_fixture.as_ref());
+        #[cfg(not(test))]
+        let effective_ids = Self::production_effective_ids();
+        #[cfg(test)]
+        let authenticated_inputs_bound =
+            self.preflight_fixture.is_some() || self.assets.authenticated_inputs_bound(system);
+        #[cfg(not(test))]
+        let authenticated_inputs_bound = self.assets.authenticated_inputs_bound(system);
+        if system != self.system || !authenticated_inputs_bound || effective_ids != (0, 0) {
             return Err(InstallError::backend_failure());
         }
         let path_entries = env::var_os("PATH")
@@ -729,6 +776,64 @@ mod tests {
         backend.mode = crate::LinuxInstallMode::OfflineUpgrade;
         assert!(!backend.services_need_mutation(false));
         assert!(!backend.services_need_mutation(true));
+        Ok(())
+    }
+
+    #[test]
+    fn production_offline_upgrade_refuses_missing_receipt_owned_non_files_before_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let system = System::X8664Linux;
+        let groups = ManagedGroupBindings::new(30_000, 30_001)?;
+        let release = Digest::from_bytes([0xd1; 32]);
+        for (missing_id, missing_path) in [
+            ("broker-user", None),
+            ("broker-log-dir", Some("var/lib/pkg/log/broker")),
+        ] {
+            let fixture = ProductionLinuxInstallBackend::for_existing_non_file_preflight_test(
+                system, groups, release, missing_id,
+            )?;
+            let ExistingNonFilePreflightBackend {
+                mut backend,
+                temporary,
+                account_mutation_calls,
+                service_calls,
+            } = fixture;
+            let receipt_path = temporary.path().join("opt/pkg/uninstall/manifest.json");
+            let receipt_before = std::fs::read(&receipt_path)?;
+            let handoff_before = backend
+                .preflight_fixture
+                .as_ref()
+                .ok_or_else(|| std::io::Error::other("missing preflight fixture"))?
+                .handoff_snapshots
+                .borrow()
+                .clone();
+
+            assert_eq!(
+                backend
+                    .preflight_clean_host(system)
+                    .map_err(InstallError::code),
+                Err(crate::InstallErrorCode::BackendFailure),
+                "missing {missing_id} must fail closed"
+            );
+
+            assert_eq!(account_mutation_calls.get(), 0);
+            assert_eq!(service_calls.get(), 0);
+            assert_eq!(std::fs::read(&receipt_path)?, receipt_before);
+            assert!(!temporary.path().join("pkg-install").exists());
+            if let Some(path) = missing_path {
+                assert!(!temporary.path().join(path).exists());
+            }
+            assert_eq!(
+                backend
+                    .preflight_fixture
+                    .as_ref()
+                    .ok_or_else(|| std::io::Error::other("missing preflight fixture"))?
+                    .handoff_snapshots
+                    .borrow()
+                    .as_slice(),
+                handoff_before.as_slice()
+            );
+        }
         Ok(())
     }
 }

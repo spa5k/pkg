@@ -76,6 +76,13 @@ pub struct LinuxPlatformAssetManager {
     states: BTreeMap<&'static str, RecordedAssetState>,
 }
 
+#[cfg(test)]
+pub struct ExistingNonFilePreflightAssets {
+    pub manager: LinuxPlatformAssetManager,
+    pub temporary: tempfile::TempDir,
+    pub account_mutation_calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
 impl std::fmt::Debug for LinuxPlatformAssetManager {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -114,6 +121,85 @@ impl LinuxPlatformAssetManager {
             installed_manifest: InstalledManifest::Unloaded,
             states: BTreeMap::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_existing_non_file_preflight_test(
+        groups: ManagedGroupBindings,
+        system: System,
+        release: Digest,
+        missing_id: &str,
+    ) -> Result<ExistingNonFilePreflightAssets, Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        for path in [
+            "opt",
+            "nix",
+            "nix/var",
+            "nix/var/nix",
+            "var",
+            "var/lib",
+            "run",
+            "usr",
+            "usr/lib",
+            "usr/lib/systemd",
+            "usr/lib/systemd/system",
+            "usr/lib/tmpfiles.d",
+            "usr/local",
+            "usr/local/bin",
+            "etc",
+            "etc/profile.d",
+        ] {
+            std::fs::create_dir(temporary.path().join(path))?;
+        }
+        let payloads =
+            LinuxReleasePayloads::from_authenticated_bytes(b"root-helper", b"broker", b"pkg-cli")?;
+        let (accounts, account_mutation_calls) =
+            LinuxAccountManager::for_existing_preflight_test(groups, Some(missing_id));
+        let mut filesystem = LinuxFilesystemManager::for_existing_preflight_test(
+            temporary.path().to_path_buf(),
+            payloads.clone(),
+        );
+        for asset in crate::assets::linux_product_install_assets()
+            .filter(|asset| asset.kind() == crate::LinuxAssetKind::Directory)
+            .filter(|asset| asset.id() != missing_id)
+        {
+            filesystem.ensure_asset(asset)?;
+        }
+        let records = crate::assets::linux_product_install_assets()
+            .map(|asset| {
+                let record = RecordedAsset::new(asset.id(), RecordedAssetState::Created)?;
+                Ok::<_, crate::UninstallError>(
+                    if asset.kind() == crate::LinuxAssetKind::File
+                        && asset.id() != "uninstall-manifest"
+                    {
+                        record.with_content_digest(body_digest(asset.id().as_bytes()))
+                    } else {
+                        record
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let manifest = UninstallManifest::new(system, release, records)?;
+        filesystem.bind_uninstall_manifest(&manifest)?;
+        let receipt = uninstall_manifest_asset()?;
+        if !filesystem.ensure_asset(receipt)? {
+            return Err(std::io::Error::other("test receipt already existed").into());
+        }
+        Ok(ExistingNonFilePreflightAssets {
+            manager: Self {
+                groups,
+                accounts,
+                filesystem: Some(filesystem),
+                payloads: Some(payloads),
+                config: None,
+                receipt_binding: Some((system, release)),
+                intent: LinuxProductAssetIntent::InstallOrUpgrade,
+                installed_manifest: InstalledManifest::Unloaded,
+                states: BTreeMap::new(),
+            },
+            temporary,
+            account_mutation_calls,
+        })
     }
 
     pub(crate) const fn set_intent(&mut self, intent: LinuxProductAssetIntent) {

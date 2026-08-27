@@ -54,7 +54,7 @@ impl ProductionLinuxUninstallBackend {
     ///
     /// Returns a redacted error for a non-Linux system, mismatched authenticated
     /// inputs, unsafe account state, missing systemd tools, or an unavailable
-    /// managed Nix executable.
+    /// Determinate-owned Base Nix executable.
     pub fn new(
         system: System,
         release_digest: Digest,
