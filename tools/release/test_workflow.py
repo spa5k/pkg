@@ -159,6 +159,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(case, LINUX_HARNESS)
         self.assertIn('"$results")" -eq 30', LINUX_HARNESS)
+        self.assertIn(
+            "test ! -e /opt/pkg/nix\n    test ! -L /opt/pkg/nix", LINUX_HARNESS
+        )
         for evidence in (
             "docker-inspect.json",
             "docker.log",

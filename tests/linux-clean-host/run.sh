@@ -489,6 +489,7 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
     systemctl is-active --quiet pkg-nix-broker.socket
     test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.7"
     test ! -e /opt/pkg/nix
+    test ! -L /opt/pkg/nix
     ! grep -R -F /opt/pkg/nix /etc/systemd/system/pkg-* >/dev/null 2>&1
     ! su -s /bin/sh proof-user -c "command -v nix"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-root-helper"
