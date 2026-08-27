@@ -13,7 +13,8 @@ use pkg_nix::{
 use crate::{
     InstallError, LinuxAccountManager, LinuxFilesystemManager, LinuxInstallAsset,
     LinuxReleasePayloads, RecordedAsset, RecordedAssetState, UninstallManifest,
-    assets::is_linux_product_asset, linux_install_assets,
+    assets::{is_linux_product_asset, is_linux_service_runtime_asset},
+    linux_install_assets,
 };
 
 /// Whether one fixed asset is exact-present or absent before a write-ahead intent.
@@ -238,6 +239,52 @@ impl LinuxPlatformAssetManager {
                     .verify_repair_target(asset)
                     .map_err(|_| InstallError::backend_failure())?;
             }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn preflight_existing_non_files(&mut self) -> Result<(), InstallError> {
+        let (system, _) = self
+            .receipt_binding
+            .ok_or_else(InstallError::backend_failure)?;
+        let manifest = self
+            .load_installed_manifest()?
+            .ok_or_else(InstallError::backend_failure)?;
+        if manifest.system() != system {
+            return Err(InstallError::backend_failure());
+        }
+        let receipt = uninstall_manifest_asset()?;
+        self.ensure_filesystem()?
+            .bind_uninstall_manifest(&manifest)
+            .map_err(|_| InstallError::backend_failure())?;
+        self.ensure_filesystem()?
+            .verify_asset(receipt)
+            .map_err(|_| InstallError::backend_failure())?;
+        for asset in linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| is_linux_product_asset(*asset))
+            .filter(|asset| asset.kind() != crate::LinuxAssetKind::File)
+        {
+            if !manifest
+                .assets()
+                .iter()
+                .any(|record| record.id() == asset.id())
+            {
+                return Err(InstallError::backend_failure());
+            }
+            self.verify_asset_exact(asset)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn verify_service_runtime_assets(&mut self) -> Result<(), InstallError> {
+        for asset in linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| is_linux_service_runtime_asset(*asset))
+        {
+            self.verify_asset_exact(asset)?;
         }
         Ok(())
     }
@@ -745,13 +792,12 @@ impl LinuxPlatformAssetManager {
                 Ok(false)
             };
         };
-        let record = manifest
+        manifest
             .assets()
             .iter()
             .find(|record| record.id() == asset.id())
             .ok_or_else(InstallError::backend_failure)?;
-        Ok(self.intent == LinuxProductAssetIntent::Repair
-            || record.state() == RecordedAssetState::PreExisting)
+        Ok(true)
     }
 
     fn recover_uninstall_manifest(&mut self) -> Result<(), InstallError> {

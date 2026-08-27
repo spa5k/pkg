@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LinuxAssetKind, assets::linux_product_mutation_assets};
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 const PRODUCT: &str = "pkg";
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 
@@ -110,6 +110,7 @@ pub struct LinuxInstallJournal {
     recovery_context_digest: String,
     mode: LinuxInstallMode,
     committed: bool,
+    fresh_services_deactivated: bool,
     entries: Vec<LinuxInstallJournalEntry>,
 }
 
@@ -145,6 +146,7 @@ impl LinuxInstallJournal {
             recovery_context_digest: recovery_context_digest.to_string(),
             mode,
             committed: false,
+            fresh_services_deactivated: false,
             entries: Vec::new(),
         })
     }
@@ -171,11 +173,11 @@ impl LinuxInstallJournal {
         }
         let value: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|_| invalid_journal())?;
-        if value
+        let schema = value
             .get("schemaVersion")
             .and_then(serde_json::Value::as_u64)
-            != Some(u64::from(SCHEMA_VERSION))
-        {
+            .ok_or_else(invalid_journal)?;
+        if schema != u64::from(SCHEMA_VERSION) {
             return Err(LinuxInstallJournalError::new(
                 LinuxInstallJournalErrorCode::UnsupportedSchema,
             ));
@@ -244,6 +246,36 @@ impl LinuxInstallJournal {
             return Err(invalid_transition());
         }
         self.intend(LinuxInstallMutation::Services)
+    }
+
+    pub(crate) fn mark_fresh_services_deactivated(
+        &mut self,
+    ) -> Result<(), LinuxInstallJournalError> {
+        if self.committed
+            || self.mode != LinuxInstallMode::FreshInstall
+            || self.fresh_services_deactivated
+            || !self.recovery_actions().iter().any(|action| {
+                matches!(
+                    action,
+                    LinuxInstallRecoveryAction::RevalidateIntended(LinuxInstallMutation::Services)
+                        | LinuxInstallRecoveryAction::RevertCreated(LinuxInstallMutation::Services)
+                )
+            })
+        {
+            return Err(invalid_transition());
+        }
+        self.fresh_services_deactivated = true;
+        Ok(())
+    }
+
+    pub(crate) const fn fresh_services_deactivated(&self) -> bool {
+        self.fresh_services_deactivated
+    }
+
+    pub(crate) fn records_asset(&self, id: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            matches!(&entry.mutation, LinuxInstallMutation::Asset { id: recorded } if recorded == id)
+        })
     }
 
     /// Records one exact object that existed before this attempt.
@@ -387,6 +419,16 @@ impl LinuxInstallJournal {
         Ok(())
     }
 
+    pub(crate) fn finish_recovery(&mut self) -> Result<bool, LinuxInstallJournalError> {
+        if self.committed || !self.recovery_actions().is_empty() {
+            return Err(invalid_transition());
+        }
+        let changed = !self.entries.is_empty() || self.fresh_services_deactivated;
+        self.entries.clear();
+        self.fresh_services_deactivated = false;
+        Ok(changed)
+    }
+
     fn validate(&self) -> Result<(), LinuxInstallJournalError> {
         if self.schema_version != SCHEMA_VERSION
             || self.product != PRODUCT
@@ -408,7 +450,10 @@ impl LinuxInstallJournal {
             LinuxInstallMode::FreshInstall => true,
             LinuxInstallMode::OfflineUpgrade | LinuxInstallMode::OfflineRepair => !changed_services,
         };
-        if !service_state_valid {
+        if !service_state_valid
+            || (self.fresh_services_deactivated
+                && (self.mode != LinuxInstallMode::FreshInstall || self.committed))
+        {
             return Err(invalid_journal());
         }
         let sequence = install_sequence();
@@ -540,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_five_persists_each_distinct_operation_mode() {
+    fn schema_six_persists_each_distinct_operation_mode() {
         for mode in [
             LinuxInstallMode::FreshInstall,
             LinuxInstallMode::OfflineUpgrade,
@@ -564,15 +609,39 @@ mod tests {
         let old = journal()
             .encode()
             .unwrap()
-            .windows(b"\"schemaVersion\":5".len())
-            .position(|bytes| bytes == b"\"schemaVersion\":5")
+            .windows(b"\"schemaVersion\":6".len())
+            .position(|bytes| bytes == b"\"schemaVersion\":6")
             .unwrap();
         let mut bytes = journal().encode().unwrap();
-        bytes[old + b"\"schemaVersion\":".len()] = b'4';
+        bytes[old + b"\"schemaVersion\":".len()] = b'5';
         assert_eq!(
             LinuxInstallJournal::decode(&bytes).map_err(LinuxInstallJournalError::code),
             Err(LinuxInstallJournalErrorCode::UnsupportedSchema)
         );
+
+        let encoded = journal().encode().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove("schemaVersion");
+        for invalid in [
+            missing,
+            {
+                let mut invalid = value.clone();
+                invalid["schemaVersion"] = serde_json::json!("6");
+                invalid
+            },
+            {
+                let mut invalid = value;
+                invalid["schemaVersion"] = serde_json::json!(6.5);
+                invalid
+            },
+        ] {
+            assert_eq!(
+                LinuxInstallJournal::decode(&serde_json::to_vec(&invalid).unwrap())
+                    .map_err(LinuxInstallJournalError::code),
+                Err(LinuxInstallJournalErrorCode::InvalidJournal)
+            );
+        }
 
         let mut fresh = journal();
         for mutation in install_sequence()

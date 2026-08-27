@@ -743,7 +743,7 @@ mod tests {
         let current = fs::read(&path).unwrap();
         let stale = String::from_utf8(current)
             .unwrap()
-            .replace("\"schemaVersion\":5", "\"schemaVersion\":4")
+            .replace("\"schemaVersion\":6", "\"schemaVersion\":5")
             .into_bytes();
         fs::write(&path, &stale).unwrap();
 

@@ -69,9 +69,7 @@ pub use helper::{
     BrokerHelperDispatch, HelperTransportError, HelperTransportErrorCode, LinuxHelperSession,
     serve_helper_connection,
 };
-pub use installer::{
-    InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallReport, install_linux,
-};
+pub use installer::{InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallReport};
 pub use linux_accounts::{
     LinuxAccountError, LinuxAccountErrorCode, LinuxAccountManager, plan_linux_group_bindings,
 };

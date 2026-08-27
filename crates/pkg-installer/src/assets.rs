@@ -396,6 +396,19 @@ pub fn is_linux_product_asset(asset: LinuxInstallAsset) -> bool {
     )
 }
 
+pub fn is_linux_service_runtime_asset(asset: LinuxInstallAsset) -> bool {
+    matches!(
+        asset.id(),
+        "root-helper-binary"
+            | "broker-binary"
+            | "helper-socket-unit"
+            | "helper-service-unit"
+            | "broker-socket-unit"
+            | "broker-service-unit"
+            | "runtime-tmpfiles"
+    )
+}
+
 pub fn linux_product_install_assets() -> impl DoubleEndedIterator<Item = LinuxInstallAsset> + Clone
 {
     ASSETS

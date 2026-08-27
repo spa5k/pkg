@@ -15,7 +15,7 @@ use crate::{
     LinuxAccountManager, LinuxAssetKind, LinuxFilesystemManager, LinuxInstallAsset,
     LinuxReleasePayloads, RecordedAssetState, UninstallAction, UninstallAssetKind,
     UninstallBackend, UninstallError, UninstallManifest,
-    assets::linux_product_install_assets,
+    assets::{is_linux_service_runtime_asset, linux_product_install_assets},
     determinate::DeterminateInstaller,
     determinate_handoff::{DeterminateHandoff, DeterminateHandoffState},
     linux_install_assets,
@@ -263,7 +263,7 @@ impl ProductionRuntime {
 
     fn verify_residue(&mut self) -> Result<(), UninstallError> {
         self.services
-            .deactivate_for_uninstall()
+            .verify_offline_or_absent()
             .map_err(|_| UninstallError::backend_failure())?;
         self.user_cleanup
             .verify_absent()
@@ -355,10 +355,18 @@ impl LinuxUninstallRuntime for ProductionRuntime {
 
     fn execute(&mut self, action: UninstallAction) -> Result<(), UninstallError> {
         match action {
-            UninstallAction::StopServices => self
-                .services
-                .deactivate_for_uninstall()
-                .map_err(|_| UninstallError::backend_failure()),
+            UninstallAction::StopServices => {
+                let manifest = self
+                    .manifest
+                    .as_ref()
+                    .ok_or_else(UninstallError::backend_failure)?;
+                let (filesystem, services) = (&mut self.filesystem, &mut self.services);
+                services
+                    .deactivate_for_uninstall(|| {
+                        verify_owned_service_assets(filesystem, manifest).is_ok()
+                    })
+                    .map_err(|_| UninstallError::backend_failure())
+            }
             UninstallAction::RemoveUserRoots => self.execute_remove_user_roots(),
             UninstallAction::CollectGarbage => Err(UninstallError::backend_failure()),
             UninstallAction::RemoveManagedStoreIfExclusive
@@ -411,6 +419,21 @@ fn is_systemd_unit(asset: LinuxInstallAsset) -> bool {
         asset.id(),
         "helper-socket-unit" | "helper-service-unit" | "broker-socket-unit" | "broker-service-unit"
     )
+}
+
+fn verify_owned_service_assets(
+    filesystem: &LinuxFilesystemManager,
+    manifest: &UninstallManifest,
+) -> Result<(), UninstallError> {
+    for record in manifest.assets() {
+        let asset = linux_asset(record.id()).ok_or_else(UninstallError::backend_failure)?;
+        if is_linux_service_runtime_asset(asset) {
+            filesystem
+                .verify_asset(asset)
+                .map_err(|_| UninstallError::backend_failure())?;
+        }
+    }
+    Ok(())
 }
 
 fn manifest_preserves_nix(manifest: &UninstallManifest) -> Result<bool, UninstallError> {
@@ -738,7 +761,7 @@ mod legacy_base_nix {
 
         fn verify_residue(&mut self) -> Result<(), UninstallError> {
             self.services
-                .deactivate_for_uninstall()
+                .verify_offline_or_absent()
                 .map_err(|_| UninstallError::backend_failure())?;
             self.user_cleanup
                 .verify_absent()
@@ -831,10 +854,18 @@ mod legacy_base_nix {
 
         fn execute(&mut self, action: UninstallAction) -> Result<(), UninstallError> {
             match action {
-                UninstallAction::StopServices => self
-                    .services
-                    .deactivate_for_uninstall()
-                    .map_err(|_| UninstallError::backend_failure()),
+                UninstallAction::StopServices => {
+                    let manifest = self
+                        .manifest
+                        .as_ref()
+                        .ok_or_else(UninstallError::backend_failure)?;
+                    let (filesystem, services) = (&mut self.filesystem, &mut self.services);
+                    services
+                        .deactivate_for_uninstall(|| {
+                            super::verify_owned_service_assets(filesystem, manifest).is_ok()
+                        })
+                        .map_err(|_| UninstallError::backend_failure())
+                }
                 UninstallAction::RemoveUserRoots => self.execute_remove_user_roots(),
                 UninstallAction::CollectGarbage | UninstallAction::ExecDeterminateUninstall => {
                     Err(UninstallError::backend_failure())

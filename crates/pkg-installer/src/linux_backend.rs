@@ -230,17 +230,39 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             self.assets.preflight_repair()?;
         }
         if mode != crate::LinuxInstallMode::FreshInstall {
-            self.preflight_product_file_mutation()?;
+            self.preflight_product_mutation()?;
         }
         Ok(())
     }
 
-    fn preflight_product_file_mutation(&mut self) -> Result<(), InstallError> {
+    fn preflight_product_mutation(&mut self) -> Result<(), InstallError> {
         if self.mode == crate::LinuxInstallMode::FreshInstall {
             return Ok(());
         }
         self.services
             .require_offline()
+            .map_err(|_| InstallError::offline_services_required())
+    }
+
+    fn preflight_fresh_recovery_mutation(
+        &mut self,
+        journal: &crate::LinuxInstallJournal,
+    ) -> Result<(), InstallError> {
+        if self.mode != crate::LinuxInstallMode::FreshInstall
+            || !journal.fresh_services_deactivated()
+        {
+            return Err(InstallError::backend_failure());
+        }
+        self.services
+            .require_fresh_recovery_offline(|unit| {
+                journal.records_asset(match unit {
+                    "pkg-root-helper.socket" => "helper-socket-unit",
+                    "pkg-nix-broker.socket" => "broker-socket-unit",
+                    "pkg-root-helper.service" => "helper-service-unit",
+                    "pkg-nix-broker.service" => "broker-service-unit",
+                    _ => return false,
+                })
+            })
             .map_err(|_| InstallError::offline_services_required())
     }
 
@@ -317,7 +339,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if self.requested_product_asset_intent == LinuxProductAssetIntent::Repair {
             validate_product_repair_handoff_preflight(state)?;
             self.assets.preflight_repair()?;
-            self.preflight_product_file_mutation()?;
+            self.preflight_product_mutation()?;
             self.existing_managed_install = true;
             return Ok(());
         }
@@ -332,7 +354,8 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             self.assets
                 .set_intent(LinuxProductAssetIntent::InstallOrUpgrade);
             if self.mode == crate::LinuxInstallMode::OfflineUpgrade {
-                self.preflight_product_file_mutation()?;
+                self.assets.preflight_existing_non_files()?;
+                self.preflight_product_mutation()?;
             }
             return Ok(());
         }
@@ -367,7 +390,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if self.mode == crate::LinuxInstallMode::OfflineRepair {
             return Err(InstallError::backend_failure());
         }
-        self.preflight_product_file_mutation()?;
+        self.preflight_product_mutation()?;
         self.assets.recover_asset(asset)?;
         Ok(())
     }
@@ -385,8 +408,9 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if self.mode != crate::LinuxInstallMode::FreshInstall {
             return Err(InstallError::backend_failure());
         }
-        self.services
-            .deactivate_fresh_recovery()
+        let (assets, services) = (&mut self.assets, &mut self.services);
+        services
+            .deactivate_fresh_recovery(|| assets.verify_service_runtime_assets().is_ok())
             .map_err(|_| InstallError::backend_failure())
     }
 
@@ -400,7 +424,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
 
     fn classify_services(&mut self) -> Result<LinuxAssetPresence, InstallError> {
         if self.mode != crate::LinuxInstallMode::FreshInstall {
-            self.preflight_product_file_mutation()?;
+            self.preflight_product_mutation()?;
             return Ok(LinuxAssetPresence::ExactPresent);
         }
         self.services
@@ -420,9 +444,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
-        if asset.kind() == crate::LinuxAssetKind::File {
-            self.preflight_product_file_mutation()?;
-        }
+        self.preflight_product_mutation()?;
         self.assets.ensure_asset(asset)
     }
 
@@ -431,7 +453,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         asset: LinuxInstallAsset,
         contents: &'static str,
     ) -> Result<bool, InstallError> {
-        self.preflight_product_file_mutation()?;
+        self.preflight_product_mutation()?;
         self.assets.install_static_asset(asset, contents)
     }
 
@@ -458,11 +480,12 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
 
     fn activate_services(&mut self) -> Result<bool, InstallError> {
         if self.mode != crate::LinuxInstallMode::FreshInstall {
-            self.preflight_product_file_mutation()?;
+            self.preflight_product_mutation()?;
             return Ok(false);
         }
-        self.services
-            .activate_fresh()
+        let (assets, services) = (&mut self.assets, &mut self.services);
+        services
+            .activate_fresh(|| assets.verify_service_runtime_assets().is_ok())
             .map_err(|_| InstallError::backend_failure())
     }
 
@@ -470,8 +493,9 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if self.mode != crate::LinuxInstallMode::FreshInstall {
             return Err(InstallError::backend_failure());
         }
-        self.services
-            .prepare_rollback()
+        let (assets, services) = (&mut self.assets, &mut self.services);
+        services
+            .prepare_rollback(|| assets.verify_service_runtime_assets().is_ok())
             .map_err(|_| InstallError::backend_failure())
     }
 
@@ -479,14 +503,13 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if self.mode != crate::LinuxInstallMode::FreshInstall {
             return Err(InstallError::rollback_incomplete());
         }
-        self.services
-            .finish_rollback()
-            .map_err(|_| InstallError::backend_failure())
+        self.services.finish_rollback();
+        Ok(())
     }
 
     fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
         if self.mode != crate::LinuxInstallMode::FreshInstall {
-            return self.preflight_product_file_mutation();
+            return self.preflight_product_mutation();
         }
         self.services
             .verify_active()
@@ -496,7 +519,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
-        self.preflight_product_file_mutation()?;
+        self.preflight_product_mutation()?;
         self.assets.publish_uninstall_manifest()
     }
 
@@ -517,9 +540,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
-        if asset.kind() == crate::LinuxAssetKind::File {
-            self.preflight_product_file_mutation()?;
-        }
+        self.preflight_product_mutation()?;
         self.assets.rollback_asset(asset)?;
         Ok(())
     }
@@ -558,7 +579,8 @@ mod tests {
         );
 
         assert_eq!(
-            crate::install_linux(System::X8664Linux, &mut backend).map_err(InstallError::code),
+            crate::installer::install_linux(System::X8664Linux, &mut backend)
+                .map_err(InstallError::code),
             Err(crate::InstallErrorCode::BackendFailure)
         );
         assert_eq!(
@@ -592,7 +614,8 @@ mod tests {
             );
 
             assert_eq!(
-                crate::install_linux(System::X8664Linux, &mut backend).map_err(InstallError::code),
+                crate::installer::install_linux(System::X8664Linux, &mut backend)
+                    .map_err(InstallError::code),
                 Err(crate::InstallErrorCode::BackendFailure)
             );
             assert_eq!(service_calls.get(), 0);

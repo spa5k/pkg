@@ -127,13 +127,14 @@ pub fn install_linux_from_bundle<'a>(
     let release_digest = bundle.release_identity_digest();
     backend.bind_authenticated_release_identity(bundle.system(), release_digest)?;
     let recovery_context_digest = linux_recovery_context_digest(release_digest, request);
-    if recover_linux_bundle_install(
+    let recovery = recover_linux_bundle_install(
         system,
         release_digest,
         recovery_context_digest,
         request,
         backend,
-    )? {
+    )?;
+    if matches!(&recovery, LinuxBundleRecovery::Committed) {
         return Ok(LinuxBundleInstallReport {
             platform: LinuxInstallReport::recovered_existing(),
             bootstrap: None,
@@ -144,19 +145,29 @@ pub fn install_linux_from_bundle<'a>(
     // absent before this attempt could create it.
     verify_provision_workspace_absent(request.scratch_parent)
         .map_err(|_| InstallError::backend_failure())?;
-    let storage =
-        LinuxInstallJournalStorage::prepare(system, release_digest, recovery_context_digest)
+    let (storage, journal) = match recovery {
+        LinuxBundleRecovery::Fresh { storage, journal } => (storage, *journal),
+        LinuxBundleRecovery::None => {
+            let storage = LinuxInstallJournalStorage::prepare(
+                system,
+                release_digest,
+                recovery_context_digest,
+            )
             .map_err(|_| InstallError::backend_failure())?;
-    let journal = LinuxInstallJournal::new(
-        backend.install_mode(),
-        system,
-        release_digest,
-        recovery_context_digest,
-    )
-    .map_err(|_| InstallError::backend_failure())?;
-    storage
-        .create(&journal)
-        .map_err(|_| InstallError::backend_failure())?;
+            let journal = LinuxInstallJournal::new(
+                backend.install_mode(),
+                system,
+                release_digest,
+                recovery_context_digest,
+            )
+            .map_err(|_| InstallError::backend_failure())?;
+            storage
+                .create(&journal)
+                .map_err(|_| InstallError::backend_failure())?;
+            (storage, journal)
+        }
+        LinuxBundleRecovery::Committed => return Err(InstallError::backend_failure()),
+    };
     // Keep the original request so final state is broker-owned and durable,
     // instead of root-owned and temporary under /run.
     let mut provisioner = AuthenticatedProvisioner::with_reauthentication(trusted_root, bundle);
@@ -169,17 +180,7 @@ pub fn install_linux_from_bundle<'a>(
         &storage,
         journal,
     );
-    let (platform, outcome) = match installation {
-        Ok(success) => success,
-        Err(error) => {
-            if error.code() != crate::InstallErrorCode::RollbackIncomplete {
-                storage
-                    .remove()
-                    .map_err(|_| InstallError::backend_failure())?;
-            }
-            return Err(error);
-        }
-    };
+    let (platform, outcome) = installation?;
     storage
         .remove()
         .map_err(|_| InstallError::backend_failure())?;
@@ -537,18 +538,27 @@ fn remove_linux_auth_datastore_at(
         .map_err(|_| InstallError::backend_failure())
 }
 
+enum LinuxBundleRecovery {
+    None,
+    Committed,
+    Fresh {
+        storage: LinuxInstallJournalStorage,
+        journal: Box<LinuxInstallJournal>,
+    },
+}
+
 fn recover_linux_bundle_install(
     system: System,
     digest: pkg_core::state::Digest,
     recovery_context_digest: Digest,
     request: &InstallerProvisionRequest<'_>,
     backend: &mut dyn LinuxInstallBackend,
-) -> Result<bool, InstallError> {
+) -> Result<LinuxBundleRecovery, InstallError> {
     let Some(storage) =
         LinuxInstallJournalStorage::open_existing(system, digest, recovery_context_digest)
             .map_err(|_| InstallError::backend_failure())?
     else {
-        return Ok(false);
+        return Ok(LinuxBundleRecovery::None);
     };
     if let Some(mut journal) = storage.load().map_err(linux_journal_file_error)? {
         let journal_system = journal
@@ -569,15 +579,27 @@ fn recover_linux_bundle_install(
                     .map_err(|_| InstallError::backend_failure())
             })?;
         }
+        if committed {
+            storage
+                .remove()
+                .map_err(|_| InstallError::backend_failure())?;
+            return Ok(LinuxBundleRecovery::Committed);
+        }
+        if journal.mode() == crate::LinuxInstallMode::FreshInstall {
+            return Ok(LinuxBundleRecovery::Fresh {
+                storage,
+                journal: Box::new(journal),
+            });
+        }
         storage
             .remove()
             .map_err(|_| InstallError::backend_failure())?;
-        return Ok(committed);
+        return Ok(LinuxBundleRecovery::None);
     }
     storage
         .remove()
         .map_err(|_| InstallError::backend_failure())?;
-    Ok(false)
+    Ok(LinuxBundleRecovery::None)
 }
 
 fn linux_recovery_context_digest(
@@ -806,6 +828,22 @@ enum BootstrapOutcome<'a> {
 }
 
 impl BootstrapOutcome<'_> {
+    fn has_accepted_base_nix(&self) -> bool {
+        match self {
+            Self::DeterminatePending { handoff, .. } => {
+                handoff.state() == Ok(DeterminateHandoffState::Accepted)
+            }
+            Self::Existing | Self::DeterminateComplete => true,
+            #[cfg(test)]
+            Self::DeterminateTestPending(handoff) => {
+                handoff.state() == Ok(DeterminateHandoffState::Accepted)
+            }
+            Self::Pending(_) | Self::Complete(_) => false,
+            #[cfg(test)]
+            Self::Stub(_) => false,
+        }
+    }
+
     fn into_linux_bootstrap(self) -> Result<Option<ProvisionedBootstrap>, InstallError> {
         match self {
             Self::Complete(bootstrap) => Ok(Some(bootstrap)),
@@ -839,8 +877,8 @@ impl BootstrapOutcome<'_> {
             Self::Pending(transaction) => transaction
                 .rollback()
                 .map_err(|_| InstallError::backend_failure()),
-            // Vendor success is already past the recoverable boundary. Keep
-            // Started as an Unknown Base Nix Outcome and roll back only product state.
+            // Accepted Base Nix is already past the vendor rollback boundary.
+            // Roll back only product state and retain the Fresh journal for continuation.
             Self::DeterminatePending { .. } => Ok(()),
             Self::Existing => Ok(()),
             Self::Complete(_) | Self::DeterminateComplete => Err(InstallError::backend_failure()),
@@ -1102,6 +1140,14 @@ impl LinuxJournalTransaction<'_> {
         self.persist()
     }
 
+    fn complete_rollback(&mut self, mutation: &LinuxInstallMutation) -> Result<(), InstallError> {
+        self.journal
+            .complete_recovery_action(mutation)
+            .map_err(|_| InstallError::rollback_incomplete())?;
+        self.persist()
+            .map_err(|_| InstallError::rollback_incomplete())
+    }
+
     fn commit(&mut self) -> Result<(), InstallError> {
         self.journal
             .commit()
@@ -1121,8 +1167,15 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         self.inner.install_mode()
     }
 
-    fn preflight_product_file_mutation(&mut self) -> Result<(), InstallError> {
-        self.inner.preflight_product_file_mutation()
+    fn preflight_product_mutation(&mut self) -> Result<(), InstallError> {
+        if let Some(transaction) = self.journal.as_ref()
+            && transaction.journal.fresh_services_deactivated()
+        {
+            return self
+                .inner
+                .preflight_fresh_recovery_mutation(&transaction.journal);
+        }
+        self.inner.preflight_product_mutation()
     }
 
     fn bind_authenticated_nix_config(
@@ -1175,9 +1228,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         let mutation = asset_mutation(asset);
         let presence = self.inner.classify_asset(asset)?;
         begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
-        if asset.kind() == crate::LinuxAssetKind::File {
-            self.inner.preflight_product_file_mutation()?;
-        }
+        self.inner.preflight_product_mutation()?;
         let changed = self.inner.ensure_asset(asset)?;
         complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
         Ok(changed)
@@ -1190,7 +1241,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         let mutation = asset_mutation(asset);
         let presence = self.inner.classify_asset(asset)?;
         begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
-        self.inner.preflight_product_file_mutation()?;
+        self.inner.preflight_product_mutation()?;
         let changed = self.inner.install_systemd_unit(asset, contents)?;
         complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
         Ok(changed)
@@ -1226,9 +1277,34 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         Ok(true)
     }
     fn rollback_managed_runtime(&mut self) -> Result<(), InstallError> {
-        self.outcome
-            .take()
-            .map_or(Ok(()), BootstrapOutcome::rollback_linux)
+        self.preflight_product_mutation()
+            .map_err(|_| InstallError::rollback_incomplete())?;
+        if !self
+            .outcome
+            .as_ref()
+            .is_some_and(BootstrapOutcome::has_accepted_base_nix)
+        {
+            let Some(outcome) = self.outcome.take() else {
+                return Err(InstallError::rollback_incomplete());
+            };
+            outcome.rollback_linux()?;
+        }
+        self.journal.as_mut().map_or(Ok(()), |journal| {
+            if journal.journal.recovery_actions().iter().any(|action| {
+                matches!(
+                    action,
+                    crate::LinuxInstallRecoveryAction::RevalidateIntended(
+                        LinuxInstallMutation::ManagedRuntime
+                    ) | crate::LinuxInstallRecoveryAction::RevertCreated(
+                        LinuxInstallMutation::ManagedRuntime
+                    )
+                )
+            }) {
+                journal.complete_rollback(&LinuxInstallMutation::ManagedRuntime)
+            } else {
+                Ok(())
+            }
+        })
     }
     fn validate_base_nix(&mut self) -> Result<(), InstallError> {
         self.inner.validate_base_nix()
@@ -1287,7 +1363,16 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         Ok(changed)
     }
     fn rollback_services(&mut self) -> Result<(), InstallError> {
-        self.inner.rollback_services()
+        self.inner.rollback_services()?;
+        if let Some(transaction) = self.journal.as_mut() {
+            transaction
+                .journal
+                .mark_fresh_services_deactivated()
+                .map_err(|_| InstallError::rollback_incomplete())?;
+            transaction.persist()?;
+            transaction.complete_rollback(&LinuxInstallMutation::Services)?;
+        }
+        Ok(())
     }
     fn finish_fresh_services_rollback(&mut self) -> Result<(), InstallError> {
         self.inner.finish_fresh_services_rollback()
@@ -1306,7 +1391,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         // An exact receipt is verified and reused by the production backend.
         // It is not rewritten on reinstall.
         begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
-        self.inner.preflight_product_file_mutation()?;
+        self.inner.preflight_product_mutation()?;
         let outcome = self
             .outcome
             .take()
@@ -1387,10 +1472,13 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         self.inner.finalize_ownership_receipt()
     }
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
-        if asset.kind() == crate::LinuxAssetKind::File {
-            self.inner.preflight_product_file_mutation()?;
-        }
-        self.inner.rollback_asset(asset)
+        self.preflight_product_mutation()
+            .map_err(|_| InstallError::rollback_incomplete())?;
+        self.inner.rollback_asset(asset)?;
+        let mutation = asset_mutation(asset);
+        self.journal
+            .as_mut()
+            .map_or(Ok(()), |journal| journal.complete_rollback(&mutation))
     }
 }
 
@@ -1485,6 +1573,15 @@ fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>(
         Err(_) if mode == crate::LinuxInstallMode::OfflineRepair => {
             return Err(InstallError::rollback_incomplete());
         }
+        Err(_)
+            if mode == crate::LinuxInstallMode::FreshInstall
+                && adapter
+                    .outcome
+                    .as_ref()
+                    .is_some_and(BootstrapOutcome::has_accepted_base_nix) =>
+        {
+            return Err(InstallError::fresh_recovery_retained());
+        }
         Err(error) => return Err(error),
     };
     adapter
@@ -1537,7 +1634,7 @@ fn install_linux_with_provisioner<'a, P: BundleProvisioner>(
         outcome: None,
         journal: None,
     };
-    let report = crate::install_linux(system, &mut adapter)?;
+    let report = crate::installer::install_linux(system, &mut adapter)?;
     let outcome = adapter
         .outcome
         .take()
@@ -2530,6 +2627,7 @@ mod tests {
         Asset,
         Unit,
         BaseNix,
+        Activation,
         Health,
         Receipt,
         Finalize,
@@ -2555,6 +2653,7 @@ mod tests {
         service_state: TestServiceState,
         failure: LinuxBackendFailure,
         preflight_handoff: Option<DeterminateHandoffState>,
+        managed_runtime_present: Option<bool>,
         mutation_calls: usize,
         file_mutation_calls: usize,
         offline_preflight_calls: usize,
@@ -2570,13 +2669,27 @@ mod tests {
             self.mode.unwrap_or(crate::LinuxInstallMode::FreshInstall)
         }
 
-        fn preflight_product_file_mutation(&mut self) -> Result<(), InstallError> {
+        fn preflight_product_mutation(&mut self) -> Result<(), InstallError> {
             if self.change_service_state_after_preflight == Some(self.offline_preflight_calls) {
                 self.service_state = TestServiceState::EnabledInactive;
             }
             self.offline_preflight_calls = self.offline_preflight_calls.saturating_add(1);
             if self.install_mode() != crate::LinuxInstallMode::FreshInstall
                 && self.service_state != TestServiceState::Offline
+            {
+                return Err(InstallError::offline_services_required());
+            }
+            Ok(())
+        }
+
+        fn preflight_fresh_recovery_mutation(
+            &mut self,
+            journal: &LinuxInstallJournal,
+        ) -> Result<(), InstallError> {
+            self.offline_preflight_calls = self.offline_preflight_calls.saturating_add(1);
+            if journal.mode() != crate::LinuxInstallMode::FreshInstall
+                || !journal.fresh_services_deactivated()
+                || self.service_state != TestServiceState::Offline
             {
                 return Err(InstallError::offline_services_required());
             }
@@ -2657,10 +2770,10 @@ mod tests {
             }
         }
         fn classify_managed_runtime(&mut self) -> Result<crate::LinuxAssetPresence, InstallError> {
-            Ok(if self.create {
-                crate::LinuxAssetPresence::Absent
-            } else {
+            Ok(if self.managed_runtime_present.unwrap_or(!self.create) {
                 crate::LinuxAssetPresence::ExactPresent
+            } else {
+                crate::LinuxAssetPresence::Absent
             })
         }
         fn classify_services(&mut self) -> Result<crate::LinuxAssetPresence, InstallError> {
@@ -2739,7 +2852,11 @@ mod tests {
             self.events.push("activate-services");
             let changed = self.create || self.service_state == TestServiceState::MutationNeeded;
             self.service_state = TestServiceState::Stable;
-            Ok(changed)
+            if self.failure == LinuxBackendFailure::Activation {
+                Err(InstallError::backend_failure())
+            } else {
+                Ok(changed)
+            }
         }
         fn rollback_services(&mut self) -> Result<(), InstallError> {
             if self.install_mode() != crate::LinuxInstallMode::FreshInstall {
@@ -2748,6 +2865,7 @@ mod tests {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
             self.rollback_calls = self.rollback_calls.saturating_add(1);
             self.events.push("quiesce-services");
+            self.service_state = TestServiceState::Offline;
             Ok(())
         }
         fn finish_fresh_services_rollback(&mut self) -> Result<(), InstallError> {
@@ -2990,6 +3108,124 @@ mod tests {
     }
 
     #[test]
+    fn accepted_fresh_install_continues_with_the_same_journal_on_the_next_invocation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for failure in [
+            LinuxBackendFailure::Activation,
+            LinuxBackendFailure::Health,
+            LinuxBackendFailure::Receipt,
+        ] {
+            assert_accepted_fresh_continuation(failure)?;
+        }
+        Ok(())
+    }
+
+    fn assert_accepted_fresh_continuation(
+        first_failure: LinuxBackendFailure,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = RealDeterminateFixture::new()?;
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let persistence = MemoryJournalPersistence::default();
+        let journal = LinuxInstallJournal::new(
+            crate::LinuxInstallMode::FreshInstall,
+            request.system,
+            Digest::from_bytes([0xc1; 32]),
+            Digest::from_bytes([0xc2; 32]),
+        )?;
+        let mut backend = LinuxBackend {
+            create: true,
+            failure: first_failure,
+            managed_runtime_present: Some(false),
+            ..LinuxBackend::default()
+        };
+        let mut first_provisioner = RealDeterminateProvisioner {
+            handoff: Some(fixture.handoff()?),
+            receipt: fixture.receipt(),
+            marker: fixture.marker("vendor-starts"),
+        };
+
+        assert_eq!(
+            install_linux_with_provisioner_journaled(
+                request.system,
+                &request,
+                &StubDaemon,
+                &mut backend,
+                &mut first_provisioner,
+                &persistence,
+                journal,
+            )
+            .map(|_| ())
+            .map_err(InstallError::code),
+            Err(crate::InstallErrorCode::FreshRecoveryRetained)
+        );
+        assert_eq!(
+            fixture.handoff()?.state()?,
+            DeterminateHandoffState::Accepted
+        );
+        assert_eq!(vendor_start_count(&fixture)?, 1);
+        let mut retained = persistence
+            .snapshots
+            .borrow()
+            .last()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("missing retained Fresh journal"))?;
+        assert!(!retained.is_committed());
+        assert!(retained.fresh_services_deactivated());
+
+        backend.failure = LinuxBackendFailure::None;
+        backend.managed_runtime_present = Some(true);
+        backend.preflight_handoff = Some(DeterminateHandoffState::Accepted);
+        recover_linux_install(
+            &mut retained,
+            &mut backend,
+            &mut || Ok(()),
+            &mut |journal| persistence.replace(journal),
+        )?;
+        assert!(!retained.fresh_services_deactivated());
+        assert!(retained.recovery_actions().is_empty());
+
+        let mut second_provisioner = ReauthProvisioner {
+            calls: 0,
+            reauthenticated: false,
+            reuse_existing: true,
+        };
+        let (_, outcome) = install_linux_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut second_provisioner,
+            &persistence,
+            retained,
+        )?;
+
+        assert!(matches!(outcome, BootstrapOutcome::Existing));
+        drop(outcome);
+        assert_eq!(second_provisioner.calls, 0);
+        assert_eq!(backend.raw_provision_calls, 0);
+        assert_eq!(vendor_start_count(&fixture)?, 1);
+        assert!(
+            persistence
+                .snapshots
+                .borrow()
+                .last()
+                .is_some_and(LinuxInstallJournal::is_committed)
+        );
+        Ok(())
+    }
+
+    fn vendor_start_count(fixture: &RealDeterminateFixture) -> std::io::Result<usize> {
+        fs::read_to_string(fixture.marker("vendor-starts")).map(|bytes| bytes.lines().count())
+    }
+
+    #[test]
     fn exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once()
     -> Result<(), Box<dyn std::error::Error>> {
         let observation = run_real_determinate_install(LinuxBackendFailure::None)?;
@@ -3179,15 +3415,15 @@ mod tests {
             Err(crate::InstallErrorCode::BackendFailure)
         );
         let mutation = asset_mutation(asset);
-        assert_eq!(
-            persistence
-                .snapshots
-                .borrow()
-                .last()
-                .ok_or_else(|| std::io::Error::other("missing intent snapshot"))?
-                .mutation_state(&mutation)?,
-            Some(crate::LinuxInstallMutationState::Intended)
-        );
+        let snapshot = persistence
+            .snapshots
+            .borrow()
+            .last()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("missing retained recovery snapshot"))?;
+        assert!(!snapshot.is_committed());
+        assert!(snapshot.recovery_actions().is_empty());
+        assert_eq!(snapshot.mutation_state(&mutation)?, None);
         Ok(())
     }
 
@@ -3413,7 +3649,8 @@ mod tests {
             .map_err(InstallError::code),
             Err(crate::InstallErrorCode::RollbackIncomplete)
         );
-        assert_eq!(backend.file_mutation_calls, 1);
+        assert_eq!(backend.mutation_calls, 1);
+        assert_eq!(backend.file_mutation_calls, 0);
         assert!(backend.offline_preflight_calls >= 3);
         assert_eq!(backend.service_state, TestServiceState::EnabledInactive);
         Ok(())
