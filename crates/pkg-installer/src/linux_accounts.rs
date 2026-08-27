@@ -124,6 +124,52 @@ trait AccountSystem {
 
 struct ProductionAccountSystem;
 
+#[cfg(test)]
+struct PreflightAccountSystem {
+    groups: Vec<GroupRecord>,
+    users: Vec<UserRecord>,
+    mutation_calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+#[cfg(test)]
+impl AccountSystem for PreflightAccountSystem {
+    fn acquire_lock(&mut self) -> Result<Option<File>, LinuxAccountError> {
+        Ok(None)
+    }
+
+    fn groups(&mut self) -> Result<Vec<GroupRecord>, LinuxAccountError> {
+        Ok(self.groups.clone())
+    }
+
+    fn users(&mut self) -> Result<Vec<UserRecord>, LinuxAccountError> {
+        Ok(self.users.clone())
+    }
+
+    fn create(&mut self, _spec: AccountSpec) -> Result<(), LinuxAccountError> {
+        self.mutation_calls
+            .set(self.mutation_calls.get().saturating_add(1));
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
+
+    fn delete_user(&mut self, _name: &'static str) -> Result<(), LinuxAccountError> {
+        self.mutation_calls
+            .set(self.mutation_calls.get().saturating_add(1));
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
+
+    fn delete_group(&mut self, _name: &'static str) -> Result<(), LinuxAccountError> {
+        self.mutation_calls
+            .set(self.mutation_calls.get().saturating_add(1));
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
+}
+
 /// Selects two free, stable group ids from the configured Linux account view.
 ///
 /// An exact existing product group keeps its current id. A new group receives
@@ -195,6 +241,65 @@ impl LinuxAccountManager {
             lock: None,
             lock_acquired: false,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_existing_preflight_test(
+        groups: ManagedGroupBindings,
+        missing_id: Option<&str>,
+    ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let mut group_records = Vec::new();
+        let mut user_records = Vec::new();
+        for asset in crate::linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| Self::handles(*asset))
+            .filter(|asset| Some(asset.id()) != missing_id)
+        {
+            match AccountSpec::for_asset(asset, groups)
+                .unwrap_or_else(|| unreachable!("closed account asset has a specification"))
+            {
+                AccountSpec::Group { name, gid, .. } => group_records.push(GroupRecord {
+                    name: name.to_owned(),
+                    gid,
+                    members: if name == BUILD_GROUP_NAME {
+                        managed_build_users()
+                    } else {
+                        BTreeSet::new()
+                    },
+                    password_locked: true,
+                    administrators: BTreeSet::new(),
+                }),
+                AccountSpec::User {
+                    name,
+                    gid,
+                    home,
+                    shell,
+                    ..
+                } => user_records.push(UserRecord {
+                    name: name.to_owned(),
+                    uid: 31_000_u32.saturating_add(
+                        u32::try_from(user_records.len()).unwrap_or_else(|_| unreachable!()),
+                    ),
+                    primary_gid: gid,
+                    home: home.to_owned(),
+                    shell: shell.to_owned(),
+                    locked: true,
+                }),
+            }
+        }
+        let mutation_calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        (
+            Self::with_system(
+                groups,
+                Box::new(PreflightAccountSystem {
+                    groups: group_records,
+                    users: user_records,
+                    mutation_calls: mutation_calls.clone(),
+                }),
+            ),
+            mutation_calls,
+        )
     }
 
     /// Returns true when this manager owns the fixed account asset kind.

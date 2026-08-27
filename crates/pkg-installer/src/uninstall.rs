@@ -1,6 +1,7 @@
 //! Bounded, fail-closed uninstall planning and execution.
 //!
-//! The recorded manifest carries only stable asset ids and creation state.
+//! The recorded manifest carries stable asset ids, creation state, and exact
+//! content identity for product files.
 //! Paths, account names, and removal ordering always come from the compiled
 //! platform allowlists, so a corrupted receipt cannot choose a deletion target.
 
@@ -22,7 +23,7 @@ use crate::{
 const MAX_RECORDED_ASSETS: usize = 256;
 const MAX_ASSET_ID_BYTES: usize = 96;
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
-const MANIFEST_SCHEMA_VERSION: u8 = 1;
+const MANIFEST_SCHEMA_VERSION: u8 = 2;
 const PRODUCT: &str = "pkg";
 
 /// Stable uninstall failure categories suitable for public reporting.
@@ -98,6 +99,7 @@ pub enum RecordedAssetState {
 pub struct RecordedAsset {
     id: String,
     state: RecordedAssetState,
+    content_digest: Option<Digest>,
 }
 
 impl RecordedAsset {
@@ -117,7 +119,18 @@ impl RecordedAsset {
         {
             return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
         }
-        Ok(Self { id, state })
+        Ok(Self {
+            id,
+            state,
+            content_digest: None,
+        })
+    }
+
+    /// Binds an exact installed-file identity to this record.
+    #[must_use]
+    pub(crate) const fn with_content_digest(mut self, digest: Digest) -> Self {
+        self.content_digest = Some(digest);
+        self
     }
 
     /// Returns the stable compiled-allowlist id.
@@ -130,6 +143,12 @@ impl RecordedAsset {
     #[must_use]
     pub const fn state(&self) -> RecordedAssetState {
         self.state
+    }
+
+    /// Returns the exact installed-file content identity, when the asset is a file.
+    #[must_use]
+    pub(crate) const fn content_digest(&self) -> Option<Digest> {
+        self.content_digest
     }
 }
 
@@ -158,23 +177,48 @@ impl UninstallManifest {
             return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
         }
 
-        let mut states = BTreeMap::new();
+        let mut records = BTreeMap::new();
         for asset in assets {
-            if states.insert(asset.id, asset.state).is_some() {
+            if records
+                .insert(asset.id, (asset.state, asset.content_digest))
+                .is_some()
+            {
                 return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
             }
         }
-        if states
+        if records
             .keys()
             .map(String::as_str)
             .ne(expected.iter().map(|asset| asset.id))
         {
             return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
         }
+        for asset in &expected {
+            let has_digest = records
+                .get(asset.id)
+                .is_some_and(|(_, digest)| digest.is_some());
+            let needs_digest = matches!(system, System::X8664Linux | System::Aarch64Linux)
+                && asset.kind == UninstallAssetKind::File
+                && asset.id != "uninstall-manifest";
+            if has_digest != needs_digest {
+                return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+            }
+        }
+        if matches!(system, System::X8664Linux | System::Aarch64Linux)
+            && records
+                .get("uninstall-manifest")
+                .is_none_or(|(state, _)| *state != RecordedAssetState::Created)
+        {
+            return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+        }
 
-        let assets = states
+        let assets = records
             .into_iter()
-            .map(|(id, state)| RecordedAsset { id, state })
+            .map(|(id, (state, content_digest))| RecordedAsset {
+                id,
+                state,
+                content_digest,
+            })
             .collect();
         Ok(Self {
             system,
@@ -189,7 +233,7 @@ impl UninstallManifest {
         self.system
     }
 
-    /// Returns the authenticated managed-runtime asset-manifest digest.
+    /// Returns the authenticated release ownership identity.
     #[must_use]
     pub const fn ownership_manifest_digest(&self) -> Digest {
         self.ownership_manifest_digest
@@ -202,7 +246,7 @@ impl UninstallManifest {
     }
 }
 
-/// Encodes the validated uninstall manifest into its canonical V1 disk form.
+/// Encodes the validated uninstall manifest into its canonical V2 disk form.
 ///
 /// # Errors
 ///
@@ -219,7 +263,7 @@ pub fn encode_uninstall_manifest(manifest: &UninstallManifest) -> Result<Vec<u8>
     Ok(bytes)
 }
 
-/// Decodes only the exact canonical V1 uninstall-manifest representation.
+/// Decodes only the exact canonical V2 uninstall-manifest representation.
 ///
 /// # Errors
 ///
@@ -285,6 +329,8 @@ impl WireManifest {
 struct WireRecordedAsset {
     id: String,
     state: WireRecordedAssetState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_digest: Option<String>,
 }
 
 impl WireRecordedAsset {
@@ -295,6 +341,7 @@ impl WireRecordedAsset {
                 RecordedAssetState::Created => WireRecordedAssetState::Created,
                 RecordedAssetState::PreExisting => WireRecordedAssetState::PreExisting,
             },
+            content_digest: record.content_digest().map(|digest| digest.to_string()),
         }
     }
 
@@ -303,7 +350,13 @@ impl WireRecordedAsset {
             WireRecordedAssetState::Created => RecordedAssetState::Created,
             WireRecordedAssetState::PreExisting => RecordedAssetState::PreExisting,
         };
-        RecordedAsset::new(self.id, state)
+        let record = RecordedAsset::new(self.id, state)?;
+        match self.content_digest {
+            Some(digest) => Digest::from_str(&digest)
+                .map(|digest| record.with_content_digest(digest))
+                .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest)),
+            None => Ok(record),
+        }
     }
 }
 
@@ -725,7 +778,19 @@ mod tests {
     ) -> Result<UninstallManifest, UninstallError> {
         let assets = platform_assets(system)
             .into_iter()
-            .map(|asset| RecordedAsset::new(asset.id, state))
+            .map(|asset| {
+                let record = RecordedAsset::new(asset.id, state)?;
+                Ok(
+                    if matches!(system, System::X8664Linux | System::Aarch64Linux)
+                        && asset.kind == UninstallAssetKind::File
+                        && asset.id != "uninstall-manifest"
+                    {
+                        record.with_content_digest(Digest::from_bytes([9; 32]))
+                    } else {
+                        record
+                    },
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
         UninstallManifest::new(system, Digest::from_bytes([7; 32]), assets)
     }
@@ -734,12 +799,19 @@ mod tests {
         let assets = platform_assets(System::Aarch64Linux)
             .into_iter()
             .map(|asset| {
-                RecordedAsset::new(
+                let record = RecordedAsset::new(
                     asset.id,
                     if asset.id == "nix-root" {
                         RecordedAssetState::PreExisting
                     } else {
                         RecordedAssetState::Created
+                    },
+                )?;
+                Ok(
+                    if asset.kind == UninstallAssetKind::File && asset.id != "uninstall-manifest" {
+                        record.with_content_digest(Digest::from_bytes([9; 32]))
+                    } else {
+                        record
                     },
                 )
             })
@@ -791,7 +863,7 @@ mod tests {
         let encoded = encode_uninstall_manifest(&manifest)?;
         assert_eq!(decode_uninstall_manifest(&encoded)?, manifest);
         assert!(encoded.ends_with(b"\n"));
-        assert!(encoded.starts_with(b"{\"schemaVersion\":1,\"product\":\"pkg\","));
+        assert!(encoded.starts_with(b"{\"schemaVersion\":2,\"product\":\"pkg\","));
 
         let mut extended: serde_json::Value = serde_json::from_slice(&encoded)
             .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
@@ -805,6 +877,109 @@ mod tests {
         );
         assert_eq!(
             error_code(decode_uninstall_manifest(encoded.trim_ascii_end())),
+            Some(UninstallErrorCode::InvalidManifest)
+        );
+
+        let encoded = encode_uninstall_manifest(&manifest)?;
+        let mut wire: serde_json::Value = serde_json::from_slice(&encoded)
+            .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let records = wire["assets"]
+            .as_array_mut()
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let file = records
+            .iter_mut()
+            .find(|record| record.get("contentDigest").is_some())
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        file.as_object_mut()
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?
+            .remove("contentDigest");
+        let mut malformed = serde_json::to_vec(&wire)
+            .map_err(|_| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        malformed.push(b'\n');
+        assert_eq!(
+            error_code(decode_uninstall_manifest(&malformed)),
+            Some(UninstallErrorCode::InvalidManifest)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_round_trip_preserves_exact_file_content_identity() -> Result<(), UninstallError> {
+        let mut assets = platform_assets(System::Aarch64Linux)
+            .into_iter()
+            .map(|asset| {
+                let record = RecordedAsset::new(asset.id, RecordedAssetState::Created)?;
+                Ok(
+                    if asset.kind == UninstallAssetKind::File && asset.id != "uninstall-manifest" {
+                        record.with_content_digest(Digest::from_bytes([9; 32]))
+                    } else {
+                        record
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let expected = Digest::from_bytes([11; 32]);
+        assets[0] = assets[0].clone().with_content_digest(expected);
+        let manifest =
+            UninstallManifest::new(System::Aarch64Linux, Digest::from_bytes([7; 32]), assets)?;
+
+        let decoded = decode_uninstall_manifest(&encode_uninstall_manifest(&manifest)?)?;
+
+        assert_eq!(decoded.assets()[0].content_digest(), Some(expected));
+        assert_eq!(decoded, manifest);
+        Ok(())
+    }
+
+    #[test]
+    fn v2_linux_receipt_rejects_missing_and_non_file_digests() -> Result<(), UninstallError> {
+        let valid = manifest(System::Aarch64Linux, RecordedAssetState::Created)?;
+        let file = valid
+            .assets()
+            .iter()
+            .position(|record| {
+                record.id() != "uninstall-manifest" && record.content_digest().is_some()
+            })
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let mut missing = valid.assets().to_vec();
+        missing[file].content_digest = None;
+        assert_eq!(
+            error_code(UninstallManifest::new(
+                System::Aarch64Linux,
+                Digest::from_bytes([7; 32]),
+                missing,
+            )),
+            Some(UninstallErrorCode::InvalidManifest)
+        );
+
+        let non_file = valid
+            .assets()
+            .iter()
+            .position(|record| record.content_digest().is_none())
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let mut extra = valid.assets().to_vec();
+        extra[non_file].content_digest = Some(Digest::from_bytes([12; 32]));
+        assert_eq!(
+            error_code(UninstallManifest::new(
+                System::Aarch64Linux,
+                Digest::from_bytes([7; 32]),
+                extra,
+            )),
+            Some(UninstallErrorCode::InvalidManifest)
+        );
+
+        let receipt = valid
+            .assets()
+            .iter()
+            .position(|record| record.id() == "uninstall-manifest")
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let mut preexisting_receipt = valid.assets().to_vec();
+        preexisting_receipt[receipt].state = RecordedAssetState::PreExisting;
+        assert_eq!(
+            error_code(UninstallManifest::new(
+                System::Aarch64Linux,
+                Digest::from_bytes([7; 32]),
+                preexisting_receipt,
+            )),
             Some(UninstallErrorCode::InvalidManifest)
         );
         Ok(())

@@ -69,9 +69,7 @@ pub use helper::{
     BrokerHelperDispatch, HelperTransportError, HelperTransportErrorCode, LinuxHelperSession,
     serve_helper_connection,
 };
-pub use installer::{
-    InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallReport, install_linux,
-};
+pub use installer::{InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallReport};
 pub use linux_accounts::{
     LinuxAccountError, LinuxAccountErrorCode, LinuxAccountManager, plan_linux_group_bindings,
 };
@@ -80,14 +78,14 @@ pub use linux_filesystem::{
     LinuxFilesystemError, LinuxFilesystemErrorCode, LinuxFilesystemManager, LinuxReleasePayloads,
 };
 pub use linux_install_journal::{
-    LinuxInstallJournal, LinuxInstallJournalError, LinuxInstallJournalErrorCode,
+    LinuxInstallJournal, LinuxInstallJournalError, LinuxInstallJournalErrorCode, LinuxInstallMode,
     LinuxInstallMutation, LinuxInstallMutationState, LinuxInstallRecoveryAction,
 };
 pub use linux_install_journal_file::{
     LinuxInstallJournalFileError, LinuxInstallJournalFileErrorCode, LinuxInstallJournalStorage,
 };
 pub use linux_platform_assets::{LinuxAssetPresence, LinuxPlatformAssetManager};
-pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode, LinuxSystemdManager};
+pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode};
 pub use linux_uninstall::ProductionLinuxUninstallBackend;
 pub use macos_backend::ProductionMacOsInstallBackend;
 pub use macos_install_journal::{

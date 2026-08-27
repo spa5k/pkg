@@ -9,12 +9,13 @@ use rustix::fs::{Mode, OFlags, open, openat};
 use rustix::io::Errno;
 
 use crate::linux_accounts::verify_linux_accounts_absent;
+use crate::linux_systemd::LinuxSystemdManager;
 use crate::linux_user_cleanup::LinuxUserCleanup;
 use crate::{
     LinuxAccountManager, LinuxAssetKind, LinuxFilesystemManager, LinuxInstallAsset,
-    LinuxReleasePayloads, LinuxSystemdManager, RecordedAssetState, UninstallAction,
-    UninstallAssetKind, UninstallBackend, UninstallError, UninstallManifest,
-    assets::linux_product_install_assets,
+    LinuxReleasePayloads, RecordedAssetState, UninstallAction, UninstallAssetKind,
+    UninstallBackend, UninstallError, UninstallManifest,
+    assets::{is_linux_service_runtime_asset, linux_product_install_assets},
     determinate::DeterminateInstaller,
     determinate_handoff::{DeterminateHandoff, DeterminateHandoffState},
     linux_install_assets,
@@ -53,7 +54,7 @@ impl ProductionLinuxUninstallBackend {
     ///
     /// Returns a redacted error for a non-Linux system, mismatched authenticated
     /// inputs, unsafe account state, missing systemd tools, or an unavailable
-    /// managed Nix executable.
+    /// Determinate-owned Base Nix executable.
     pub fn new(
         system: System,
         release_digest: Digest,
@@ -262,7 +263,7 @@ impl ProductionRuntime {
 
     fn verify_residue(&mut self) -> Result<(), UninstallError> {
         self.services
-            .deactivate_for_uninstall()
+            .verify_offline_or_absent()
             .map_err(|_| UninstallError::backend_failure())?;
         self.user_cleanup
             .verify_absent()
@@ -354,10 +355,18 @@ impl LinuxUninstallRuntime for ProductionRuntime {
 
     fn execute(&mut self, action: UninstallAction) -> Result<(), UninstallError> {
         match action {
-            UninstallAction::StopServices => self
-                .services
-                .deactivate_for_uninstall()
-                .map_err(|_| UninstallError::backend_failure()),
+            UninstallAction::StopServices => {
+                let manifest = self
+                    .manifest
+                    .as_ref()
+                    .ok_or_else(UninstallError::backend_failure)?;
+                let (filesystem, services) = (&mut self.filesystem, &mut self.services);
+                services
+                    .deactivate_for_uninstall(|| {
+                        verify_owned_service_assets(filesystem, manifest).is_ok()
+                    })
+                    .map_err(|_| UninstallError::backend_failure())
+            }
             UninstallAction::RemoveUserRoots => self.execute_remove_user_roots(),
             UninstallAction::CollectGarbage => Err(UninstallError::backend_failure()),
             UninstallAction::RemoveManagedStoreIfExclusive
@@ -408,13 +417,23 @@ const fn uninstall_kind(kind: LinuxAssetKind) -> UninstallAssetKind {
 fn is_systemd_unit(asset: LinuxInstallAsset) -> bool {
     matches!(
         asset.id(),
-        "daemon-socket-unit"
-            | "daemon-service-unit"
-            | "helper-socket-unit"
-            | "helper-service-unit"
-            | "broker-socket-unit"
-            | "broker-service-unit"
+        "helper-socket-unit" | "helper-service-unit" | "broker-socket-unit" | "broker-service-unit"
     )
+}
+
+fn verify_owned_service_assets(
+    filesystem: &LinuxFilesystemManager,
+    manifest: &UninstallManifest,
+) -> Result<(), UninstallError> {
+    for record in manifest.assets() {
+        let asset = linux_asset(record.id()).ok_or_else(UninstallError::backend_failure)?;
+        if is_linux_service_runtime_asset(asset) {
+            filesystem
+                .verify_asset(asset)
+                .map_err(|_| UninstallError::backend_failure())?;
+        }
+    }
+    Ok(())
 }
 
 fn manifest_preserves_nix(manifest: &UninstallManifest) -> Result<bool, UninstallError> {
@@ -505,11 +524,12 @@ mod legacy_base_nix {
     };
 
     use super::{LinuxUninstallRuntime, verify_fixed_path_absent};
+    use crate::linux_systemd::LinuxSystemdManager;
     use crate::linux_user_cleanup::LinuxUserCleanup;
     use crate::{
         LinuxAccountManager, LinuxAssetKind, LinuxFilesystemManager, LinuxInstallAsset,
-        LinuxReleasePayloads, LinuxSystemdManager, RecordedAssetState, UninstallAction,
-        UninstallAssetKind, UninstallError, UninstallManifest, linux_install_assets,
+        LinuxReleasePayloads, RecordedAssetState, UninstallAction, UninstallAssetKind,
+        UninstallError, UninstallManifest, linux_install_assets,
     };
 
     const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
@@ -741,7 +761,7 @@ mod legacy_base_nix {
 
         fn verify_residue(&mut self) -> Result<(), UninstallError> {
             self.services
-                .deactivate_for_uninstall()
+                .verify_offline_or_absent()
                 .map_err(|_| UninstallError::backend_failure())?;
             self.user_cleanup
                 .verify_absent()
@@ -834,10 +854,18 @@ mod legacy_base_nix {
 
         fn execute(&mut self, action: UninstallAction) -> Result<(), UninstallError> {
             match action {
-                UninstallAction::StopServices => self
-                    .services
-                    .deactivate_for_uninstall()
-                    .map_err(|_| UninstallError::backend_failure()),
+                UninstallAction::StopServices => {
+                    let manifest = self
+                        .manifest
+                        .as_ref()
+                        .ok_or_else(UninstallError::backend_failure)?;
+                    let (filesystem, services) = (&mut self.filesystem, &mut self.services);
+                    services
+                        .deactivate_for_uninstall(|| {
+                            super::verify_owned_service_assets(filesystem, manifest).is_ok()
+                        })
+                        .map_err(|_| UninstallError::backend_failure())
+                }
                 UninstallAction::RemoveUserRoots => self.execute_remove_user_roots(),
                 UninstallAction::CollectGarbage | UninstallAction::ExecDeterminateUninstall => {
                     Err(UninstallError::backend_failure())
@@ -895,9 +923,7 @@ mod legacy_base_nix {
     fn is_systemd_unit(asset: LinuxInstallAsset) -> bool {
         matches!(
             asset.id(),
-            "daemon-socket-unit"
-                | "daemon-service-unit"
-                | "helper-socket-unit"
+            "helper-socket-unit"
                 | "helper-service-unit"
                 | "broker-socket-unit"
                 | "broker-service-unit"
@@ -992,12 +1018,23 @@ mod tests {
     ) -> Result<UninstallManifest, UninstallError> {
         let records = crate::assets::linux_product_install_assets()
             .map(|asset| {
-                RecordedAsset::new(
+                let record = RecordedAsset::new(
                     asset.id(),
                     if asset.id() == "nix-root" {
                         nix_root_state
                     } else {
                         RecordedAssetState::Created
+                    },
+                )?;
+                Ok(
+                    if asset.kind() == crate::LinuxAssetKind::File
+                        && asset.id() != "uninstall-manifest"
+                    {
+                        record.with_content_digest(pkg_core::state::body_digest(
+                            asset.id().as_bytes(),
+                        ))
+                    } else {
+                        record
                     },
                 )
             })

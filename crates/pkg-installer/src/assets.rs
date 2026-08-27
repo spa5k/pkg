@@ -311,18 +311,6 @@ const ASSETS: &[LinuxInstallAsset] = &[
     )
     .with_ownership(LinuxAssetPrincipal::Root, LinuxAssetPrincipal::Broker),
     LinuxInstallAsset::new(
-        "daemon-socket-unit",
-        LinuxAssetKind::File,
-        "/usr/lib/systemd/system/pkg-nix-daemon.socket",
-        Some(0o644),
-    ),
-    LinuxInstallAsset::new(
-        "daemon-service-unit",
-        LinuxAssetKind::File,
-        "/usr/lib/systemd/system/pkg-nix-daemon.service",
-        Some(0o644),
-    ),
-    LinuxInstallAsset::new(
         "helper-socket-unit",
         LinuxAssetKind::File,
         "/usr/lib/systemd/system/pkg-root-helper.socket",
@@ -405,8 +393,19 @@ pub fn is_linux_product_asset(asset: LinuxInstallAsset) -> bool {
             | "nix-var"
             | "nix-state"
             | "daemon-socket-dir"
-            | "daemon-socket-unit"
-            | "daemon-service-unit"
+    )
+}
+
+pub fn is_linux_service_runtime_asset(asset: LinuxInstallAsset) -> bool {
+    matches!(
+        asset.id(),
+        "root-helper-binary"
+            | "broker-binary"
+            | "helper-socket-unit"
+            | "helper-service-unit"
+            | "broker-socket-unit"
+            | "broker-service-unit"
+            | "runtime-tmpfiles"
     )
 }
 
@@ -431,12 +430,6 @@ impl LinuxSystemdAssets {
     /// Recreates the private helper socket parent after `/run` is cleared.
     pub const TMPFILES: &'static str =
         "d /run/pkg-helper 0750 root pkg-nix-broker -\nd /run/pkg 0755 root root -\n";
-
-    /// Root daemon socket, reachable only by the broker group.
-    pub const DAEMON_SOCKET: &'static str = "[Unit]\nDescription=pkg managed Nix daemon socket\n\n[Socket]\nListenStream=/nix/var/nix/daemon-socket/socket\nSocketUser=root\nSocketGroup=pkg-nix-broker\nSocketMode=0660\nDirectoryMode=0750\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
-
-    /// Root Nix daemon consuming only the managed configuration.
-    pub const DAEMON_SERVICE: &'static str = "[Unit]\nDescription=pkg managed Nix daemon\nRequires=pkg-nix-daemon.socket\nAfter=pkg-nix-daemon.socket\nRequiresMountsFor=/nix/store /nix/var/nix\n\n[Service]\nExecStart=@/opt/pkg/nix/current/bin/nix-daemon nix-daemon --daemon\nEnvironment=NIX_CONF_DIR=/opt/pkg/etc/pkg\nEnvironment=NIX_DAEMON_SOCKET_PATH=/nix/var/nix/daemon-socket/socket\nEnvironment=NIX_STATE_DIR=/nix/var/nix\nKillMode=process\nLimitNOFILE=1048576\nDelegate=yes\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/nix /var/lib/pkg/log\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
 
     /// Broker-only privileged-helper socket; peer credentials remain mandatory.
     pub const HELPER_SOCKET: &'static str = "[Unit]\nDescription=pkg privileged root helper socket\n\n[Socket]\nListenStream=/run/pkg-helper/root-helper.sock\nSocketUser=root\nSocketGroup=pkg-nix-broker\nSocketMode=0660\nDirectoryMode=0750\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
@@ -511,11 +504,13 @@ mod tests {
             "nix-var",
             "nix-state",
             "daemon-socket-dir",
-            "daemon-socket-unit",
-            "daemon-service-unit",
         ] {
             assert!(!assets.contains(vendor_owned));
         }
+        assert!(linux_install_assets().iter().all(|asset| {
+            !matches!(asset.id(), "daemon-socket-unit" | "daemon-service-unit")
+                && !asset.path_or_name().contains("pkg-nix-daemon")
+        }));
         let units = LinuxSystemdAssets::all();
         assert!(units.iter().all(|(name, _)| !name.contains("nix-daemon")));
         assert!(LinuxSystemdAssets::BROKER_SERVICE.contains("Requires=nix-daemon.socket"));
@@ -525,12 +520,6 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn socket_and_service_security_contract_is_exact() {
-        assert!(
-            LinuxSystemdAssets::DAEMON_SOCKET
-                .contains("ListenStream=/nix/var/nix/daemon-socket/socket")
-        );
-        assert!(LinuxSystemdAssets::DAEMON_SOCKET.contains("SocketMode=0660"));
-        assert!(LinuxSystemdAssets::DAEMON_SOCKET.contains("SocketGroup=pkg-nix-broker"));
         assert!(LinuxSystemdAssets::HELPER_SOCKET.contains("SocketMode=0660"));
         assert!(LinuxSystemdAssets::HELPER_SOCKET.contains("/run/pkg-helper/"));
         assert!(
@@ -549,19 +538,6 @@ mod tests {
                 && asset.owner() == Some(LinuxAssetPrincipal::Broker)
                 && asset.group() == Some(LinuxAssetPrincipal::Broker)
         }));
-        assert!(
-            LinuxSystemdAssets::DAEMON_SERVICE
-                .contains("ExecStart=@/opt/pkg/nix/current/bin/nix-daemon nix-daemon --daemon")
-        );
-        assert!(LinuxSystemdAssets::DAEMON_SERVICE.contains("Delegate=yes"));
-        assert!(
-            LinuxSystemdAssets::DAEMON_SERVICE
-                .contains("Environment=NIX_CONF_DIR=/opt/pkg/etc/pkg")
-        );
-        assert!(
-            LinuxSystemdAssets::DAEMON_SERVICE
-                .contains("Environment=NIX_DAEMON_SOCKET_PATH=/nix/var/nix/daemon-socket/socket")
-        );
         assert!(LinuxSystemdAssets::BROKER_SERVICE.contains("User=pkg-nix-broker"));
         assert!(
             LinuxSystemdAssets::BROKER_SERVICE
