@@ -153,10 +153,27 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "install-process-controls",
             "package-operations",
             "package-repair",
+            "package-roots-gc",
+            "old-runtime-absent",
             "terminal-uninstall",
         ):
             self.assertIn(case, LINUX_HARNESS)
-        self.assertIn('"$results")" -eq 26', LINUX_HARNESS)
+        self.assertIn('"$results")" -eq 30', LINUX_HARNESS)
+        for evidence in (
+            "docker-inspect.json",
+            "docker.log",
+            "final-state.txt",
+            "residue.txt",
+        ):
+            self.assertIn(evidence, LINUX_HARNESS)
+        cleanup = LINUX_HARNESS.split("cleanup() {\n", 1)[1].split("\n}\n", 1)[0]
+        self.assertLess(
+            cleanup.index('capture_failure "$status"'), cleanup.index("stop_container")
+        )
+        self.assertLess(
+            LINUX_HARNESS.index('mkdir -p -m 0700 "$artifact_output/evidence"'),
+            LINUX_HARNESS.index('echo "+ stage x86_64 Linux release inputs"'),
+        )
 
         block = LINUX_HARNESS.split('cat > "$filters" <<\'EOF\'\n', 1)[1].split(
             "\nEOF\n", 1
@@ -188,7 +205,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "bootstrap::tests::only_exit_zero_is_vendor_success",
             "determinate::tests::spawn_failure_is_reported_without_terminal_outcome",
             "determinate::tests::wait_failure_is_reported_after_one_vendor_start",
-            "bootstrap::tests::simulated_caller_and_supervisor_loss_preserves_started_and_refuses_second_start",
+            "bootstrap::tests::nonzero_exit_preserves_started_and_refuses_retry",
+            "bootstrap::tests::signal_preserves_started_and_refuses_retry",
+            "bootstrap::tests::real_supervisor_loss_preserves_started_and_refuses_second_start",
             "bootstrap::tests::crash_before_vendor_start_preserves_started_and_refuses_retry",
             "bootstrap::tests::crash_after_exit_zero_before_acceptance_preserves_started",
             "bootstrap::tests::failed_installed_state_validation_preserves_started",
@@ -196,8 +215,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "bootstrap::tests::spawn_and_wait_uncertainty_preserves_started_and_refuses_retry",
             "bootstrap::tests::failed_product_receipt_publication_preserves_started",
         }
-        self.assertEqual(len(filters), 32)
-        self.assertEqual(len(set(filters)), 32)
+        self.assertEqual(len(filters), 34)
+        self.assertEqual(len(set(filters)), 34)
         self.assertEqual(set(filters), expected_filters)
 
     def test_macos_proof_stages_both_shared_runtime_archives(self) -> None:

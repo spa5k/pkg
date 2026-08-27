@@ -27,16 +27,66 @@ artifact_context="$stage_root/artifact"
 evidence_root="$stage_root/evidence"
 docker_platform=linux/amd64
 
+if [ -n "$artifact_output" ]; then
+    : "${PKG_CARGO_ABOUT:?set PKG_CARGO_ABOUT for a candidate archive}"
+    if [ -e "$artifact_output" ] || [ -L "$artifact_output" ]; then
+        echo "artifact output must not exist: $artifact_output" >&2
+        exit 1
+    fi
+    mkdir -p -m 0700 "$artifact_output/evidence"
+    evidence_root="$artifact_output/evidence"
+fi
+
 image=pkg-linux-clean-host:local
 container="pkg-linux-clean-host-$$"
 stop_container() {
     docker rm --force "$container" >/dev/null 2>&1 || true
 }
+capture_failure() {
+    [ -n "$artifact_output" ] || return 0
+    failure="$evidence_root/failure"
+    mkdir -p "$failure"
+    printf 'exit_status=%s\n' "$1" > "$failure/status.txt"
+    if ! docker inspect "$container" > "$failure/docker-inspect.json" 2> "$failure/docker-inspect.stderr"; then
+        printf '[]\n' > "$failure/docker-inspect.json"
+    fi
+    docker logs "$container" > "$failure/docker.log" 2>&1 || true
+    printf 'container was not running at failure capture\n' > "$failure/final-state.txt"
+    printf 'container was not running at failure capture\n' > "$failure/residue.txt"
+    if [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null)" = true ]; then
+        docker exec "$container" sh -c '
+            ps -ef
+            systemctl --failed --no-pager || true
+            systemctl list-units --all --no-pager \
+                "nix-*" "determinate-*" "pkg-*" || true
+        ' > "$failure/final-state.txt" 2>&1 || true
+        docker exec "$container" sh -c '
+            for path in /nix /etc/nix /opt/pkg /var/lib/pkg /var/lib/pkg-install \
+                /run/pkg /run/pkg-helper /home/proof-user/.local/share/pkg; do
+                if test -e "$path" || test -L "$path"; then
+                    find "$path" -xdev -maxdepth 4 \
+                        -printf "%M %u:%g %s %p -> %l\n" 2>&1 || true
+                else
+                    printf "absent %s\n" "$path"
+                fi
+            done
+            getent passwd || true
+            getent group || true
+        ' > "$failure/residue.txt" 2>&1 || true
+    fi
+}
 cleanup() {
+    status=$1
+    set +e
+    if [ "$status" -ne 0 ]; then
+        capture_failure "$status"
+    fi
     stop_container
     rm -rf "$stage_root"
 }
-trap cleanup EXIT INT TERM
+trap 'status=$?; trap - EXIT; cleanup "$status"; exit "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "+ proof host"
 uname -a
@@ -62,12 +112,6 @@ else
 fi
 
 if [ -n "$artifact_output" ]; then
-    : "${PKG_CARGO_ABOUT:?set PKG_CARGO_ABOUT for a candidate archive}"
-    if [ -e "$artifact_output" ] || [ -L "$artifact_output" ]; then
-        echo "artifact output must not exist: $artifact_output" >&2
-        exit 1
-    fi
-    mkdir -p -m 0700 "$artifact_output"
     candidate="$artifact_output/pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz"
     python3 "$repo/tools/release/package_alpha_candidate.py" \
         linux-x86_64 \
@@ -97,10 +141,6 @@ cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
     "$artifact_context/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-1/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-2/"
-if [ -n "$artifact_output" ]; then
-    mkdir "$artifact_output/evidence"
-    evidence_root="$artifact_output/evidence"
-fi
 mkdir -p "$evidence_root"
 cp -a "$artifact_context/." "$evidence_root/"
 
@@ -146,7 +186,9 @@ install-process-controls	determinate::tests::diagnostics_never_expose_captured_b
 install-process-controls	bootstrap::tests::only_exit_zero_is_vendor_success
 install-process-controls	determinate::tests::spawn_failure_is_reported_without_terminal_outcome
 install-process-controls	determinate::tests::wait_failure_is_reported_after_one_vendor_start
-install-process-controls	bootstrap::tests::simulated_caller_and_supervisor_loss_preserves_started_and_refuses_second_start
+install-process-controls	bootstrap::tests::nonzero_exit_preserves_started_and_refuses_retry
+install-process-controls	bootstrap::tests::signal_preserves_started_and_refuses_retry
+install-process-controls	bootstrap::tests::real_supervisor_loss_preserves_started_and_refuses_second_start
 install-process-controls	bootstrap::tests::crash_before_vendor_start_preserves_started_and_refuses_retry
 install-process-controls	bootstrap::tests::crash_after_exit_zero_before_acceptance_preserves_started
 install-process-controls	bootstrap::tests::failed_installed_state_validation_preserves_started
@@ -446,6 +488,8 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
     systemctl is-active --quiet pkg-root-helper.socket
     systemctl is-active --quiet pkg-nix-broker.socket
     test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.7"
+    test ! -e /opt/pkg/nix
+    ! grep -R -F /opt/pkg/nix /etc/systemd/system/pkg-* >/dev/null 2>&1
     ! su -s /bin/sh proof-user -c "command -v nix"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-root-helper"
     ! su -s /bin/sh proof-user -c "/opt/pkg/bin/pkg-nix-broker"
@@ -453,6 +497,7 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
     ! su -s /bin/sh proof-user -c "test -w /run/pkg-helper/root-helper.sock"
     ! su -s /bin/sh proof-user -c "test -r /opt/pkg/etc/pkg/nix.conf"
 '
+record_pass old-runtime-absent "$1" "no /opt/pkg/nix tree or service reference"
 
 echo "+ inspect the proof-only test executable"
 inspect_test_binary "$1"
@@ -562,6 +607,48 @@ docker exec "$container" su - proof-user -c \
     | grep -F "Hello, world!" >/dev/null
 record_pass package-repair "$1" "live cache repair"
 
+echo "+ prove package roots and explicit GC"
+current_before_gc=$(docker exec "$container" readlink -f \
+    /home/proof-user/.local/share/pkg/current)
+roots_evidence="$evidence_root/package-roots-gc-run-$1.txt"
+docker exec "$container" sh -eu -c '
+    test -d /nix/var/nix/gcroots/pkg
+    roots=$(find /nix/var/nix/gcroots/pkg -type l -print | sort)
+    test -n "$roots"
+    printf "before GC roots:\n%s\n" "$roots"
+' > "$roots_evidence"
+test -s "$roots_evidence"
+gc_output=$(docker exec "$container" su - proof-user -c \
+    "/usr/local/bin/pkg --yes --json gc --keep-generations 1 --max-age-days 0")
+printf 'gc: %s\n' "$gc_output" >> "$roots_evidence"
+printf '%s\n' "$gc_output" | python3 -c '
+import json
+import sys
+
+result = json.load(sys.stdin)
+assert isinstance(result.get("prunedGenerations"), list)
+assert result["prunedGenerations"]
+assert isinstance(result.get("collectedPathCount"), int)
+'
+docker exec "$container" sh -eu -c '
+    test -d /nix/var/nix/gcroots/pkg
+    roots=$(find /nix/var/nix/gcroots/pkg -type l -print)
+    test -n "$roots"
+    printf "after GC roots:\n%s\n" "$roots"
+    for root in $roots; do
+        target=$(readlink -f "$root")
+        test -e "$target"
+        case "$target" in /nix/store/*) ;; *) exit 1 ;; esac
+    done
+' >> "$roots_evidence"
+test "$(docker exec "$container" readlink -f \
+    /home/proof-user/.local/share/pkg/current)" = "$current_before_gc"
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/hello" \
+    | grep -F "Hello, world!" >/dev/null
+cat "$roots_evidence"
+record_pass package-roots-gc "$1" "owned roots survive explicit generation prune and store GC"
+
 echo "+ pkg remove all installed packages"
 docker exec "$container" su - proof-user -c \
     "/usr/local/bin/pkg --yes remove hello ripgrep fd bat tree wget git tmux zoxide fzf cxx-prettyprint"
@@ -665,6 +752,8 @@ for blocking_case in \
     install-process-controls \
     package-operations \
     package-repair \
+    package-roots-gc \
+    old-runtime-absent \
     terminal-uninstall
 do
     test "$(awk -F '\t' -v case_name="$blocking_case" \
@@ -676,7 +765,7 @@ do
             "$results")" -eq 1
     done
 done
-test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 26
+test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 30
 
 echo "Linux vendor install/uninstall and product package lifecycle proof passed."
 echo "Docker limits: no host boot or reboot, SELinux, foreign-host coexistence, or full distribution matrix."

@@ -20,7 +20,9 @@ Each run also proves the product Package Repair and channel lifecycle. It proves
 bootstrap verification, repeat product install, the authenticated installed
 vendor helper, opaque receipt metadata, functional vendor Nix and systemd state,
 product Broker and Root Helper isolation, package operations, product cleanup,
-and vendor uninstall postconditions. Determinate owns its supported native
+package roots through explicit generation pruning and store garbage collection,
+the absence of the old `/opt/pkg/nix` runtime, and vendor uninstall
+postconditions. Determinate owns its supported native
 update. `pkg` exposes no Base Nix update action in this alpha. This proof does
 not invoke or validate `determinate-nixd upgrade`. General Base Nix repair has
 no supported vendor command or product action. The proof records vendor residue.
@@ -73,8 +75,10 @@ matrix, and retained artifacts must receive independent review.
 The retained evidence contains the exact commit, Docker server architecture,
 test-executable SHA-256, `file`, `readelf`, and `ldd` reports, the exact test
 filter manifest and output, structured refusal snapshots, two residue reports,
-and the complete runtime log. `dn15-results.tsv` has exactly two pass rows for
-each blocking case. The workflow uploads evidence even when the proof fails.
+and the complete runtime log. On failure, it also contains Docker logs, Docker
+state, container service and process state, and a residue inventory captured
+before cleanup. `dn15-results.tsv` has exactly two pass rows for each blocking
+case. The workflow uploads evidence even when the proof fails.
 It uploads the candidate only after the complete proof succeeds.
 
 This proof does not cover host boot, reboot, SELinux behavior, foreign-host

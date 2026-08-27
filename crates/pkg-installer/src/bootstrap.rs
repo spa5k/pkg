@@ -1823,12 +1823,20 @@ mod tests {
     use super::*;
     use pkg_core::state::Digest;
     use pkg_nix::{DaemonError, ManagedGroupBindings, NixVersion};
+    use pkg_testkit::{ChaosCheckpoint, ChaosCommand, FsyncMode, publish_checkpoint};
     use std::{
         cell::RefCell,
         fs,
         os::unix::fs::{OpenOptionsExt, PermissionsExt, symlink},
+        os::unix::process::ExitStatusExt as _,
         path::Path,
+        thread,
+        time::{Duration, Instant},
     };
+
+    const SUPERVISOR_LOSS_CHILD_ENV: &str = "PKG_TEST_DN15_SUPERVISOR_LOSS_CHILD";
+    const SUPERVISOR_LOSS_ROOT_ENV: &str = "PKG_TEST_DN15_SUPERVISOR_LOSS_ROOT";
+    const SUPERVISOR_LOSS_EXECUTABLE_ENV: &str = "PKG_TEST_DN15_SUPERVISOR_LOSS_EXECUTABLE";
 
     #[test]
     fn linux_recovery_context_binds_installation_and_scratch_paths()
@@ -2200,6 +2208,36 @@ mod tests {
         assert!(restart_refuses_vendor_start(handoff, marker));
     }
 
+    fn assert_terminal_failure_preserves_started_and_refuses_retry(
+        name: &str,
+        body: &str,
+        expected: DeterminateTerminal,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = RealDeterminateFixture::new()?;
+        let handoff = fixture.handoff()?;
+        let executable = write_vendor_script(&fixture, name, body)?;
+        let outcome = run_with_new_determinate_handoff(&handoff, || {
+            crate::determinate::run_test_install_with_process(
+                &executable,
+                &staged_installer_identity(&executable)
+                    .map_err(|_| BundleProvisionError::Failed)?,
+                fixture.temporary.path(),
+                std::process::Command::spawn,
+                std::process::Child::wait,
+            )
+            .map_err(|_| BundleProvisionError::Failed)
+        })
+        .map_err(|_| std::io::Error::other("vendor process failed"))?;
+        assert_eq!(outcome.terminal, expected);
+        assert!(!determinate_succeeded(outcome));
+        assert_eq!(
+            fixture.handoff()?.state()?,
+            DeterminateHandoffState::Started
+        );
+        assert_restart_refuses_vendor_start(&fixture.handoff()?, &fixture.marker("retry"));
+        Ok(())
+    }
+
     #[test]
     fn existing_handoff_refuses_before_vendor_spawn() -> Result<(), Box<dyn std::error::Error>> {
         for accepted in [false, true] {
@@ -2291,74 +2329,115 @@ mod tests {
     }
 
     #[test]
-    fn simulated_caller_and_supervisor_loss_preserves_started_and_refuses_second_start()
+    fn nonzero_exit_preserves_started_and_refuses_retry() -> Result<(), Box<dyn std::error::Error>>
+    {
+        assert_terminal_failure_preserves_started_and_refuses_retry(
+            "nonzero-installer",
+            "exit 23",
+            DeterminateTerminal::Exited(23),
+        )
+    }
+
+    #[test]
+    fn signal_preserves_started_and_refuses_retry() -> Result<(), Box<dyn std::error::Error>> {
+        assert_terminal_failure_preserves_started_and_refuses_retry(
+            "signaled-installer",
+            "kill -TERM $$",
+            DeterminateTerminal::Signaled(15),
+        )
+    }
+
+    #[test]
+    fn real_supervisor_loss_preserves_started_and_refuses_second_start()
     -> Result<(), Box<dyn std::error::Error>> {
-        let fixture = RealDeterminateFixture::new()?;
-        let handoff = fixture.handoff()?;
-        let pid_path = fixture.marker("supervisor-loss.pid");
-        let first = run_with_new_determinate_handoff(&handoff, || {
-            if handoff.state() != Ok(DeterminateHandoffState::Started) {
-                return Err(BundleProvisionError::Failed);
-            }
-            let mut child = std::process::Command::new("/bin/sh")
-                .args([
-                    std::ffi::OsStr::new("-c"),
-                    std::ffi::OsStr::new(
-                        "printf '%s' $$ > \"$1\"; printf 'ready\\n'; IFS= read -r _ || true",
-                    ),
-                    std::ffi::OsStr::new("determinate-test"),
-                ])
-                .arg(&pid_path)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .spawn()
-                .map_err(|_| BundleProvisionError::Failed)?;
-            let observed_while_running = (|| {
-                let stdout = child.stdout.take().ok_or(BundleProvisionError::Failed)?;
-                let mut ready = String::new();
-                std::io::BufRead::read_line(&mut std::io::BufReader::new(stdout), &mut ready)
-                    .map_err(|_| BundleProvisionError::Failed)?;
-                if ready != "ready\n" || handoff.state() != Ok(DeterminateHandoffState::Started) {
-                    return Err(BundleProvisionError::Failed);
-                }
-                let pid = fs::read_to_string(&pid_path)
-                    .map_err(|_| BundleProvisionError::Failed)?
-                    .parse::<i32>()
-                    .map_err(|_| BundleProvisionError::Failed)?;
-                if pid != i32::try_from(child.id()).map_err(|_| BundleProvisionError::Failed)?
-                    || kill(Pid::from_raw(pid), None).is_err()
-                {
-                    return Err(BundleProvisionError::Failed);
-                }
-                if !restart_refuses_vendor_start(
-                    &fixture
-                        .handoff()
+        let checkpoint = ChaosCheckpoint::new("install-supervisor-lost")?;
+        if std::env::var_os(SUPERVISOR_LOSS_CHILD_ENV).is_some() {
+            let root = std::path::PathBuf::from(
+                std::env::var_os(SUPERVISOR_LOSS_ROOT_ENV).ok_or("missing fixture root")?,
+            );
+            let executable = std::path::PathBuf::from(
+                std::env::var_os(SUPERVISOR_LOSS_EXECUTABLE_ENV)
+                    .ok_or("missing vendor executable")?,
+            );
+            let pid_path = root.join("supervisor-loss.pid");
+            let handoff =
+                DeterminateHandoff::for_test_bytes(&root, 0o600, TEST_INSTALLED_INSTALLER)?;
+            let _ = run_with_new_determinate_handoff(&handoff, || {
+                crate::determinate::run_test_install_with_process(
+                    &executable,
+                    &staged_installer_identity(&executable)
                         .map_err(|_| BundleProvisionError::Failed)?,
-                    &fixture.marker("second-supervisor-start"),
-                ) {
-                    return Err(BundleProvisionError::Failed);
-                }
-                Ok(())
-            })();
-            drop(child.stdin.take());
-            let waited = child.wait();
-            if waited.is_err() {
-                let _ = child.wait();
-            }
-            observed_while_running?;
-            if !waited.map_err(|_| BundleProvisionError::Failed)?.success() {
-                return Err(BundleProvisionError::Failed);
-            }
-            Err::<(), _>(BundleProvisionError::Failed)
-        });
-        assert!(matches!(first, Err(BundleProvisionError::Failed)));
+                    &root,
+                    |command| {
+                        let mut child = command.spawn()?;
+                        let deadline = Instant::now() + Duration::from_secs(10);
+                        while !pid_path.try_exists()? {
+                            if Instant::now() >= deadline {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::TimedOut,
+                                    "vendor pid was not published",
+                                ));
+                            }
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        let _ = publish_checkpoint(&checkpoint).map_err(std::io::Error::other)?;
+                        Ok(child)
+                    },
+                    std::process::Child::wait,
+                )
+                .map_err(|_| BundleProvisionError::Failed)
+            });
+            return Err("supervisor was not terminated at its checkpoint".into());
+        }
+
+        let fixture = RealDeterminateFixture::new()?;
+        let pid_path = fixture.marker("supervisor-loss.pid");
+        let executable = write_vendor_script(
+            &fixture,
+            "supervisor-loss-installer",
+            "printf '%s' $$ > \"$TMPDIR/supervisor-loss.pid\"; \
+             attempts=0; \
+             while [ ! -e \"$TMPDIR/vendor-release\" ] && [ \"$attempts\" -lt 1000 ]; do \
+                 attempts=$((attempts + 1)); sleep 0.01; \
+             done; \
+             test -e \"$TMPDIR/vendor-release\"",
+        )?;
+        let mut command = ChaosCommand::new(
+            std::env::current_exe()?,
+            checkpoint,
+            fixture.marker("install-supervisor-lost"),
+            FsyncMode::Enabled,
+        )?;
+        command
+            .arg("--exact")
+            .arg(
+                "bootstrap::tests::real_supervisor_loss_preserves_started_and_refuses_second_start",
+            )
+            .arg("--nocapture")
+            .env(SUPERVISOR_LOSS_CHILD_ENV, "1")
+            .env(SUPERVISOR_LOSS_ROOT_ENV, fixture.temporary.path())
+            .env(SUPERVISOR_LOSS_EXECUTABLE_ENV, &executable);
+        let mut supervisor = command.spawn()?;
+        let status = supervisor.kill_at_checkpoint(Duration::from_secs(10))?;
+        assert_eq!(status.signal(), Some(9));
         assert_eq!(
             fixture.handoff()?.state()?,
             DeterminateHandoffState::Started
         );
         let pid = fs::read_to_string(pid_path)?.parse::<i32>()?;
+        assert_eq!(kill(Pid::from_raw(pid), None), Ok(()));
+        fs::write(fixture.marker("vendor-release"), b"release")?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while kill(Pid::from_raw(pid), None).is_ok() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
         assert_eq!(kill(Pid::from_raw(pid), None), Err(Errno::ESRCH));
-        assert!(!fixture.marker("second-supervisor-start").exists());
+        assert_restart_refuses_vendor_start(
+            &fixture.handoff()?,
+            &fixture.marker("second-supervisor-start"),
+        );
         Ok(())
     }
 
