@@ -63,7 +63,6 @@ pub enum DeterminateHandoffError {
     InvalidInstaller,
     IdentityMismatch,
     InvalidTransition,
-    InstalledStateUnproved,
     PersistenceFailed,
     ClearAndRestoreFailed,
 }
@@ -84,7 +83,6 @@ impl fmt::Display for DeterminateHandoffError {
             Self::InvalidInstaller => "invalid installed Determinate installer identity",
             Self::IdentityMismatch => "accepted Determinate identity changed",
             Self::InvalidTransition => "invalid Determinate handoff transition",
-            Self::InstalledStateUnproved => "Determinate installed state is not proved",
             Self::PersistenceFailed => "could not persist Determinate handoff state",
             Self::ClearAndRestoreFailed => "could not clear or restore Determinate handoff state",
         })
@@ -145,8 +143,6 @@ pub struct DeterminateHandoff {
     #[cfg(test)]
     pause_after_temp: Option<(Arc<Barrier>, Arc<Barrier>)>,
     #[cfg(test)]
-    pause_before_clear: Option<(Arc<Barrier>, Arc<Barrier>)>,
-    #[cfg(test)]
     pause_after_handoff_unlink: Option<(Arc<Barrier>, Arc<Barrier>)>,
     #[cfg(test)]
     fail_clear_at: Option<ClearFailurePoint>,
@@ -167,8 +163,6 @@ impl DeterminateHandoff {
             installer_identity,
             #[cfg(test)]
             pause_after_temp: None,
-            #[cfg(test)]
-            pause_before_clear: None,
             #[cfg(test)]
             pause_after_handoff_unlink: None,
             #[cfg(test)]
@@ -222,16 +216,6 @@ impl DeterminateHandoff {
         }
     }
 
-    /// Validates vendor-owned identities but cannot accept them before DN09 proof.
-    pub fn accept_vendor_result(&self) -> Result<(), DeterminateHandoffError> {
-        let _lock = self.lock_operation()?;
-        if self.load_locked()? != Some(Record::Started) {
-            return Err(DeterminateHandoffError::InvalidTransition);
-        }
-        self.observe_vendor_identity()?;
-        Err(DeterminateHandoffError::InstalledStateUnproved)
-    }
-
     // DN09 can call this only after its standard-daemon installed-state proof passes.
     pub fn accept_after_installed_state_proof(&self) -> Result<(), DeterminateHandoffError> {
         let _lock = self.lock_operation()?;
@@ -240,15 +224,6 @@ impl DeterminateHandoff {
         }
         let (installer, receipt) = self.observe_vendor_identity()?;
         self.persist_locked(Record::Accepted { installer, receipt }, false)
-    }
-
-    /// Removes product Handoff state after an installation rollback vendor uninstall.
-    pub fn clear_after_vendor_uninstall(&self) -> Result<(), DeterminateHandoffError> {
-        let lock = self.lock_operation()?;
-        if self.load_locked()? != Some(Record::Started) {
-            return Err(DeterminateHandoffError::InvalidTransition);
-        }
-        self.clear_locked(&lock)
     }
 
     /// Revalidates and consumes Accepted state while the stable operation lock is held,
@@ -318,11 +293,6 @@ impl DeterminateHandoff {
     }
 
     fn clear_locked(&self, _lock: &File) -> Result<(), DeterminateHandoffError> {
-        #[cfg(test)]
-        if let Some((ready, release)) = self.pause_before_clear.as_ref() {
-            ready.wait();
-            release.wait();
-        }
         let parent = self
             .handoff
             .parent()
@@ -369,16 +339,6 @@ impl DeterminateHandoff {
         } else {
             Ok(())
         }
-    }
-
-    // DN12 can call this only after a proved repair or update and fresh DN09 proof.
-    fn replace_after_installed_state_proof(&self) -> Result<(), DeterminateHandoffError> {
-        let _lock = self.lock_operation()?;
-        if !matches!(self.load_locked()?, Some(Record::Accepted { .. })) {
-            return Err(DeterminateHandoffError::InvalidTransition);
-        }
-        let (installer, receipt) = self.observe_vendor_identity()?;
-        self.persist_locked(Record::Accepted { installer, receipt }, false)
     }
 
     fn observe_vendor_identity(
@@ -565,7 +525,6 @@ impl DeterminateHandoff {
             receipt_mode,
             installer_identity,
             pause_after_temp: None,
-            pause_before_clear: None,
             pause_after_handoff_unlink: None,
             fail_clear_at: None,
         })
@@ -1145,7 +1104,7 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
     }
 
     #[test]
-    fn all_handoff_transitions_fail_closed_until_installed_state_is_proved() {
+    fn handoff_transitions_require_installed_state_proof_and_fail_closed() {
         let fixture = fixture(0o600);
         assert_eq!(
             fixture.handoff.state().unwrap(),
@@ -1157,15 +1116,6 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             fixture.handoff.state().unwrap(),
             DeterminateHandoffState::Started
         );
-        assert_eq!(
-            fixture.handoff.accept_vendor_result().unwrap_err(),
-            DeterminateHandoffError::InstalledStateUnproved
-        );
-        assert_eq!(
-            fixture.handoff.state().unwrap(),
-            DeterminateHandoffState::Started
-        );
-
         fixture
             .handoff
             .accept_after_installed_state_proof()
@@ -1179,31 +1129,6 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             DeterminateHandoffError::InvalidTransition
         );
 
-        write_mode(&fixture.handoff.receipt, b"proved repair receipt", 0o600);
-        assert_eq!(
-            fixture.handoff.state().unwrap_err(),
-            DeterminateHandoffError::IdentityMismatch
-        );
-        fixture
-            .handoff
-            .replace_after_installed_state_proof()
-            .unwrap();
-        assert_eq!(
-            fixture.handoff.state().unwrap(),
-            DeterminateHandoffState::Accepted
-        );
-        assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
-    }
-
-    #[test]
-    fn successful_vendor_uninstall_clears_started_product_state_only() {
-        let fixture = fixture(0o600);
-        fixture.handoff.record_started().unwrap();
-
-        fixture.handoff.clear_after_vendor_uninstall().unwrap();
-
-        assert!(!fixture.handoff.handoff.exists());
-        assert!(fixture.handoff.lock.exists());
         assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
     }
 
@@ -1215,6 +1140,7 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             .handoff
             .accept_after_installed_state_proof()
             .unwrap();
+        let original_receipt = fs::read(&fixture.handoff.receipt).unwrap();
         write_mode(&fixture.handoff.receipt, b"changed receipt", 0o600);
 
         assert_eq!(
@@ -1226,10 +1152,7 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         );
         assert!(fixture.handoff.handoff.exists());
 
-        fixture
-            .handoff
-            .replace_after_installed_state_proof()
-            .unwrap();
+        write_mode(&fixture.handoff.receipt, &original_receipt, 0o600);
         let consumed = fixture.handoff.consume_for_terminal_uninstall().unwrap();
         assert!(!fixture.handoff.handoff.exists());
         assert!(fixture.handoff.lock.exists());
@@ -1495,46 +1418,6 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
     }
 
     #[test]
-    fn stable_lock_serializes_clear_state_and_new_start() {
-        let mut fixture = fixture(0o600);
-        fixture.handoff.record_started().unwrap();
-        let observer = DeterminateHandoff::for_test(
-            fixture.handoff.trust_root.as_path(),
-            0o600,
-            fixture.handoff.installer_identity,
-        )
-        .unwrap();
-        let starter = DeterminateHandoff::for_test(
-            fixture.handoff.trust_root.as_path(),
-            0o600,
-            fixture.handoff.installer_identity,
-        )
-        .unwrap();
-        let ready = Arc::new(Barrier::new(2));
-        let release = Arc::new(Barrier::new(2));
-        fixture.handoff.pause_before_clear = Some((Arc::clone(&ready), Arc::clone(&release)));
-
-        let (cleared, state_after_clear, started_after_clear) = thread::scope(|scope| {
-            let clear = scope.spawn(|| fixture.handoff.clear_after_vendor_uninstall());
-            ready.wait();
-            let state_and_start = scope.spawn(|| {
-                let state = observer.state();
-                let start_result = starter.record_started();
-                (state, start_result)
-            });
-            release.wait();
-            let (state, start_result) = state_and_start.join().unwrap();
-            (clear.join().unwrap(), state, start_result)
-        });
-
-        assert_eq!(cleared, Ok(()));
-        assert_eq!(state_after_clear, Ok(DeterminateHandoffState::NotStarted));
-        assert_eq!(started_after_clear, Ok(()));
-        assert_eq!(starter.state(), Ok(DeterminateHandoffState::Started));
-        assert!(starter.lock.exists());
-    }
-
-    #[test]
     fn handoff_record_is_atomic_private_strict_and_contains_no_receipt_data() {
         let fixture = fixture(0o600);
         fixture.handoff.record_started().unwrap();
@@ -1566,7 +1449,6 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             DeterminateHandoffError::InvalidReceipt,
             DeterminateHandoffError::InvalidInstaller,
             DeterminateHandoffError::IdentityMismatch,
-            DeterminateHandoffError::InstalledStateUnproved,
             DeterminateHandoffError::PersistenceFailed,
         ] {
             let message = error.to_string();
@@ -1688,7 +1570,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         wrong_mode.handoff.record_started().unwrap();
         fs::set_permissions(&wrong_mode.handoff.receipt, Permissions::from_mode(0o644)).unwrap();
         assert_eq!(
-            wrong_mode.handoff.accept_vendor_result().unwrap_err(),
+            wrong_mode
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidReceipt
         );
 
@@ -1700,7 +1585,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         )
         .unwrap();
         assert_eq!(
-            linked.handoff.accept_vendor_result().unwrap_err(),
+            linked
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidReceipt
         );
 
@@ -1712,7 +1600,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             0o600,
         );
         assert_eq!(
-            oversized.handoff.accept_vendor_result().unwrap_err(),
+            oversized
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidReceipt
         );
 
@@ -1722,19 +1613,32 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         fs::rename(&linked_target.handoff.receipt, &target).unwrap();
         symlink(&target, &linked_target.handoff.receipt).unwrap();
         assert_eq!(
-            linked_target.handoff.accept_vendor_result().unwrap_err(),
+            linked_target
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidReceipt
         );
 
         let macos_mode = fixture(0o644);
         macos_mode.handoff.record_started().unwrap();
+        macos_mode
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+
+        let wrong_macos_mode = fixture(0o644);
+        wrong_macos_mode.handoff.record_started().unwrap();
+        fs::set_permissions(
+            &wrong_macos_mode.handoff.receipt,
+            Permissions::from_mode(0o600),
+        )
+        .unwrap();
         assert_eq!(
-            macos_mode.handoff.accept_vendor_result().unwrap_err(),
-            DeterminateHandoffError::InstalledStateUnproved
-        );
-        fs::set_permissions(&macos_mode.handoff.receipt, Permissions::from_mode(0o600)).unwrap();
-        assert_eq!(
-            macos_mode.handoff.accept_vendor_result().unwrap_err(),
+            wrong_macos_mode
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidReceipt
         );
     }
@@ -1746,7 +1650,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         fs::write(&fixture.handoff.receipt, []).unwrap();
 
         assert_eq!(
-            fixture.handoff.accept_vendor_result().unwrap_err(),
+            fixture
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidReceipt
         );
     }
@@ -1757,7 +1664,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         wrong_mode.handoff.record_started().unwrap();
         fs::set_permissions(&wrong_mode.handoff.installer, Permissions::from_mode(0o775)).unwrap();
         assert_eq!(
-            wrong_mode.handoff.accept_vendor_result().unwrap_err(),
+            wrong_mode
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidInstaller
         );
 
@@ -1769,7 +1679,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         )
         .unwrap();
         assert_eq!(
-            linked.handoff.accept_vendor_result().unwrap_err(),
+            linked
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidInstaller
         );
 
@@ -1781,7 +1694,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             changed.handoff.record_started().unwrap();
             write_mode(&changed.handoff.installer, bytes, 0o755);
             assert_eq!(
-                changed.handoff.accept_vendor_result().unwrap_err(),
+                changed
+                    .handoff
+                    .accept_after_installed_state_proof()
+                    .unwrap_err(),
                 DeterminateHandoffError::InvalidInstaller
             );
         }
@@ -1792,7 +1708,10 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         fs::rename(&linked_target.handoff.installer, &target).unwrap();
         symlink(&target, &linked_target.handoff.installer).unwrap();
         assert_eq!(
-            linked_target.handoff.accept_vendor_result().unwrap_err(),
+            linked_target
+                .handoff
+                .accept_after_installed_state_proof()
+                .unwrap_err(),
             DeterminateHandoffError::InvalidInstaller
         );
     }

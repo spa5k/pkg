@@ -7,9 +7,7 @@ mod approval_audit;
 mod assets;
 mod bootstrap;
 mod broker;
-#[allow(dead_code)] // Inactive until the grouped DN08-DN14 routing checkpoint.
 mod determinate;
-#[allow(dead_code)] // Inactive until DN09 supplies installed-state proof and routing.
 mod determinate_handoff;
 mod helper;
 mod installer;
