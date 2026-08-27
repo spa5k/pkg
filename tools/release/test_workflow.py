@@ -1,6 +1,7 @@
 """Structural release-workflow security contract."""
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -190,6 +191,57 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("assert_publication_product /srv/pkg-releases/2", LINUX_HARNESS)
         self.assertIn("--repair-product-assets", LINUX_HARNESS)
         self.assertIn("cmp \"$product_evidence/repair-active-before.json\"", LINUX_HARNESS)
+        self.assertIn(
+            'printf "damaged broker service\\n" > '
+            "/usr/lib/systemd/system/pkg-nix-broker.service",
+            LINUX_HARNESS,
+        )
+        self.assertIn(
+            'sha256sum /usr/lib/systemd/system/pkg-nix-broker.service',
+            LINUX_HARNESS,
+        )
+        activation = LINUX_HARNESS.split("activate_product_units() {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertLess(
+            activation.index('assert_publication_product "$1"'),
+            activation.index("systemctl daemon-reload"),
+        )
+        receipt_files = LINUX_HARNESS.split("file_paths = {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        receipt_records = LINUX_HARNESS.split("expected_records = {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertEqual(len(set(re.findall(r'"([a-z0-9-]+)"', receipt_records))), 31)
+        self.assertIn("records.keys() != expected_records", LINUX_HARNESS)
+        for asset in (
+            "root-helper-binary",
+            "broker-binary",
+            "nix-config",
+            "helper-socket-unit",
+            "helper-service-unit",
+            "broker-socket-unit",
+            "broker-service-unit",
+            "runtime-tmpfiles",
+            "profile-snippet",
+            "product-cli",
+        ):
+            self.assertIn(f'"{asset}"', receipt_files)
+        self.assertIn('records[asset].get("contentDigest") != actual', LINUX_HARNESS)
+        self.assertIn("path.resolve(strict=True)", LINUX_HARNESS)
+        self.assertIn('print("gc-root\\t"', LINUX_HARNESS)
+        for boundary in (
+            "package-state-after-upgrade.txt",
+            "package-state-after-active-repair-refusal.txt",
+            "package-state-after-repair.txt",
+        ):
+            self.assertIn(boundary, LINUX_HARNESS)
+            self.assertIn(
+                'cmp "$product_evidence/package-state-before.txt" \\\n'
+                f'    "$product_evidence/{boundary}"',
+                LINUX_HARNESS,
+            )
         self.assertEqual(LINUX_HARNESS.count("run_filter_group product-upgrade"), 1)
         self.assertEqual(
             LINUX_HARNESS.count("run_filter_group product-asset-repair"), 1
@@ -198,6 +250,24 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(
             LINUX_HARNESS.index("assert_publication_product /srv/pkg-releases/2"),
             LINUX_HARNESS.index('echo "+ activate verified N+1 product services"'),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index("package-state-after-upgrade.txt"),
+            LINUX_HARNESS.index("run_filter_group product-upgrade"),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index("package-state-after-repair.txt"),
+            LINUX_HARNESS.index("run_filter_group product-asset-repair"),
+        )
+        service_digest = (
+            'test "$(docker exec "$container" sha256sum '
+            '/usr/lib/systemd/system/pkg-nix-broker.service | awk \'{print $1}\')" '
+            '= "$repair_service"'
+        )
+        self.assertIn(service_digest, LINUX_HARNESS)
+        self.assertLess(
+            LINUX_HARNESS.index(service_digest),
+            LINUX_HARNESS.index("run_filter_group product-asset-repair"),
         )
 
         block = LINUX_HARNESS.split('cat > "$filters" <<\'EOF\'\n', 1)[1].split(

@@ -37,16 +37,22 @@ stops and disables the four still-authenticated product units before it installs
 publication 2. It proves the offline upgrade changes the receipt and exact
 product digests, keeps the Accepted Handoff and Determinate files unchanged,
 keeps package roots, and does not activate product services. It then activates
-only the verified publication-2 units and proves a new Broker process and usable
-package state.
+only after every receipt-listed product file matches its recorded digest. It
+proves a new Broker process and usable package state. Exact retained snapshots
+prove the complete per-user package-state tree and every GC-root name and target
+stay byte-for-byte unchanged across the offline upgrade.
 
 Each lifecycle also proves explicit same-release Product Asset Repair. Repair
 first refuses while the units are active. Exact before and after snapshots prove
 that refusal changes no product, Base Nix, Handoff, journal, or service state.
-The harness then stops and disables the trusted units, damages only the
-receipt-Created `pkg` file, and runs `pkg-install --repair-product-assets`. It
-proves exact publication-2 bytes are restored. The receipt release, Accepted
-Handoff, Determinate files, package roots, and offline unit state do not change.
+The harness then stops and disables the trusted units. It damages the
+receipt-Created `/usr/lib/systemd/system/pkg-nix-broker.service` unit and `pkg`
+CLI. It runs `pkg-install --repair-product-assets` and proves both exact
+publication-2 files and receipt content digests are restored. The receipt
+release, Accepted Handoff, Determinate files, package state, every GC-root name
+and target, and offline unit state do not change. Every external activation is
+blocked until the exact receipt record set and all ten recorded product-file
+digests match the fixed filesystem inventory.
 The exact Rust filters also prove that upgrade and repair never start the vendor
 installer and that missing receipt-owned accounts or directories refuse before
 mutation. Native missing non-file destruction is not used because this harness

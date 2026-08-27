@@ -509,6 +509,7 @@ stop_disable_product_units() {
 }
 
 activate_product_units() {
+    assert_publication_product "$1"
     docker exec "$container" systemctl daemon-reload
     docker exec "$container" systemctl enable $product_units
     docker exec "$container" systemctl start $product_units
@@ -550,6 +551,18 @@ descriptor = next(item for item in manifest["artifacts"] if item["kind"] == "des
 if receipt["ownershipManifestDigest"] != descriptor["sha256"]:
     raise SystemExit("receipt release identity does not match the publication")
 records = {item["id"]: item for item in receipt["assets"]}
+expected_records = {
+    "broker-group", "broker-user", "nix-root", "nix-gcroots", "product-root",
+    "product-config-root", "product-config-dir", "uninstall-root", "service-bin-dir",
+    "service-root", "helper-socket-dir", "broker-socket-dir", "log-root",
+    "broker-log-dir", "helper-log-dir", "broker-home", "broker-channel-state",
+    "helper-home", "helper-tmp", "broker-tmp", "root-helper-binary", "broker-binary",
+    "nix-config", "helper-socket-unit", "helper-service-unit", "broker-socket-unit",
+    "broker-service-unit", "runtime-tmpfiles", "profile-snippet", "product-cli",
+    "uninstall-manifest",
+}
+if len(records) != len(receipt["assets"]) or records.keys() != expected_records:
+    raise SystemExit("receipt product record set is not exact")
 for asset, target in {
     "root-helper-binary": "installer/x86_64-linux/pkg-root-helper",
     "broker-binary": "installer/x86_64-linux/pkg-nix-broker",
@@ -557,6 +570,71 @@ for asset, target in {
 }.items():
     if records[asset]["state"] != "created" or records[asset]["contentDigest"] != expected[target]:
         raise SystemExit(f"receipt product digest mismatch: {asset}")
+file_paths = {
+    "root-helper-binary": pathlib.Path("/opt/pkg/bin/pkg-root-helper"),
+    "broker-binary": pathlib.Path("/opt/pkg/bin/pkg-nix-broker"),
+    "nix-config": pathlib.Path("/opt/pkg/etc/pkg/nix.conf"),
+    "helper-socket-unit": pathlib.Path("/usr/lib/systemd/system/pkg-root-helper.socket"),
+    "helper-service-unit": pathlib.Path("/usr/lib/systemd/system/pkg-root-helper.service"),
+    "broker-socket-unit": pathlib.Path("/usr/lib/systemd/system/pkg-nix-broker.socket"),
+    "broker-service-unit": pathlib.Path("/usr/lib/systemd/system/pkg-nix-broker.service"),
+    "runtime-tmpfiles": pathlib.Path("/usr/lib/tmpfiles.d/pkg.conf"),
+    "profile-snippet": pathlib.Path("/etc/profile.d/pkg.sh"),
+    "product-cli": pathlib.Path("/usr/local/bin/pkg"),
+}
+for asset, path in file_paths.items():
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if records[asset].get("contentDigest") != actual:
+        raise SystemExit(f"receipt file digest mismatch: {asset}")
+for asset in expected_records - file_paths.keys() - {"uninstall-manifest"}:
+    if records[asset].get("contentDigest") is not None:
+        raise SystemExit(f"non-file receipt digest is present: {asset}")
+if records["uninstall-manifest"]["state"] != "created" or records["uninstall-manifest"].get("contentDigest") is not None:
+    raise SystemExit("receipt ownership record is invalid")
+PY
+}
+
+snapshot_package_state() {
+    snapshot=$1
+    docker exec -i "$container" python3 - > "$snapshot" <<'PY'
+import hashlib
+import os
+import pathlib
+import stat
+
+state_root = pathlib.Path("/home/proof-user/.local/share/pkg")
+gc_root = pathlib.Path("/nix/var/nix/gcroots/pkg")
+
+
+def entry(path, relative):
+    metadata = path.lstat()
+    fields = [relative, format(stat.S_IMODE(metadata.st_mode), "04o"), str(metadata.st_uid), str(metadata.st_gid)]
+    if stat.S_ISDIR(metadata.st_mode):
+        fields.insert(0, "directory")
+    elif stat.S_ISLNK(metadata.st_mode):
+        fields[:0] = ["symlink"]
+        fields.append(os.readlink(path))
+    elif stat.S_ISREG(metadata.st_mode):
+        fields[:0] = ["file"]
+        fields.extend([str(metadata.st_size), hashlib.sha256(path.read_bytes()).hexdigest()])
+    else:
+        raise SystemExit(f"unexpected package-state object: {path}")
+    return "\t".join(fields)
+
+
+if not state_root.is_dir() or not gc_root.is_dir():
+    raise SystemExit("package state or GC-root directory is absent")
+print(entry(state_root, "."))
+for path in sorted(state_root.rglob("*"), key=lambda item: os.fsencode(str(item.relative_to(state_root)))):
+    print(entry(path, str(path.relative_to(state_root))))
+roots = []
+for path in sorted(gc_root.rglob("*"), key=lambda item: os.fsencode(str(item.relative_to(gc_root)))):
+    if path.is_symlink():
+        roots.append((str(path.relative_to(gc_root)), os.readlink(path), str(path.resolve(strict=True))))
+if not roots:
+    raise SystemExit("package GC roots are absent")
+for name, target, resolved in roots:
+    print("gc-root\t" + "\t".join((name, target, resolved)))
 PY
 }
 
@@ -729,6 +807,7 @@ product_evidence="$evidence_root/product-lifecycle/run-$1"
 mkdir -p "$product_evidence"
 assert_publication_product /srv/pkg-releases/1
 snapshot_product_boundary "$product_evidence/n-before.json"
+snapshot_package_state "$product_evidence/package-state-before.txt"
 product_n_broker=$(docker exec "$container" sha256sum /opt/pkg/bin/pkg-nix-broker | awk '{print $1}')
 product_n_receipt=$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')
 base_installer=$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}')
@@ -749,6 +828,9 @@ test "$upgrade_output" = "pkg product files are upgraded. Product services remai
 assert_product_units_offline
 assert_publication_product /srv/pkg-releases/2
 snapshot_product_boundary "$product_evidence/n-plus-1-offline.json"
+snapshot_package_state "$product_evidence/package-state-after-upgrade.txt"
+cmp "$product_evidence/package-state-before.txt" \
+    "$product_evidence/package-state-after-upgrade.txt"
 product_n_plus_1_broker=$(docker exec "$container" sha256sum /opt/pkg/bin/pkg-nix-broker | awk '{print $1}')
 product_n_plus_1_receipt=$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')
 test "$product_n_broker" != "$product_n_plus_1_broker"
@@ -767,7 +849,7 @@ sys.exit(record.get("state", {}).get("kind") != "accepted")
     test "$(find /nix/var/nix/gcroots/pkg -type l | wc -l)" -gt 0
 '
 echo "+ activate verified N+1 product services"
-activate_product_units
+activate_product_units /srv/pkg-releases/2
 docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
     | grep -F '"name":"hello"' >/dev/null
 docker exec "$container" su - proof-user -c \
@@ -793,21 +875,32 @@ grep -Fx "Stop and disable all pkg product services. Remove all product unit dro
     "$product_evidence/repair-active.stderr" >/dev/null
 snapshot_product_boundary "$product_evidence/repair-active-after.json"
 cmp "$product_evidence/repair-active-before.json" "$product_evidence/repair-active-after.json"
+snapshot_package_state "$product_evidence/package-state-after-active-repair-refusal.txt"
+cmp "$product_evidence/package-state-before.txt" \
+    "$product_evidence/package-state-after-active-repair-refusal.txt"
 
 echo "+ authenticated offline product asset repair"
 stop_disable_product_units
 repair_receipt=$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')
 repair_pkg=$(docker exec "$container" sha256sum /usr/local/bin/pkg | awk '{print $1}')
+repair_service=$(docker exec "$container" sha256sum /usr/lib/systemd/system/pkg-nix-broker.service | awk '{print $1}')
 repair_base_installer=$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}')
 repair_base_receipt=$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')
 repair_handoff=$(docker exec "$container" sha256sum /var/lib/pkg-install/determinate-handoff-v1.json | awk '{print $1}')
-docker exec "$container" sh -eu -c 'printf "damaged product cli\n" > /usr/local/bin/pkg; chmod 0755 /usr/local/bin/pkg'
+docker exec "$container" sh -eu -c '
+    printf "damaged product cli\n" > /usr/local/bin/pkg
+    chmod 0755 /usr/local/bin/pkg
+    printf "damaged broker service\n" > /usr/lib/systemd/system/pkg-nix-broker.service
+    chmod 0644 /usr/lib/systemd/system/pkg-nix-broker.service
+'
 test "$(docker exec "$container" sha256sum /usr/local/bin/pkg | awk '{print $1}')" != "$repair_pkg"
+test "$(docker exec "$container" sha256sum /usr/lib/systemd/system/pkg-nix-broker.service | awk '{print $1}')" != "$repair_service"
 repair_output=$(docker exec "$container" "$n_plus_1_installer" --repair-product-assets)
 test "$repair_output" = "pkg product files are repaired. Product services remain offline."
 assert_product_units_offline
 assert_publication_product /srv/pkg-releases/2
 test "$(docker exec "$container" sha256sum /usr/local/bin/pkg | awk '{print $1}')" = "$repair_pkg"
+test "$(docker exec "$container" sha256sum /usr/lib/systemd/system/pkg-nix-broker.service | awk '{print $1}')" = "$repair_service"
 test "$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')" = "$repair_receipt"
 test "$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}')" = "$repair_base_installer"
 test "$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')" = "$repair_base_receipt"
@@ -818,15 +911,18 @@ docker exec "$container" sh -eu -c '
     test "$(find /nix/var/nix/gcroots/pkg -type l | wc -l)" -gt 0
 '
 snapshot_product_boundary "$product_evidence/repair-offline-after.json"
+snapshot_package_state "$product_evidence/package-state-after-repair.txt"
+cmp "$product_evidence/package-state-before.txt" \
+    "$product_evidence/package-state-after-repair.txt"
 
 echo "+ activate verified repaired N+1 product services"
-activate_product_units
+activate_product_units /srv/pkg-releases/2
 docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
     | grep -F '"name":"hello"' >/dev/null
 docker exec "$container" su - proof-user -c \
     "/home/proof-user/.local/share/pkg/current/bin/hello" \
     | grep -F "Hello, world!" >/dev/null
-run_filter_group product-asset-repair "$1" "native same-release repair; exact refusal snapshot; verified activation"
+run_filter_group product-asset-repair "$1" "native pkg-nix-broker.service repair; exact snapshots; verified activation"
 
 echo "+ pkg update"
 channel_output=$(docker exec "$container" su - proof-user -c \
