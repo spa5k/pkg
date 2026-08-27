@@ -283,7 +283,7 @@
       color: #552b1c;
       background: #f5dfd2;
     }
-    .historical-banner strong { display: block; font-size: 1.12rem; }
+    .historical-banner h2 { margin: 0; font-size: 1.12rem; }
     .historical-banner p { margin: 6px 0 0; max-width: 88ch; }
 
     .table-wrap { max-width: 100%; overflow-x: auto; margin: 18px 0 24px; border: 1px solid var(--line); border-radius: 12px; }
@@ -410,10 +410,10 @@
   </header>
 
   <main class="wrap">
-    <div class="historical-snapshot" aria-labelledby="historical-report-title">
+    <section class="historical-snapshot" aria-labelledby="historical-report-title">
       <div class="historical-banner">
-        <strong id="historical-report-title">Historical snapshot: 24 August 2026</strong>
-        <p>This framed content is retained for design history. Its 25-PR roadmap, DN-05–14 work order, delivery NO-GO labels, and present-tense Next cards are superseded. The current plan has four delivery PRs. Use the Approved DN-15 architecture section after this frame for current instructions.</p>
+        <h2 id="historical-report-title">Old report: 24 August 2026</h2>
+        <p>This content is old. We keep it for design history. Do not use its roadmap, work order, or status cards. Use the current four-PR section and active plan after this frame.</p>
       </div>
     <section class="summary-grid" aria-label="Key results">
       <article class="card metric">
@@ -1304,7 +1304,7 @@
         </ul>
       </div>
     </section>
-    </div>
+    </section>
 
     <section class="longform" aria-labelledby="linux-modes-title">
       <header>
@@ -1312,6 +1312,25 @@
         <h2 id="linux-modes-title">The Linux installer now has three simple modes</h2>
         <p class="chapter-lede">This section is the current design. Earlier sections remain above as the history that led to it. The code and local tests exist. The final native x86-64 proof does not exist yet.</p>
       </header>
+
+      <section aria-labelledby="current-stack-title">
+        <h3 id="current-stack-title">Current four-PR status</h3>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Current four-PR delivery status">
+          <table class="decision-table">
+            <thead><tr><th>Delivery PR</th><th>Scope</th><th>Current status</th></tr></thead>
+            <tbody>
+              <tr><td>PR 1</td><td>DN-00 through DN-07</td><td class="yes">Complete</td></tr>
+              <tr><td>PR 2</td><td>DN-08 through DN-14</td><td class="yes">Complete</td></tr>
+              <tr><td>PR 3</td><td>DN-15 Linux lifecycle</td><td class="maybe">Active. Native proof is pending.</td></tr>
+              <tr><td>PR 4</td><td>DN-16 macOS lifecycle and later cleanup</td><td class="no">Pending. PR 3 blocks this work.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="long-callout">
+          <strong>Use the current plan.</strong>
+          <p>Read the <a href="plans/determinate-nix-stacked-prs.md">active four-PR implementation plan</a>. The old roadmap in the historical frames is not an instruction.</p>
+        </div>
+      </section>
 
       <section aria-labelledby="linux-result-title">
         <h3 id="linux-result-title">1. The result in plain language</h3>
@@ -1507,10 +1526,10 @@
       </section>
     </section>
 
-    <div class="historical-snapshot" aria-label="Historical snapshot continued">
+    <section class="historical-snapshot" aria-labelledby="historical-report-continued-title">
       <div class="historical-banner">
-        <strong>Historical snapshot continued</strong>
-        <p>The old work order below is not a current instruction. It is retained to show the earlier design path. The current four-PR plan and Approved DN-15 architecture supersede it.</p>
+        <h2 id="historical-report-continued-title">Old report continued</h2>
+        <p>This content is old. We keep it for design history. Do not use its roadmap or work order. Use the current four-PR section and active plan above.</p>
       </div>
     <section aria-labelledby="next-title">
       <div class="section-head">
@@ -1580,7 +1599,7 @@
         <p><small>The review evidence is in the active Herdr and TraceDecay transcripts. It is not repo source evidence.</small></p>
       </div>
     </section>
-    </div>
+    </section>
   </main>
 
   <footer>
