@@ -516,9 +516,13 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn validate_base_nix(&mut self) -> Result<(), InstallError> {
-        RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
-            .and_then(|adapter| adapter.ping_managed_store())
-            .map_err(|_| InstallError::backend_failure())
+        let adapter = RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
+            .map_err(|_| InstallError::backend_failure())?;
+        validate_base_nix_readiness(
+            self.existing_managed_install,
+            || adapter.ping_managed_store(),
+            || adapter.wait_for_managed_store(),
+        )
     }
 
     fn accept_base_nix_handoff(&mut self) -> Result<(), InstallError> {
@@ -593,9 +597,54 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 }
 
+fn validate_base_nix_readiness(
+    existing_managed_install: bool,
+    ping: impl FnOnce() -> Result<(), pkg_nix::NixAdapterError>,
+    wait: impl FnOnce() -> Result<(), pkg_nix::NixAdapterError>,
+) -> Result<(), InstallError> {
+    if existing_managed_install {
+        ping()
+    } else {
+        wait()
+    }
+    .map_err(|_| InstallError::backend_failure())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_nix_readiness_waits_only_for_a_fresh_install() {
+        let pings = std::cell::Cell::new(0);
+
+        assert!(
+            validate_base_nix_readiness(
+                true,
+                || {
+                    pings.set(pings.get() + 1);
+                    Ok(())
+                },
+                || Err(pkg_nix::NixAdapterError::OperationFailed),
+            )
+            .is_ok()
+        );
+        assert_eq!(pings.get(), 1);
+
+        let waits = std::cell::Cell::new(0);
+        assert!(
+            validate_base_nix_readiness(
+                false,
+                || Err(pkg_nix::NixAdapterError::OperationFailed),
+                || {
+                    waits.set(waits.get() + 1);
+                    Ok(())
+                },
+            )
+            .is_ok()
+        );
+        assert_eq!(waits.get(), 1);
+    }
 
     #[test]
     fn started_handoff_is_the_only_refused_linux_preflight_state() {

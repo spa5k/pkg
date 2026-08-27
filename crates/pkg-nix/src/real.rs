@@ -65,6 +65,9 @@ const INDEX_META_EXPR: &str = include_str!("../../pkg-index/nix/index-meta.nix")
 const ACT_BUILDS: u64 = 104;
 const RESULT_PROGRESS: u64 = 105;
 const SHORT_TIMEOUT: Duration = Duration::from_secs(60);
+const MANAGED_STORE_PING_TIMEOUT: Duration = Duration::from_secs(2);
+const MANAGED_STORE_READY_WINDOW: Duration = Duration::from_secs(10);
+const MANAGED_STORE_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 const EVALUATE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const BUILD_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const GC_TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -455,6 +458,10 @@ impl RealNixAdapter {
     ///
     /// Returns a redacted adapter error when the managed daemon does not answer.
     pub fn ping_managed_store(&self) -> Result<(), NixAdapterError> {
+        self.ping_managed_store_with_timeout(MANAGED_STORE_PING_TIMEOUT)
+    }
+
+    fn ping_managed_store_with_timeout(&self, timeout: Duration) -> Result<(), NixAdapterError> {
         self.require_success(
             MethodKind::Version,
             vec![
@@ -463,9 +470,29 @@ impl RealNixAdapter {
                 OsString::from("--store"),
                 OsString::from("daemon"),
             ],
-            Duration::from_secs(2),
+            timeout,
         )
         .map(|_| ())
+    }
+
+    /// Waits for the fixed managed-daemon store to become ready.
+    ///
+    /// Only transient daemon-start errors are retried. All other errors fail
+    /// closed without delay.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first terminal adapter error, or a timeout when the fixed
+    /// readiness window expires.
+    pub fn wait_for_managed_store(&self) -> Result<(), NixAdapterError> {
+        wait_for_managed_store_with(
+            |timeout| self.ping_managed_store_with_timeout(timeout),
+            Instant::now,
+            thread::sleep,
+            MANAGED_STORE_READY_WINDOW,
+            MANAGED_STORE_RETRY_INTERVAL,
+            MANAGED_STORE_PING_TIMEOUT,
+        )
     }
 
     /// Projects the fixed native package index from an exact verified source.
@@ -851,6 +878,38 @@ impl RealNixAdapter {
             return Err(NixAdapterError::OperationFailed);
         }
         BuildReport::new(BuildStatus::Built, outputs)
+    }
+}
+
+fn wait_for_managed_store_with(
+    mut ping: impl FnMut(Duration) -> Result<(), NixAdapterError>,
+    mut now: impl FnMut() -> Instant,
+    mut sleep: impl FnMut(Duration),
+    window: Duration,
+    interval: Duration,
+    ping_timeout: Duration,
+) -> Result<(), NixAdapterError> {
+    let deadline = now().checked_add(window).ok_or(NixAdapterError::Timeout)?;
+    loop {
+        let remaining = deadline.saturating_duration_since(now());
+        if remaining.is_zero() {
+            return Err(NixAdapterError::Timeout);
+        }
+        let result = ping(ping_timeout.min(remaining));
+        let remaining = deadline.saturating_duration_since(now());
+        if remaining.is_zero() {
+            return Err(NixAdapterError::Timeout);
+        }
+        match result {
+            Ok(()) => return Ok(()),
+            Err(
+                NixAdapterError::OperationFailed
+                | NixAdapterError::Unavailable
+                | NixAdapterError::Timeout,
+            ) => {}
+            Err(error) => return Err(error),
+        }
+        sleep(interval.min(remaining));
     }
 }
 
@@ -3071,6 +3130,185 @@ mod tests {
                 OsString::from("--store"),
                 OsString::from("daemon"),
             ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn managed_store_wait_retries_transient_errors_until_success() {
+        let started = Instant::now();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let sleeps = std::cell::RefCell::new(Vec::new());
+        let pings = std::cell::Cell::new(0);
+        let mut outcomes = [
+            Err(NixAdapterError::OperationFailed),
+            Err(NixAdapterError::Unavailable),
+            Err(NixAdapterError::Timeout),
+            Ok(()),
+        ]
+        .into_iter();
+
+        assert_eq!(
+            wait_for_managed_store_with(
+                |_| {
+                    pings.set(pings.get() + 1);
+                    outcomes.next().expect("bounded ping sequence")
+                },
+                || started + elapsed.get(),
+                |duration| {
+                    sleeps.borrow_mut().push(duration);
+                    elapsed.set(elapsed.get() + duration);
+                },
+                Duration::from_millis(500),
+                Duration::from_millis(50),
+                Duration::from_secs(2),
+            ),
+            Ok(())
+        );
+        assert_eq!(pings.get(), 4);
+        assert_eq!(sleeps.into_inner(), vec![Duration::from_millis(50); 3]);
+    }
+
+    #[test]
+    fn managed_store_wait_returns_terminal_error_without_sleeping() {
+        let pings = std::cell::Cell::new(0);
+        let sleeps = std::cell::Cell::new(0);
+
+        assert_eq!(
+            wait_for_managed_store_with(
+                |_| {
+                    pings.set(pings.get() + 1);
+                    Err(NixAdapterError::PermissionDenied)
+                },
+                Instant::now,
+                |_| sleeps.set(sleeps.get() + 1),
+                Duration::from_millis(120),
+                Duration::from_millis(50),
+                Duration::from_secs(2),
+            ),
+            Err(NixAdapterError::PermissionDenied)
+        );
+        assert_eq!(pings.get(), 1);
+        assert_eq!(sleeps.get(), 0);
+    }
+
+    #[test]
+    fn managed_store_wait_caps_the_last_sleep_and_times_out() {
+        let started = Instant::now();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let sleeps = std::cell::RefCell::new(Vec::new());
+        let timeouts = std::cell::RefCell::new(Vec::new());
+        let pings = std::cell::Cell::new(0);
+
+        assert_eq!(
+            wait_for_managed_store_with(
+                |timeout| {
+                    pings.set(pings.get() + 1);
+                    timeouts.borrow_mut().push(timeout);
+                    Err(NixAdapterError::OperationFailed)
+                },
+                || started + elapsed.get(),
+                |duration| {
+                    sleeps.borrow_mut().push(duration);
+                    elapsed.set(elapsed.get() + duration);
+                },
+                Duration::from_millis(120),
+                Duration::from_millis(50),
+                Duration::from_secs(2),
+            ),
+            Err(NixAdapterError::Timeout)
+        );
+        assert_eq!(pings.get(), 3);
+        assert_eq!(
+            timeouts.into_inner(),
+            vec![
+                Duration::from_millis(120),
+                Duration::from_millis(70),
+                Duration::from_millis(20),
+            ]
+        );
+        assert_eq!(
+            sleeps.into_inner(),
+            vec![
+                Duration::from_millis(50),
+                Duration::from_millis(50),
+                Duration::from_millis(20),
+            ]
+        );
+    }
+
+    #[test]
+    fn managed_store_wait_rejects_success_that_finishes_after_deadline() {
+        let started = Instant::now();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let pings = std::cell::Cell::new(0);
+        let sleeps = std::cell::Cell::new(0);
+        let timeout = std::cell::Cell::new(Duration::ZERO);
+
+        assert_eq!(
+            wait_for_managed_store_with(
+                |attempt_timeout| {
+                    pings.set(pings.get() + 1);
+                    timeout.set(attempt_timeout);
+                    elapsed.set(Duration::from_millis(121));
+                    Ok(())
+                },
+                || started + elapsed.get(),
+                |_| sleeps.set(sleeps.get() + 1),
+                Duration::from_millis(120),
+                Duration::from_millis(50),
+                Duration::from_secs(2),
+            ),
+            Err(NixAdapterError::Timeout)
+        );
+        assert_eq!(pings.get(), 1);
+        assert_eq!(sleeps.get(), 0);
+        assert_eq!(timeout.get(), Duration::from_millis(120));
+    }
+
+    #[test]
+    fn managed_store_wait_stops_when_a_ping_finishes_at_deadline() {
+        let started = Instant::now();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let pings = std::cell::Cell::new(0);
+        let sleeps = std::cell::Cell::new(0);
+
+        assert_eq!(
+            wait_for_managed_store_with(
+                |_| {
+                    pings.set(pings.get() + 1);
+                    elapsed.set(Duration::from_millis(120));
+                    Err(NixAdapterError::OperationFailed)
+                },
+                || started + elapsed.get(),
+                |_| sleeps.set(sleeps.get() + 1),
+                Duration::from_millis(120),
+                Duration::from_millis(50),
+                Duration::from_secs(2),
+            ),
+            Err(NixAdapterError::Timeout)
+        );
+        assert_eq!(pings.get(), 1);
+        assert_eq!(sleeps.get(), 0);
+    }
+
+    #[test]
+    fn managed_store_wait_uses_only_the_fixed_daemon_store()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let executor = Scripted::new(vec![success(Vec::new())]);
+        let calls = Arc::clone(&executor.calls);
+        let adapter = RealNixAdapter::scripted(executor);
+
+        adapter.wait_for_managed_store()?;
+
+        assert_eq!(
+            calls.lock().map_err(|_| "poisoned call log")?.as_slice(),
+            [[
+                OsString::from("store"),
+                OsString::from("ping"),
+                OsString::from("--store"),
+                OsString::from("daemon"),
+            ]]
         );
         Ok(())
     }
