@@ -409,12 +409,7 @@ const fn uninstall_kind(kind: LinuxAssetKind) -> UninstallAssetKind {
 fn is_systemd_unit(asset: LinuxInstallAsset) -> bool {
     matches!(
         asset.id(),
-        "daemon-socket-unit"
-            | "daemon-service-unit"
-            | "helper-socket-unit"
-            | "helper-service-unit"
-            | "broker-socket-unit"
-            | "broker-service-unit"
+        "helper-socket-unit" | "helper-service-unit" | "broker-socket-unit" | "broker-service-unit"
     )
 }
 
@@ -897,9 +892,7 @@ mod legacy_base_nix {
     fn is_systemd_unit(asset: LinuxInstallAsset) -> bool {
         matches!(
             asset.id(),
-            "daemon-socket-unit"
-                | "daemon-service-unit"
-                | "helper-socket-unit"
+            "helper-socket-unit"
                 | "helper-service-unit"
                 | "broker-socket-unit"
                 | "broker-service-unit"

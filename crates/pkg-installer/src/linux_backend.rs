@@ -2,10 +2,8 @@
 
 use crate::{
     DeterminateHandoffState, InstallError, LinuxAssetPresence, LinuxInstallAsset,
-    LinuxInstallBackend, LinuxPlatformAssetManager,
-    determinate_handoff::DeterminateHandoff,
-    linux_platform_assets::LinuxProductAssetIntent,
-    linux_systemd::{LinuxSystemdManager, ServiceActivation},
+    LinuxInstallBackend, LinuxPlatformAssetManager, determinate_handoff::DeterminateHandoff,
+    linux_platform_assets::LinuxProductAssetIntent, linux_systemd::LinuxSystemdManager,
 };
 use nix::unistd::{Gid, Uid};
 use pkg_core::{System, state::Digest};
@@ -17,11 +15,6 @@ use std::{env, path::Path};
 
 const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
 
-#[derive(Debug, Default)]
-struct ServiceLifecycle {
-    expected_active: bool,
-}
-
 /// Production implementation of the closed Linux installer backend.
 #[derive(Debug)]
 pub struct ProductionLinuxInstallBackend {
@@ -30,10 +23,9 @@ pub struct ProductionLinuxInstallBackend {
     services: LinuxSystemdManager,
     release_identity: Option<Digest>,
     requested_product_asset_intent: LinuxProductAssetIntent,
-    product_asset_intent: LinuxProductAssetIntent,
+    mode: crate::LinuxInstallMode,
     existing_managed_install: bool,
-    product_files_changed: bool,
-    service_lifecycle: ServiceLifecycle,
+    recovered_fresh_install: bool,
     #[cfg(test)]
     preflight_fixture: Option<ProductionPreflightFixture>,
 }
@@ -82,25 +74,16 @@ impl ProductionLinuxInstallBackend {
                 .map_err(|_| InstallError::backend_failure())?,
             release_identity: None,
             requested_product_asset_intent: product_asset_intent,
-            product_asset_intent,
+            mode: if product_asset_intent == LinuxProductAssetIntent::Repair {
+                crate::LinuxInstallMode::OfflineRepair
+            } else {
+                crate::LinuxInstallMode::FreshInstall
+            },
             existing_managed_install: false,
-            product_files_changed: false,
-            service_lifecycle: ServiceLifecycle::default(),
+            recovered_fresh_install: false,
             #[cfg(test)]
             preflight_fixture: None,
         })
-    }
-
-    fn is_systemd_unit(asset: LinuxInstallAsset) -> bool {
-        matches!(
-            asset.id(),
-            "daemon-socket-unit"
-                | "daemon-service-unit"
-                | "helper-socket-unit"
-                | "helper-service-unit"
-                | "broker-socket-unit"
-                | "broker-service-unit"
-        )
     }
 
     #[cfg(test)]
@@ -151,10 +134,13 @@ impl ProductionLinuxInstallBackend {
                 services,
                 release_identity: None,
                 requested_product_asset_intent: product_asset_intent,
-                product_asset_intent,
+                mode: if product_asset_intent == LinuxProductAssetIntent::Repair {
+                    crate::LinuxInstallMode::OfflineRepair
+                } else {
+                    crate::LinuxInstallMode::FreshInstall
+                },
                 existing_managed_install: false,
-                product_files_changed: false,
-                service_lifecycle: ServiceLifecycle::default(),
+                recovered_fresh_install: false,
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
                     handoff_snapshots,
@@ -185,27 +171,37 @@ const fn validate_product_repair_handoff_preflight(
     }
 }
 
+const fn validate_recovery_mode(
+    requested_intent: LinuxProductAssetIntent,
+    journal_mode: crate::LinuxInstallMode,
+    handoff_state: DeterminateHandoffState,
+) -> Result<(), InstallError> {
+    if matches!(handoff_state, DeterminateHandoffState::Started) {
+        return Err(InstallError::backend_failure());
+    }
+    match (requested_intent, journal_mode, handoff_state) {
+        (
+            LinuxProductAssetIntent::Repair,
+            crate::LinuxInstallMode::OfflineRepair,
+            DeterminateHandoffState::Accepted,
+        )
+        | (
+            LinuxProductAssetIntent::InstallOrUpgrade,
+            crate::LinuxInstallMode::OfflineUpgrade,
+            DeterminateHandoffState::Accepted,
+        )
+        | (
+            LinuxProductAssetIntent::InstallOrUpgrade,
+            crate::LinuxInstallMode::FreshInstall,
+            DeterminateHandoffState::NotStarted | DeterminateHandoffState::Accepted,
+        ) => Ok(()),
+        _ => Err(InstallError::recovery_mode_mismatch()),
+    }
+}
+
 impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     fn install_mode(&self) -> crate::LinuxInstallMode {
-        match self.requested_product_asset_intent {
-            LinuxProductAssetIntent::InstallOrUpgrade => crate::LinuxInstallMode::InstallOrUpgrade,
-            LinuxProductAssetIntent::Repair => crate::LinuxInstallMode::Repair,
-        }
-    }
-
-    fn begin_recovery_mode(&mut self, mode: crate::LinuxInstallMode) -> Result<(), InstallError> {
-        self.product_asset_intent = match mode {
-            crate::LinuxInstallMode::InstallOrUpgrade => LinuxProductAssetIntent::InstallOrUpgrade,
-            crate::LinuxInstallMode::Repair => LinuxProductAssetIntent::Repair,
-        };
-        self.assets.set_intent(self.product_asset_intent);
-        Ok(())
-    }
-
-    fn end_recovery_mode(&mut self) -> Result<(), InstallError> {
-        self.product_asset_intent = self.requested_product_asset_intent;
-        self.assets.set_intent(self.product_asset_intent);
-        Ok(())
+        self.mode
     }
 
     fn preflight_recovery(
@@ -213,24 +209,39 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         mode: crate::LinuxInstallMode,
         system: System,
     ) -> Result<(), InstallError> {
-        let expected_intent = match mode {
-            crate::LinuxInstallMode::InstallOrUpgrade => LinuxProductAssetIntent::InstallOrUpgrade,
-            crate::LinuxInstallMode::Repair => LinuxProductAssetIntent::Repair,
-        };
-        if system != self.system
-            || self.product_asset_intent != expected_intent
-            || !self.assets.authenticated_inputs_bound(system)
-        {
+        self.preflight_privilege()?;
+        #[cfg(test)]
+        let handoff_state = Self::handoff_state(self.preflight_fixture.as_ref())?;
+        #[cfg(not(test))]
+        let handoff_state = Self::production_handoff_state()?;
+        validate_recovery_mode(self.requested_product_asset_intent, mode, handoff_state)?;
+        if system != self.system || !self.assets.authenticated_inputs_bound(system) {
             return Err(InstallError::backend_failure());
         }
-        self.preflight_privilege()?;
-        if mode == crate::LinuxInstallMode::Repair {
+        self.mode = mode;
+        self.recovered_fresh_install = mode == crate::LinuxInstallMode::FreshInstall;
+        self.assets
+            .set_intent(if mode == crate::LinuxInstallMode::OfflineRepair {
+                LinuxProductAssetIntent::Repair
+            } else {
+                LinuxProductAssetIntent::InstallOrUpgrade
+            });
+        if mode == crate::LinuxInstallMode::OfflineRepair {
             self.assets.preflight_repair()?;
-            self.services
-                .require_offline()
-                .map_err(|_| InstallError::backend_failure())?;
+        }
+        if mode != crate::LinuxInstallMode::FreshInstall {
+            self.preflight_product_file_mutation()?;
         }
         Ok(())
+    }
+
+    fn preflight_product_file_mutation(&mut self) -> Result<(), InstallError> {
+        if self.mode == crate::LinuxInstallMode::FreshInstall {
+            return Ok(());
+        }
+        self.services
+            .require_offline()
+            .map_err(|_| InstallError::offline_services_required())
     }
 
     fn bind_authenticated_installer_payloads(
@@ -279,7 +290,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         let state = Self::handoff_state(self.preflight_fixture.as_ref())?;
         #[cfg(not(test))]
         let state = Self::production_handoff_state()?;
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+        if self.requested_product_asset_intent == LinuxProductAssetIntent::Repair {
             validate_product_repair_handoff_preflight(state)?;
         } else {
             validate_determinate_handoff_preflight(state)?;
@@ -303,17 +314,26 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         let state = Self::handoff_state(self.preflight_fixture.as_ref())?;
         #[cfg(not(test))]
         let state = Self::production_handoff_state()?;
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+        if self.requested_product_asset_intent == LinuxProductAssetIntent::Repair {
             validate_product_repair_handoff_preflight(state)?;
             self.assets.preflight_repair()?;
-            self.services
-                .require_offline()
-                .map_err(|_| InstallError::backend_failure())?;
+            self.preflight_product_file_mutation()?;
             self.existing_managed_install = true;
             return Ok(());
         }
         if validate_determinate_handoff_preflight(state)? {
             self.existing_managed_install = true;
+            self.mode = if self.recovered_fresh_install {
+                crate::LinuxInstallMode::FreshInstall
+            } else {
+                crate::LinuxInstallMode::OfflineUpgrade
+            };
+            self.recovered_fresh_install = false;
+            self.assets
+                .set_intent(LinuxProductAssetIntent::InstallOrUpgrade);
+            if self.mode == crate::LinuxInstallMode::OfflineUpgrade {
+                self.preflight_product_file_mutation()?;
+            }
             return Ok(());
         }
         let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
@@ -321,6 +341,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             return Err(InstallError::backend_failure());
         }
         self.existing_managed_install = false;
+        self.mode = crate::LinuxInstallMode::FreshInstall;
         Ok(())
     }
 
@@ -343,43 +364,30 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+        if self.mode == crate::LinuxInstallMode::OfflineRepair {
             return Err(InstallError::backend_failure());
         }
+        self.preflight_product_file_mutation()?;
         self.assets.recover_asset(asset)?;
-        if Self::is_systemd_unit(asset) {
-            self.services
-                .reload_units()
-                .map_err(|_| InstallError::backend_failure())?;
-        }
         Ok(())
     }
 
     fn recover_repair_assets(&mut self) -> Result<(), InstallError> {
-        self.assets.recover_repair_assets()
+        let (assets, services) = (&mut self.assets, &mut self.services);
+        assets.recover_repair_assets(|| {
+            services
+                .require_offline()
+                .map_err(|_| InstallError::offline_services_required())
+        })
     }
 
-    fn prepare_service_recovery(&mut self, _prior_active: bool) -> Result<(), InstallError> {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+    fn recover_fresh_services(&mut self) -> Result<(), InstallError> {
+        if self.mode != crate::LinuxInstallMode::FreshInstall {
             return Err(InstallError::backend_failure());
         }
         self.services
-            .prepare_recovery()
+            .deactivate_fresh_recovery()
             .map_err(|_| InstallError::backend_failure())
-    }
-
-    fn finish_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
-            return Err(InstallError::backend_failure());
-        }
-        let result = self
-            .services
-            .finish_recovery(prior_active)
-            .map_err(|_| InstallError::backend_failure());
-        if result.is_ok() {
-            self.service_lifecycle.expected_active = prior_active;
-        }
-        result
     }
 
     fn classify_managed_runtime(&mut self) -> Result<LinuxAssetPresence, InstallError> {
@@ -391,6 +399,10 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn classify_services(&mut self) -> Result<LinuxAssetPresence, InstallError> {
+        if self.mode != crate::LinuxInstallMode::FreshInstall {
+            self.preflight_product_file_mutation()?;
+            return Ok(LinuxAssetPresence::ExactPresent);
+        }
         self.services
             .classify_activation()
             .map(|active| {
@@ -404,20 +416,14 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn services_need_mutation(&self, prior_active: bool) -> bool {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
-            return false;
-        }
-        if prior_active {
-            self.product_files_changed
-        } else {
-            !self.existing_managed_install
-        }
+        self.mode == crate::LinuxInstallMode::FreshInstall && !prior_active
     }
 
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
-        let changed = self.assets.ensure_asset(asset)?;
-        self.product_files_changed |= changed && asset.kind() == crate::LinuxAssetKind::File;
-        Ok(changed)
+        if asset.kind() == crate::LinuxAssetKind::File {
+            self.preflight_product_file_mutation()?;
+        }
+        self.assets.ensure_asset(asset)
     }
 
     fn install_systemd_unit(
@@ -425,9 +431,8 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         asset: LinuxInstallAsset,
         contents: &'static str,
     ) -> Result<bool, InstallError> {
-        let changed = self.assets.install_static_asset(asset, contents)?;
-        self.product_files_changed |= changed;
-        Ok(changed)
+        self.preflight_product_file_mutation()?;
+        self.assets.install_static_asset(asset, contents)
     }
 
     fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
@@ -441,34 +446,28 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         Ok(())
     }
 
+    fn validate_base_nix(&mut self) -> Result<(), InstallError> {
+        RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
+            .and_then(|adapter| adapter.ping_managed_store())
+            .map_err(|_| InstallError::backend_failure())
+    }
+
+    fn accept_base_nix_handoff(&mut self) -> Result<(), InstallError> {
+        Ok(())
+    }
+
     fn activate_services(&mut self) -> Result<bool, InstallError> {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
-            self.services
-                .require_offline()
-                .map_err(|_| InstallError::backend_failure())?;
-            self.service_lifecycle.expected_active = false;
+        if self.mode != crate::LinuxInstallMode::FreshInstall {
+            self.preflight_product_file_mutation()?;
             return Ok(false);
         }
-        let prior_active = self
-            .services
-            .classify_activation()
-            .map_err(|_| InstallError::backend_failure())?;
-        let activation = if !self.existing_managed_install {
-            ServiceActivation::Start
-        } else if self.product_files_changed && prior_active {
-            ServiceActivation::Restart
-        } else {
-            ServiceActivation::Preserve
-        };
-        self.service_lifecycle.expected_active =
-            prior_active || activation == ServiceActivation::Start;
         self.services
-            .activate(activation)
+            .activate_fresh()
             .map_err(|_| InstallError::backend_failure())
     }
 
     fn rollback_services(&mut self) -> Result<(), InstallError> {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+        if self.mode != crate::LinuxInstallMode::FreshInstall {
             return Err(InstallError::backend_failure());
         }
         self.services
@@ -476,8 +475,8 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             .map_err(|_| InstallError::backend_failure())
     }
 
-    fn finish_services_rollback(&mut self) -> Result<(), InstallError> {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+    fn finish_fresh_services_rollback(&mut self) -> Result<(), InstallError> {
+        if self.mode != crate::LinuxInstallMode::FreshInstall {
             return Err(InstallError::rollback_incomplete());
         }
         self.services
@@ -486,47 +485,42 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
-        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
-            return self
-                .services
-                .require_offline()
-                .map_err(|_| InstallError::backend_failure());
-        }
-        if self.existing_managed_install && !self.service_lifecycle.expected_active {
-            return match self.services.classify_activation() {
-                Ok(false) => Ok(()),
-                Ok(true) | Err(_) => Err(InstallError::backend_failure()),
-            };
+        if self.mode != crate::LinuxInstallMode::FreshInstall {
+            return self.preflight_product_file_mutation();
         }
         self.services
             .verify_active()
-            .map_err(|_| InstallError::backend_failure())?;
-        RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
-            .and_then(|adapter| adapter.ping_managed_store())
             .map_err(|_| InstallError::backend_failure())?;
         crate::broker::probe_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))
             .map_err(|_| InstallError::backend_failure())
     }
 
     fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
+        self.preflight_product_file_mutation()?;
         self.assets.publish_uninstall_manifest()
     }
 
     fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
-        self.assets.finalize_replacement_backups()?;
+        let mode = self.mode;
+        let (assets, services) = (&mut self.assets, &mut self.services);
+        assets.finalize_replacement_backups(|| {
+            if mode == crate::LinuxInstallMode::FreshInstall {
+                Ok(())
+            } else {
+                services
+                    .require_offline()
+                    .map_err(|_| InstallError::offline_services_required())
+            }
+        })?;
         self.services.commit_activation();
         Ok(())
     }
 
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
-        self.assets.rollback_asset(asset)?;
-        if self.product_asset_intent != LinuxProductAssetIntent::Repair
-            && Self::is_systemd_unit(asset)
-        {
-            self.services
-                .reload_units()
-                .map_err(|_| InstallError::backend_failure())?;
+        if asset.kind() == crate::LinuxAssetKind::File {
+            self.preflight_product_file_mutation()?;
         }
+        self.assets.rollback_asset(asset)?;
         Ok(())
     }
 }
@@ -608,7 +602,95 @@ mod tests {
     }
 
     #[test]
-    fn production_service_transition_is_only_for_clean_start_or_changed_active_files()
+    fn recovery_mode_is_derived_from_the_journal_and_handoff() {
+        for (intent, mode, handoff) in [
+            (
+                LinuxProductAssetIntent::InstallOrUpgrade,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::NotStarted,
+            ),
+            (
+                LinuxProductAssetIntent::InstallOrUpgrade,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::Accepted,
+            ),
+            (
+                LinuxProductAssetIntent::InstallOrUpgrade,
+                crate::LinuxInstallMode::OfflineUpgrade,
+                DeterminateHandoffState::Accepted,
+            ),
+            (
+                LinuxProductAssetIntent::Repair,
+                crate::LinuxInstallMode::OfflineRepair,
+                DeterminateHandoffState::Accepted,
+            ),
+        ] {
+            assert_eq!(
+                validate_recovery_mode(intent, mode, handoff).map_err(InstallError::code),
+                Ok(())
+            );
+        }
+
+        for (intent, mode, handoff) in [
+            (
+                LinuxProductAssetIntent::InstallOrUpgrade,
+                crate::LinuxInstallMode::OfflineUpgrade,
+                DeterminateHandoffState::NotStarted,
+            ),
+            (
+                LinuxProductAssetIntent::InstallOrUpgrade,
+                crate::LinuxInstallMode::OfflineRepair,
+                DeterminateHandoffState::Accepted,
+            ),
+            (
+                LinuxProductAssetIntent::Repair,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::Accepted,
+            ),
+            (
+                LinuxProductAssetIntent::Repair,
+                crate::LinuxInstallMode::OfflineRepair,
+                DeterminateHandoffState::NotStarted,
+            ),
+        ] {
+            assert_eq!(
+                validate_recovery_mode(intent, mode, handoff).map_err(InstallError::code),
+                Err(crate::InstallErrorCode::RecoveryModeMismatch)
+            );
+        }
+        assert_eq!(
+            validate_recovery_mode(
+                LinuxProductAssetIntent::InstallOrUpgrade,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::Started,
+            )
+            .map_err(InstallError::code),
+            Err(crate::InstallErrorCode::BackendFailure)
+        );
+    }
+
+    #[test]
+    fn privilege_preflight_does_not_classify_an_existing_install()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let snapshots = std::rc::Rc::new(std::cell::RefCell::new(vec![
+            DeterminateHandoffState::Accepted,
+        ]));
+        let (mut backend, service_calls) = ProductionLinuxInstallBackend::for_preflight_test(
+            System::X8664Linux,
+            ManagedGroupBindings::new(100, 101)?,
+            snapshots,
+            LinuxProductAssetIntent::InstallOrUpgrade,
+        );
+
+        backend.preflight_privilege()?;
+
+        assert_eq!(backend.mode, crate::LinuxInstallMode::FreshInstall);
+        assert_eq!(service_calls.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn production_service_transition_is_fresh_install_only()
     -> Result<(), Box<dyn std::error::Error>> {
         let snapshots = std::rc::Rc::new(std::cell::RefCell::new(vec![
             DeterminateHandoffState::Accepted,
@@ -620,12 +702,10 @@ mod tests {
             LinuxProductAssetIntent::InstallOrUpgrade,
         );
         assert!(backend.services_need_mutation(false));
-        backend.existing_managed_install = true;
+        assert!(!backend.services_need_mutation(true));
+        backend.mode = crate::LinuxInstallMode::OfflineUpgrade;
         assert!(!backend.services_need_mutation(false));
         assert!(!backend.services_need_mutation(true));
-        backend.product_files_changed = true;
-        assert!(!backend.services_need_mutation(false));
-        assert!(backend.services_need_mutation(true));
         Ok(())
     }
 }

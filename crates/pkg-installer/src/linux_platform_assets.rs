@@ -242,7 +242,10 @@ impl LinuxPlatformAssetManager {
         Ok(())
     }
 
-    pub(crate) fn recover_repair_assets(&mut self) -> Result<(), InstallError> {
+    pub(crate) fn recover_repair_assets(
+        &mut self,
+        mut preflight_mutation: impl FnMut() -> Result<(), InstallError>,
+    ) -> Result<(), InstallError> {
         self.preflight_repair()?;
         let manifest = self
             .load_installed_manifest()?
@@ -260,6 +263,7 @@ impl LinuxPlatformAssetManager {
                 .find(|record| record.id() == asset.id())
                 .ok_or_else(InstallError::backend_failure)?;
             if record.state() == RecordedAssetState::Created {
+                preflight_mutation()?;
                 self.ensure_filesystem()?
                     .roll_forward_owned_file(asset)
                     .map_err(|_| InstallError::backend_failure())?;
@@ -975,7 +979,10 @@ impl LinuxPlatformAssetManager {
             .collect()
     }
 
-    pub(crate) fn finalize_replacement_backups(&mut self) -> Result<(), InstallError> {
+    pub(crate) fn finalize_replacement_backups(
+        &mut self,
+        mut preflight_mutation: impl FnMut() -> Result<(), InstallError>,
+    ) -> Result<(), InstallError> {
         let (system, release) = self
             .receipt_binding
             .ok_or_else(InstallError::backend_failure)?;
@@ -994,6 +1001,7 @@ impl LinuxPlatformAssetManager {
             .filter(|asset| is_linux_product_asset(*asset))
             .filter(|asset| asset.kind() == crate::LinuxAssetKind::File)
         {
+            preflight_mutation()?;
             self.ensure_filesystem()?
                 .finalize_owned_file(asset)
                 .map_err(|_| InstallError::backend_failure())?;

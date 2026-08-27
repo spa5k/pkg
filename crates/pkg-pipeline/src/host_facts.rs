@@ -19,7 +19,7 @@ use crate::{BuildHostFacts, BuildHostFactsError, BuildHostFactsProbe};
 const MANAGED_NIX_CONF: &str = "/opt/pkg/etc/pkg/nix.conf";
 const LINUX_CGROUP_CONTROLLERS: &str = "/sys/fs/cgroup/cgroup.controllers";
 const LINUX_DAEMON_CGROUP: &str =
-    "/sys/fs/cgroup/system.slice/pkg-nix-daemon.service/nix-daemon/cgroup.procs";
+    "/sys/fs/cgroup/system.slice/nix-daemon.service/nix-daemon/cgroup.procs";
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_CONFIG_ENTRIES: usize = 64;
 const LINUX_BUILD_USERS: usize = 16;

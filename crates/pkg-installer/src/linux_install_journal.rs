@@ -7,13 +7,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LinuxAssetKind, assets::linux_product_mutation_assets};
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 const PRODUCT: &str = "pkg";
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 
 /// Stable Linux install-journal failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinuxInstallJournalErrorCode {
+    /// The snapshot belongs to a journal schema this binary does not support.
+    UnsupportedSchema,
     /// The snapshot is malformed, oversized, stale, or has unknown data.
     InvalidJournal,
     /// A mutation was repeated, skipped, or completed out of order.
@@ -40,7 +42,15 @@ impl LinuxInstallJournalError {
 
 impl fmt::Display for LinuxInstallJournalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("linux install recovery state is invalid")
+        formatter.write_str(match self.code {
+            LinuxInstallJournalErrorCode::UnsupportedSchema => {
+                "linux install recovery state uses an unsupported schema; keep it unchanged and use the matching installer"
+            }
+            LinuxInstallJournalErrorCode::InvalidJournal
+            | LinuxInstallJournalErrorCode::InvalidTransition => {
+                "linux install recovery state is invalid"
+            }
+        })
     }
 }
 
@@ -74,10 +84,12 @@ pub enum LinuxInstallMutationState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LinuxInstallMode {
-    /// Restore only authenticated prior bytes after an interrupted upgrade.
-    InstallOrUpgrade,
+    /// Create a new installation and activate its product service set.
+    FreshInstall,
+    /// Replace an existing installation while its product service set stays offline.
+    OfflineUpgrade,
     /// Keep authenticated same-release candidate bytes during offline repair.
-    Repair,
+    OfflineRepair,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,8 +110,6 @@ pub struct LinuxInstallJournal {
     recovery_context_digest: String,
     mode: LinuxInstallMode,
     committed: bool,
-    service_prior_active: Option<bool>,
-    service_recovery_prepared: bool,
     entries: Vec<LinuxInstallJournalEntry>,
 }
 
@@ -119,44 +129,10 @@ impl LinuxInstallJournal {
     ///
     /// Returns `InvalidJournal` for a non-Linux system.
     pub fn new(
-        system: System,
-        ownership_manifest_digest: Digest,
-        recovery_context_digest: Digest,
-    ) -> Result<Self, LinuxInstallJournalError> {
-        Self::new_with_mode(
-            system,
-            ownership_manifest_digest,
-            recovery_context_digest,
-            LinuxInstallMode::InstallOrUpgrade,
-            None,
-        )
-    }
-
-    /// Creates an offline repair journal.
-    ///
-    /// # Errors
-    ///
-    /// Returns `InvalidJournal` for a non-Linux system.
-    pub fn new_repair(
-        system: System,
-        ownership_manifest_digest: Digest,
-        recovery_context_digest: Digest,
-    ) -> Result<Self, LinuxInstallJournalError> {
-        Self::new_with_mode(
-            system,
-            ownership_manifest_digest,
-            recovery_context_digest,
-            LinuxInstallMode::Repair,
-            None,
-        )
-    }
-
-    fn new_with_mode(
-        system: System,
-        ownership_manifest_digest: Digest,
-        recovery_context_digest: Digest,
         mode: LinuxInstallMode,
-        service_prior_active: Option<bool>,
+        system: System,
+        ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
     ) -> Result<Self, LinuxInstallJournalError> {
         if !matches!(system, System::X8664Linux | System::Aarch64Linux) {
             return Err(invalid_journal());
@@ -169,8 +145,6 @@ impl LinuxInstallJournal {
             recovery_context_digest: recovery_context_digest.to_string(),
             mode,
             committed: false,
-            service_prior_active,
-            service_recovery_prepared: false,
             entries: Vec::new(),
         })
     }
@@ -195,7 +169,18 @@ impl LinuxInstallJournal {
         if bytes.len() > MAX_JOURNAL_BYTES {
             return Err(invalid_journal());
         }
-        let journal: Self = serde_json::from_slice(bytes).map_err(|_| invalid_journal())?;
+        let value: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| invalid_journal())?;
+        if value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(u64::from(SCHEMA_VERSION))
+        {
+            return Err(LinuxInstallJournalError::new(
+                LinuxInstallJournalErrorCode::UnsupportedSchema,
+            ));
+        }
+        let journal: Self = serde_json::from_value(value).map_err(|_| invalid_journal())?;
         journal.validate()?;
         Ok(journal)
     }
@@ -253,46 +238,12 @@ impl LinuxInstallJournal {
         Ok(())
     }
 
-    /// Records the service transition and its exact prior active state.
-    pub(crate) fn intend_services(
-        &mut self,
-        prior_active: bool,
-    ) -> Result<(), LinuxInstallJournalError> {
-        if self.mode == LinuxInstallMode::Repair {
+    /// Records fresh-install service activation intent before any systemd mutation.
+    pub(crate) fn intend_services(&mut self) -> Result<(), LinuxInstallJournalError> {
+        if self.mode != LinuxInstallMode::FreshInstall {
             return Err(invalid_transition());
         }
-        self.intend(LinuxInstallMutation::Services)?;
-        self.service_prior_active = Some(prior_active);
-        Ok(())
-    }
-
-    pub(crate) const fn service_prior_active(&self) -> Option<bool> {
-        self.service_prior_active
-    }
-
-    pub(crate) const fn service_recovery_prepared(&self) -> bool {
-        self.service_recovery_prepared
-    }
-
-    pub(crate) const fn prepare_service_recovery(
-        &mut self,
-    ) -> Result<(), LinuxInstallJournalError> {
-        if self.committed || self.service_prior_active.is_none() {
-            return Err(invalid_transition());
-        }
-        self.service_recovery_prepared = true;
-        Ok(())
-    }
-
-    pub(crate) const fn complete_service_recovery(
-        &mut self,
-    ) -> Result<(), LinuxInstallJournalError> {
-        if self.committed || !self.service_recovery_prepared {
-            return Err(invalid_transition());
-        }
-        self.service_prior_active = None;
-        self.service_recovery_prepared = false;
-        Ok(())
+        self.intend(LinuxInstallMutation::Services)
     }
 
     /// Records one exact object that existed before this attempt.
@@ -352,8 +303,6 @@ impl LinuxInstallJournal {
         {
             return Err(invalid_transition());
         }
-        self.service_prior_active = None;
-        self.service_recovery_prepared = false;
         self.committed = true;
         Ok(())
     }
@@ -448,29 +397,18 @@ impl LinuxInstallJournal {
             || Digest::from_str(&self.ownership_manifest_digest).is_err()
             || Digest::from_str(&self.recovery_context_digest).is_err()
             || self.entries.len() > install_sequence().len()
-            || (self.service_recovery_prepared && self.service_prior_active.is_none())
         {
             return Err(invalid_journal());
         }
-        let has_changed_services = self.entries.iter().any(|entry| {
+        let changed_services = self.entries.iter().any(|entry| {
             entry.mutation == LinuxInstallMutation::Services
                 && entry.state != LinuxInstallMutationState::PreExisting
         });
         let service_state_valid = match self.mode {
-            LinuxInstallMode::InstallOrUpgrade => {
-                self.service_prior_active.is_some()
-                    == (has_changed_services || self.service_recovery_prepared)
-            }
-            LinuxInstallMode::Repair => {
-                self.service_prior_active.is_none()
-                    && !self.service_recovery_prepared
-                    && !has_changed_services
-            }
+            LinuxInstallMode::FreshInstall => true,
+            LinuxInstallMode::OfflineUpgrade | LinuxInstallMode::OfflineRepair => !changed_services,
         };
-        if (self.committed
-            && (self.service_prior_active.is_some() || self.service_recovery_prepared))
-            || (!self.committed && !service_state_valid)
-        {
+        if !service_state_valid {
             return Err(invalid_journal());
         }
         let sequence = install_sequence();
@@ -543,6 +481,7 @@ mod tests {
 
     fn journal() -> LinuxInstallJournal {
         LinuxInstallJournal::new(
+            LinuxInstallMode::FreshInstall,
             System::X8664Linux,
             Digest::from_bytes([0x5a; 32]),
             Digest::from_bytes([0x6a; 32]),
@@ -582,23 +521,82 @@ mod tests {
 
     #[test]
     fn repair_round_trip_has_no_service_mutation_state() {
-        let mut journal = LinuxInstallJournal::new_repair(
+        let mut journal = LinuxInstallJournal::new(
+            LinuxInstallMode::OfflineRepair,
             System::X8664Linux,
             Digest::from_bytes([0x7a; 32]),
             Digest::from_bytes([0x7b; 32]),
         )
         .unwrap();
         let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
-        assert_eq!(decoded.mode(), LinuxInstallMode::Repair);
-        assert_eq!(decoded.service_prior_active(), None);
-        assert!(!decoded.service_recovery_prepared());
+        assert_eq!(decoded.mode(), LinuxInstallMode::OfflineRepair);
 
         journal
             .record_preexisting(install_sequence()[0].clone())
             .unwrap();
         let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
         assert!(decoded.recovery_actions().is_empty());
-        assert_eq!(journal.intend_services(false), Err(invalid_transition()));
+        assert_eq!(journal.intend_services(), Err(invalid_transition()));
+    }
+
+    #[test]
+    fn schema_five_persists_each_distinct_operation_mode() {
+        for mode in [
+            LinuxInstallMode::FreshInstall,
+            LinuxInstallMode::OfflineUpgrade,
+            LinuxInstallMode::OfflineRepair,
+        ] {
+            let journal = LinuxInstallJournal::new(
+                mode,
+                System::X8664Linux,
+                Digest::from_bytes([0x81; 32]),
+                Digest::from_bytes([0x82; 32]),
+            )
+            .unwrap();
+            assert_eq!(
+                LinuxInstallJournal::decode(&journal.encode().unwrap())
+                    .unwrap()
+                    .mode(),
+                mode
+            );
+        }
+
+        let old = journal()
+            .encode()
+            .unwrap()
+            .windows(b"\"schemaVersion\":5".len())
+            .position(|bytes| bytes == b"\"schemaVersion\":5")
+            .unwrap();
+        let mut bytes = journal().encode().unwrap();
+        bytes[old + b"\"schemaVersion\":".len()] = b'4';
+        assert_eq!(
+            LinuxInstallJournal::decode(&bytes).map_err(LinuxInstallJournalError::code),
+            Err(LinuxInstallJournalErrorCode::UnsupportedSchema)
+        );
+
+        let mut fresh = journal();
+        for mutation in install_sequence()
+            .into_iter()
+            .take_while(|mutation| *mutation != LinuxInstallMutation::Services)
+        {
+            fresh.record_preexisting(mutation).unwrap();
+        }
+        assert_eq!(fresh.intend_services(), Ok(()));
+
+        let mut upgrade = LinuxInstallJournal::new(
+            LinuxInstallMode::OfflineUpgrade,
+            System::X8664Linux,
+            Digest::from_bytes([0x83; 32]),
+            Digest::from_bytes([0x84; 32]),
+        )
+        .unwrap();
+        for mutation in install_sequence()
+            .into_iter()
+            .take_while(|mutation| *mutation != LinuxInstallMutation::Services)
+        {
+            upgrade.record_preexisting(mutation).unwrap();
+        }
+        assert_eq!(upgrade.intend_services(), Err(invalid_transition()));
     }
 
     #[test]

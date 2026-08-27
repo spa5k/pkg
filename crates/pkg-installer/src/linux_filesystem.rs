@@ -1537,8 +1537,6 @@ impl LinuxFilesystemManager {
 
 fn static_payload(asset: LinuxInstallAsset) -> Option<&'static [u8]> {
     match asset.id() {
-        "daemon-socket-unit" => Some(LinuxSystemdAssets::DAEMON_SOCKET.as_bytes()),
-        "daemon-service-unit" => Some(LinuxSystemdAssets::DAEMON_SERVICE.as_bytes()),
         "helper-socket-unit" => Some(LinuxSystemdAssets::HELPER_SOCKET.as_bytes()),
         "helper-service-unit" => Some(LinuxSystemdAssets::HELPER_SERVICE.as_bytes()),
         "broker-socket-unit" => Some(LinuxSystemdAssets::BROKER_SOCKET.as_bytes()),
@@ -1782,7 +1780,7 @@ mod tests {
             failure_code(
                 &fixture
                     .manager
-                    .ensure_asset(Fixture::asset("daemon-service-unit"))
+                    .ensure_asset(Fixture::asset("broker-service-unit"))
             )?,
             LinuxFilesystemErrorCode::UnsafeFilesystemState
         );
@@ -1867,12 +1865,12 @@ mod tests {
         assert!(profile.contains("__pkg_state=\"$HOME/.local/share/pkg\""));
         assert!(!profile.contains("XDG_DATA_HOME"));
         assert!(fixture.manager.install_static_asset(
-            Fixture::asset("daemon-service-unit"),
-            LinuxSystemdAssets::DAEMON_SERVICE,
+            Fixture::asset("broker-service-unit"),
+            LinuxSystemdAssets::BROKER_SERVICE,
         )?);
         fixture
             .manager
-            .verify_asset(Fixture::asset("daemon-service-unit"))?;
+            .verify_asset(Fixture::asset("broker-service-unit"))?;
         let records = crate::assets::linux_product_install_assets()
             .map(|asset| {
                 let record =
