@@ -6,7 +6,7 @@ use std::{
     ffi::OsStr,
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, Read},
+    io::{self, Read, Write},
     os::unix::{
         fs::{MetadataExt, OpenOptionsExt},
         process::{CommandExt, ExitStatusExt},
@@ -180,6 +180,19 @@ struct CapturedOutcome {
     stderr: Vec<u8>,
 }
 
+impl CapturedOutcome {
+    fn write_failure_diagnostics(&self, writer: &mut impl Write) {
+        if self.public.terminal == DeterminateTerminal::Exited(0) {
+            return;
+        }
+        let _ = writeln!(writer, "determinate installer outcome: {}", self.public);
+    }
+}
+
+fn write_process_error_diagnostic(error: DeterminateProcessError, writer: &mut impl Write) {
+    let _ = writeln!(writer, "determinate installer error: {error}");
+}
+
 struct CapturedStream {
     bytes: Vec<u8>,
     truncated: bool,
@@ -200,7 +213,14 @@ fn run_production(
     installer: &DeterminateInstaller,
     operation: Operation,
 ) -> Result<DeterminateProcessOutcome, DeterminateProcessError> {
-    let captured = run(executable, installer, operation, &production_settings())?;
+    let captured = match run(executable, installer, operation, &production_settings()) {
+        Ok(captured) => captured,
+        Err(error) => {
+            write_process_error_diagnostic(error, &mut io::stderr().lock());
+            return Err(error);
+        }
+    };
+    captured.write_failure_diagnostics(&mut io::stderr().lock());
     drop(captured.stdout);
     drop(captured.stderr);
     Ok(captured.public)
@@ -742,7 +762,7 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         let temporary = tempfile::tempdir()?;
         let executable = write_script(
             temporary.path(),
-            "i=0; while [ $i -lt 20000 ]; do printf '1234567890123456'; printf 'abcdefghijklmnop' >&2; i=$((i + 1)); done",
+            "i=0; while [ $i -lt 20000 ]; do printf '1234567890123456'; printf 'abcdefghijklmnop' >&2; i=$((i + 1)); done; exit 23",
         )?;
         let result = run(
             &executable,
@@ -754,14 +774,31 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         assert_eq!(result.stderr.len(), OUTPUT_LIMIT);
         assert!(result.public.stdout_truncated);
         assert!(result.public.stderr_truncated);
-        assert_eq!(result.public.terminal, DeterminateTerminal::Exited(0));
+        assert_eq!(result.public.terminal, DeterminateTerminal::Exited(23));
+        let mut diagnostics = Vec::new();
+        result.write_failure_diagnostics(&mut diagnostics);
+        let metadata = format!("determinate installer outcome: {}\n", result.public);
+        assert_eq!(diagnostics, metadata.as_bytes());
+        assert!(
+            !diagnostics
+                .windows(16)
+                .any(|window| window == b"1234567890123456")
+        );
+        assert!(
+            !diagnostics
+                .windows(16)
+                .any(|window| window == b"abcdefghijklmnop")
+        );
         Ok(())
     }
 
     #[test]
     fn exit_nonzero_and_signal_are_distinct() -> Result<(), Box<dyn std::error::Error>> {
         let temporary = tempfile::tempdir()?;
-        let executable = write_script(temporary.path(), "exit 23")?;
+        let executable = write_script(
+            temporary.path(),
+            r"printf 'ignored-stdout'; printf '\033[31mvendor-error\033[0m' >&2; exit 23",
+        )?;
         let nonzero = run(
             &executable,
             &identity(&executable)?,
@@ -769,8 +806,36 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             &settings(temporary.path())?,
         )?;
         assert_eq!(nonzero.public.terminal, DeterminateTerminal::Exited(23));
+        assert_eq!(nonzero.stdout, b"ignored-stdout");
+        assert!(
+            nonzero
+                .stderr
+                .windows(12)
+                .any(|value| value == b"vendor-error")
+        );
+        assert!(nonzero.stderr.contains(&0x1b));
+        let mut diagnostics = Vec::new();
+        nonzero.write_failure_diagnostics(&mut diagnostics);
+        assert_eq!(
+            diagnostics,
+            b"determinate installer outcome: terminal=Exited(23), stdout_truncated=false, stderr_truncated=false\n"
+        );
+        assert!(
+            !diagnostics
+                .windows(14)
+                .any(|value| value == b"ignored-stdout")
+        );
+        assert!(
+            !diagnostics
+                .windows(12)
+                .any(|value| value == b"vendor-error")
+        );
+        assert!(!diagnostics.contains(&0x1b));
 
-        let executable = write_script(temporary.path(), "kill -TERM $$")?;
+        let executable = write_script(
+            temporary.path(),
+            "printf 'signal-error\n' >&2; kill -TERM $$",
+        )?;
         let signaled = run(
             &executable,
             &identity(&executable)?,
@@ -778,7 +843,62 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
             &settings(temporary.path())?,
         )?;
         assert_eq!(signaled.public.terminal, DeterminateTerminal::Signaled(15));
+        assert!(
+            signaled
+                .stderr
+                .windows(12)
+                .any(|value| value == b"signal-error")
+        );
+        diagnostics.clear();
+        signaled.write_failure_diagnostics(&mut diagnostics);
+        assert_eq!(
+            diagnostics,
+            b"determinate installer outcome: terminal=Signaled(15), stdout_truncated=false, stderr_truncated=false\n"
+        );
+        assert!(
+            !diagnostics
+                .windows(12)
+                .any(|value| value == b"signal-error")
+        );
         Ok(())
+    }
+
+    #[test]
+    fn process_errors_emit_only_fixed_classifications() {
+        let cases = [
+            (
+                DeterminateProcessError::InvalidExecutable,
+                "determinate installer error: invalid vendor executable\n",
+            ),
+            (
+                DeterminateProcessError::InvalidEnvironment,
+                "determinate installer error: invalid process environment\n",
+            ),
+            (
+                DeterminateProcessError::SpawnFailed,
+                "determinate installer error: vendor process spawn failed\n",
+            ),
+            (
+                DeterminateProcessError::WaitFailed,
+                "determinate installer error: vendor process wait failed\n",
+            ),
+            (
+                DeterminateProcessError::OutputFailed,
+                "determinate installer error: vendor process output failed\n",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            let mut diagnostics = Vec::new();
+            write_process_error_diagnostic(error, &mut diagnostics);
+            assert_eq!(diagnostics, expected.as_bytes());
+            assert!(
+                !diagnostics
+                    .windows(14)
+                    .any(|value| value == b"private-marker")
+            );
+            assert!(!diagnostics.contains(&0x1b));
+        }
     }
 
     #[test]
@@ -794,6 +914,9 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
         )?;
         assert!(started.elapsed() >= std::time::Duration::from_millis(90));
         assert_eq!(result.public.terminal, DeterminateTerminal::Exited(0));
+        let mut diagnostics = Vec::new();
+        result.write_failure_diagnostics(&mut diagnostics);
+        assert!(diagnostics.is_empty());
         Ok(())
     }
 
