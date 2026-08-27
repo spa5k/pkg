@@ -42,7 +42,10 @@ const NOLOGIN_PATHS: &[&str] = &[
 const INSTALL_LOCK: &str = "/run/pkg-install-accounts.lock";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
-const FIRST_MANAGED_GID: u32 = 30_000;
+const DETERMINATE_BUILD_GID: u32 = 30_000;
+const DETERMINATE_BUILD_USER_ID_BASE: u32 = 30_000;
+const DETERMINATE_BUILD_USER_COUNT: u32 = 32;
+const FIRST_PRODUCT_ID: u32 = DETERMINATE_BUILD_USER_ID_BASE + DETERMINATE_BUILD_USER_COUNT + 1;
 const LAST_MANAGED_GID: u32 = 39_999;
 const BROKER_NAME: &str = "pkg-nix-broker";
 const BUILD_GROUP_NAME: &str = "nixbld";
@@ -50,10 +53,6 @@ const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
 const BUILD_HOME: &str = "/var/empty";
 const DEFAULT_NOLOGIN_SHELL: &str = "/usr/sbin/nologin";
 const BUILD_USER_COUNT: u8 = 16;
-const BUILD_NAMES: [&str; 16] = [
-    "nixbld1", "nixbld2", "nixbld3", "nixbld4", "nixbld5", "nixbld6", "nixbld7", "nixbld8",
-    "nixbld9", "nixbld10", "nixbld11", "nixbld12", "nixbld13", "nixbld14", "nixbld15", "nixbld16",
-];
 
 /// Stable Linux account failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,11 +189,12 @@ impl AccountSystem for PreflightAccountSystem {
     }
 }
 
-/// Selects two free, stable group ids from the configured Linux account view.
+/// Selects the stable vendor build id and one free product account id.
 ///
-/// An exact existing product group keeps its current id. A new group receives
-/// the first unoccupied id in the fixed managed range. The later creation step
-/// rechecks every collision, so a concurrent administrator change fails closed.
+/// An exact existing product account keeps its current ids. A new product
+/// account receives the first id above Determinate's reserved group and user
+/// ids that is unoccupied in either namespace. The later creation step rechecks
+/// every collision, so a concurrent administrator change fails closed.
 ///
 /// # Errors
 ///
@@ -401,15 +401,26 @@ impl LinuxAccountManager {
             verify_complete_build_group(&groups, &users, self.groups.build_users_gid())?;
         }
         let uid = match spec {
-            AccountSpec::User { name, .. } => Some(
-                users
+            AccountSpec::User {
+                name,
+                gid,
+                build_number,
+                ..
+            } => {
+                let uid = users
                     .iter()
                     .find(|user| user.name == name)
                     .ok_or_else(|| {
                         LinuxAccountError::new(LinuxAccountErrorCode::VerificationFailure)
                     })?
-                    .uid,
-            ),
+                    .uid;
+                if build_number.is_none() && uid != gid {
+                    return Err(LinuxAccountError::new(
+                        LinuxAccountErrorCode::VerificationFailure,
+                    ));
+                }
+                Some(uid)
+            }
             AccountSpec::Group { .. } => None,
         };
         self.attempt_owned
@@ -446,7 +457,9 @@ impl LinuxAccountManager {
         }
         users
             .iter()
-            .find(|user| user.name == BROKER_NAME && user.uid != 0)
+            .find(|user| {
+                user.name == BROKER_NAME && user.uid != 0 && !determinate_id_reserved(user.uid)
+            })
             .map(|user| user.uid)
             .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::Conflict))
     }
@@ -760,6 +773,8 @@ fn create_command(
             ];
             if build_number.is_some() {
                 arguments.extend(["--groups".to_owned(), BUILD_GROUP_NAME.to_owned()]);
+            } else {
+                arguments.extend(["--uid".to_owned(), gid.to_string()]);
             }
             arguments.push(name.to_owned());
             (useradd, arguments)
@@ -790,18 +805,162 @@ fn plan_group_bindings(
         .map(|group| group.gid)
         .collect::<BTreeSet<_>>();
     occupied.extend(users.iter().map(|user| user.primary_gid));
-    let broker_gid = existing_group_gid(&groups, BROKER_NAME)?
-        .unwrap_or_else(|| first_free_gid(&occupied, &BTreeSet::new()).unwrap_or(0));
-    let reserved = BTreeSet::from([broker_gid]);
-    let build_gid = existing_group_gid(&groups, BUILD_GROUP_NAME)?
-        .unwrap_or_else(|| first_free_gid(&occupied, &reserved).unwrap_or(0));
-    ManagedGroupBindings::new(broker_gid, build_gid)
+    occupied.extend(users.iter().map(|user| user.uid));
+    validate_determinate_accounts(&groups, &users, &occupied)?;
+    let existing_broker_gid = existing_group_gid(&groups, BROKER_NAME)?;
+    let broker_user = users.iter().find(|user| user.name == BROKER_NAME);
+    if existing_broker_gid.is_none() && broker_user.is_some() {
+        return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+    }
+    if broker_user.is_none()
+        && groups.iter().any(|group| {
+            group.members.contains(BROKER_NAME) || group.administrators.contains(BROKER_NAME)
+        })
+    {
+        return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+    }
+    if let Some(gid) = existing_broker_gid {
+        if !(FIRST_PRODUCT_ID..=LAST_MANAGED_GID).contains(&gid)
+            || !verify_existing(
+                &AccountSpec::Group {
+                    name: BROKER_NAME,
+                    gid,
+                    permitted_members: BuildMembers::None,
+                },
+                &groups,
+                &users,
+            )?
+        {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        if let Some(user) = broker_user
+            && (determinate_id_reserved(user.uid)
+                || !verify_existing(
+                    &AccountSpec::User {
+                        name: BROKER_NAME,
+                        gid,
+                        home: BROKER_HOME,
+                        shell: DEFAULT_NOLOGIN_SHELL,
+                        build_number: None,
+                    },
+                    &groups,
+                    &users,
+                )?)
+        {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        if broker_user.is_none() && users.iter().any(|user| user.uid == gid) {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+    }
+    let broker_gid =
+        existing_broker_gid.unwrap_or_else(|| first_free_product_id(&occupied).unwrap_or(0));
+    ManagedGroupBindings::new(broker_gid, DETERMINATE_BUILD_GID)
         .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::Conflict))
 }
 
-fn first_free_gid(occupied: &BTreeSet<u32>, reserved: &BTreeSet<u32>) -> Option<u32> {
-    (FIRST_MANAGED_GID..=LAST_MANAGED_GID)
-        .find(|gid| !occupied.contains(gid) && !reserved.contains(gid))
+fn validate_determinate_accounts(
+    groups: &[GroupRecord],
+    users: &[UserRecord],
+    occupied: &BTreeSet<u32>,
+) -> Result<(), LinuxAccountError> {
+    let build_group = groups.iter().find(|group| group.name == BUILD_GROUP_NAME);
+    match build_group {
+        Some(group) if group.gid == DETERMINATE_BUILD_GID => {}
+        Some(_) => return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict)),
+        None if occupied.contains(&DETERMINATE_BUILD_GID) => {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        None => {}
+    }
+    let mut present_build_users = BTreeSet::new();
+    for number in 1..=DETERMINATE_BUILD_USER_COUNT {
+        let name = determinate_build_user_name(number);
+        let uid = DETERMINATE_BUILD_USER_ID_BASE + number;
+        let mut claims = users
+            .iter()
+            .filter(|user| user.name == name || user.uid == uid);
+        let existing = claims.next();
+        if claims.next().is_some()
+            || existing.is_some_and(|user| {
+                user.name != name
+                    || user.uid != uid
+                    || user.primary_gid != DETERMINATE_BUILD_GID
+                    || user.home != BUILD_HOME
+                    || !NOLOGIN_PATHS.contains(&user.shell.as_str())
+                    || !user.locked
+            })
+        {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        if existing.is_some() {
+            present_build_users.insert(name);
+        }
+    }
+    let expected_build_users = determinate_build_users();
+    match build_group {
+        Some(group)
+            if !group.password_locked
+                || !group.administrators.is_empty()
+                || present_build_users != expected_build_users
+                || group.members != expected_build_users =>
+        {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        None if !present_build_users.is_empty() => {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        _ => {}
+    }
+    let complete_build_users = build_group.is_some();
+    for name in &expected_build_users {
+        let memberships_exact = if complete_build_users {
+            supplementary_memberships_are_exact(groups, name, true)
+        } else {
+            groups.iter().all(|group| !group.members.contains(name))
+        };
+        if !memberships_exact
+            || groups
+                .iter()
+                .any(|group| group.administrators.contains(name))
+        {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+    }
+    let primary_build_users = users
+        .iter()
+        .filter(|user| user.primary_gid == DETERMINATE_BUILD_GID)
+        .map(|user| user.name.clone())
+        .collect::<BTreeSet<_>>();
+    if primary_build_users
+        != if complete_build_users {
+            expected_build_users
+        } else {
+            BTreeSet::new()
+        }
+    {
+        return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+    }
+    Ok(())
+}
+
+const fn determinate_id_reserved(id: u32) -> bool {
+    id >= DETERMINATE_BUILD_GID
+        && id <= DETERMINATE_BUILD_USER_ID_BASE + DETERMINATE_BUILD_USER_COUNT
+}
+
+fn determinate_build_user_name(number: u32) -> String {
+    format!("nixbld{number}")
+}
+
+fn determinate_build_users() -> BTreeSet<String> {
+    (1..=DETERMINATE_BUILD_USER_COUNT)
+        .map(determinate_build_user_name)
+        .collect()
+}
+
+fn first_free_product_id(occupied: &BTreeSet<u32>) -> Option<u32> {
+    (FIRST_PRODUCT_ID..=LAST_MANAGED_GID).find(|id| !occupied.contains(id))
 }
 
 fn existing_group_gid(
@@ -893,6 +1052,9 @@ fn verify_existing(
                 return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
             }
             let Some(user) = users.iter().find(|user| user.name == name) else {
+                if build_number.is_none() && users.iter().any(|user| user.uid == gid) {
+                    return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+                }
                 return Ok(false);
             };
             let uid_uses = users
@@ -1003,12 +1165,12 @@ impl AccountSystem for ProductionAccountSystem {
     fn users(&mut self) -> Result<Vec<UserRecord>, LinuxAccountError> {
         let getent = resolve_program(GETENT_PATHS)?;
         let passwd = run_capture(getent, &["passwd"])?;
-        let locked = managed_user_names()
+        let locked = inspected_user_names()
             .into_iter()
             .filter_map(
-                |name| match run_capture_allow_absent(getent, &["shadow", name]) {
+                |name| match run_capture_allow_absent(getent, &["shadow", &name]) {
                     Ok(Some(bytes)) => {
-                        Some(parse_shadow_lock(name, &bytes).map(|locked| (name, locked)))
+                        Some(parse_shadow_lock(&name, &bytes).map(|locked| (name, locked)))
                     }
                     Ok(None) => None,
                     Err(error) => Some(Err(error)),
@@ -1038,9 +1200,9 @@ impl AccountSystem for ProductionAccountSystem {
     }
 }
 
-fn managed_user_names() -> Vec<&'static str> {
-    let mut names = vec![BROKER_NAME];
-    names.extend(BUILD_NAMES);
+fn inspected_user_names() -> Vec<String> {
+    let mut names = vec![BROKER_NAME.to_owned()];
+    names.extend((1..=DETERMINATE_BUILD_USER_COUNT).map(determinate_build_user_name));
     names
 }
 
@@ -1168,7 +1330,7 @@ fn parse_comma_set(value: &str) -> Result<BTreeSet<String>, LinuxAccountError> {
 
 fn parse_users(
     bytes: &[u8],
-    locked: &BTreeMap<&str, bool>,
+    locked: &BTreeMap<String, bool>,
 ) -> Result<Vec<UserRecord>, LinuxAccountError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?;
@@ -1423,6 +1585,7 @@ mod tests {
         applied: Vec<Vec<u8>>,
         deleted: Vec<String>,
         fail_create_after_mutation: bool,
+        broker_uid_after_create: Option<u32>,
     }
 
     struct FakeSystem(Arc<Mutex<FakeState>>);
@@ -1508,6 +1671,34 @@ mod tests {
         }
     }
 
+    fn exact_determinate_accounts() -> (GroupRecord, Vec<UserRecord>) {
+        let users = (1..=DETERMINATE_BUILD_USER_COUNT)
+            .map(|number| {
+                user(
+                    &determinate_build_user_name(number),
+                    DETERMINATE_BUILD_USER_ID_BASE + number,
+                    DETERMINATE_BUILD_GID,
+                    BUILD_HOME,
+                )
+            })
+            .collect::<Vec<_>>();
+        let members = users
+            .iter()
+            .map(|user| user.name.as_str())
+            .collect::<Vec<_>>();
+        (
+            group(BUILD_GROUP_NAME, DETERMINATE_BUILD_GID, &members),
+            users,
+        )
+    }
+
+    fn exact_broker_accounts() -> (GroupRecord, UserRecord) {
+        (
+            group(BROKER_NAME, 31_000, &[]),
+            user(BROKER_NAME, 31_001, 31_000, BROKER_HOME),
+        )
+    }
+
     fn fake_manager(
         groups: ManagedGroupBindings,
         state: Arc<Mutex<FakeState>>,
@@ -1544,9 +1735,13 @@ mod tests {
                     } else {
                         BUILD_HOME
                     };
-                    let uid = 31_000_u32.saturating_add(
-                        u32::try_from(state.users.len()).map_err(|_| command_error())?,
-                    );
+                    let uid = if *name == BROKER_NAME {
+                        state.broker_uid_after_create.unwrap_or(gid)
+                    } else {
+                        31_000_u32.saturating_add(
+                            u32::try_from(state.users.len()).map_err(|_| command_error())?,
+                        )
+                    };
                     state.users.push(user(name, uid, gid, home));
                 }
                 ["m", name, group_name] => {
@@ -1565,22 +1760,500 @@ mod tests {
     }
 
     #[test]
-    fn group_planning_reuses_exact_groups_and_fills_first_free_ids() -> Result<(), Box<dyn Error>> {
+    fn group_planning_reserves_determinate_gid_on_a_clean_host() -> Result<(), Box<dyn Error>> {
         let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group("root", 0, &[]), group(BROKER_NAME, 31_234, &[])],
-            users: vec![user("foreign", 42_000, 30_000, "/var/empty")],
+            groups: vec![group("root", 0, &[])],
+            users: vec![user("root", 0, 0, "/root")],
             ..FakeState::default()
         }));
         let bindings = plan_group_bindings(&mut FakeSystem(state))?;
-        assert_eq!(bindings.broker_gid(), 31_234);
-        assert_eq!(bindings.build_users_gid(), 30_001);
+        assert_eq!(bindings.broker_gid(), 30_033);
+        assert_eq!(bindings.build_users_gid(), DETERMINATE_BUILD_GID);
+        Ok(())
+    }
+
+    #[test]
+    fn group_planning_refuses_foreign_determinate_gid_occupants() {
+        for state in [
+            FakeState {
+                groups: vec![group("foreign", DETERMINATE_BUILD_GID, &[])],
+                ..FakeState::default()
+            },
+            FakeState {
+                users: vec![user("foreign", 42_000, DETERMINATE_BUILD_GID, "/var/empty")],
+                ..FakeState::default()
+            },
+        ] {
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(Arc::new(Mutex::new(state))))
+                    .map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_wrong_existing_nixbld_gid() {
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![group(BUILD_GROUP_NAME, 30_001, &[])],
+            ..FakeState::default()
+        }));
+        assert_eq!(
+            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+    }
+
+    #[test]
+    fn group_planning_refuses_foreign_determinate_build_user_ids() {
+        for number in 1..=DETERMINATE_BUILD_USER_COUNT {
+            let (build_group, mut users) = exact_determinate_accounts();
+            users.push(user(
+                "foreign",
+                DETERMINATE_BUILD_USER_ID_BASE + number,
+                42_000,
+                BUILD_HOME,
+            ));
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![build_group],
+                users,
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_wrong_existing_determinate_build_user_binding() {
+        for (uid, gid) in [
+            (DETERMINATE_BUILD_USER_ID_BASE, DETERMINATE_BUILD_GID),
+            (
+                DETERMINATE_BUILD_USER_ID_BASE + 1,
+                DETERMINATE_BUILD_GID + 1,
+            ),
+        ] {
+            let (build_group, mut users) = exact_determinate_accounts();
+            users[0].uid = uid;
+            users[0].primary_gid = gid;
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![build_group],
+                users,
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_inexact_existing_determinate_user_state() {
+        let (_, exact_users) = exact_determinate_accounts();
+        let exact = exact_users[16].clone();
+        for invalid in [
+            UserRecord {
+                home: "/home/nixbld17".to_owned(),
+                ..exact.clone()
+            },
+            UserRecord {
+                shell: "/bin/sh".to_owned(),
+                ..exact.clone()
+            },
+            UserRecord {
+                locked: false,
+                ..exact
+            },
+        ] {
+            let (build_group, mut users) = exact_determinate_accounts();
+            users[16] = invalid;
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![build_group],
+                users,
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_inexact_existing_determinate_group_state() {
+        let (exact, users) = exact_determinate_accounts();
+        for invalid in [
+            GroupRecord {
+                password_locked: false,
+                ..exact.clone()
+            },
+            GroupRecord {
+                administrators: BTreeSet::from(["root".to_owned()]),
+                ..exact.clone()
+            },
+            GroupRecord {
+                members: BTreeSet::from(["foreign".to_owned()]),
+                ..exact
+            },
+        ] {
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![invalid],
+                users: users.clone(),
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![group(BUILD_GROUP_NAME, DETERMINATE_BUILD_GID, &[])],
+            users: vec![user(
+                "nixbld17",
+                DETERMINATE_BUILD_USER_ID_BASE + 17,
+                DETERMINATE_BUILD_GID,
+                BUILD_HOME,
+            )],
+            ..FakeState::default()
+        }));
+        assert_eq!(
+            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+    }
+
+    #[test]
+    fn group_planning_refuses_dangling_vendor_names_in_foreign_groups() {
+        let member = group("foreign", 42_000, &["nixbld17"]);
+        let mut administrator = group("foreign", 42_000, &[]);
+        administrator.administrators.insert("nixbld17".to_owned());
+        for foreign in [member, administrator] {
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![foreign],
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_complete_vendor_users_in_foreign_groups() {
+        let member = group("docker", 42_000, &["nixbld17"]);
+        let mut administrator = group("sudo", 42_001, &[]);
+        administrator.administrators.insert("nixbld18".to_owned());
+        for foreign in [member, administrator] {
+            let (build_group, users) = exact_determinate_accounts();
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![build_group, foreign],
+                users,
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_foreign_primary_members_of_determinate_group() {
+        let (build_group, mut users) = exact_determinate_accounts();
+        users.push(user("foreign", 42_000, DETERMINATE_BUILD_GID, BUILD_HOME));
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![build_group],
+            users,
+            ..FakeState::default()
+        }));
+        assert_eq!(
+            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+    }
+
+    #[test]
+    fn group_planning_refuses_partial_users_17_through_32() {
+        let mut users = (17..=DETERMINATE_BUILD_USER_COUNT)
+            .map(|number| {
+                user(
+                    &determinate_build_user_name(number),
+                    DETERMINATE_BUILD_USER_ID_BASE + number,
+                    DETERMINATE_BUILD_GID,
+                    BUILD_HOME,
+                )
+            })
+            .collect::<Vec<_>>();
+        for user in &mut users {
+            user.shell = "/sbin/nologin".to_owned();
+        }
+        let members = users
+            .iter()
+            .map(|user| user.name.as_str())
+            .collect::<Vec<_>>();
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![group(BUILD_GROUP_NAME, DETERMINATE_BUILD_GID, &members)],
+            users,
+            ..FakeState::default()
+        }));
+        assert_eq!(
+            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+    }
+
+    #[test]
+    fn shadow_preflight_covers_all_determinate_build_users() {
+        let names = inspected_user_names();
+        assert_eq!(names.len(), 33);
+        assert_eq!(names.first().map(String::as_str), Some(BROKER_NAME));
+        for number in 1..=DETERMINATE_BUILD_USER_COUNT {
+            assert!(names.contains(&determinate_build_user_name(number)));
+        }
+    }
+
+    #[test]
+    fn group_planning_reserves_vendor_ids_across_uid_and_gid_namespaces()
+    -> Result<(), Box<dyn Error>> {
+        for state in [
+            FakeState {
+                groups: vec![group("foreign", FIRST_PRODUCT_ID, &[])],
+                ..FakeState::default()
+            },
+            FakeState {
+                users: vec![user("foreign", FIRST_PRODUCT_ID, 42_000, BUILD_HOME)],
+                ..FakeState::default()
+            },
+            FakeState {
+                users: vec![user("foreign", 42_000, FIRST_PRODUCT_ID, BUILD_HOME)],
+                ..FakeState::default()
+            },
+        ] {
+            let bindings = plan_group_bindings(&mut FakeSystem(Arc::new(Mutex::new(state))))?;
+            assert_eq!(bindings.broker_gid(), FIRST_PRODUCT_ID + 1);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn group_planning_refuses_old_or_incomplete_broker_ids() {
+        for state in [
+            FakeState {
+                groups: vec![group(BROKER_NAME, DETERMINATE_BUILD_GID + 1, &[])],
+                ..FakeState::default()
+            },
+            FakeState {
+                groups: vec![group(BROKER_NAME, LAST_MANAGED_GID + 1, &[])],
+                ..FakeState::default()
+            },
+            FakeState {
+                groups: vec![group(BROKER_NAME, 31_000, &[])],
+                users: vec![user(
+                    BROKER_NAME,
+                    DETERMINATE_BUILD_USER_ID_BASE + 1,
+                    31_000,
+                    BROKER_HOME,
+                )],
+                ..FakeState::default()
+            },
+            FakeState {
+                users: vec![user(BROKER_NAME, 31_000, 31_000, BROKER_HOME)],
+                ..FakeState::default()
+            },
+            FakeState {
+                groups: vec![group(BROKER_NAME, 31_000, &[])],
+                users: vec![user(BROKER_NAME, 31_001, 31_001, BROKER_HOME)],
+                ..FakeState::default()
+            },
+        ] {
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(Arc::new(Mutex::new(state))))
+                    .map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_inexact_existing_broker_group() {
+        let (exact, _) = exact_broker_accounts();
+        for invalid in [
+            GroupRecord {
+                password_locked: false,
+                ..exact.clone()
+            },
+            GroupRecord {
+                members: BTreeSet::from(["foreign".to_owned()]),
+                ..exact.clone()
+            },
+            GroupRecord {
+                administrators: BTreeSet::from(["root".to_owned()]),
+                ..exact
+            },
+        ] {
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![invalid],
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn group_planning_refuses_dangling_broker_privileges() {
+        for broker_group in [None, Some(group(BROKER_NAME, 31_000, &[]))] {
+            let member = group("docker", 42_000, &[BROKER_NAME]);
+            let mut administrator = group("sudo", 42_001, &[]);
+            administrator.administrators.insert(BROKER_NAME.to_owned());
+            for foreign in [member, administrator] {
+                let mut groups = Vec::from_iter(broker_group.clone());
+                groups.push(foreign);
+                let state = Arc::new(Mutex::new(FakeState {
+                    groups,
+                    ..FakeState::default()
+                }));
+                assert_eq!(
+                    plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                    Err(LinuxAccountErrorCode::Conflict)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn group_planning_keeps_an_exact_broker_group_without_its_user() -> Result<(), Box<dyn Error>> {
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![group(BROKER_NAME, 31_000, &[])],
+            ..FakeState::default()
+        }));
+        assert_eq!(
+            plan_group_bindings(&mut FakeSystem(state))?,
+            ManagedGroupBindings::new(31_000, DETERMINATE_BUILD_GID)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn group_planning_refuses_inexact_existing_broker_user() {
+        let (_, exact) = exact_broker_accounts();
+        for invalid in [
+            UserRecord {
+                home: "/home/broker".to_owned(),
+                ..exact.clone()
+            },
+            UserRecord {
+                shell: "/bin/sh".to_owned(),
+                ..exact.clone()
+            },
+            UserRecord {
+                locked: false,
+                ..exact
+            },
+        ] {
+            let (broker_group, _) = exact_broker_accounts();
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![broker_group],
+                users: vec![invalid],
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+
+        for foreign in [group("docker", 42_000, &[BROKER_NAME]), {
+            let mut sudo = group("sudo", 42_001, &[]);
+            sudo.administrators.insert(BROKER_NAME.to_owned());
+            sudo
+        }] {
+            let (broker_group, broker_user) = exact_broker_accounts();
+            let state = Arc::new(Mutex::new(FakeState {
+                groups: vec![broker_group, foreign],
+                users: vec![broker_user],
+                ..FakeState::default()
+            }));
+            assert_eq!(
+                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
+                Err(LinuxAccountErrorCode::Conflict)
+            );
+        }
+    }
+
+    #[test]
+    fn absent_broker_rechecks_the_planned_uid() {
+        let (broker_group, _) = exact_broker_accounts();
+        let users = vec![user("foreign", 31_000, 42_000, BUILD_HOME)];
+        let spec = AccountSpec::User {
+            name: BROKER_NAME,
+            gid: 31_000,
+            home: BROKER_HOME,
+            shell: DEFAULT_NOLOGIN_SHELL,
+            build_number: None,
+        };
+        assert_eq!(
+            verify_existing(&spec, &[broker_group], &users).map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+    }
+
+    #[test]
+    fn broker_uid_refuses_a_post_plan_vendor_range_uid() -> Result<(), Box<dyn Error>> {
+        let bindings = ManagedGroupBindings::new(31_000, DETERMINATE_BUILD_GID)?;
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![group(BROKER_NAME, 31_000, &[])],
+            users: vec![user(
+                BROKER_NAME,
+                DETERMINATE_BUILD_USER_ID_BASE + 1,
+                31_000,
+                BROKER_HOME,
+            )],
+            ..FakeState::default()
+        }));
+        assert_eq!(
+            fake_manager(bindings, state)
+                .broker_uid()
+                .map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn group_planning_keeps_existing_broker_and_determinate_bindings_stable()
+    -> Result<(), Box<dyn Error>> {
+        let (build_group, build_users) = exact_determinate_accounts();
+        let mut users = build_users;
+        users.push(user(BROKER_NAME, 31_235, 31_234, BROKER_HOME));
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![
+                group("root", 0, &[]),
+                group(BROKER_NAME, 31_234, &[]),
+                build_group,
+            ],
+            users,
+            ..FakeState::default()
+        }));
+        let first = plan_group_bindings(&mut FakeSystem(Arc::clone(&state)))?;
+        let retry = plan_group_bindings(&mut FakeSystem(state))?;
+        assert_eq!(first, retry);
+        assert_eq!(retry.broker_gid(), 31_234);
+        assert_eq!(retry.build_users_gid(), DETERMINATE_BUILD_GID);
         Ok(())
     }
 
     #[test]
     fn group_planning_refuses_managed_gid_aliases_and_exhaustion() {
         let alias = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BROKER_NAME, 30_000, &[]), group("other", 30_000, &[])],
+            groups: vec![group(BROKER_NAME, 30_033, &[]), group("other", 30_033, &[])],
             ..FakeState::default()
         }));
         assert_eq!(
@@ -1589,7 +2262,7 @@ mod tests {
         );
 
         let full = Arc::new(Mutex::new(FakeState {
-            groups: (FIRST_MANAGED_GID..=LAST_MANAGED_GID)
+            groups: (FIRST_PRODUCT_ID..=LAST_MANAGED_GID)
                 .map(|gid| group(&format!("g{gid}"), gid, &[]))
                 .collect(),
             ..FakeState::default()
@@ -1620,6 +2293,14 @@ mod tests {
         assert_eq!(state.applied.len(), 19);
         assert_eq!(state.applied[0], b"g pkg-nix-broker 30000\n");
         assert_eq!(
+            state
+                .users
+                .iter()
+                .find(|user| user.name == BROKER_NAME)
+                .map(|user| user.uid),
+            Some(30_000)
+        );
+        assert_eq!(
             state.applied[3],
             b"u nixbld1 -:30001 \"pkg Nix build user 1\" /var/empty /usr/sbin/nologin\nm nixbld1 nixbld\n"
         );
@@ -1630,7 +2311,35 @@ mod tests {
 
     #[test]
     fn production_create_commands_are_fixed_and_non_interactive() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
+        let bindings = ManagedGroupBindings::new(30_033, 30_000)?;
+        let broker = AccountSpec::for_asset(account_asset("broker-user"), bindings)
+            .ok_or_else(command_error)?;
+        assert_eq!(
+            create_command(
+                broker,
+                "/usr/sbin/groupadd",
+                "/usr/sbin/useradd",
+                "/usr/sbin/nologin",
+            ),
+            (
+                "/usr/sbin/useradd",
+                vec![
+                    "--system".to_owned(),
+                    "--gid".to_owned(),
+                    "30033".to_owned(),
+                    "--home-dir".to_owned(),
+                    "/var/lib/pkg/broker-home".to_owned(),
+                    "--shell".to_owned(),
+                    "/usr/sbin/nologin".to_owned(),
+                    "--comment".to_owned(),
+                    "pkg Nix broker".to_owned(),
+                    "--no-create-home".to_owned(),
+                    "--uid".to_owned(),
+                    "30033".to_owned(),
+                    "pkg-nix-broker".to_owned(),
+                ]
+            )
+        );
         let group = AccountSpec::for_asset(account_asset("build-group"), bindings)
             .ok_or_else(command_error)?;
         assert_eq!(
@@ -1642,7 +2351,7 @@ mod tests {
             ),
             (
                 "/usr/sbin/groupadd",
-                vec!["--gid".to_owned(), "30001".to_owned(), "nixbld".to_owned()]
+                vec!["--gid".to_owned(), "30000".to_owned(), "nixbld".to_owned()]
             )
         );
         let user = AccountSpec::for_asset(account_asset("build-user-01"), bindings)
@@ -1659,7 +2368,7 @@ mod tests {
                 vec![
                     "--system".to_owned(),
                     "--gid".to_owned(),
-                    "30001".to_owned(),
+                    "30000".to_owned(),
                     "--home-dir".to_owned(),
                     "/var/empty".to_owned(),
                     "--shell".to_owned(),
@@ -1717,6 +2426,38 @@ mod tests {
                 .lock()
                 .map_err(|_| command_error())?
                 .applied
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn new_broker_user_requires_the_planned_uid() -> Result<(), Box<dyn Error>> {
+        let bindings = ManagedGroupBindings::new(31_000, DETERMINATE_BUILD_GID)?;
+        let state = Arc::new(Mutex::new(FakeState {
+            groups: vec![group(BROKER_NAME, 31_000, &[])],
+            broker_uid_after_create: Some(31_001),
+            ..FakeState::default()
+        }));
+        let mut manager = fake_manager(bindings, Arc::clone(&state));
+        let broker = account_asset("broker-user");
+        assert_eq!(
+            manager
+                .ensure_asset(broker)
+                .map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::VerificationFailure)
+        );
+        assert_eq!(
+            manager
+                .rollback_asset(broker)
+                .map_err(LinuxAccountError::code),
+            Err(LinuxAccountErrorCode::Conflict)
+        );
+        assert!(
+            state
+                .lock()
+                .map_err(|_| command_error())?
+                .deleted
                 .is_empty()
         );
         Ok(())
@@ -1939,7 +2680,7 @@ mod tests {
             b"root:*::\nnixbld:!::nixbld1\n",
         )?;
         assert_eq!(groups[1].members, BTreeSet::from(["nixbld1".to_owned()]));
-        let locked = BTreeMap::from([("nixbld1", true)]);
+        let locked = BTreeMap::from([("nixbld1".to_owned(), true)]);
         let users = parse_users(
             b"root:x:0:0:root:/root:/bin/sh\nnixbld1:x:31001:30001::/var/empty:/usr/sbin/nologin\n",
             &locked,
