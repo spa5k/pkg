@@ -52,14 +52,17 @@ Developer ID signed or notarized. These items remain TODO items.
 ## Local candidate proof
 
 Local candidate archives are separate test artifacts. They contain test-key
-installers and fixed loopback URLs. Each archive includes:
+installers and fixed loopback URLs. Both archives include:
 
 - the prepared platform installer;
 - checksums for every other archive file;
 - the Apache-2.0 license;
 - Rust dependency licenses;
-- the Nix 2.34.8 LGPL-2.1 text and exact source information;
 - release notes with the test-only limits.
+
+The macOS archive also includes the Nix 2.34.8 LGPL-2.1 text and exact source
+information. The Linux archive does not bundle the Determinate installer or a
+Nix runtime.
 
 Use `tests/linux-clean-host/run.sh` on a native x86-64 Docker server. The server
 can be local or on a disposable GitHub-hosted runner. A GitHub-hosted result is
@@ -72,8 +75,10 @@ satisfy macOS proof. Both proofs stop on the first failed check.
 
 The Linux proof covers foreign-state refusal, ownership drift, one-start vendor
 install, repeat product install, cached installs, one approved local build,
-package update, product upgrade, rollback, Package Repair, isolation, and
-terminal vendor uninstall.
+package update, package upgrade, package rollback, Package Repair, isolation,
+and terminal vendor uninstall. It does not prove a product binary upgrade,
+explicit package GC, repair of a modified product service asset, or absence of
+the old `/opt/pkg/nix` runtime during installation.
 
 The macOS proof covers the same product flow with the macOS service, APFS, and
 account boundaries. A local Tart result does not prove Developer ID signing,
