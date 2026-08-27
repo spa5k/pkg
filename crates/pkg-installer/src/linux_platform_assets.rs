@@ -2,11 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use pkg_core::{System, state::Digest};
+use pkg_core::{
+    System,
+    state::{Digest, body_digest},
+};
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
-use sha2::{Digest as _, Sha256};
 
 use crate::{
     InstallError, LinuxAccountManager, LinuxFilesystemManager, LinuxInstallAsset,
@@ -37,6 +39,26 @@ enum InstalledManifest {
     Unloaded,
     Absent,
     Present(UninstallManifest),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplacementAuthority {
+    Upgrade { prior_digest: Digest },
+    RepairExisting,
+    RepairMissing,
+}
+
+impl ReplacementAuthority {
+    const fn prior_digest(self) -> Option<Digest> {
+        match self {
+            Self::Upgrade { prior_digest } => Some(prior_digest),
+            Self::RepairExisting | Self::RepairMissing => None,
+        }
+    }
+
+    const fn is_repair(self) -> bool {
+        matches!(self, Self::RepairExisting | Self::RepairMissing)
+    }
 }
 
 /// Routes the closed Linux asset set through the production account and
@@ -185,8 +207,11 @@ impl LinuxPlatformAssetManager {
             let replacement = self.file_replacement(asset)?;
             let filesystem = self.ensure_filesystem()?;
             match replacement {
-                Some((prior, repair)) => filesystem
-                    .replace_owned_file(asset, prior, repair)
+                Some(ReplacementAuthority::RepairMissing) => filesystem
+                    .ensure_asset(asset)
+                    .map_err(|_| InstallError::backend_failure())?,
+                Some(authority) => filesystem
+                    .replace_owned_file(asset, authority.prior_digest(), authority.is_repair())
                     .map_err(|_| InstallError::backend_failure())?,
                 None => filesystem
                     .ensure_asset(asset)
@@ -221,8 +246,16 @@ impl LinuxPlatformAssetManager {
         let replacement = self.file_replacement(asset)?;
         let filesystem = self.ensure_filesystem()?;
         let created = match replacement {
-            Some((prior, repair)) => filesystem
-                .replace_static_owned_file(asset, contents, prior, repair)
+            Some(ReplacementAuthority::RepairMissing) => filesystem
+                .install_static_asset(asset, contents)
+                .map_err(|_| InstallError::backend_failure())?,
+            Some(authority) => filesystem
+                .replace_static_owned_file(
+                    asset,
+                    contents,
+                    authority.prior_digest(),
+                    authority.is_repair(),
+                )
                 .map_err(|_| InstallError::backend_failure())?,
             None => filesystem
                 .install_static_asset(asset, contents)
@@ -278,7 +311,7 @@ impl LinuxPlatformAssetManager {
             let records = self.current_records(Some(&existing))?;
             let manifest = UninstallManifest::new(system, digest, records)
                 .map_err(|_| InstallError::backend_failure())?;
-            let old_digest = digest_bytes(
+            let old_digest = body_digest(
                 &crate::encode_uninstall_manifest(&existing)
                     .map_err(|_| InstallError::backend_failure())?,
             );
@@ -429,13 +462,13 @@ impl LinuxPlatformAssetManager {
             }
             let replacement = self.replacement_authority(asset, &manifest)?;
             if absent {
-                return if replacement.1 {
+                return if replacement.is_repair() {
                     Ok(LinuxAssetPresence::Absent)
                 } else {
                     Err(InstallError::backend_failure())
                 };
             }
-            if let Some(prior) = replacement.0 {
+            if let Some(prior) = replacement.prior_digest() {
                 self.ensure_filesystem()?
                     .verify_asset_digest(asset, prior)
                     .map_err(|_| InstallError::backend_failure())?;
@@ -484,15 +517,25 @@ impl LinuxPlatformAssetManager {
         if has_backup {
             return self
                 .ensure_filesystem()?
-                .reconcile_owned_file(asset, replacement.0, replacement.1, false)
+                .reconcile_owned_file(
+                    asset,
+                    replacement.prior_digest(),
+                    replacement.is_repair(),
+                    false,
+                )
                 .map_err(|_| InstallError::backend_failure());
         }
 
-        if replacement.1 && self.ensure_filesystem()?.verify_asset(asset).is_ok() {
+        if replacement.is_repair() && self.ensure_filesystem()?.verify_asset(asset).is_ok() {
             return self.remove_verified_asset(asset);
         }
         self.ensure_filesystem()?
-            .reconcile_owned_file(asset, replacement.0, replacement.1, false)
+            .reconcile_owned_file(
+                asset,
+                replacement.prior_digest(),
+                replacement.is_repair(),
+                false,
+            )
             .map_err(|_| InstallError::backend_failure())
     }
 
@@ -575,7 +618,7 @@ impl LinuxPlatformAssetManager {
             self.ensure_filesystem()?
                 .bind_uninstall_manifest(&candidate)
                 .map_err(|_| InstallError::backend_failure())?;
-            let prior_digest = digest_bytes(
+            let prior_digest = body_digest(
                 &crate::encode_uninstall_manifest(prior)
                     .map_err(|_| InstallError::backend_failure())?,
             );
@@ -607,7 +650,7 @@ impl LinuxPlatformAssetManager {
             self.ensure_filesystem()?
                 .bind_uninstall_manifest(&current)
                 .map_err(|_| InstallError::backend_failure())?;
-            let prior_digest = digest_bytes(
+            let prior_digest = body_digest(
                 &crate::encode_uninstall_manifest(&prior)
                     .map_err(|_| InstallError::backend_failure())?,
             );
@@ -669,7 +712,7 @@ impl LinuxPlatformAssetManager {
         &self,
         asset: LinuxInstallAsset,
         manifest: &UninstallManifest,
-    ) -> Result<(Option<Digest>, bool), InstallError> {
+    ) -> Result<ReplacementAuthority, InstallError> {
         let (system, current) = self
             .receipt_binding
             .ok_or_else(InstallError::backend_failure)?;
@@ -687,20 +730,17 @@ impl LinuxPlatformAssetManager {
                 if manifest.ownership_manifest_digest() != current {
                     return Err(InstallError::backend_failure());
                 }
-                Ok((None, true))
+                Ok(ReplacementAuthority::RepairExisting)
             }
             LinuxProductAssetIntent::InstallOrUpgrade => {
                 if manifest.ownership_manifest_digest() == current {
                     return Err(InstallError::backend_failure());
                 }
-                Ok((
-                    Some(
-                        record
-                            .content_digest()
-                            .ok_or_else(InstallError::backend_failure)?,
-                    ),
-                    false,
-                ))
+                Ok(ReplacementAuthority::Upgrade {
+                    prior_digest: record
+                        .content_digest()
+                        .ok_or_else(InstallError::backend_failure)?,
+                })
             }
         }
     }
@@ -708,7 +748,7 @@ impl LinuxPlatformAssetManager {
     fn file_replacement(
         &mut self,
         asset: LinuxInstallAsset,
-    ) -> Result<Option<(Option<Digest>, bool)>, InstallError> {
+    ) -> Result<Option<ReplacementAuthority>, InstallError> {
         if asset.kind() != crate::LinuxAssetKind::File {
             return Ok(None);
         }
@@ -719,10 +759,14 @@ impl LinuxPlatformAssetManager {
             return Ok(None);
         }
         if self.ensure_filesystem()?.verify_asset_absent(asset).is_ok() {
-            return if self.intent == LinuxProductAssetIntent::Repair {
-                Ok(None)
-            } else {
-                Err(InstallError::backend_failure())
+            let authority = self.replacement_authority(asset, &manifest)?;
+            return match authority {
+                ReplacementAuthority::RepairExisting => {
+                    Ok(Some(ReplacementAuthority::RepairMissing))
+                }
+                ReplacementAuthority::Upgrade { .. } | ReplacementAuthority::RepairMissing => {
+                    Err(InstallError::backend_failure())
+                }
             };
         }
         self.replacement_authority(asset, &manifest).map(Some)
@@ -804,10 +848,6 @@ fn uninstall_manifest_asset() -> Result<LinuxInstallAsset, InstallError> {
         .ok_or_else(InstallError::backend_failure)
 }
 
-fn digest_bytes(bytes: &[u8]) -> Digest {
-    Digest::from_bytes(Sha256::digest(bytes).into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,11 +869,19 @@ mod tests {
                         RecordedAssetState::Created
                     },
                 )?;
-                Ok::<_, crate::UninstallError>(if asset == target {
-                    record.with_content_digest(target_digest)
-                } else {
-                    record
-                })
+                Ok::<_, crate::UninstallError>(
+                    if asset.kind() == crate::LinuxAssetKind::File
+                        && asset.id() != "uninstall-manifest"
+                    {
+                        record.with_content_digest(if asset == target {
+                            target_digest
+                        } else {
+                            body_digest(asset.id().as_bytes())
+                        })
+                    } else {
+                        record
+                    },
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(UninstallManifest::new(system, release, records)?)
@@ -867,7 +915,9 @@ mod tests {
 
         assert_eq!(
             manager.replacement_authority(target, &receipt)?,
-            (Some(prior_content), false)
+            ReplacementAuthority::Upgrade {
+                prior_digest: prior_content,
+            }
         );
 
         manager.bind_authenticated_release_identity(system, candidate_release)?;
@@ -904,7 +954,10 @@ mod tests {
             RecordedAssetState::Created,
             Digest::from_bytes([3; 32]),
         )?;
-        assert_eq!(manager.replacement_authority(target, &owned)?, (None, true));
+        assert_eq!(
+            manager.replacement_authority(target, &owned)?,
+            ReplacementAuthority::RepairExisting
+        );
 
         let prior_release = manifest(
             system,

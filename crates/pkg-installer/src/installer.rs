@@ -175,6 +175,11 @@ pub trait LinuxInstallBackend {
         Err(InstallError::backend_failure())
     }
 
+    /// Returns whether this invocation must change the fixed service set.
+    fn services_need_mutation(&self, prior_active: bool) -> bool {
+        !prior_active
+    }
+
     /// Removes one exact fixed asset during authenticated restart recovery.
     ///
     /// This operation must not use in-memory attempt ownership. It must reopen
@@ -196,6 +201,23 @@ pub trait LinuxInstallBackend {
     /// or restored to absence.
     fn recover_services(&mut self) -> Result<(), InstallError> {
         Err(InstallError::backend_failure())
+    }
+    /// Quiesces candidate processes before durable recovery restores old files.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the candidate service set cannot be stopped safely.
+    fn prepare_service_recovery(&mut self, _prior_active: bool) -> Result<(), InstallError> {
+        self.recover_services()
+    }
+
+    /// Restores the prior service state after durable recovery restored old files.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the prior service state cannot be restored.
+    fn finish_service_recovery(&mut self, _prior_active: bool) -> Result<(), InstallError> {
+        Ok(())
     }
 
     /// Ensures one fixed artifact exists and returns whether this attempt created it.
@@ -254,6 +276,15 @@ pub trait LinuxInstallBackend {
     ///
     /// Returns a redacted backend error when exact rollback is incomplete.
     fn rollback_services(&mut self) -> Result<(), InstallError>;
+
+    /// Restarts the prior service set after old files are restored.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error when the prior active service set cannot be restored.
+    fn finish_services_rollback(&mut self) -> Result<(), InstallError> {
+        Ok(())
+    }
 
     /// Runs the fixed managed-daemon readiness check.
     ///
@@ -414,15 +445,22 @@ pub fn install_linux_preflighted(
 
     if result.is_err() {
         let mut rollback_incomplete = false;
+        let mut services_changed = false;
         for mutation in mutations.into_iter().rev() {
             let rollback = match mutation {
                 InstallMutation::Asset(asset) => backend.rollback_asset(asset),
                 InstallMutation::ManagedRuntime => backend.rollback_managed_runtime(),
-                InstallMutation::Services => backend.rollback_services(),
+                InstallMutation::Services => {
+                    services_changed = true;
+                    backend.rollback_services()
+                }
             };
             if rollback.is_err() {
                 rollback_incomplete = true;
             }
+        }
+        if services_changed && backend.finish_services_rollback().is_err() {
+            rollback_incomplete = true;
         }
         if rollback_incomplete {
             return Err(InstallError::new(InstallErrorCode::RollbackIncomplete));
@@ -454,6 +492,15 @@ pub fn recover_linux_install(
     recover_runtime: &mut dyn FnMut() -> Result<(), InstallError>,
     persist_progress: &mut dyn FnMut(&LinuxInstallJournal) -> Result<(), InstallError>,
 ) -> Result<(), InstallError> {
+    if let Some(prior_active) = journal.service_prior_active()
+        && !journal.service_recovery_prepared()
+    {
+        backend.prepare_service_recovery(prior_active)?;
+        journal
+            .prepare_service_recovery()
+            .map_err(|_| InstallError::backend_failure())?;
+        persist_progress(journal)?;
+    }
     while let Some((mutation, revalidate)) =
         journal
             .recovery_actions()
@@ -475,12 +522,23 @@ pub fn recover_linux_install(
             }
             LinuxInstallMutation::ManagedRuntime => recover_runtime()?,
             LinuxInstallMutation::Services => {
-                require_exact_service_assets(backend)?;
-                backend.recover_services()?;
+                if !journal.service_recovery_prepared() {
+                    return Err(InstallError::backend_failure());
+                }
             }
         }
         journal
             .complete_recovery_action(&mutation)
+            .map_err(|_| InstallError::backend_failure())?;
+        persist_progress(journal)?;
+    }
+    if let Some(prior_active) = journal.service_prior_active() {
+        if prior_active {
+            require_exact_service_assets(backend)?;
+        }
+        backend.finish_service_recovery(prior_active)?;
+        journal
+            .complete_service_recovery()
             .map_err(|_| InstallError::backend_failure())?;
         persist_progress(journal)?;
     }
@@ -681,6 +739,14 @@ mod tests {
             Ok(())
         }
 
+        fn finish_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
+            if prior_active {
+                self.states.insert("services");
+                self.rollback_events.push("resume-services");
+            }
+            Ok(())
+        }
+
         fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
             self.ensure(asset)
         }
@@ -864,7 +930,7 @@ mod tests {
     #[test]
     fn restart_recovery_deactivates_only_with_exact_service_assets() -> Result<(), Box<dyn Error>> {
         let mut journal = journal_before_services(0x77)?;
-        journal.intend(LinuxInstallMutation::Services)?;
+        journal.intend_services(false)?;
         let mut backend = FakeBackend::clean();
         backend.states.insert("services");
         backend.existing.extend(
@@ -881,28 +947,15 @@ mod tests {
     }
 
     #[test]
-    fn restart_recovery_preserves_services_when_a_unit_is_not_exact() -> Result<(), Box<dyn Error>>
-    {
+    fn restart_recovery_quiesces_candidate_before_restoring_files() -> Result<(), Box<dyn Error>> {
         let mut journal = journal_before_services(0x88)?;
-        journal.intend(LinuxInstallMutation::Services)?;
+        journal.intend_services(false)?;
         let mut backend = FakeBackend::clean();
         backend.states.insert("services");
 
-        let error = match recover_linux_install(
-            &mut journal,
-            &mut backend,
-            &mut || Ok(()),
-            &mut |_| Ok(()),
-        ) {
-            Ok(()) => {
-                return Err(io::Error::other("service recovery unexpectedly succeeded").into());
-            }
-            Err(error) => error,
-        };
-
-        assert_eq!(error.code(), InstallErrorCode::BackendFailure);
-        assert!(backend.states.contains("services"));
-        assert!(backend.rollback_events.is_empty());
+        recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))?;
+        assert!(!backend.states.contains("services"));
+        assert_eq!(backend.rollback_events, ["recover-services"]);
         Ok(())
     }
 
@@ -920,7 +973,7 @@ mod tests {
                 id: asset.id().to_owned(),
             })?;
         }
-        journal.intend(LinuxInstallMutation::Services)?;
+        journal.intend_services(false)?;
         journal.complete_created()?;
         let mut backend = FakeBackend::clean();
         backend.states.insert("services");
@@ -964,6 +1017,31 @@ mod tests {
             Err(InstallErrorCode::BackendFailure)
         );
         assert_eq!(backend.rollback_events.len(), recovery_events);
+        Ok(())
+    }
+
+    #[test]
+    fn restart_recovery_resumes_prior_active_services_only_after_files_are_exact()
+    -> Result<(), Box<dyn Error>> {
+        let mut journal = journal_before_services(0x8a)?;
+        journal.intend_services(true)?;
+        journal.complete_created()?;
+        let mut backend = FakeBackend::clean();
+        backend.states.insert("services");
+        backend.existing.extend(
+            linux_product_mutation_assets()
+                .filter(|asset| static_asset_contents(*asset).is_some())
+                .map(LinuxInstallAsset::id),
+        );
+
+        recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))?;
+
+        assert!(backend.states.contains("services"));
+        assert_eq!(
+            backend.rollback_events,
+            ["recover-services", "resume-services"]
+        );
+        assert!(journal.service_prior_active().is_none());
         Ok(())
     }
 

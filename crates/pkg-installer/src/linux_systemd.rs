@@ -90,6 +90,7 @@ trait SystemdSystem: fmt::Debug {
     fn enable(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
     fn disable(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
     fn start(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
+    fn restart(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
     fn stop(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
 }
 
@@ -150,7 +151,11 @@ impl LinuxSystemdManager {
     ///
     /// Returns a redacted query or command failure. Call [`Self::rollback`]
     /// after any error.
-    pub fn activate(&mut self) -> Result<bool, LinuxSystemdError> {
+    pub fn activate(
+        &mut self,
+        start_inactive: bool,
+        restart_active: bool,
+    ) -> Result<bool, LinuxSystemdError> {
         if self.journal.is_some() {
             return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed));
         }
@@ -172,14 +177,18 @@ impl LinuxSystemdManager {
         self.system.apply_tmpfiles()?;
 
         for index in 0..journal.len() {
-            if !journal[index].prior.enabled {
+            if start_inactive && !journal[index].prior.enabled {
                 journal[index].enable_intent = true;
                 self.journal = Some(journal.clone());
                 self.system.enable(journal[index].name)?;
             }
         }
         for index in 0..journal.len() {
-            if !journal[index].prior.active {
+            if restart_active && journal[index].prior.active {
+                journal[index].start_intent = true;
+                self.journal = Some(journal.clone());
+                self.system.restart(journal[index].name)?;
+            } else if start_inactive && !journal[index].prior.active {
                 journal[index].start_intent = true;
                 self.journal = Some(journal.clone());
                 self.system.start(journal[index].name)?;
@@ -203,12 +212,22 @@ impl LinuxSystemdManager {
     ///
     /// Returns a redacted rollback failure after attempting every restoration.
     pub fn rollback(&mut self) -> Result<(), LinuxSystemdError> {
+        self.prepare_rollback()?;
+        self.finish_rollback()
+    }
+
+    /// Stops candidate processes before old product files are restored.
+    ///
+    /// # Errors
+    ///
+    /// Returns a rollback failure when the candidate set cannot be quiesced.
+    pub fn prepare_rollback(&mut self) -> Result<(), LinuxSystemdError> {
         let Some(journal) = self.journal.as_ref() else {
             return Ok(());
         };
         let mut failed = false;
         for entry in journal.iter().rev() {
-            if entry.start_intent && !entry.prior.active && self.system.stop(entry.name).is_err() {
+            if entry.start_intent && self.system.stop(entry.name).is_err() {
                 failed = true;
             }
         }
@@ -220,8 +239,28 @@ impl LinuxSystemdManager {
                 failed = true;
             }
         }
-        if self.system.daemon_reload().is_err() {
-            failed = true;
+        if failed {
+            return Err(LinuxSystemdError::new(
+                LinuxSystemdErrorCode::RollbackFailed,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reloads restored unit files and restores the prior active service set.
+    ///
+    /// # Errors
+    ///
+    /// Returns a rollback failure when the prior set cannot be resumed.
+    pub fn finish_rollback(&mut self) -> Result<(), LinuxSystemdError> {
+        let Some(journal) = self.journal.as_ref() else {
+            return Ok(());
+        };
+        let mut failed = self.system.daemon_reload().is_err();
+        for entry in journal {
+            if entry.start_intent && entry.prior.active && self.system.start(entry.name).is_err() {
+                failed = true;
+            }
         }
         if failed {
             return Err(LinuxSystemdError::new(
@@ -230,6 +269,11 @@ impl LinuxSystemdManager {
         }
         self.journal = None;
         Ok(())
+    }
+
+    /// Forgets the in-memory rollback record after the new receipt is durable.
+    pub fn commit_activation(&mut self) {
+        self.journal = None;
     }
 
     /// Stops and disables the complete fixed service set for uninstall.
@@ -276,6 +320,53 @@ impl LinuxSystemdManager {
             return Err(LinuxSystemdError::new(
                 LinuxSystemdErrorCode::RollbackFailed,
             ));
+        }
+        Ok(())
+    }
+
+    /// Quiesces candidate processes before durable install recovery restores files.
+    ///
+    /// # Errors
+    ///
+    /// Returns a rollback failure when the candidate set cannot be quiesced.
+    pub fn prepare_recovery(&mut self, prior_active: bool) -> Result<(), LinuxSystemdError> {
+        if self.journal.is_some() {
+            return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed));
+        }
+        self.system.daemon_reload()?;
+        let states = UNITS
+            .iter()
+            .copied()
+            .map(|unit| self.system.unit_state(unit).map(|state| (unit, state)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut failed = false;
+        for (unit, state) in states.iter().rev() {
+            if state.active && self.system.stop(unit).is_err() {
+                failed = true;
+            }
+            if !prior_active && state.enabled && self.system.disable(unit).is_err() {
+                failed = true;
+            }
+        }
+        if failed {
+            return Err(LinuxSystemdError::new(
+                LinuxSystemdErrorCode::RollbackFailed,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reloads restored files and resumes the exact prior active service set.
+    ///
+    /// # Errors
+    ///
+    /// Returns a command failure when the prior set cannot be resumed.
+    pub fn finish_recovery(&mut self, prior_active: bool) -> Result<(), LinuxSystemdError> {
+        self.system.daemon_reload()?;
+        if prior_active {
+            for unit in UNITS {
+                self.system.start(unit)?;
+            }
         }
         Ok(())
     }
@@ -371,6 +462,10 @@ impl SystemdSystem for PreflightTestSystem {
         self.refuse()
     }
 
+    fn restart(&mut self, _unit: &'static str) -> Result<(), LinuxSystemdError> {
+        self.refuse()
+    }
+
     fn stop(&mut self, _unit: &'static str) -> Result<(), LinuxSystemdError> {
         self.refuse()
     }
@@ -431,6 +526,10 @@ impl SystemdSystem for ProductionSystemdSystem {
 
     fn start(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError> {
         run_success(&self.systemctl, &["start", unit])
+    }
+
+    fn restart(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError> {
+        run_success(&self.systemctl, &["restart", unit])
     }
 
     fn stop(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError> {
@@ -600,6 +699,17 @@ mod tests {
             Ok(())
         }
 
+        fn restart(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError> {
+            self.call(&format!("restart:{unit}"))?;
+            self.state
+                .borrow_mut()
+                .units
+                .get_mut(unit)
+                .ok_or_else(|| LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed))?
+                .active = true;
+            Ok(())
+        }
+
         fn stop(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError> {
             self.call(&format!("stop:{unit}"))?;
             self.state
@@ -636,7 +746,7 @@ mod tests {
         let state = Rc::clone(&fake.state);
         let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
 
-        assert!(manager.activate()?);
+        assert!(manager.activate(true, false)?);
         manager.verify_active()?;
 
         let state = state.borrow();
@@ -667,7 +777,7 @@ mod tests {
         let shared = Rc::clone(&fake.state);
         let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
 
-        assert!(manager.activate()?);
+        assert!(manager.activate(true, false)?);
         manager.rollback()?;
 
         let state = shared.borrow();
@@ -700,7 +810,7 @@ mod tests {
         let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
 
         assert_eq!(
-            manager.activate(),
+            manager.activate(true, false),
             Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))
         );
         assert!(manager.rollback().is_ok());
@@ -728,9 +838,78 @@ mod tests {
         let shared = Rc::clone(&fake.state);
         let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
 
-        assert!(!manager.activate()?);
+        assert!(!manager.activate(false, false)?);
         assert_eq!(shared.borrow().calls, ["daemon-reload", "tmpfiles"]);
         manager.rollback()?;
+        Ok(())
+    }
+
+    #[test]
+    fn changed_active_service_set_is_restarted_and_rollback_resumes_prior_set()
+    -> Result<(), Box<dyn Error>> {
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: true,
+            active: true,
+        }));
+        let shared = Rc::clone(&fake.state);
+        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+
+        assert!(manager.activate(false, true)?);
+        assert_eq!(
+            shared
+                .borrow()
+                .calls
+                .iter()
+                .filter(|call| call.starts_with("restart:"))
+                .count(),
+            UNITS.len()
+        );
+        manager.prepare_rollback()?;
+        assert!(shared.borrow().units.values().all(|unit| !unit.active));
+        manager.finish_rollback()?;
+        assert!(shared.borrow().units.values().all(|unit| unit.active));
+        Ok(())
+    }
+
+    #[test]
+    fn changed_inactive_service_set_remains_inactive() -> Result<(), Box<dyn Error>> {
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: false,
+            active: false,
+        }));
+        let shared = Rc::clone(&fake.state);
+        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+
+        assert!(!manager.activate(false, false)?);
+        assert!(shared.borrow().units.values().all(|unit| !unit.active));
+        assert!(
+            !shared
+                .borrow()
+                .calls
+                .iter()
+                .any(|call| call.starts_with("start:") || call.starts_with("restart:"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_restart_rolls_back_to_the_prior_active_service_set() -> Result<(), Box<dyn Error>> {
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: true,
+            active: true,
+        }));
+        let shared = Rc::clone(&fake.state);
+        shared.borrow_mut().fail_call = Some("restart:pkg-root-helper.service".to_owned());
+        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+
+        assert_eq!(
+            manager.activate(false, true),
+            Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))
+        );
+        shared.borrow_mut().fail_call = None;
+        manager.prepare_rollback()?;
+        manager.finish_rollback()?;
+        assert!(shared.borrow().units.values().all(|unit| unit.active));
         Ok(())
     }
 
@@ -781,7 +960,7 @@ mod tests {
         }));
         let shared = Rc::clone(&fake.state);
         let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
-        assert!(manager.activate()?);
+        assert!(manager.activate(true, false)?);
         shared.borrow_mut().fail_call = Some("stop:pkg-nix-broker.service".to_owned());
 
         assert_eq!(

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use nix::unistd::{Gid, Uid};
-use pkg_core::state::Digest;
+use pkg_core::state::{Digest, body_digest};
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
@@ -27,7 +27,7 @@ use crate::bootstrap::validate_linux_auth_datastore_file;
 use crate::linux_user_cleanup::remove_owned_tree;
 use crate::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets, MacOsLaunchdAssets,
-    UninstallManifest, encode_uninstall_manifest,
+    UninstallManifest, assets::is_linux_product_asset, encode_uninstall_manifest,
 };
 
 const MAX_RELEASE_BINARY_BYTES: usize = 128 * 1024 * 1024;
@@ -524,7 +524,7 @@ impl LinuxFilesystemManager {
         if asset.kind() != LinuxAssetKind::File {
             return Err(unsupported());
         }
-        Ok(digest_bytes(&self.payload_for(asset)?))
+        Ok(body_digest(&self.payload_for(asset)?))
     }
 
     /// Verifies one fixed file against a prior manifest content identity.
@@ -680,7 +680,8 @@ impl LinuxFilesystemManager {
             let current = current.ok_or_else(io_failure)?;
             self.verify_file(asset, current, &payload)?;
             if let Some(backup) = backup {
-                self.verify_replacement_backup(asset, &backup)?;
+                self.verify_metadata(asset, &backup)?;
+                require_single_link(&backup)?;
                 let backup_identity = identity(&backup, LinuxAssetKind::File)?;
                 drop(backup);
                 Self::remove_if_owned(&parent, &backup_name, backup_identity)?;
@@ -698,7 +699,6 @@ impl LinuxFilesystemManager {
             };
         };
         let backup_identity = identity(&backup, LinuxAssetKind::File)?;
-        self.verify_replacement_backup(asset, &backup)?;
         let current = current.ok_or_else(io_failure)?;
         if self
             .verify_file(
@@ -708,6 +708,8 @@ impl LinuxFilesystemManager {
             )
             .is_ok()
         {
+            self.verify_metadata(asset, &backup)?;
+            require_single_link(&backup)?;
             if !repair {
                 self.verify_file_digest(
                     asset,
@@ -730,16 +732,8 @@ impl LinuxFilesystemManager {
             } else {
                 self.verify_file_digest(asset, current, prior_digest.ok_or_else(unsupported)?)?;
             }
-            if self
-                .verify_file(
-                    asset,
-                    backup.try_clone().map_err(|_| io_failure())?,
-                    &payload,
-                )
-                .is_err()
-            {
-                self.verify_replacement_backup(asset, &backup)?;
-            }
+            self.verify_replacement_backup(asset, &backup)?;
+            Self::verify_file_contents(backup.try_clone().map_err(|_| io_failure())?, &payload)?;
             Self::remove_if_owned(&parent, &backup_name, backup_identity)
         }
     }
@@ -1283,11 +1277,15 @@ impl LinuxFilesystemManager {
     fn verify_file(
         &self,
         asset: LinuxInstallAsset,
-        mut file: File,
+        file: File,
         payload: &[u8],
     ) -> Result<(), LinuxFilesystemError> {
         self.verify_metadata(asset, &file)?;
         require_single_link(&file)?;
+        Self::verify_file_contents(file, payload)
+    }
+
+    fn verify_file_contents(mut file: File, payload: &[u8]) -> Result<(), LinuxFilesystemError> {
         let metadata = file.metadata().map_err(|_| io_failure())?;
         if metadata.len() != u64::try_from(payload.len()).map_err(|_| io_failure())? {
             return Err(LinuxFilesystemError::new(
@@ -1364,7 +1362,10 @@ impl LinuxFilesystemManager {
             Err(error) => return Err(open_error(error)),
         };
         let mut parent = root;
+        self.verify_ancestor(Path::new("/"), &parent)?;
+        let mut path = PathBuf::from("/");
         for component in parents {
+            path.push(component);
             parent = match openat(
                 &parent,
                 component,
@@ -1375,8 +1376,30 @@ impl LinuxFilesystemManager {
                 Err(error) if error == Errno::NOENT => return Ok(None),
                 Err(error) => return Err(open_error(error)),
             };
+            self.verify_ancestor(&path, &parent)?;
         }
         Ok(Some((parent, name.clone())))
+    }
+
+    fn verify_ancestor(&self, path: &Path, directory: &File) -> Result<(), LinuxFilesystemError> {
+        if let Some(asset) = crate::linux_install_assets().iter().copied().find(|asset| {
+            is_linux_product_asset(*asset)
+                && asset.kind() == LinuxAssetKind::Directory
+                && Path::new(asset.path_or_name()) == path
+        }) {
+            return self.verify_metadata(asset, directory);
+        }
+        let metadata = directory.metadata().map_err(|_| io_failure())?;
+        if !metadata.is_dir()
+            || metadata.uid() != self.principals.root_uid
+            || metadata.gid() != self.principals.root_gid
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(LinuxFilesystemError::new(
+                LinuxFilesystemErrorCode::UnsafeFilesystemState,
+            ));
+        }
+        Ok(())
     }
 
     fn remove_if_owned(
@@ -1431,10 +1454,6 @@ fn static_payload(asset: LinuxInstallAsset) -> Option<&'static [u8]> {
 
 fn rollback_name(asset: LinuxInstallAsset) -> OsString {
     OsString::from(format!(".pkg-install-rollback-{}", asset.id()))
-}
-
-fn digest_bytes(bytes: &[u8]) -> Digest {
-    Digest::from_bytes(Sha256::digest(bytes).into())
 }
 
 fn require_single_link(file: &File) -> Result<(), LinuxFilesystemError> {
@@ -1657,6 +1676,47 @@ mod tests {
     }
 
     #[test]
+    fn privileged_writes_refuse_unsafe_external_and_managed_ancestors() -> Result<(), Box<dyn Error>>
+    {
+        let mut fixture = Fixture::new()?;
+        fs::set_permissions(
+            fixture.temporary.path().join("usr/lib/systemd"),
+            fs::Permissions::from_mode(0o777),
+        )?;
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .ensure_asset(Fixture::asset("daemon-service-unit"))
+            )?,
+            LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
+
+        fs::set_permissions(
+            fixture.temporary.path().join("usr/lib/systemd"),
+            fs::Permissions::from_mode(0o755),
+        )?;
+        assert!(
+            fixture
+                .manager
+                .ensure_asset(Fixture::asset("product-root"))?
+        );
+        fs::set_permissions(
+            fixture.temporary.path().join("opt/pkg"),
+            fs::Permissions::from_mode(0o777),
+        )?;
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .ensure_asset(Fixture::asset("service-bin-dir"))
+            )?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+        Ok(())
+    }
+
+    #[test]
     fn installs_exact_release_static_and_authenticated_bytes() -> Result<(), Box<dyn Error>> {
         let mut fixture = Fixture::new()?;
         for id in [
@@ -1703,7 +1763,17 @@ mod tests {
             .manager
             .verify_asset(Fixture::asset("daemon-service-unit"))?;
         let records = crate::assets::linux_product_install_assets()
-            .map(|asset| crate::RecordedAsset::new(asset.id(), crate::RecordedAssetState::Created))
+            .map(|asset| {
+                let record =
+                    crate::RecordedAsset::new(asset.id(), crate::RecordedAssetState::Created)?;
+                Ok::<_, crate::UninstallError>(
+                    if asset.kind() == LinuxAssetKind::File && asset.id() != "uninstall-manifest" {
+                        record.with_content_digest(body_digest(asset.id().as_bytes()))
+                    } else {
+                        record
+                    },
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let manifest =
             UninstallManifest::new(System::X8664Linux, Digest::from_bytes([9; 32]), records)?;
@@ -1787,7 +1857,7 @@ mod tests {
             .join("usr/lib/systemd/system/pkg-nix-broker.service");
         let prior = b"prior authenticated unit\n";
         fs::write(&path, prior)?;
-        let prior_digest = digest_bytes(prior);
+        let prior_digest = body_digest(prior);
 
         assert!(fixture.manager.replace_static_owned_file(
             asset,
@@ -1856,7 +1926,7 @@ mod tests {
             .join("usr/lib/systemd/system/pkg-nix-broker.service");
         let prior = b"prior authenticated unit\n";
         fs::write(&path, prior)?;
-        let prior_digest = digest_bytes(prior);
+        let prior_digest = body_digest(prior);
         fixture.manager.replace_static_owned_file(
             asset,
             LinuxSystemdAssets::BROKER_SERVICE,
@@ -1888,17 +1958,24 @@ mod tests {
 
         fixture
             .manager
-            .reconcile_owned_file(asset, Some(digest_bytes(prior)), false, false)?;
+            .reconcile_owned_file(asset, Some(body_digest(prior)), false, false)?;
 
-        assert_eq!(fs::read(path)?, prior);
+        assert_eq!(fs::read(&path)?, prior);
         assert!(!backup.exists());
 
         fs::write(&backup, b"partial candidate")?;
         fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))?;
-        fixture
-            .manager
-            .reconcile_owned_file(asset, Some(digest_bytes(prior)), false, false)?;
-        assert!(!backup.exists());
+        assert_eq!(
+            failure_code(&fixture.manager.reconcile_owned_file(
+                asset,
+                Some(body_digest(prior)),
+                false,
+                false,
+            ))?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+        assert_eq!(fs::read(path)?, prior);
+        assert_eq!(fs::read(backup)?, b"partial candidate");
         Ok(())
     }
 

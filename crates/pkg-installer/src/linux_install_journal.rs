@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LinuxAssetKind, assets::linux_product_mutation_assets};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const PRODUCT: &str = "pkg";
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 
@@ -87,6 +87,8 @@ pub struct LinuxInstallJournal {
     ownership_manifest_digest: String,
     recovery_context_digest: String,
     committed: bool,
+    service_prior_active: Option<bool>,
+    service_recovery_prepared: bool,
     entries: Vec<LinuxInstallJournalEntry>,
 }
 
@@ -120,6 +122,8 @@ impl LinuxInstallJournal {
             ownership_manifest_digest: ownership_manifest_digest.to_string(),
             recovery_context_digest: recovery_context_digest.to_string(),
             committed: false,
+            service_prior_active: None,
+            service_recovery_prepared: false,
             entries: Vec::new(),
         })
     }
@@ -191,6 +195,45 @@ impl LinuxInstallJournal {
         Ok(())
     }
 
+    /// Records the service transition and its exact prior active state.
+    pub(crate) fn intend_services(
+        &mut self,
+        prior_active: bool,
+    ) -> Result<(), LinuxInstallJournalError> {
+        self.intend(LinuxInstallMutation::Services)?;
+        self.service_prior_active = Some(prior_active);
+        Ok(())
+    }
+
+    pub(crate) const fn service_prior_active(&self) -> Option<bool> {
+        self.service_prior_active
+    }
+
+    pub(crate) const fn service_recovery_prepared(&self) -> bool {
+        self.service_recovery_prepared
+    }
+
+    pub(crate) const fn prepare_service_recovery(
+        &mut self,
+    ) -> Result<(), LinuxInstallJournalError> {
+        if self.committed || self.service_prior_active.is_none() {
+            return Err(invalid_transition());
+        }
+        self.service_recovery_prepared = true;
+        Ok(())
+    }
+
+    pub(crate) const fn complete_service_recovery(
+        &mut self,
+    ) -> Result<(), LinuxInstallJournalError> {
+        if self.committed || !self.service_recovery_prepared {
+            return Err(invalid_transition());
+        }
+        self.service_prior_active = None;
+        self.service_recovery_prepared = false;
+        Ok(())
+    }
+
     /// Records one exact object that existed before this attempt.
     ///
     /// No intent is needed because this operation does not mutate the host.
@@ -248,6 +291,8 @@ impl LinuxInstallJournal {
         {
             return Err(invalid_transition());
         }
+        self.service_prior_active = None;
+        self.service_recovery_prepared = false;
         self.committed = true;
         Ok(())
     }
@@ -342,6 +387,19 @@ impl LinuxInstallJournal {
             || Digest::from_str(&self.ownership_manifest_digest).is_err()
             || Digest::from_str(&self.recovery_context_digest).is_err()
             || self.entries.len() > install_sequence().len()
+            || (self.service_recovery_prepared && self.service_prior_active.is_none())
+        {
+            return Err(invalid_journal());
+        }
+        let has_changed_services = self.entries.iter().any(|entry| {
+            entry.mutation == LinuxInstallMutation::Services
+                && entry.state != LinuxInstallMutationState::PreExisting
+        });
+        if (self.committed
+            && (self.service_prior_active.is_some() || self.service_recovery_prepared))
+            || (!self.committed
+                && self.service_prior_active.is_some()
+                    != (has_changed_services || self.service_recovery_prepared))
         {
             return Err(invalid_journal());
         }

@@ -1061,6 +1061,13 @@ impl LinuxJournalTransaction<'_> {
         self.persist()
     }
 
+    fn begin_services(&mut self, prior_active: bool) -> Result<(), InstallError> {
+        self.journal
+            .intend_services(prior_active)
+            .map_err(|_| InstallError::backend_failure())?;
+        self.persist()
+    }
+
     fn commit(&mut self) -> Result<(), InstallError> {
         self.journal
             .commit()
@@ -1110,11 +1117,20 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
     fn classify_services(&mut self) -> Result<LinuxAssetPresence, InstallError> {
         self.inner.classify_services()
     }
+    fn services_need_mutation(&self, prior_active: bool) -> bool {
+        self.inner.services_need_mutation(prior_active)
+    }
     fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
         self.inner.recover_asset(asset)
     }
     fn recover_services(&mut self) -> Result<(), InstallError> {
         self.inner.recover_services()
+    }
+    fn prepare_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
+        self.inner.prepare_service_recovery(prior_active)
+    }
+    fn finish_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
+        self.inner.finish_service_recovery(prior_active)
     }
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
         let mutation = asset_mutation(asset);
@@ -1184,13 +1200,38 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         }
         let mutation = LinuxInstallMutation::Services;
         let presence = self.inner.classify_services()?;
-        begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
+        let prior_active = presence == LinuxAssetPresence::ExactPresent;
+        let needed = self.inner.services_need_mutation(prior_active);
+        if needed {
+            self.journal
+                .as_mut()
+                .ok_or_else(InstallError::backend_failure)?
+                .begin_services(prior_active)?;
+        }
         let changed = self.inner.activate_services()?;
-        complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
+        if changed != needed {
+            return Err(InstallError::backend_failure());
+        }
+        if needed {
+            let transaction = self
+                .journal
+                .as_mut()
+                .ok_or_else(InstallError::backend_failure)?;
+            transaction
+                .journal
+                .complete_created()
+                .map_err(|_| InstallError::backend_failure())?;
+            transaction.persist()?;
+        } else {
+            complete_linux_mutation(&mut self.journal, mutation, presence, false)?;
+        }
         Ok(changed)
     }
     fn rollback_services(&mut self) -> Result<(), InstallError> {
         self.inner.rollback_services()
+    }
+    fn finish_services_rollback(&mut self) -> Result<(), InstallError> {
+        self.inner.finish_services_rollback()
     }
     fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
         self.inner.check_managed_daemon()

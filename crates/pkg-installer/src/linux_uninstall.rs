@@ -992,12 +992,23 @@ mod tests {
     ) -> Result<UninstallManifest, UninstallError> {
         let records = crate::assets::linux_product_install_assets()
             .map(|asset| {
-                RecordedAsset::new(
+                let record = RecordedAsset::new(
                     asset.id(),
                     if asset.id() == "nix-root" {
                         nix_root_state
                     } else {
                         RecordedAssetState::Created
+                    },
+                )?;
+                Ok(
+                    if asset.kind() == crate::LinuxAssetKind::File
+                        && asset.id() != "uninstall-manifest"
+                    {
+                        record.with_content_digest(pkg_core::state::body_digest(
+                            asset.id().as_bytes(),
+                        ))
+                    } else {
+                        record
                     },
                 )
             })

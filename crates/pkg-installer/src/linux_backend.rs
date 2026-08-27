@@ -24,6 +24,8 @@ pub struct ProductionLinuxInstallBackend {
     release_identity: Option<Digest>,
     product_asset_intent: LinuxProductAssetIntent,
     existing_managed_install: bool,
+    product_files_changed: bool,
+    prior_services_active: bool,
     #[cfg(test)]
     preflight_fixture: Option<ProductionPreflightFixture>,
 }
@@ -73,6 +75,8 @@ impl ProductionLinuxInstallBackend {
             release_identity: None,
             product_asset_intent,
             existing_managed_install: false,
+            product_files_changed: false,
+            prior_services_active: false,
             #[cfg(test)]
             preflight_fixture: None,
         })
@@ -139,6 +143,8 @@ impl ProductionLinuxInstallBackend {
                 release_identity: None,
                 product_asset_intent,
                 existing_managed_install: false,
+                product_files_changed: false,
+                prior_services_active: false,
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
                     handoff_snapshots,
@@ -291,6 +297,18 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             .map_err(|_| InstallError::backend_failure())
     }
 
+    fn prepare_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
+        self.services
+            .prepare_recovery(prior_active)
+            .map_err(|_| InstallError::backend_failure())
+    }
+
+    fn finish_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
+        self.services
+            .finish_recovery(prior_active)
+            .map_err(|_| InstallError::backend_failure())
+    }
+
     fn classify_managed_runtime(&mut self) -> Result<LinuxAssetPresence, InstallError> {
         Ok(if self.existing_managed_install {
             LinuxAssetPresence::ExactPresent
@@ -312,8 +330,15 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             .map_err(|_| InstallError::backend_failure())
     }
 
+    fn services_need_mutation(&self, prior_active: bool) -> bool {
+        (!self.existing_managed_install && !prior_active)
+            || (self.product_files_changed && prior_active)
+    }
+
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
-        self.assets.ensure_asset(asset)
+        let changed = self.assets.ensure_asset(asset)?;
+        self.product_files_changed |= changed && asset.kind() == crate::LinuxAssetKind::File;
+        Ok(changed)
     }
 
     fn install_systemd_unit(
@@ -321,7 +346,9 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         asset: LinuxInstallAsset,
         contents: &'static str,
     ) -> Result<bool, InstallError> {
-        self.assets.install_static_asset(asset, contents)
+        let changed = self.assets.install_static_asset(asset, contents)?;
+        self.product_files_changed |= changed;
+        Ok(changed)
     }
 
     fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
@@ -336,18 +363,37 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn activate_services(&mut self) -> Result<bool, InstallError> {
+        self.prior_services_active = self
+            .services
+            .classify_activation()
+            .map_err(|_| InstallError::backend_failure())?;
         self.services
-            .activate()
+            .activate(
+                !self.existing_managed_install,
+                self.product_files_changed && self.prior_services_active,
+            )
             .map_err(|_| InstallError::backend_failure())
     }
 
     fn rollback_services(&mut self) -> Result<(), InstallError> {
         self.services
-            .rollback()
+            .prepare_rollback()
+            .map_err(|_| InstallError::backend_failure())
+    }
+
+    fn finish_services_rollback(&mut self) -> Result<(), InstallError> {
+        self.services
+            .finish_rollback()
             .map_err(|_| InstallError::backend_failure())
     }
 
     fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
+        if self.existing_managed_install && !self.prior_services_active {
+            return match self.services.classify_activation() {
+                Ok(false) => Ok(()),
+                Ok(true) | Err(_) => Err(InstallError::backend_failure()),
+            };
+        }
         self.services
             .verify_active()
             .map_err(|_| InstallError::backend_failure())?;
@@ -363,7 +409,9 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
-        self.assets.finalize_replacement_backups()
+        self.assets.finalize_replacement_backups()?;
+        self.services.commit_activation();
+        Ok(())
     }
 
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
@@ -450,6 +498,28 @@ mod tests {
             assert_eq!(service_calls.get(), 0);
             assert!(!backend.existing_managed_install);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn production_service_transition_is_only_for_clean_start_or_changed_active_files()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let snapshots = std::rc::Rc::new(std::cell::RefCell::new(vec![
+            DeterminateHandoffState::Accepted,
+        ]));
+        let (mut backend, _) = ProductionLinuxInstallBackend::for_preflight_test(
+            System::X8664Linux,
+            ManagedGroupBindings::new(100, 101)?,
+            snapshots,
+            LinuxProductAssetIntent::InstallOrUpgrade,
+        );
+        assert!(backend.services_need_mutation(false));
+        backend.existing_managed_install = true;
+        assert!(!backend.services_need_mutation(false));
+        assert!(!backend.services_need_mutation(true));
+        backend.product_files_changed = true;
+        assert!(!backend.services_need_mutation(false));
+        assert!(backend.services_need_mutation(true));
         Ok(())
     }
 }
