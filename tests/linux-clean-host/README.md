@@ -30,6 +30,34 @@ It does not require exact `/etc/nix` or `nixbld` cleanup. Separate clean hosts
 prove foreign-Nix refusal before mutation and product-asset ownership-drift
 refusal.
 
+Each publication contains a separately built product set. The second build uses
+an equivalent build-time channel URL. This makes the authenticated Broker and
+installer bytes different without test-only runtime behavior. Each lifecycle
+stops and disables the four still-authenticated product units before it installs
+publication 2. It proves the offline upgrade changes the receipt and exact
+product digests, keeps the Accepted Handoff and Determinate files unchanged,
+keeps package roots, and does not activate product services. It then activates
+only after every receipt-listed product file matches its recorded digest. It
+proves a new Broker process and usable package state. Exact retained snapshots
+prove the complete per-user package-state tree and every GC-root name and target
+stay byte-for-byte unchanged across the offline upgrade.
+
+Each lifecycle also proves explicit same-release Product Asset Repair. Repair
+first refuses while the units are active. Exact before and after snapshots prove
+that refusal changes no product, Base Nix, Handoff, journal, or service state.
+The harness then stops and disables the trusted units. It damages the
+receipt-Created `/usr/lib/systemd/system/pkg-nix-broker.service` unit and `pkg`
+CLI. It runs `pkg-install --repair-product-assets` and proves both exact
+publication-2 files and receipt content digests are restored. The receipt
+release, Accepted Handoff, Determinate files, package state, every GC-root name
+and target, and offline unit state do not change. Every external activation is
+blocked until the exact receipt record set and all ten recorded product-file
+digests match the fixed filesystem inventory.
+The exact Rust filters also prove that upgrade and repair never start the vendor
+installer and that missing receipt-owned accounts or directories refuse before
+mutation. Native missing non-file destruction is not used because this harness
+has no isolated reset helper.
+
 Each fresh lifecycle run also runs the blocking DN-15 process and state tests.
 They cover exact process arguments and environment, bounded output, wait and
 reap behavior, lost-supervisor states, acceptance after validation, persisted
@@ -77,8 +105,8 @@ test-executable SHA-256, `file`, `readelf`, and `ldd` reports, the exact test
 filter manifest and output, structured refusal snapshots, two residue reports,
 and the complete runtime log. On failure, it also contains Docker logs, Docker
 state, container service and process state, and a residue inventory captured
-before cleanup. `dn15-results.tsv` has exactly two pass rows for each blocking
-case. The workflow uploads evidence even when the proof fails.
+before cleanup. `dn15-results.tsv` has exactly two pass rows for each of 17
+blocking cases. The workflow uploads evidence even when the proof fails.
 It uploads the candidate only after the complete proof succeeds.
 
 This proof does not cover host boot, reboot, SELinux behavior, foreign-host

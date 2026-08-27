@@ -1,6 +1,7 @@
 """Structural release-workflow security contract."""
 
 from pathlib import Path
+import re
 import unittest
 
 
@@ -151,6 +152,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "later-outcome-unknown",
             "vendor-action-last",
             "install-process-controls",
+            "product-upgrade",
+            "product-asset-repair",
             "package-operations",
             "package-repair",
             "package-roots-gc",
@@ -158,7 +161,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "terminal-uninstall",
         ):
             self.assertIn(case, LINUX_HARNESS)
-        self.assertIn('"$results")" -eq 30', LINUX_HARNESS)
+        self.assertIn('"$results")" -eq 34', LINUX_HARNESS)
         self.assertIn(
             "test ! -e /opt/pkg/nix\n    test ! -L /opt/pkg/nix", LINUX_HARNESS
         )
@@ -176,6 +179,95 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertLess(
             LINUX_HARNESS.index('mkdir -p -m 0700 "$artifact_output/evidence"'),
             LINUX_HARNESS.index('echo "+ stage x86_64 Linux release inputs"'),
+        )
+        self.assertIn("/binaries-n x86_64-linux /proof-signing 1", LINUX_STAGE)
+        self.assertIn(
+            "/binaries-n-plus-1 x86_64-linux /proof-signing 2", LINUX_STAGE
+        )
+        self.assertIn(
+            "PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/./",
+            LINUX_STAGE,
+        )
+        self.assertIn("assert_publication_product /srv/pkg-releases/2", LINUX_HARNESS)
+        self.assertIn("--repair-product-assets", LINUX_HARNESS)
+        self.assertIn("cmp \"$product_evidence/repair-active-before.json\"", LINUX_HARNESS)
+        self.assertIn(
+            'printf "damaged broker service\\n" > '
+            "/usr/lib/systemd/system/pkg-nix-broker.service",
+            LINUX_HARNESS,
+        )
+        self.assertIn(
+            'sha256sum /usr/lib/systemd/system/pkg-nix-broker.service',
+            LINUX_HARNESS,
+        )
+        activation = LINUX_HARNESS.split("activate_product_units() {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertLess(
+            activation.index('assert_publication_product "$1"'),
+            activation.index("systemctl daemon-reload"),
+        )
+        receipt_files = LINUX_HARNESS.split("file_paths = {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        receipt_records = LINUX_HARNESS.split("expected_records = {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertEqual(len(set(re.findall(r'"([a-z0-9-]+)"', receipt_records))), 31)
+        self.assertIn("records.keys() != expected_records", LINUX_HARNESS)
+        for asset in (
+            "root-helper-binary",
+            "broker-binary",
+            "nix-config",
+            "helper-socket-unit",
+            "helper-service-unit",
+            "broker-socket-unit",
+            "broker-service-unit",
+            "runtime-tmpfiles",
+            "profile-snippet",
+            "product-cli",
+        ):
+            self.assertIn(f'"{asset}"', receipt_files)
+        self.assertIn('records[asset].get("contentDigest") != actual', LINUX_HARNESS)
+        self.assertIn("path.resolve(strict=True)", LINUX_HARNESS)
+        self.assertIn('print("gc-root\\t"', LINUX_HARNESS)
+        for boundary in (
+            "package-state-after-upgrade.txt",
+            "package-state-after-active-repair-refusal.txt",
+            "package-state-after-repair.txt",
+        ):
+            self.assertIn(boundary, LINUX_HARNESS)
+            self.assertIn(
+                'cmp "$product_evidence/package-state-before.txt" \\\n'
+                f'    "$product_evidence/{boundary}"',
+                LINUX_HARNESS,
+            )
+        self.assertEqual(LINUX_HARNESS.count("run_filter_group product-upgrade"), 1)
+        self.assertEqual(
+            LINUX_HARNESS.count("run_filter_group product-asset-repair"), 1
+        )
+        self.assertGreaterEqual(LINUX_HARNESS.count("assert_product_units_offline"), 3)
+        self.assertLess(
+            LINUX_HARNESS.index("assert_publication_product /srv/pkg-releases/2"),
+            LINUX_HARNESS.index('echo "+ activate verified N+1 product services"'),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index("package-state-after-upgrade.txt"),
+            LINUX_HARNESS.index("run_filter_group product-upgrade"),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index("package-state-after-repair.txt"),
+            LINUX_HARNESS.index("run_filter_group product-asset-repair"),
+        )
+        service_digest = (
+            'test "$(docker exec "$container" sha256sum '
+            '/usr/lib/systemd/system/pkg-nix-broker.service | awk \'{print $1}\')" '
+            '= "$repair_service"'
+        )
+        self.assertIn(service_digest, LINUX_HARNESS)
+        self.assertLess(
+            LINUX_HARNESS.index(service_digest),
+            LINUX_HARNESS.index("run_filter_group product-asset-repair"),
         )
 
         block = LINUX_HARNESS.split('cat > "$filters" <<\'EOF\'\n', 1)[1].split(
@@ -216,10 +308,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "bootstrap::tests::failed_installed_state_validation_preserves_started",
             "bootstrap::tests::exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once",
             "bootstrap::tests::spawn_and_wait_uncertainty_preserves_started_and_refuses_retry",
-            "bootstrap::tests::failed_product_receipt_publication_preserves_started",
+            "bootstrap::tests::failed_product_receipt_publication_keeps_accepted_handoff",
+            "bootstrap::tests::journaled_existing_product_update_stays_offline_and_never_starts_determinate",
+            "bootstrap::tests::offline_state_change_blocks_the_next_file_mutation_and_rollback",
+            "bootstrap::tests::failed_existing_product_update_restores_files_and_stays_offline",
+            "linux_platform_assets::tests::ordinary_upgrade_requires_different_release_and_prior_content_identity",
+            "linux_filesystem::tests::upgrade_replaces_only_exact_prior_owned_bytes_and_rolls_back",
+            "bootstrap::tests::journaled_offline_repair_changes_product_files_without_service_mutation",
+            "bootstrap::tests::journaled_repair_refuses_non_offline_service_state_before_mutation",
+            "bootstrap::tests::failed_offline_repair_rolls_forward_files_without_service_mutation",
+            "linux_systemd::tests::offline_preflight_is_query_only_and_refuses_every_non_offline_state",
+            "linux_platform_assets::tests::repair_requires_same_release_and_created_product_ownership",
+            "linux_platform_assets::tests::repair_requires_a_receipt_and_non_files_never_gain_implicit_ownership",
+            "linux_filesystem::tests::repair_roll_forward_replaces_unknown_binaries_and_changed_or_missing_units",
         }
-        self.assertEqual(len(filters), 34)
-        self.assertEqual(len(set(filters)), 34)
+        self.assertEqual(len(filters), 46)
+        self.assertEqual(len(set(filters)), 46)
         self.assertEqual(set(filters), expected_filters)
 
     def test_macos_proof_stages_both_shared_runtime_archives(self) -> None:
