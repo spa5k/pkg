@@ -204,6 +204,13 @@ impl UninstallManifest {
                 return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
             }
         }
+        if matches!(system, System::X8664Linux | System::Aarch64Linux)
+            && records
+                .get("uninstall-manifest")
+                .is_none_or(|(state, _)| *state != RecordedAssetState::Created)
+        {
+            return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+        }
 
         let assets = records
             .into_iter()
@@ -956,6 +963,22 @@ mod tests {
                 System::Aarch64Linux,
                 Digest::from_bytes([7; 32]),
                 extra,
+            )),
+            Some(UninstallErrorCode::InvalidManifest)
+        );
+
+        let receipt = valid
+            .assets()
+            .iter()
+            .position(|record| record.id() == "uninstall-manifest")
+            .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
+        let mut preexisting_receipt = valid.assets().to_vec();
+        preexisting_receipt[receipt].state = RecordedAssetState::PreExisting;
+        assert_eq!(
+            error_code(UninstallManifest::new(
+                System::Aarch64Linux,
+                Digest::from_bytes([7; 32]),
+                preexisting_receipt,
             )),
             Some(UninstallErrorCode::InvalidManifest)
         );

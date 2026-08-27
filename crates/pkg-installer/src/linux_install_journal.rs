@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LinuxAssetKind, assets::linux_product_mutation_assets};
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 const PRODUCT: &str = "pkg";
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 
@@ -70,6 +70,16 @@ pub enum LinuxInstallMutationState {
     PreExisting,
 }
 
+/// Durable product-asset recovery policy for one Linux invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LinuxInstallMode {
+    /// Restore only authenticated prior bytes after an interrupted upgrade.
+    InstallOrUpgrade,
+    /// Keep authenticated same-release candidate bytes after repair starts.
+    Repair,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LinuxInstallJournalEntry {
@@ -86,6 +96,7 @@ pub struct LinuxInstallJournal {
     system: String,
     ownership_manifest_digest: String,
     recovery_context_digest: String,
+    mode: LinuxInstallMode,
     committed: bool,
     service_prior_active: Option<bool>,
     service_recovery_prepared: bool,
@@ -112,6 +123,42 @@ impl LinuxInstallJournal {
         ownership_manifest_digest: Digest,
         recovery_context_digest: Digest,
     ) -> Result<Self, LinuxInstallJournalError> {
+        Self::new_with_mode(
+            system,
+            ownership_manifest_digest,
+            recovery_context_digest,
+            LinuxInstallMode::InstallOrUpgrade,
+            None,
+        )
+    }
+
+    /// Creates a repair journal that records service state before quiescence.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidJournal` for a non-Linux system.
+    pub fn new_repair(
+        system: System,
+        ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
+        prior_active: bool,
+    ) -> Result<Self, LinuxInstallJournalError> {
+        Self::new_with_mode(
+            system,
+            ownership_manifest_digest,
+            recovery_context_digest,
+            LinuxInstallMode::Repair,
+            Some(prior_active),
+        )
+    }
+
+    fn new_with_mode(
+        system: System,
+        ownership_manifest_digest: Digest,
+        recovery_context_digest: Digest,
+        mode: LinuxInstallMode,
+        service_prior_active: Option<bool>,
+    ) -> Result<Self, LinuxInstallJournalError> {
         if !matches!(system, System::X8664Linux | System::Aarch64Linux) {
             return Err(invalid_journal());
         }
@@ -121,11 +168,23 @@ impl LinuxInstallJournal {
             system: system.to_string(),
             ownership_manifest_digest: ownership_manifest_digest.to_string(),
             recovery_context_digest: recovery_context_digest.to_string(),
+            mode,
             committed: false,
-            service_prior_active: None,
+            service_prior_active,
             service_recovery_prepared: false,
             entries: Vec::new(),
         })
+    }
+
+    /// Returns the durable recovery policy.
+    #[must_use]
+    pub const fn mode(&self) -> LinuxInstallMode {
+        self.mode
+    }
+
+    /// Returns the Linux target bound into this validated journal.
+    pub(crate) fn system(&self) -> Result<System, LinuxInstallJournalError> {
+        System::from_str(&self.system).map_err(|_| invalid_journal())
     }
 
     /// Decodes and fully validates one bounded strict snapshot.
@@ -201,7 +260,11 @@ impl LinuxInstallJournal {
         prior_active: bool,
     ) -> Result<(), LinuxInstallJournalError> {
         self.intend(LinuxInstallMutation::Services)?;
-        self.service_prior_active = Some(prior_active);
+        match self.mode {
+            LinuxInstallMode::InstallOrUpgrade => self.service_prior_active = Some(prior_active),
+            LinuxInstallMode::Repair if self.service_prior_active.is_some() && !prior_active => {}
+            LinuxInstallMode::Repair => return Err(invalid_transition()),
+        }
         Ok(())
     }
 
@@ -395,11 +458,23 @@ impl LinuxInstallJournal {
             entry.mutation == LinuxInstallMutation::Services
                 && entry.state != LinuxInstallMutationState::PreExisting
         });
+        let service_state_valid = match self.mode {
+            LinuxInstallMode::InstallOrUpgrade => {
+                self.service_prior_active.is_some()
+                    == (has_changed_services || self.service_recovery_prepared)
+            }
+            LinuxInstallMode::Repair => {
+                self.service_prior_active.is_some()
+                    || (self
+                        .entries
+                        .iter()
+                        .all(|entry| entry.state == LinuxInstallMutationState::PreExisting)
+                        && !self.service_recovery_prepared)
+            }
+        };
         if (self.committed
             && (self.service_prior_active.is_some() || self.service_recovery_prepared))
-            || (!self.committed
-                && self.service_prior_active.is_some()
-                    != (has_changed_services || self.service_recovery_prepared))
+            || (!self.committed && !service_state_valid)
         {
             return Err(invalid_journal());
         }
@@ -508,6 +583,47 @@ mod tests {
             decoded.recovery_actions(),
             vec![LinuxInstallRecoveryAction::RevertCreated(&first)]
         );
+    }
+
+    #[test]
+    fn repair_round_trip_persists_mode_and_pre_quiescence_service_state() {
+        let mut journal = LinuxInstallJournal::new_repair(
+            System::X8664Linux,
+            Digest::from_bytes([0x7a; 32]),
+            Digest::from_bytes([0x7b; 32]),
+            true,
+        )
+        .unwrap();
+        let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
+        assert_eq!(decoded.mode(), LinuxInstallMode::Repair);
+        assert_eq!(decoded.service_prior_active(), Some(true));
+        assert!(!decoded.service_recovery_prepared());
+
+        journal.prepare_service_recovery().unwrap();
+        let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
+        assert!(decoded.service_recovery_prepared());
+    }
+
+    #[test]
+    fn completed_repair_recovery_keeps_a_valid_preexisting_prefix() {
+        let mut journal = LinuxInstallJournal::new_repair(
+            System::X8664Linux,
+            Digest::from_bytes([0x7c; 32]),
+            Digest::from_bytes([0x7d; 32]),
+            true,
+        )
+        .unwrap();
+        journal.prepare_service_recovery().unwrap();
+        journal
+            .record_preexisting(install_sequence()[0].clone())
+            .unwrap();
+        journal.complete_service_recovery().unwrap();
+
+        let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
+
+        assert_eq!(decoded.service_prior_active(), None);
+        assert!(!decoded.service_recovery_prepared());
+        assert!(decoded.recovery_actions().is_empty());
     }
 
     #[test]

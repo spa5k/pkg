@@ -115,6 +115,10 @@ impl LinuxPlatformAssetManager {
         }
     }
 
+    pub(crate) const fn set_intent(&mut self, intent: LinuxProductAssetIntent) {
+        self.intent = intent;
+    }
+
     /// Binds product binaries that the authenticated bundle supplied.
     ///
     /// # Errors
@@ -193,6 +197,84 @@ impl LinuxPlatformAssetManager {
                 .is_some_and(|(bound_system, _)| bound_system == system)
     }
 
+    /// Authenticates the complete non-file repair boundary before mutation.
+    pub(crate) fn preflight_repair(&mut self) -> Result<(), InstallError> {
+        if self.intent != LinuxProductAssetIntent::Repair {
+            return Err(InstallError::backend_failure());
+        }
+        let (system, release) = self
+            .receipt_binding
+            .ok_or_else(InstallError::backend_failure)?;
+        let manifest = self
+            .load_installed_manifest()?
+            .ok_or_else(InstallError::backend_failure)?;
+        if manifest.system() != system || manifest.ownership_manifest_digest() != release {
+            return Err(InstallError::backend_failure());
+        }
+        let receipt = uninstall_manifest_asset()?;
+        self.ensure_filesystem()?
+            .bind_uninstall_manifest(&manifest)
+            .map_err(|_| InstallError::backend_failure())?;
+        self.ensure_filesystem()?
+            .verify_asset(receipt)
+            .map_err(|_| InstallError::backend_failure())?;
+
+        for asset in linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| is_linux_product_asset(*asset))
+        {
+            let record = manifest
+                .assets()
+                .iter()
+                .find(|record| record.id() == asset.id())
+                .ok_or_else(InstallError::backend_failure)?;
+            if asset.kind() != crate::LinuxAssetKind::File
+                || record.state() == RecordedAssetState::PreExisting
+            {
+                self.verify_asset_exact(asset)?;
+            } else if asset.id() != "uninstall-manifest" {
+                self.ensure_filesystem()?
+                    .verify_repair_target(asset)
+                    .map_err(|_| InstallError::backend_failure())?;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn recover_repair_assets(&mut self) -> Result<(), InstallError> {
+        self.preflight_repair()?;
+        let manifest = self
+            .load_installed_manifest()?
+            .ok_or_else(InstallError::backend_failure)?;
+        for asset in linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| is_linux_product_asset(*asset))
+            .filter(|asset| asset.kind() == crate::LinuxAssetKind::File)
+            .filter(|asset| asset.id() != "uninstall-manifest")
+        {
+            let record = manifest
+                .assets()
+                .iter()
+                .find(|record| record.id() == asset.id())
+                .ok_or_else(InstallError::backend_failure)?;
+            if record.state() == RecordedAssetState::Created {
+                self.ensure_filesystem()?
+                    .roll_forward_owned_file(asset)
+                    .map_err(|_| InstallError::backend_failure())?;
+            }
+        }
+        for asset in linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| is_linux_product_asset(*asset))
+        {
+            self.verify_asset_exact(asset)?;
+        }
+        Ok(())
+    }
+
     /// Verifies or creates one closed account, directory, or release file.
     ///
     /// # Errors
@@ -200,10 +282,14 @@ impl LinuxPlatformAssetManager {
     /// Returns a redacted backend failure when the production component refuses.
     pub fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
         let created = if LinuxAccountManager::handles(asset) {
+            self.require_non_file_mutation_authority(asset)?;
             self.accounts
                 .ensure_asset(asset)
                 .map_err(|_| InstallError::backend_failure())?
         } else {
+            if asset.kind() != crate::LinuxAssetKind::File {
+                self.require_non_file_mutation_authority(asset)?;
+            }
             let replacement = self.file_replacement(asset)?;
             let filesystem = self.ensure_filesystem()?;
             match replacement {
@@ -402,6 +488,20 @@ impl LinuxPlatformAssetManager {
     ///
     /// Returns a redacted backend failure when identity-bound rollback is incomplete.
     pub fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
+        if self.intent == LinuxProductAssetIntent::Repair
+            && asset.kind() == crate::LinuxAssetKind::File
+            && asset.id() != "uninstall-manifest"
+        {
+            let manifest = self
+                .load_installed_manifest()?
+                .ok_or_else(InstallError::backend_failure)?;
+            self.replacement_authority(asset, &manifest)?;
+            self.ensure_filesystem()?
+                .roll_forward_owned_file(asset)
+                .map_err(|_| InstallError::backend_failure())?;
+            self.states.remove(asset.id());
+            return Ok(());
+        }
         if LinuxAccountManager::handles(asset) {
             self.accounts
                 .rollback_asset(asset)
@@ -500,6 +600,9 @@ impl LinuxPlatformAssetManager {
     /// Restores one interrupted asset mutation from durable receipt state.
     pub(crate) fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
         if LinuxAccountManager::handles(asset) || asset.kind() != crate::LinuxAssetKind::File {
+            if self.intent == LinuxProductAssetIntent::Repair {
+                return Err(InstallError::backend_failure());
+            }
             return self.remove_verified_asset(asset);
         }
         if asset.id() == "uninstall-manifest" {
@@ -507,9 +610,21 @@ impl LinuxPlatformAssetManager {
         }
 
         let Some(manifest) = self.load_installed_manifest()? else {
-            return self.remove_verified_asset(asset);
+            return self
+                .ensure_filesystem()?
+                .recover_created_file(asset)
+                .map_err(|_| InstallError::backend_failure());
         };
         let replacement = self.replacement_authority(asset, &manifest)?;
+        if replacement.is_repair() {
+            return self
+                .ensure_filesystem()?
+                .roll_forward_owned_file(asset)
+                .map_err(|_| InstallError::backend_failure());
+        }
+        let prior_digest = replacement
+            .prior_digest()
+            .ok_or_else(InstallError::backend_failure)?;
         let has_backup = self
             .ensure_filesystem()?
             .replacement_backup_exists(asset)
@@ -517,25 +632,12 @@ impl LinuxPlatformAssetManager {
         if has_backup {
             return self
                 .ensure_filesystem()?
-                .reconcile_owned_file(
-                    asset,
-                    replacement.prior_digest(),
-                    replacement.is_repair(),
-                    false,
-                )
+                .recover_owned_file(asset, prior_digest)
                 .map_err(|_| InstallError::backend_failure());
         }
 
-        if replacement.is_repair() && self.ensure_filesystem()?.verify_asset(asset).is_ok() {
-            return self.remove_verified_asset(asset);
-        }
         self.ensure_filesystem()?
-            .reconcile_owned_file(
-                asset,
-                replacement.prior_digest(),
-                replacement.is_repair(),
-                false,
-            )
+            .recover_owned_file(asset, prior_digest)
             .map_err(|_| InstallError::backend_failure())
     }
 
@@ -596,6 +698,58 @@ impl LinuxPlatformAssetManager {
         })
     }
 
+    fn verify_asset_exact(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
+        if LinuxAccountManager::handles(asset) {
+            self.accounts
+                .verify_asset(asset)
+                .map_err(|_| InstallError::backend_failure())
+        } else {
+            self.ensure_filesystem()?
+                .verify_asset(asset)
+                .map_err(|_| InstallError::backend_failure())
+        }
+    }
+
+    fn require_non_file_mutation_authority(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), InstallError> {
+        if asset.kind() == crate::LinuxAssetKind::File {
+            return Err(InstallError::backend_failure());
+        }
+        let Some(manifest) = self.load_installed_manifest()? else {
+            return self.non_file_requires_exact(asset, None).map(|_| ());
+        };
+        if self.non_file_requires_exact(asset, Some(&manifest))? {
+            self.verify_asset_exact(asset)?;
+        }
+        Ok(())
+    }
+
+    fn non_file_requires_exact(
+        &self,
+        asset: LinuxInstallAsset,
+        manifest: Option<&UninstallManifest>,
+    ) -> Result<bool, InstallError> {
+        if asset.kind() == crate::LinuxAssetKind::File {
+            return Err(InstallError::backend_failure());
+        }
+        let Some(manifest) = manifest else {
+            return if self.intent == LinuxProductAssetIntent::Repair {
+                Err(InstallError::backend_failure())
+            } else {
+                Ok(false)
+            };
+        };
+        let record = manifest
+            .assets()
+            .iter()
+            .find(|record| record.id() == asset.id())
+            .ok_or_else(InstallError::backend_failure)?;
+        Ok(self.intent == LinuxProductAssetIntent::Repair
+            || record.state() == RecordedAssetState::PreExisting)
+    }
+
     fn recover_uninstall_manifest(&mut self) -> Result<(), InstallError> {
         let (system, current_release) = self
             .receipt_binding
@@ -604,6 +758,13 @@ impl LinuxPlatformAssetManager {
             .ensure_filesystem()?
             .existing_uninstall_manifest()
             .map_err(|_| InstallError::backend_failure())?;
+
+        if current.is_none() {
+            return self
+                .ensure_filesystem()?
+                .recover_absent_uninstall_manifest_staging(system, current_release)
+                .map_err(|_| InstallError::backend_failure());
+        }
 
         if let Some(prior) = current
             .as_ref()
@@ -623,12 +784,7 @@ impl LinuxPlatformAssetManager {
                     .map_err(|_| InstallError::backend_failure())?,
             );
             self.ensure_filesystem()?
-                .reconcile_owned_file(
-                    uninstall_manifest_asset()?,
-                    Some(prior_digest),
-                    false,
-                    false,
-                )
+                .recover_owned_file(uninstall_manifest_asset()?, prior_digest)
                 .map_err(|_| InstallError::backend_failure())?;
             self.installed_manifest = InstalledManifest::Present(prior.clone());
             return Ok(());
@@ -655,12 +811,7 @@ impl LinuxPlatformAssetManager {
                     .map_err(|_| InstallError::backend_failure())?,
             );
             self.ensure_filesystem()?
-                .reconcile_owned_file(
-                    uninstall_manifest_asset()?,
-                    Some(prior_digest),
-                    false,
-                    false,
-                )
+                .recover_owned_file(uninstall_manifest_asset()?, prior_digest)
                 .map_err(|_| InstallError::backend_failure())?;
             self.installed_manifest = InstalledManifest::Present(prior);
             return Ok(());
@@ -686,7 +837,7 @@ impl LinuxPlatformAssetManager {
                 Ok(())
             }
             Some(_) => Err(InstallError::backend_failure()),
-            None => Ok(()),
+            None => unreachable!("the absent receipt returned before replacement recovery"),
         }
     }
 
@@ -753,7 +904,11 @@ impl LinuxPlatformAssetManager {
             return Ok(None);
         }
         let Some(manifest) = self.load_installed_manifest()? else {
-            return Ok(None);
+            return if self.intent == LinuxProductAssetIntent::Repair {
+                Err(InstallError::backend_failure())
+            } else {
+                Ok(None)
+            };
         };
         if self.ensure_filesystem()?.verify_asset(asset).is_ok() {
             return Ok(None);
@@ -840,7 +995,7 @@ impl LinuxPlatformAssetManager {
             .filter(|asset| asset.kind() == crate::LinuxAssetKind::File)
         {
             self.ensure_filesystem()?
-                .reconcile_owned_file(asset, None, false, true)
+                .finalize_owned_file(asset)
                 .map_err(|_| InstallError::backend_failure())?;
         }
         Ok(())
@@ -996,6 +1151,49 @@ mod tests {
                 .missing_file_replacement_authority(target, &preexisting)
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn repair_requires_a_receipt_and_non_files_never_gain_implicit_ownership()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let system = System::X8664Linux;
+        let release = Digest::from_bytes([0x41; 32]);
+        let account = asset("broker-user");
+        let directory = asset("nix-root");
+        let preexisting_account = manifest(
+            system,
+            release,
+            account,
+            RecordedAssetState::PreExisting,
+            Digest::from_bytes([0x42; 32]),
+        )?;
+        let preexisting_directory = manifest(
+            system,
+            release,
+            directory,
+            RecordedAssetState::PreExisting,
+            Digest::from_bytes([0x43; 32]),
+        )?;
+        let created_account = manifest(
+            system,
+            release,
+            account,
+            RecordedAssetState::Created,
+            Digest::from_bytes([0x44; 32]),
+        )?;
+        let ordinary = LinuxPlatformAssetManager::new(ManagedGroupBindings::new(100, 101)?);
+        assert!(ordinary.non_file_requires_exact(account, Some(&preexisting_account))?);
+        assert!(ordinary.non_file_requires_exact(directory, Some(&preexisting_directory))?);
+
+        let mut repair = LinuxPlatformAssetManager::with_intent(
+            ManagedGroupBindings::new(100, 101)?,
+            LinuxProductAssetIntent::Repair,
+        );
+        repair.installed_manifest = InstalledManifest::Absent;
+        assert!(repair.non_file_requires_exact(account, Some(&created_account))?);
+        assert!(repair.non_file_requires_exact(account, None).is_err());
+        assert!(repair.file_replacement(asset("broker-binary")).is_err());
         Ok(())
     }
 }

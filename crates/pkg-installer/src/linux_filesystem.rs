@@ -9,7 +9,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use nix::unistd::{Gid, Uid};
 use pkg_core::state::{Digest, body_digest};
@@ -34,7 +33,6 @@ const MAX_RELEASE_BINARY_BYTES: usize = 128 * 1024 * 1024;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_UNINSTALL_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_PRIVATE_STATE_FILES: usize = 1_024;
-const TEMP_ATTEMPTS: u8 = 16;
 const PROFILE_SNIPPET: &[u8] = b"# managed by pkg \xE2\x80\x94 do not edit\n\
 __pkg_state=\"$HOME/.local/share/pkg\"\n\
 case \":$PATH:\" in\n\
@@ -43,7 +41,6 @@ case \":$PATH:\" in\n\
 esac\n\
 export MANPATH=\"$__pkg_state/current/share/man:${MANPATH:-}\"\n\
 unset __pkg_state\n";
-static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
 
 /// Stable failure classes for the privileged filesystem boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,6 +473,40 @@ impl LinuxFilesystemManager {
         self.decode_uninstall_manifest_file(asset, file).map(Some)
     }
 
+    /// Removes only an interrupted initial candidate receipt staging file.
+    pub(crate) fn recover_absent_uninstall_manifest_staging(
+        &self,
+        system: pkg_core::System,
+        release: Digest,
+    ) -> Result<(), LinuxFilesystemError> {
+        let asset = crate::linux_install_assets()
+            .iter()
+            .copied()
+            .find(|asset| asset.id() == "uninstall-manifest")
+            .ok_or_else(unsupported)?;
+        let (parent, _) = self.open_parent(asset)?;
+        let name = rollback_name(asset);
+        let file = match open_child(&parent, &name, LinuxAssetKind::File) {
+            Ok(file) => file,
+            Err(error) if error == Errno::NOENT => return Ok(()),
+            Err(error) => return Err(open_error(error)),
+        };
+        self.verify_replacement_backup(asset, &file)?;
+        let staged_identity = identity(&file, LinuxAssetKind::File)?;
+        match self.decode_uninstall_manifest_file(asset, file) {
+            Ok(manifest)
+                if manifest.system() == system
+                    && manifest.ownership_manifest_digest() == release => {}
+            Ok(_) => {
+                return Err(LinuxFilesystemError::new(
+                    LinuxFilesystemErrorCode::RollbackConflict,
+                ));
+            }
+            Err(_) => {}
+        }
+        Self::remove_if_owned(&parent, &name, staged_identity)
+    }
+
     fn decode_uninstall_manifest_file(
         &self,
         asset: LinuxInstallAsset,
@@ -539,6 +570,20 @@ impl LinuxFilesystemManager {
         let (parent, name) = self.open_parent(asset)?;
         let file = open_child(&parent, &name, LinuxAssetKind::File).map_err(open_error)?;
         self.verify_file_digest(asset, file, expected)
+    }
+
+    /// Accepts an exact, absent, or metadata-safe file as an explicit repair target.
+    pub(crate) fn verify_repair_target(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if self.verify_asset(asset).is_ok() || self.verify_asset_absent(asset).is_ok() {
+            return Ok(());
+        }
+        let (parent, name) = self.open_parent(asset)?;
+        let file = open_child(&parent, &name, LinuxAssetKind::File).map_err(open_error)?;
+        self.verify_metadata(asset, &file)?;
+        require_single_link(&file)
     }
 
     /// Replaces one owned file with exact candidate bytes.
@@ -649,20 +694,18 @@ impl LinuxFilesystemManager {
         self.replace_owned_file(asset, prior_digest, repair)
     }
 
-    /// Reconciles a fixed replacement backup after restart or receipt commit.
-    pub(crate) fn reconcile_owned_file(
+    /// Restores an authenticated prior file after an interrupted upgrade.
+    pub(crate) fn recover_owned_file(
         &self,
         asset: LinuxInstallAsset,
-        prior_digest: Option<Digest>,
-        repair: bool,
-        committed: bool,
+        prior_digest: Digest,
     ) -> Result<(), LinuxFilesystemError> {
         if asset.kind() != LinuxAssetKind::File {
             return Err(unsupported());
         }
         let payload = self.payload_for(asset)?;
         let Some((parent, name)) = self.open_parent_optional(asset)? else {
-            return if committed { Err(io_failure()) } else { Ok(()) };
+            return Ok(());
         };
         let backup_name = rollback_name(asset);
         let backup = match open_child(&parent, &backup_name, LinuxAssetKind::File) {
@@ -676,27 +719,9 @@ impl LinuxFilesystemManager {
             Err(error) => return Err(open_error(error)),
         };
 
-        if committed {
-            let current = current.ok_or_else(io_failure)?;
-            self.verify_file(asset, current, &payload)?;
-            if let Some(backup) = backup {
-                self.verify_metadata(asset, &backup)?;
-                require_single_link(&backup)?;
-                let backup_identity = identity(&backup, LinuxAssetKind::File)?;
-                drop(backup);
-                Self::remove_if_owned(&parent, &backup_name, backup_identity)?;
-            }
-            return Ok(());
-        }
-
         let Some(backup) = backup else {
             let current = current.ok_or_else(io_failure)?;
-            return if repair {
-                self.verify_metadata(asset, &current)
-                    .and_then(|()| require_single_link(&current))
-            } else {
-                self.verify_file_digest(asset, current, prior_digest.ok_or_else(unsupported)?)
-            };
+            return self.verify_file_digest(asset, current, prior_digest);
         };
         let backup_identity = identity(&backup, LinuxAssetKind::File)?;
         let current = current.ok_or_else(io_failure)?;
@@ -710,13 +735,11 @@ impl LinuxFilesystemManager {
         {
             self.verify_metadata(asset, &backup)?;
             require_single_link(&backup)?;
-            if !repair {
-                self.verify_file_digest(
-                    asset,
-                    backup.try_clone().map_err(|_| io_failure())?,
-                    prior_digest.ok_or_else(unsupported)?,
-                )?;
-            }
+            self.verify_file_digest(
+                asset,
+                backup.try_clone().map_err(|_| io_failure())?,
+                prior_digest,
+            )?;
             renameat_with(&parent, &backup_name, &parent, &name, RenameFlags::EXCHANGE).map_err(
                 |_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::RollbackConflict),
             )?;
@@ -726,16 +749,94 @@ impl LinuxFilesystemManager {
             self.verify_file(asset, candidate, &payload)?;
             Self::remove_if_owned(&parent, &backup_name, candidate_identity)
         } else {
-            if repair {
-                self.verify_metadata(asset, &current)?;
-                require_single_link(&current)?;
-            } else {
-                self.verify_file_digest(asset, current, prior_digest.ok_or_else(unsupported)?)?;
-            }
+            self.verify_file_digest(asset, current, prior_digest)?;
             self.verify_replacement_backup(asset, &backup)?;
-            Self::verify_file_contents(backup.try_clone().map_err(|_| io_failure())?, &payload)?;
             Self::remove_if_owned(&parent, &backup_name, backup_identity)
         }
+    }
+
+    /// Removes an authenticated replacement backup after receipt durability.
+    pub(crate) fn finalize_owned_file(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.kind() != LinuxAssetKind::File {
+            return Err(unsupported());
+        }
+        let payload = self.payload_for(asset)?;
+        let (parent, name) = self.open_parent(asset)?;
+        let current = open_child(&parent, &name, LinuxAssetKind::File).map_err(open_error)?;
+        self.verify_file(asset, current, &payload)?;
+        let backup_name = rollback_name(asset);
+        let backup = match open_child(&parent, &backup_name, LinuxAssetKind::File) {
+            Ok(file) => file,
+            Err(error) if error == Errno::NOENT => return Ok(()),
+            Err(error) => return Err(open_error(error)),
+        };
+        self.verify_metadata(asset, &backup)?;
+        require_single_link(&backup)?;
+        let backup_identity = identity(&backup, LinuxAssetKind::File)?;
+        drop(backup);
+        Self::remove_if_owned(&parent, &backup_name, backup_identity)
+    }
+
+    /// Removes deterministic residue and keeps authenticated repair bytes live.
+    pub(crate) fn roll_forward_owned_file(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.kind() != LinuxAssetKind::File {
+            return Err(unsupported());
+        }
+        self.remove_fixed_staging(asset)?;
+        if self.verify_asset(asset).is_ok() {
+            self.remove_fixed_staging(asset)?;
+            self.attempt_owned.remove(asset.id());
+            return Ok(());
+        }
+        if self.verify_asset_absent(asset).is_ok() {
+            let payload = self.payload_for(asset)?;
+            self.ensure_file(asset, &payload)?;
+            self.attempt_owned.remove(asset.id());
+            return Ok(());
+        }
+
+        self.remove_fixed_staging(asset)?;
+        self.replace_owned_file(asset, None, true)?;
+        self.remove_fixed_staging(asset)?;
+        self.attempt_owned.remove(asset.id());
+        self.verify_asset(asset)
+    }
+
+    /// Removes one interrupted initial file write and its deterministic residue.
+    pub(crate) fn recover_created_file(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.kind() != LinuxAssetKind::File {
+            return Err(unsupported());
+        }
+        self.remove_fixed_staging(asset)?;
+        self.remove_verified_asset(asset)
+    }
+
+    pub(crate) fn remove_fixed_staging(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        let Some((parent, _)) = self.open_parent_optional(asset)? else {
+            return Ok(());
+        };
+        let name = rollback_name(asset);
+        let file = match open_child(&parent, &name, LinuxAssetKind::File) {
+            Ok(file) => file,
+            Err(error) if error == Errno::NOENT => return Ok(()),
+            Err(error) => return Err(open_error(error)),
+        };
+        self.verify_replacement_backup(asset, &file)?;
+        let identity = identity(&file, LinuxAssetKind::File)?;
+        drop(file);
+        Self::remove_if_owned(&parent, &name, identity)
     }
 
     pub(crate) fn verify_empty_directory(
@@ -1164,7 +1265,7 @@ impl LinuxFilesystemManager {
 
         self.attempt_owned
             .insert(asset.id(), AttemptOwnership::pending());
-        let (staging_name, mut staging) = create_staging(&parent)?;
+        let (staging_name, mut staging) = create_staging(&parent, asset)?;
         let staging_identity = identity(&staging, LinuxAssetKind::File)?;
         if let Some(ownership) = self.attempt_owned.get_mut(asset.id()) {
             ownership.staging = Some(StagingIdentity {
@@ -1496,25 +1597,19 @@ fn open_child(parent: &File, name: &OsStr, kind: LinuxAssetKind) -> Result<File,
     openat(parent, name, flags, Mode::empty()).map(File::from)
 }
 
-fn create_staging(parent: &File) -> Result<(OsString, File), LinuxFilesystemError> {
-    for _ in 0..TEMP_ATTEMPTS {
-        let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-        let name = OsString::from(format!(
-            ".pkg-install-{}-{sequence}.tmp",
-            std::process::id()
-        ));
-        match openat(
-            parent,
-            &name,
-            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::from_raw_mode(0o600),
-        ) {
-            Ok(file) => return Ok((name, File::from(file))),
-            Err(error) if error == Errno::EXIST => {}
-            Err(_) => return Err(io_failure()),
-        }
-    }
-    Err(io_failure())
+fn create_staging(
+    parent: &File,
+    asset: LinuxInstallAsset,
+) -> Result<(OsString, File), LinuxFilesystemError> {
+    let name = rollback_name(asset);
+    let file = openat(
+        parent,
+        &name,
+        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o600),
+    )
+    .map_err(|_| io_failure())?;
+    Ok((name, File::from(file)))
 }
 
 fn identity(file: &File, kind: LinuxAssetKind) -> Result<FileIdentity, LinuxFilesystemError> {
@@ -1951,9 +2046,7 @@ mod tests {
         )?;
         fixture.manager.attempt_owned.clear();
 
-        fixture
-            .manager
-            .reconcile_owned_file(asset, Some(prior_digest), false, false)?;
+        fixture.manager.recover_owned_file(asset, prior_digest)?;
 
         assert_eq!(fs::read(&path)?, prior);
         assert!(!fixture.manager.replacement_backup_exists(asset)?);
@@ -1974,31 +2067,137 @@ mod tests {
 
         fixture
             .manager
-            .reconcile_owned_file(asset, Some(body_digest(prior)), false, false)?;
+            .recover_owned_file(asset, body_digest(prior))?;
 
         assert_eq!(fs::read(&path)?, prior);
         assert!(!backup.exists());
 
         fs::write(&backup, b"partial candidate")?;
         fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))?;
-        assert_eq!(
-            failure_code(&fixture.manager.reconcile_owned_file(
-                asset,
-                Some(body_digest(prior)),
-                false,
-                false,
-            ))?,
-            LinuxFilesystemErrorCode::Conflict
-        );
+        fixture
+            .manager
+            .recover_owned_file(asset, body_digest(prior))?;
         assert_eq!(fs::read(path)?, prior);
-        assert_eq!(fs::read(backup)?, b"partial candidate");
+        assert!(!backup.exists());
         Ok(())
     }
 
     #[test]
-    fn repair_recovery_refuses_unknown_staging_metadata_as_live_prior_bytes()
+    fn partial_upgrade_staging_refuses_when_live_prior_identity_is_wrong()
     -> Result<(), Box<dyn Error>> {
         let fixture = Fixture::new()?;
+        let asset = Fixture::asset("broker-service-unit");
+        let parent = fixture.temporary.path().join("usr/lib/systemd/system");
+        let path = parent.join("pkg-nix-broker.service");
+        let staging = parent.join(rollback_name(asset));
+        let authenticated_prior = b"authenticated prior unit\n";
+        fs::write(&path, b"unknown live bytes\n")?;
+        fs::write(&staging, b"partial candidate")?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o600))?;
+
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .recover_owned_file(asset, body_digest(authenticated_prior)),
+            )?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+        assert_eq!(fs::read(path)?, b"unknown live bytes\n");
+        assert_eq!(fs::read(staging)?, b"partial candidate");
+        Ok(())
+    }
+
+    #[test]
+    fn deterministic_initial_file_staging_recovers_before_and_after_rename()
+    -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
+        let asset = Fixture::asset("product-cli");
+        let parent = fixture.temporary.path().join("usr/local/bin");
+        let target = parent.join("pkg");
+        let staging = parent.join(rollback_name(asset));
+
+        fs::write(&staging, b"partial candidate")?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o600))?;
+        assert!(fixture.manager.ensure_asset(asset).is_err());
+        assert_eq!(fs::read(&staging)?, b"partial candidate");
+        fixture.manager.recover_created_file(asset)?;
+        assert!(!staging.exists());
+        assert!(!target.exists());
+
+        assert!(fixture.manager.ensure_asset(asset)?);
+        fixture.manager.attempt_owned.clear();
+        fixture.manager.recover_created_file(asset)?;
+        assert!(!staging.exists());
+        assert!(!target.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn deterministic_initial_receipt_staging_recovers_without_residue() -> Result<(), Box<dyn Error>>
+    {
+        let mut fixture = Fixture::new()?;
+        for id in ["product-root", "uninstall-root"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        let asset = Fixture::asset("uninstall-manifest");
+        let records = crate::assets::linux_product_install_assets()
+            .map(|asset| {
+                let record =
+                    crate::RecordedAsset::new(asset.id(), crate::RecordedAssetState::Created)?;
+                Ok::<_, crate::UninstallError>(
+                    if asset.kind() == LinuxAssetKind::File && asset.id() != "uninstall-manifest" {
+                        record.with_content_digest(body_digest(asset.id().as_bytes()))
+                    } else {
+                        record
+                    },
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let manifest =
+            UninstallManifest::new(System::X8664Linux, Digest::from_bytes([0x91; 32]), records)?;
+        let release = manifest.ownership_manifest_digest();
+        let prior = UninstallManifest::new(
+            System::X8664Linux,
+            Digest::from_bytes([0x92; 32]),
+            manifest.assets().to_vec(),
+        )?;
+        fixture.manager.bind_uninstall_manifest(&manifest)?;
+        let parent = fixture.temporary.path().join("opt/pkg/uninstall");
+        let staging = parent.join(rollback_name(asset));
+        fs::write(&staging, b"partial receipt")?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o600))?;
+
+        fixture
+            .manager
+            .recover_absent_uninstall_manifest_staging(System::X8664Linux, release)?;
+
+        assert!(!staging.exists());
+        assert!(!parent.join("manifest.json").exists());
+
+        fs::write(&staging, crate::encode_uninstall_manifest(&manifest)?)?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o600))?;
+        fixture
+            .manager
+            .recover_absent_uninstall_manifest_staging(System::X8664Linux, release)?;
+        assert!(!staging.exists());
+
+        fs::write(&staging, crate::encode_uninstall_manifest(&prior)?)?;
+        fs::set_permissions(&staging, fs::Permissions::from_mode(0o600))?;
+        assert!(
+            fixture
+                .manager
+                .recover_absent_uninstall_manifest_staging(System::X8664Linux, release)
+                .is_err()
+        );
+        assert!(staging.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn repair_recovery_keeps_candidate_and_discards_unknown_prior_bytes()
+    -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
         let asset = Fixture::asset("broker-service-unit");
         let parent = fixture.temporary.path().join("usr/lib/systemd/system");
         let path = parent.join("pkg-nix-broker.service");
@@ -2007,19 +2206,44 @@ mod tests {
         fs::write(&backup, b"unknown prior bytes")?;
         fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))?;
 
-        assert_eq!(
-            failure_code(
-                &fixture
-                    .manager
-                    .reconcile_owned_file(asset, None, true, false)
-            )?,
-            LinuxFilesystemErrorCode::Conflict
-        );
+        fixture.manager.roll_forward_owned_file(asset)?;
         assert_eq!(
             fs::read(path)?,
             LinuxSystemdAssets::BROKER_SERVICE.as_bytes()
         );
-        assert_eq!(fs::read(backup)?, b"unknown prior bytes");
+        assert!(!backup.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn repair_roll_forward_replaces_unknown_binaries_and_changed_or_missing_units()
+    -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
+        for id in ["product-root", "service-bin-dir"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+        for (id, relative, mode) in [
+            ("root-helper-binary", "opt/pkg/bin/pkg-root-helper", 0o750),
+            ("broker-binary", "opt/pkg/bin/pkg-nix-broker", 0o750),
+            (
+                "broker-service-unit",
+                "usr/lib/systemd/system/pkg-nix-broker.service",
+                0o644,
+            ),
+        ] {
+            let asset = Fixture::asset(id);
+            let path = fixture.temporary.path().join(relative);
+            fs::write(&path, b"unknown damaged bytes")?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
+            fixture.manager.roll_forward_owned_file(asset)?;
+            fixture.manager.verify_asset(asset)?;
+            assert!(!fixture.manager.replacement_backup_exists(asset)?);
+        }
+
+        let missing = Fixture::asset("helper-service-unit");
+        fixture.manager.roll_forward_owned_file(missing)?;
+        fixture.manager.verify_asset(missing)?;
+        assert!(!fixture.manager.replacement_backup_exists(missing)?);
         Ok(())
     }
 
@@ -2040,12 +2264,8 @@ mod tests {
         )?;
         fixture.manager.attempt_owned.clear();
 
-        fixture
-            .manager
-            .reconcile_owned_file(asset, None, true, true)?;
-        fixture
-            .manager
-            .reconcile_owned_file(asset, None, true, true)?;
+        fixture.manager.finalize_owned_file(asset)?;
+        fixture.manager.finalize_owned_file(asset)?;
 
         assert_eq!(
             fs::read(path)?,

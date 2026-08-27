@@ -9,11 +9,12 @@ use rustix::fs::{Mode, OFlags, open, openat};
 use rustix::io::Errno;
 
 use crate::linux_accounts::verify_linux_accounts_absent;
+use crate::linux_systemd::LinuxSystemdManager;
 use crate::linux_user_cleanup::LinuxUserCleanup;
 use crate::{
     LinuxAccountManager, LinuxAssetKind, LinuxFilesystemManager, LinuxInstallAsset,
-    LinuxReleasePayloads, LinuxSystemdManager, RecordedAssetState, UninstallAction,
-    UninstallAssetKind, UninstallBackend, UninstallError, UninstallManifest,
+    LinuxReleasePayloads, RecordedAssetState, UninstallAction, UninstallAssetKind,
+    UninstallBackend, UninstallError, UninstallManifest,
     assets::linux_product_install_assets,
     determinate::DeterminateInstaller,
     determinate_handoff::{DeterminateHandoff, DeterminateHandoffState},
@@ -505,11 +506,12 @@ mod legacy_base_nix {
     };
 
     use super::{LinuxUninstallRuntime, verify_fixed_path_absent};
+    use crate::linux_systemd::LinuxSystemdManager;
     use crate::linux_user_cleanup::LinuxUserCleanup;
     use crate::{
         LinuxAccountManager, LinuxAssetKind, LinuxFilesystemManager, LinuxInstallAsset,
-        LinuxReleasePayloads, LinuxSystemdManager, RecordedAssetState, UninstallAction,
-        UninstallAssetKind, UninstallError, UninstallManifest, linux_install_assets,
+        LinuxReleasePayloads, RecordedAssetState, UninstallAction, UninstallAssetKind,
+        UninstallError, UninstallManifest, linux_install_assets,
     };
 
     const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";

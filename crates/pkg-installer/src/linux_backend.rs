@@ -2,8 +2,10 @@
 
 use crate::{
     DeterminateHandoffState, InstallError, LinuxAssetPresence, LinuxInstallAsset,
-    LinuxInstallBackend, LinuxPlatformAssetManager, LinuxSystemdManager,
-    determinate_handoff::DeterminateHandoff, linux_platform_assets::LinuxProductAssetIntent,
+    LinuxInstallBackend, LinuxPlatformAssetManager,
+    determinate_handoff::DeterminateHandoff,
+    linux_platform_assets::LinuxProductAssetIntent,
+    linux_systemd::{LinuxSystemdManager, ServiceActivation},
 };
 use nix::unistd::{Gid, Uid};
 use pkg_core::{System, state::Digest};
@@ -15,6 +17,12 @@ use std::{env, path::Path};
 
 const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
 
+#[derive(Debug, Default)]
+struct ServiceLifecycle {
+    expected_active: bool,
+    resume_repair: bool,
+}
+
 /// Production implementation of the closed Linux installer backend.
 #[derive(Debug)]
 pub struct ProductionLinuxInstallBackend {
@@ -22,10 +30,11 @@ pub struct ProductionLinuxInstallBackend {
     assets: LinuxPlatformAssetManager,
     services: LinuxSystemdManager,
     release_identity: Option<Digest>,
+    requested_product_asset_intent: LinuxProductAssetIntent,
     product_asset_intent: LinuxProductAssetIntent,
     existing_managed_install: bool,
     product_files_changed: bool,
-    prior_services_active: bool,
+    service_lifecycle: ServiceLifecycle,
     #[cfg(test)]
     preflight_fixture: Option<ProductionPreflightFixture>,
 }
@@ -73,10 +82,11 @@ impl ProductionLinuxInstallBackend {
             services: LinuxSystemdManager::production()
                 .map_err(|_| InstallError::backend_failure())?,
             release_identity: None,
+            requested_product_asset_intent: product_asset_intent,
             product_asset_intent,
             existing_managed_install: false,
             product_files_changed: false,
-            prior_services_active: false,
+            service_lifecycle: ServiceLifecycle::default(),
             #[cfg(test)]
             preflight_fixture: None,
         })
@@ -141,10 +151,11 @@ impl ProductionLinuxInstallBackend {
                 assets: LinuxPlatformAssetManager::with_intent(groups, product_asset_intent),
                 services,
                 release_identity: None,
+                requested_product_asset_intent: product_asset_intent,
                 product_asset_intent,
                 existing_managed_install: false,
                 product_files_changed: false,
-                prior_services_active: false,
+                service_lifecycle: ServiceLifecycle::default(),
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
                     handoff_snapshots,
@@ -176,6 +187,51 @@ const fn validate_product_repair_handoff_preflight(
 }
 
 impl LinuxInstallBackend for ProductionLinuxInstallBackend {
+    fn install_mode(&self) -> crate::LinuxInstallMode {
+        match self.requested_product_asset_intent {
+            LinuxProductAssetIntent::InstallOrUpgrade => crate::LinuxInstallMode::InstallOrUpgrade,
+            LinuxProductAssetIntent::Repair => crate::LinuxInstallMode::Repair,
+        }
+    }
+
+    fn begin_recovery_mode(&mut self, mode: crate::LinuxInstallMode) -> Result<(), InstallError> {
+        self.product_asset_intent = match mode {
+            crate::LinuxInstallMode::InstallOrUpgrade => LinuxProductAssetIntent::InstallOrUpgrade,
+            crate::LinuxInstallMode::Repair => LinuxProductAssetIntent::Repair,
+        };
+        self.assets.set_intent(self.product_asset_intent);
+        Ok(())
+    }
+
+    fn end_recovery_mode(&mut self) -> Result<(), InstallError> {
+        self.product_asset_intent = self.requested_product_asset_intent;
+        self.assets.set_intent(self.product_asset_intent);
+        self.service_lifecycle.resume_repair = false;
+        Ok(())
+    }
+
+    fn preflight_recovery(
+        &mut self,
+        mode: crate::LinuxInstallMode,
+        system: System,
+    ) -> Result<(), InstallError> {
+        let expected_intent = match mode {
+            crate::LinuxInstallMode::InstallOrUpgrade => LinuxProductAssetIntent::InstallOrUpgrade,
+            crate::LinuxInstallMode::Repair => LinuxProductAssetIntent::Repair,
+        };
+        if system != self.system
+            || self.product_asset_intent != expected_intent
+            || !self.assets.authenticated_inputs_bound(system)
+        {
+            return Err(InstallError::backend_failure());
+        }
+        self.preflight_privilege()?;
+        if mode == crate::LinuxInstallMode::Repair {
+            self.assets.preflight_repair()?;
+        }
+        Ok(())
+    }
+
     fn bind_authenticated_installer_payloads(
         &mut self,
         payloads: &AuthenticatedInstallerPayloads,
@@ -248,6 +304,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         let state = Self::production_handoff_state()?;
         if self.product_asset_intent == LinuxProductAssetIntent::Repair {
             validate_product_repair_handoff_preflight(state)?;
+            self.assets.preflight_repair()?;
             self.existing_managed_install = true;
             return Ok(());
         }
@@ -291,22 +348,29 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         Ok(())
     }
 
-    fn recover_services(&mut self) -> Result<(), InstallError> {
-        self.services
-            .deactivate_for_uninstall()
-            .map_err(|_| InstallError::backend_failure())
+    fn recover_repair_assets(&mut self) -> Result<(), InstallError> {
+        self.assets.recover_repair_assets()
     }
 
     fn prepare_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
+        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+            self.service_lifecycle.resume_repair = prior_active;
+        }
         self.services
-            .prepare_recovery(prior_active)
+            .prepare_recovery()
             .map_err(|_| InstallError::backend_failure())
     }
 
     fn finish_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
-        self.services
+        let result = self
+            .services
             .finish_recovery(prior_active)
-            .map_err(|_| InstallError::backend_failure())
+            .map_err(|_| InstallError::backend_failure());
+        if result.is_ok() {
+            self.service_lifecycle.expected_active = prior_active;
+            self.service_lifecycle.resume_repair = false;
+        }
+        result
     }
 
     fn classify_managed_runtime(&mut self) -> Result<LinuxAssetPresence, InstallError> {
@@ -331,8 +395,11 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn services_need_mutation(&self, prior_active: bool) -> bool {
-        (!self.existing_managed_install && !prior_active)
-            || (self.product_files_changed && prior_active)
+        if prior_active {
+            self.product_files_changed
+        } else {
+            !self.existing_managed_install || self.service_lifecycle.resume_repair
+        }
     }
 
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
@@ -363,15 +430,21 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn activate_services(&mut self) -> Result<bool, InstallError> {
-        self.prior_services_active = self
+        let prior_active = self
             .services
             .classify_activation()
             .map_err(|_| InstallError::backend_failure())?;
+        let activation = if !self.existing_managed_install || self.service_lifecycle.resume_repair {
+            ServiceActivation::Start
+        } else if self.product_files_changed && prior_active {
+            ServiceActivation::Restart
+        } else {
+            ServiceActivation::Preserve
+        };
+        self.service_lifecycle.expected_active =
+            prior_active || activation == ServiceActivation::Start;
         self.services
-            .activate(
-                !self.existing_managed_install,
-                self.product_files_changed && self.prior_services_active,
-            )
+            .activate(activation)
             .map_err(|_| InstallError::backend_failure())
     }
 
@@ -382,13 +455,16 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn finish_services_rollback(&mut self) -> Result<(), InstallError> {
+        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+            return Err(InstallError::rollback_incomplete());
+        }
         self.services
             .finish_rollback()
             .map_err(|_| InstallError::backend_failure())
     }
 
     fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
-        if self.existing_managed_install && !self.prior_services_active {
+        if self.existing_managed_install && !self.service_lifecycle.expected_active {
             return match self.services.classify_activation() {
                 Ok(false) => Ok(()),
                 Ok(true) | Err(_) => Err(InstallError::backend_failure()),

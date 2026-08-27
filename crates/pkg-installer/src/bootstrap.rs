@@ -20,7 +20,7 @@ use crate::{
     determinate::{DeterminateInstaller, DeterminateProcessOutcome, DeterminateTerminal},
     determinate_handoff::{DeterminateHandoff, DeterminateHandoffState},
     execute_uninstall, install_macos,
-    installer::{install_linux_preflighted, recover_linux_install},
+    installer::recover_linux_install,
     linux_uninstall::verify_linux_install_absent,
     macos_uninstall::verify_macos_install_absent,
     service::production_release_inputs,
@@ -143,8 +143,21 @@ pub fn install_linux_from_bundle<'a>(
     let storage =
         LinuxInstallJournalStorage::prepare(system, release_digest, recovery_context_digest)
             .map_err(|_| InstallError::backend_failure())?;
-    let journal = LinuxInstallJournal::new(system, release_digest, recovery_context_digest)
-        .map_err(|_| InstallError::backend_failure())?;
+    let journal = match backend.install_mode() {
+        crate::LinuxInstallMode::InstallOrUpgrade => {
+            LinuxInstallJournal::new(system, release_digest, recovery_context_digest)
+        }
+        crate::LinuxInstallMode::Repair => {
+            let prior_active = backend.classify_services()? == LinuxAssetPresence::ExactPresent;
+            LinuxInstallJournal::new_repair(
+                system,
+                release_digest,
+                recovery_context_digest,
+                prior_active,
+            )
+        }
+    }
+    .map_err(|_| InstallError::backend_failure())?;
     storage
         .create(&journal)
         .map_err(|_| InstallError::backend_failure())?;
@@ -1068,6 +1081,13 @@ impl LinuxJournalTransaction<'_> {
         self.persist()
     }
 
+    fn record_preexisting(&mut self, mutation: LinuxInstallMutation) -> Result<(), InstallError> {
+        self.journal
+            .record_preexisting(mutation)
+            .map_err(|_| InstallError::backend_failure())?;
+        self.persist()
+    }
+
     fn commit(&mut self) -> Result<(), InstallError> {
         self.journal
             .commit()
@@ -1083,6 +1103,18 @@ impl LinuxJournalTransaction<'_> {
 }
 
 impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P> {
+    fn install_mode(&self) -> crate::LinuxInstallMode {
+        self.inner.install_mode()
+    }
+
+    fn begin_recovery_mode(&mut self, mode: crate::LinuxInstallMode) -> Result<(), InstallError> {
+        self.inner.begin_recovery_mode(mode)
+    }
+
+    fn end_recovery_mode(&mut self) -> Result<(), InstallError> {
+        self.inner.end_recovery_mode()
+    }
+
     fn bind_authenticated_nix_config(
         &mut self,
         config: &AuthenticatedManagedNixConfig,
@@ -1123,8 +1155,8 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
     fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
         self.inner.recover_asset(asset)
     }
-    fn recover_services(&mut self) -> Result<(), InstallError> {
-        self.inner.recover_services()
+    fn recover_repair_assets(&mut self) -> Result<(), InstallError> {
+        self.inner.recover_repair_assets()
     }
     fn prepare_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
         self.inner.prepare_service_recovery(prior_active)
@@ -1222,8 +1254,8 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 .complete_created()
                 .map_err(|_| InstallError::backend_failure())?;
             transaction.persist()?;
-        } else {
-            complete_linux_mutation(&mut self.journal, mutation, presence, false)?;
+        } else if let Some(transaction) = self.journal.as_mut() {
+            transaction.record_preexisting(mutation)?;
         }
         Ok(changed)
     }
@@ -1329,6 +1361,9 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
             }
         }
     }
+    fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
+        self.inner.finalize_ownership_receipt()
+    }
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
         self.inner.rollback_asset(asset)
     }
@@ -1404,8 +1439,26 @@ fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>(
     backend: &'a mut dyn LinuxInstallBackend,
     provisioner: &'a mut P,
     storage: &dyn LinuxJournalPersistence,
-    journal: LinuxInstallJournal,
+    mut journal: LinuxInstallJournal,
 ) -> Result<(LinuxInstallReport, BootstrapOutcome<'a>), InstallError> {
+    if !matches!(system, System::X8664Linux | System::Aarch64Linux) {
+        return Err(InstallError::backend_failure());
+    }
+    let mode = journal.mode();
+    if mode == crate::LinuxInstallMode::Repair {
+        let prior_active = journal
+            .service_prior_active()
+            .ok_or_else(InstallError::rollback_incomplete)?;
+        backend
+            .prepare_service_recovery(prior_active)
+            .map_err(|_| InstallError::rollback_incomplete())?;
+        journal
+            .prepare_service_recovery()
+            .map_err(|_| InstallError::rollback_incomplete())?;
+        storage
+            .replace(&journal)
+            .map_err(|_| InstallError::rollback_incomplete())?;
+    }
     let mut adapter = LinuxBundleBackend {
         inner: backend,
         request,
@@ -1414,7 +1467,13 @@ fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>(
         outcome: None,
         journal: Some(LinuxJournalTransaction { storage, journal }),
     };
-    let report = install_linux_preflighted(system, &mut adapter)?;
+    let report = match crate::installer::install_linux_journaled_preflighted(&mut adapter) {
+        Ok(report) => report,
+        Err(_) if mode == crate::LinuxInstallMode::Repair => {
+            return Err(InstallError::rollback_incomplete());
+        }
+        Err(error) => return Err(error),
+    };
     adapter
         .journal
         .as_mut()
@@ -2456,12 +2515,22 @@ mod tests {
         Finalize,
     }
 
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    enum TestServiceState {
+        #[default]
+        Stable,
+        MutationNeeded,
+        Quiesced,
+        QuiescedForMutation,
+    }
+
     #[derive(Default)]
     struct LinuxBackend {
         raw_provision_calls: usize,
         create: bool,
         replace_files: bool,
-        service_mutation: bool,
+        mode: Option<crate::LinuxInstallMode>,
+        service_state: TestServiceState,
         failure: LinuxBackendFailure,
         preflight_handoff: Option<DeterminateHandoffState>,
         mutation_calls: usize,
@@ -2472,6 +2541,22 @@ mod tests {
     }
 
     impl LinuxInstallBackend for LinuxBackend {
+        fn install_mode(&self) -> crate::LinuxInstallMode {
+            self.mode
+                .unwrap_or(crate::LinuxInstallMode::InstallOrUpgrade)
+        }
+
+        fn begin_recovery_mode(
+            &mut self,
+            _mode: crate::LinuxInstallMode,
+        ) -> Result<(), InstallError> {
+            Ok(())
+        }
+
+        fn end_recovery_mode(&mut self) -> Result<(), InstallError> {
+            Ok(())
+        }
+
         fn bind_authenticated_nix_config(
             &mut self,
             _config: &AuthenticatedManagedNixConfig,
@@ -2488,6 +2573,9 @@ mod tests {
         }
 
         fn preflight_privilege(&mut self) -> Result<(), InstallError> {
+            Ok(())
+        }
+        fn recover_repair_assets(&mut self) -> Result<(), InstallError> {
             Ok(())
         }
         fn preflight_clean_host(&mut self, _system: System) -> Result<(), InstallError> {
@@ -2509,6 +2597,16 @@ mod tests {
                 },
             )
         }
+        fn classify_ownership_receipt(
+            &mut self,
+            asset: LinuxInstallAsset,
+        ) -> Result<crate::LinuxAssetPresence, InstallError> {
+            if self.mode == Some(crate::LinuxInstallMode::Repair) {
+                Ok(crate::LinuxAssetPresence::ExactPresent)
+            } else {
+                self.classify_asset(asset)
+            }
+        }
         fn classify_managed_runtime(&mut self) -> Result<crate::LinuxAssetPresence, InstallError> {
             Ok(if self.create {
                 crate::LinuxAssetPresence::Absent
@@ -2517,17 +2615,44 @@ mod tests {
             })
         }
         fn classify_services(&mut self) -> Result<crate::LinuxAssetPresence, InstallError> {
-            Ok(if self.create {
-                crate::LinuxAssetPresence::Absent
+            Ok(
+                if self.create
+                    || matches!(
+                        self.service_state,
+                        TestServiceState::Quiesced | TestServiceState::QuiescedForMutation
+                    )
+                {
+                    crate::LinuxAssetPresence::Absent
+                } else {
+                    crate::LinuxAssetPresence::ExactPresent
+                },
+            )
+        }
+        fn prepare_service_recovery(&mut self, _prior_active: bool) -> Result<(), InstallError> {
+            self.events.push("quiesce-services");
+            self.service_state = if self.service_state == TestServiceState::MutationNeeded {
+                TestServiceState::QuiescedForMutation
             } else {
-                crate::LinuxAssetPresence::ExactPresent
-            })
+                TestServiceState::Quiesced
+            };
+            Ok(())
+        }
+        fn finish_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError> {
+            if prior_active {
+                self.events.push("resume-services");
+            }
+            Ok(())
         }
         fn services_need_mutation(&self, _prior_active: bool) -> bool {
-            self.create || self.service_mutation
+            self.create
+                || matches!(
+                    self.service_state,
+                    TestServiceState::MutationNeeded | TestServiceState::QuiescedForMutation
+                )
         }
         fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
+            self.events.push("ensure-asset");
             if self.failure == LinuxBackendFailure::Asset {
                 Err(InstallError::backend_failure())
             } else {
@@ -2556,7 +2681,13 @@ mod tests {
         fn activate_services(&mut self) -> Result<bool, InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
             self.events.push("activate-services");
-            Ok(self.create || self.service_mutation)
+            let changed = self.create
+                || matches!(
+                    self.service_state,
+                    TestServiceState::MutationNeeded | TestServiceState::QuiescedForMutation
+                );
+            self.service_state = TestServiceState::Stable;
+            Ok(changed)
         }
         fn rollback_services(&mut self) -> Result<(), InstallError> {
             self.mutation_calls = self.mutation_calls.saturating_add(1);
@@ -2582,7 +2713,8 @@ mod tests {
             if self.failure == LinuxBackendFailure::Receipt {
                 Err(InstallError::backend_failure())
             } else {
-                Ok(self.create || self.replace_files)
+                Ok(self.mode != Some(crate::LinuxInstallMode::Repair)
+                    && (self.create || self.replace_files))
             }
         }
         fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
@@ -3111,7 +3243,7 @@ mod tests {
         };
         let mut backend = LinuxBackend {
             replace_files: true,
-            service_mutation: true,
+            service_state: TestServiceState::MutationNeeded,
             preflight_handoff: Some(DeterminateHandoffState::Accepted),
             ..LinuxBackend::default()
         };
@@ -3166,6 +3298,128 @@ mod tests {
     }
 
     #[test]
+    fn journaled_repair_quiesces_before_first_file_mutation_and_reuses_runtime()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // This is the closest injectable seam below `install_linux_from_bundle`.
+        // The public entry owns real signed TUF loading and fixed root-only `/run`
+        // journal storage, so the native clean-host proof covers that final boundary.
+        let persistence = MemoryJournalPersistence::default();
+        let journal = LinuxInstallJournal::new_repair(
+            System::X8664Linux,
+            Digest::from_bytes([0xd3; 32]),
+            Digest::from_bytes([0xd4; 32]),
+            true,
+        )?;
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let mut backend = LinuxBackend {
+            replace_files: true,
+            mode: Some(crate::LinuxInstallMode::Repair),
+            service_state: TestServiceState::MutationNeeded,
+            preflight_handoff: Some(DeterminateHandoffState::Accepted),
+            ..LinuxBackend::default()
+        };
+        let mut provisioner = ReauthProvisioner {
+            calls: 0,
+            reauthenticated: false,
+            reuse_existing: true,
+        };
+
+        install_linux_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            &persistence,
+            journal,
+        )?;
+
+        assert_eq!(provisioner.calls, 0);
+        assert_eq!(backend.raw_provision_calls, 0);
+        let quiesce = backend
+            .events
+            .iter()
+            .position(|event| *event == "quiesce-services")
+            .ok_or_else(|| std::io::Error::other("missing repair quiescence"))?;
+        let first_write = backend
+            .events
+            .iter()
+            .position(|event| *event == "ensure-asset")
+            .ok_or_else(|| std::io::Error::other("missing product write"))?;
+        assert!(quiesce < first_write);
+        assert!(
+            persistence
+                .snapshots
+                .borrow()
+                .first()
+                .is_some_and(LinuxInstallJournal::service_recovery_prepared)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn journaled_repair_preserves_an_inactive_service_set() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let persistence = MemoryJournalPersistence::default();
+        let journal = LinuxInstallJournal::new_repair(
+            System::X8664Linux,
+            Digest::from_bytes([0xd5; 32]),
+            Digest::from_bytes([0xd6; 32]),
+            false,
+        )?;
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let mut backend = LinuxBackend {
+            replace_files: true,
+            mode: Some(crate::LinuxInstallMode::Repair),
+            preflight_handoff: Some(DeterminateHandoffState::Accepted),
+            ..LinuxBackend::default()
+        };
+        let mut provisioner = ReauthProvisioner {
+            calls: 0,
+            reauthenticated: false,
+            reuse_existing: true,
+        };
+
+        install_linux_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            &persistence,
+            journal,
+        )?;
+
+        let committed = persistence
+            .snapshots
+            .borrow()
+            .last()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("missing committed repair journal"))?;
+        assert_eq!(
+            committed.mutation_state(&LinuxInstallMutation::Services)?,
+            Some(crate::LinuxInstallMutationState::PreExisting)
+        );
+        assert!(!backend.events.contains(&"resume-services"));
+        assert_eq!(provisioner.calls, 0);
+        Ok(())
+    }
+
+    #[test]
     fn failed_existing_product_update_quiesces_then_restores_files_and_prior_services()
     -> Result<(), Box<dyn std::error::Error>> {
         let persistence = MemoryJournalPersistence::default();
@@ -3184,7 +3438,7 @@ mod tests {
         };
         let mut backend = LinuxBackend {
             replace_files: true,
-            service_mutation: true,
+            service_state: TestServiceState::MutationNeeded,
             failure: LinuxBackendFailure::Health,
             preflight_handoff: Some(DeterminateHandoffState::Accepted),
             ..LinuxBackend::default()
