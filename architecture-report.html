@@ -267,6 +267,25 @@
     .long-callout.caution { border-left-color: var(--caution); background: var(--caution-soft); }
     .long-callout p:last-child { margin-bottom: 0; }
 
+    .historical-snapshot {
+      margin-top: 42px;
+      padding: clamp(18px, 4vw, 34px);
+      border: 3px dashed #a86545;
+      border-radius: var(--radius);
+      background: #fbf3ed;
+    }
+    .historical-snapshot > :last-child { margin-bottom: 0; }
+    .historical-banner {
+      margin: 0 0 28px;
+      padding: 18px 20px;
+      border-left: 6px solid #a86545;
+      border-radius: 10px;
+      color: #552b1c;
+      background: #f5dfd2;
+    }
+    .historical-banner strong { display: block; font-size: 1.12rem; }
+    .historical-banner p { margin: 6px 0 0; max-width: 88ch; }
+
     .table-wrap { max-width: 100%; overflow-x: auto; margin: 18px 0 24px; border: 1px solid var(--line); border-radius: 12px; }
     .decision-table { width: 100%; min-width: 720px; border-collapse: collapse; background: var(--surface); }
     .decision-table th, .decision-table td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -391,6 +410,11 @@
   </header>
 
   <main class="wrap">
+    <div class="historical-snapshot" aria-labelledby="historical-report-title">
+      <div class="historical-banner">
+        <strong id="historical-report-title">Historical snapshot: 24 August 2026</strong>
+        <p>This framed content is retained for design history. Its 25-PR roadmap, DN-05–14 work order, delivery NO-GO labels, and present-tense Next cards are superseded. The current plan has four delivery PRs. Use the Approved DN-15 architecture section after this frame for current instructions.</p>
+      </div>
     <section class="summary-grid" aria-label="Key results">
       <article class="card metric">
         <span class="number">162</span>
@@ -1280,12 +1304,13 @@
         </ul>
       </div>
     </section>
+    </div>
 
     <section class="longform" aria-labelledby="linux-modes-title">
       <header>
         <span class="evidence-label accepted">Approved DN-15 architecture</span>
         <h2 id="linux-modes-title">The Linux installer now has three simple modes</h2>
-        <p class="chapter-lede">This section is the current design. Earlier sections remain below as the history that led to it. The code and local tests exist. The final native x86-64 proof does not exist yet.</p>
+        <p class="chapter-lede">This section is the current design. Earlier sections remain above as the history that led to it. The code and local tests exist. The final native x86-64 proof does not exist yet.</p>
       </header>
 
       <section aria-labelledby="linux-result-title">
@@ -1482,13 +1507,18 @@
       </section>
     </section>
 
+    <div class="historical-snapshot" aria-label="Historical snapshot continued">
+      <div class="historical-banner">
+        <strong>Historical snapshot continued</strong>
+        <p>The old work order below is not a current instruction. It is retained to show the earlier design path. The current four-PR plan and Approved DN-15 architecture supersede it.</p>
+      </div>
     <section aria-labelledby="next-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow" style="color: var(--next)">Next</p>
-          <h2 id="next-title">Work in this order</h2>
+          <p class="eyebrow" style="color: var(--caution)">Historical roadmap · superseded</p>
+          <h2 id="next-title">Old work order</h2>
         </div>
-        <p>The roadmap has 25 delivery PRs and 33 stable DN requirement labels. Grouped labels are checkpoints inside one PR. They are not separate PRs.</p>
+        <p>This old roadmap had 25 delivery PRs and 33 stable DN requirement labels. The current plan has four delivery PRs. Do not use this old work order.</p>
       </div>
       <div class="work-group">
         <h3>Now: one DN-05–07 delivery PR</h3>
@@ -1550,6 +1580,7 @@
         <p><small>The review evidence is in the active Herdr and TraceDecay transcripts. It is not repo source evidence.</small></p>
       </div>
     </section>
+    </div>
   </main>
 
   <footer>
