@@ -21,6 +21,7 @@ if [ -n "$(git -C "$repo" status --porcelain --untracked-files=all)" ]; then
     echo "Linux clean-host proof requires an exact clean commit." >&2
     exit 1
 fi
+python3 "$repo/tests/linux-clean-host/test_vendor_trace.py" >/dev/null
 stage_root=$(mktemp -d "${TMPDIR:-/tmp}/pkg-linux-alpha.XXXXXXXX")
 raw_stage="$stage_root/raw"
 artifact_context="$stage_root/artifact"
@@ -39,8 +40,156 @@ fi
 
 image=pkg-linux-clean-host:local
 container="pkg-linux-clean-host-$$"
+diagnostic_container="${container}-vendor-trace"
 stop_container() {
     docker rm --force "$container" >/dev/null 2>&1 || true
+    docker rm --force "$diagnostic_container" >/dev/null 2>&1 || true
+}
+handoff_is_started() {
+    [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null)" = true ] \
+        || return 1
+    docker exec -i "$container" python3 - <<'PY'
+import os
+import stat
+from pathlib import Path
+
+try:
+    descriptor = os.open(
+        "/var/lib/pkg-install/determinate-handoff-v1.json",
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+    )
+except OSError:
+    raise SystemExit(1)
+try:
+    metadata = os.fstat(descriptor)
+    chunks = []
+    remaining = 47
+    while remaining:
+        chunk = os.read(descriptor, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    valid = (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == 0
+        and metadata.st_gid == 0
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and metadata.st_nlink == 1
+        and metadata.st_size == 47
+        and not remaining
+        and b"".join(chunks) == b'{"schema_version":1,"state":{"kind":"started"}}'
+        and os.read(descriptor, 1) == b""
+        and not Path("/nix").exists()
+        and not Path("/nix").is_symlink()
+    )
+finally:
+    os.close(descriptor)
+raise SystemExit(not valid)
+PY
+}
+copy_replay_file() {
+    source=$1
+    target=$2
+    limit=$3
+    umask 077
+    docker exec "$diagnostic_container" python3 \
+        /usr/local/libexec/pkg_bounded_capture.py copy "$source" "$limit" \
+        > "$target" 2>/dev/null || : > "$target"
+    chmod 0600 "$target"
+    test "$(wc -c < "$target")" -le "$limit"
+}
+capture_vendor_replay() {
+    failure=$1
+    handoff_is_started || return 0
+    replay=$failure/vendor-trace-replay
+    umask 077
+    mkdir -m 0700 "$replay" || return 0
+    docker rm --force "$diagnostic_container" >/dev/null 2>&1 || true
+    docker run \
+        --detach \
+        --privileged \
+        --platform "$docker_platform" \
+        --cgroupns=private \
+        --name "$diagnostic_container" \
+        --tmpfs /run \
+        --tmpfs /run/lock \
+        "$image" >/dev/null 2>&1 || return 0
+    if ! wait_container_ready "$diagnostic_container" >/dev/null 2>&1; then
+        printf 'setup=container-not-ready\n' > "$replay/setup-status.txt"
+        docker rm --force "$diagnostic_container" >/dev/null 2>&1 || true
+        return 0
+    fi
+    if ! docker exec "$diagnostic_container" sh -eu -c '
+        groupadd --gid 30033 --system pkg-nix-broker
+        useradd --uid 30033 --gid 30033 --system --no-create-home \
+            --home-dir /var/lib/pkg/broker-home --shell /usr/sbin/nologin pkg-nix-broker
+        install -d -m 0700 -o 30033 -g 30033 /var/lib/pkg/broker-home
+        install -d -m 0700 -o root -g root /var/lib/pkg-install/tmp
+        test "$(getent group pkg-nix-broker)" = "pkg-nix-broker:x:30033:"
+        test "$(getent passwd pkg-nix-broker | cut -d: -f3-4,6-7)" = \
+            "30033:30033:/var/lib/pkg/broker-home:/usr/sbin/nologin"
+        test "$(stat -c %u:%g:%a /var/lib/pkg/broker-home)" = 30033:30033:700
+        test "$(stat -c %u:%g:%a /var/lib/pkg-install/tmp)" = 0:0:700
+        vendor=/srv/pkg-release/targets/9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c.determinate/3.22.1/nix-installer-x86_64-linux
+        resolved=$(readlink -f "$vendor")
+        test "$resolved" = /srv/pkg-releases/1/targets/9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c.determinate/3.22.1/nix-installer-x86_64-linux
+        test ! -L "$vendor"
+        test -f "$resolved"
+        test ! -L "$resolved"
+        test "$(stat -c %u:%g:%a:%s "$resolved")" = 0:0:644:74918096
+        printf "%s  %s\n" 9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c "$resolved" \
+            | sha256sum --check --strict --status
+        install -m 0700 -o root -g root "$resolved" /var/lib/pkg-install/tmp/nix-installer
+        staged=/var/lib/pkg-install/tmp/nix-installer
+        test "$(stat -c %u:%g:%a:%s "$staged")" = 0:0:700:74918096
+        printf "%s  %s\n" 9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c "$staged" \
+            | sha256sum --check --strict --status
+        install -d -m 0700 -o root -g root /run/pkg-vendor-trace
+        printf "%s\n" "$resolved" > /run/pkg-vendor-trace/vendor-path.txt
+        chmod 0600 /run/pkg-vendor-trace/vendor-path.txt
+        printf "setup=passed\n" > /run/pkg-vendor-trace/setup-status.txt
+        chmod 0600 /run/pkg-vendor-trace/setup-status.txt
+    ' >/dev/null 2>&1; then
+        printf 'setup=failed\n' > "$replay/setup-status.txt"
+        docker rm --force "$diagnostic_container" >/dev/null 2>&1 || true
+        return 0
+    fi
+    docker exec "$diagnostic_container" python3 \
+        /usr/local/libexec/pkg_bounded_capture.py 1048576 \
+        /run/pkg-vendor-trace/trace-status.txt \
+        /run/pkg-vendor-trace/trace.stdout \
+        /run/pkg-vendor-trace/trace.stderr -- \
+        timeout --signal=TERM --kill-after=10s 1200s \
+        env -i \
+        HOME=/root \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        TMPDIR=/var/lib/pkg-install/tmp \
+        DETSYS_IDS_TELEMETRY=disabled \
+        /var/lib/pkg-install/tmp/nix-installer \
+        --diagnostic-endpoint http://127.0.0.1:18080 \
+        --logger pretty --log-directive nix_installer=trace -vv \
+        install --determinate --no-confirm --no-modify-profile \
+        >/dev/null 2>&1 || true
+    docker exec "$diagnostic_container" python3 \
+        /usr/local/libexec/pkg_bounded_capture.py 262144 \
+        /run/pkg-vendor-trace/system-status.txt \
+        /run/pkg-vendor-trace/system.stdout \
+        /run/pkg-vendor-trace/system.stderr -- \
+        timeout --signal=TERM --kill-after=5s 30s \
+        sh -c 'systemctl --failed --no-pager; systemctl list-units --all --no-pager "nix-*" "determinate-*"; journalctl --no-pager -n 2000' \
+        >/dev/null 2>&1 || true
+    for name in setup-status.txt vendor-path.txt trace-status.txt system-status.txt; do
+        copy_replay_file "/run/pkg-vendor-trace/$name" "$replay/$name" 4096 || true
+    done
+    copy_replay_file /run/pkg-vendor-trace/trace.stdout "$replay/trace.stdout" 1048576 || true
+    remaining=$((1048576 - $(wc -c < "$replay/trace.stdout")))
+    copy_replay_file /run/pkg-vendor-trace/trace.stderr "$replay/trace.stderr" "$remaining" || true
+    copy_replay_file /run/pkg-vendor-trace/system.stdout "$replay/system.stdout" 262144 || true
+    remaining=$((262144 - $(wc -c < "$replay/system.stdout")))
+    copy_replay_file /run/pkg-vendor-trace/system.stderr "$replay/system.stderr" "$remaining" || true
+    docker rm --force "$diagnostic_container" >/dev/null 2>&1 || true
+    return 0
 }
 capture_failure() {
     [ -n "$artifact_output" ] || return 0
@@ -73,14 +222,32 @@ capture_failure() {
             getent passwd || true
             getent group || true
         ' > "$failure/residue.txt" 2>&1 || true
+        umask 077
+        docker exec "$container" python3 \
+            /usr/local/libexec/pkg_bounded_capture.py copy \
+            /var/lib/pkg-install/determinate-handoff-v1.json 4096 \
+            > "$failure/handoff.json" 2>/dev/null || : > "$failure/handoff.json"
+        chmod 0600 "$failure/handoff.json"
     fi
+    capture_vendor_replay "$failure" || true
+}
+cleanup_after_signal() {
+    signal_status=$1
+    trap '' INT TERM
+    set +e
+    stop_container
+    rm -rf "$stage_root"
+    exit "$signal_status"
 }
 cleanup() {
     status=$1
+    trap 'cleanup_after_signal 130' INT
+    trap 'cleanup_after_signal 143' TERM
     set +e
-    if [ "$status" -ne 0 ]; then
-        capture_failure "$status"
-    fi
+    case "$status" in
+        0|130|143) ;;
+        *) capture_failure "$status" ;;
+    esac
     stop_container
     rm -rf "$stage_root"
 }
@@ -137,6 +304,7 @@ fi
 cp -a "$raw_stage/publication-1" "$raw_stage/publication-2" "$artifact_context/"
 cp -a "$raw_stage/test-binaries" "$artifact_context/"
 cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
+    "$repo/tests/linux-clean-host/pkg_bounded_capture.py" \
     "$repo/tests/linux-clean-host/pkg-proof-release.service" \
     "$artifact_context/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-1/"
@@ -219,10 +387,11 @@ docker build \
     "$artifact_context"
 
 wait_container_ready() {
+    target_container=${1:-$container}
     ready=0
     attempt=0
     while [ "$attempt" -lt 60 ]; do
-        if docker exec "$container" curl --fail --silent https://127.0.0.1:8443/root.json >/dev/null; then
+        if docker exec "$target_container" curl --fail --silent https://127.0.0.1:8443/root.json >/dev/null; then
             ready=1
             break
         fi
@@ -230,8 +399,8 @@ wait_container_ready() {
         sleep 1
     done
     if [ "$ready" -ne 1 ]; then
-        docker logs "$container"
-        exit 1
+        docker logs "$target_container" || true
+        return 1
     fi
 }
 

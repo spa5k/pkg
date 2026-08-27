@@ -36,6 +36,7 @@ COPY publication-1 /srv/pkg-releases/1
 COPY publication-2 /srv/pkg-releases/2
 COPY install.sh /usr/local/sbin/pkg-bootstrap
 COPY pkg-proof-server.py /usr/local/libexec/pkg-proof-server.py
+COPY pkg_bounded_capture.py /usr/local/libexec/
 COPY pkg-proof-release.service /etc/systemd/system/pkg-proof-release.service
 COPY test-binaries/pkg-installer-lib-tests /usr/local/libexec/pkg-installer-lib-tests
 RUN ln -s /srv/pkg-releases/1 /srv/pkg-release \
