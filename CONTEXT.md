@@ -78,6 +78,14 @@ _Avoid_: Failure, interrupted install, recoverable install
 The user-initiated, verified restore of damaged store content. It is not atomic.
 _Avoid_: Repair, Base Nix repair, self-heal, auto-repair
 
+**Product Asset**:
+A release-authenticated file that belongs to the installed product rather than to Base Nix or a user package.
+_Avoid_: Package asset, Nix asset
+
+**Product Asset Repair**:
+The user-initiated replacement of damaged Product Assets with authenticated bytes from the same product release.
+_Avoid_: Package Repair, Base Nix repair, product reinstall
+
 ## Lifecycle Ownership
 
 **Base Nix**:

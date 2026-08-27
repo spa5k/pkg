@@ -54,6 +54,13 @@ The accepted product boundary is:
 - `pkg` does not supervise, cancel, resume, retry, or reconstruct the vendor uninstall phase.
 - `pkg` does not implement a second Base Nix lifecycle engine or exact cleanup for vendor-owned residue.
 - `pkg` owns package selection, package builds, package state, generations, activation, package roots, package garbage collection, package repair, and the product user experience.
+- Linux product installation has three modes. Fresh Install alone activates the fixed product service set.
+- An ordinary N-to-N+1 product upgrade is an Offline Upgrade. A same-release Product Asset Repair is an Offline Repair.
+- Offline Upgrade and Offline Repair require all fixed product units to be inactive and disabled, to use the exact product unit fragments, and to have no drop-ins.
+- Both offline modes only query systemd state. They change product files only. They never stop, disable, reload, start, or restart a unit. They leave product services offline.
+- Product Asset Repair moves forward to authenticated same-release bytes. It does not restore unknown damaged bytes.
+- The operator activates or reboots into the authenticated result after an offline operation.
+- The active-upgrade service-state recovery design is deleted. No replacement protocol is needed because existing-install work stays offline.
 - `pkg` can keep its Broker and Root Helper for package work.
 - The plan does not assume that Determinate replaces the Broker or Root Helper.
 - The plan does not assume that Determinate replaces package roots, package garbage collection, or package repair.
@@ -416,20 +423,40 @@ Current work-area result:
 
 ### DN-15 delivery label — Cut over Linux Base Nix install and uninstall
 
-- **Status:** active. Linux code is present. Native x86-64 lifecycle proof and independent evidence review remain.
+- **Status:** active. Linux code and local tests are present. Native x86-64 lifecycle proof and independent evidence review remain.
 - **Branch:** `dn/15-linux-lifecycle-cutover`.
 - **Delivery PR:** PR 3, based on PR 2.
 - **Goal:** activate and prove clean-host Linux Base Nix install and uninstall through Determinate.
 - **Why later:** start after PR 2 lands its inactive foundation and evidence. Old private-alpha migration is outside this clean-host cutover.
 - **Likely files and symbols:** Linux bootstrap, inactive lifecycle routes, Base Nix Handoff, product asset install, Doctor, release asset selection, and Linux user documents.
-- **Interface and invariants:** no runtime fallback. Product assets remain owned by `pkg`. Determinate owns any supported native Base Nix repair and update behavior. `pkg` exposes no Base Nix repair or update action on any alpha platform. A post-alpha product route needs separate approval. Package Repair remains product-owned. Install authenticates pinned Determinate Nix Installer 3.22.1 and starts it once. One supervisor waits and reaps. After start, there is no product cancellation, signal, hard timeout, or parent-death guarantee. A persisted `Started` Base Nix Handoff is an Unknown Base Nix Outcome and cannot retry. Only exit status `0` plus installed-state validation can become `Accepted`. Live uninstall uses the terminal boundary from DN-13 and requires plain output. Vendor-owned residue is accepted for alpha. Unsupported hosts fail before mutation. Linux user documents describe the new behavior in this PR.
-- **Implementation steps:** enable Base Nix install and terminal vendor uninstall for clean Linux hosts. Authenticate the vendor executable. Persist `Started`, start it once, drain bounded output, and keep one supervisor until wait and reap complete. Keep `Started` for any uncertain result. Write `Accepted` only after exit status `0` and installed-state validation. For live uninstall, reject structured JSON or JSONL, finish and verify every product action, hold the stable lock, revalidate exact `/nix/nix-installer` and opaque `/nix/receipt.json`, consume Accepted Base Nix Handoff immediately before `exec`, then start terminal vendor uninstall as the last action. Restore Accepted state on synchronous `exec` return. Refuse the unmarked crash window. Run package and product-service smoke tests. Update Linux install and uninstall documents. Keep the old implementation present but unreachable for deletion proof. Add no Base Nix repair or update product action.
+- **Interface and invariants:** no runtime fallback. Product assets remain owned by `pkg`. Determinate owns any supported native Base Nix repair and update behavior. `pkg` exposes no Base Nix repair or update action on any alpha platform. A post-alpha product route needs separate approval. Package Repair remains product-owned. Fresh Install alone activates product services. Ordinary N-to-N+1 product upgrade and same-release Product Asset Repair are offline, systemd-query-only, and product-file-only. They require the fixed product units to be inactive and disabled, with exact fragments and no drop-ins. They leave product services offline for operator activation or reboot. Product Asset Repair rolls forward to authenticated same-release bytes. Install authenticates pinned Determinate Nix Installer 3.22.1 and starts it once. One supervisor waits and reaps. After start, there is no product cancellation, signal, hard timeout, or parent-death guarantee. A persisted `Started` Base Nix Handoff is an Unknown Base Nix Outcome and cannot retry. Only exit status `0` plus installed-state validation can become `Accepted`. Live uninstall uses the terminal boundary from DN-13 and requires plain output. Vendor-owned residue is accepted for alpha. Unsupported hosts fail before mutation. Linux user documents describe the new behavior in this PR.
+- **Implementation steps:** enable Base Nix install and terminal vendor uninstall for clean Linux hosts. Authenticate the vendor executable. Persist `Started`, start it once, drain bounded output, and keep one supervisor until wait and reap complete. Keep `Started` for any uncertain result. Write `Accepted` only after exit status `0` and installed-state validation. Keep Fresh Install recovery after Accepted Handoff so the same installer can finish product files without a second vendor start. For existing installs, classify the operation as Offline Upgrade or explicit Offline Repair. Query all fixed systemd states and definitions before mutation and again during recovery. Mutate only authenticated product files. Publish the product receipt last. Delete active-upgrade service recovery because offline modes never own service state. For live uninstall, reject structured JSON or JSONL, finish and verify every product action, hold the stable lock, revalidate exact `/nix/nix-installer` and opaque `/nix/receipt.json`, consume Accepted Base Nix Handoff immediately before `exec`, then start terminal vendor uninstall as the last action. Restore Accepted state on synchronous `exec` return. Refuse the unmarked crash window. Run package and product-service smoke tests. Update Linux install and uninstall documents. Keep the old Base Nix implementation present but unreachable for deletion proof. Add no Base Nix repair or update product action.
 - **Tests:** run fake install-process tests for exact authentication and arguments, one start, bounded output drain, wait and reap, spawn failure, nonzero exit, signal, lost caller, persisted `Started` after simulated supervisor loss, and failed installed-state validation. Each persisted `Started` case must remain an Unknown Base Nix Outcome and must not retry. Prove that only exit status `0` plus validation becomes `Accepted`. Run the Linux install, terminal plain-output uninstall, synchronous-restore, restore-failure, unmarked-`SIGKILL`, Unknown Base Nix Outcome, Package Repair, and package-operation matrix on a disposable native x86-64 host. The checked-in privileged Docker and systemd harness can run locally or on a GitHub-hosted runner.
 - **Proof and evidence:** repeat clean-host Linux install and terminal vendor uninstall proof. Prove live structured-output refusal before mutation. Prove vendor action is last. Prove synchronous `exec` return restores exact Accepted state. Prove restore failure is fail-closed. Prove `SIGKILL` after consumption leaves Base Nix Handoff absent, Base Nix unmarked, restart refusal, and no vendor start. Prove later loss of vendor outcome remains an Unknown Base Nix Outcome. A GitHub-hosted result must name the exact signed commit and retain complete logs, the results matrix, and artifacts for independent review. State that this proof does not prove host boot, reboot, SELinux, foreign-host coexistence, or a complete distribution matrix. Do not claim Base Nix repair or update proof.
 - **Deletion:** none. Old Linux Base Nix code remains until DN-17.
 - **Rollback or stop rule:** revert before release if any lifecycle row fails. Do not add a runtime fallback.
 - **Review focus:** authenticated one-start install, supervisor wait and reap, honest post-start limits, Base Nix Handoff acceptance, terminal vendor uninstall, vendor-action-last ordering, synchronous restore, unmarked crash refusal, Unknown Base Nix Outcome handling, accepted vendor residue, and no Base Nix repair or update product route.
 - **Child-unblock condition:** all blocking Linux install, terminal vendor uninstall, synchronous-restore, unmarked-crash, Unknown Base Nix Outcome, and package rows pass twice with no old runtime path used. The native x86-64 evidence receives independent review.
+
+The remaining native Linux gates are separate rows. One result cannot stand in
+for another:
+
+1. **N-to-N+1 Offline Upgrade:** install N, stop and disable the fixed units,
+   run N+1, prove product identity changed, prove Base Nix Handoff and package
+   state did not change, and prove services stayed offline.
+2. **Same-release Offline Repair:** install a release, stop and disable the
+   fixed units while their files are still authenticated, change one product
+   service asset, run `pkg-install --repair-product-assets`, prove the exact
+   same-release bytes returned, and prove services stayed offline.
+3. **Vendor cgroup:** prove the one Determinate process and its descendants use
+   the expected containment and no second vendor process starts.
+4. **Real systemd:** prove active, enabled, mixed, drop-in, changed-fragment,
+   and unqueryable states refuse before product-file mutation. Prove a fully
+   inactive and disabled exact unit set can upgrade and repair without a
+   systemd mutation command.
+
+These four rows require a native x86-64 run on the exact signed commit. Local
+unit tests and an emulated Docker server do not complete them.
 
 ### DN-16 delivery label — Cut over Apple Silicon macOS Base Nix install and uninstall
 
@@ -813,7 +840,11 @@ Mac.
 | Local build | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Current approval and multi-user safety remain |
 | Package roots and GC | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | Active Generation and per-user isolation remain |
 | Package repair | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Product-owned repair only |
-| Modified product service asset | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Product repair detects and handles it |
+| N-to-N+1 offline product upgrade | DN-15 Linux; DN-16 macOS | Blocking | Blocking | Blocking | Product identity changes; Base Nix Handoff and package state stay valid; product services stay offline |
+| Same-release Product Asset Repair | DN-15 Linux | Blocking | Sample | Not yet implemented | Exact authenticated same-release product-file bytes are restored; unknown bytes are never restored; services stay offline |
+| Vendor process cgroup | DN-15 Linux | Blocking | Sample | Separate macOS process proof | One vendor process start; expected descendants stay contained; no second vendor process starts |
+| Real systemd offline contract | DN-15 Linux | Blocking | Sample | Not applicable | Unsafe service states refuse before file mutation; exact inactive and disabled state uses query commands only |
+| Modified product service asset | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Product repair detects and handles it without changing Base Nix or package state |
 | Final release ownership | DN-20 | Blocking | Blocking | Blocking | Each remaining asset has one owner |
 | Final release residue | DN-20 | Blocking | Blocking | Blocking | No product lifecycle residue except volatile `/run/pkg-install-handoff.lock`; record accepted vendor-owned alpha residue |
 | Optional Root Helper removal | DN-28 | Blocking | Sample | Blocking | Every helper duty has equal replacement proof |

@@ -51,6 +51,19 @@ Across both paths, `pkg` also owns:
 - product health and support policy;
 - product-owned file, service, package, and state cleanup.
 
+Linux product installation has three modes. Only a Fresh Install can activate
+product services. An ordinary product upgrade and a same-release Product Asset
+Repair require every fixed product unit to be inactive and disabled. They only
+query systemd state. They change product files only. They do not stop, disable,
+start, restart, or reload services. They leave all product services inactive and
+disabled. The operator activates the authenticated result after the operation.
+
+This offline boundary prevents an upgrade or repair from running a changed
+service unit or binary. It also removes the need for an active-upgrade service
+recovery protocol. Determinate remains the only owner of Base Nix. Product
+upgrade and Product Asset Repair cannot install, repair, update, or remove Base
+Nix.
+
 `pkg` does not implement a second Base Nix install, repair, update, uninstall, or residue-cleanup engine. If the vendor has no supported operation, `pkg` reports that capability as unsupported. It does not fill the gap with custom Base Nix mutation code.
 
 Vendor-owned residue after vendor uninstall is accepted for the alpha product.
@@ -145,6 +158,10 @@ Intel macOS is unsupported until an authenticated asset and complete lifecycle p
 ## Consequences
 
 - There is one Base Nix lifecycle engine: Determinate.
+- Only a Fresh Install activates Linux product services.
+- Linux product upgrade and same-release Product Asset Repair are offline,
+  systemd-query-only, and product-file-only operations.
+- The operator activates product services after an offline upgrade or repair.
 - Product code becomes smaller because it does not duplicate vendor repair, update, uninstall, or residue cleanup.
 - Vendor capability limits become health and support results.
 - Vendor-owned residue is an accepted alpha limitation.
