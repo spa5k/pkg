@@ -232,14 +232,14 @@ pub trait LinuxInstallBackend {
     /// Returns a backend error unless every product asset becomes exact.
     fn recover_repair_assets(&mut self) -> Result<(), InstallError>;
 
-    /// Quiesces candidate processes before durable recovery restores old files.
+    /// Quiesces candidate processes before an interrupted upgrade restores old files.
     ///
     /// # Errors
     ///
     /// Returns a redacted error when the candidate service set cannot be stopped safely.
     fn prepare_service_recovery(&mut self, prior_active: bool) -> Result<(), InstallError>;
 
-    /// Restores the prior service state after durable recovery restored old files.
+    /// Restores the prior service state after an interrupted upgrade restored old files.
     ///
     /// # Errors
     ///
@@ -284,7 +284,8 @@ pub trait LinuxInstallBackend {
     /// Returns a redacted backend error when exact rollback is incomplete.
     fn rollback_managed_runtime(&mut self) -> Result<(), InstallError>;
 
-    /// Reloads systemd and enables/starts the fixed product units.
+    /// Reloads systemd and enables/starts the fixed product units for ordinary work.
+    /// Repair must only revalidate offline state and return `false`.
     ///
     /// Before each mutation the backend must journal enough prior state for
     /// [`Self::rollback_services`] to revert only this attempt. That rollback
@@ -296,7 +297,8 @@ pub trait LinuxInstallBackend {
     /// Returns a redacted backend error when fixed service activation fails.
     fn activate_services(&mut self) -> Result<bool, InstallError>;
 
-    /// Reverts service enable/start changes journaled by this exact attempt.
+    /// Reverts service enable/start changes journaled by this exact ordinary attempt.
+    /// Repair must reject this operation without service mutation.
     ///
     /// # Errors
     ///
@@ -310,7 +312,8 @@ pub trait LinuxInstallBackend {
     /// Returns a redacted error when the prior active service set cannot be restored.
     fn finish_services_rollback(&mut self) -> Result<(), InstallError>;
 
-    /// Runs the fixed managed-daemon readiness check.
+    /// Runs the fixed managed-daemon readiness check for ordinary work.
+    /// Repair must only revalidate offline service state.
     ///
     /// # Errors
     ///
@@ -535,6 +538,9 @@ pub fn recover_linux_install(
             .system()
             .map_err(|_| InstallError::backend_failure())?;
         backend.preflight_recovery(mode, system)?;
+        if mode == LinuxInstallMode::Repair {
+            return backend.recover_repair_assets();
+        }
         if let Some(prior_active) = journal.service_prior_active() {
             backend.prepare_service_recovery(prior_active)?;
             if !journal.service_recovery_prepared() {
@@ -578,23 +584,13 @@ pub fn recover_linux_install(
                 .map_err(|_| InstallError::backend_failure())?;
             persist_progress(journal)?;
         }
-        if mode == LinuxInstallMode::Repair && journal.service_prior_active().is_some() {
-            backend.recover_repair_assets()?;
-        }
         if let Some(prior_active) = journal.service_prior_active() {
-            if prior_active && mode == LinuxInstallMode::InstallOrUpgrade {
+            if prior_active {
                 require_exact_service_assets(backend)?;
             }
             if let Err(error) = backend.finish_service_recovery(prior_active) {
                 let _ = backend.prepare_service_recovery(prior_active);
                 return Err(error);
-            }
-            if mode == LinuxInstallMode::Repair
-                && prior_active
-                && backend.check_managed_daemon().is_err()
-            {
-                backend.prepare_service_recovery(prior_active)?;
-                return Err(InstallError::rollback_incomplete());
             }
             journal
                 .complete_service_recovery()
@@ -806,11 +802,13 @@ mod tests {
 
         fn preflight_recovery(
             &mut self,
-            _mode: LinuxInstallMode,
+            mode: LinuxInstallMode,
             _system: System,
         ) -> Result<(), InstallError> {
-            if self.states.contains("fail-recovery-preflight") {
+            if mode == LinuxInstallMode::Repair {
                 self.rollback_events.push("preflight-recovery");
+            }
+            if self.states.contains("fail-recovery-preflight") {
                 Err(InstallError::backend_failure())
             } else {
                 Ok(())
@@ -836,7 +834,11 @@ mod tests {
 
         fn recover_repair_assets(&mut self) -> Result<(), InstallError> {
             self.rollback_events.push("recover-repair-assets");
-            Ok(())
+            if self.states.contains("fail-repair-recovery") {
+                Err(InstallError::backend_failure())
+            } else {
+                Ok(())
+            }
         }
 
         fn prepare_service_recovery(&mut self, _prior_active: bool) -> Result<(), InstallError> {
@@ -1161,37 +1163,24 @@ mod tests {
     }
 
     #[test]
-    fn repair_journal_drives_roll_forward_and_requiesces_after_failed_health()
+    fn repair_journal_drives_offline_roll_forward_without_service_recovery()
     -> Result<(), Box<dyn Error>> {
         let mut journal = LinuxInstallJournal::new_repair(
             System::X8664Linux,
             Digest::from_bytes([0xa1; 32]),
             Digest::from_bytes([0xa2; 32]),
-            true,
         )?;
         let mut backend = FakeBackend::clean();
-        backend.fail_health_check = true;
 
-        let result =
-            recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()));
-
-        assert_eq!(
-            result.map_err(InstallError::code),
-            Err(InstallErrorCode::RollbackIncomplete)
-        );
+        recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))?;
         assert_eq!(backend.recovery_modes, [LinuxInstallMode::Repair]);
         assert_eq!(
             backend.rollback_events,
-            [
-                "recover-services",
-                "recover-repair-assets",
-                "resume-services",
-                "recover-services"
-            ]
+            ["preflight-recovery", "recover-repair-assets"]
         );
         assert!(!backend.states.contains("services"));
-        assert_eq!(journal.service_prior_active(), Some(true));
-        assert!(journal.service_recovery_prepared());
+        assert_eq!(journal.service_prior_active(), None);
+        assert!(!journal.service_recovery_prepared());
         Ok(())
     }
 
@@ -1202,7 +1191,6 @@ mod tests {
             System::X8664Linux,
             Digest::from_bytes([0xa3; 32]),
             Digest::from_bytes([0xa4; 32]),
-            true,
         )?;
         let mut backend = FakeBackend::clean();
         backend.states.insert("fail-recovery-preflight");
@@ -1215,35 +1203,92 @@ mod tests {
             Err(InstallErrorCode::BackendFailure)
         );
         assert_eq!(backend.rollback_events, ["preflight-recovery"]);
-        assert_eq!(journal.service_prior_active(), Some(true));
+        assert_eq!(journal.service_prior_active(), None);
         assert!(!journal.service_recovery_prepared());
         assert!(!backend.states.contains("effective-repair"));
         Ok(())
     }
 
     #[test]
-    fn completed_repair_journal_cleanup_does_not_start_an_implicit_repair()
+    fn repair_recovery_converges_even_when_only_preexisting_entries_were_recorded()
     -> Result<(), Box<dyn Error>> {
         let mut journal = LinuxInstallJournal::new_repair(
             System::X8664Linux,
             Digest::from_bytes([0xa5; 32]),
             Digest::from_bytes([0xa6; 32]),
-            false,
         )?;
-        journal.prepare_service_recovery()?;
         let first = linux_product_mutation_assets()
             .find(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
             .ok_or_else(|| io::Error::other("missing first Linux mutation"))?;
         journal.record_preexisting(LinuxInstallMutation::Asset {
             id: first.id().to_owned(),
         })?;
-        journal.complete_service_recovery()?;
         let mut backend = FakeBackend::clean();
 
         recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))?;
 
         assert_eq!(backend.recovery_modes, [LinuxInstallMode::Repair]);
-        assert!(backend.rollback_events.is_empty());
+        assert_eq!(
+            backend.rollback_events,
+            ["preflight-recovery", "recover-repair-assets"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repair_retry_rechecks_offline_state_and_never_uses_service_recovery()
+    -> Result<(), Box<dyn Error>> {
+        let mut journal = LinuxInstallJournal::new_repair(
+            System::X8664Linux,
+            Digest::from_bytes([0xa7; 32]),
+            Digest::from_bytes([0xa8; 32]),
+        )?;
+        let mut backend = FakeBackend::clean();
+        backend.states.insert("fail-repair-recovery");
+
+        assert_eq!(
+            recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))
+                .map_err(InstallError::code),
+            Err(InstallErrorCode::BackendFailure)
+        );
+        assert_eq!(
+            backend.rollback_events,
+            ["preflight-recovery", "recover-repair-assets"]
+        );
+
+        backend.states.remove("fail-repair-recovery");
+        backend.states.insert("fail-recovery-preflight");
+        assert!(
+            recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))
+                .is_err()
+        );
+        assert_eq!(
+            backend.rollback_events,
+            [
+                "preflight-recovery",
+                "recover-repair-assets",
+                "preflight-recovery"
+            ]
+        );
+
+        backend.states.remove("fail-recovery-preflight");
+        recover_linux_install(&mut journal, &mut backend, &mut || Ok(()), &mut |_| Ok(()))?;
+        assert_eq!(
+            backend.rollback_events,
+            [
+                "preflight-recovery",
+                "recover-repair-assets",
+                "preflight-recovery",
+                "preflight-recovery",
+                "recover-repair-assets"
+            ]
+        );
+        assert!(
+            !backend
+                .rollback_events
+                .iter()
+                .any(|event| matches!(*event, "recover-services" | "resume-services"))
+        );
         Ok(())
     }
 

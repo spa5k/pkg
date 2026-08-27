@@ -94,6 +94,7 @@ trait SystemdSystem: fmt::Debug {
     fn daemon_reload(&mut self) -> Result<(), LinuxSystemdError>;
     fn apply_tmpfiles(&mut self) -> Result<(), LinuxSystemdError>;
     fn unit_state(&mut self, unit: &'static str) -> Result<UnitState, LinuxSystemdError>;
+    fn required_unit_state(&mut self, unit: &'static str) -> Result<UnitState, LinuxSystemdError>;
     fn enable(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
     fn disable(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
     fn start(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError>;
@@ -432,6 +433,26 @@ impl LinuxSystemdManager {
         ))
     }
 
+    /// Requires every fixed product unit to be inactive and disabled.
+    ///
+    /// This operation only reads unit state. It does not reload, enable,
+    /// disable, start, stop, or restart any unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted state error for active, enabled, mixed, or unreadable state.
+    pub(crate) fn require_offline(&mut self) -> Result<(), LinuxSystemdError> {
+        for unit in UNITS {
+            let state = self.system.required_unit_state(unit)?;
+            if state.active || state.enabled {
+                return Err(LinuxSystemdError::new(
+                    LinuxSystemdErrorCode::StateQueryFailed,
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Reloads unit definitions after an attempt-owned unit file is removed.
     ///
     /// # Errors
@@ -467,6 +488,10 @@ impl SystemdSystem for PreflightTestSystem {
     }
 
     fn unit_state(&mut self, _unit: &'static str) -> Result<UnitState, LinuxSystemdError> {
+        self.refuse()
+    }
+
+    fn required_unit_state(&mut self, _unit: &'static str) -> Result<UnitState, LinuxSystemdError> {
         self.refuse()
     }
 
@@ -533,6 +558,13 @@ impl SystemdSystem for ProductionSystemdSystem {
         Ok(UnitState {
             enabled: self.systemctl_status(&["is-enabled", "--quiet", unit], &[1, 4])?,
             active: self.systemctl_status(&["is-active", "--quiet", unit], &[3, 4])?,
+        })
+    }
+
+    fn required_unit_state(&mut self, unit: &'static str) -> Result<UnitState, LinuxSystemdError> {
+        Ok(UnitState {
+            enabled: self.systemctl_status(&["is-enabled", "--quiet", unit], &[1])?,
+            active: self.systemctl_status(&["is-active", "--quiet", unit], &[3])?,
         })
     }
 
@@ -686,6 +718,13 @@ mod tests {
                 .ok_or_else(|| LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed))
         }
 
+        fn required_unit_state(
+            &mut self,
+            unit: &'static str,
+        ) -> Result<UnitState, LinuxSystemdError> {
+            self.unit_state(unit)
+        }
+
         fn enable(&mut self, unit: &'static str) -> Result<(), LinuxSystemdError> {
             self.call(&format!("enable:{unit}"))?;
             self.state
@@ -753,6 +792,7 @@ mod tests {
             tmpfiles: PathBuf::from("/bin/true"),
         };
         assert!(!system.systemctl_status(&["-c", "exit 4"], &[1, 4])?);
+        assert!(system.systemctl_status(&["-c", "exit 4"], &[1]).is_err());
         assert!(system.systemctl_status(&["-c", "exit 5"], &[1, 4]).is_err());
         Ok(())
     }
@@ -1067,6 +1107,52 @@ mod tests {
                 .map_err(super::LinuxSystemdError::code),
             Err(LinuxSystemdErrorCode::StateQueryFailed)
         );
+    }
+
+    #[test]
+    fn offline_preflight_is_query_only_and_refuses_every_non_offline_state() {
+        let offline = FakeSystem::new(all(UnitState {
+            enabled: false,
+            active: false,
+        }));
+        let offline_state = Rc::clone(&offline.state);
+        let mut manager = LinuxSystemdManager::with_system(Box::new(offline));
+        assert_eq!(manager.require_offline(), Ok(()));
+        assert!(offline_state.borrow().calls.is_empty());
+
+        let mut refused = vec![
+            all(UnitState {
+                enabled: true,
+                active: true,
+            }),
+            all(UnitState {
+                enabled: true,
+                active: false,
+            }),
+        ];
+        let mut mixed = all(UnitState {
+            enabled: false,
+            active: false,
+        });
+        mixed[0].1.active = true;
+        refused.push(mixed);
+        let mut unreadable = all(UnitState {
+            enabled: false,
+            active: false,
+        });
+        let _ = unreadable.pop();
+        refused.push(unreadable);
+
+        for states in refused {
+            let fake = FakeSystem::new(states);
+            let shared = Rc::clone(&fake.state);
+            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            assert_eq!(
+                manager.require_offline().map_err(LinuxSystemdError::code),
+                Err(LinuxSystemdErrorCode::StateQueryFailed)
+            );
+            assert!(shared.borrow().calls.is_empty());
+        }
     }
 
     #[test]

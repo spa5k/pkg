@@ -76,7 +76,7 @@ pub enum LinuxInstallMutationState {
 pub enum LinuxInstallMode {
     /// Restore only authenticated prior bytes after an interrupted upgrade.
     InstallOrUpgrade,
-    /// Keep authenticated same-release candidate bytes after repair starts.
+    /// Keep authenticated same-release candidate bytes during offline repair.
     Repair,
 }
 
@@ -132,7 +132,7 @@ impl LinuxInstallJournal {
         )
     }
 
-    /// Creates a repair journal that records service state before quiescence.
+    /// Creates an offline repair journal.
     ///
     /// # Errors
     ///
@@ -141,14 +141,13 @@ impl LinuxInstallJournal {
         system: System,
         ownership_manifest_digest: Digest,
         recovery_context_digest: Digest,
-        prior_active: bool,
     ) -> Result<Self, LinuxInstallJournalError> {
         Self::new_with_mode(
             system,
             ownership_manifest_digest,
             recovery_context_digest,
             LinuxInstallMode::Repair,
-            Some(prior_active),
+            None,
         )
     }
 
@@ -259,12 +258,11 @@ impl LinuxInstallJournal {
         &mut self,
         prior_active: bool,
     ) -> Result<(), LinuxInstallJournalError> {
-        self.intend(LinuxInstallMutation::Services)?;
-        match self.mode {
-            LinuxInstallMode::InstallOrUpgrade => self.service_prior_active = Some(prior_active),
-            LinuxInstallMode::Repair if self.service_prior_active.is_some() && !prior_active => {}
-            LinuxInstallMode::Repair => return Err(invalid_transition()),
+        if self.mode == LinuxInstallMode::Repair {
+            return Err(invalid_transition());
         }
+        self.intend(LinuxInstallMutation::Services)?;
+        self.service_prior_active = Some(prior_active);
         Ok(())
     }
 
@@ -464,12 +462,9 @@ impl LinuxInstallJournal {
                     == (has_changed_services || self.service_recovery_prepared)
             }
             LinuxInstallMode::Repair => {
-                self.service_prior_active.is_some()
-                    || (self
-                        .entries
-                        .iter()
-                        .all(|entry| entry.state == LinuxInstallMutationState::PreExisting)
-                        && !self.service_recovery_prepared)
+                self.service_prior_active.is_none()
+                    && !self.service_recovery_prepared
+                    && !has_changed_services
             }
         };
         if (self.committed
@@ -586,44 +581,24 @@ mod tests {
     }
 
     #[test]
-    fn repair_round_trip_persists_mode_and_pre_quiescence_service_state() {
+    fn repair_round_trip_has_no_service_mutation_state() {
         let mut journal = LinuxInstallJournal::new_repair(
             System::X8664Linux,
             Digest::from_bytes([0x7a; 32]),
             Digest::from_bytes([0x7b; 32]),
-            true,
         )
         .unwrap();
         let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
         assert_eq!(decoded.mode(), LinuxInstallMode::Repair);
-        assert_eq!(decoded.service_prior_active(), Some(true));
+        assert_eq!(decoded.service_prior_active(), None);
         assert!(!decoded.service_recovery_prepared());
 
-        journal.prepare_service_recovery().unwrap();
-        let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
-        assert!(decoded.service_recovery_prepared());
-    }
-
-    #[test]
-    fn completed_repair_recovery_keeps_a_valid_preexisting_prefix() {
-        let mut journal = LinuxInstallJournal::new_repair(
-            System::X8664Linux,
-            Digest::from_bytes([0x7c; 32]),
-            Digest::from_bytes([0x7d; 32]),
-            true,
-        )
-        .unwrap();
-        journal.prepare_service_recovery().unwrap();
         journal
             .record_preexisting(install_sequence()[0].clone())
             .unwrap();
-        journal.complete_service_recovery().unwrap();
-
         let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
-
-        assert_eq!(decoded.service_prior_active(), None);
-        assert!(!decoded.service_recovery_prepared());
         assert!(decoded.recovery_actions().is_empty());
+        assert_eq!(journal.intend_services(false), Err(invalid_transition()));
     }
 
     #[test]
