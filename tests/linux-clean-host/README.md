@@ -28,6 +28,28 @@ It does not require exact `/etc/nix` or `nixbld` cleanup. Separate clean hosts
 prove foreign-Nix refusal before mutation and product-asset ownership-drift
 refusal.
 
+Each publication contains a separately built product set. The second build uses
+an equivalent build-time channel URL. This makes the authenticated Broker and
+installer bytes different without test-only runtime behavior. Each lifecycle
+stops and disables the four still-authenticated product units before it installs
+publication 2. It proves the offline upgrade changes the receipt and exact
+product digests, keeps the Accepted Handoff and Determinate files unchanged,
+keeps package roots, and does not activate product services. It then activates
+only the verified publication-2 units and proves a new Broker process and usable
+package state.
+
+Each lifecycle also proves explicit same-release Product Asset Repair. Repair
+first refuses while the units are active. Exact before and after snapshots prove
+that refusal changes no product, Base Nix, Handoff, journal, or service state.
+The harness then stops and disables the trusted units, damages only the
+receipt-Created `pkg` file, and runs `pkg-install --repair-product-assets`. It
+proves exact publication-2 bytes are restored. The receipt release, Accepted
+Handoff, Determinate files, package roots, and offline unit state do not change.
+The exact Rust filters also prove that upgrade and repair never start the vendor
+installer and that missing receipt-owned accounts or directories refuse before
+mutation. Native missing non-file destruction is not used because this harness
+has no isolated reset helper.
+
 Each fresh lifecycle run also runs the blocking DN-15 process and state tests.
 They cover exact process arguments and environment, bounded output, wait and
 reap behavior, lost-supervisor states, acceptance after validation, persisted
@@ -74,7 +96,7 @@ The retained evidence contains the exact commit, Docker server architecture,
 test-executable SHA-256, `file`, `readelf`, and `ldd` reports, the exact test
 filter manifest and output, structured refusal snapshots, two residue reports,
 and the complete runtime log. `dn15-results.tsv` has exactly two pass rows for
-each blocking case. The workflow uploads evidence even when the proof fails.
+each of 15 blocking cases. The workflow uploads evidence even when the proof fails.
 It uploads the candidate only after the complete proof succeeds.
 
 This proof does not cover host boot, reboot, SELinux behavior, foreign-host

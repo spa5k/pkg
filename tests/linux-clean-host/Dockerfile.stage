@@ -31,11 +31,29 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
         -p pkg-installer --bin pkg-nix-broker \
         -p pkg-installer --bin pkg-root-helper \
         -p pkg-installer --bin pkg-install \
-    && mkdir -p /binaries/determinate \
+    && mkdir -p /binaries-n/determinate \
     && cp /target/x86_64-unknown-linux-gnu/release/pkg \
         /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
         /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
-        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries/
+        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries-n/
+RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
+    PKG_RELEASE_TUF_ROOT_JSON="$(cat /proof-signing/root.json)" \
+    PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/./ \
+    PKG_RELEASE_CHANNEL_TARGETS_URL=https://127.0.0.1:8443/targets/./ \
+    CARGO_TARGET_DIR=/target cargo build --locked --release \
+        --target x86_64-unknown-linux-gnu \
+        -p pkg-cli --bin pkg \
+        -p pkg-installer --bin pkg-nix-broker \
+        -p pkg-installer --bin pkg-root-helper \
+        -p pkg-installer --bin pkg-install \
+    && mkdir -p /binaries-n-plus-1/determinate \
+    && cp /target/x86_64-unknown-linux-gnu/release/pkg \
+        /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
+        /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
+        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries-n-plus-1/ \
+    && ! cmp /binaries-n/pkg-nix-broker /binaries-n-plus-1/pkg-nix-broker \
+    && ! cmp /binaries-n/pkg-install /binaries-n-plus-1/pkg-install
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo test --locked --release \
@@ -67,7 +85,7 @@ PY
 RUN set -eu; \
     stage_determinate() { \
         name="$1"; expected_length="$2"; expected_sha256="$3"; url="$4"; \
-        path="/binaries/determinate/$name"; \
+        path="/binaries-n/determinate/$name"; \
         curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
             --output "$path" "$url"; \
         test "$(stat -c '%s' "$path")" = "$expected_length"; \
@@ -89,6 +107,7 @@ RUN set -eu; \
     stage_determinate LICENSE 26434 \
         36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89 \
         https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE
+RUN cp -a /binaries-n/determinate/. /binaries-n-plus-1/determinate/
 RUN set -eu; \
     mkdir /runtime; \
     stage_runtime() { \
@@ -108,16 +127,17 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-1 /runtime /binaries x86_64-linux /proof-signing 1
+        /publication-1 /runtime /binaries-n x86_64-linux /proof-signing 1
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-2 /runtime /binaries x86_64-linux /proof-signing 2
+        /publication-2 /runtime /binaries-n-plus-1 x86_64-linux /proof-signing 2
 RUN mkdir /out \
     && cp -a /publication-1 /publication-2 /out/ \
     && mkdir /out/binaries \
-    && cp /binaries/pkg-install /out/binaries/ \
+    && cp /binaries-n/pkg-install /out/binaries/ \
+    && cp /binaries-n-plus-1/pkg-install /out/binaries/pkg-install-n-plus-1 \
     && cp -a /test-binaries /out/
 
 FROM scratch

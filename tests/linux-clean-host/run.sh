@@ -97,6 +97,8 @@ cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
     "$artifact_context/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-1/"
 cp -a "$artifact_context/v0.1.0-alpha.7" "$artifact_context/publication-2/"
+cp "$raw_stage/binaries/pkg-install-n-plus-1" \
+    "$artifact_context/publication-2/v0.1.0-alpha.7/pkg-installer-x86_64-linux"
 if [ -n "$artifact_output" ]; then
     mkdir "$artifact_output/evidence"
     evidence_root="$artifact_output/evidence"
@@ -152,7 +154,19 @@ install-process-controls	bootstrap::tests::crash_after_exit_zero_before_acceptan
 install-process-controls	bootstrap::tests::failed_installed_state_validation_preserves_started
 install-process-controls	bootstrap::tests::exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once
 install-process-controls	bootstrap::tests::spawn_and_wait_uncertainty_preserves_started_and_refuses_retry
-install-process-controls	bootstrap::tests::failed_product_receipt_publication_preserves_started
+install-process-controls	bootstrap::tests::failed_product_receipt_publication_keeps_accepted_handoff
+product-upgrade	bootstrap::tests::journaled_existing_product_update_stays_offline_and_never_starts_determinate
+product-upgrade	bootstrap::tests::offline_state_change_blocks_the_next_file_mutation_and_rollback
+product-upgrade	bootstrap::tests::failed_existing_product_update_restores_files_and_stays_offline
+product-upgrade	linux_platform_assets::tests::ordinary_upgrade_requires_different_release_and_prior_content_identity
+product-upgrade	linux_filesystem::tests::upgrade_replaces_only_exact_prior_owned_bytes_and_rolls_back
+product-asset-repair	bootstrap::tests::journaled_offline_repair_changes_product_files_without_service_mutation
+product-asset-repair	bootstrap::tests::journaled_repair_refuses_non_offline_service_state_before_mutation
+product-asset-repair	bootstrap::tests::failed_offline_repair_rolls_forward_files_without_service_mutation
+product-asset-repair	linux_systemd::tests::offline_preflight_is_query_only_and_refuses_every_non_offline_state
+product-asset-repair	linux_platform_assets::tests::repair_requires_same_release_and_created_product_ownership
+product-asset-repair	linux_platform_assets::tests::repair_requires_a_receipt_and_non_files_never_gain_implicit_ownership
+product-asset-repair	linux_filesystem::tests::repair_roll_forward_replaces_unknown_binaries_and_changed_or_missing_units
 EOF
 
 echo "+ build clean host from staged artifacts only"
@@ -200,6 +214,7 @@ record_pass() {
 run_filter_group() {
     case_name=$1
     lifecycle_run=$2
+    case_detail=${3-}
     log_directory="$evidence_root/test-logs/run-$lifecycle_run"
     mkdir -p "$log_directory"
     filter_index=0
@@ -223,7 +238,11 @@ run_filter_group() {
         grep -F "test result: ok. 1 passed; 0 failed;" "$log" >/dev/null
     done < "$filters"
     test "$found" -eq 1
-    record_pass "$case_name" "$lifecycle_run" "$filter_index exact filters"
+    filter_detail="$filter_index exact filters"
+    if [ -n "$case_detail" ]; then
+        filter_detail="$filter_detail; $case_detail"
+    fi
+    record_pass "$case_name" "$lifecycle_run" "$filter_detail"
 }
 
 inspect_test_binary() {
@@ -361,6 +380,162 @@ prove_structured_uninstall_refusal() {
     snapshot_uninstall_state "$after"
     cmp "$before" "$after"
     record_pass "structured-$mode" "$lifecycle_run" "exit 78; exact CONFIG; zero mutation"
+}
+
+product_units='pkg-root-helper.socket pkg-nix-broker.socket pkg-root-helper.service pkg-nix-broker.service'
+
+snapshot_product_boundary() {
+    snapshot=$1
+    docker exec -i "$container" python3 - > "$snapshot" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import subprocess
+import sys
+
+paths = [
+    "/var/lib/pkg-install/determinate-handoff-v1.json",
+    "/run/pkg-install/transaction-v1.json",
+    "/nix/nix-installer",
+    "/nix/receipt.json",
+    "/opt/pkg/uninstall/manifest.json",
+    "/opt/pkg/bin/pkg-root-helper",
+    "/opt/pkg/bin/pkg-nix-broker",
+    "/opt/pkg/etc/pkg/nix.conf",
+    "/usr/lib/systemd/system/pkg-root-helper.socket",
+    "/usr/lib/systemd/system/pkg-nix-broker.socket",
+    "/usr/lib/systemd/system/pkg-root-helper.service",
+    "/usr/lib/systemd/system/pkg-nix-broker.service",
+    "/usr/local/bin/pkg",
+]
+units = [
+    "pkg-root-helper.socket",
+    "pkg-nix-broker.socket",
+    "pkg-root-helper.service",
+    "pkg-nix-broker.service",
+]
+
+
+def path_state(path):
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    value = {
+        "gid": metadata.st_gid,
+        "mode": format(stat.S_IMODE(metadata.st_mode), "04o"),
+        "size": metadata.st_size,
+        "type": stat.S_IFMT(metadata.st_mode),
+        "uid": metadata.st_uid,
+    }
+    if stat.S_ISREG(metadata.st_mode):
+        value["sha256"] = hashlib.sha256(open(path, "rb").read()).hexdigest()
+    elif stat.S_ISLNK(metadata.st_mode):
+        value["target"] = os.readlink(path)
+    return value
+
+
+state = {"paths": {path: path_state(path) for path in paths}, "units": {}}
+for unit in units:
+    result = subprocess.run(
+        ["systemctl", "show", "--no-pager", "--property=ActiveState,SubState,UnitFileState,MainPID", unit],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    state["units"][unit] = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+json.dump(state, sys.stdout, indent=2, sort_keys=True)
+print()
+PY
+}
+
+assert_product_units_offline() {
+    for unit in $product_units; do
+        docker exec "$container" systemctl is-active --quiet "$unit" && return 1
+        test "$(docker exec "$container" systemctl is-enabled "$unit" 2>/dev/null || true)" = disabled
+        test "$(docker exec "$container" systemctl show --property=MainPID --value "$unit")" = 0
+    done
+}
+
+stop_disable_product_units() {
+    docker exec "$container" systemctl stop $product_units
+    docker exec "$container" systemctl disable $product_units
+    assert_product_units_offline
+}
+
+activate_product_units() {
+    docker exec "$container" systemctl daemon-reload
+    docker exec "$container" systemctl enable $product_units
+    docker exec "$container" systemctl start $product_units
+    for unit in $product_units; do
+        docker exec "$container" systemctl is-active --quiet "$unit"
+        test "$(docker exec "$container" systemctl is-enabled "$unit")" = enabled
+    done
+}
+
+assert_publication_product() {
+    publication=$1
+    docker exec "$container" python3 - "$publication" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+manifest = json.loads((root / "release-manifest.json").read_text())
+installed = {
+    "installer/x86_64-linux/pkg-root-helper": pathlib.Path("/opt/pkg/bin/pkg-root-helper"),
+    "installer/x86_64-linux/pkg-nix-broker": pathlib.Path("/opt/pkg/bin/pkg-nix-broker"),
+    "installer/x86_64-linux/pkg": pathlib.Path("/usr/local/bin/pkg"),
+}
+expected = {
+    item["target"]: item["sha256"]
+    for item in manifest["artifacts"]
+    if item["target"] in installed
+}
+if expected.keys() != installed.keys():
+    raise SystemExit("publication product set is incomplete")
+for target, path in installed.items():
+    actual = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual != expected[target]:
+        raise SystemExit(f"installed product digest mismatch: {target}")
+
+receipt = json.loads(pathlib.Path("/opt/pkg/uninstall/manifest.json").read_text())
+descriptor = next(item for item in manifest["artifacts"] if item["kind"] == "descriptor")
+if receipt["ownershipManifestDigest"] != descriptor["sha256"]:
+    raise SystemExit("receipt release identity does not match the publication")
+records = {item["id"]: item for item in receipt["assets"]}
+for asset, target in {
+    "root-helper-binary": "installer/x86_64-linux/pkg-root-helper",
+    "broker-binary": "installer/x86_64-linux/pkg-nix-broker",
+    "product-cli": "installer/x86_64-linux/pkg",
+}.items():
+    if records[asset]["state"] != "created" or records[asset]["contentDigest"] != expected[target]:
+        raise SystemExit(f"receipt product digest mismatch: {asset}")
+PY
+}
+
+publication_installer() {
+    docker exec "$container" python3 - "$1" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+path = root / "v0.1.0-alpha.7/pkg-installer-x86_64-linux"
+manifest = json.loads((root / "release-manifest.json").read_text())
+record = next(
+    item for item in manifest["cliArtifacts"]
+    if item["kind"] == "pkg-install" and item["system"] == "x86_64-linux"
+)
+if hashlib.sha256(path.read_bytes()).hexdigest() != record["sha256"]:
+    raise SystemExit("publication installer digest mismatch")
+print(path)
+PY
 }
 
 shipping_installer=/srv/pkg-release/v0.1.0-alpha.7/pkg-installer-x86_64-linux
@@ -504,10 +679,109 @@ printf '%s\n' "$local_build_output" | grep -F '"type":"build_started"' >/dev/nul
 printf '%s\n' "$local_build_output" | grep -F '"selector":"cxx-prettyprint"' >/dev/null
 
 echo "+ publish channel sequence 2"
+product_evidence="$evidence_root/product-lifecycle/run-$1"
+mkdir -p "$product_evidence"
+assert_publication_product /srv/pkg-releases/1
+snapshot_product_boundary "$product_evidence/n-before.json"
+product_n_broker=$(docker exec "$container" sha256sum /opt/pkg/bin/pkg-nix-broker | awk '{print $1}')
+product_n_receipt=$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')
+base_installer=$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}')
+base_receipt=$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')
+base_handoff=$(docker exec "$container" sha256sum /var/lib/pkg-install/determinate-handoff-v1.json | awk '{print $1}')
+old_broker_pid=$(docker exec "$container" systemctl show --property=MainPID --value pkg-nix-broker.service)
+test "$old_broker_pid" -gt 0
+stop_disable_product_units
 docker exec "$container" sh -eu -c '
     ln -s /srv/pkg-releases/2 /srv/pkg-release.next
     mv -Tf /srv/pkg-release.next /srv/pkg-release
 '
+
+echo "+ authenticated offline product upgrade"
+n_plus_1_installer=$(publication_installer /srv/pkg-releases/2)
+upgrade_output=$(docker exec "$container" "$n_plus_1_installer")
+test "$upgrade_output" = "pkg product files are upgraded. Product services remain offline."
+assert_product_units_offline
+assert_publication_product /srv/pkg-releases/2
+snapshot_product_boundary "$product_evidence/n-plus-1-offline.json"
+product_n_plus_1_broker=$(docker exec "$container" sha256sum /opt/pkg/bin/pkg-nix-broker | awk '{print $1}')
+product_n_plus_1_receipt=$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')
+test "$product_n_broker" != "$product_n_plus_1_broker"
+test "$product_n_receipt" != "$product_n_plus_1_receipt"
+test "$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}')" = "$base_installer"
+test "$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')" = "$base_receipt"
+test "$(docker exec "$container" sha256sum /var/lib/pkg-install/determinate-handoff-v1.json | awk '{print $1}')" = "$base_handoff"
+docker exec "$container" sh -eu -c '
+    test ! -e /run/pkg-install/transaction-v1.json
+    python3 -c '\''
+import json, sys
+record = json.load(open("/var/lib/pkg-install/determinate-handoff-v1.json"))
+sys.exit(record.get("state", {}).get("kind") != "accepted")
+'\''
+    test -d /nix/var/nix/gcroots/pkg
+    test "$(find /nix/var/nix/gcroots/pkg -type l | wc -l)" -gt 0
+'
+run_filter_group product-upgrade "$1" "native N to N+1; Base Nix unchanged; product offline"
+
+echo "+ activate verified N+1 product services"
+activate_product_units
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
+    | grep -F '"name":"hello"' >/dev/null
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/hello" \
+    | grep -F "Hello, world!" >/dev/null
+new_broker_pid=$(docker exec "$container" systemctl show --property=MainPID --value pkg-nix-broker.service)
+test "$new_broker_pid" -gt 0
+test "$new_broker_pid" != "$old_broker_pid"
+test "$(docker exec "$container" /usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.7"
+
+echo "+ active product repair refusal without mutation"
+snapshot_product_boundary "$product_evidence/repair-active-before.json"
+set +e
+docker exec "$container" "$n_plus_1_installer" --repair-product-assets \
+    > "$product_evidence/repair-active.stdout" \
+    2> "$product_evidence/repair-active.stderr"
+repair_active_status=$?
+set -e
+test "$repair_active_status" -eq 1
+test ! -s "$product_evidence/repair-active.stdout"
+grep -Fx "Stop and disable all pkg product services. Remove all product unit drop-ins. Then run pkg-install again." \
+    "$product_evidence/repair-active.stderr" >/dev/null
+snapshot_product_boundary "$product_evidence/repair-active-after.json"
+cmp "$product_evidence/repair-active-before.json" "$product_evidence/repair-active-after.json"
+
+echo "+ authenticated offline product asset repair"
+stop_disable_product_units
+repair_receipt=$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')
+repair_pkg=$(docker exec "$container" sha256sum /usr/local/bin/pkg | awk '{print $1}')
+repair_base_installer=$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}')
+repair_base_receipt=$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')
+repair_handoff=$(docker exec "$container" sha256sum /var/lib/pkg-install/determinate-handoff-v1.json | awk '{print $1}')
+docker exec "$container" sh -eu -c 'printf "damaged product cli\n" > /usr/local/bin/pkg; chmod 0755 /usr/local/bin/pkg'
+test "$(docker exec "$container" sha256sum /usr/local/bin/pkg | awk '{print $1}')" != "$repair_pkg"
+repair_output=$(docker exec "$container" "$n_plus_1_installer" --repair-product-assets)
+test "$repair_output" = "pkg product files are repaired. Product services remain offline."
+assert_product_units_offline
+assert_publication_product /srv/pkg-releases/2
+test "$(docker exec "$container" sha256sum /usr/local/bin/pkg | awk '{print $1}')" = "$repair_pkg"
+test "$(docker exec "$container" sha256sum /opt/pkg/uninstall/manifest.json | awk '{print $1}')" = "$repair_receipt"
+test "$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}')" = "$repair_base_installer"
+test "$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')" = "$repair_base_receipt"
+test "$(docker exec "$container" sha256sum /var/lib/pkg-install/determinate-handoff-v1.json | awk '{print $1}')" = "$repair_handoff"
+docker exec "$container" sh -eu -c '
+    test ! -e /run/pkg-install/transaction-v1.json
+    test -d /nix/var/nix/gcroots/pkg
+    test "$(find /nix/var/nix/gcroots/pkg -type l | wc -l)" -gt 0
+'
+snapshot_product_boundary "$product_evidence/repair-offline-after.json"
+run_filter_group product-asset-repair "$1" "native same-release repair; exact refusal snapshot; product offline"
+
+echo "+ activate verified repaired N+1 product services"
+activate_product_units
+docker exec "$container" su - proof-user -c "/usr/local/bin/pkg --json list" \
+    | grep -F '"name":"hello"' >/dev/null
+docker exec "$container" su - proof-user -c \
+    "/home/proof-user/.local/share/pkg/current/bin/hello" \
+    | grep -F "Hello, world!" >/dev/null
 
 echo "+ pkg update"
 channel_output=$(docker exec "$container" su - proof-user -c \
@@ -663,6 +937,8 @@ for blocking_case in \
     later-outcome-unknown \
     vendor-action-last \
     install-process-controls \
+    product-upgrade \
+    product-asset-repair \
     package-operations \
     package-repair \
     terminal-uninstall
@@ -676,7 +952,7 @@ do
             "$results")" -eq 1
     done
 done
-test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 26
+test "$(awk -F '\t' '$1 == "pass" { count += 1 } END { print count + 0 }' "$results")" -eq 30
 
 echo "Linux vendor install/uninstall and product package lifecycle proof passed."
 echo "Docker limits: no host boot or reboot, SELinux, foreign-host coexistence, or full distribution matrix."
