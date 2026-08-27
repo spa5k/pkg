@@ -3,7 +3,7 @@
 use crate::{
     DeterminateHandoffState, InstallError, LinuxAssetPresence, LinuxInstallAsset,
     LinuxInstallBackend, LinuxPlatformAssetManager, LinuxSystemdManager,
-    determinate_handoff::DeterminateHandoff,
+    determinate_handoff::DeterminateHandoff, linux_platform_assets::LinuxProductAssetIntent,
 };
 use nix::unistd::{Gid, Uid};
 use pkg_core::{System, state::Digest};
@@ -22,6 +22,7 @@ pub struct ProductionLinuxInstallBackend {
     assets: LinuxPlatformAssetManager,
     services: LinuxSystemdManager,
     release_identity: Option<Digest>,
+    product_asset_intent: LinuxProductAssetIntent,
     existing_managed_install: bool,
     #[cfg(test)]
     preflight_fixture: Option<ProductionPreflightFixture>,
@@ -41,15 +42,36 @@ impl ProductionLinuxInstallBackend {
     ///
     /// Returns a redacted error for a non-Linux system or unavailable systemd tools.
     pub fn new(system: System, groups: ManagedGroupBindings) -> Result<Self, InstallError> {
+        Self::with_product_asset_intent(system, groups, LinuxProductAssetIntent::InstallOrUpgrade)
+    }
+
+    /// Creates a backend for explicit same-release Linux product-file repair.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error for a non-Linux system or unavailable systemd tools.
+    pub fn new_product_repair(
+        system: System,
+        groups: ManagedGroupBindings,
+    ) -> Result<Self, InstallError> {
+        Self::with_product_asset_intent(system, groups, LinuxProductAssetIntent::Repair)
+    }
+
+    fn with_product_asset_intent(
+        system: System,
+        groups: ManagedGroupBindings,
+        product_asset_intent: LinuxProductAssetIntent,
+    ) -> Result<Self, InstallError> {
         if !matches!(system, System::X8664Linux | System::Aarch64Linux) {
             return Err(InstallError::backend_failure());
         }
         Ok(Self {
             system,
-            assets: LinuxPlatformAssetManager::new(groups),
+            assets: LinuxPlatformAssetManager::with_intent(groups, product_asset_intent),
             services: LinuxSystemdManager::production()
                 .map_err(|_| InstallError::backend_failure())?,
             release_identity: None,
+            product_asset_intent,
             existing_managed_install: false,
             #[cfg(test)]
             preflight_fixture: None,
@@ -106,14 +128,16 @@ impl ProductionLinuxInstallBackend {
         system: System,
         groups: ManagedGroupBindings,
         handoff_snapshots: std::rc::Rc<std::cell::RefCell<Vec<DeterminateHandoffState>>>,
+        product_asset_intent: LinuxProductAssetIntent,
     ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
         let (services, service_calls) = LinuxSystemdManager::inert_for_preflight_test();
         (
             Self {
                 system,
-                assets: LinuxPlatformAssetManager::new(groups),
+                assets: LinuxPlatformAssetManager::with_intent(groups, product_asset_intent),
                 services,
                 release_identity: None,
+                product_asset_intent,
                 existing_managed_install: false,
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
@@ -132,6 +156,16 @@ pub const fn validate_determinate_handoff_preflight(
         DeterminateHandoffState::NotStarted => Ok(false),
         DeterminateHandoffState::Started => Err(InstallError::backend_failure()),
         DeterminateHandoffState::Accepted => Ok(true),
+    }
+}
+
+const fn validate_product_repair_handoff_preflight(
+    state: DeterminateHandoffState,
+) -> Result<(), InstallError> {
+    if matches!(state, DeterminateHandoffState::Accepted) {
+        Ok(())
+    } else {
+        Err(InstallError::backend_failure())
     }
 }
 
@@ -182,7 +216,11 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         let state = Self::handoff_state(self.preflight_fixture.as_ref())?;
         #[cfg(not(test))]
         let state = Self::production_handoff_state()?;
-        validate_determinate_handoff_preflight(state)?;
+        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+            validate_product_repair_handoff_preflight(state)?;
+        } else {
+            validate_determinate_handoff_preflight(state)?;
+        }
         Ok(())
     }
 
@@ -202,6 +240,11 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         let state = Self::handoff_state(self.preflight_fixture.as_ref())?;
         #[cfg(not(test))]
         let state = Self::production_handoff_state()?;
+        if self.product_asset_intent == LinuxProductAssetIntent::Repair {
+            validate_product_repair_handoff_preflight(state)?;
+            self.existing_managed_install = true;
+            return Ok(());
+        }
         if validate_determinate_handoff_preflight(state)? {
             self.existing_managed_install = true;
             return Ok(());
@@ -233,7 +276,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn recover_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
-        self.assets.remove_verified_asset(asset)?;
+        self.assets.recover_asset(asset)?;
         if Self::is_systemd_unit(asset) {
             self.services
                 .reload_units()
@@ -319,6 +362,10 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         self.assets.publish_uninstall_manifest()
     }
 
+    fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
+        self.assets.finalize_replacement_backups()
+    }
+
     fn rollback_asset(&mut self, asset: LinuxInstallAsset) -> Result<(), InstallError> {
         self.assets.rollback_asset(asset)?;
         if Self::is_systemd_unit(asset) {
@@ -359,6 +406,7 @@ mod tests {
             System::X8664Linux,
             ManagedGroupBindings::new(100, 101)?,
             snapshots.clone(),
+            LinuxProductAssetIntent::InstallOrUpgrade,
         );
 
         assert_eq!(
@@ -372,6 +420,36 @@ mod tests {
         assert_eq!(service_calls.get(), 0);
         assert!(backend.release_identity.is_none());
         assert!(!backend.existing_managed_install);
+        Ok(())
+    }
+
+    #[test]
+    fn product_repair_requires_an_accepted_determinate_handoff()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            validate_product_repair_handoff_preflight(DeterminateHandoffState::Accepted)
+                .map_err(InstallError::code),
+            Ok(())
+        );
+        for state in [
+            DeterminateHandoffState::NotStarted,
+            DeterminateHandoffState::Started,
+        ] {
+            let snapshots = std::rc::Rc::new(std::cell::RefCell::new(vec![state]));
+            let (mut backend, service_calls) = ProductionLinuxInstallBackend::for_preflight_test(
+                System::X8664Linux,
+                ManagedGroupBindings::new(100, 101)?,
+                snapshots,
+                LinuxProductAssetIntent::Repair,
+            );
+
+            assert_eq!(
+                crate::install_linux(System::X8664Linux, &mut backend).map_err(InstallError::code),
+                Err(crate::InstallErrorCode::BackendFailure)
+            );
+            assert_eq!(service_calls.get(), 0);
+            assert!(!backend.existing_managed_install);
+        }
         Ok(())
     }
 }

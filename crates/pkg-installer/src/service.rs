@@ -52,7 +52,7 @@ const MAX_HELPER_WORKERS: usize = 8;
 pub const LINUX_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_HOME: &str = "/var/lib/pkg/helper-home";

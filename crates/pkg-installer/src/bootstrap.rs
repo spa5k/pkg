@@ -544,17 +544,20 @@ fn recover_linux_bundle_install(
     if let Some(mut journal) = storage
         .load()
         .map_err(|_| InstallError::backend_failure())?
-        && !journal.is_committed()
     {
-        // This journal was created only after the fixed workspace was absent.
-        // Cleanup is independent of runtime presence, including reinstalls.
-        recover_interrupted_provision_workspace(request.scratch_parent)
-            .map_err(|_| InstallError::backend_failure())?;
-        recover_linux_install(&mut journal, backend, &mut || Ok(()), &mut |journal| {
-            storage
-                .replace(journal)
-                .map_err(|_| InstallError::backend_failure())
-        })?;
+        if journal.is_committed() {
+            finalize_committed_linux_install(&journal, backend)?;
+        } else {
+            // This journal was created only after the fixed workspace was absent.
+            // Cleanup is independent of runtime presence, including reinstalls.
+            recover_interrupted_provision_workspace(request.scratch_parent)
+                .map_err(|_| InstallError::backend_failure())?;
+            recover_linux_install(&mut journal, backend, &mut || Ok(()), &mut |journal| {
+                storage
+                    .replace(journal)
+                    .map_err(|_| InstallError::backend_failure())
+            })?;
+        }
     }
     storage
         .remove()
@@ -1376,11 +1379,28 @@ fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>(
         .as_mut()
         .ok_or_else(InstallError::rollback_incomplete)?
         .commit()?;
+    let committed = adapter
+        .journal
+        .as_ref()
+        .ok_or_else(InstallError::rollback_incomplete)?;
+    finalize_committed_linux_install(&committed.journal, adapter.inner)?;
     let outcome = adapter
         .outcome
         .take()
         .ok_or_else(InstallError::backend_failure)?;
     Ok((report, outcome))
+}
+
+fn finalize_committed_linux_install(
+    journal: &LinuxInstallJournal,
+    backend: &mut dyn LinuxInstallBackend,
+) -> Result<(), InstallError> {
+    if !journal.is_committed() {
+        return Err(InstallError::rollback_incomplete());
+    }
+    backend
+        .finalize_ownership_receipt()
+        .map_err(|_| InstallError::rollback_incomplete())
 }
 
 #[cfg(test)]
@@ -1949,11 +1969,15 @@ mod tests {
     #[derive(Default)]
     struct MemoryJournalPersistence {
         snapshots: RefCell<Vec<LinuxInstallJournal>>,
+        committed: std::rc::Rc<std::cell::Cell<bool>>,
     }
 
     impl LinuxJournalPersistence for MemoryJournalPersistence {
         fn replace(&self, journal: &LinuxInstallJournal) -> Result<(), InstallError> {
             self.snapshots.borrow_mut().push(journal.clone());
+            if journal.is_committed() {
+                self.committed.set(true);
+            }
             Ok(())
         }
     }
@@ -2388,6 +2412,7 @@ mod tests {
         Asset,
         Health,
         Receipt,
+        Finalize,
     }
 
     #[derive(Default)]
@@ -2398,6 +2423,8 @@ mod tests {
         preflight_handoff: Option<DeterminateHandoffState>,
         mutation_calls: usize,
         rollback_calls: usize,
+        finalize_calls: usize,
+        finalize_requires_commit: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     }
 
     impl LinuxInstallBackend for LinuxBackend {
@@ -2496,6 +2523,19 @@ mod tests {
                 Err(InstallError::backend_failure())
             } else {
                 Ok(self.create)
+            }
+        }
+        fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
+            self.finalize_calls = self.finalize_calls.saturating_add(1);
+            if self
+                .finalize_requires_commit
+                .as_ref()
+                .is_some_and(|committed| !committed.get())
+                || self.failure == LinuxBackendFailure::Finalize
+            {
+                Err(InstallError::backend_failure())
+            } else {
+                Ok(())
             }
         }
         fn rollback_asset(&mut self, _asset: LinuxInstallAsset) -> Result<(), InstallError> {
@@ -2736,6 +2776,7 @@ mod tests {
         )?;
         let mut backend = LinuxBackend {
             create: true,
+            finalize_requires_commit: Some(persistence.committed.clone()),
             ..LinuxBackend::default()
         };
         let request = InstallerProvisionRequest {
@@ -2761,6 +2802,7 @@ mod tests {
         )?;
 
         assert!(matches!(outcome, BootstrapOutcome::Stub(_)));
+        drop(outcome);
         assert_eq!(
             report.created_artifacts(),
             crate::assets::linux_product_mutation_assets().count()
@@ -2772,6 +2814,64 @@ mod tests {
                 .last()
                 .is_some_and(LinuxInstallJournal::is_committed)
         );
+        assert_eq!(backend.finalize_calls, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn post_commit_cleanup_failure_keeps_a_resumable_committed_journal()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let persistence = MemoryJournalPersistence::default();
+        let journal = LinuxInstallJournal::new(
+            System::X8664Linux,
+            Digest::from_bytes([0xc1; 32]),
+            Digest::from_bytes([0xc2; 32]),
+        )?;
+        let mut backend = LinuxBackend {
+            create: true,
+            failure: LinuxBackendFailure::Finalize,
+            finalize_requires_commit: Some(persistence.committed.clone()),
+            ..LinuxBackend::default()
+        };
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: Path::new("/state"),
+            installation_root: Path::new("/"),
+            scratch_parent: Path::new("/scratch"),
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let mut provisioner = StubProvisioner {
+            calls: 0,
+            rolled_back: std::rc::Rc::new(std::cell::Cell::new(false)),
+        };
+
+        let error = install_linux_with_provisioner_journaled(
+            request.system,
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            &persistence,
+            journal,
+        )
+        .err()
+        .ok_or_else(|| std::io::Error::other("expected cleanup failure"))?;
+        assert_eq!(error.code(), crate::InstallErrorCode::RollbackIncomplete);
+        assert!(persistence.committed.get());
+        assert_eq!(backend.finalize_calls, 1);
+        assert_eq!(backend.rollback_calls, 0);
+        let committed = persistence
+            .snapshots
+            .borrow()
+            .last()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("missing committed snapshot"))?;
+        assert!(committed.is_committed());
+
+        backend.failure = LinuxBackendFailure::None;
+        finalize_committed_linux_install(&committed, &mut backend)?;
+        assert_eq!(backend.finalize_calls, 2);
         Ok(())
     }
 

@@ -269,6 +269,18 @@ pub trait LinuxInstallBackend {
     /// Returns a redacted backend error when receipt-last publication fails.
     fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError>;
 
+    /// Removes superseded product-file backups after the new receipt is durable.
+    ///
+    /// This operation must be idempotent. A caller must invoke it only after
+    /// the install journal records the committed receipt.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted backend error when exact post-commit cleanup is incomplete.
+    fn finalize_ownership_receipt(&mut self) -> Result<(), InstallError> {
+        Ok(())
+    }
+
     /// Reverts one exact artifact created by this attempt.
     ///
     /// # Errors
