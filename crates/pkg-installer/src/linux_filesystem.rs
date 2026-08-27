@@ -153,7 +153,7 @@ impl LinuxReleasePayloads {
 struct PrincipalBindings {
     root_uid: u32,
     root_gid: u32,
-    broker_uid: u32,
+    broker_uid: Option<u32>,
     broker_gid: u32,
     build_users_gid: u32,
 }
@@ -171,16 +171,16 @@ impl PrincipalBindings {
         Ok(Self {
             root_uid: 0,
             root_gid: 0,
-            broker_uid,
+            broker_uid: Some(broker_uid),
             broker_gid: groups.broker_gid(),
             build_users_gid: groups.build_users_gid(),
         })
     }
 
-    const fn owner(self, principal: LinuxAssetPrincipal) -> u32 {
+    fn owner(self, principal: LinuxAssetPrincipal) -> Result<u32, LinuxFilesystemError> {
         match principal {
-            LinuxAssetPrincipal::Broker => self.broker_uid,
-            LinuxAssetPrincipal::Root | LinuxAssetPrincipal::BuildUsers => self.root_uid,
+            LinuxAssetPrincipal::Broker => self.broker_uid.ok_or_else(unsupported),
+            LinuxAssetPrincipal::Root | LinuxAssetPrincipal::BuildUsers => Ok(self.root_uid),
         }
     }
 
@@ -251,6 +251,67 @@ impl fmt::Debug for LinuxFilesystemManager {
     }
 }
 
+/// Read-only root-owned receipt access before the broker account exists.
+pub struct LinuxReceiptReader(LinuxFilesystemManager);
+
+impl LinuxReceiptReader {
+    pub(crate) fn new(groups: ManagedGroupBindings, payloads: LinuxReleasePayloads) -> Self {
+        Self(Self::at(PathBuf::from("/"), (0, 0), groups, payloads))
+    }
+
+    const fn at(
+        root: PathBuf,
+        root_ids: (u32, u32),
+        groups: ManagedGroupBindings,
+        payloads: LinuxReleasePayloads,
+    ) -> LinuxFilesystemManager {
+        LinuxFilesystemManager {
+            root,
+            principals: PrincipalBindings {
+                root_uid: root_ids.0,
+                root_gid: root_ids.1,
+                broker_uid: None,
+                broker_gid: groups.broker_gid(),
+                build_users_gid: groups.build_users_gid(),
+            },
+            payloads,
+            authenticated_config: None,
+            uninstall_manifest: None,
+            attempt_owned: BTreeMap::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        root: PathBuf,
+        groups: ManagedGroupBindings,
+        payloads: LinuxReleasePayloads,
+    ) -> Self {
+        Self::for_test_with_owner(
+            root,
+            (Uid::effective().as_raw(), Gid::effective().as_raw()),
+            groups,
+            payloads,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn for_test_with_owner(
+        root: PathBuf,
+        root_ids: (u32, u32),
+        groups: ManagedGroupBindings,
+        payloads: LinuxReleasePayloads,
+    ) -> Self {
+        Self(Self::at(root, root_ids, groups, payloads))
+    }
+
+    pub(crate) fn existing_uninstall_manifest(
+        &self,
+    ) -> Result<Option<UninstallManifest>, LinuxFilesystemError> {
+        self.0.existing_uninstall_manifest()
+    }
+}
+
 impl LinuxFilesystemManager {
     /// Creates the production writer fixed to the real host root.
     ///
@@ -300,7 +361,7 @@ impl LinuxFilesystemManager {
             PrincipalBindings {
                 root_uid: user_id,
                 root_gid: group_id,
-                broker_uid: user_id,
+                broker_uid: Some(user_id),
                 broker_gid: group_id,
                 build_users_gid: group_id,
             },
@@ -448,7 +509,9 @@ impl LinuxFilesystemManager {
         if asset.id() != "uninstall-manifest" || asset.kind() != LinuxAssetKind::File {
             return Err(unsupported());
         }
-        let (parent, name) = self.open_parent(asset)?;
+        let Some((parent, name)) = self.open_parent_optional(asset)? else {
+            return Ok(None);
+        };
         let file = match open_child(&parent, &name, LinuxAssetKind::File) {
             Ok(file) => file,
             Err(error) if error == Errno::NOENT => return Ok(None),
@@ -988,7 +1051,7 @@ impl LinuxFilesystemManager {
         let target_identity = identity(&target, LinuxAssetKind::Directory)?;
         let owner = self
             .principals
-            .owner(asset.owner().ok_or_else(unsupported)?);
+            .owner(asset.owner().ok_or_else(unsupported)?)?;
         let group = self
             .principals
             .group(asset.group().ok_or_else(unsupported)?);
@@ -1065,7 +1128,7 @@ impl LinuxFilesystemManager {
         let tree_owner_uid = if asset.id() == "helper-home" {
             self.principals.root_uid
         } else {
-            self.principals.broker_uid
+            self.principals.owner(LinuxAssetPrincipal::Broker)?
         };
         remove_owned_tree(
             &self.root,
@@ -1118,7 +1181,7 @@ impl LinuxFilesystemManager {
             let expected = match (asset.id(), child_name.as_bytes()) {
                 ("broker-socket-dir", b"broker.sock") => (
                     FileType::Socket,
-                    self.principals.broker_uid,
+                    self.principals.owner(LinuxAssetPrincipal::Broker)?,
                     self.principals.broker_gid,
                     0o666,
                 ),
@@ -1336,7 +1399,7 @@ impl LinuxFilesystemManager {
         let group = asset.group().ok_or_else(unsupported)?;
         nix::unistd::fchown(
             file,
-            Some(Uid::from_raw(self.principals.owner(owner))),
+            Some(Uid::from_raw(self.principals.owner(owner)?)),
             Some(Gid::from_raw(self.principals.group(group))),
         )
         .map_err(|_| io_failure())?;
@@ -1360,7 +1423,7 @@ impl LinuxFilesystemManager {
         }
         let owner = asset.owner().ok_or_else(unsupported)?;
         let group = asset.group().ok_or_else(unsupported)?;
-        if metadata.uid() != self.principals.owner(owner)
+        if metadata.uid() != self.principals.owner(owner)?
             || metadata.gid() != self.principals.group(group)
             || metadata.mode() & 0o7777 != asset_mode(asset)?
         {
@@ -1716,7 +1779,7 @@ mod tests {
             let principals = PrincipalBindings {
                 root_uid: uid,
                 root_gid: gid,
-                broker_uid: uid,
+                broker_uid: Some(uid),
                 broker_gid: gid,
                 build_users_gid: gid,
             };

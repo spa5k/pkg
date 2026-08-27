@@ -14,6 +14,7 @@ use crate::{
     InstallError, LinuxAccountManager, LinuxFilesystemManager, LinuxInstallAsset,
     LinuxReleasePayloads, RecordedAsset, RecordedAssetState, UninstallManifest,
     assets::{is_linux_product_asset, is_linux_service_runtime_asset},
+    linux_filesystem::LinuxReceiptReader,
     linux_install_assets,
 };
 
@@ -74,6 +75,8 @@ pub struct LinuxPlatformAssetManager {
     intent: LinuxProductAssetIntent,
     installed_manifest: InstalledManifest,
     states: BTreeMap<&'static str, RecordedAssetState>,
+    #[cfg(test)]
+    pre_broker_receipt_reader: Option<LinuxReceiptReader>,
 }
 
 #[cfg(test)]
@@ -120,6 +123,8 @@ impl LinuxPlatformAssetManager {
             intent,
             installed_manifest: InstalledManifest::Unloaded,
             states: BTreeMap::new(),
+            #[cfg(test)]
+            pre_broker_receipt_reader: None,
         }
     }
 
@@ -196,6 +201,7 @@ impl LinuxPlatformAssetManager {
                 intent: LinuxProductAssetIntent::InstallOrUpgrade,
                 installed_manifest: InstalledManifest::Unloaded,
                 states: BTreeMap::new(),
+                pre_broker_receipt_reader: None,
             },
             temporary,
             account_mutation_calls,
@@ -822,10 +828,25 @@ impl LinuxPlatformAssetManager {
 
     fn load_installed_manifest(&mut self) -> Result<Option<UninstallManifest>, InstallError> {
         if matches!(self.installed_manifest, InstalledManifest::Unloaded) {
-            let manifest = self
-                .ensure_filesystem()?
-                .existing_uninstall_manifest()
-                .map_err(|_| InstallError::backend_failure())?;
+            let manifest = if self.filesystem.is_none() {
+                let payloads = self
+                    .payloads
+                    .clone()
+                    .ok_or_else(InstallError::backend_failure)?;
+                #[cfg(test)]
+                let result = self.pre_broker_receipt_reader.as_ref().map_or_else(
+                    || LinuxReceiptReader::new(self.groups, payloads).existing_uninstall_manifest(),
+                    LinuxReceiptReader::existing_uninstall_manifest,
+                );
+                #[cfg(not(test))]
+                let result =
+                    LinuxReceiptReader::new(self.groups, payloads).existing_uninstall_manifest();
+                result.map_err(|_| InstallError::backend_failure())?
+            } else {
+                self.ensure_filesystem()?
+                    .existing_uninstall_manifest()
+                    .map_err(|_| InstallError::backend_failure())?
+            };
             self.installed_manifest =
                 manifest.map_or(InstalledManifest::Absent, InstalledManifest::Present);
         }
@@ -1195,6 +1216,150 @@ mod tests {
             .copied()
             .find(|asset| asset.id() == id)
             .unwrap_or_else(|| unreachable!("test asset is in the closed set"))
+    }
+
+    fn manager_before_broker(
+        groups: ManagedGroupBindings,
+        payloads: LinuxReleasePayloads,
+        reader: LinuxReceiptReader,
+        fail_account_read: bool,
+    ) -> (
+        LinuxPlatformAssetManager,
+        std::rc::Rc<std::cell::Cell<usize>>,
+    ) {
+        let (accounts, mutation_calls) =
+            LinuxAccountManager::for_fresh_preflight_test(groups, usize::from(fail_account_read));
+        (
+            LinuxPlatformAssetManager {
+                groups,
+                accounts,
+                filesystem: None,
+                payloads: Some(payloads),
+                config: None,
+                receipt_binding: None,
+                intent: LinuxProductAssetIntent::InstallOrUpgrade,
+                installed_manifest: InstalledManifest::Unloaded,
+                states: BTreeMap::new(),
+                pre_broker_receipt_reader: Some(reader),
+            },
+            mutation_calls,
+        )
+    }
+
+    #[test]
+    fn fresh_receipt_preflight_does_not_require_the_broker_uid()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let groups = ManagedGroupBindings::new(30_000, 30_001)?;
+        let payloads =
+            LinuxReleasePayloads::from_authenticated_bytes(b"helper", b"broker", b"pkg")?;
+        let reader =
+            LinuxReceiptReader::for_test(temporary.path().to_path_buf(), groups, payloads.clone());
+        let (mut manager, mutation_calls) = manager_before_broker(groups, payloads, reader, false);
+
+        assert!(manager.broker_uid().is_err());
+        assert!(manager.ensure_asset(asset("broker-group"))?);
+        assert_eq!(mutation_calls.get(), 1);
+        assert!(matches!(
+            manager.installed_manifest,
+            InstalledManifest::Absent
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn account_read_error_is_not_consumed_by_receipt_discovery()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let groups = ManagedGroupBindings::new(30_000, 30_001)?;
+        let payloads =
+            LinuxReleasePayloads::from_authenticated_bytes(b"helper", b"broker", b"pkg")?;
+        let reader =
+            LinuxReceiptReader::for_test(temporary.path().to_path_buf(), groups, payloads.clone());
+        let (mut manager, mutation_calls) = manager_before_broker(groups, payloads, reader, true);
+
+        assert!(manager.ensure_asset(asset("broker-group")).is_err());
+        assert_eq!(mutation_calls.get(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn unsafe_pre_broker_receipts_refuse_before_account_mutation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let groups = ManagedGroupBindings::new(30_000, 30_001)?;
+        let payloads =
+            LinuxReleasePayloads::from_authenticated_bytes(b"helper", b"broker", b"pkg")?;
+        let mut fixtures = Vec::new();
+
+        let unsafe_mode = tempfile::tempdir()?;
+        std::fs::set_permissions(unsafe_mode.path(), std::fs::Permissions::from_mode(0o777))?;
+        fixtures.push((
+            unsafe_mode,
+            None,
+            nix::unistd::Uid::effective().as_raw(),
+            nix::unistd::Gid::effective().as_raw(),
+        ));
+
+        let symlinked = tempfile::tempdir()?;
+        symlink("/", symlinked.path().join("opt"))?;
+        fixtures.push((
+            symlinked,
+            None,
+            nix::unistd::Uid::effective().as_raw(),
+            nix::unistd::Gid::effective().as_raw(),
+        ));
+
+        let wrong_owner = tempfile::tempdir()?;
+        fixtures.push((
+            wrong_owner,
+            None,
+            nix::unistd::Uid::effective().as_raw().saturating_add(1),
+            nix::unistd::Gid::effective().as_raw(),
+        ));
+
+        let noncanonical = tempfile::tempdir()?;
+        std::fs::create_dir(noncanonical.path().join("opt"))?;
+        let mut filesystem = LinuxFilesystemManager::for_existing_preflight_test(
+            noncanonical.path().to_path_buf(),
+            payloads.clone(),
+        );
+        for directory in crate::assets::linux_product_install_assets()
+            .filter(|asset| asset.kind() == crate::LinuxAssetKind::Directory)
+            .filter(|asset| asset.path_or_name().starts_with("/opt/pkg"))
+        {
+            filesystem.ensure_asset(directory)?;
+        }
+        std::fs::write(
+            noncanonical.path().join("opt/pkg/uninstall/manifest.json"),
+            b"not canonical json",
+        )?;
+        std::fs::set_permissions(
+            noncanonical.path().join("opt/pkg/uninstall/manifest.json"),
+            std::fs::Permissions::from_mode(0o600),
+        )?;
+        fixtures.push((
+            noncanonical,
+            Some(filesystem),
+            nix::unistd::Uid::effective().as_raw(),
+            nix::unistd::Gid::effective().as_raw(),
+        ));
+
+        for (temporary, filesystem, root_uid, root_gid) in fixtures {
+            drop(filesystem);
+            let reader = LinuxReceiptReader::for_test_with_owner(
+                temporary.path().to_path_buf(),
+                (root_uid, root_gid),
+                groups,
+                payloads.clone(),
+            );
+            let (mut manager, mutation_calls) =
+                manager_before_broker(groups, payloads.clone(), reader, false);
+            assert!(manager.ensure_asset(asset("broker-group")).is_err());
+            assert_eq!(mutation_calls.get(), 0);
+        }
+        Ok(())
     }
 
     #[test]

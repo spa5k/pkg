@@ -129,6 +129,8 @@ struct PreflightAccountSystem {
     groups: Vec<GroupRecord>,
     users: Vec<UserRecord>,
     mutation_calls: std::rc::Rc<std::cell::Cell<usize>>,
+    create_groups: bool,
+    read_failures: usize,
 }
 
 #[cfg(test)]
@@ -138,6 +140,12 @@ impl AccountSystem for PreflightAccountSystem {
     }
 
     fn groups(&mut self) -> Result<Vec<GroupRecord>, LinuxAccountError> {
+        if self.read_failures > 0 {
+            self.read_failures = self.read_failures.saturating_sub(1);
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::CommandFailure,
+            ));
+        }
         Ok(self.groups.clone())
     }
 
@@ -145,9 +153,21 @@ impl AccountSystem for PreflightAccountSystem {
         Ok(self.users.clone())
     }
 
-    fn create(&mut self, _spec: AccountSpec) -> Result<(), LinuxAccountError> {
+    fn create(&mut self, spec: AccountSpec) -> Result<(), LinuxAccountError> {
         self.mutation_calls
             .set(self.mutation_calls.get().saturating_add(1));
+        if self.create_groups
+            && let AccountSpec::Group { name, gid, .. } = spec
+        {
+            self.groups.push(GroupRecord {
+                name: name.to_owned(),
+                gid,
+                members: BTreeSet::new(),
+                password_locked: true,
+                administrators: BTreeSet::new(),
+            });
+            return Ok(());
+        }
         Err(LinuxAccountError::new(
             LinuxAccountErrorCode::CommandFailure,
         ))
@@ -296,6 +316,29 @@ impl LinuxAccountManager {
                     groups: group_records,
                     users: user_records,
                     mutation_calls: mutation_calls.clone(),
+                    create_groups: false,
+                    read_failures: 0,
+                }),
+            ),
+            mutation_calls,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_fresh_preflight_test(
+        groups: ManagedGroupBindings,
+        read_failures: usize,
+    ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let mutation_calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        (
+            Self::with_system(
+                groups,
+                Box::new(PreflightAccountSystem {
+                    groups: Vec::new(),
+                    users: Vec::new(),
+                    mutation_calls: mutation_calls.clone(),
+                    create_groups: true,
+                    read_failures,
                 }),
             ),
             mutation_calls,
