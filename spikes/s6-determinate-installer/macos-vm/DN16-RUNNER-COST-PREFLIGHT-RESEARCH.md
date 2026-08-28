@@ -21,8 +21,8 @@ contract, which requires two different `VirtualMac` guests, runner names, and
 instance nonces. The contract does not prove that the guests use two different
 physical Macs.
 
-First raise free host storage from 37 GiB to at least 60 GiB. Do not start two
-destructive guests with the current 37 GiB margin.
+The host now has about 74 GiB free. This satisfies the 60 GiB setup gate.
+Continue to monitor free space while both destructive guests run.
 
 If two different physical Macs are a new requirement, the lowest published
 external price found is two Scaleway M1 Mac minis for a 24-hour minimum. The
@@ -82,7 +82,7 @@ Read-only commands gave this result:
 |---|---:|
 | Host | Apple M4 Mac mini |
 | Host CPU and memory | 10 cores, 32 GiB |
-| Free host storage | 37 GiB |
+| Free host storage | About 74 GiB on `/` and `/System/Volumes/Data` |
 | Tart | 2.35.0 |
 | Local Tart guests | 0 |
 | Cached image | `ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c` |
@@ -97,12 +97,13 @@ The installed `tart clone --help` states that local clones use APFS
 copy-on-write. A new clone therefore starts with a small unique-storage cost.
 Only blocks changed by a clone consume new physical space.
 
-This does not make 37 GiB a safe margin. Each 50 GB guest reports about 17 GB
-unused. Two guests can therefore create about 34 GB of unique blocks before
-they fill their own disks. The runner, candidates, Determinate Nix install,
-logs, APFS metadata, and normal host writes need more space. A 60 GiB free-space
-gate leaves about 26 GiB after that simple worst-case guest-write bound. This is
-a safety estimate, not a guaranteed Tart requirement.
+Each 50 GB guest reports about 17 GB unused. Two guests can therefore create
+about 34 GB of unique blocks before they fill their own disks. The runner,
+candidates, Determinate Nix install, logs, APFS metadata, and normal host writes
+need more space. The current 74 GiB satisfies the 60 GiB setup gate and leaves
+about 40 GiB after that simple worst-case guest-write bound. This is a safety
+estimate, not a guaranteed Tart requirement. Continue to monitor space while
+both guests run.
 
 The host has enough memory for two default Tart guests. Tart defaults to two
 CPUs and 4 GB of memory per guest. The destructive guests do not compile Rust;
@@ -209,7 +210,8 @@ Do these steps only after the three non-runner proof blockers are resolved and
 after explicit authority is given to enable a workflow, register runners, and
 dispatch a destructive run.
 
-1. Increase host free space to at least 60 GiB.
+1. Confirm that host free space is still at least 60 GiB. The current reading
+   is about 74 GiB, so this gate is satisfied.
 2. Clone the cached image by immutable digest into two new names.
 3. Keep the default two CPUs and 4 GB guest memory.
 4. Run both guests headless. Do not expose host directories to them.
