@@ -53,6 +53,7 @@ pub(crate) const MANAGED_NIX_STATE: &str = "/nix/var/nix";
 pub(crate) const MANAGED_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socket";
 pub(crate) const MANAGED_PATH: &str = "/usr/bin:/bin";
 const STANDARD_DETERMINATE_NIX_BINARY: &str = "/nix/var/nix/profiles/default/bin/nix";
+const STANDARD_DETERMINATE_NIX_BRAND: &str = "Determinate Nix 3.22.1";
 const STANDARD_DETERMINATE_NIX_VERSION: &str = "2.35.2";
 const MAX_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
@@ -82,6 +83,7 @@ pub const MAX_REPAIR_EXECUTION_DURATION: Duration = Duration::from_secs(24 * 60 
 #[derive(Clone)]
 pub struct RealNixAdapter {
     executor: Arc<dyn CommandExecutor>,
+    expected_nix_brand: &'static str,
     expected_nix_version: &'static str,
     operation_deadline: Option<Instant>,
 }
@@ -380,6 +382,7 @@ impl RealNixAdapter {
                 private_home,
                 Some(Path::new(MANAGED_DAEMON_SOCKET)),
             )?),
+            expected_nix_brand: "Nix",
             expected_nix_version: PINNED_NIX_VERSION,
             operation_deadline: None,
         })
@@ -399,6 +402,7 @@ impl RealNixAdapter {
                 private_home,
                 None,
             )?),
+            expected_nix_brand: STANDARD_DETERMINATE_NIX_BRAND,
             expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
             operation_deadline: None,
         })
@@ -415,6 +419,7 @@ impl RealNixAdapter {
                 private_home,
                 Some(daemon_socket),
             )?),
+            expected_nix_brand: "Nix",
             expected_nix_version: PINNED_NIX_VERSION,
             operation_deadline: None,
         })
@@ -434,6 +439,7 @@ impl RealNixAdapter {
         }
         Ok(Self {
             executor: Arc::clone(&self.executor),
+            expected_nix_brand: self.expected_nix_brand,
             expected_nix_version: self.expected_nix_version,
             operation_deadline: Some(operation_deadline),
         })
@@ -689,6 +695,7 @@ impl RealNixAdapter {
     fn scripted(executor: impl CommandExecutor + 'static) -> Self {
         Self {
             executor: Arc::new(executor),
+            expected_nix_brand: "Nix",
             expected_nix_version: PINNED_NIX_VERSION,
             operation_deadline: None,
         }
@@ -698,6 +705,7 @@ impl RealNixAdapter {
     fn scripted_standard_determinate(executor: impl CommandExecutor + 'static) -> Self {
         Self {
             executor: Arc::new(executor),
+            expected_nix_brand: STANDARD_DETERMINATE_NIX_BRAND,
             expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
             operation_deadline: None,
         }
@@ -1156,8 +1164,12 @@ impl NixAdapter for RealNixAdapter {
         let bytes =
             self.require_success(MethodKind::Version, vec!["--version".into()], SHORT_TIMEOUT)?;
         let text = std::str::from_utf8(&bytes).map_err(|_| malformed())?.trim();
-        let version = text.strip_prefix("nix (Nix) ").ok_or_else(malformed)?;
-        if version != self.expected_nix_version {
+        if text
+            != format!(
+                "nix ({}) {}",
+                self.expected_nix_brand, self.expected_nix_version
+            )
+        {
             return Err(NixAdapterError::UnsupportedUpstreamFormat {
                 command: MethodKind::Version,
                 observed: 0,
@@ -1175,14 +1187,19 @@ impl NixAdapter for RealNixAdapter {
         let legacy_text = std::str::from_utf8(&legacy.stdout)
             .map_err(|_| malformed())?
             .trim();
-        if legacy_text != format!("nix-store (Nix) {}", self.expected_nix_version) {
+        if legacy_text
+            != format!(
+                "nix-store ({}) {}",
+                self.expected_nix_brand, self.expected_nix_version
+            )
+        {
             return Err(NixAdapterError::UnsupportedUpstreamFormat {
                 command: MethodKind::Version,
                 observed: 0,
             });
         }
         Ok(VersionInfo::new(
-            NixVersion::new(version)?,
+            NixVersion::new(self.expected_nix_version)?,
             AcceptedFormats::new(FormatVersion::new(PATH_INFO_FORMAT)?),
         ))
     }
@@ -3000,8 +3017,8 @@ mod tests {
         assert_eq!(legacy_version.accepted_formats().path_info().get(), 2);
 
         let standard = RealNixAdapter::scripted_standard_determinate(Scripted::new(vec![
-            success("nix (Nix) 2.35.2\n"),
-            success("nix-store (Nix) 2.35.2\n"),
+            success("nix (Determinate Nix 3.22.1) 2.35.2\n"),
+            success("nix-store (Determinate Nix 3.22.1) 2.35.2\n"),
         ]));
         assert_eq!(
             standard.version()?.nix_version().as_str(),
@@ -3011,20 +3028,30 @@ mod tests {
     }
 
     #[test]
-    fn fixed_mode_versions_reject_the_other_mode_for_nix_and_nix_store() {
+    fn root_operation_clone_preserves_standard_determinate_version_banner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let adapter = RealNixAdapter::scripted_standard_determinate(Scripted::new(vec![
+            success("nix (Determinate Nix 3.22.1) 2.35.2\n"),
+            success("nix-store (Determinate Nix 3.22.1) 2.35.2\n"),
+        ]));
+        let root_operation = adapter.for_root_operation(
+            RootNixOperation::Version,
+            Instant::now() + Duration::from_secs(1),
+        )?;
+
+        assert_eq!(
+            root_operation.version()?.nix_version().as_str(),
+            STANDARD_DETERMINATE_NIX_VERSION
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fixed_mode_versions_reject_wrong_brand_version_and_legacy_banner() {
         let legacy_nix =
             RealNixAdapter::scripted(Scripted::new(vec![success("nix (Nix) 2.35.2\n")]));
         assert!(matches!(
             legacy_nix.version(),
-            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
-        ));
-
-        let standard_nix =
-            RealNixAdapter::scripted_standard_determinate(Scripted::new(vec![success(
-                "nix (Nix) 2.34.8\n",
-            )]));
-        assert!(matches!(
-            standard_nix.version(),
             Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
         ));
 
@@ -3037,13 +3064,37 @@ mod tests {
             Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
         ));
 
-        let standard_nix_store =
+        let unbranded_standard_nix = RealNixAdapter::scripted_standard_determinate(Scripted::new(
+            vec![success("nix (Nix) 2.35.2\n")],
+        ));
+        assert!(matches!(
+            unbranded_standard_nix.version(),
+            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
+        ));
+
+        let wrong_determinate_release = RealNixAdapter::scripted_standard_determinate(
+            Scripted::new(vec![success("nix (Determinate Nix 3.22.0) 2.35.2\n")]),
+        );
+        assert!(matches!(
+            wrong_determinate_release.version(),
+            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
+        ));
+
+        let wrong_standard_nix_version = RealNixAdapter::scripted_standard_determinate(
+            Scripted::new(vec![success("nix (Determinate Nix 3.22.1) 2.35.1\n")]),
+        );
+        assert!(matches!(
+            wrong_standard_nix_version.version(),
+            Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
+        ));
+
+        let wrong_standard_nix_store =
             RealNixAdapter::scripted_standard_determinate(Scripted::new(vec![
-                success("nix (Nix) 2.35.2\n"),
-                success("nix-store (Nix) 2.34.8\n"),
+                success("nix (Determinate Nix 3.22.1) 2.35.2\n"),
+                success("nix-store (Nix) 2.35.2\n"),
             ]));
         assert!(matches!(
-            standard_nix_store.version(),
+            wrong_standard_nix_store.version(),
             Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
         ));
     }
