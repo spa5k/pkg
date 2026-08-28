@@ -1,9 +1,11 @@
 //! Complete production binding for the closed Linux installer transaction.
 
 use crate::{
-    DeterminateHandoffState, InstallError, LinuxAssetPresence, LinuxInstallAsset,
-    LinuxInstallBackend, LinuxPlatformAssetManager, determinate_handoff::DeterminateHandoff,
-    linux_platform_assets::LinuxProductAssetIntent, linux_systemd::LinuxSystemdManager,
+    BrokerTransportErrorCode, DeterminateHandoffState, InstallError, LinuxAssetPresence,
+    LinuxInstallAsset, LinuxInstallBackend, LinuxPlatformAssetManager,
+    determinate_handoff::DeterminateHandoff,
+    linux_platform_assets::LinuxProductAssetIntent,
+    linux_systemd::{LinuxSystemdFailure, LinuxSystemdFailurePhase, LinuxSystemdManager},
 };
 use nix::unistd::{Gid, Uid};
 use pkg_core::{System, state::Digest};
@@ -11,9 +13,84 @@ use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, DetectionDisposition,
     ManagedGroupBindings, RealNixAdapter, detect_unmanaged_nix,
 };
-use std::{env, path::Path};
+use std::{env, fmt, io, io::Write, path::Path};
 
 const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxServiceFailure {
+    Systemd(LinuxSystemdFailure),
+    BrokerReadiness(BrokerTransportErrorCode),
+}
+
+impl fmt::Display for LinuxServiceFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Systemd(failure) => failure.fmt(formatter),
+            Self::BrokerReadiness(code) => write!(
+                formatter,
+                "phase=broker-readiness class={}",
+                match code {
+                    BrokerTransportErrorCode::UnauthenticatedPeer => "unauthenticated-peer",
+                    BrokerTransportErrorCode::TransportFailure => "transport-failure",
+                    BrokerTransportErrorCode::InvalidFrame => "invalid-frame",
+                    BrokerTransportErrorCode::BrokerFailure => "broker-failure",
+                }
+            ),
+        }
+    }
+}
+
+fn write_service_diagnostic(
+    mut writer: impl Write,
+    failure: Option<LinuxServiceFailure>,
+) -> io::Result<()> {
+    if let Some(failure) = failure {
+        writeln!(writer, "pkg-service-failure {failure}")?;
+    }
+    Ok(())
+}
+
+fn report_service_failure(failure: LinuxServiceFailure) {
+    let stderr = io::stderr();
+    let _ = write_service_diagnostic(stderr.lock(), Some(failure));
+}
+
+fn systemd_service_failure(
+    error: crate::linux_systemd::LinuxSystemdError,
+    fallback_phase: LinuxSystemdFailurePhase,
+) -> LinuxServiceFailure {
+    LinuxServiceFailure::Systemd(
+        error
+            .failure()
+            .unwrap_or_else(|| LinuxSystemdFailure::not_run(fallback_phase, None, error.code())),
+    )
+}
+
+fn classify_service_state(
+    services: &mut LinuxSystemdManager,
+    writer: impl Write,
+) -> Result<LinuxAssetPresence, InstallError> {
+    services
+        .classify_activation()
+        .map(|active| {
+            if active {
+                LinuxAssetPresence::ExactPresent
+            } else {
+                LinuxAssetPresence::Absent
+            }
+        })
+        .map_err(|error| {
+            let _ = write_service_diagnostic(
+                writer,
+                Some(systemd_service_failure(
+                    error,
+                    LinuxSystemdFailurePhase::StateQuery,
+                )),
+            );
+            InstallError::backend_failure()
+        })
+}
 
 /// Production implementation of the closed Linux installer backend.
 #[derive(Debug)]
@@ -474,16 +551,8 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             self.preflight_product_mutation()?;
             return Ok(LinuxAssetPresence::ExactPresent);
         }
-        self.services
-            .classify_activation()
-            .map(|active| {
-                if active {
-                    LinuxAssetPresence::ExactPresent
-                } else {
-                    LinuxAssetPresence::Absent
-                }
-            })
-            .map_err(|_| InstallError::backend_failure())
+        let stderr = io::stderr();
+        classify_service_state(&mut self.services, stderr.lock())
     }
 
     fn services_need_mutation(&self, prior_active: bool) -> bool {
@@ -537,7 +606,13 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         let (assets, services) = (&mut self.assets, &mut self.services);
         services
             .activate_fresh(|| assets.verify_service_runtime_assets().is_ok())
-            .map_err(|_| InstallError::backend_failure())
+            .map_err(|error| {
+                report_service_failure(systemd_service_failure(
+                    error,
+                    LinuxSystemdFailurePhase::StateQuery,
+                ));
+                InstallError::backend_failure()
+            })
     }
 
     fn rollback_services(&mut self) -> Result<(), InstallError> {
@@ -562,11 +637,18 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         if self.mode != crate::LinuxInstallMode::FreshInstall {
             return self.preflight_product_mutation();
         }
-        self.services
-            .verify_active()
-            .map_err(|_| InstallError::backend_failure())?;
+        self.services.verify_active().map_err(|error| {
+            report_service_failure(systemd_service_failure(
+                error,
+                LinuxSystemdFailurePhase::VerifyActive,
+            ));
+            InstallError::backend_failure()
+        })?;
         crate::broker::probe_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))
-            .map_err(|_| InstallError::backend_failure())
+            .map_err(|error| {
+                report_service_failure(LinuxServiceFailure::BrokerReadiness(error.code()));
+                InstallError::backend_failure()
+            })
     }
 
     fn publish_ownership_receipt(&mut self) -> Result<bool, InstallError> {
@@ -613,6 +695,74 @@ fn validate_base_nix_readiness(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rendered_service_diagnostic(
+        failure: Option<LinuxServiceFailure>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut output = Vec::new();
+        write_service_diagnostic(&mut output, failure)?;
+        Ok(String::from_utf8(output)?)
+    }
+
+    #[test]
+    fn service_diagnostics_are_one_fixed_line_and_success_is_silent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert!(rendered_service_diagnostic(None)?.is_empty());
+
+        let systemd = rendered_service_diagnostic(Some(LinuxServiceFailure::Systemd(
+            LinuxSystemdFailure::not_run(
+                LinuxSystemdFailurePhase::Start,
+                Some("pkg-root-helper.service"),
+                crate::linux_systemd::LinuxSystemdErrorCode::CommandFailed,
+            ),
+        )))?;
+        assert_eq!(
+            systemd,
+            "pkg-service-failure phase=start class=command-failed terminal=not-run unit=pkg-root-helper.service\n"
+        );
+        assert_eq!(systemd.lines().count(), 1);
+
+        for (code, class) in [
+            (
+                BrokerTransportErrorCode::UnauthenticatedPeer,
+                "unauthenticated-peer",
+            ),
+            (
+                BrokerTransportErrorCode::TransportFailure,
+                "transport-failure",
+            ),
+            (BrokerTransportErrorCode::InvalidFrame, "invalid-frame"),
+            (BrokerTransportErrorCode::BrokerFailure, "broker-failure"),
+        ] {
+            let line =
+                rendered_service_diagnostic(Some(LinuxServiceFailure::BrokerReadiness(code)))?;
+            assert_eq!(
+                line,
+                format!("pkg-service-failure phase=broker-readiness class={class}\n")
+            );
+            assert_eq!(line.lines().count(), 1);
+            for forbidden in ["synthetic-raw", "secret-marker", "\x1b", "\r"] {
+                assert!(!line.contains(forbidden));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn classify_services_failure_writes_exactly_one_line_before_mapping() {
+        let (mut services, calls) = LinuxSystemdManager::inert_for_preflight_test();
+        let mut output = Vec::new();
+
+        assert_eq!(
+            classify_service_state(&mut services, &mut output).map_err(InstallError::code),
+            Err(crate::InstallErrorCode::BackendFailure)
+        );
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            output,
+            b"pkg-service-failure phase=state-query class=command-failed terminal=not-run unit=pkg-root-helper.socket\n"
+        );
+    }
 
     #[test]
     fn base_nix_readiness_waits_only_for_a_fresh_install() {

@@ -8,7 +8,10 @@ use std::{
     error::Error,
     fmt, fs,
     io::Read,
-    os::unix::{fs::MetadataExt, process::CommandExt},
+    os::unix::{
+        fs::MetadataExt,
+        process::{CommandExt, ExitStatusExt},
+    },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -55,17 +58,42 @@ pub enum LinuxSystemdErrorCode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinuxSystemdError {
     code: LinuxSystemdErrorCode,
+    terminal: LinuxSystemdTerminal,
+    failure: Option<LinuxSystemdFailure>,
 }
 
 impl LinuxSystemdError {
     const fn new(code: LinuxSystemdErrorCode) -> Self {
-        Self { code }
+        Self {
+            code,
+            terminal: LinuxSystemdTerminal::NotRun,
+            failure: None,
+        }
     }
 
     /// Returns the stable failure class.
     #[must_use]
     pub const fn code(self) -> LinuxSystemdErrorCode {
         self.code
+    }
+
+    const fn at(mut self, phase: LinuxSystemdFailurePhase, unit: Option<&'static str>) -> Self {
+        self.failure = Some(LinuxSystemdFailure::new(
+            phase,
+            unit,
+            self.code,
+            self.terminal,
+        ));
+        self
+    }
+
+    const fn with_terminal(mut self, terminal: LinuxSystemdTerminal) -> Self {
+        self.terminal = terminal;
+        self
+    }
+
+    pub(crate) const fn failure(self) -> Option<LinuxSystemdFailure> {
+        self.failure
     }
 }
 
@@ -76,6 +104,122 @@ impl fmt::Display for LinuxSystemdError {
 }
 
 impl Error for LinuxSystemdError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxSystemdFailurePhase {
+    StateQuery,
+    DaemonReload,
+    AuthenticateUnit,
+    Tmpfiles,
+    Enable,
+    Start,
+    VerifyActive,
+}
+
+impl fmt::Display for LinuxSystemdErrorCode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ProgramUnavailable => "program-unavailable",
+            Self::StateQueryFailed => "state-query-failed",
+            Self::CommandFailed => "command-failed",
+            Self::RollbackFailed => "rollback-failed",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxSystemdTerminal {
+    NotRun,
+    SpawnFailed,
+    TimedOut,
+    WaitFailed,
+    ExitedNonzero(i32),
+    Signaled(i32),
+    OutputFailed,
+}
+
+impl fmt::Display for LinuxSystemdTerminal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotRun => formatter.write_str("not-run"),
+            Self::SpawnFailed => formatter.write_str("spawn-failed"),
+            Self::TimedOut => formatter.write_str("timed-out"),
+            Self::WaitFailed => formatter.write_str("wait-failed"),
+            Self::ExitedNonzero(_) => formatter.write_str("exited-nonzero"),
+            Self::Signaled(_) => formatter.write_str("signaled"),
+            Self::OutputFailed => formatter.write_str("output-failed"),
+        }
+    }
+}
+
+impl fmt::Display for LinuxSystemdFailurePhase {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::StateQuery => "state-query",
+            Self::DaemonReload => "daemon-reload",
+            Self::AuthenticateUnit => "authenticate-unit",
+            Self::Tmpfiles => "tmpfiles",
+            Self::Enable => "enable",
+            Self::Start => "start",
+            Self::VerifyActive => "verify-active",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinuxSystemdFailure {
+    phase: LinuxSystemdFailurePhase,
+    unit: Option<&'static str>,
+    code: LinuxSystemdErrorCode,
+    terminal: LinuxSystemdTerminal,
+}
+
+impl LinuxSystemdFailure {
+    const fn new(
+        phase: LinuxSystemdFailurePhase,
+        unit: Option<&'static str>,
+        code: LinuxSystemdErrorCode,
+        terminal: LinuxSystemdTerminal,
+    ) -> Self {
+        Self {
+            phase,
+            unit,
+            code,
+            terminal,
+        }
+    }
+
+    pub(crate) const fn not_run(
+        phase: LinuxSystemdFailurePhase,
+        unit: Option<&'static str>,
+        code: LinuxSystemdErrorCode,
+    ) -> Self {
+        Self::new(phase, unit, code, LinuxSystemdTerminal::NotRun)
+    }
+}
+
+impl fmt::Display for LinuxSystemdFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "phase={} class={} terminal={}",
+            self.phase, self.code, self.terminal
+        )?;
+        match self.terminal {
+            LinuxSystemdTerminal::ExitedNonzero(code) => {
+                write!(formatter, " exit-code={code}")?;
+            }
+            LinuxSystemdTerminal::Signaled(signal) => {
+                write!(formatter, " signal={signal}")?;
+            }
+            _ => {}
+        }
+        if let Some(unit) = self.unit {
+            write!(formatter, " unit={unit}")?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct UnitState {
@@ -173,25 +317,39 @@ impl LinuxSystemdManager {
         authenticate_candidate: impl FnOnce() -> bool,
     ) -> Result<bool, LinuxSystemdError> {
         if self.journal.is_some() {
-            return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed));
+            return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed)
+                .at(LinuxSystemdFailurePhase::StateQuery, None));
         }
 
         let prior = UNITS
             .iter()
             .copied()
-            .map(|name| self.system.unit_state(name).map(|state| (name, state)))
+            .map(|name| {
+                self.system
+                    .unit_state(name)
+                    .map(|state| (name, state))
+                    .map_err(|error| error.at(LinuxSystemdFailurePhase::StateQuery, Some(name)))
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        if prior.iter().any(|(_, state)| state.active || state.enabled) {
-            return Err(LinuxSystemdError::new(
-                LinuxSystemdErrorCode::StateQueryFailed,
-            ));
+        if let Some((unit, _)) = prior
+            .iter()
+            .find(|(_, state)| state.active || state.enabled)
+        {
+            return Err(
+                LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                    .at(LinuxSystemdFailurePhase::StateQuery, Some(unit)),
+            );
         }
-        self.system.daemon_reload()?;
-        if !authenticate_candidate() || self.authenticate_expected_definitions().is_err() {
-            return Err(LinuxSystemdError::new(
-                LinuxSystemdErrorCode::StateQueryFailed,
-            ));
+        self.system
+            .daemon_reload()
+            .map_err(|error| error.at(LinuxSystemdFailurePhase::DaemonReload, None))?;
+        if !authenticate_candidate() {
+            return Err(
+                LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                    .at(LinuxSystemdFailurePhase::AuthenticateUnit, None),
+            );
         }
+        self.authenticate_expected_definitions()?;
         let mut journal = prior
             .into_iter()
             .map(|(name, _)| UnitJournal {
@@ -201,17 +359,25 @@ impl LinuxSystemdManager {
             })
             .collect::<Vec<_>>();
         self.journal = Some(journal.clone());
-        self.system.apply_tmpfiles()?;
+        self.system
+            .apply_tmpfiles()
+            .map_err(|error| error.at(LinuxSystemdFailurePhase::Tmpfiles, None))?;
 
         for index in 0..journal.len() {
             journal[index].enable_intent = true;
             self.journal = Some(journal.clone());
-            self.system.enable(journal[index].name)?;
+            let unit = journal[index].name;
+            self.system
+                .enable(unit)
+                .map_err(|error| error.at(LinuxSystemdFailurePhase::Enable, Some(unit)))?;
         }
         for index in 0..journal.len() {
             journal[index].start_intent = true;
             self.journal = Some(journal.clone());
-            self.system.start(journal[index].name)?;
+            let unit = journal[index].name;
+            self.system
+                .start(unit)
+                .map_err(|error| error.at(LinuxSystemdFailurePhase::Start, Some(unit)))?;
         }
 
         let changed = journal
@@ -411,10 +577,15 @@ impl LinuxSystemdManager {
     /// Returns a redacted state error for any inactive or unreadable unit.
     pub(crate) fn verify_active(&mut self) -> Result<(), LinuxSystemdError> {
         for unit in UNITS {
-            if !self.system.unit_state(unit)?.active {
-                return Err(LinuxSystemdError::new(
-                    LinuxSystemdErrorCode::StateQueryFailed,
-                ));
+            let state = self
+                .system
+                .unit_state(unit)
+                .map_err(|error| error.at(LinuxSystemdFailurePhase::VerifyActive, Some(unit)))?;
+            if !state.active {
+                return Err(
+                    LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                        .at(LinuxSystemdFailurePhase::VerifyActive, Some(unit)),
+                );
             }
         }
         Ok(())
@@ -432,17 +603,39 @@ impl LinuxSystemdManager {
         let states = UNITS
             .iter()
             .copied()
-            .map(|unit| self.system.unit_state(unit))
+            .map(|unit| {
+                self.system
+                    .unit_state(unit)
+                    .map(|state| (unit, state))
+                    .map_err(|error| error.at(LinuxSystemdFailurePhase::StateQuery, Some(unit)))
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        if states.iter().all(|state| state.active && state.enabled) {
+        if states
+            .iter()
+            .all(|(_, state)| state.active && state.enabled)
+        {
             return Ok(true);
         }
-        if states.iter().all(|state| !state.active && !state.enabled) {
+        if states
+            .iter()
+            .all(|(_, state)| !state.active && !state.enabled)
+        {
             return Ok(false);
         }
-        Err(LinuxSystemdError::new(
-            LinuxSystemdErrorCode::StateQueryFailed,
-        ))
+        let unit = states
+            .iter()
+            .find(|(_, state)| state.active != state.enabled)
+            .or_else(|| {
+                states
+                    .windows(2)
+                    .find(|pair| pair[0].1 != pair[1].1)
+                    .map(|pair| &pair[1])
+            })
+            .map_or(UNITS[0], |(unit, _)| *unit);
+        Err(
+            LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                .at(LinuxSystemdFailurePhase::StateQuery, Some(unit)),
+        )
     }
 
     /// Requires every fixed product unit to be inactive and disabled.
@@ -500,7 +693,10 @@ impl LinuxSystemdManager {
 
     fn authenticate_expected_definitions(&mut self) -> Result<(), LinuxSystemdError> {
         for (index, unit) in UNITS.into_iter().enumerate() {
-            self.require_expected_definition(index, unit)?;
+            self.require_expected_definition(index, unit)
+                .map_err(|error| {
+                    error.at(LinuxSystemdFailurePhase::AuthenticateUnit, Some(unit))
+                })?;
         }
         Ok(())
     }
@@ -608,9 +804,10 @@ impl ProductionSystemdSystem {
         match run_status_code(&self.systemctl, arguments)? {
             0 => Ok(true),
             code if false_codes.contains(&code) => Ok(false),
-            _ => Err(LinuxSystemdError::new(
-                LinuxSystemdErrorCode::StateQueryFailed,
-            )),
+            code => Err(
+                LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                    .with_terminal(LinuxSystemdTerminal::ExitedNonzero(code)),
+            ),
         }
     }
 
@@ -705,10 +902,12 @@ fn require_program(program: &Path) -> Result<(), LinuxSystemdError> {
 }
 
 fn run_success(program: &Path, arguments: &[&str]) -> Result<(), LinuxSystemdError> {
-    if run_status_code(program, arguments)? == 0 {
+    let code = run_status_code(program, arguments)?;
+    if code == 0 {
         Ok(())
     } else {
-        Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))
+        Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed)
+            .with_terminal(LinuxSystemdTerminal::ExitedNonzero(code)))
     }
 }
 
@@ -722,13 +921,19 @@ fn run_status_code(program: &Path, arguments: &[&str]) -> Result<i32, LinuxSyste
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .process_group(0);
-    let mut child = command
-        .spawn()
-        .map_err(|_| LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))?;
+    let mut child = command.spawn().map_err(|_| {
+        LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed)
+            .with_terminal(LinuxSystemdTerminal::SpawnFailed)
+    })?;
     let status = wait_bounded(&mut child)?;
-    status
-        .code()
-        .ok_or_else(|| LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))
+    status.code().ok_or_else(|| {
+        LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed).with_terminal(
+            status.signal().map_or(
+                LinuxSystemdTerminal::WaitFailed,
+                LinuxSystemdTerminal::Signaled,
+            ),
+        )
+    })
 }
 
 fn run_output(program: &Path, arguments: &[&str]) -> Result<String, LinuxSystemdError> {
@@ -741,31 +946,51 @@ fn run_output(program: &Path, arguments: &[&str]) -> Result<String, LinuxSystemd
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0);
-    let mut child = command
-        .spawn()
-        .map_err(|_| LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))?;
+    let mut child = command.spawn().map_err(|_| {
+        LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed)
+            .with_terminal(LinuxSystemdTerminal::SpawnFailed)
+    })?;
     let status = wait_bounded(&mut child)?;
     if !status.success() {
-        return Err(LinuxSystemdError::new(
-            LinuxSystemdErrorCode::StateQueryFailed,
-        ));
+        let terminal = status.code().map_or_else(
+            || {
+                status.signal().map_or(
+                    LinuxSystemdTerminal::WaitFailed,
+                    LinuxSystemdTerminal::Signaled,
+                )
+            },
+            LinuxSystemdTerminal::ExitedNonzero,
+        );
+        return Err(
+            LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed).with_terminal(terminal),
+        );
     }
     let mut bytes = Vec::new();
     child
         .stdout
         .take()
-        .ok_or_else(|| LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed))?
+        .ok_or_else(|| {
+            LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                .with_terminal(LinuxSystemdTerminal::OutputFailed)
+        })?
         .take(4097)
         .read_to_end(&mut bytes)
-        .map_err(|_| LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed))?;
+        .map_err(|_| {
+            LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                .with_terminal(LinuxSystemdTerminal::OutputFailed)
+        })?;
     if bytes.len() > 4096 {
-        return Err(LinuxSystemdError::new(
-            LinuxSystemdErrorCode::StateQueryFailed,
-        ));
+        return Err(
+            LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                .with_terminal(LinuxSystemdTerminal::OutputFailed),
+        );
     }
     String::from_utf8(bytes)
         .map(|value| value.trim_end_matches('\n').to_owned())
-        .map_err(|_| LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed))
+        .map_err(|_| {
+            LinuxSystemdError::new(LinuxSystemdErrorCode::StateQueryFailed)
+                .with_terminal(LinuxSystemdTerminal::OutputFailed)
+        })
 }
 
 fn wait_bounded(child: &mut Child) -> Result<ExitStatus, LinuxSystemdError> {
@@ -774,9 +999,15 @@ fn wait_bounded(child: &mut Child) -> Result<ExitStatus, LinuxSystemdError> {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            Ok(None) | Err(_) => {
+            Ok(None) => {
                 terminate(child);
-                return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed));
+                return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed)
+                    .with_terminal(LinuxSystemdTerminal::TimedOut));
+            }
+            Err(_) => {
+                terminate(child);
+                return Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed)
+                    .with_terminal(LinuxSystemdTerminal::WaitFailed));
             }
         }
     }
@@ -801,6 +1032,7 @@ mod tests {
         definitions: BTreeMap<&'static str, UnitDefinition>,
         calls: Vec<String>,
         fail_call: Option<String>,
+        fail_unit_state: Option<&'static str>,
     }
 
     #[derive(Debug, Clone)]
@@ -851,6 +1083,11 @@ mod tests {
         }
 
         fn unit_state(&mut self, unit: &'static str) -> Result<UnitState, LinuxSystemdError> {
+            if self.state.borrow().fail_unit_state == Some(unit) {
+                return Err(LinuxSystemdError::new(
+                    LinuxSystemdErrorCode::StateQueryFailed,
+                ));
+            }
             self.state
                 .borrow()
                 .units
@@ -940,6 +1177,55 @@ mod tests {
     }
 
     #[test]
+    fn command_terminal_metadata_is_fixed_bounded_and_raw_free() -> Result<(), Box<dyn Error>> {
+        let cases = [
+            (LinuxSystemdTerminal::NotRun, "terminal=not-run"),
+            (LinuxSystemdTerminal::SpawnFailed, "terminal=spawn-failed"),
+            (LinuxSystemdTerminal::TimedOut, "terminal=timed-out"),
+            (LinuxSystemdTerminal::WaitFailed, "terminal=wait-failed"),
+            (
+                LinuxSystemdTerminal::ExitedNonzero(23),
+                "terminal=exited-nonzero exit-code=23",
+            ),
+            (
+                LinuxSystemdTerminal::Signaled(15),
+                "terminal=signaled signal=15",
+            ),
+            (LinuxSystemdTerminal::OutputFailed, "terminal=output-failed"),
+        ];
+        for (terminal, expected) in cases {
+            let rendered = LinuxSystemdFailure::new(
+                LinuxSystemdFailurePhase::Start,
+                Some("pkg-nix-broker.service"),
+                LinuxSystemdErrorCode::CommandFailed,
+                terminal,
+            )
+            .to_string();
+            assert!(rendered.contains("class=command-failed"));
+            assert!(rendered.contains(expected));
+            for forbidden in ["synthetic-raw", "secret-marker", "\x1b", "\r"] {
+                assert!(!rendered.contains(forbidden));
+            }
+        }
+
+        let nonzero = run_success(Path::new("/bin/sh"), &["-c", "exit 23"])
+            .err()
+            .ok_or("nonzero command unexpectedly succeeded")?;
+        assert_eq!(nonzero.terminal, LinuxSystemdTerminal::ExitedNonzero(23));
+
+        let signaled = run_status_code(Path::new("/bin/sh"), &["-c", "kill -TERM $$"])
+            .err()
+            .ok_or("signaled command unexpectedly succeeded")?;
+        assert_eq!(signaled.terminal, LinuxSystemdTerminal::Signaled(15));
+
+        let output = run_output(Path::new("/bin/sh"), &["-c", "printf '\\377'"])
+            .err()
+            .ok_or("invalid output unexpectedly succeeded")?;
+        assert_eq!(output.terminal, LinuxSystemdTerminal::OutputFailed);
+        Ok(())
+    }
+
+    #[test]
     fn activation_orders_reload_tmpfiles_enable_and_start() -> Result<(), Box<dyn Error>> {
         let fake = FakeSystem::new(all(UnitState {
             enabled: false,
@@ -963,6 +1249,160 @@ mod tests {
             UNITS.map(|unit| format!("start:{unit}"))
         );
         Ok(())
+    }
+
+    #[test]
+    fn activation_failures_retain_only_fixed_phase_and_unit_metadata() {
+        let expected = |phase, unit, code| {
+            LinuxSystemdFailure::new(phase, unit, code, LinuxSystemdTerminal::NotRun)
+        };
+        let run = |fake: FakeSystem, authenticate| {
+            LinuxSystemdManager::with_system(Box::new(fake))
+                .activate_fresh(|| authenticate)
+                .err()
+                .and_then(LinuxSystemdError::failure)
+        };
+
+        for unit in UNITS {
+            let fake = FakeSystem::new(all(UnitState {
+                enabled: false,
+                active: false,
+            }));
+            fake.state.borrow_mut().fail_unit_state = Some(unit);
+            assert_eq!(
+                run(fake, true),
+                Some(expected(
+                    LinuxSystemdFailurePhase::StateQuery,
+                    Some(unit),
+                    LinuxSystemdErrorCode::StateQueryFailed,
+                ))
+            );
+        }
+
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: false,
+            active: false,
+        }));
+        fake.state.borrow_mut().fail_call = Some("daemon-reload".to_owned());
+        assert_eq!(
+            run(fake, true),
+            Some(expected(
+                LinuxSystemdFailurePhase::DaemonReload,
+                None,
+                LinuxSystemdErrorCode::CommandFailed,
+            ))
+        );
+
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: false,
+            active: false,
+        }));
+        assert_eq!(
+            run(fake, false),
+            Some(expected(
+                LinuxSystemdFailurePhase::AuthenticateUnit,
+                None,
+                LinuxSystemdErrorCode::StateQueryFailed,
+            ))
+        );
+
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: false,
+            active: false,
+        }));
+        fake.state.borrow_mut().fail_call = Some("tmpfiles".to_owned());
+        assert_eq!(
+            run(fake, true),
+            Some(expected(
+                LinuxSystemdFailurePhase::Tmpfiles,
+                None,
+                LinuxSystemdErrorCode::CommandFailed,
+            ))
+        );
+
+        for (phase, action) in [
+            (LinuxSystemdFailurePhase::Enable, "enable"),
+            (LinuxSystemdFailurePhase::Start, "start"),
+        ] {
+            for unit in UNITS {
+                let fake = FakeSystem::new(all(UnitState {
+                    enabled: false,
+                    active: false,
+                }));
+                fake.state.borrow_mut().fail_call = Some(format!("{action}:{unit}"));
+                assert_eq!(
+                    run(fake, true),
+                    Some(expected(
+                        phase,
+                        Some(unit),
+                        LinuxSystemdErrorCode::CommandFailed,
+                    ))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn authentication_failure_does_not_retain_raw_unit_metadata() {
+        for unit in UNITS {
+            let fake = FakeSystem::new(all(UnitState {
+                enabled: false,
+                active: false,
+            }));
+            fake.state
+                .borrow_mut()
+                .definitions
+                .entry(unit)
+                .and_modify(|definition| {
+                    definition.drop_in_paths = "synthetic-raw\x1b[31m".to_owned();
+                });
+            let failure = LinuxSystemdManager::with_system(Box::new(fake))
+                .activate_fresh(|| true)
+                .err()
+                .and_then(LinuxSystemdError::failure);
+            assert_eq!(
+                failure,
+                Some(LinuxSystemdFailure::new(
+                    LinuxSystemdFailurePhase::AuthenticateUnit,
+                    Some(unit),
+                    LinuxSystemdErrorCode::StateQueryFailed,
+                    LinuxSystemdTerminal::NotRun,
+                ))
+            );
+            let rendered = failure
+                .map(|failure| failure.to_string())
+                .unwrap_or_default();
+            assert!(!rendered.contains("synthetic-raw"));
+            assert!(!rendered.contains('\x1b'));
+        }
+    }
+
+    #[test]
+    fn verify_active_retains_the_exact_fixed_unit() {
+        for failed_unit in UNITS {
+            let fake = FakeSystem::new(UNITS.map(|unit| {
+                (
+                    unit,
+                    UnitState {
+                        enabled: true,
+                        active: unit != failed_unit,
+                    },
+                )
+            }));
+            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            assert_eq!(
+                manager
+                    .verify_active()
+                    .err()
+                    .and_then(LinuxSystemdError::failure),
+                Some(LinuxSystemdFailure::new(
+                    LinuxSystemdFailurePhase::VerifyActive,
+                    Some(failed_unit),
+                    LinuxSystemdErrorCode::StateQueryFailed,
+                    LinuxSystemdTerminal::NotRun,
+                ))
+            );
+        }
     }
 
     #[test]
@@ -1007,9 +1447,19 @@ mod tests {
         shared.borrow_mut().fail_call = Some("start:pkg-root-helper.service".to_owned());
         let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
 
+        let error = manager.activate_fresh(|| true).err();
         assert_eq!(
-            manager.activate_fresh(|| true),
-            Err(LinuxSystemdError::new(LinuxSystemdErrorCode::CommandFailed))
+            error.map(LinuxSystemdError::code),
+            Some(LinuxSystemdErrorCode::CommandFailed)
+        );
+        assert_eq!(
+            error.and_then(LinuxSystemdError::failure),
+            Some(LinuxSystemdFailure::new(
+                LinuxSystemdFailurePhase::Start,
+                Some("pkg-root-helper.service"),
+                LinuxSystemdErrorCode::CommandFailed,
+                LinuxSystemdTerminal::NotRun,
+            ))
         );
         assert!(manager.rollback().is_ok());
         let state = shared.borrow();
@@ -1253,12 +1703,41 @@ mod tests {
         };
         let mut manager = LinuxSystemdManager::with_system(Box::new(FakeSystem::new(states)));
 
+        let error = manager.classify_activation().err();
         assert_eq!(
-            manager
-                .classify_activation()
-                .map_err(super::LinuxSystemdError::code),
-            Err(LinuxSystemdErrorCode::StateQueryFailed)
+            error.map(super::LinuxSystemdError::code),
+            Some(LinuxSystemdErrorCode::StateQueryFailed)
         );
+        assert_eq!(
+            error.and_then(LinuxSystemdError::failure),
+            Some(LinuxSystemdFailure::new(
+                LinuxSystemdFailurePhase::StateQuery,
+                Some(UNITS[0]),
+                LinuxSystemdErrorCode::StateQueryFailed,
+                LinuxSystemdTerminal::NotRun,
+            ))
+        );
+
+        for unit in UNITS {
+            let fake = FakeSystem::new(all(UnitState {
+                enabled: false,
+                active: false,
+            }));
+            fake.state.borrow_mut().fail_unit_state = Some(unit);
+            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            assert_eq!(
+                manager
+                    .classify_activation()
+                    .err()
+                    .and_then(LinuxSystemdError::failure),
+                Some(LinuxSystemdFailure::new(
+                    LinuxSystemdFailurePhase::StateQuery,
+                    Some(unit),
+                    LinuxSystemdErrorCode::StateQueryFailed,
+                    LinuxSystemdTerminal::NotRun,
+                ))
+            );
+        }
     }
 
     #[test]
