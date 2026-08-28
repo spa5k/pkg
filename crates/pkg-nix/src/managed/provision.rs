@@ -12,7 +12,7 @@ use lzma_rust2::XzReader;
 use pkg_channel::{TrustedRoot, VerifiedChannel};
 use sha2::{Digest as _, Sha256};
 use tar::{Archive, EntryType};
-use tempfile::NamedTempFile;
+use tempfile::TempPath;
 use url::Url;
 
 use super::daemon::{DaemonErrorCode, ManagedDaemon};
@@ -367,7 +367,7 @@ impl AuthenticatedInstallerBundle {
             return Err(ProvisionError::new(ProvisionErrorCode::FetchFailed));
         }
         Ok(StagedDeterminateInstaller {
-            file,
+            path: file.into_temp_path(),
             length,
             sha256,
         })
@@ -396,7 +396,7 @@ impl AuthenticatedInstallerBundle {
 
 /// One private, authenticated Determinate installer executable.
 pub struct StagedDeterminateInstaller {
-    file: NamedTempFile,
+    path: TempPath,
     length: u64,
     sha256: Digest,
 }
@@ -405,7 +405,7 @@ impl StagedDeterminateInstaller {
     /// Returns the private executable path for the closed process adapter.
     #[must_use]
     pub fn path(&self) -> &Path {
-        self.file.path()
+        &self.path
     }
 
     /// Returns the authenticated executable length.
@@ -2481,6 +2481,30 @@ mod tests {
                 .file_type()
                 .is_symlink()
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn staged_determinate_installer_closes_writer_before_execution() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, b"#!/bin/sh\nprintf 'staged-ok\\n'\n").unwrap();
+        file.as_file_mut()
+            .set_permissions(fs::Permissions::from_mode(0o700))
+            .unwrap();
+        file.as_file_mut().sync_all().unwrap();
+        let path = file.path().to_owned();
+        let staged = StagedDeterminateInstaller {
+            path: file.into_temp_path(),
+            length: fs::metadata(&path).unwrap().len(),
+            sha256: Digest::from_bytes([0; 32]),
+        };
+
+        let output = std::process::Command::new(staged.path()).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"staged-ok\n");
+        assert!(path.exists());
+        drop(staged);
+        assert!(!path.exists());
     }
 
     #[test]
