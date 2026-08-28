@@ -41,9 +41,10 @@ use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
     StateEditKind, StateEditMetadata, assemble_upgrade_evidence_state, discard_unprepared_installs,
     discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
-    pending_install_generation, pending_state_edit_generation, pending_state_transition_source,
-    prepare_install_generation, prepare_rollback, prepare_state_edit, recover_generation,
-    recover_transitioned_state_edit, resume_prepared_install, resume_prepared_state_edit,
+    pending_install_discard_generation, pending_install_generation, pending_state_edit_generation,
+    pending_state_transition_source, prepare_install_generation, prepare_rollback,
+    prepare_state_edit, recover_generation, recover_transitioned_state_edit,
+    resume_prepared_install, resume_prepared_state_edit,
 };
 use pkg_store::{
     GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
@@ -793,6 +794,15 @@ impl LocalStateOperations {
         broker: &mut BrokerLifecycleClient,
         reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
     ) -> Result<(), CommandError> {
+        let probe = StateLease::try_shared(layout).map_err(state_lease_error)?;
+        let pending_discard =
+            pending_install_discard_generation(layout, &probe).map_err(state_read_error)?;
+        drop(probe);
+        if let Some(generation) = pending_discard {
+            self.recover_pending_prunes(layout, broker)?;
+            self.discard_unrooted_install_with(layout, broker, reconnect, &generation)?;
+            return Ok(());
+        }
         let nonce = secure_nonce()?;
         let created_at = utc_now()?;
         let identity = LeaseIdentity::new("recover_install", &nonce, &created_at)

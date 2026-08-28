@@ -16,8 +16,8 @@ use pkg_nix::{
 use pkg_store::{
     ActivationEvent, ActivationPlan, LeaseMode, PreparedRootSet, RootCandidate, StateJournal,
     StateJournalError, StateLayout, StateLease, activate_generation, activate_published_generation,
-    activate_transitioned_generation, inspect_staged_activation, prepare_root_set,
-    publish_root_set, verify_recorded_activation,
+    activate_transitioned_generation, authorize_generation_root_removal, inspect_staged_activation,
+    prepare_root_set, publish_root_set, verify_recorded_activation,
 };
 use serde_json::{Value, json};
 
@@ -252,6 +252,61 @@ pub fn pending_install_generation(
     pending_generation(layout, lease, is_install_operation)
 }
 
+/// Returns the sole aborted install generation whose discard is not terminal.
+pub fn pending_install_discard_generation(
+    layout: &StateLayout,
+    lease: &StateLease,
+) -> Result<Option<GenerationId>, CommitError> {
+    let mut prepared = BTreeSet::new();
+    let mut aborted = BTreeSet::new();
+    let mut pruned = BTreeSet::new();
+    for row in StateJournal::open(layout)
+        .and_then(|journal| journal.rows(lease))
+        .map_err(map_journal_error)?
+    {
+        let fields = row.payload().fields();
+        let (Some(operation_id), Some(generation_id)) = (
+            fields.get("opId").and_then(Value::as_str),
+            fields.get("generationId").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let key = (operation_id.to_owned(), generation_id.to_owned());
+        match (
+            fields.get("phase").and_then(Value::as_str),
+            fields.get("status").and_then(Value::as_str),
+        ) {
+            (Some("commit"), Some("prepared")) => {
+                prepared.insert(key);
+            }
+            (Some("commit"), Some("aborted")) => {
+                if fields
+                    .get("operationKind")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_install_operation)
+                {
+                    aborted.insert(key);
+                }
+            }
+            (Some("prune"), Some("pruned")) => {
+                pruned.insert(generation_id.to_owned());
+            }
+            _ => {}
+        }
+    }
+    let pending = aborted
+        .intersection(&prepared)
+        .filter(|(_, generation_id)| !pruned.contains(generation_id))
+        .map(|(_, generation_id)| {
+            GenerationId::new(generation_id).map_err(|_| CommitError::InvalidCandidate)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if pending.len() > 1 {
+        return Err(CommitError::InvalidCandidate);
+    }
+    Ok(pending.into_iter().next())
+}
+
 fn pending_generation(
     layout: &StateLayout,
     lease: &StateLease,
@@ -275,10 +330,17 @@ fn pending_generation(
                 "commit",
                 "committed",
             )?;
+            let aborted = journal_has_status(
+                layout,
+                lease,
+                snapshot.generation().operation().op_id(),
+                "commit",
+                "aborted",
+            )?;
             if committed && !prepared {
                 return Err(CommitError::InvalidCandidate);
             }
-            if !prepared || committed {
+            if !prepared || committed || aborted {
                 continue;
             }
             pending.push(
@@ -1008,13 +1070,7 @@ pub fn recover_generation(
         if current_is_generation {
             return Err(CommitError::InvalidCandidate);
         }
-        helper
-            .remove_root_set(&RemoveRootSetRequest::new(
-                generation.uid(),
-                generation_id.clone(),
-            ))
-            .map_err(|_| CommitError::ActivationFailed)?;
-        discard_generation_paths(root, &generation)?;
+        discard_generation_root_last(layout, lease, &generation, helper)?;
         return Ok(RecoveryResult::DiscardedUnactivated);
     }
     let manifest = read_verified_snapshot(
@@ -1042,21 +1098,7 @@ pub fn recover_generation(
         )
     };
     if !current_is_generation {
-        helper
-            .remove_root_set(&RemoveRootSetRequest::new(
-                generation.uid(),
-                generation_id.clone(),
-            ))
-            .map_err(|_| CommitError::ActivationFailed)?;
-        discard_candidate(root, &candidate)?;
-        append_phase(
-            layout,
-            lease,
-            generation.operation().op_id(),
-            "commit",
-            "aborted",
-            [("generationId", json!(generation.id()))],
-        )?;
+        discard_generation_root_last(layout, lease, candidate.generation(), helper)?;
         return Ok(RecoveryResult::DiscardedUnactivated);
     }
 
@@ -1093,6 +1135,72 @@ pub fn recover_generation(
         )?;
         Ok(RecoveryResult::FinishedActivated)
     }
+}
+
+fn discard_generation_root_last(
+    layout: &StateLayout,
+    lease: &StateLease,
+    generation: &Generation,
+    helper: &dyn MaintenanceAdapter,
+) -> Result<(), CommitError> {
+    let generation_id =
+        GenerationId::new(generation.id()).map_err(|_| CommitError::InvalidCandidate)?;
+    let operation_id = generation.operation().op_id();
+    // Abort first. Generic prune recovery must never observe this candidate
+    // before the durable commit decision says that it cannot be activated.
+    if !journal_has_status(layout, lease, operation_id, "commit", "aborted")? {
+        append_phase(
+            layout,
+            lease,
+            operation_id,
+            "commit",
+            "aborted",
+            [
+                ("generationId", json!(generation.id())),
+                ("operationKind", json!(generation.operation().kind())),
+            ],
+        )?;
+    }
+    if !journal_has_status(layout, lease, operation_id, "prune", "intended")? {
+        append_phase(
+            layout,
+            lease,
+            operation_id,
+            "prune",
+            "intended",
+            [
+                ("generationId", json!(generation.id())),
+                (
+                    "outputRoots",
+                    json!(
+                        generation
+                            .activation()
+                            .output_roots()
+                            .iter()
+                            .map(StorePath::as_str)
+                            .collect::<Vec<_>>()
+                    ),
+                ),
+            ],
+        )?;
+    }
+    discard_generation_paths(layout.state_root(), generation)?;
+    authorize_generation_root_removal(layout, &generation_id)
+        .map_err(|_| CommitError::ActivationFailed)?;
+    helper
+        .remove_root_set(&RemoveRootSetRequest::new(
+            layout.owner_uid(),
+            generation_id,
+        ))
+        .map_err(|_| CommitError::ActivationFailed)?;
+    append_phase(
+        layout,
+        lease,
+        operation_id,
+        "prune",
+        "pruned",
+        [("generationId", json!(generation.id()))],
+    )
 }
 
 fn validate_plan(
@@ -1489,6 +1597,55 @@ mod tests {
         maintenance: pkg_nix::CallerMaintenance,
     }
 
+    struct RootLastMaintenance<'a> {
+        layout: &'a StateLayout,
+        inner: &'a dyn MaintenanceAdapter,
+        fail_removal: bool,
+        fail_after_removal: bool,
+    }
+
+    impl MaintenanceAdapter for RootLastMaintenance<'_> {
+        fn publish_root_set(
+            &self,
+            root_set: &pkg_nix::RootSet,
+        ) -> Result<RootSetReport, pkg_nix::MaintenanceError> {
+            self.inner.publish_root_set(root_set)
+        }
+
+        fn attest_root_set(
+            &self,
+            request: &pkg_nix::RootSetAttestationRequest,
+        ) -> Result<RootSetReport, pkg_nix::MaintenanceError> {
+            self.inner.attest_root_set(request)
+        }
+
+        fn remove_root_set(
+            &self,
+            request: &RemoveRootSetRequest,
+        ) -> Result<(), pkg_nix::MaintenanceError> {
+            assert_eq!(request.owner_uid(), self.layout.owner_uid());
+            assert!(
+                authorize_generation_root_removal(self.layout, request.generation()).is_ok(),
+                "root removal must follow user-state deletion"
+            );
+            if self.fail_removal {
+                return Err(pkg_nix::MaintenanceError::backend_failure());
+            }
+            self.inner.remove_root_set(request)?;
+            if self.fail_after_removal {
+                return Err(pkg_nix::MaintenanceError::backend_failure());
+            }
+            Ok(())
+        }
+
+        fn repair_store_paths(
+            &self,
+            request: &pkg_nix::RepairStorePathsRequest,
+        ) -> Result<pkg_nix::RepairStorePathsReport, pkg_nix::MaintenanceError> {
+            self.inner.repair_store_paths(request)
+        }
+    }
+
     fn fixture() -> Fixture {
         fixture_with_outputs(true)
     }
@@ -1688,6 +1845,269 @@ mod tests {
                 .state_root()
                 .join("activations/gen-0001.staging")
                 .exists()
+        );
+    }
+
+    #[test]
+    fn prepared_and_aborted_without_intent_are_not_generic_prunes() {
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
+        publish_root_set(prepared.roots.as_ref().unwrap(), &fixture.maintenance).unwrap();
+
+        let maintenance = RootLastMaintenance {
+            layout: &fixture.layout,
+            inner: &fixture.maintenance,
+            fail_removal: false,
+            fail_after_removal: false,
+        };
+        assert!(
+            pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            fixture
+                .layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            None
+        );
+
+        append_phase(
+            &fixture.layout,
+            &prepared.lease,
+            "op_fixture",
+            "commit",
+            "aborted",
+            [
+                ("generationId", json!("gen-0001")),
+                ("operationKind", json!("install")),
+            ],
+        )
+        .unwrap();
+        assert!(
+            pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            Some(fixture.generation_id.clone())
+        );
+        assert_eq!(
+            pending_install_generation(&fixture.layout, &prepared.lease).unwrap(),
+            None
+        );
+
+        assert_eq!(
+            recover_generation(
+                &fixture.layout,
+                &prepared.lease,
+                &fixture.generation_id,
+                &maintenance,
+            )
+            .unwrap(),
+            RecoveryResult::DiscardedUnactivated
+        );
+        assert!(
+            !fixture
+                .layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn failed_root_last_discard_converges_through_generic_recovery() {
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
+        publish_root_set(prepared.roots.as_ref().unwrap(), &fixture.maintenance).unwrap();
+        let failing = RootLastMaintenance {
+            layout: &fixture.layout,
+            inner: &fixture.maintenance,
+            fail_removal: true,
+            fail_after_removal: false,
+        };
+        assert_eq!(
+            recover_generation(
+                &fixture.layout,
+                &prepared.lease,
+                &fixture.generation_id,
+                &failing,
+            ),
+            Err(CommitError::ActivationFailed)
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            Some(fixture.generation_id.clone())
+        );
+        assert!(
+            !fixture
+                .layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
+        );
+
+        let maintenance = RootLastMaintenance {
+            layout: &fixture.layout,
+            inner: &fixture.maintenance,
+            fail_removal: false,
+            fail_after_removal: false,
+        };
+        assert_eq!(
+            pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance).unwrap(),
+            vec!["gen-0001".to_owned()]
+        );
+        assert!(
+            pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn cross_operation_prune_is_terminal_for_aborted_install() {
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
+        publish_root_set(prepared.roots.as_ref().unwrap(), &fixture.maintenance).unwrap();
+        append_phase(
+            &fixture.layout,
+            &prepared.lease,
+            "op_fixture",
+            "commit",
+            "aborted",
+            [
+                ("generationId", json!("gen-0001")),
+                ("operationKind", json!("install")),
+            ],
+        )
+        .unwrap();
+        append_phase(
+            &fixture.layout,
+            &prepared.lease,
+            "op_other_gc",
+            "prune",
+            "intended",
+            [
+                ("generationId", json!("gen-0001")),
+                ("outputRoots", json!([STORE])),
+            ],
+        )
+        .unwrap();
+        let maintenance = RootLastMaintenance {
+            layout: &fixture.layout,
+            inner: &fixture.maintenance,
+            fail_removal: false,
+            fail_after_removal: false,
+        };
+        assert!(
+            fixture
+                .layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
+        );
+        assert_eq!(
+            pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance).unwrap(),
+            vec!["gen-0001".to_owned()]
+        );
+        assert!(
+            !fixture
+                .layout
+                .state_root()
+                .join("generations/gen-0001.json")
+                .exists()
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            None
+        );
+        assert!(
+            pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn helper_removed_before_terminal_row_retries_idempotently() {
+        let fixture = fixture();
+        let lease = mutation_lease(&fixture.layout);
+        let prepared = PreparedGeneration::prepare(
+            fixture.layout.clone(),
+            fixture.candidate,
+            fixture.plan,
+            lease,
+        )
+        .unwrap();
+        publish_root_set(prepared.roots.as_ref().unwrap(), &fixture.maintenance).unwrap();
+        let interrupted = RootLastMaintenance {
+            layout: &fixture.layout,
+            inner: &fixture.maintenance,
+            fail_removal: false,
+            fail_after_removal: true,
+        };
+        assert_eq!(
+            recover_generation(
+                &fixture.layout,
+                &prepared.lease,
+                &fixture.generation_id,
+                &interrupted,
+            ),
+            Err(CommitError::ActivationFailed)
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            Some(fixture.generation_id.clone())
+        );
+        let maintenance = RootLastMaintenance {
+            layout: &fixture.layout,
+            inner: &fixture.maintenance,
+            fail_removal: false,
+            fail_after_removal: false,
+        };
+        assert_eq!(
+            pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance).unwrap(),
+            vec!["gen-0001".to_owned()]
+        );
+        assert_eq!(
+            pending_install_discard_generation(&fixture.layout, &prepared.lease).unwrap(),
+            None
         );
     }
 
