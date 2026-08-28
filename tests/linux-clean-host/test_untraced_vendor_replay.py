@@ -178,6 +178,10 @@ offline = run.split("assert_product_units_offline() {", 1)[1].split("\n}", 1)[0]
 assert 'case "$unit" in' in offline
 assert '*.service) test "$(docker exec "$container" systemctl show --property=MainPID --value "$unit")" = 0 ;;' in offline
 assert offline.count("--property=MainPID") == 1
+publication_product = run.split("assert_publication_product() {", 1)[1].split("\n}", 1)[0]
+assert 'docker exec -i "$container" python3 - "$publication"' in publication_product
+publication = run.split("publication_installer() {", 1)[1].split("\n}", 1)[0]
+assert 'docker exec -i "$container" python3 - "$1"' in publication
 proof_check = 'python3 "$repo/tests/linux-clean-host/test_untraced_vendor_replay.py" >/dev/null'
 assert run.index(proof_check) < run.index('echo "+ stage x86_64 Linux release inputs"')
 assert run.index("package_alpha_candidate.py") < run.index('"$repo/tests/linux-clean-host/pkg_bounded_capture.py"')

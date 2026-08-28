@@ -729,7 +729,7 @@ activate_product_units() {
 
 assert_publication_product() {
     publication=$1
-    docker exec "$container" python3 - "$publication" <<'PY'
+    docker exec -i "$container" python3 - "$publication" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -850,7 +850,7 @@ PY
 }
 
 publication_installer() {
-    docker exec "$container" python3 - "$1" <<'PY'
+    docker exec -i "$container" python3 - "$1" <<'PY'
 import hashlib
 import json
 import pathlib
