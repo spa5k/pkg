@@ -152,7 +152,7 @@ impl LinuxRootSetStore {
     pub fn production() -> Result<Self, LinuxPlatformError> {
         let gcroots = Path::new(PRODUCTION_GCROOTS);
         ensure_safe_ancestors(gcroots, 0)?;
-        provision_product_root(gcroots, 0)
+        open_product_root(gcroots, 0)
     }
 
     pub(crate) fn new_at(
@@ -320,7 +320,41 @@ impl LinuxRootSetStore {
     }
 }
 
-fn provision_product_root(
+fn open_product_root(
+    gcroots: &Path,
+    owner_uid: u32,
+) -> Result<LinuxRootSetStore, LinuxPlatformError> {
+    ensure_trusted_directory(gcroots, owner_uid)?;
+    let product = gcroots.join("pkg");
+    ensure_trusted_directory(&product, owner_uid)?;
+    let users = product.join("users");
+    ensure_trusted_directory(&users, owner_uid)?;
+    for path in [&product, &users] {
+        if path
+            .symlink_metadata()
+            .map_err(fs_error)?
+            .permissions()
+            .mode()
+            & 0o777
+            != 0o700
+        {
+            return Err(LinuxPlatformError::new(
+                LinuxPlatformErrorCode::UnsafeFilesystemState,
+            ));
+        }
+    }
+    LinuxRootSetStore::new_at(users, owner_uid)
+}
+
+pub(crate) fn provision_product_root_if_absent(
+    gcroots: &Path,
+    owner_uid: u32,
+) -> Result<LinuxRootSetStore, LinuxPlatformError> {
+    ensure_safe_ancestors(gcroots, owner_uid)?;
+    provision_product_root_under_trusted_parent(gcroots, owner_uid)
+}
+
+fn provision_product_root_under_trusted_parent(
     gcroots: &Path,
     owner_uid: u32,
 ) -> Result<LinuxRootSetStore, LinuxPlatformError> {
@@ -569,12 +603,11 @@ mod tests {
     }
 
     #[test]
-    fn product_root_initialization_is_narrow_idempotent_and_symlink_safe()
-    -> Result<(), Box<dyn Error>> {
+    fn provision_if_absent_is_narrow_idempotent_and_symlink_safe() -> Result<(), Box<dyn Error>> {
         let scratch = Scratch::new("product-root")?;
         let owner = Uid::current().as_raw();
-        let first = provision_product_root(&scratch.0, owner)?;
-        let second = provision_product_root(&scratch.0, owner)?;
+        let first = provision_product_root_under_trusted_parent(&scratch.0, owner)?;
+        let second = provision_product_root_under_trusted_parent(&scratch.0, owner)?;
         let users = scratch.0.join("pkg/users");
         assert_eq!(first.root, users);
         assert_eq!(second.root, users);
@@ -587,7 +620,40 @@ mod tests {
         fs::remove_dir(&users)?;
         symlink("/tmp", &users)?;
         assert!(matches!(
-            provision_product_root(&scratch.0, owner).map_err(LinuxPlatformError::code),
+            provision_product_root_under_trusted_parent(&scratch.0, owner)
+                .map_err(LinuxPlatformError::code),
+            Err(LinuxPlatformErrorCode::UnsafeFilesystemState)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn product_root_open_is_verify_only_and_requires_exact_private_directories()
+    -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new("product-root-open")?;
+        let owner = Uid::current().as_raw();
+        assert!(matches!(
+            open_product_root(&scratch.0, owner).map_err(LinuxPlatformError::code),
+            Err(LinuxPlatformErrorCode::FilesystemFailure)
+        ));
+        assert!(!scratch.0.join("pkg").exists());
+
+        let product = scratch.0.join("pkg");
+        let users = product.join("users");
+        fs::create_dir(&product)?;
+        fs::set_permissions(&product, fs::Permissions::from_mode(0o700))?;
+        assert!(matches!(
+            open_product_root(&scratch.0, owner).map_err(LinuxPlatformError::code),
+            Err(LinuxPlatformErrorCode::FilesystemFailure)
+        ));
+        assert!(!users.exists());
+        fs::create_dir(&users)?;
+        fs::set_permissions(&users, fs::Permissions::from_mode(0o700))?;
+        assert_eq!(open_product_root(&scratch.0, owner)?.root, users);
+
+        fs::set_permissions(&product, fs::Permissions::from_mode(0o755))?;
+        assert!(matches!(
+            open_product_root(&scratch.0, owner).map_err(LinuxPlatformError::code),
             Err(LinuxPlatformErrorCode::UnsafeFilesystemState)
         ));
         Ok(())

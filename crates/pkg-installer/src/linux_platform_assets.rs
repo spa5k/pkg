@@ -141,6 +141,7 @@ impl LinuxPlatformAssetManager {
             "nix",
             "nix/var",
             "nix/var/nix",
+            "nix/var/nix/gcroots",
             "var",
             "var/lib",
             "run",

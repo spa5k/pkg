@@ -3,8 +3,8 @@
 use crate::{
     LinuxAssetPresence,
     assets::{
-        LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, is_linux_service_runtime_asset,
-        linux_install_assets, linux_product_mutation_assets,
+        LinuxAssetKind, LinuxInstallAsset, LinuxSystemdAssets, is_linux_product_gcroots_asset,
+        is_linux_service_runtime_asset, linux_install_assets, linux_product_mutation_assets,
     },
     linux_install_journal::{
         LinuxInstallJournal, LinuxInstallMode, LinuxInstallMutation, LinuxInstallRecoveryAction,
@@ -478,9 +478,9 @@ pub fn install_linux_journaled_preflighted(
     let mut created_artifacts = 0_usize;
     let mut existing = 0_usize;
     let result = (|| {
-        for asset in linux_product_mutation_assets()
-            .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
-        {
+        for asset in linux_product_mutation_assets().filter(|asset| {
+            asset.kind() != LinuxAssetKind::File && !is_linux_product_gcroots_asset(*asset)
+        }) {
             mutations.push(InstallMutation::Asset(asset));
             let was_created = backend.ensure_asset(asset)?;
             if was_created {
@@ -504,7 +504,7 @@ pub fn install_linux_journaled_preflighted(
             let _ = mutations.pop();
         }
         for asset in linux_product_mutation_assets().filter(|asset| {
-            asset.id() == "nix-gcroots"
+            is_linux_product_gcroots_asset(*asset)
                 || (asset.kind() == LinuxAssetKind::File
                     && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
         }) {
@@ -787,9 +787,9 @@ mod tests {
             Digest::from_bytes([digest; 32]),
             Digest::from_bytes([digest.wrapping_add(1); 32]),
         )?;
-        for asset in linux_product_mutation_assets()
-            .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
-        {
+        for asset in linux_product_mutation_assets().filter(|asset| {
+            asset.kind() != LinuxAssetKind::File && !is_linux_product_gcroots_asset(*asset)
+        }) {
             journal.record_preexisting(LinuxInstallMutation::Asset {
                 id: asset.id().to_owned(),
             })?;
@@ -803,9 +803,13 @@ mod tests {
     fn journal_before_services(digest: u8) -> Result<LinuxInstallJournal, Box<dyn Error>> {
         let mut journal = journal_before_runtime(digest)?;
         journal.record_preexisting(LinuxInstallMutation::ManagedRuntime)?;
-        journal.record_preexisting(LinuxInstallMutation::Asset {
-            id: "nix-gcroots".to_owned(),
-        })?;
+        for asset in
+            linux_product_mutation_assets().filter(|asset| is_linux_product_gcroots_asset(*asset))
+        {
+            journal.record_preexisting(LinuxInstallMutation::Asset {
+                id: asset.id().to_owned(),
+            })?;
+        }
         for asset in linux_product_mutation_assets().filter(|asset| {
             asset.kind() == LinuxAssetKind::File
                 && !matches!(asset.id(), "nix-config" | "uninstall-manifest")
@@ -958,7 +962,9 @@ mod tests {
         }
 
         fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
-            self.gcroots_present_at_runtime = self.existing.contains("nix-gcroots");
+            self.gcroots_present_at_runtime = ["nix-gcroots", "nix-gcroots-users"]
+                .into_iter()
+                .any(|id| self.existing.contains(id));
             let changed = self.states.insert("runtime");
             if self.states.contains("fail-runtime") {
                 Err(InstallError::new(InstallErrorCode::BackendFailure))
@@ -1014,13 +1020,14 @@ mod tests {
     }
 
     #[test]
-    fn runtime_registration_precedes_the_gcroots_asset() -> Result<(), Box<dyn Error>> {
+    fn runtime_registration_precedes_the_gcroots_assets() -> Result<(), Box<dyn Error>> {
         let mut backend = FakeBackend::clean();
 
         install_linux(System::X8664Linux, &mut backend)?;
 
         assert!(!backend.gcroots_present_at_runtime);
         assert!(backend.existing.contains("nix-gcroots"));
+        assert!(backend.existing.contains("nix-gcroots-users"));
         Ok(())
     }
 
@@ -1164,7 +1171,7 @@ mod tests {
         journal.intend(LinuxInstallMutation::ManagedRuntime)?;
         journal.complete_created()?;
         for asset in linux_product_mutation_assets().filter(|asset| {
-            asset.id() == "nix-gcroots"
+            is_linux_product_gcroots_asset(*asset)
                 || (asset.kind() == LinuxAssetKind::File
                     && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
         }) {
@@ -1277,7 +1284,9 @@ mod tests {
             Digest::from_bytes([0xa6; 32]),
         )?;
         let first = linux_product_mutation_assets()
-            .find(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
+            .find(|asset| {
+                asset.kind() != LinuxAssetKind::File && !is_linux_product_gcroots_asset(*asset)
+            })
             .ok_or_else(|| io::Error::other("missing first Linux mutation"))?;
         journal.record_preexisting(LinuxInstallMutation::Asset {
             id: first.id().to_owned(),
@@ -1401,9 +1410,20 @@ mod tests {
             .iter()
             .position(|event| *event == "runtime")
             .ok_or_else(|| io::Error::other("runtime rollback missing"))?;
+        let gcroots_users = backend
+            .rollback_events
+            .iter()
+            .position(|event| *event == "nix-gcroots-users")
+            .ok_or_else(|| io::Error::other("GC-root users rollback missing"))?;
+        let gcroots = backend
+            .rollback_events
+            .iter()
+            .position(|event| *event == "nix-gcroots")
+            .ok_or_else(|| io::Error::other("GC-root rollback missing"))?;
+        assert!(gcroots_users < gcroots && gcroots < runtime);
         let post_runtime_asset_count = linux_product_mutation_assets()
             .filter(|asset| {
-                asset.id() == "nix-gcroots"
+                is_linux_product_gcroots_asset(*asset)
                     || (asset.kind() == LinuxAssetKind::File
                         && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
             })

@@ -756,7 +756,7 @@ if receipt["ownershipManifestDigest"] != descriptor["sha256"]:
     raise SystemExit("receipt release identity does not match the publication")
 records = {item["id"]: item for item in receipt["assets"]}
 expected_records = {
-    "broker-group", "broker-user", "nix-root", "nix-gcroots", "product-root",
+    "broker-group", "broker-user", "nix-root", "nix-gcroots", "nix-gcroots-users", "product-root",
     "product-config-root", "product-config-dir", "uninstall-root", "service-bin-dir",
     "service-root", "helper-socket-dir", "broker-socket-dir", "log-root",
     "broker-log-dir", "helper-log-dir", "broker-home", "broker-channel-state",
@@ -767,6 +767,9 @@ expected_records = {
 }
 if len(records) != len(receipt["assets"]) or records.keys() != expected_records:
     raise SystemExit("receipt product record set is not exact")
+for asset in ["nix-gcroots", "nix-gcroots-users"]:
+    if records[asset]["state"] != "created":
+        raise SystemExit(f"product GC-root directory is not receipt-owned: {asset}")
 for asset, target in {
     "root-helper-binary": "installer/x86_64-linux/pkg-root-helper",
     "broker-binary": "installer/x86_64-linux/pkg-nix-broker",
@@ -942,6 +945,8 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
     test "$receipt_size" -gt 0
     test "$receipt_size" -le 1048576
     stat -c "vendor receipt: owner=%u:%g mode=%a bytes=%s" /nix/receipt.json
+    test "$(stat -c %u:%g:%a /nix/var/nix/gcroots/pkg)" = 0:0:700
+    test "$(stat -c %u:%g:%a /nix/var/nix/gcroots/pkg/users)" = 0:0:700
     systemctl is-active --quiet nix-daemon.service
     systemctl is-active --quiet nix-daemon.socket
     /nix/var/nix/profiles/default/bin/nix --version \

@@ -1824,9 +1824,14 @@ mod tests {
             "nix-store",
             "nix-var",
             "nix-state",
-            "nix-gcroots",
             "daemon-socket-dir",
         ] {
+            assert!(fixture.manager.ensure_asset(Fixture::asset(id))?);
+        }
+        let vendor_gcroots = fixture.temporary.path().join("nix/var/nix/gcroots");
+        fs::create_dir(&vendor_gcroots)?;
+        fs::set_permissions(&vendor_gcroots, fs::Permissions::from_mode(0o755))?;
+        for id in ["nix-gcroots", "nix-gcroots-users"] {
             assert!(fixture.manager.ensure_asset(Fixture::asset(id))?);
         }
         assert_eq!(
@@ -1837,9 +1842,13 @@ mod tests {
             0o1775
         );
         assert!(!fixture.manager.ensure_asset(Fixture::asset("nix-store"))?);
+        for id in ["nix-gcroots-users", "nix-gcroots"] {
+            fixture.manager.rollback_asset(Fixture::asset(id))?;
+        }
+        assert!(vendor_gcroots.is_dir());
+        fs::remove_dir(&vendor_gcroots)?;
         for id in [
             "daemon-socket-dir",
-            "nix-gcroots",
             "nix-state",
             "nix-var",
             "nix-store",

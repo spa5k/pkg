@@ -213,7 +213,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         receipt_records = LINUX_HARNESS.split("expected_records = {\n", 1)[1].split(
             "\n}\n", 1
         )[0]
-        self.assertEqual(len(set(re.findall(r'"([a-z0-9-]+)"', receipt_records))), 31)
+        self.assertEqual(len(set(re.findall(r'"([a-z0-9-]+)"', receipt_records))), 32)
         self.assertIn("records.keys() != expected_records", LINUX_HARNESS)
         for asset in (
             "root-helper-binary",

@@ -5,7 +5,10 @@ use std::{error::Error, fmt, str::FromStr};
 use pkg_core::{System, state::Digest};
 use serde::{Deserialize, Serialize};
 
-use crate::{LinuxAssetKind, assets::linux_product_mutation_assets};
+use crate::{
+    LinuxAssetKind,
+    assets::{is_linux_product_gcroots_asset, linux_product_mutation_assets},
+};
 
 const SCHEMA_VERSION: u32 = 6;
 const PRODUCT: &str = "pkg";
@@ -480,7 +483,9 @@ impl LinuxInstallJournal {
 
 fn install_sequence() -> Vec<LinuxInstallMutation> {
     let mut sequence = linux_product_mutation_assets()
-        .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
+        .filter(|asset| {
+            asset.kind() != LinuxAssetKind::File && !is_linux_product_gcroots_asset(*asset)
+        })
         .map(|asset| LinuxInstallMutation::Asset {
             id: asset.id().to_owned(),
         })
@@ -492,7 +497,7 @@ fn install_sequence() -> Vec<LinuxInstallMutation> {
     sequence.extend(
         linux_product_mutation_assets()
             .filter(|asset| {
-                asset.id() == "nix-gcroots"
+                is_linux_product_gcroots_asset(*asset)
                     || (asset.kind() == LinuxAssetKind::File
                         && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
             })
@@ -802,10 +807,23 @@ mod tests {
                     id: "nix-gcroots".to_owned(),
                 }
         });
+        let gcroots_users = sequence.iter().position(|mutation| {
+            mutation
+                == &LinuxInstallMutation::Asset {
+                    id: "nix-gcroots-users".to_owned(),
+                }
+        });
+        let services = sequence
+            .iter()
+            .position(|mutation| mutation == &LinuxInstallMutation::Services);
         assert!(
             runtime
                 .zip(gcroots)
-                .is_some_and(|(runtime, gcroots)| runtime < gcroots)
+                .zip(gcroots_users)
+                .zip(services)
+                .is_some_and(|(((runtime, gcroots), users), services)| {
+                    runtime < gcroots && gcroots < users && users < services
+                })
         );
     }
 }

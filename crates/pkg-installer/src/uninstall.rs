@@ -1091,7 +1091,15 @@ mod tests {
             .iter()
             .position(|action| *action == UninstallAction::VerifyNoPrivilegedResidue)
             .ok_or_else(UninstallError::backend_failure)?;
-        assert!(roots < verification);
+        let asset = |id| {
+            plan.actions()
+                .iter()
+                .position(|action| matches!(action, UninstallAction::RemoveAsset { id: actual, .. } if *actual == id))
+                .ok_or_else(UninstallError::backend_failure)
+        };
+        let users = asset("nix-gcroots-users")?;
+        let product = asset("nix-gcroots")?;
+        assert!(roots < users && users < product && product < verification);
         assert_eq!(
             plan.actions().last(),
             Some(&UninstallAction::ExecDeterminateUninstall)

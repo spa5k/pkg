@@ -174,8 +174,14 @@ const ASSETS: &[LinuxInstallAsset] = &[
     LinuxInstallAsset::new(
         "nix-gcroots",
         LinuxAssetKind::Directory,
-        "/nix/var/nix/gcroots",
-        Some(0o755),
+        "/nix/var/nix/gcroots/pkg",
+        Some(0o700),
+    ),
+    LinuxInstallAsset::new(
+        "nix-gcroots-users",
+        LinuxAssetKind::Directory,
+        "/nix/var/nix/gcroots/pkg/users",
+        Some(0o700),
     ),
     LinuxInstallAsset::new(
         "product-root",
@@ -409,6 +415,10 @@ pub fn is_linux_service_runtime_asset(asset: LinuxInstallAsset) -> bool {
     )
 }
 
+pub fn is_linux_product_gcroots_asset(asset: LinuxInstallAsset) -> bool {
+    matches!(asset.id(), "nix-gcroots" | "nix-gcroots-users")
+}
+
 pub fn linux_product_install_assets() -> impl DoubleEndedIterator<Item = LinuxInstallAsset> + Clone
 {
     ASSETS
@@ -515,6 +525,41 @@ mod tests {
         assert!(units.iter().all(|(name, _)| !name.contains("nix-daemon")));
         assert!(LinuxSystemdAssets::BROKER_SERVICE.contains("Requires=nix-daemon.socket"));
         assert!(!LinuxSystemdAssets::BROKER_SERVICE.contains("pkg-nix-daemon.socket"));
+        let product_gcroots = linux_product_install_assets()
+            .filter(|asset| is_linux_product_gcroots_asset(*asset))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            product_gcroots
+                .iter()
+                .map(|asset| (
+                    asset.id(),
+                    asset.path_or_name(),
+                    asset.mode(),
+                    asset.owner(),
+                    asset.group(),
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    "nix-gcroots",
+                    "/nix/var/nix/gcroots/pkg",
+                    Some(0o700),
+                    Some(LinuxAssetPrincipal::Root),
+                    Some(LinuxAssetPrincipal::Root),
+                ),
+                (
+                    "nix-gcroots-users",
+                    "/nix/var/nix/gcroots/pkg/users",
+                    Some(0o700),
+                    Some(LinuxAssetPrincipal::Root),
+                    Some(LinuxAssetPrincipal::Root),
+                ),
+            ]
+        );
+        assert!(
+            linux_product_install_assets()
+                .all(|asset| { asset.path_or_name() != "/nix/var/nix/gcroots" })
+        );
     }
 
     #[test]

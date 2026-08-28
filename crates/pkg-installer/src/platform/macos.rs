@@ -6,7 +6,10 @@
 //! signing/notarization applies to product runtime artifacts only, never to
 //! locally built Nix store outputs.
 
-use crate::{BrokerHelperDispatch, LinuxHelperSession, platform::linux::LinuxRootSetStore};
+use crate::{
+    BrokerHelperDispatch, LinuxHelperSession,
+    platform::linux::{LinuxRootSetStore, provision_product_root_if_absent},
+};
 #[cfg(target_os = "macos")]
 use nix::unistd::getpeereid;
 use pkg_core::System;
@@ -928,7 +931,7 @@ impl MacOsRootSetStore {
     ///
     /// Returns a closed filesystem failure on unsafe or unavailable state.
     pub fn production() -> Result<Self, MacOsError> {
-        LinuxRootSetStore::production()
+        provision_product_root_if_absent(std::path::Path::new("/nix/var/nix/gcroots"), 0)
             .map(|inner| Self { inner })
             .map_err(|_| MacOsError::new(MacOsErrorCode::BackendFailure))
     }
