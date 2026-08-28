@@ -31,7 +31,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
 
     def test_uses_two_distinct_disposable_apple_silicon_runners(self) -> None:
         self.assertEqual(WORKFLOW.count("\n  prove:\n"), 1)
-        proof_job = WORKFLOW.split("\n  prove:\n", 1)[1]
+        proof_job = WORKFLOW.split("\n  prove:\n", 1)[1].split("\n  aggregate:\n", 1)[0]
         self.assertIn('runs-on: [self-hosted, macOS, ARM64, "${{ matrix.runner_label }}"]', proof_job)
         self.assertEqual(proof_job.count("lifecycle_run:"), 2)
         self.assertEqual(proof_job.count("pkg-disposable-macos-proof-1"), 1)
@@ -42,20 +42,29 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("PKG-DN16-DISPOSABLE-V1:${GITHUB_RUN_ID}:${{ matrix.lifecycle_run }}", proof_job)
         self.assertIn("/var/tmp/pkg-disposable-macos-instance", proof_job)
         self.assertIn("^PKG-DN16-INSTANCE-V1:([0-9a-f]{64})$", proof_job)
+        self.assertIn("/var/tmp/pkg-disposable-macos-reboot-v2", proof_job)
+        self.assertIn(
+            "PKG-DN16-REBOOT-V2:${GITHUB_RUN_ID}:${{ matrix.lifecycle_run }}:${RUNNER_NAME}:${instance_nonce}:",
+            proof_job,
+        )
+        self.assertIn("test \"$(wc -l < \"$reboot_marker\")\" -eq 1", proof_job)
+        self.assertIn("[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}", proof_job)
+        self.assertIn('test "$prior_boot" != "$current_boot"', proof_job)
+        self.assertIn('test "$reboot_age" -le 300', proof_job)
         self.assertIn("kern.hv_vmm_present", proof_job)
         self.assertIn("VirtualMac*", proof_job)
         self.assertIn("root:wheel:600", proof_job)
         self.assertIn("both disposable runners", README)
 
     def test_preflight_is_retained_before_the_destructive_gate(self) -> None:
-        proof_job = WORKFLOW.split("\n  prove:\n", 1)[1]
+        proof_job = WORKFLOW.split("\n  prove:\n", 1)[1].split("\n  aggregate:\n", 1)[0]
         preflight = proof_job.index("Initialize bounded preflight evidence")
         gate = proof_job.index("Refuse an unsafe host before download or mutation")
         self.assertLess(preflight, gate)
         self.assertIn("preflight.txt", proof_job)
 
     def test_destructive_host_receives_no_source_or_build_tools(self) -> None:
-        proof_job = WORKFLOW.split("\n  prove:\n", 1)[1]
+        proof_job = WORKFLOW.split("\n  prove:\n", 1)[1].split("\n  aggregate:\n", 1)[0]
         for forbidden in ("actions/checkout", "cargo ", "secrets.", "gh release create", "gh release upload"):
             self.assertNotIn(forbidden, proof_job)
         self.assertNotIn("publish: true", proof_job)
@@ -79,6 +88,37 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         evidence = WORKFLOW.split("name: Upload bounded proof evidence", 1)[1]
         self.assertIn("if: always()", evidence.split("- name:", 1)[0])
         self.assertNotIn("retention-days: 4", WORKFLOW)
+
+    def test_signed_checksums_bind_each_release_input_before_use(self) -> None:
+        inputs = WORKFLOW.split(
+            "- name: Download and authenticate signed release inputs", 1
+        )[1].split("- name: Run the destructive proof", 1)[0]
+        self.assertIn("SHA256SUMS.sigstore.json", inputs)
+        verification = 'cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json"'
+        self.assertIn(verification, inputs)
+        self.assertLess(
+            inputs.index(verification),
+            inputs.index('for asset in "pkg-$version-preview.pkg"'),
+        )
+        self.assertIn(
+            'for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin release-manifest.json',
+            inputs,
+        )
+        self.assertIn('manifest.get("releaseId") != sys.argv[2]', inputs)
+
+    def test_hosted_aggregation_requires_distinct_runner_evidence(self) -> None:
+        aggregate = WORKFLOW.split("\n  aggregate:\n", 1)[1]
+        self.assertIn("runs-on: ubuntu-24.04", aggregate)
+        self.assertIn("needs: prove", aggregate)
+        self.assertIn(
+            "if: ${{ always() && needs.prove.result != 'skipped' }}", aggregate
+        )
+        self.assertIn("pattern: pkg-macos-lifecycle-evidence-*", aggregate)
+        self.assertIn('test "$PROVE_RESULT" = success', aggregate)
+        self.assertIn("runner names are not distinct", aggregate)
+        self.assertIn("reimage nonces are not distinct", aggregate)
+        self.assertNotIn("sudo", aggregate)
+        self.assertNotIn("prove.sh", aggregate)
 
     def test_harness_has_current_product_boundaries_only(self) -> None:
         for required in (

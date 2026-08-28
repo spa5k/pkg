@@ -82,12 +82,14 @@ jobs:
             "pkg-${RELEASE_TAG}-linux-x86_64.tar.gz.sigstore.json"
             "pkg-${RELEASE_TAG}-macos-aarch64.tar.gz.sigstore.json"
             pkg-x86_64-linux.sigstore.json
+            SHA256SUMS.sigstore.json
           )
           mapfile -t actual_assets < <(
             gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
               --jq '.assets[].name'
           )
           generated_count=0
+          checksum_signature_present=false
           for actual in "${actual_assets[@]}"; do
             allowed=false
             for expected in "${base_assets[@]}"; do
@@ -100,12 +102,24 @@ jobs:
               if [[ "$actual" == "$expected" ]]; then
                 allowed=true
                 generated_count=$((generated_count + 1))
+                if [[ "$actual" == SHA256SUMS.sigstore.json ]]; then
+                  checksum_signature_present=true
+                fi
                 break
               fi
             done
             test "$allowed" = true
           done
-          if ((generated_count != 0 && generated_count != ${#generated_assets[@]})); then
+          payload_generated_count=$generated_count
+          if [[ "$checksum_signature_present" == true ]]; then
+            payload_generated_count=$((payload_generated_count - 1))
+          fi
+          payload_generated_total=$((${#generated_assets[@]} - 1))
+          if ((payload_generated_count != 0 && payload_generated_count != payload_generated_total)); then
+            exit 1
+          fi
+          if [[ "$checksum_signature_present" == true ]] \
+            && ((payload_generated_count != payload_generated_total)); then
             exit 1
           fi
 
@@ -116,13 +130,22 @@ jobs:
               --pattern "$asset" \
               --dir release-assets
           done
-          if ((generated_count > 0)); then
+          if ((payload_generated_count > 0)); then
             for asset in "${generated_assets[@]}"; do
+              if [[ "$asset" == SHA256SUMS.sigstore.json ]]; then
+                continue
+              fi
               gh release download "$RELEASE_TAG" \
                 --repo "$GITHUB_REPOSITORY" \
                 --pattern "$asset" \
                 --dir release-assets
             done
+          fi
+          if [[ "$checksum_signature_present" == true ]]; then
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern SHA256SUMS.sigstore.json \
+              --dir release-assets
           fi
 
           : >release-assets/BASE_SHA256SUMS
@@ -171,58 +194,7 @@ jobs:
           printf '%s\n' "$COSIGN_CERTIFICATE_IDENTITY" >release-assets/COSIGN_IDENTITY.txt
           printf '%s\n' "$COSIGN_CERTIFICATE_OIDC_ISSUER" >release-assets/COSIGN_ISSUER.txt
 
-      - name: Upload verified signatures and checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=${RELEASE_TAG#v}
-          checksum_assets=(
-            1.root.json
-            COSIGN_IDENTITY.txt
-            COSIGN_ISSUER.txt
-            install.sh
-            "pkg-${version}-preview.pkg"
-            "pkg-${version}-preview.pkg.sigstore.json"
-            pkg-aarch64-darwin
-            pkg-aarch64-darwin.sigstore.json
-            pkg-installer-x86_64-linux
-            pkg-installer-x86_64-linux.sigstore.json
-            "pkg-${RELEASE_TAG}-linux-x86_64.tar.gz"
-            "pkg-${RELEASE_TAG}-linux-x86_64.tar.gz.sigstore.json"
-            "pkg-${RELEASE_TAG}-macos-aarch64.tar.gz"
-            "pkg-${RELEASE_TAG}-macos-aarch64.tar.gz.sigstore.json"
-            pkg-x86_64-linux
-            pkg-x86_64-linux.sigstore.json
-            release-manifest.json
-          )
-          (cd release-assets && sha256sum "${checksum_assets[@]}" >SHA256SUMS)
-          upload_assets=(
-            release-assets/COSIGN_IDENTITY.txt
-            release-assets/COSIGN_ISSUER.txt
-            "release-assets/pkg-${version}-preview.pkg.sigstore.json"
-            release-assets/pkg-aarch64-darwin.sigstore.json
-            release-assets/pkg-installer-x86_64-linux.sigstore.json
-            "release-assets/pkg-${RELEASE_TAG}-linux-x86_64.tar.gz.sigstore.json"
-            "release-assets/pkg-${RELEASE_TAG}-macos-aarch64.tar.gz.sigstore.json"
-            release-assets/pkg-x86_64-linux.sigstore.json
-            release-assets/SHA256SUMS
-          )
-          gh release upload "$RELEASE_TAG" "${upload_assets[@]}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
-          mkdir remote-assets
-          for asset in "${upload_assets[@]}"; do
-            name=${asset#release-assets/}
-            gh release download "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern "$name" \
-              --dir remote-assets
-            cmp "$asset" "remote-assets/$name"
-          done
-
-      - name: Publish the verified draft
-        if: ${{ inputs.publish }}
+      - name: Validate the signed draft manifest
         shell: bash
         run: |
           set -euo pipefail
@@ -255,9 +227,78 @@ jobs:
             test "$(stat -c %s "$bundle_path")" = "$bundle_length"
           done
 
+      - name: Upload verified signatures and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${RELEASE_TAG#v}
+          checksum_assets=(
+            1.root.json
+            COSIGN_IDENTITY.txt
+            COSIGN_ISSUER.txt
+            install.sh
+            "pkg-${version}-preview.pkg"
+            "pkg-${version}-preview.pkg.sigstore.json"
+            pkg-aarch64-darwin
+            pkg-aarch64-darwin.sigstore.json
+            pkg-installer-x86_64-linux
+            pkg-installer-x86_64-linux.sigstore.json
+            "pkg-${RELEASE_TAG}-linux-x86_64.tar.gz"
+            "pkg-${RELEASE_TAG}-linux-x86_64.tar.gz.sigstore.json"
+            "pkg-${RELEASE_TAG}-macos-aarch64.tar.gz"
+            "pkg-${RELEASE_TAG}-macos-aarch64.tar.gz.sigstore.json"
+            pkg-x86_64-linux
+            pkg-x86_64-linux.sigstore.json
+            release-manifest.json
+          )
+          (cd release-assets && sha256sum "${checksum_assets[@]}" >SHA256SUMS)
+          checksum_bundle=release-assets/SHA256SUMS.sigstore.json
+          if [[ ! -f "$checksum_bundle" ]]; then
+            cosign sign-blob \
+              --yes \
+              --bundle "$checksum_bundle" \
+              release-assets/SHA256SUMS
+          fi
+          cosign verify-blob \
+            --bundle "$checksum_bundle" \
+            --certificate-identity "$COSIGN_CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_CERTIFICATE_OIDC_ISSUER" \
+            release-assets/SHA256SUMS
+          upload_assets=(
+            release-assets/COSIGN_IDENTITY.txt
+            release-assets/COSIGN_ISSUER.txt
+            "release-assets/pkg-${version}-preview.pkg.sigstore.json"
+            release-assets/pkg-aarch64-darwin.sigstore.json
+            release-assets/pkg-installer-x86_64-linux.sigstore.json
+            "release-assets/pkg-${RELEASE_TAG}-linux-x86_64.tar.gz.sigstore.json"
+            "release-assets/pkg-${RELEASE_TAG}-macos-aarch64.tar.gz.sigstore.json"
+            release-assets/pkg-x86_64-linux.sigstore.json
+            release-assets/SHA256SUMS
+            release-assets/SHA256SUMS.sigstore.json
+          )
+          gh release upload "$RELEASE_TAG" "${upload_assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          mkdir remote-assets
+          for asset in "${upload_assets[@]}"; do
+            name=${asset#release-assets/}
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$name" \
+              --dir remote-assets
+            cmp "$asset" "remote-assets/$name"
+          done
+
+      - name: Publish the verified draft
+        if: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
           {
             awk '{ print $2 }' release-assets/SHA256SUMS
             printf '%s\n' SHA256SUMS
+            printf '%s\n' SHA256SUMS.sigstore.json
           } | LC_ALL=C sort >expected-assets
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
             --jq '.assets[].name' | LC_ALL=C sort >actual-assets

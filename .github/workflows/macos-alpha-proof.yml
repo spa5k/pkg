@@ -106,6 +106,8 @@ jobs:
       matrix:
         # The trusted provisioner must map these names to two different VMs.
         # It must never reassign both names to one VM or one reimage nonce.
+        # Before the runner starts, it must reboot once and write the exact
+        # root:wheel 0600 V2 reboot record checked below.
         include:
           - lifecycle_run: 1
             runner_label: pkg-disposable-macos-proof-1
@@ -164,6 +166,25 @@ jobs:
           instance_age=$(( $(date +%s) - $(stat -f '%m' "$instance_marker") ))
           test "$instance_age" -ge 0
           test "$instance_age" -le 300
+          reboot_marker=/var/tmp/pkg-disposable-macos-reboot-v2
+          test -f "$reboot_marker"
+          test ! -L "$reboot_marker"
+          test "$(stat -f '%Su:%Sg:%Lp' "$reboot_marker")" = root:wheel:600
+          test "$(stat -f '%z' "$reboot_marker")" -le 256
+          test "$(wc -l < "$reboot_marker")" -eq 1
+          reboot_record=$(cat "$reboot_marker")
+          reboot_prefix="PKG-DN16-REBOOT-V2:${GITHUB_RUN_ID}:${{ matrix.lifecycle_run }}:${RUNNER_NAME}:${instance_nonce}:"
+          [[ "$reboot_record" =~ ^${reboot_prefix}([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}):([0-9]{10})$ ]]
+          prior_boot=${BASH_REMATCH[1]}
+          reboot_timestamp=${BASH_REMATCH[2]}
+          current_boot=$(sysctl -n kern.bootsessionuuid)
+          test "$prior_boot" != "$current_boot"
+          reboot_age=$(( $(date +%s) - reboot_timestamp ))
+          test "$reboot_age" -ge 0
+          test "$reboot_age" -le 300
+          reboot_marker_age=$(( $(date +%s) - $(stat -f '%m' "$reboot_marker") ))
+          test "$reboot_marker_age" -ge 0
+          test "$reboot_marker_age" -le 300
           sudo -n true
           launchd_labels="$RUNNER_TEMP/pkg-macos-proof/launchd-labels.txt"
           (ulimit -f 2048; sudo -n launchctl list) > "$launchd_labels"
@@ -301,11 +322,17 @@ jobs:
             dir="$root/candidate/$side"
             gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease \
               --jq 'select(.isDraft == true or .isPrerelease == true) | true' | grep -Fx true >/dev/null
-            for asset in SHA256SUMS release-manifest.json COSIGN_IDENTITY.txt COSIGN_ISSUER.txt \
+            for asset in SHA256SUMS SHA256SUMS.sigstore.json \
+              release-manifest.json COSIGN_IDENTITY.txt COSIGN_ISSUER.txt \
               "pkg-$version-preview.pkg" "pkg-$version-preview.pkg.sigstore.json" \
               pkg-aarch64-darwin pkg-aarch64-darwin.sigstore.json; do
               gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$dir"
             done
+            cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json" \
+              --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              "$dir/SHA256SUMS" >/dev/null
+            awk '$2 == "SHA256SUMS" || $2 == "SHA256SUMS.sigstore.json" { found=1 } \
+              END { exit found ? 1 : 0 }' "$dir/SHA256SUMS"
             test "$(cat "$dir/COSIGN_IDENTITY.txt")" = "$identity"
             test "$(cat "$dir/COSIGN_ISSUER.txt")" = "$issuer"
             selected="$root/evidence/$side-selected-sha256.txt"
@@ -315,6 +342,15 @@ jobs:
                 "$dir/SHA256SUMS" >> "$selected"
             done
             (cd "$dir" && shasum -a 256 --check "$selected")
+            python3 - "$dir/release-manifest.json" "$tag" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
+          if manifest.get("releaseId") != sys.argv[2]:
+              raise SystemExit("release manifest does not match selected tag")
+          PY
             for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
               cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
                 --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
@@ -331,7 +367,7 @@ jobs:
           PKG_PROOF_FROM_RELEASE: ${{ inputs.from_release }}
           PKG_PROOF_TO_RELEASE: ${{ inputs.to_release }}
           PKG_PROOF_ROOT: ${{ runner.temp }}/pkg-macos-proof
-          PKG_PROOF_REBOOT_MARKER: /var/tmp/pkg-disposable-macos-reboot-v1
+          PKG_PROOF_REBOOT_MARKER: /var/tmp/pkg-disposable-macos-reboot-v2
           PKG_PROOF_LIFECYCLE_RUN: ${{ matrix.lifecycle_run }}
         run: ${{ runner.temp }}/pkg-macos-proof/harness/prove.sh
 
@@ -352,3 +388,67 @@ jobs:
           path: ${{ runner.temp }}/pkg-macos-proof/candidate
           if-no-files-found: error
           retention-days: 3
+
+  aggregate:
+    name: Verify independent proof runners
+    needs: prove
+    if: ${{ always() && needs.prove.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download both bounded evidence artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: pkg-macos-lifecycle-evidence-*
+          path: ${{ runner.temp }}/pkg-macos-proof-results
+
+      - name: Verify distinct runner and reimage identities
+        shell: bash
+        env:
+          PROVE_RESULT: ${{ needs.prove.result }}
+        run: |
+          set -euo pipefail
+          test "$PROVE_RESULT" = success
+          python3 - "$RUNNER_TEMP/pkg-macos-proof-results" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          expected = {
+              1: "pkg-dn16-proof-runner-1",
+              2: "pkg-dn16-proof-runner-2",
+          }
+          observed = []
+          if {path.name for path in root.iterdir()} != {
+              "pkg-macos-lifecycle-evidence-1",
+              "pkg-macos-lifecycle-evidence-2",
+          }:
+              raise SystemExit("the exact two evidence artifacts are required")
+          for run, runner in expected.items():
+              path = root / f"pkg-macos-lifecycle-evidence-{run}" / "preflight.txt"
+              if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024:
+                  raise SystemExit("preflight evidence is absent or unsafe")
+              records = {}
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  key, separator, value = line.partition("=")
+                  if separator != "=" or key in records:
+                      raise SystemExit("preflight evidence is malformed")
+                  records[key] = value
+              if records != {
+                  "lifecycle_run": str(run),
+                  "runner_name": runner,
+                  "instance_nonce": records.get("instance_nonce", ""),
+                  "status": "preflight-passed",
+              }:
+                  raise SystemExit("preflight evidence does not match its slot")
+              nonce = records["instance_nonce"]
+              if re.fullmatch(r"[0-9a-f]{64}", nonce) is None:
+                  raise SystemExit("the reimage nonce is invalid")
+              observed.append((runner, nonce))
+          if len({runner for runner, _ in observed}) != 2:
+              raise SystemExit("runner names are not distinct")
+          if len({nonce for _, nonce in observed}) != 2:
+              raise SystemExit("reimage nonces are not distinct")
+          print("independent proof runner evidence passed")
+          PY

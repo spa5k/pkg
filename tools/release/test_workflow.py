@@ -361,36 +361,26 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
         self.assertEqual(len(set(filters)), 46)
         self.assertEqual(set(filters), expected_filters)
 
-    def test_macos_proof_stages_both_shared_runtime_archives(self) -> None:
-        self.assertIn('runtimes="$RUNNER_TEMP/pkg-proof-runtimes"', MACOS_WORKFLOW)
-        self.assertIn('path="$runtimes/$candidate.tar.xz"', MACOS_WORKFLOW)
+    def test_macos_proof_authenticates_release_checksums_before_use(self) -> None:
+        authenticate = MACOS_WORKFLOW.split(
+            "- name: Download and authenticate signed release inputs", 1
+        )[1].split("- name: Run the destructive proof", 1)[0]
+        self.assertIn("SHA256SUMS.sigstore.json", authenticate)
         self.assertIn(
-            '"https://releases.nixos.org/nix/nix-2.34.8/'
-            'nix-2.34.8-$candidate.tar.xz"',
-            MACOS_WORKFLOW,
+            'cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json"',
+            authenticate,
         )
-        self.assertIn(
-            'printf \'%s  %s\\n\' "$expected_sha256" "$path" \\\n'
-            "              | shasum -a 256 --check",
-            MACOS_WORKFLOW,
+        self.assertLess(
+            authenticate.index('"$dir/SHA256SUMS" >/dev/null'),
+            authenticate.index('for asset in "pkg-$version-preview.pkg"'),
         )
-        for candidate, digest in (
-            (
-                "aarch64-darwin",
-                "ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf",
-            ),
-            (
-                "x86_64-linux",
-                "2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464",
-            ),
+        for asset in (
+            '"pkg-$version-preview.pkg"',
+            "pkg-aarch64-darwin",
+            "release-manifest.json",
         ):
-            self.assertIn(f"stage_runtime {candidate} \\\n            {digest}", MACOS_WORKFLOW)
-        self.assertIn(
-            '"$bundle/publication-1" "$runtimes" "$binaries"', MACOS_WORKFLOW
-        )
-        self.assertIn(
-            '"$bundle/publication-2" "$runtimes" "$binaries"', MACOS_WORKFLOW
-        )
+            self.assertIn(asset, authenticate)
+        self.assertIn('manifest.get("releaseId") != sys.argv[2]', authenticate)
 
     def test_production_signing_is_keyless_protected_and_closed(self) -> None:
         self.assertIn("environment: release", PUBLISH_WORKFLOW)
@@ -404,10 +394,14 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
         self.assertIn("test \"$draft\" = true", PUBLISH_WORKFLOW)
         self.assertIn("releases/${RELEASE_ID}", PUBLISH_WORKFLOW)
         self.assertNotIn("releases/tags/${RELEASE_TAG}", PUBLISH_WORKFLOW)
-        self.assertIn("generated_count != 0 && generated_count", PUBLISH_WORKFLOW)
+        self.assertIn(
+            "payload_generated_count != 0 && payload_generated_count != payload_generated_total",
+            PUBLISH_WORKFLOW,
+        )
+        self.assertIn('checksum_signature_present" == true', PUBLISH_WORKFLOW)
         self.assertIn('if [[ ! -f "$bundle" ]]', PUBLISH_WORKFLOW)
-        self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 1)
-        self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 1)
+        self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 2)
+        self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 2)
         self.assertIn("--yes", PUBLISH_WORKFLOW)
         self.assertIn("--certificate-identity", PUBLISH_WORKFLOW)
         self.assertIn("--certificate-oidc-issuer", PUBLISH_WORKFLOW)
@@ -415,6 +409,26 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
         self.assertIn(".trustedRootSha256", PUBLISH_WORKFLOW)
         self.assertIn('test "${#cli_artifacts[@]}" = 3', PUBLISH_WORKFLOW)
         self.assertIn(".sigstoreBundleSha256", PUBLISH_WORKFLOW)
+        self.assertIn("SHA256SUMS.sigstore.json", PUBLISH_WORKFLOW)
+        manifest_validation = PUBLISH_WORKFLOW.split(
+            "- name: Validate the signed draft manifest", 1
+        )[1].split("- name: Upload verified signatures and checksums", 1)[0]
+        self.assertNotIn("if:", manifest_validation)
+        checksum_signing = PUBLISH_WORKFLOW.split(
+            "- name: Upload verified signatures and checksums", 1
+        )[1].split("- name: Publish the verified draft", 1)[0]
+        checksum_inputs = checksum_signing.split("checksum_assets=(", 1)[1].split(
+            "\n          )", 1
+        )[0]
+        self.assertNotIn("SHA256SUMS.sigstore.json", checksum_inputs)
+        self.assertLess(
+            checksum_signing.index('>SHA256SUMS)'),
+            checksum_signing.index("checksum_bundle=release-assets/SHA256SUMS.sigstore.json"),
+        )
+        self.assertIn("release-assets/SHA256SUMS.sigstore.json", checksum_signing)
+        publication = PUBLISH_WORKFLOW.split("- name: Publish the verified draft", 1)[1]
+        self.assertIn("if: ${{ inputs.publish }}", publication.split("run: |", 1)[0])
+        self.assertIn("printf '%s\\n' SHA256SUMS.sigstore.json", publication)
         self.assertIn("diff -u expected-assets actual-assets", PUBLISH_WORKFLOW)
         self.assertIn("final-assets", PUBLISH_WORKFLOW)
         self.assertIn("gh release upload", PUBLISH_WORKFLOW)
