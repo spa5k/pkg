@@ -850,7 +850,12 @@ impl SystemdSystem for ProductionSystemdSystem {
 
     fn required_unit_state(&mut self, unit: &'static str) -> Result<UnitState, LinuxSystemdError> {
         Ok(UnitState {
-            enabled: self.systemctl_status(&["is-enabled", "--quiet", unit], &[1])?,
+            enabled: parse_required_unit_file_state(&self.systemctl_value(&[
+                "show",
+                "--property=UnitFileState",
+                "--value",
+                unit,
+            ])?)?,
             active: self.systemctl_status(&["is-active", "--quiet", unit], &[3])?,
         })
     }
@@ -1043,6 +1048,16 @@ fn same_file(left: &Path, right: &Path) -> bool {
         && fs::canonicalize(left)
             .and_then(|left| fs::canonicalize(right).map(|right| left == right))
             .unwrap_or(false)
+}
+
+fn parse_required_unit_file_state(value: &str) -> Result<bool, LinuxSystemdError> {
+    match value {
+        "enabled" | "enabled-runtime" => Ok(true),
+        "disabled" | "static" => Ok(false),
+        _ => Err(LinuxSystemdError::new(
+            LinuxSystemdErrorCode::StateQueryFailed,
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -1257,6 +1272,20 @@ mod tests {
         assert!(system.systemctl_status(&["-c", "exit 4"], &[1]).is_err());
         assert!(system.systemctl_status(&["-c", "exit 5"], &[1, 4]).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn required_unit_file_state_is_closed() {
+        assert_eq!(parse_required_unit_file_state("enabled"), Ok(true));
+        assert_eq!(parse_required_unit_file_state("enabled-runtime"), Ok(true));
+        assert_eq!(parse_required_unit_file_state("disabled"), Ok(false));
+        assert_eq!(parse_required_unit_file_state("static"), Ok(false));
+        for refused in ["", "masked", "linked", "indirect", "not-found"] {
+            assert_eq!(
+                parse_required_unit_file_state(refused).map_err(LinuxSystemdError::code),
+                Err(LinuxSystemdErrorCode::StateQueryFailed)
+            );
+        }
     }
 
     #[test]
