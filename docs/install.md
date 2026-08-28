@@ -9,7 +9,13 @@ The current public release is
 `docs/install.sh` is the source template for its fixed Linux installer. An
 unrendered template exits before network access.
 
-The first preview targets Linux x86-64 and macOS arm64. Linux arm64 is deferred.
+Public alpha.7 does not contain the DN-16 macOS Determinate cutover. The DN-16
+candidate still needs its disposable native Apple silicon proof. The public
+package and the current candidate do not have the same macOS lifecycle.
+
+The first preview targets Linux x86-64 and Apple silicon macOS. Linux arm64 is
+deferred. Intel macOS is not supported. The macOS installer refuses it before
+it changes trusted product state.
 
 ## Linux x86-64
 
@@ -211,6 +217,44 @@ pkg doctor
 The embedded `pkg-install` uses an ad-hoc signature. The package is not
 Developer ID signed or notarized. These items remain TODO items.
 
+In the current DN-16 candidate, `pkg-install` obtains and authenticates the
+pinned Determinate Nix Installer 3.22.1 executable through the authenticated
+installer repository. It uses that executable to install machine-wide Base
+Nix. Do not install Nix before you install the DN-16 candidate.
+
+The vendor installer starts once. After it starts, there is no safe product
+cancellation, signal, hard timeout, or parent-death guarantee. A stored
+`Started` state means an Unknown Base Nix Outcome. `pkg` fails closed. It does
+not start the vendor installer again. Only vendor exit status `0` followed by
+installed-state validation becomes `Accepted`.
+
+Determinate alone owns the Base Nix lifecycle. `pkg` does not create or manage
+Base Nix on macOS. Product upgrade and Product Asset Repair do not update or
+repair Base Nix.
+
+### macOS product upgrade and repair
+
+Product upgrade and Product Asset Repair require both product launchd jobs to
+be inactive and disabled:
+
+- `org.pkg.root-helper`
+- `org.pkg.nix-broker`
+
+The product state must also pass its ownership and recovery checks. The
+installer checks this state again before each product-file change. It refuses
+unsafe launchd state and failed ownership or recovery checks. An authenticated,
+receipt-owned product-file change is the repair target. The installer does not
+stop or disable a job for you.
+
+An ordinary installer run against an Accepted installation upgrades only the
+authenticated product files. The exact `--repair-product-assets` option repairs
+only product files from the same authenticated release. Both operations leave
+the product jobs inactive and disabled. Start them only after you inspect a
+successful result.
+
+These operations keep Base Nix, Base Nix Handoff, package state, roots, and
+user Generations. They do not run a Base Nix update or repair.
+
 ## Local candidate proof
 
 Local candidate archives are separate test artifacts. They contain test-key
@@ -222,9 +266,9 @@ installers and fixed loopback URLs. Both archives include:
 - Rust dependency licenses;
 - release notes with the test-only limits.
 
-The macOS archive also includes the Nix 2.34.8 LGPL-2.1 text and exact source
-information. The Linux archive does not bundle the Determinate installer or a
-Nix runtime.
+Proof and candidate bundles can retain Nix runtime targets for the shared
+publication format. DN-16 does not use those targets to install Base Nix. It
+selects and authenticates the pinned Determinate installer before it starts it.
 
 Use `tests/linux-clean-host/run.sh` on a native x86-64 Docker server. The server
 can be local or on a disposable GitHub-hosted runner. A GitHub-hosted result is
@@ -238,31 +282,28 @@ satisfy macOS proof. Both proofs stop on the first failed check.
 The current Linux harness covers foreign-state refusal, ownership drift,
 one-start vendor install, repeat product install, cached installs, one approved
 local build, package update, package upgrade, package rollback, Package Repair,
-isolation, package roots and garbage collection, absence of the old
-`/opt/pkg/nix` runtime, and terminal vendor uninstall.
+isolation, package roots, garbage collection, and terminal vendor uninstall.
 
-The final native x86-64 run is still pending for the current signed product
-commit. Separate blocking native rows also remain for a real N-to-N+1 product
-upgrade, same-release Product Asset Repair of a modified service file, vendor
-process cgroup behavior, and real systemd offline-state behavior. This document
-does not claim a public release or completed native proof for those rows.
+The current signed Linux commit passed its native x86-64 clean-host proof. The
+retained result covers a real N-to-N+1 product upgrade, same-release Product
+Asset Repair, vendor process behavior, and real systemd offline-state behavior.
 
-The macOS proof covers the same product flow with the macOS service, APFS, and
-account boundaries. A local Tart result does not prove Developer ID signing,
-notarization, or Gatekeeper acceptance.
+The current macOS Determinate cutover still needs a disposable Apple silicon
+clean-host proof. Linux and Docker results do not satisfy this gate. A local
+virtual-machine result does not prove Developer ID signing, notarization, or
+Gatekeeper acceptance.
 
 ## Uninstall
 
 Run `pkg uninstall --dry-run` to preview product-owned assets. Dry-run can use a
-structured format. In the current Linux source, run live `pkg uninstall` with
-plain terminal output. Linux refuses live JSON or JSONL output before mutation.
-This restriction remains Linux-only until PR 4 proves and adopts the terminal
-boundary on macOS.
+structured format. On Linux and macOS, run live `pkg uninstall` with plain
+terminal output. Live JSON and JSONL output are refused before administrator
+access or mutation.
 
-On Linux, `pkg` first removes and verifies all product-owned state. It then
-revalidates the installed Determinate executable and its opaque receipt. The
-final action replaces `pkg` with the vendor uninstaller. The vendor owns its
-signals, status, temporary files, self-copy, native cleanup, and residue.
+`pkg` first removes and verifies all product-owned state. It then revalidates
+the installed Determinate executable and its opaque receipt. The final action
+replaces `pkg` with the vendor uninstaller. The vendor owns its signals, status,
+temporary files, self-copy, native cleanup, and residue.
 
 The command refuses changed, unrecorded, or foreign state. It keeps that state
 for manual review. Determinate can leave vendor-owned residue. `pkg` does not

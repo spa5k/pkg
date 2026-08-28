@@ -7,8 +7,9 @@
 interface like Homebrew and paru.
 
 Base Nix is the machine-wide package and build engine. You do not need to
-install or configure it yourself. In the current Linux source, `pkg`
-authenticates and starts the pinned Determinate Nix Installer 3.22.1 executable.
+install or configure Nix first. The current DN-16 source authenticates and
+starts the pinned Determinate Nix Installer 3.22.1 executable on supported
+systems.
 
 > [!WARNING]
 > `pkg` is a technical preview. Breaking changes can occur before v1.
@@ -52,6 +53,19 @@ The macOS preview is not Developer ID signed or notarized. See the
 [latest release](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.7)
 for verification details.
 
+The package command above installs public alpha.7. Alpha.7 does not contain the
+DN-16 Determinate cutover described below. The DN-16 candidate still needs its
+disposable native Apple silicon proof.
+
+The DN-16 macOS source supports Apple silicon only. It refuses Intel macOS.
+`pkg-install` obtains and authenticates the pinned executable through the
+authenticated installer repository. It then uses that executable to install
+Base Nix. You do not need to install Nix before you install `pkg`.
+
+After the vendor installer starts, `pkg` waits for it. A stored `Started` state
+means that the Base Nix result is unknown. `pkg` fails closed. It does not start
+the vendor installer again.
+
 ## Use `pkg`
 
 ```sh
@@ -73,18 +87,19 @@ one exact, one-time approval.
 
 ## Uninstall
 
-Preview the files that `pkg` will remove. Then uninstall it. Live Linux
-uninstall requires plain terminal output.
+Preview the files that `pkg` will remove. Then uninstall it. Live uninstall on
+Linux and macOS requires plain terminal output. Live JSON and JSONL output are
+refused before any change.
 
 ```sh
 pkg uninstall --dry-run
 pkg uninstall
 ```
 
-In the current Linux source, `pkg` first removes and verifies authenticated
-product-owned state. It then replaces itself with the authenticated installed
-Determinate uninstaller. The vendor command returns its status directly to the
-shell.
+`pkg` first removes and verifies authenticated product-owned state. It then
+replaces itself with the authenticated installed Determinate uninstaller. This
+vendor uninstall is the last action. The vendor command returns its status
+directly to the shell.
 
 `pkg` keeps changed, unrecorded, or foreign state for manual review. Determinate
 can leave vendor-owned residue. `pkg` does not delete that residue or infer
@@ -111,23 +126,25 @@ a product security boundary. Local administrators can access or change Base
 Nix. `pkg doctor` checks important changes and fails closed when ownership is
 not clear.
 
-This section describes the current source. Linux uses pinned Determinate Nix
-Installer 3.22.1 for Base Nix install and terminal uninstall. macOS keeps the
-existing Base Nix path until its separate real-host proof passes. See the
+This section describes the current DN-16 source. It is not in public alpha.7.
+Linux and Apple silicon macOS use pinned Determinate Nix Installer 3.22.1 for
+Base Nix install and terminal uninstall. `pkg` does not own Base Nix update or
+repair. See the
 [active implementation plan](plans/determinate-nix-stacked-prs.md).
 
 ## Platform status
 
 | Platform | Preview status |
 | --- | --- |
-| Linux x86-64 | Published alpha available; current Determinate candidate needs native x86-64 proof |
-| macOS Apple silicon | Published alpha available; Determinate cutover and Apple signing remain pending |
+| Linux x86-64 | Alpha.7 is public; newer Determinate source has passed its native proof |
+| macOS Apple silicon | Alpha.7 does not contain DN-16; the DN-16 candidate still needs disposable native proof and Apple signing |
+| macOS Intel | Not supported; the installer refuses this system |
 | Linux arm64 | Not available in this preview |
 
 The checked-in clean-host matrix covers install, cached package installation,
 one approved local build, upgrade, rollback, Package Repair, ownership drift,
-isolation, and uninstall. The current Linux candidate is not accepted until its
-native x86-64 result and retained evidence receive independent review.
+isolation, and uninstall. The Linux proof passed. The macOS Determinate cutover
+still needs its disposable Apple silicon proof.
 
 ## Contribute
 
