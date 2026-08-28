@@ -22,10 +22,10 @@
 //! There are **no** per-call trust, substituter, key, sandbox, builder,
 //! build-user, `max-jobs`, expression-string, environment, or policy knobs on
 //! any method or request type (`plans/01` §11.1; T-DAEMON-1/T-CACHE-1/
-//! T-BUILD-1). All trust and build enforcement is fixed once, at adapter
-//! construction / managed-runtime config time, sourced from the signed channel
-//! descriptor and the channel-locked `/opt/pkg/etc/pkg/nix.conf` (INV-03), and
-//! is **immutable for the life of the adapter**. The trait therefore accepts
+//! T-BUILD-1). All trust and build enforcement is fixed at adapter construction.
+//! Linux binds the supported Determinate runtime contract. macOS binds the
+//! signed channel descriptor and channel-locked `/opt/pkg/etc/pkg/nix.conf`.
+//! This policy is **immutable for the life of the adapter**. The trait accepts
 //! only selector/store-path/realization inputs plus already-pinned identifiers
 //! — never `--substituters`, `--trusted-public-keys`, `--sandbox`,
 //! `--builders`, or an expression string.

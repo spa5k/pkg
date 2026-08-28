@@ -150,7 +150,7 @@ pub use nixpkgs::{
 };
 pub use real::{
     MAX_REPAIR_EXECUTION_DURATION, PINNED_NIX_VERSION, RealNixAdapter, RootNixGcExecutor,
-    RootNixRepairExecutor,
+    RootNixRepairExecutor, STANDARD_DETERMINATE_NIX_VERSION,
 };
 pub use root_nix::{
     RootNixFailure, RootNixOperation, RootNixRequest, RootNixResponse, RootRepairPlanProof,

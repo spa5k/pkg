@@ -91,7 +91,7 @@ impl AuthenticatedBuildPreparation {
 /// Stable authenticated-build preparation refusal categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuildPreparationErrorCode {
-    /// Current native host facts or managed configuration were unavailable.
+    /// Linux Determinate host facts or macOS managed configuration were unavailable.
     HostRefused,
     /// The typed selector batch was invalid under the verified channel.
     IntentRefused,

@@ -1,4 +1,6 @@
-//! Pinned Nix 2.34.8 subprocess adapter used by the managed broker.
+//! Platform-pinned Nix subprocess adapters used by the managed broker.
+//!
+//! macOS uses Nix 2.34.8. Linux uses Determinate Nix 2.35.2.
 //!
 //! All argv is assembled from validated strong types plus fixed product policy.
 //! The child environment is cleared, output is bounded, stderr is retained only
@@ -54,7 +56,8 @@ pub(crate) const MANAGED_DAEMON_SOCKET: &str = "/nix/var/nix/daemon-socket/socke
 pub(crate) const MANAGED_PATH: &str = "/usr/bin:/bin";
 const STANDARD_DETERMINATE_NIX_BINARY: &str = "/nix/var/nix/profiles/default/bin/nix";
 const STANDARD_DETERMINATE_NIX_BRAND: &str = "Determinate Nix 3.22.1";
-const STANDARD_DETERMINATE_NIX_VERSION: &str = "2.35.2";
+/// Exact Nix version supplied by the supported standard Determinate install.
+pub const STANDARD_DETERMINATE_NIX_VERSION: &str = "2.35.2";
 const MAX_STDOUT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
 const MAX_INTERNAL_JSON_LINE_BYTES: usize = 256 * 1024;
