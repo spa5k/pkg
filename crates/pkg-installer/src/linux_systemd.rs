@@ -644,6 +644,13 @@ impl LinuxSystemdManager {
         )
     }
 
+    /// Classifies the active state after authenticating all canonical unit
+    /// fragments and refusing drop-ins.
+    pub(crate) fn classify_exact_activation(&mut self) -> Result<bool, LinuxSystemdError> {
+        self.authenticate_expected_definitions()?;
+        self.classify_activation()
+    }
+
     /// Requires every fixed product unit to be inactive and disabled.
     ///
     /// This operation only reads unit state. It does not reload, enable,
@@ -1790,13 +1797,13 @@ mod tests {
             enabled: true,
             active: true,
         })));
-        assert!(active.classify_activation()?);
+        assert!(active.classify_exact_activation()?);
 
         let mut inactive = test_manager(FakeSystem::new(all(UnitState {
             enabled: false,
             active: false,
         })));
-        assert!(!inactive.classify_activation()?);
+        assert!(!inactive.classify_exact_activation()?);
         Ok(())
     }
 

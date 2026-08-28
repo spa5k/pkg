@@ -165,26 +165,33 @@ impl LinuxPlatformAssetManager {
             temporary.path().to_path_buf(),
             payloads.clone(),
         );
+        filesystem.bind_config_bytes_for_test(b"test-nix-config");
         for asset in crate::assets::linux_product_install_assets()
             .filter(|asset| asset.kind() == crate::LinuxAssetKind::Directory)
             .filter(|asset| asset.id() != missing_id)
         {
             filesystem.ensure_asset(asset)?;
         }
+        for asset in crate::assets::linux_product_install_assets()
+            .filter(|asset| asset.kind() == crate::LinuxAssetKind::File)
+            .filter(|asset| asset.id() != "uninstall-manifest" && asset.id() != missing_id)
+        {
+            filesystem.ensure_asset(asset)?;
+        }
         let records = crate::assets::linux_product_install_assets()
-            .map(|asset| {
+            .map(|asset| -> Result<_, Box<dyn std::error::Error>> {
                 let record = RecordedAsset::new(asset.id(), RecordedAssetState::Created)?;
-                Ok::<_, crate::UninstallError>(
+                Ok(
                     if asset.kind() == crate::LinuxAssetKind::File
                         && asset.id() != "uninstall-manifest"
                     {
-                        record.with_content_digest(body_digest(asset.id().as_bytes()))
+                        record.with_content_digest(filesystem.expected_file_digest(asset)?)
                     } else {
                         record
                     },
                 )
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
         let manifest = UninstallManifest::new(system, release, records)?;
         filesystem.bind_uninstall_manifest(&manifest)?;
         let receipt = uninstall_manifest_asset()?;
@@ -289,6 +296,50 @@ impl LinuxPlatformAssetManager {
             && self
                 .receipt_binding
                 .is_some_and(|(bound_system, _)| bound_system == system)
+    }
+
+    /// Returns whether the canonical installed receipt names a different
+    /// release, or verifies every compiled product asset for this release.
+    pub(crate) fn classify_exact_release(&mut self) -> Result<bool, InstallError> {
+        let (system, release) = self
+            .receipt_binding
+            .ok_or_else(InstallError::backend_failure)?;
+        let Some(manifest) = self.load_installed_manifest()? else {
+            return Ok(false);
+        };
+        if manifest.system() != system {
+            return Err(InstallError::backend_failure());
+        }
+        self.ensure_filesystem()?
+            .bind_uninstall_manifest(&manifest)
+            .map_err(|_| InstallError::backend_failure())?;
+        self.verify_asset_exact(uninstall_manifest_asset()?)?;
+        if manifest.ownership_manifest_digest() != release {
+            return Ok(false);
+        }
+        for asset in linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| is_linux_product_asset(*asset))
+        {
+            self.verify_asset_exact(asset)?;
+            if asset.kind() == crate::LinuxAssetKind::File && asset.id() != "uninstall-manifest" {
+                let recorded = manifest
+                    .assets()
+                    .iter()
+                    .find(|record| record.id() == asset.id())
+                    .and_then(RecordedAsset::content_digest)
+                    .ok_or_else(InstallError::backend_failure)?;
+                let expected = self
+                    .ensure_filesystem()?
+                    .expected_file_digest(asset)
+                    .map_err(|_| InstallError::backend_failure())?;
+                if recorded != expected {
+                    return Err(InstallError::backend_failure());
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// Authenticates the complete non-file repair boundary before mutation.
@@ -1217,6 +1268,35 @@ mod tests {
             .copied()
             .find(|asset| asset.id() == id)
             .unwrap_or_else(|| unreachable!("test asset is in the closed set"))
+    }
+
+    #[test]
+    fn exact_release_classification_accepts_only_same_undrifted_assets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let system = System::X8664Linux;
+        let release = Digest::from_bytes([0xa1; 32]);
+        let groups = ManagedGroupBindings::new(30_000, 30_001)?;
+
+        let mut exact = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            groups, system, release, "none",
+        )?;
+        assert!(exact.manager.classify_exact_release()?);
+
+        let mut different = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            groups, system, release, "none",
+        )?;
+        different.manager.receipt_binding = Some((system, Digest::from_bytes([0xa2; 32])));
+        assert!(!different.manager.classify_exact_release()?);
+
+        let mut drifted = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            groups, system, release, "none",
+        )?;
+        std::fs::write(
+            drifted.temporary.path().join("usr/local/bin/pkg"),
+            b"changed",
+        )?;
+        assert!(drifted.manager.classify_exact_release().is_err());
+        Ok(())
     }
 
     fn manager_before_broker(

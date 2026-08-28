@@ -318,9 +318,55 @@ const fn validate_recovery_mode(
     }
 }
 
+fn can_classify_active_install(
+    intent: LinuxProductAssetIntent,
+    mode: crate::LinuxInstallMode,
+    handoff: DeterminateHandoffState,
+    authenticated_inputs_bound: bool,
+    release_identity_bound: bool,
+) -> Result<bool, InstallError> {
+    if intent == LinuxProductAssetIntent::Repair {
+        return Ok(false);
+    }
+    match handoff {
+        DeterminateHandoffState::NotStarted => Ok(false),
+        DeterminateHandoffState::Started => Err(InstallError::backend_failure()),
+        DeterminateHandoffState::Accepted => Ok(mode == crate::LinuxInstallMode::FreshInstall
+            && authenticated_inputs_bound
+            && release_identity_bound),
+    }
+}
+
 impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     fn install_mode(&self) -> crate::LinuxInstallMode {
         self.mode
+    }
+
+    fn classify_active_install(&mut self) -> Result<bool, InstallError> {
+        #[cfg(test)]
+        let handoff_state = Self::handoff_state(self.preflight_fixture.as_ref())?;
+        #[cfg(not(test))]
+        let handoff_state = Self::production_handoff_state()?;
+        if !can_classify_active_install(
+            self.requested_product_asset_intent,
+            self.mode,
+            handoff_state,
+            self.assets.authenticated_inputs_bound(self.system),
+            self.release_identity.is_some(),
+        )? || !self.assets.classify_exact_release()?
+            || !self
+                .services
+                .classify_exact_activation()
+                .map_err(|_| InstallError::backend_failure())?
+        {
+            return Ok(false);
+        }
+        RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
+            .and_then(|adapter| adapter.ping_managed_store())
+            .map_err(|_| InstallError::backend_failure())?;
+        crate::broker::probe_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))
+            .map_err(|_| InstallError::backend_failure())?;
+        Ok(true)
     }
 
     fn preflight_recovery(
@@ -976,6 +1022,63 @@ mod tests {
         assert!(!backend.services_need_mutation(false));
         assert!(!backend.services_need_mutation(true));
         Ok(())
+    }
+
+    #[test]
+    fn active_install_policy_is_fresh_normal_accepted_and_fully_bound() {
+        let normal = LinuxProductAssetIntent::InstallOrUpgrade;
+        assert_eq!(
+            can_classify_active_install(
+                normal,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::Accepted,
+                true,
+                true,
+            ),
+            Ok(true)
+        );
+        for policy in [
+            can_classify_active_install(
+                LinuxProductAssetIntent::Repair,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::Accepted,
+                true,
+                true,
+            ),
+            can_classify_active_install(
+                normal,
+                crate::LinuxInstallMode::OfflineUpgrade,
+                DeterminateHandoffState::Accepted,
+                true,
+                true,
+            ),
+            can_classify_active_install(
+                normal,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::NotStarted,
+                true,
+                true,
+            ),
+            can_classify_active_install(
+                normal,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::Accepted,
+                false,
+                true,
+            ),
+        ] {
+            assert_eq!(policy, Ok(false));
+        }
+        assert!(
+            can_classify_active_install(
+                normal,
+                crate::LinuxInstallMode::FreshInstall,
+                DeterminateHandoffState::Started,
+                true,
+                true,
+            )
+            .is_err()
+        );
     }
 
     #[test]

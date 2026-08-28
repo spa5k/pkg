@@ -118,6 +118,16 @@ pub trait LinuxInstallBackend {
     /// Returns the policy for new work started by this invocation.
     fn install_mode(&self) -> LinuxInstallMode;
 
+    /// Returns whether this is an exact, healthy, active installation of the
+    /// authenticated release. This query must not mutate the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns a backend error for partial, changed, mixed, or unhealthy state.
+    fn classify_active_install(&mut self) -> Result<bool, InstallError> {
+        Ok(false)
+    }
+
     /// Revalidates privilege, handoff, and host state for the journal policy.
     ///
     /// This rejects a journal whose mode differs from the requested operation.

@@ -160,6 +160,12 @@ fn continue_linux_bundle_install<'a, P: BundleProvisioner>(
             bootstrap: None,
         });
     }
+    if matches!(&recovery, LinuxBundleRecovery::None) && backend.classify_active_install()? {
+        return Ok(LinuxBundleInstallReport {
+            platform: LinuxInstallReport::recovered_existing(),
+            bootstrap: None,
+        });
+    }
     backend.preflight_clean_host(request.system)?;
     // Journal creation is the durable proof that the fixed workspace was
     // absent before this attempt could create it.
@@ -2810,6 +2816,9 @@ mod tests {
         create: bool,
         replace_files: bool,
         mode: Option<crate::LinuxInstallMode>,
+        active_install: bool,
+        active_install_checks: usize,
+        clean_host_checks: usize,
         service_state: TestServiceState,
         failure: LinuxBackendFailure,
         preflight_handoff: Option<DeterminateHandoffState>,
@@ -2827,6 +2836,11 @@ mod tests {
     impl LinuxInstallBackend for LinuxBackend {
         fn install_mode(&self) -> crate::LinuxInstallMode {
             self.mode.unwrap_or(crate::LinuxInstallMode::FreshInstall)
+        }
+
+        fn classify_active_install(&mut self) -> Result<bool, InstallError> {
+            self.active_install_checks = self.active_install_checks.saturating_add(1);
+            Ok(self.active_install)
         }
 
         fn preflight_product_mutation(&mut self) -> Result<(), InstallError> {
@@ -2878,6 +2892,7 @@ mod tests {
             Ok(())
         }
         fn preflight_clean_host(&mut self, _system: System) -> Result<(), InstallError> {
+            self.clean_host_checks = self.clean_host_checks.saturating_add(1);
             if self.mode == Some(crate::LinuxInstallMode::OfflineRepair) {
                 if self.preflight_handoff != Some(DeterminateHandoffState::Accepted)
                     || self.service_state != TestServiceState::Offline
@@ -3283,6 +3298,64 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn exact_active_install_returns_without_journal_or_provisioning()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let scratch_parent = temporary.path().join("scratch");
+        let request = InstallerProvisionRequest {
+            repository: pkg_nix::InstallerRepository::Bundle(Path::new("/bundle")),
+            datastore: temporary.path(),
+            installation_root: Path::new("/"),
+            scratch_parent: &scratch_parent,
+            system: System::X8664Linux,
+            groups: ManagedGroupBindings::new(100, 101)?,
+        };
+        let location = LinuxJournalLocation::At {
+            base: temporary.path().to_path_buf(),
+            user_id: nix::unistd::Uid::effective().as_raw(),
+            group_id: nix::unistd::Gid::effective().as_raw(),
+        };
+        let release = Digest::from_bytes([0xe1; 32]);
+        let context = linux_recovery_context_digest(release, &request);
+        let mut backend = LinuxBackend {
+            active_install: true,
+            ..LinuxBackend::default()
+        };
+        let mut provisioner = ReauthProvisioner {
+            calls: 0,
+            reauthenticated: false,
+            reuse_existing: true,
+        };
+
+        let report = continue_linux_bundle_install(
+            &request,
+            &StubDaemon,
+            &mut backend,
+            &mut provisioner,
+            release,
+            &location,
+        )?;
+
+        assert!(report.bootstrap().is_none());
+        assert_eq!(report.platform().created_artifacts(), 0);
+        assert_eq!(
+            report.platform().existing_artifacts(),
+            crate::assets::linux_product_mutation_assets().count()
+        );
+        assert_eq!(backend.active_install_checks, 1);
+        assert_eq!(backend.clean_host_checks, 0);
+        assert_eq!(backend.mutation_calls, 0);
+        assert_eq!(backend.raw_provision_calls, 0);
+        assert_eq!(provisioner.calls, 0);
+        assert!(
+            location
+                .open_existing(request.system, release, context)?
+                .is_none()
+        );
+        Ok(())
+    }
+
     fn assert_accepted_fresh_continuation(
         first_failure: LinuxBackendFailure,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3351,6 +3424,8 @@ mod tests {
         backend.failure = LinuxBackendFailure::None;
         backend.managed_runtime_present = Some(true);
         backend.preflight_handoff = Some(DeterminateHandoffState::Accepted);
+        backend.active_install = true;
+        let active_install_checks = backend.active_install_checks;
 
         let mut second_provisioner = ReauthProvisioner {
             calls: 0,
@@ -3367,6 +3442,7 @@ mod tests {
         )?;
 
         assert!(report.bootstrap().is_none());
+        assert_eq!(backend.active_install_checks, active_install_checks);
         assert_eq!(second_provisioner.calls, 0);
         assert_eq!(backend.raw_provision_calls, 0);
         assert_eq!(vendor_start_count(&fixture)?, 1);

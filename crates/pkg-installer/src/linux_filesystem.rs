@@ -369,6 +369,11 @@ impl LinuxFilesystemManager {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn bind_config_bytes_for_test(&mut self, contents: &[u8]) {
+        self.authenticated_config = Some(Arc::from(contents));
+    }
+
     /// Returns true for every closed file or directory asset.
     #[must_use]
     pub const fn handles(asset: LinuxInstallAsset) -> bool {
