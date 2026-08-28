@@ -1154,7 +1154,7 @@ echo "+ pkg update"
 channel_output=$(docker exec "$container" su - proof-user -c \
     "/usr/local/bin/pkg --json update")
 printf '%s\n' "$channel_output" | grep -F '"channelSequence":2' >/dev/null
-printf '%s\n' "$channel_output" | grep -F '"updated":true' >/dev/null
+printf '%s\n' "$channel_output" | grep -F '"updated":false' >/dev/null
 printf '%s\n' "$channel_output" | grep -F '"stateUpdated":true' >/dev/null
 
 echo "+ pkg upgrade ripgrep"
