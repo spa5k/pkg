@@ -36,12 +36,17 @@ GitHub Actions does not create or update these root-owned markers.
 
 Start with slot 1 only.
 Do not register slot 2 before slot 1 completes.
-Register each Actions runner with `--ephemeral`.
+Confirm that the host has at least 70 GiB free.
+Clone slot 1 from this immutable Tart image digest:
 
-1. Create a fresh macOS Apple Silicon virtual machine.
-2. Confirm that Nix and pkg are absent.
-3. Record `sysctl -n kern.bootsessionuuid`.
-4. Write a root-owned mode `0600` reboot marker.
+`ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c`
+
+Create a fresh registration token for slot 1.
+Register the Actions runner with `--ephemeral`.
+
+1. Confirm that Nix and pkg are absent.
+2. Record `sysctl -n kern.bootsessionuuid`.
+3. Write a root-owned mode `0600` reboot marker.
 
    `/var/tmp/pkg-disposable-macos-reboot-v2`
 
@@ -49,9 +54,9 @@ Register each Actions runner with `--ephemeral`.
 
    `PKG-DN16-REBOOT-V2:<github-run-id>:<lifecycle-run>:<runner-name>:<instance-nonce>:<boot-session-before-reboot>:<unix-time>`
 
-5. Reboot the virtual machine.
-6. Start the Actions runner after the reboot.
-7. When a workflow job is assigned, write this root-owned mode `0600` file:
+4. Reboot the virtual machine.
+5. Start the Actions runner after the reboot.
+6. When a workflow job is assigned, write this root-owned mode `0600` file:
 
    `/var/tmp/pkg-disposable-macos-proof`
 
@@ -73,18 +78,29 @@ The runner must provide passwordless `sudo` only inside the disposable VM.
 
 Wait until the slot 1 matrix job has a terminal result.
 Confirm that all required slot 1 artifact uploads for that result completed.
-Confirm that the ephemeral runner registration is absent.
+Wait for the ephemeral slot 1 runner to deregister.
+Remove any stale offline slot 1 runner registration.
+Confirm that the exact slot 1 runner registration is absent.
 Only then stop and destroy the slot 1 VM.
 
-Create and register slot 2 after the slot 1 cleanup gate passes.
+Create slot 2 only after the slot 1 cleanup gate passes.
 Use the same GitHub workflow run and GitHub run ID.
 Do not enable or dispatch the workflow again.
+Confirm that the host has at least 70 GiB free.
+Clone slot 2 from the same immutable Tart image digest:
+
+`ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c`
+
+Create a fresh registration token for slot 2.
 Use the slot 2 runner name, label, lifecycle slot, and a new instance nonce.
-Repeat the VM, marker, reboot, and runner steps above.
+Register the Actions runner with `--ephemeral`.
+Repeat the clean-state, marker, reboot, and runner steps above.
 
 Wait until the slot 2 matrix job has a terminal result.
 Confirm that all required slot 2 artifact uploads for that result completed.
-Confirm that the ephemeral runner registration is absent.
+Wait for the ephemeral slot 2 runner to deregister.
+Remove any stale offline slot 2 runner registration.
+Confirm that the exact slot 2 runner registration is absent.
 Only then stop and destroy the slot 2 VM.
 
 The hosted aggregate job starts after both matrix jobs are terminal.

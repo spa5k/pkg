@@ -68,7 +68,34 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("Do not enable or dispatch the workflow again", README)
         self.assertEqual(README.count("matrix job has a terminal result"), 2)
         self.assertEqual(README.count("artifact uploads for that result completed"), 2)
-        self.assertEqual(README.count("ephemeral runner registration is absent"), 2)
+        self.assertEqual(README.count("runner to deregister"), 2)
+        image = (
+            "ghcr.io/cirruslabs/macos-sequoia-base@sha256:"
+            "3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c"
+        )
+        self.assertEqual(README.count(image), 2)
+        slot_2 = README.split("Create slot 2 only", 1)[1].split(
+            "Wait until the slot 2 matrix job", 1
+        )[0]
+        self.assertIn("at least 70 GiB free", slot_2)
+        self.assertIn("same immutable Tart image digest", slot_2)
+        self.assertIn("fresh registration token for slot 2", slot_2)
+        self.assertEqual(README.count("Remove any stale offline"), 2)
+        self.assertEqual(README.count("runner registration is absent"), 2)
+        for slot, end in ((1, "Create slot 2 only"), (2, "The hosted aggregate job")):
+            cleanup = README.split(
+                f"Wait until the slot {slot} matrix job", 1
+            )[1].split(end, 1)[0]
+            gates = (
+                "terminal result",
+                f"required slot {slot} artifact uploads",
+                f"ephemeral slot {slot} runner to deregister",
+                f"Remove any stale offline slot {slot} runner registration",
+                f"exact slot {slot} runner registration is absent",
+                f"Only then stop and destroy the slot {slot} VM",
+            )
+            positions = [cleanup.index(gate) for gate in gates]
+            self.assertEqual(positions, sorted(positions))
 
     def test_preflight_is_retained_before_the_destructive_gate(self) -> None:
         proof_job = WORKFLOW.split("\n  prove:\n", 1)[1].split("\n  aggregate:\n", 1)[0]
