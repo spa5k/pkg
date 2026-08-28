@@ -20,6 +20,9 @@ LINUX_STAGE = (ROOT / "tests/linux-clean-host/Dockerfile.stage").read_text(
     encoding="utf-8"
 )
 LINUX_HOST = (ROOT / "tests/linux-clean-host/Dockerfile").read_text(encoding="utf-8")
+PROOF_PUBLICATION = (
+    ROOT / "tools/release/examples/linux_proof_publication.rs"
+).read_text(encoding="utf-8")
 MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
     encoding="utf-8"
 )
@@ -199,10 +202,33 @@ class ReleaseWorkflowTests(unittest.TestCase):
             LINUX_HARNESS.index('mkdir -p -m 0700 "$artifact_output/evidence"'),
             LINUX_HARNESS.index('echo "+ stage x86_64 Linux release inputs"'),
         )
-        self.assertIn("/binaries-n x86_64-linux /proof-signing 1", LINUX_STAGE)
         self.assertIn(
-            "/binaries-n-plus-1 x86_64-linux /proof-signing 2", LINUX_STAGE
+            "--legacy-linux-fixture /publication-1 /runtime /binaries-n",
+            LINUX_STAGE,
         )
+        self.assertIn(
+            "--legacy-linux-fixture /publication-2 /runtime /binaries-n-plus-1",
+            LINUX_STAGE,
+        )
+        self.assertIn(
+            "copy_sigstore_bundle(artifact_root, &bundle, &bundle_input)",
+            PROOF_PUBLICATION,
+        )
+        self.assertIn("dn16_refuses_placeholder_and_plain_text_bundles", PROOF_PUBLICATION)
+        for command in ("--prepare-dn16-manifest", "--publish-dn16"):
+            self.assertIn(command, PROOF_PUBLICATION)
+        for mode in ("Dn16Prepared", "Dn16Sealed", "LegacyLinuxFixture"):
+            self.assertIn(mode, PROOF_PUBLICATION)
+        self.assertIn("ReleaseManifest::from_prepared_json", PROOF_PUBLICATION)
+        self.assertNotIn("ProofInputMode::Dn16Fixture", PROOF_PUBLICATION)
+        self.assertIn("--bind-dn16-pair", PROOF_PUBLICATION)
+        self.assertIn("$name.sigstore.json", LINUX_STAGE)
+        for name in (
+            "pkg-aarch64-darwin",
+            "pkg-x86_64-linux",
+            "pkg-installer-x86_64-linux",
+        ):
+            self.assertIn(name, LINUX_STAGE)
         self.assertIn(
             "PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/./",
             LINUX_STAGE,

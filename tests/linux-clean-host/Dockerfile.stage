@@ -35,7 +35,13 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     && cp /target/x86_64-unknown-linux-gnu/release/pkg \
         /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
         /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
-        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries-n/
+        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries-n/ \
+    && cp /binaries-n/pkg /binaries-n/pkg-x86_64-linux \
+    && cp /binaries-n/pkg-install /binaries-n/pkg-installer-x86_64-linux \
+    && printf 'aarch64-darwin CLI fixture\n' > /binaries-n/pkg-aarch64-darwin \
+    && for name in pkg-aarch64-darwin pkg-x86_64-linux pkg-installer-x86_64-linux; do \
+        printf '{"proofFixture":"%s"}\n' "$name" > "/binaries-n/$name.sigstore.json"; \
+    done
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     PKG_RELEASE_TUF_ROOT_JSON="$(cat /proof-signing/root.json)" \
@@ -52,6 +58,15 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
         /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
         /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
         /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries-n-plus-1/ \
+    && cp /binaries-n-plus-1/pkg /binaries-n-plus-1/pkg-x86_64-linux \
+    && cp /binaries-n-plus-1/pkg-install \
+        /binaries-n-plus-1/pkg-installer-x86_64-linux \
+    && printf 'aarch64-darwin CLI fixture\n' \
+        > /binaries-n-plus-1/pkg-aarch64-darwin \
+    && for name in pkg-aarch64-darwin pkg-x86_64-linux pkg-installer-x86_64-linux; do \
+        printf '{"proofFixture":"%s"}\n' "$name" \
+            > "/binaries-n-plus-1/$name.sigstore.json"; \
+    done \
     && ! cmp /binaries-n/pkg-nix-broker /binaries-n-plus-1/pkg-nix-broker \
     && ! cmp /binaries-n/pkg-install /binaries-n-plus-1/pkg-install
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
@@ -127,12 +142,14 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-1 /runtime /binaries-n x86_64-linux /proof-signing 1
+        --legacy-linux-fixture /publication-1 /runtime /binaries-n \
+        x86_64-linux /proof-signing 1 linux-proof-1
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-2 /runtime /binaries-n-plus-1 x86_64-linux /proof-signing 2
+        --legacy-linux-fixture /publication-2 /runtime /binaries-n-plus-1 \
+        x86_64-linux /proof-signing 2 linux-proof-2
 RUN mkdir /out \
     && cp -a /publication-1 /publication-2 /out/ \
     && mkdir /out/binaries \
