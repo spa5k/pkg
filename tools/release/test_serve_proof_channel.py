@@ -1,6 +1,7 @@
 """Focused checks for the one-use DN-16 proof server."""
 
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -93,7 +94,7 @@ def processes(root: Path, served: Path) -> tuple[Path, subprocess.Popen, subproc
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
     tunnel = subprocess.Popen(
-        [str(cloudflared), "tunnel", "--url", f"http://127.0.0.1:{port}"],
+        [str(cloudflared), *server.CLOUDFLARED_ARGUMENTS, f"http://127.0.0.1:{port}"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
     for name in ("http.log", "cloudflared.log"):
@@ -115,6 +116,13 @@ def kill(processes: tuple[subprocess.Popen, ...]) -> None:
 
 
 class ProofServerTests(unittest.TestCase):
+    def test_cloudflared_uses_empty_config_and_keeps_bounded_readiness(self) -> None:
+        self.assertEqual(
+            server.CLOUDFLARED_ARGUMENTS,
+            ("tunnel", "--config", "/dev/null", "--url"),
+        )
+        self.assertIn("wait_empty(url, 60)", inspect.getsource(server.bootstrap))
+
     def test_inventory_covers_every_file_and_refuses_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pair(Path(directory))

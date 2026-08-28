@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parents[2]
 PAIR_FILES = {"n", "n-plus-1", "n.inventory.json", "n-plus-1.inventory.json", "proof-pair.json"}
 URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 STATE_FILES = ("state.json", "http.log", "cloudflared.log")
+CLOUDFLARED_ARGUMENTS = ("tunnel", "--config", "/dev/null", "--url")
 
 
 def fail(message: str) -> ValueError:
@@ -191,7 +192,11 @@ def owned_process(state: dict, role: str) -> tuple[int, bool]:
     markers = (
         (str(Path(__file__).resolve()), "_serve", str(state["publication"]))
         if role == "http"
-        else (state["cloudflared"], "tunnel", f"http://127.0.0.1:{state['port']}")
+        else (
+            state["cloudflared"],
+            *CLOUDFLARED_ARGUMENTS,
+            f"http://127.0.0.1:{state['port']}",
+        )
     )
     if not isinstance(pid, int) or pid <= 1:
         raise fail("invalid process id")
@@ -279,7 +284,7 @@ def bootstrap(publication_value: str, state_value: str, port_value: str) -> None
         wait_empty(f"http://127.0.0.1:{port}", 10)
         tunnel_log = (state / "cloudflared.log").open("xb")
         tunnel = subprocess.Popen(
-            [cloudflared, "tunnel", "--url", f"http://127.0.0.1:{port}"],
+            [cloudflared, *CLOUDFLARED_ARGUMENTS, f"http://127.0.0.1:{port}"],
             stdout=tunnel_log, stderr=subprocess.STDOUT, start_new_session=True,
         )
         tunnel_log.close()
