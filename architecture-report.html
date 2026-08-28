@@ -334,6 +334,251 @@
     .change-strip strong { display: block; font-size: 1.65rem; }
     .change-strip span { color: var(--muted); font-size: .84rem; }
 
+    .skip-link {
+      position: absolute;
+      left: 12px;
+      top: -80px;
+      z-index: 10;
+      padding: 10px 14px;
+      color: #fff;
+      background: var(--next);
+      border-radius: 8px;
+    }
+    .skip-link:focus { top: 12px; }
+
+    .current-report {
+      margin-top: 0;
+      padding: clamp(22px, 5vw, 52px);
+      background: var(--surface);
+      border: 2px solid var(--complete);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .current-report > section {
+      margin-top: 48px;
+      padding-top: 40px;
+      border-top: 1px solid var(--line);
+    }
+    .current-report > section:first-of-type { margin-top: 30px; }
+    .current-report p, .current-report li { max-width: 86ch; }
+    .current-report .full-width { max-width: none; }
+    .current-kicker { color: var(--complete); font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
+    .current-intro { max-width: 850px; color: var(--muted); font-size: 1.08rem; }
+    .report-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 22px;
+    }
+    .report-nav a {
+      padding: 7px 10px;
+      color: var(--ink);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    .report-nav a:hover { border-color: var(--next); text-decoration: underline; }
+
+    .current-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .truth-card {
+      min-width: 0;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-top: 5px solid var(--complete);
+      border-radius: 12px;
+      background: var(--paper);
+    }
+    .truth-card.ready { border-top-color: var(--next); }
+    .truth-card.blocked { border-top-color: var(--caution); }
+    .truth-card strong { display: block; margin-bottom: 7px; font-size: 1.04rem; }
+    .truth-card p { margin: 0; color: var(--muted); }
+
+    .status-lanes { display: grid; gap: 14px; margin-top: 22px; }
+    .status-lane {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 16px;
+      align-items: center;
+    }
+    .lane-label strong, .lane-label span { display: block; }
+    .lane-label span { color: var(--muted); font-size: .82rem; }
+    .lane-track {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      padding: 6px;
+      background: var(--code);
+      border-radius: 12px;
+    }
+    .lane-step {
+      min-height: 70px;
+      display: grid;
+      place-items: center;
+      padding: 9px;
+      border-radius: 8px;
+      color: var(--muted);
+      background: var(--surface);
+      text-align: center;
+      font-size: .8rem;
+      font-weight: 800;
+    }
+    .lane-step.complete { color: #0b4a37; background: var(--complete-soft); }
+    .lane-step.ready { color: #173d75; background: var(--next-soft); }
+    .lane-step.blocked { color: #693a00; background: var(--caution-soft); }
+
+    .boundary-grid, .choice-grid, .cleanup-grid, .evidence-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+    .owner-box {
+      padding: 22px;
+      border-radius: 14px;
+      color: #fff;
+      background: var(--dark);
+    }
+    .owner-box.product { background: #173357; }
+    .owner-box h4 { margin-top: 0; font-size: 1.15rem; }
+    .owner-box ul { margin: 12px 0 0; padding-left: 20px; }
+    .owner-box li { margin: 6px 0; }
+
+    .diagram-frame {
+      margin-top: 22px;
+      padding: 18px;
+      color: #f8fff9;
+      background: var(--dark);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .diagram-frame svg { display: block; width: 100%; height: auto; }
+    .diagram-frame text { font-family: ui-sans-serif, system-ui, sans-serif; }
+    .diagram-caption { margin: 14px 0 0; color: #c8d9cf; }
+
+    .branch-flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 28px;
+      margin: 22px 0;
+      padding: 0;
+      list-style: none;
+    }
+    .branch-flow li {
+      position: relative;
+      max-width: none;
+      min-width: 0;
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-top: 5px solid var(--complete);
+      border-radius: 12px;
+      background: var(--paper);
+    }
+    .branch-flow li.ready { border-top-color: var(--next); }
+    .branch-flow li.blocked { border-top-color: var(--caution); }
+    .branch-flow li:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -23px;
+      top: 43%;
+      color: var(--next);
+      font-size: 1.5rem;
+      font-weight: 850;
+    }
+    .branch-flow strong, .branch-flow code { display: block; }
+    .branch-flow code { margin: 8px 0; }
+    .branch-flow span { color: var(--muted); font-size: .87rem; }
+
+    .evidence-rung {
+      padding: 20px;
+      border-left: 7px solid var(--complete);
+      border-radius: 10px;
+      background: var(--complete-soft);
+    }
+    .evidence-rung.ready { border-left-color: var(--next); background: var(--next-soft); }
+    .evidence-rung.blocked { border-left-color: var(--caution); background: var(--caution-soft); }
+    .evidence-rung h4 { margin-top: 0; }
+    .evidence-rung p:last-child { margin-bottom: 0; }
+
+    .blocker-list {
+      counter-reset: blockers;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin: 22px 0;
+      padding: 0;
+      list-style: none;
+    }
+    .blocker-list li {
+      counter-increment: blockers;
+      max-width: none;
+      padding: 18px;
+      border: 1px solid #d6a66d;
+      border-radius: 12px;
+      background: var(--caution-soft);
+    }
+    .blocker-list li::before {
+      content: "Blocker " counter(blockers);
+      display: block;
+      margin-bottom: 8px;
+      color: #6a3b00;
+      font-size: .78rem;
+      font-weight: 850;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .blocker-list strong { display: block; margin-bottom: 5px; }
+
+    .decision-path {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 28px;
+      margin-top: 22px;
+    }
+    .decision-path article {
+      position: relative;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper);
+    }
+    .decision-path article:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      top: 46%;
+      right: -23px;
+      color: var(--next);
+      font-size: 1.5rem;
+      font-weight: 850;
+    }
+    .decision-path h4 { margin-top: 0; }
+    .authorization {
+      margin-top: 12px;
+      padding: 12px;
+      border-left: 4px solid var(--next);
+      background: var(--next-soft);
+      border-radius: 7px;
+    }
+
+    .compact-facts { display: grid; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
+    .compact-facts li { display: grid; grid-template-columns: 170px 1fr; gap: 12px; max-width: none; }
+    .compact-facts strong { color: var(--muted); }
+
+    .plain-warning {
+      margin: 20px 0;
+      padding: 20px;
+      border: 2px solid var(--caution);
+      border-radius: 12px;
+      background: var(--caution-soft);
+    }
+    .plain-warning strong { display: block; margin-bottom: 5px; font-size: 1.08rem; }
+
     footer { padding: 28px 0; color: #d0dfd6; background: var(--dark); }
     footer .wrap { display: flex; justify-content: space-between; gap: 24px; }
     footer p { margin: 0; }
@@ -346,6 +591,9 @@
       .process-flow { grid-template-columns: 1fr 1fr; }
       .process-flow li:nth-child(2)::after { display: none; }
       .state-strip { grid-template-columns: 1fr 1fr; }
+      .current-summary-grid { grid-template-columns: 1fr 1fr; }
+      .branch-flow, .decision-path { grid-template-columns: 1fr 1fr; }
+      .branch-flow li:nth-child(2)::after, .decision-path article:nth-child(2)::after { display: none; }
     }
 
     @media (max-width: 620px) {
@@ -361,6 +609,12 @@
       .longform { padding: 20px; }
       .process-flow, .state-strip { grid-template-columns: 1fr; }
       .process-flow li::after { display: none; }
+      .current-report { padding: 18px; }
+      .current-summary-grid, .boundary-grid, .choice-grid, .cleanup-grid, .evidence-grid, .blocker-list, .branch-flow, .decision-path { grid-template-columns: 1fr; }
+      .status-lane { grid-template-columns: 1fr; }
+      .lane-track { grid-template-columns: 1fr 1fr; }
+      .branch-flow li::after, .decision-path article::after { display: none !important; }
+      .compact-facts li { grid-template-columns: 1fr; gap: 2px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -396,24 +650,444 @@
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#current-report">Skip to the current report</a>
   <header class="hero">
     <div class="wrap">
-      <p class="eyebrow">Architecture and domain review</p>
-      <h1>A smaller and safer base for the pkg alpha</h1>
-      <p class="lede">The Linux code now uses Determinate for Base Nix. Fresh install, offline product upgrade, and offline product-file repair have separate rules. Native x86-64 proof is still required.</p>
+      <p class="eyebrow">Verified architecture update · 29 August 2026</p>
+      <h1>Code-ready is not proof-complete</h1>
+      <p class="lede">Linux passed its native lifecycle proof. The macOS production code and proof structure passed local review. Native macOS proof is still blocked by external runners, signed shipping inputs, staged channels, and reboot recovery.</p>
       <div class="status-row" aria-label="Report status">
-        <span class="pill complete">PR 1 and PR 2 complete</span>
-        <span class="pill caution">DN-15 native proof pending</span>
-        <span class="pill next">Linux code active</span>
+        <span class="pill complete">Linux native proof passed twice</span>
+        <span class="pill next">macOS code reviewed and backed up</span>
+        <span class="pill caution">macOS native proof blocked</span>
       </div>
     </div>
   </header>
 
   <main class="wrap">
+    <article class="current-report" id="current-report" aria-labelledby="current-report-title">
+      <header>
+        <p class="current-kicker">Current verified report</p>
+        <h2 id="current-report-title">The honest state of the Determinate cutover</h2>
+        <p class="current-intro">This section is the current source of truth. It separates code, review, native proof, and external proof. The large earlier report remains below as design history and agent-review context.</p>
+        <nav class="report-nav" aria-label="Current report sections">
+          <a href="#current-status">Status</a>
+          <a href="#current-ownership">Ownership</a>
+          <a href="#current-trust">Trust</a>
+          <a href="#current-evidence">Evidence</a>
+          <a href="#current-stack">Branches</a>
+          <a href="#current-macos-proof">macOS proof</a>
+          <a href="#current-blockers">Blockers</a>
+          <a href="#current-decisions">Next decisions</a>
+          <a href="#current-simplification">Simplification</a>
+          <a href="#current-cleanup">Disk cleanup</a>
+        </nav>
+      </header>
+
+      <section id="current-status" aria-labelledby="current-status-title">
+        <h3 id="current-status-title">1. Current status in plain language</h3>
+        <div class="current-summary-grid" aria-label="Current lifecycle status">
+          <article class="truth-card">
+            <strong>Linux: proved</strong>
+            <p>Signed head <code>9bd17b7</code> passed the native x86-64 lifecycle twice in run <code>33198985687</code>.</p>
+          </article>
+          <article class="truth-card ready">
+            <strong>macOS code: ready</strong>
+            <p>Production head <code>8ffd325</code> is reviewed and backed up. It is not merged.</p>
+          </article>
+          <article class="truth-card ready">
+            <strong>macOS proof code: ready</strong>
+            <p>Proof head <code>b9d92cc</code> has seven signed commits. Local checks and both final review axes passed.</p>
+          </article>
+          <article class="truth-card blocked">
+            <strong>macOS native result: absent</strong>
+            <p>No disposable runner is registered. No destructive native proof was dispatched.</p>
+          </article>
+        </div>
+
+        <div class="plain-warning" role="note">
+          <strong>Code-ready is not proof-complete.</strong>
+          <p>A compiled workflow can prove that its rules are well formed. It cannot prove launchd, a real reboot, a real product upgrade, or native uninstall on an Apple silicon machine.</p>
+        </div>
+
+        <div class="status-lanes" role="img" aria-label="Linux is complete through native proof. macOS production and proof code are reviewed, but native and external proof remain blocked. Public alpha 7 is older than both candidates.">
+          <div class="status-lane">
+            <div class="lane-label"><strong>Linux DN-15</strong><span>remote backup exact</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Code complete</div>
+              <div class="lane-step complete">Review passed</div>
+              <div class="lane-step complete">Native proof ×2</div>
+              <div class="lane-step complete">No publication</div>
+            </div>
+          </div>
+          <div class="status-lane">
+            <div class="lane-label"><strong>macOS production</strong><span>DN-16 head 8ffd325</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Code complete</div>
+              <div class="lane-step complete">Two review axes</div>
+              <div class="lane-step ready">Backed up</div>
+              <div class="lane-step blocked">Not merged</div>
+            </div>
+          </div>
+          <div class="status-lane">
+            <div class="lane-label"><strong>macOS proof</strong><span>head b9d92cc</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Structure complete</div>
+              <div class="lane-step complete">Local checks pass</div>
+              <div class="lane-step blocked">No native run</div>
+              <div class="lane-step blocked">External gates open</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Exact branch and backup status">
+          <table class="decision-table">
+            <thead><tr><th>Work</th><th>Branch</th><th>Exact local and remote backup head</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td>Linux lifecycle</td><td><code>dn/15-linux-lifecycle-cutover</code></td><td><code>9bd17b716503d7be3bcf5bd310ceddd9aecede50</code></td><td class="yes">Native proof passed twice. Run 33198985687. Nothing published.</td></tr>
+              <tr><td>macOS production</td><td><code>dn/16-macos-lifecycle-cutover</code></td><td><code>8ffd325a4be12a998f3a5684097b57841a11540e</code></td><td class="maybe">Reviewed and backed up. Not merged.</td></tr>
+              <tr><td>macOS proof structure</td><td><code>dn/16-macos-lifecycle-proof</code></td><td><code>b9d92ccbbccfff020660e76cbadea5993ad98d67</code></td><td class="maybe">Seven signed commits. Local checks and final review passed. Native proof did not run.</td></tr>
+              <tr><td>Public release</td><td><code>v0.1.0-alpha.7</code></td><td>Older published release</td><td class="no">It does not contain the DN-16 Determinate macOS cutover.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="current-ownership" aria-labelledby="current-ownership-title">
+        <h3 id="current-ownership-title">2. One owner for each lifecycle</h3>
+        <p>The important architecture change is small. Determinate owns machine-wide Base Nix. pkg owns the product and the packages that the user asked for.</p>
+
+        <div class="boundary-grid">
+          <article class="owner-box">
+            <h4>Determinate owns Base Nix</h4>
+            <ul>
+              <li>Machine-wide Nix installation.</li>
+              <li>The Nix daemon and native platform setup.</li>
+              <li>The vendor receipt and installed vendor executable.</li>
+              <li>Supported native Base Nix repair and update behavior.</li>
+              <li>Terminal Base Nix uninstall and vendor-owned residue.</li>
+            </ul>
+          </article>
+          <article class="owner-box product">
+            <h4>pkg owns product and package work</h4>
+            <ul>
+              <li>The Broker and Root Helper used for package work.</li>
+              <li>Package selection, builds, generations, roots, and garbage collection.</li>
+              <li>Package Repair and product asset repair.</li>
+              <li>Product files, services, receipts, journals, and user experience.</li>
+              <li>Verified cleanup before terminal Determinate uninstall.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="diagram-frame">
+          <svg viewBox="0 0 1040 270" role="img" aria-labelledby="owner-svg-title owner-svg-desc">
+            <title id="owner-svg-title">Ownership boundary</title>
+            <desc id="owner-svg-desc">The user installs pkg. pkg authenticates one pinned Determinate installer for Base Nix. Determinate owns Base Nix. pkg separately owns the product package lifecycle.</desc>
+            <defs>
+              <marker id="owner-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9cd8c1"/></marker>
+            </defs>
+            <rect x="20" y="80" width="170" height="105" rx="14" fill="#173428" stroke="#759084"/>
+            <text x="105" y="120" text-anchor="middle" fill="#ffffff" font-size="20" font-weight="700">User installs pkg</text>
+            <text x="105" y="151" text-anchor="middle" fill="#bdd0c5" font-size="15">No Nix preinstall</text>
+            <path d="M 190 132 L 285 132" stroke="#9cd8c1" stroke-width="4" marker-end="url(#owner-arrow)"/>
+            <rect x="295" y="55" width="240" height="155" rx="14" fill="#173357" stroke="#8fb7ff" stroke-width="2"/>
+            <text x="415" y="98" text-anchor="middle" fill="#ffffff" font-size="20" font-weight="700">pkg trust boundary</text>
+            <text x="415" y="130" text-anchor="middle" fill="#d9e7ff" font-size="15">Authenticate pinned input</text>
+            <text x="415" y="158" text-anchor="middle" fill="#d9e7ff" font-size="15">Record Base Nix Handoff</text>
+            <text x="415" y="186" text-anchor="middle" fill="#d9e7ff" font-size="15">Never become a second owner</text>
+            <path d="M 535 105 L 640 70" stroke="#9cd8c1" stroke-width="4" marker-end="url(#owner-arrow)"/>
+            <path d="M 535 165 L 640 200" stroke="#9cd8c1" stroke-width="4" marker-end="url(#owner-arrow)"/>
+            <rect x="650" y="20" width="365" height="100" rx="14" fill="#173428" stroke="#72cfae" stroke-width="2"/>
+            <text x="832" y="59" text-anchor="middle" fill="#ffffff" font-size="20" font-weight="700">Determinate: Base Nix lifecycle</text>
+            <text x="832" y="89" text-anchor="middle" fill="#bdd0c5" font-size="15">Install · daemon · native state · terminal uninstall</text>
+            <rect x="650" y="150" width="365" height="100" rx="14" fill="#173357" stroke="#8fb7ff" stroke-width="2"/>
+            <text x="832" y="189" text-anchor="middle" fill="#ffffff" font-size="20" font-weight="700">pkg: product and package lifecycle</text>
+            <text x="832" y="219" text-anchor="middle" fill="#d9e7ff" font-size="15">Packages · generations · roots · GC · repair</text>
+          </svg>
+          <p class="diagram-caption">This boundary avoids a fork. pkg does not copy Determinate Rust code. It uses the pinned executable and keeps its own package product.</p>
+        </div>
+      </section>
+
+      <section id="current-trust" aria-labelledby="current-trust-title">
+        <h3 id="current-trust-title">3. The shipping trust flow</h3>
+        <p>The proof branch fixed a real trust error. A package digest is not trusted because it appears beside a release tag. The signed <code>SHA256SUMS</code> file must bind the package, CLI, release manifest, and their digests.</p>
+
+        <div class="diagram-frame">
+          <svg viewBox="0 0 1120 300" role="img" aria-labelledby="trust-svg-title trust-svg-desc">
+            <title id="trust-svg-title">Authenticated release and runtime trust flow</title>
+            <desc id="trust-svg-desc">A signed release identity and Cosign bundle authenticate SHA256SUMS. SHA256SUMS binds the package, CLI, and release manifest. The package contains compile-time channel URLs. TUF authenticates product channel metadata. pkg authenticates the pinned Determinate executable before Base Nix starts.</desc>
+            <defs>
+              <marker id="trust-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9cd8c1"/></marker>
+            </defs>
+            <rect x="20" y="95" width="175" height="110" rx="13" fill="#173428" stroke="#72cfae"/>
+            <text x="107" y="133" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Signed tag</text>
+            <text x="107" y="162" text-anchor="middle" fill="#bdd0c5" font-size="14">Shipping identity</text>
+            <text x="107" y="185" text-anchor="middle" fill="#bdd0c5" font-size="14">N or N+1</text>
+            <path d="M 195 150 L 260 150" stroke="#9cd8c1" stroke-width="4" marker-end="url(#trust-arrow)"/>
+            <rect x="270" y="65" width="210" height="170" rx="13" fill="#173357" stroke="#8fb7ff" stroke-width="2"/>
+            <text x="375" y="108" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Cosign verifies</text>
+            <text x="375" y="138" text-anchor="middle" fill="#d9e7ff" font-size="14">SHA256SUMS</text>
+            <text x="375" y="165" text-anchor="middle" fill="#d9e7ff" font-size="14">signature bundle</text>
+            <text x="375" y="202" text-anchor="middle" fill="#d9e7ff" font-size="14">Fail closed on mismatch</text>
+            <path d="M 480 150 L 545 150" stroke="#9cd8c1" stroke-width="4" marker-end="url(#trust-arrow)"/>
+            <rect x="555" y="35" width="250" height="230" rx="13" fill="#173428" stroke="#72cfae"/>
+            <text x="680" y="75" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">SHA256SUMS binds</text>
+            <text x="680" y="110" text-anchor="middle" fill="#bdd0c5" font-size="14">Preview package</text>
+            <text x="680" y="139" text-anchor="middle" fill="#bdd0c5" font-size="14">CLI archive</text>
+            <text x="680" y="168" text-anchor="middle" fill="#bdd0c5" font-size="14">Release manifest</text>
+            <text x="680" y="197" text-anchor="middle" fill="#bdd0c5" font-size="14">Exact file digests</text>
+            <text x="680" y="235" text-anchor="middle" fill="#bdd0c5" font-size="14">No self-reference</text>
+            <path d="M 805 105 L 875 75" stroke="#9cd8c1" stroke-width="4" marker-end="url(#trust-arrow)"/>
+            <path d="M 805 195 L 875 225" stroke="#9cd8c1" stroke-width="4" marker-end="url(#trust-arrow)"/>
+            <rect x="885" y="20" width="215" height="110" rx="13" fill="#173357" stroke="#8fb7ff"/>
+            <text x="992" y="59" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">TUF channel</text>
+            <text x="992" y="87" text-anchor="middle" fill="#d9e7ff" font-size="14">Compile-time URL</text>
+            <text x="992" y="110" text-anchor="middle" fill="#d9e7ff" font-size="14">Product targets</text>
+            <rect x="885" y="170" width="215" height="110" rx="13" fill="#173428" stroke="#72cfae"/>
+            <text x="992" y="209" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Determinate</text>
+            <text x="992" y="237" text-anchor="middle" fill="#bdd0c5" font-size="14">Pinned asset digest</text>
+            <text x="992" y="260" text-anchor="middle" fill="#bdd0c5" font-size="14">Base Nix start</text>
+          </svg>
+          <p class="diagram-caption">The proof reuses the product trust system. It does not add a local certificate authority, a private HTTP server, or a second channel format.</p>
+        </div>
+
+        <div class="plain-warning">
+          <strong>Why two signed package tags cannot prove N-to-N+1 by themselves</strong>
+          <p>Both packages contain the same live channel URLs. If the live channel already points to N+1, the package called “N” also reads N+1. The tags prove which package bytes were shipped. They do not freeze the channel state that the package reads.</p>
+          <p>An honest upgrade proof needs two immutable staged channel states. The runner must install N while the channel is pinned to N. Then an authorized publisher must advance the same real channel route to N+1. Only then can the runner prove a native N-to-N+1 product upgrade.</p>
+        </div>
+      </section>
+
+      <section id="current-evidence" aria-labelledby="current-evidence-title">
+        <h3 id="current-evidence-title">4. Three evidence levels</h3>
+        <div class="evidence-grid">
+          <article class="evidence-rung">
+            <h4>Compiled and local evidence</h4>
+            <p>Syntax, workflow structure, unit tests, shell rules, file inventories, exact runner checks, signature checks, and failure paths can pass on the development Mac.</p>
+            <p><strong>Current result:</strong> passed for proof head <code>b9d92cc</code>.</p>
+          </article>
+          <article class="evidence-rung ready">
+            <h4>Native platform evidence</h4>
+            <p>A disposable Apple silicon VM must run launchd, install Base Nix, install pkg, reboot, recover, upgrade, repair, uninstall, and report residue.</p>
+            <p><strong>Current result:</strong> not run for DN-16.</p>
+          </article>
+          <article class="evidence-rung blocked">
+            <h4>External publishing evidence</h4>
+            <p>Signed shipping inputs and a real immutable N/N+1 channel transition need external release and CDN state. Repository tests cannot create this fact.</p>
+            <p><strong>Current result:</strong> blocked.</p>
+          </article>
+          <article class="evidence-rung blocked">
+            <h4>Two-phase reboot evidence</h4>
+            <p>The proof must survive a real reboot and resume on the same disposable instance with a fresh boot session and the exact saved marker.</p>
+            <p><strong>Current result:</strong> protocol is checked, but no native lifecycle result exists.</p>
+          </article>
+        </div>
+
+        <h4>Seven signed commits in the macOS proof branch</h4>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Signed macOS proof commits">
+          <table class="decision-table table-sm">
+            <thead><tr><th>Commit</th><th>Purpose</th><th>Signature</th></tr></thead>
+            <tbody>
+              <tr><td><code>8d885e1</code></td><td>Require disposable macOS lifecycle proof.</td><td class="yes">Good</td></tr>
+              <tr><td><code>b8bd1ea</code></td><td>Test the Determinate lifecycle on disposable hosts.</td><td class="yes">Good</td></tr>
+              <tr><td><code>fadcf59</code></td><td>Document the macOS Determinate lifecycle.</td><td class="yes">Good</td></tr>
+              <tr><td><code>ff19669</code></td><td>Authenticate macOS proof release inputs.</td><td class="yes">Good</td></tr>
+              <tr><td><code>bcb16d7</code></td><td>Make the macOS proof fail closed.</td><td class="yes">Good</td></tr>
+              <tr><td><code>e2d85b2</code></td><td>Correct lifecycle proof status.</td><td class="yes">Good</td></tr>
+              <tr><td><code>b9d92cc</code></td><td>Correct the macOS reboot marker path.</td><td class="yes">Good</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Both final review axes passed at <code>b9d92ccbbccfff020660e76cbadea5993ad98d67</code>. The standards review passed. The specification and security review passed. These reviews approve the code and proof structure. They do not claim a native proof result.</p>
+      </section>
+
+      <section id="current-stack" aria-labelledby="current-stack-title-new">
+        <h3 id="current-stack-title-new">5. The stacked branch flow</h3>
+        <ol class="branch-flow" aria-label="Stacked branch flow from Linux proof to macOS proof and report">
+          <li>
+            <strong>Linux base</strong>
+            <code>dn/15-linux-lifecycle-cutover</code>
+            <span>Remote head 9bd17b7. Native proof complete.</span>
+          </li>
+          <li class="ready">
+            <strong>macOS production</strong>
+            <code>dn/16-macos-lifecycle-cutover</code>
+            <span>Remote head 8ffd325. Reviewed. Not merged.</span>
+          </li>
+          <li class="ready">
+            <strong>macOS proof</strong>
+            <code>dn/16-macos-lifecycle-proof</code>
+            <span>Remote head b9d92cc. Structure reviewed.</span>
+          </li>
+          <li class="blocked">
+            <strong>External proof gate</strong>
+            <code>not a branch</code>
+            <span>Runners, releases, staged channel, and reboot result.</span>
+          </li>
+        </ol>
+        <p>The proof branch is separate from production code. This keeps proof-only fault injection and destructive runner policy out of the production commit. The production branch stays unmerged until native Apple silicon evidence exists.</p>
+      </section>
+
+      <section id="current-macos-proof" aria-labelledby="current-macos-proof-title">
+        <h3 id="current-macos-proof-title">6. What the macOS proof structure now does</h3>
+        <div class="current-summary-grid">
+          <article class="truth-card">
+            <strong>Two exact runners</strong>
+            <p><code>pkg-dn16-proof-runner-1</code> and <code>pkg-dn16-proof-runner-2</code>.</p>
+          </article>
+          <article class="truth-card">
+            <strong>Two exact labels</strong>
+            <p><code>pkg-disposable-macos-proof-1</code> and <code>pkg-disposable-macos-proof-2</code>.</p>
+          </article>
+          <article class="truth-card ready">
+            <strong>Fresh instance proof</strong>
+            <p>The workflow binds each run to one V2 reboot record and one instance nonce.</p>
+          </article>
+          <article class="truth-card blocked">
+            <strong>No runner exists yet</strong>
+            <p>The required self-hosted runner identities are not registered.</p>
+          </article>
+        </div>
+
+        <h4>The exact V2 reboot record</h4>
+        <pre><code>PKG-DN16-REBOOT-V2:&lt;github-run-id&gt;:&lt;lifecycle-run&gt;:&lt;runner-name&gt;:&lt;instance-nonce&gt;:&lt;boot-session-before-reboot&gt;:&lt;unix-time&gt;</code></pre>
+        <p>The workflow requires a root-owned mode-<code>0600</code> record. It checks the run ID, lifecycle number, runner name, instance nonce, prior boot session, and time. The runner must return after a real reboot with a different boot session. A compiled test cannot manufacture this native fact.</p>
+
+        <h4>Old proof machinery that was removed</h4>
+        <div class="choice-grid">
+          <article class="truth-card">
+            <strong>Legacy APFS and private-Nix proof</strong>
+            <p>The proof no longer tests pkg-owned APFS provisioning or a private Nix runtime. Determinate owns native Base Nix setup.</p>
+          </article>
+          <article class="truth-card">
+            <strong>Local certificate authority</strong>
+            <p><code>tests/macos-clean-host/openssl.cnf</code> was deleted. The proof does not mint a local trust root.</p>
+          </article>
+          <article class="truth-card">
+            <strong>Local proof server</strong>
+            <p><code>tests/macos-clean-host/pkg-proof-server.py</code> was deleted. The proof does not replace real release and channel behavior with a private HTTP server.</p>
+          </article>
+          <article class="truth-card ready">
+            <strong>Real shipping trust</strong>
+            <p>Cosign verifies each signed <code>SHA256SUMS</code>. The checksums bind the package, CLI, manifest, and exact digests.</p>
+          </article>
+        </div>
+
+        <p>The proof is intentionally fail-closed. It can validate compiled rules now. It records staged-channel upgrade and lifecycle reboot recovery as external blocked rows. It cannot report overall success while either row is blocked.</p>
+      </section>
+
+      <section id="current-blockers" aria-labelledby="current-blockers-title">
+        <h3 id="current-blockers-title">7. Four external blockers</h3>
+        <ol class="blocker-list">
+          <li><strong>No registered disposable runners</strong>The two exact Apple silicon runner names and labels do not exist in GitHub yet. The proof cannot start safely.</li>
+          <li><strong>No two signed DN-16 shipping inputs</strong>There are no signed N and N+1 DN-16 package releases with signed <code>SHA256SUMS</code> and Cosign bundles. These inputs establish shipping identity.</li>
+          <li><strong>No immutable staged channel transition</strong>There is no real publisher and CDN route that can pin N, install it, then advance the same route to N+1. Package tags alone do not freeze live URLs.</li>
+          <li><strong>No two-phase lifecycle reboot recovery</strong>No native runner has completed phase one, rebooted, resumed phase two, and proved the full lifecycle on the same disposable instance.</li>
+        </ol>
+        <p>These are not Rust defects. More repository code cannot make the external facts true. The next work needs explicit infrastructure and publishing authorization.</p>
+      </section>
+
+      <section id="current-decisions" aria-labelledby="current-decisions-title">
+        <h3 id="current-decisions-title">8. Minimum honest next paths</h3>
+        <div class="decision-path" aria-label="Next decision flow">
+          <article>
+            <h4>1. Choose the native runner path</h4>
+            <p>Provision two disposable Apple silicon Tart virtual machines. Register the exact runner names and labels. Add the V2 reboot record through a trusted provisioner.</p>
+            <div class="authorization"><strong>Authorization needed:</strong> permission to create, register, reboot, and destroy the two runner VMs.</div>
+          </article>
+          <article>
+            <h4>2. Choose the shipping input path</h4>
+            <p>Create two signed DN-16 tags or draft releases. Publish their package, CLI, manifest, <code>SHA256SUMS</code>, and Cosign bundles without making a production release.</p>
+            <div class="authorization"><strong>Authorization needed:</strong> permission to create tags or draft releases and upload signed artifacts.</div>
+          </article>
+          <article>
+            <h4>3. Choose the real channel path</h4>
+            <p>Use the actual CDN route and provider. Publish immutable state N. Install N. Then advance the same route to immutable state N+1 and run the upgrade.</p>
+            <div class="authorization"><strong>Authorization needed:</strong> provider choice, credentials, route ownership, and permission to publish and advance the staged channel.</div>
+          </article>
+        </div>
+
+        <div class="plain-warning">
+          <strong>If these authorizations are not available</strong>
+          <p>Stop at code-ready. Keep the branches backed up. Do not merge DN-16. Do not call macOS proof complete. Do not replace the real CDN with a local server only to make the row green.</p>
+        </div>
+
+        <h4>Shortest valid execution order</h4>
+        <ol class="numbered-detail">
+          <li><strong>Register two clean Tart runners.</strong>Confirm the exact names, labels, instance nonces, sudo behavior, and reboot record contract.</li>
+          <li><strong>Create authenticated N and N+1 shipping inputs.</strong>Both must resolve to reviewed DN-16 production head <code>8ffd325</code>. Their signed checksums must bind every proof input.</li>
+          <li><strong>Prepare immutable channel states.</strong>Use the existing compile-time URL and TUF model. Do not create a second channel protocol.</li>
+          <li><strong>Dispatch the manual proof once.</strong>Use production mode false and the exact destructive confirmation. Do not run it on a developer Mac.</li>
+          <li><strong>Review retained evidence.</strong>Inspect both lifecycle runs, reboot sessions, upgrade transition, uninstall ordering, failure rows, and vendor residue.</li>
+          <li><strong>Merge only after proof.</strong>Keep production code and proof claims separate until both native runs pass.</li>
+        </ol>
+      </section>
+
+      <section id="current-simplification" aria-labelledby="current-simplification-title">
+        <h3 id="current-simplification-title">9. Dependency, deletion, and simplification decisions</h3>
+        <p>The smallest correct design reuses the boundaries already in the product. It does not add a new Rust framework for one vendor executable.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Dependency and simplification decisions">
+          <table class="decision-table">
+            <thead><tr><th>Area</th><th>Decision</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>Base Nix lifecycle</td><td class="yes">Use pinned Determinate executable</td><td>Determinate already owns native install and uninstall. Copying or forking it would create a second incomplete owner.</td></tr>
+              <tr><td>Rust architecture</td><td class="no">Add no new provider seam</td><td>The existing concrete Determinate handoff, journal, filesystem, and uninstall seams are enough.</td></tr>
+              <tr><td>Release identity</td><td class="yes">Reuse SHA256SUMS and Cosign</td><td>The signed checksum file binds proof inputs without a new trust database.</td></tr>
+              <tr><td>Channel trust</td><td class="yes">Reuse compile-time URLs and TUF</td><td>The product already has one authenticated channel model. A second proof-only channel would prove the wrong system.</td></tr>
+              <tr><td>Native macOS host</td><td class="yes">Reuse Tart</td><td>Disposable Apple silicon virtual machines can prove launchd and reboot behavior. Docker cannot.</td></tr>
+              <tr><td>Local certificate authority</td><td class="no">Delete and do not replace</td><td>A proof-only CA changes the trust boundary and does not prove shipping identity.</td></tr>
+              <tr><td>Local HTTP proof server</td><td class="no">Delete and do not replace</td><td>A local server cannot prove the real CDN route or immutable channel transition.</td></tr>
+              <tr><td>Private Nix runtime</td><td class="no">Do not restore</td><td>Determinate owns Base Nix. pkg does not need a second private runtime.</td></tr>
+              <tr><td>Legacy APFS proof</td><td class="no">Removed from DN-16 proof</td><td>The product must prove the Determinate lifecycle, not the old pkg-owned Base Nix installer.</td></tr>
+              <tr><td>Production legacy code</td><td class="maybe">Delete after native proof</td><td>Keep inert code until the matching native replacement evidence exists. Then delete only zero-caller Base-Nix leaves.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Do not delete the Broker, Root Helper, package roots, garbage collection, Package Repair, or product services because Determinate is present. Determinate does not provide those product duties.</p>
+      </section>
+
+      <section id="current-cleanup" aria-labelledby="current-cleanup-title">
+        <h3 id="current-cleanup-title">10. Disk cleanup and workspace safety</h3>
+        <div class="cleanup-grid">
+          <article class="truth-card">
+            <strong>About 12 GiB recovered</strong>
+            <p><code>cargo clean</code> removed generated Cargo output across completed pkg worktrees and spikes.</p>
+          </article>
+          <article class="truth-card">
+            <strong>42 safe worktrees removed</strong>
+            <p>Completed or superseded worktrees were removed. This recovered about 451 MiB.</p>
+          </article>
+          <article class="truth-card ready">
+            <strong>About 37 GiB free now</strong>
+            <p>The workspace has enough room for the remaining proof and report checks.</p>
+          </article>
+          <article class="truth-card">
+            <strong>Other repositories untouched</strong>
+            <p>The cleanup stayed inside generated pkg build output and reviewed pkg worktrees.</p>
+          </article>
+        </div>
+        <p>The cleanup did not delete source branches, remote backups, release inputs, or evidence needed by the current DN-16 work.</p>
+      </section>
+
+      <section id="current-review" aria-labelledby="current-review-title">
+        <h3 id="current-review-title">11. Research and agent review synthesis</h3>
+        <p>The earlier report records reviews from GLM 5.3, DeepSeek, Qwen, and independent agents. Their useful conclusion remains the same: use the external Determinate executable, keep one Base Nix owner, and keep pkg responsible for package product work.</p>
+        <p>The current repository evidence is stronger than model advice. Linux has a retained native result. macOS has reviewed code and reviewed proof structure. It does not have a native result. This report uses those evidence levels even when an earlier model recommendation was more optimistic.</p>
+        <ul class="compact-facts">
+          <li><strong>Accepted from review</strong><span>Thin executable boundary, no source fork, one owner per lifecycle, fail-closed recovery, proof before deletion.</span></li>
+          <li><strong>Rejected from review</strong><span>Generic provider frameworks, a local certificate authority, a local proof server, private Nix, and proof claims based only on compiled tests.</span></li>
+          <li><strong>Still external</strong><span>Runner registration, signed shipping artifacts, real CDN publishing, immutable staged channel states, and native reboot recovery.</span></li>
+        </ul>
+      </section>
+    </article>
+
     <section class="historical-snapshot" aria-labelledby="historical-report-title">
       <div class="historical-banner">
         <h2 id="historical-report-title">Old report: 24 August 2026</h2>
-        <p>This content is old. We keep it for design history. Do not use its roadmap, work order, or status cards. Use the current four-PR section and active plan after this frame.</p>
+        <p>This content is old. We keep it for design history. Do not use its roadmap, work order, or status cards. Use the verified current report above and the active plan.</p>
       </div>
     <section class="summary-grid" aria-label="Key results">
       <article class="card metric">
@@ -1605,7 +2279,7 @@
   <footer>
     <div class="wrap">
       <p><strong>pkg architecture report</strong></p>
-      <p>Internal alpha · PR 1 and PR 2 complete · DN-15 Linux native proof pending</p>
+      <p>Internal alpha · Linux native proof passed · macOS code ready · macOS native proof blocked</p>
     </div>
   </footer>
 </body>
