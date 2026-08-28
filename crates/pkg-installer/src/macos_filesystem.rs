@@ -1,5 +1,6 @@
 //! macOS binding for the descriptor-relative production filesystem writer.
 
+use pkg_core::state::Digest;
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
@@ -17,6 +18,11 @@ pub struct MacOsFilesystemManager {
 }
 
 impl MacOsFilesystemManager {
+    #[cfg(test)]
+    pub(crate) const fn from_linux_for_test(inner: LinuxFilesystemManager) -> Self {
+        Self { inner }
+    }
+
     pub(crate) fn new(
         groups: ManagedGroupBindings,
         broker_uid: u32,
@@ -44,6 +50,44 @@ impl MacOsFilesystemManager {
     ) -> Result<(), MacOsError> {
         self.inner
             .bind_uninstall_manifest(manifest)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn replace_uninstall_manifest(
+        &mut self,
+        asset: MacOsInstallAsset,
+        prior: &UninstallManifest,
+        candidate: &UninstallManifest,
+    ) -> Result<bool, MacOsError> {
+        self.inner
+            .replace_uninstall_manifest(map(asset)?, prior, candidate)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn rollback_uninstall_manifest_replacement(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        self.inner
+            .rollback_uninstall_manifest_replacement(map(asset)?)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn recover_uninstall_manifest_replacement(
+        &mut self,
+        asset: MacOsInstallAsset,
+        prior: &UninstallManifest,
+    ) -> Result<(), MacOsError> {
+        self.inner
+            .recover_uninstall_manifest_replacement(map(asset)?, prior)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn replacement_uninstall_manifest(
+        &self,
+    ) -> Result<Option<UninstallManifest>, MacOsError> {
+        self.inner
+            .replacement_uninstall_manifest()
             .map_err(|_| MacOsError::backend_failure())
     }
 
@@ -75,6 +119,69 @@ impl MacOsFilesystemManager {
     pub(crate) fn verify_asset(&self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         self.inner
             .verify_asset(map(asset)?)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn expected_file_digest(
+        &self,
+        asset: MacOsInstallAsset,
+    ) -> Result<Digest, MacOsError> {
+        self.inner
+            .expected_file_digest(map(asset)?)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn verify_repair_target(&self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        self.inner
+            .verify_repair_target(map(asset)?)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn replace_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+        prior_digest: Option<Digest>,
+        repair: bool,
+    ) -> Result<bool, MacOsError> {
+        self.inner
+            .replace_owned_file(map(asset)?, prior_digest, repair)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn replace_static_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+        contents: &'static str,
+        prior_digest: Option<Digest>,
+        repair: bool,
+    ) -> Result<bool, MacOsError> {
+        self.inner
+            .replace_static_owned_file(map(asset)?, contents, prior_digest, repair)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn recover_owned_file(
+        &self,
+        asset: MacOsInstallAsset,
+        prior_digest: Digest,
+    ) -> Result<(), MacOsError> {
+        self.inner
+            .recover_owned_file(map(asset)?, prior_digest)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn roll_forward_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        self.inner
+            .roll_forward_owned_file(map(asset)?)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
+    pub(crate) fn finalize_owned_file(&self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        self.inner
+            .finalize_owned_file(map(asset)?)
             .map_err(|_| MacOsError::backend_failure())
     }
 

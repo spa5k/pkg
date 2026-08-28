@@ -21,7 +21,7 @@ use rustix::{
 
 use crate::MacOsInstallJournal;
 
-const DIRECTORY_NAME: &str = "pkg-install";
+const DIRECTORY_NAME: &str = "pkg-install-journal";
 const JOURNAL_NAME: &str = "macos-transaction-v1.json";
 const TEMP_NAME: &str = ".macos-transaction-v1.json.tmp";
 const MAX_JOURNAL_BYTES: u64 = 32 * 1024;
@@ -43,7 +43,7 @@ impl fmt::Display for MacOsInstallJournalFileError {
 
 impl Error for MacOsInstallJournalFileError {}
 
-/// Locked access to `/private/var/db/pkg-install/macos-transaction-v1.json`.
+/// Locked access to `/private/var/db/pkg-install-journal/macos-transaction-v1.json`.
 pub struct MacOsInstallJournalStorage {
     base: File,
     directory: File,
@@ -158,7 +158,7 @@ impl MacOsInstallJournalStorage {
     }
 
     #[cfg(test)]
-    fn prepare_for_test(
+    pub(crate) fn prepare_for_test(
         base: &Path,
         expected_user_id: u32,
         expected_group_id: u32,
@@ -527,6 +527,10 @@ mod tests {
     #[test]
     fn create_replace_load_and_remove_are_private_and_bound() -> Result<(), Box<dyn Error>> {
         let temporary = temporary()?;
+        let handoff = temporary.path().join("pkg-install");
+        fs::create_dir(&handoff)?;
+        fs::write(handoff.join("determinate-handoff-v1.json"), b"accepted")?;
+        fs::create_dir(handoff.join("tmp"))?;
         let uid = Uid::current().as_raw();
         let gid = Gid::current().as_raw();
         let ownership = Digest::from_bytes([1; 32]);
@@ -555,6 +559,11 @@ mod tests {
         );
         storage.remove()?;
         assert!(!temporary.path().join(DIRECTORY_NAME).exists());
+        assert_eq!(
+            fs::read(handoff.join("determinate-handoff-v1.json"))?,
+            b"accepted"
+        );
+        assert!(handoff.join("tmp").is_dir());
         Ok(())
     }
 

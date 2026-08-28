@@ -71,11 +71,20 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
     };
     let daemon = ProductionManagedDaemon::production();
     if matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
-        let mut backend = ProductionMacOsInstallBackend::new(system, groups)
-            .map_err(|_| PublicInstallError::InstallFailed)?;
+        let mut backend = match invocation {
+            Invocation::InstallOrUpgrade => ProductionMacOsInstallBackend::new(system, groups),
+            Invocation::RepairProductAssets => {
+                ProductionMacOsInstallBackend::new_product_repair(system, groups)
+            }
+        }
+        .map_err(|_| PublicInstallError::InstallFailed)?;
         install_macos_from_bundle(system, trusted_root, &request, &daemon, &mut backend)
             .map_err(|_| PublicInstallError::InstallFailed)?;
-        Ok(InstallSuccess::Installed)
+        Ok(match backend.install_mode() {
+            pkg_installer::MacOsInstallMode::FreshInstall => InstallSuccess::Installed,
+            pkg_installer::MacOsInstallMode::OfflineUpgrade => InstallSuccess::Upgraded,
+            pkg_installer::MacOsInstallMode::OfflineRepair => InstallSuccess::Repaired,
+        })
     } else {
         let mut backend = match invocation {
             Invocation::InstallOrUpgrade => ProductionLinuxInstallBackend::new(system, groups),
@@ -153,16 +162,16 @@ fn parse_invocation(
     }
 }
 
-fn validate_invocation_system(
+const fn validate_invocation_system(
     invocation: Invocation,
     system: System,
 ) -> Result<(), PublicInstallError> {
-    if invocation == Invocation::RepairProductAssets
-        && matches!(system, System::X8664Darwin | System::Aarch64Darwin)
-    {
-        Err(PublicInstallError::UnsupportedSystem)
-    } else {
-        Ok(())
+    match (invocation, system) {
+        (_, System::X8664Darwin) => Err(PublicInstallError::UnsupportedSystem),
+        (
+            Invocation::InstallOrUpgrade | Invocation::RepairProductAssets,
+            System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin,
+        ) => Ok(()),
     }
 }
 
@@ -319,6 +328,10 @@ mod tests {
         );
         assert_eq!(
             validate_invocation_system(Invocation::RepairProductAssets, System::Aarch64Darwin,),
+            Ok(())
+        );
+        assert_eq!(
+            validate_invocation_system(Invocation::InstallOrUpgrade, System::X8664Darwin,),
             Err(PublicInstallError::UnsupportedSystem)
         );
     }

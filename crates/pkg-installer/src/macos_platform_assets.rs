@@ -10,7 +10,7 @@ use pkg_nix::{
 use crate::{
     MacOsAssetPresence, MacOsError, MacOsInstallAsset, RecordedAsset, RecordedAssetState,
     UninstallManifest, macos_accounts::MacOsAccountManager,
-    macos_filesystem::MacOsFilesystemManager, macos_install_assets,
+    macos_filesystem::MacOsFilesystemManager, macos_install_assets, macos_product_install_assets,
 };
 
 pub struct MacOsPlatformAssetManager {
@@ -32,6 +32,24 @@ impl MacOsPlatformAssetManager {
             payloads: None,
             config: None,
             receipt_binding: None,
+            states: BTreeMap::new(),
+        })
+    }
+
+    #[cfg(test)]
+    fn with_filesystem_for_test(
+        groups: ManagedGroupBindings,
+        filesystem: MacOsFilesystemManager,
+        system: System,
+        digest: Digest,
+    ) -> Result<Self, MacOsError> {
+        Ok(Self {
+            groups,
+            accounts: MacOsAccountManager::new(groups)?,
+            filesystem: Some(filesystem),
+            payloads: None,
+            config: None,
+            receipt_binding: Some((system, digest)),
             states: BTreeMap::new(),
         })
     }
@@ -164,6 +182,57 @@ impl MacOsPlatformAssetManager {
         }
     }
 
+    pub(crate) fn verify_repair_target(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        self.ensure_filesystem()?.verify_repair_target(asset)
+    }
+
+    pub(crate) fn replace_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+        prior_digest: Option<Digest>,
+        repair: bool,
+    ) -> Result<bool, MacOsError> {
+        self.ensure_filesystem()?
+            .replace_owned_file(asset, prior_digest, repair)
+    }
+
+    pub(crate) fn replace_static_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+        contents: &'static str,
+        prior_digest: Option<Digest>,
+        repair: bool,
+    ) -> Result<bool, MacOsError> {
+        self.ensure_filesystem()?
+            .replace_static_owned_file(asset, contents, prior_digest, repair)
+    }
+
+    pub(crate) fn recover_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+        prior_digest: Digest,
+    ) -> Result<(), MacOsError> {
+        self.ensure_filesystem()?
+            .recover_owned_file(asset, prior_digest)
+    }
+
+    pub(crate) fn roll_forward_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        self.ensure_filesystem()?.roll_forward_owned_file(asset)
+    }
+
+    pub(crate) fn finalize_owned_file(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<(), MacOsError> {
+        self.ensure_filesystem()?.finalize_owned_file(asset)
+    }
+
     pub(crate) fn rollback_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         if MacOsAccountManager::handles(asset) {
             self.accounts.rollback_asset(asset)?;
@@ -198,33 +267,49 @@ impl MacOsPlatformAssetManager {
         let (system, digest) = self
             .receipt_binding
             .ok_or_else(MacOsError::backend_failure)?;
-        if self.classify_uninstall_manifest()? == MacOsAssetPresence::ExactPresent {
-            return Ok(false);
+        let mut records = Vec::new();
+        for asset in macos_product_install_assets() {
+            let state = if asset.id() == "uninstall-manifest" {
+                RecordedAssetState::Created
+            } else {
+                *self
+                    .states
+                    .get(asset.id())
+                    .ok_or_else(MacOsError::backend_failure)?
+            };
+            if state != RecordedAssetState::Created
+                && !(asset.id() == "nix-root" && state == RecordedAssetState::PreExisting)
+            {
+                return Err(MacOsError::backend_failure());
+            }
+            let mut record =
+                RecordedAsset::new(asset.id(), state).map_err(|_| MacOsError::backend_failure())?;
+            if asset.kind() == crate::MacOsAssetKind::File && asset.id() != "uninstall-manifest" {
+                record = record
+                    .with_content_digest(self.ensure_filesystem()?.expected_file_digest(asset)?);
+            }
+            records.push(record);
         }
-        if self
-            .states
-            .values()
-            .any(|state| *state != RecordedAssetState::Created)
-        {
-            return Err(MacOsError::backend_failure());
-        }
-        let records = macos_install_assets()
-            .iter()
-            .map(|asset| {
-                let state = if asset.id() == "uninstall-manifest" {
-                    RecordedAssetState::Created
-                } else {
-                    *self
-                        .states
-                        .get(asset.id())
-                        .ok_or_else(MacOsError::backend_failure)?
-                };
-                RecordedAsset::new(asset.id(), state).map_err(|_| MacOsError::backend_failure())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let manifest = UninstallManifest::new(system, digest, records)
             .map_err(|_| MacOsError::backend_failure())?;
         let asset = uninstall_manifest_asset()?;
+        if let Some(prior) = self
+            .ensure_filesystem()?
+            .existing_uninstall_manifest(asset)?
+        {
+            if prior == manifest {
+                self.ensure_filesystem()?
+                    .bind_uninstall_manifest(&manifest)?;
+                self.ensure_filesystem()?.verify_asset(asset)?;
+                return Ok(false);
+            }
+            self.ensure_filesystem()?.bind_uninstall_manifest(&prior)?;
+            let changed = self
+                .ensure_filesystem()?
+                .replace_uninstall_manifest(asset, &prior, &manifest)?;
+            self.states.insert(asset.id(), RecordedAssetState::Created);
+            return Ok(changed);
+        }
         let filesystem = self.ensure_filesystem()?;
         filesystem.bind_uninstall_manifest(&manifest)?;
         if !filesystem.ensure_asset(asset)? {
@@ -239,6 +324,60 @@ impl MacOsPlatformAssetManager {
         self.ensure_filesystem()?.remove_verified_asset(asset)
     }
 
+    pub(crate) fn rollback_uninstall_manifest_replacement(&mut self) -> Result<(), MacOsError> {
+        let asset = uninstall_manifest_asset()?;
+        self.ensure_filesystem()?
+            .rollback_uninstall_manifest_replacement(asset)
+    }
+
+    pub(crate) fn recover_uninstall_manifest_replacement(
+        &mut self,
+        prior: &UninstallManifest,
+    ) -> Result<(), MacOsError> {
+        let asset = uninstall_manifest_asset()?;
+        self.ensure_filesystem()?
+            .recover_uninstall_manifest_replacement(asset, prior)
+    }
+
+    pub(crate) fn recover_uninstall_manifest_replacement_by_digest(
+        &mut self,
+        system: System,
+        digest: Digest,
+        prior_digest: Digest,
+    ) -> Result<(), MacOsError> {
+        use sha2::{Digest as _, Sha256};
+
+        let candidate = self.expected_product_manifest(system, digest)?;
+        let asset = uninstall_manifest_asset()?;
+        let current = self
+            .ensure_filesystem()?
+            .existing_uninstall_manifest(asset)?;
+        let current_is_prior = current.as_ref().is_some_and(|manifest| {
+            crate::encode_uninstall_manifest(manifest).is_ok_and(|bytes| {
+                manifest.system() == system
+                    && Digest::from_bytes(Sha256::digest(bytes).into()) == prior_digest
+            })
+        });
+        let prior = if current_is_prior {
+            current.ok_or_else(MacOsError::backend_failure)?
+        } else {
+            self.ensure_filesystem()?
+                .replacement_uninstall_manifest()?
+                .ok_or_else(MacOsError::backend_failure)?
+        };
+        let bytes =
+            crate::encode_uninstall_manifest(&prior).map_err(|_| MacOsError::backend_failure())?;
+        if prior.system() != system
+            || Digest::from_bytes(Sha256::digest(bytes).into()) != prior_digest
+        {
+            return Err(MacOsError::backend_failure());
+        }
+        self.ensure_filesystem()?
+            .bind_uninstall_manifest(&candidate)?;
+        self.ensure_filesystem()?
+            .recover_uninstall_manifest_replacement(asset, &prior)
+    }
+
     pub(crate) fn installed_uninstall_manifest(
         &mut self,
     ) -> Result<Option<UninstallManifest>, MacOsError> {
@@ -246,11 +385,57 @@ impl MacOsPlatformAssetManager {
         self.ensure_filesystem()?.existing_uninstall_manifest(asset)
     }
 
+    pub(crate) fn expected_product_manifest(
+        &mut self,
+        system: System,
+        digest: Digest,
+    ) -> Result<UninstallManifest, MacOsError> {
+        let mut records = Vec::new();
+        for asset in macos_product_install_assets() {
+            let state = if asset.id() == "nix-root" {
+                RecordedAssetState::PreExisting
+            } else {
+                RecordedAssetState::Created
+            };
+            let mut record =
+                RecordedAsset::new(asset.id(), state).map_err(|_| MacOsError::backend_failure())?;
+            if asset.kind() == crate::MacOsAssetKind::File && asset.id() != "uninstall-manifest" {
+                record = record
+                    .with_content_digest(self.ensure_filesystem()?.expected_file_digest(asset)?);
+            }
+            records.push(record);
+        }
+        UninstallManifest::new(system, digest, records).map_err(|_| MacOsError::backend_failure())
+    }
+
     pub(crate) fn bind_uninstall_manifest(
         &mut self,
         manifest: &UninstallManifest,
     ) -> Result<(), MacOsError> {
         self.ensure_filesystem()?.bind_uninstall_manifest(manifest)
+    }
+
+    pub(crate) fn bind_prior_asset_states(
+        &mut self,
+        manifest: &UninstallManifest,
+    ) -> Result<(), MacOsError> {
+        for record in manifest.assets() {
+            if !macos_product_install_assets().any(|asset| asset.id() == record.id())
+                || self
+                    .states
+                    .insert(
+                        macos_product_install_assets()
+                            .find(|asset| asset.id() == record.id())
+                            .ok_or_else(MacOsError::backend_failure)?
+                            .id(),
+                        record.state(),
+                    )
+                    .is_some()
+            {
+                return Err(MacOsError::backend_failure());
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn remove_uninstall_asset(
@@ -342,6 +527,11 @@ impl MacOsPlatformAssetManager {
     pub(crate) fn record_created(&mut self, asset: MacOsInstallAsset) {
         self.states.insert(asset.id(), RecordedAssetState::Created);
     }
+
+    pub(crate) fn record_preexisting(&mut self, asset: MacOsInstallAsset) {
+        self.states
+            .insert(asset.id(), RecordedAssetState::PreExisting);
+    }
 }
 
 fn uninstall_manifest_asset() -> Result<MacOsInstallAsset, MacOsError> {
@@ -350,4 +540,91 @@ fn uninstall_manifest_asset() -> Result<MacOsInstallAsset, MacOsError> {
         .copied()
         .find(|asset| asset.id() == "uninstall-manifest")
         .ok_or_else(MacOsError::backend_failure)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{LinuxFilesystemManager, LinuxReleasePayloads};
+    use sha2::{Digest as _, Sha256};
+    use std::{error::Error, fs, os::unix::fs::PermissionsExt as _, path::Path};
+
+    fn manager(
+        root: &Path,
+        groups: ManagedGroupBindings,
+        release: Digest,
+    ) -> Result<MacOsPlatformAssetManager, Box<dyn Error>> {
+        let payloads =
+            LinuxReleasePayloads::from_authenticated_bytes(b"root-helper", b"broker", b"pkg-cli")?;
+        let inner =
+            LinuxFilesystemManager::for_existing_preflight_test(root.to_path_buf(), payloads);
+        MacOsPlatformAssetManager::with_filesystem_for_test(
+            groups,
+            MacOsFilesystemManager::from_linux_for_test(inner),
+            System::Aarch64Darwin,
+            release,
+        )
+        .map_err(Into::into)
+    }
+
+    fn prepare_receipt_parent(root: &Path) -> Result<(), Box<dyn Error>> {
+        for (path, mode) in [
+            ("opt", 0o755),
+            ("opt/pkg", 0o755),
+            ("opt/pkg/uninstall", 0o700),
+        ] {
+            let path = root.join(path);
+            fs::create_dir(&path)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_recovery_handles_intent_before_and_after_exchange() -> Result<(), Box<dyn Error>> {
+        for exchanged in [false, true] {
+            let temporary = tempfile::tempdir()?;
+            prepare_receipt_parent(temporary.path())?;
+            let groups = ManagedGroupBindings::new(333, 350)?;
+            let current_release = Digest::from_bytes([0x31; 32]);
+            let prior_release = Digest::from_bytes([0x21; 32]);
+            let mut initial = manager(temporary.path(), groups, current_release)?;
+            let candidate =
+                initial.expected_product_manifest(System::Aarch64Darwin, current_release)?;
+            let prior = UninstallManifest::new(
+                System::Aarch64Darwin,
+                prior_release,
+                candidate.assets().to_vec(),
+            )?;
+            let prior_bytes = crate::encode_uninstall_manifest(&prior)?;
+            let receipt = temporary.path().join("opt/pkg/uninstall/manifest.json");
+            fs::write(&receipt, &prior_bytes)?;
+            fs::set_permissions(&receipt, fs::Permissions::from_mode(0o600))?;
+            if exchanged {
+                initial.bind_uninstall_manifest(&prior)?;
+                initial.ensure_filesystem()?.replace_uninstall_manifest(
+                    uninstall_manifest_asset()?,
+                    &prior,
+                    &candidate,
+                )?;
+            }
+            drop(initial);
+
+            let mut recovered = manager(temporary.path(), groups, current_release)?;
+            recovered.recover_uninstall_manifest_replacement_by_digest(
+                System::Aarch64Darwin,
+                current_release,
+                Digest::from_bytes(Sha256::digest(&prior_bytes).into()),
+            )?;
+
+            assert_eq!(recovered.installed_uninstall_manifest()?, Some(prior));
+            assert!(
+                recovered
+                    .ensure_filesystem()?
+                    .replacement_uninstall_manifest()?
+                    .is_none()
+            );
+        }
+        Ok(())
+    }
 }

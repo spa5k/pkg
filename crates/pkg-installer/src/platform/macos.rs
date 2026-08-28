@@ -12,11 +12,10 @@ use crate::{
 };
 #[cfg(target_os = "macos")]
 use nix::unistd::getpeereid;
-use pkg_core::System;
+use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedHelper, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
     BrokerHelperRequest, BrokerHelperResponse, BuildReadiness, MaintenanceError,
-    OwnershipExpectation,
 };
 use std::{error::Error, fmt, os::unix::net::UnixStream};
 
@@ -569,6 +568,70 @@ pub const fn macos_install_assets() -> &'static [MacOsInstallAsset] {
     MACOS_ASSETS
 }
 
+/// Returns the exact assets owned by pkg on the Determinate macOS route.
+///
+/// `/nix` is included only as pre-existing Base Nix evidence. The iterator
+/// excludes every Base Nix account, directory, configuration, and service.
+#[must_use]
+pub fn macos_product_install_assets() -> impl DoubleEndedIterator<Item = MacOsInstallAsset> {
+    MACOS_ASSETS
+        .iter()
+        .copied()
+        .filter(|asset| is_macos_product_asset(*asset))
+}
+
+/// Returns whether one legacy allowlist entry is owned by the product.
+#[must_use]
+pub fn is_macos_product_asset(asset: MacOsInstallAsset) -> bool {
+    !matches!(
+        asset.id,
+        "build-group"
+            | "build-user-01"
+            | "build-user-02"
+            | "build-user-03"
+            | "build-user-04"
+            | "build-user-05"
+            | "build-user-06"
+            | "build-user-07"
+            | "build-user-08"
+            | "build-user-09"
+            | "build-user-10"
+            | "build-user-11"
+            | "build-user-12"
+            | "build-user-13"
+            | "build-user-14"
+            | "build-user-15"
+            | "build-user-16"
+            | "build-user-17"
+            | "build-user-18"
+            | "build-user-19"
+            | "build-user-20"
+            | "build-user-21"
+            | "build-user-22"
+            | "build-user-23"
+            | "build-user-24"
+            | "build-user-25"
+            | "build-user-26"
+            | "build-user-27"
+            | "build-user-28"
+            | "build-user-29"
+            | "build-user-30"
+            | "build-user-31"
+            | "build-user-32"
+            | "nix-store"
+            | "nix-var"
+            | "nix-state"
+            | "daemon-socket-dir"
+            | "product-config-root"
+            | "product-config-dir"
+            | "runtime-root"
+            | "managed-nix-state"
+            | "nix-config"
+            | "store-volume-plist"
+            | "daemon-plist"
+    )
+}
+
 /// Fixed encrypted APFS store-volume ownership contract.
 ///
 /// The privileged backend creates an encrypted, ownership-enabled APFS volume,
@@ -789,7 +852,7 @@ impl MacOsBuildReadiness {
     ///
     /// Returns `BuildReadinessFailed` unless every exact invariant holds.
     pub fn into_engine(self) -> Result<BuildReadiness, MacOsError> {
-        if !matches!(self.system, System::X8664Darwin | System::Aarch64Darwin)
+        if self.system != System::Aarch64Darwin
             || self.sandbox != MacOsSandboxReadiness::Enforced
             || self.build_users != MacOsBuildUsersReadiness::Ready
             || self.toolchain != MacOsToolchainReadiness::Ready
@@ -1006,6 +1069,17 @@ pub enum MacOsAssetPresence {
 
 /// Closed privileged operations used by the macOS installer.
 pub trait MacOsInstallBackend {
+    /// Returns the durable product operation mode.
+    fn install_mode(&self) -> crate::MacOsInstallMode {
+        crate::MacOsInstallMode::FreshInstall
+    }
+    /// Rechecks the offline barrier before one product mutation.
+    ///
+    /// # Errors
+    /// Returns a closed error when the product jobs are not offline.
+    fn preflight_product_mutation(&mut self) -> Result<(), MacOsError> {
+        Ok(())
+    }
     /// Binds exact authenticated product executable bytes in memory.
     ///
     /// # Errors
@@ -1025,22 +1099,26 @@ pub trait MacOsInstallBackend {
         config: &AuthenticatedManagedNixConfig,
     ) -> Result<(), MacOsError>;
 
-    /// Binds the authenticated runtime ownership expectation in memory.
+    /// Binds the authenticated release identity in memory.
     ///
     /// This must not mutate the host. It runs before privileged preflight.
     ///
     /// # Errors
     /// Returns a closed error for a wrong-platform or conflicting binding.
-    fn bind_authenticated_ownership_expectation(
+    fn bind_authenticated_release_identity(
         &mut self,
-        expectation: &OwnershipExpectation,
+        system: System,
+        release_identity_digest: Digest,
     ) -> Result<(), MacOsError>;
 
     /// Records that an authenticated install journal will be recovered.
     ///
     /// # Errors
     /// Returns a closed error when recovery state cannot be bound.
-    fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError>;
+    fn begin_authenticated_recovery(
+        &mut self,
+        mode: crate::MacOsInstallMode,
+    ) -> Result<(), MacOsError>;
 
     /// Verifies AuthorizationServices/sudo authority.
     ///
@@ -1150,6 +1228,11 @@ pub trait MacOsInstallBackend {
     /// # Errors
     /// Returns a closed error when exact rollback is incomplete.
     fn rollback_managed_runtime(&mut self) -> Result<(), MacOsError>;
+    /// Accepts Base Nix after the standard adapter proves readiness.
+    ///
+    /// # Errors
+    /// Returns a closed error for an invalid or incomplete handoff.
+    fn accept_base_nix_handoff(&mut self) -> Result<(), MacOsError>;
     /// Verifies installed product executables' Developer ID requirement.
     ///
     /// # Errors
@@ -1188,6 +1271,65 @@ pub trait MacOsInstallBackend {
     /// # Errors
     /// Returns a closed error when exact rollback is incomplete.
     fn rollback_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError>;
+    /// Returns the prior receipt digest for one owned file during upgrade.
+    ///
+    /// # Errors
+    /// Returns a closed error when authenticated prior state is unavailable.
+    fn prior_file_digest(
+        &mut self,
+        _asset: MacOsInstallAsset,
+    ) -> Result<Option<Digest>, MacOsError> {
+        Ok(None)
+    }
+    /// Restores an authenticated prior product file.
+    ///
+    /// # Errors
+    /// Returns a closed error when exact replacement recovery fails.
+    fn recover_replaced_asset(
+        &mut self,
+        _asset: MacOsInstallAsset,
+        _prior_digest: Digest,
+    ) -> Result<(), MacOsError> {
+        Err(MacOsError::backend_failure())
+    }
+    /// Keeps authenticated release bytes after interrupted explicit repair.
+    ///
+    /// # Errors
+    /// Returns a closed error when exact replacement recovery fails.
+    fn roll_forward_replaced_asset(&mut self, _asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        Err(MacOsError::backend_failure())
+    }
+    /// Removes a replacement backup after receipt durability.
+    ///
+    /// # Errors
+    /// Returns a closed error when exact backup removal fails.
+    fn finalize_replaced_asset(&mut self, _asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        Ok(())
+    }
+    /// Returns the digest of the authenticated prior product receipt.
+    ///
+    /// # Errors
+    /// Returns a closed error when authenticated prior state is unavailable.
+    fn prior_ownership_receipt_digest(&mut self) -> Result<Option<Digest>, MacOsError> {
+        Ok(None)
+    }
+    /// Restores the authenticated prior product receipt.
+    ///
+    /// # Errors
+    /// Returns a closed error when exact receipt recovery fails.
+    fn recover_replaced_ownership_receipt(
+        &mut self,
+        _prior_digest: Digest,
+    ) -> Result<(), MacOsError> {
+        Err(MacOsError::backend_failure())
+    }
+    /// Keeps the authenticated candidate receipt after interrupted repair.
+    ///
+    /// # Errors
+    /// Returns a closed error when exact receipt recovery fails.
+    fn roll_forward_replaced_ownership_receipt(&mut self) -> Result<(), MacOsError> {
+        Err(MacOsError::backend_failure())
+    }
 }
 
 /// Sanitized idempotent installation result.
@@ -1214,30 +1356,9 @@ impl MacOsInstallReport {
 #[derive(Debug, Clone, Copy)]
 enum InstallMutation {
     Asset(MacOsInstallAsset),
-    StoreVolume,
     Runtime,
     Services,
     OwnershipReceipt,
-}
-
-fn install_nix_config_phase(
-    backend: &mut dyn MacOsInstallBackend,
-    mutations: &mut Vec<InstallMutation>,
-    created: &mut usize,
-    existing: &mut usize,
-) -> Result<(), MacOsError> {
-    let asset = MACOS_ASSETS
-        .iter()
-        .find(|asset| asset.id == "nix-config")
-        .ok_or_else(MacOsError::backend_failure)?;
-    mutations.push(InstallMutation::Asset(*asset));
-    if backend.install_nix_config(*asset)? {
-        *created = created.saturating_add(1);
-    } else {
-        let _ = mutations.pop();
-        *existing = existing.saturating_add(1);
-    }
-    Ok(())
 }
 
 /// Executes authenticated, failure-atomic, receipt-last macOS installation.
@@ -1256,54 +1377,41 @@ pub fn install_macos(
     let mut created = 0_usize;
     let mut existing = 0_usize;
     let result = (|| {
-        for asset in MACOS_ASSETS
-            .iter()
-            .filter(|asset| store_volume_prerequisite(asset.id))
+        for asset in macos_product_install_assets()
+            .filter(|asset| asset.kind != MacOsAssetKind::File && asset.id != "nix-root")
         {
-            mutations.push(InstallMutation::Asset(*asset));
-            let was_created = backend.ensure_asset(*asset)?;
-            if was_created {
-                created = created.saturating_add(1);
-            } else {
-                let _ = mutations.pop();
-                existing = existing.saturating_add(1);
-            }
+            record_asset_result(backend, asset, &mut mutations, &mut created, &mut existing)?;
         }
-        mutations.push(InstallMutation::StoreVolume);
-        if !backend.provision_store_volume()? {
-            let _ = mutations.pop();
-        }
-        for asset in MACOS_ASSETS.iter().filter(|asset| {
-            asset.kind != MacOsAssetKind::File && !store_volume_prerequisite(asset.id)
-        }) {
-            record_asset_result(backend, *asset, &mut mutations, &mut created, &mut existing)?;
-        }
-        install_nix_config_phase(backend, &mut mutations, &mut created, &mut existing)?;
         mutations.push(InstallMutation::Runtime);
         if !backend.provision_managed_runtime()? {
             let _ = mutations.pop();
         }
-        for asset in MACOS_ASSETS.iter().filter(|asset| {
-            asset.kind == MacOsAssetKind::File
-                && asset.id != "nix-config"
-                && asset.id != "uninstall-manifest"
-                && !store_volume_prerequisite(asset.id)
-        }) {
-            mutations.push(InstallMutation::Asset(*asset));
+        backend
+            .check_managed_daemon()
+            .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))?;
+        backend.accept_base_nix_handoff()?;
+        let nix_root = macos_product_install_assets()
+            .find(|asset| asset.id == "nix-root")
+            .ok_or_else(MacOsError::backend_failure)?;
+        record_asset_result(
+            backend,
+            nix_root,
+            &mut mutations,
+            &mut created,
+            &mut existing,
+        )?;
+        for asset in macos_product_install_assets()
+            .filter(|asset| asset.kind == MacOsAssetKind::File && asset.id != "uninstall-manifest")
+        {
+            mutations.push(InstallMutation::Asset(asset));
             let was_created = match asset.id {
-                "store-volume-plist" => {
-                    backend.install_launchd_plist(*asset, MacOsLaunchdAssets::STORE_VOLUME)?
-                }
-                "daemon-plist" => {
-                    backend.install_launchd_plist(*asset, MacOsLaunchdAssets::NIX_DAEMON)?
-                }
                 "helper-plist" => {
-                    backend.install_launchd_plist(*asset, MacOsLaunchdAssets::ROOT_HELPER)?
+                    backend.install_launchd_plist(asset, MacOsLaunchdAssets::ROOT_HELPER)?
                 }
                 "broker-plist" => {
-                    backend.install_launchd_plist(*asset, MacOsLaunchdAssets::BROKER)?
+                    backend.install_launchd_plist(asset, MacOsLaunchdAssets::BROKER)?
                 }
-                _ => backend.ensure_asset(*asset)?,
+                _ => backend.ensure_asset(asset)?,
             };
             if was_created {
                 created = created.saturating_add(1);
@@ -1325,15 +1433,21 @@ pub fn install_macos(
         backend
             .check_managed_daemon()
             .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))?;
-        backend.observe_build_readiness(system)?.into_engine()?;
         let receipt_presence = backend.classify_ownership_receipt()?;
-        if receipt_presence == MacOsAssetPresence::Absent {
+        if receipt_presence == MacOsAssetPresence::Absent
+            || backend.install_mode() == crate::MacOsInstallMode::OfflineUpgrade
+        {
             mutations.push(InstallMutation::OwnershipReceipt);
         }
         let receipt_created = backend
             .publish_ownership_receipt()
             .map_err(|_| MacOsError::new(MacOsErrorCode::ReceiptFailure))?;
-        if receipt_created != (receipt_presence == MacOsAssetPresence::Absent) {
+        let expected_receipt_change = match backend.install_mode() {
+            crate::MacOsInstallMode::FreshInstall => receipt_presence == MacOsAssetPresence::Absent,
+            crate::MacOsInstallMode::OfflineUpgrade => true,
+            crate::MacOsInstallMode::OfflineRepair => false,
+        };
+        if receipt_created != expected_receipt_change {
             return Err(MacOsError::backend_failure());
         }
         Ok(MacOsInstallReport {
@@ -1347,7 +1461,6 @@ pub fn install_macos(
         for mutation in mutations.into_iter().rev() {
             let rollback = match mutation {
                 InstallMutation::Asset(asset) => backend.rollback_asset(asset),
-                InstallMutation::StoreVolume => backend.rollback_store_volume(),
                 InstallMutation::Runtime => backend.rollback_managed_runtime(),
                 InstallMutation::Services => backend.rollback_services(),
                 InstallMutation::OwnershipReceipt => backend.recover_ownership_receipt(),
@@ -1374,29 +1487,44 @@ pub fn recover_macos_install(
     recover_runtime: &mut dyn FnMut() -> Result<(), MacOsError>,
     persist_progress: &mut dyn FnMut(&crate::MacOsInstallJournal) -> Result<(), MacOsError>,
 ) -> Result<(), MacOsError> {
-    while let Some((mutation, revalidate)) =
+    while let Some((mutation, disposition, prior_digest)) =
         journal
             .recovery_actions()
             .first()
             .map(|action| match action {
                 crate::MacOsInstallRecoveryAction::RevalidateIntended(mutation) => {
-                    ((*mutation).clone(), true)
+                    ((*mutation).clone(), 0_u8, None)
                 }
                 crate::MacOsInstallRecoveryAction::RevertCreated(mutation) => {
-                    ((*mutation).clone(), false)
+                    ((*mutation).clone(), 1, None)
+                }
+                crate::MacOsInstallRecoveryAction::RestoreReplaced(mutation, digest) => {
+                    ((*mutation).clone(), 2, Some(*digest))
+                }
+                crate::MacOsInstallRecoveryAction::RollForwardReplaced(mutation) => {
+                    ((*mutation).clone(), 3, None)
                 }
             })
     {
         match &mutation {
             crate::MacOsInstallMutation::Asset { id } => {
                 let asset = macos_asset_by_id(id)?;
-                if !revalidate || backend.classify_asset(asset)? == MacOsAssetPresence::ExactPresent
-                {
-                    backend.recover_asset(asset)?;
+                match disposition {
+                    0 if backend.classify_asset(asset)? == MacOsAssetPresence::ExactPresent => {
+                        backend.recover_asset(asset)?;
+                    }
+                    0 => {}
+                    1 => backend.recover_asset(asset)?,
+                    2 => backend.recover_replaced_asset(
+                        asset,
+                        prior_digest.ok_or_else(MacOsError::backend_failure)?,
+                    )?,
+                    3 => backend.roll_forward_replaced_asset(asset)?,
+                    _ => return Err(MacOsError::backend_failure()),
                 }
             }
             crate::MacOsInstallMutation::StoreVolume => {
-                if !revalidate
+                if disposition == 1
                     || backend.classify_store_volume()? == MacOsAssetPresence::ExactPresent
                 {
                     backend.recover_store_volume()?;
@@ -1404,17 +1532,24 @@ pub fn recover_macos_install(
             }
             crate::MacOsInstallMutation::ManagedRuntime => recover_runtime()?,
             crate::MacOsInstallMutation::Services => {
-                if !revalidate || backend.classify_services()? == MacOsAssetPresence::ExactPresent {
+                if disposition == 1
+                    || backend.classify_services()? == MacOsAssetPresence::ExactPresent
+                {
                     backend.recover_services()?;
                 }
             }
-            crate::MacOsInstallMutation::OwnershipReceipt => {
-                if !revalidate
-                    || backend.classify_ownership_receipt()? == MacOsAssetPresence::ExactPresent
-                {
+            crate::MacOsInstallMutation::OwnershipReceipt => match disposition {
+                0 if backend.classify_ownership_receipt()? == MacOsAssetPresence::ExactPresent => {
                     backend.recover_ownership_receipt()?;
                 }
-            }
+                0 => {}
+                1 => backend.recover_ownership_receipt()?,
+                2 => backend.recover_replaced_ownership_receipt(
+                    prior_digest.ok_or_else(MacOsError::backend_failure)?,
+                )?,
+                3 => backend.roll_forward_replaced_ownership_receipt()?,
+                _ => return Err(MacOsError::backend_failure()),
+            },
         }
         journal
             .complete_recovery_action(&mutation)
@@ -1451,7 +1586,7 @@ fn preflight_macos(
     system: System,
     backend: &mut dyn MacOsInstallBackend,
 ) -> Result<(), MacOsError> {
-    if !matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
+    if system != System::Aarch64Darwin {
         return Err(MacOsError::new(MacOsErrorCode::UnsupportedPlatform));
     }
     backend.preflight_privilege()?;
@@ -1807,14 +1942,18 @@ mod tests {
             Ok(())
         }
 
-        fn bind_authenticated_ownership_expectation(
+        fn bind_authenticated_release_identity(
             &mut self,
-            _expectation: &OwnershipExpectation,
+            _system: System,
+            _release_identity_digest: Digest,
         ) -> Result<(), MacOsError> {
             Ok(())
         }
 
-        fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError> {
+        fn begin_authenticated_recovery(
+            &mut self,
+            _mode: crate::MacOsInstallMode,
+        ) -> Result<(), MacOsError> {
             Ok(())
         }
 
@@ -1934,6 +2073,9 @@ mod tests {
                 Ok(())
             }
         }
+        fn accept_base_nix_handoff(&mut self) -> Result<(), MacOsError> {
+            Ok(())
+        }
         fn verify_installed_code(&mut self) -> Result<(), MacOsError> {
             if self.fail_on == Some("codesign") {
                 Err(MacOsError::backend_failure())
@@ -1994,11 +2136,12 @@ mod tests {
     fn install_is_receipt_last_and_idempotent() -> Result<(), Box<dyn Error>> {
         let mut backend = FakeBackend::clean();
         let report = install_macos(System::Aarch64Darwin, &mut backend)?;
-        assert_eq!(report.created_artifacts(), MACOS_ASSETS.len() - 1);
+        let product_assets = macos_product_install_assets().count();
+        assert_eq!(report.created_artifacts(), product_assets - 1);
         assert_eq!(report.existing_artifacts(), 0);
         let second = install_macos(System::Aarch64Darwin, &mut backend)?;
         assert_eq!(second.created_artifacts(), 0);
-        assert_eq!(second.existing_artifacts(), MACOS_ASSETS.len() - 1);
+        assert_eq!(second.existing_artifacts(), product_assets - 1);
         Ok(())
     }
 
@@ -2009,10 +2152,6 @@ mod tests {
         assert!(install_macos(System::Aarch64Darwin, &mut backend).is_err());
         assert_eq!(backend.rollback.first().copied(), Some("helper-plist"));
         assert_eq!(backend.rollback.last().copied(), Some("broker-group"));
-        let store = backend
-            .mutations
-            .iter()
-            .position(|mutation| *mutation == "store-volume");
         let helper = backend
             .mutations
             .iter()
@@ -2021,11 +2160,29 @@ mod tests {
             .mutations
             .iter()
             .position(|mutation| *mutation == "nix-root");
+        let runtime = backend
+            .mutations
+            .iter()
+            .position(|mutation| *mutation == "runtime");
         assert!(matches!(
-            (helper, store, nix_root),
-            (Some(helper), Some(store), Some(nix_root))
-                if helper < store && store < nix_root
+            (runtime, nix_root, helper),
+            (Some(runtime), Some(nix_root), Some(helper))
+                if runtime < nix_root && nix_root < helper
         ));
+        assert_eq!(
+            backend
+                .mutations
+                .iter()
+                .filter(|mutation| **mutation == "runtime")
+                .count(),
+            1
+        );
+        assert!(
+            !backend.mutations.iter().any(|mutation| matches!(
+                *mutation,
+                "store-volume" | "daemon-plist" | "nix-config"
+            ))
+        );
     }
 
     #[test]

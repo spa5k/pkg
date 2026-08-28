@@ -1,41 +1,72 @@
 //! Production macOS installer backend.
 
-use std::{env, path::Path};
+use std::{io::ErrorKind, path::Path};
 
 use nix::unistd::{Gid, Uid};
-use pkg_core::System;
+use pkg_core::{System, state::Digest};
 use pkg_nix::{
-    AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, DetectionDisposition,
-    ManagedGroupBindings, OwnershipExpectation, RealNixAdapter, detect_unmanaged_nix,
-    observe_build_accounts, verify_authenticated_managed_install,
+    AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
+    RealNixAdapter, observe_build_accounts,
 };
+use sha2::{Digest as _, Sha256};
 
 #[cfg(target_os = "macos")]
 use crate::MacOsStoreProvisionOutcome;
-#[cfg(any(target_os = "macos", test))]
-use pkg_nix::{DetectionReport, FindingKind};
-
 use crate::{
     MacOsAssetPresence, MacOsBuildReadiness, MacOsBuildUsersReadiness, MacOsError,
-    MacOsInstallAsset, MacOsInstallBackend, MacOsSandboxReadiness, MacOsToolchainReadiness,
-    macos_install_assets, macos_launchd::MacOsLaunchdManager,
+    MacOsInstallAsset, MacOsInstallBackend, MacOsInstallMode, MacOsSandboxReadiness,
+    MacOsToolchainReadiness, UninstallManifest,
+    determinate_handoff::{DeterminateHandoff, DeterminateHandoffState},
+    macos_launchd::MacOsLaunchdManager,
     macos_platform_assets::MacOsPlatformAssetManager,
+    macos_product_install_assets,
 };
 
-const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 const BROKER_HOME: &str = "/Library/Application Support/pkg/broker-home";
 const CODESIGN: &str = "/usr/bin/codesign";
 const XCRUN: &str = "/usr/bin/xcrun";
 
+fn select_install_mode(
+    handoff: DeterminateHandoffState,
+    installed: Option<(System, Digest)>,
+    requested_repair: bool,
+    system: System,
+    release_identity: Digest,
+) -> Result<MacOsInstallMode, MacOsError> {
+    match (handoff, installed, requested_repair) {
+        (DeterminateHandoffState::NotStarted, None, false) => Ok(MacOsInstallMode::FreshInstall),
+        (DeterminateHandoffState::Accepted, Some((installed_system, installed_release)), false)
+            if installed_system == system && installed_release == release_identity =>
+        {
+            Ok(MacOsInstallMode::FreshInstall)
+        }
+        (DeterminateHandoffState::Accepted, Some((installed_system, _)), false)
+            if installed_system == system =>
+        {
+            Ok(MacOsInstallMode::OfflineUpgrade)
+        }
+        (DeterminateHandoffState::Accepted, Some((installed_system, installed_release)), true)
+            if installed_system == system && installed_release == release_identity =>
+        {
+            Ok(MacOsInstallMode::OfflineRepair)
+        }
+        _ => Err(MacOsError::backend_failure()),
+    }
+}
+
+#[allow(clippy::struct_excessive_bools)]
 pub struct ProductionMacOsInstallBackend {
     system: System,
     assets: MacOsPlatformAssetManager,
     services: MacOsLaunchdManager,
-    ownership_expectation: Option<OwnershipExpectation>,
+    release_identity: Option<Digest>,
     config: Option<AuthenticatedManagedNixConfig>,
     existing_managed_install: bool,
     authenticated_recovery: bool,
     store_created: bool,
+    requested_repair: bool,
+    mode: MacOsInstallMode,
+    prior_manifest: Option<UninstallManifest>,
 }
 
 impl ProductionMacOsInstallBackend {
@@ -45,32 +76,74 @@ impl ProductionMacOsInstallBackend {
     ///
     /// Returns a redacted error for a non-Darwin system or invalid fixed group bindings.
     pub fn new(system: System, groups: ManagedGroupBindings) -> Result<Self, MacOsError> {
-        if !matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
+        if system != System::Aarch64Darwin {
             return Err(MacOsError::backend_failure());
         }
         Ok(Self {
             system,
             assets: MacOsPlatformAssetManager::new(groups)?,
             services: MacOsLaunchdManager::new(),
-            ownership_expectation: None,
+            release_identity: None,
             config: None,
             existing_managed_install: false,
             authenticated_recovery: false,
             store_created: false,
+            requested_repair: false,
+            mode: MacOsInstallMode::FreshInstall,
+            prior_manifest: None,
         })
     }
 
+    /// Creates the fixed backend for an explicit same-release repair.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted error for an unsupported system or invalid groups.
+    pub fn new_product_repair(
+        system: System,
+        groups: ManagedGroupBindings,
+    ) -> Result<Self, MacOsError> {
+        let mut backend = Self::new(system, groups)?;
+        backend.requested_repair = true;
+        Ok(backend)
+    }
+
+    #[must_use]
+    pub const fn install_mode(&self) -> MacOsInstallMode {
+        self.mode
+    }
+
     fn verify_service_assets(&mut self) -> Result<(), MacOsError> {
-        for asset in macos_install_assets().iter().copied().filter(|asset| {
-            matches!(
-                asset.id(),
-                "store-volume-plist" | "daemon-plist" | "helper-plist" | "broker-plist"
-            )
-        }) {
+        for asset in macos_product_install_assets()
+            .filter(|asset| matches!(asset.id(), "helper-plist" | "broker-plist"))
+        {
             if self.assets.classify_asset(asset)? != MacOsAssetPresence::ExactPresent {
                 return Err(MacOsError::backend_failure());
             }
         }
+        Ok(())
+    }
+
+    fn installed_product_manifest(&mut self) -> Result<Option<UninstallManifest>, MacOsError> {
+        let receipt = macos_product_install_assets()
+            .find(|asset| asset.id() == "uninstall-manifest")
+            .ok_or_else(MacOsError::backend_failure)?;
+        match std::fs::symlink_metadata(receipt.path_or_name()) {
+            Ok(_) => self.assets.installed_uninstall_manifest(),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(MacOsError::backend_failure()),
+        }
+    }
+
+    fn bind_prior_manifest(
+        &mut self,
+        manifest: Option<UninstallManifest>,
+    ) -> Result<(), MacOsError> {
+        if let Some(manifest) = manifest.as_ref() {
+            self.assets.bind_uninstall_manifest(manifest)?;
+            self.assets.bind_prior_asset_states(manifest)?;
+        }
+        self.prior_manifest = manifest;
         Ok(())
     }
 
@@ -100,6 +173,17 @@ impl ProductionMacOsInstallBackend {
 }
 
 impl MacOsInstallBackend for ProductionMacOsInstallBackend {
+    fn install_mode(&self) -> MacOsInstallMode {
+        self.mode
+    }
+
+    fn preflight_product_mutation(&mut self) -> Result<(), MacOsError> {
+        if self.mode == MacOsInstallMode::FreshInstall {
+            Ok(())
+        } else {
+            MacOsLaunchdManager::require_offline()
+        }
+    }
     fn bind_authenticated_installer_payloads(
         &mut self,
         payloads: &AuthenticatedInstallerPayloads,
@@ -124,31 +208,34 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         Ok(())
     }
 
-    fn bind_authenticated_ownership_expectation(
+    fn bind_authenticated_release_identity(
         &mut self,
-        expectation: &OwnershipExpectation,
+        system: System,
+        release_identity_digest: Digest,
     ) -> Result<(), MacOsError> {
-        if expectation.system() != self.system
+        if system != self.system
             || self
-                .ownership_expectation
-                .as_ref()
-                .is_some_and(|bound| bound != expectation)
+                .release_identity
+                .is_some_and(|bound| bound != release_identity_digest)
         {
             return Err(MacOsError::backend_failure());
         }
-        self.assets.bind_authenticated_ownership(
-            expectation.system(),
-            expectation.asset_manifest_digest(),
-        )?;
-        self.ownership_expectation = Some(expectation.clone());
+        self.assets
+            .bind_authenticated_ownership(system, release_identity_digest)?;
+        self.release_identity = Some(release_identity_digest);
         Ok(())
     }
 
-    fn begin_authenticated_recovery(&mut self) -> Result<(), MacOsError> {
-        if self.ownership_expectation.is_none()
-            || !self.assets.authenticated_inputs_bound(self.system)
-        {
+    fn begin_authenticated_recovery(&mut self, mode: MacOsInstallMode) -> Result<(), MacOsError> {
+        if self.release_identity.is_none() || !self.assets.authenticated_inputs_bound(self.system) {
             return Err(MacOsError::backend_failure());
+        }
+        if (mode == MacOsInstallMode::OfflineRepair) != self.requested_repair {
+            return Err(MacOsError::backend_failure());
+        }
+        self.mode = mode;
+        if mode != MacOsInstallMode::FreshInstall {
+            MacOsLaunchdManager::require_offline()?;
         }
         self.authenticated_recovery = true;
         Ok(())
@@ -170,40 +257,43 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         {
             return Err(MacOsError::backend_failure());
         }
-        let path_entries = env::var_os("PATH")
-            .map(|value| env::split_paths(&value).collect::<Vec<_>>())
-            .unwrap_or_default();
-        let environment_keys = env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
-        let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);
-        if report.disposition() == DetectionDisposition::Clean {
-            self.existing_managed_install = false;
+        let handoff = DeterminateHandoff::production()
+            .and_then(|handoff| handoff.state())
+            .map_err(|_| MacOsError::backend_failure())?;
+        if handoff == DeterminateHandoffState::Started {
+            return Err(MacOsError::backend_failure());
+        }
+        if self.authenticated_recovery {
+            if self.mode != MacOsInstallMode::FreshInstall {
+                if handoff != DeterminateHandoffState::Accepted {
+                    return Err(MacOsError::backend_failure());
+                }
+                MacOsLaunchdManager::require_offline()?;
+            }
+            let installed = self.installed_product_manifest()?;
+            if self.mode != MacOsInstallMode::FreshInstall && installed.is_none() {
+                return Err(MacOsError::backend_failure());
+            }
+            self.bind_prior_manifest(installed)?;
+            self.existing_managed_install = handoff == DeterminateHandoffState::Accepted;
             return Ok(());
         }
-        #[cfg(target_os = "macos")]
-        if self.authenticated_recovery && report_is_recovered_mountpoint_only(&report) {
-            let nix_root = macos_install_assets()
-                .iter()
-                .copied()
-                .find(|asset| store_volume_owns_rollback(*asset))
-                .ok_or_else(MacOsError::backend_failure)?;
-            if self.assets.classify_store_mountpoint(nix_root)? == MacOsAssetPresence::ExactPresent
-                && !crate::classify_macos_store_volume_production()
-                    .map_err(|_| MacOsError::backend_failure())?
-            {
-                self.existing_managed_install = false;
-                return Ok(());
-            }
-        }
-        verify_authenticated_managed_install(
-            Path::new("/"),
-            self.ownership_expectation
+        let installed = self.installed_product_manifest()?;
+        self.mode = select_install_mode(
+            handoff,
+            installed
                 .as_ref()
+                .map(|manifest| (manifest.system(), manifest.ownership_manifest_digest())),
+            self.requested_repair,
+            system,
+            self.release_identity
                 .ok_or_else(MacOsError::backend_failure)?,
-            &path_entries,
-            &environment_keys,
-        )
-        .map_err(|_| MacOsError::backend_failure())?;
-        self.existing_managed_install = true;
+        )?;
+        if self.mode != MacOsInstallMode::FreshInstall {
+            MacOsLaunchdManager::require_offline()?;
+        }
+        self.bind_prior_manifest(installed)?;
+        self.existing_managed_install = handoff == DeterminateHandoffState::Accepted;
         Ok(())
     }
 
@@ -215,8 +305,17 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         &mut self,
         asset: MacOsInstallAsset,
     ) -> Result<MacOsAssetPresence, MacOsError> {
-        let presence = self.assets.classify_asset(asset)?;
-        self.classify_asset_presence(asset, presence)
+        match self.assets.classify_asset(asset) {
+            Ok(presence) => self.classify_asset_presence(asset, presence),
+            Err(_)
+                if self.mode != MacOsInstallMode::FreshInstall
+                    && asset.kind() == crate::MacOsAssetKind::File =>
+            {
+                self.assets.verify_repair_target(asset)?;
+                Ok(MacOsAssetPresence::ExactPresent)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
@@ -237,14 +336,21 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        Ok(if self.existing_managed_install {
-            MacOsAssetPresence::ExactPresent
-        } else {
-            MacOsAssetPresence::Absent
-        })
+        match DeterminateHandoff::production()
+            .and_then(|handoff| handoff.state())
+            .map_err(|_| MacOsError::backend_failure())?
+        {
+            DeterminateHandoffState::Accepted => Ok(MacOsAssetPresence::ExactPresent),
+            DeterminateHandoffState::NotStarted => Ok(MacOsAssetPresence::Absent),
+            DeterminateHandoffState::Started => Err(MacOsError::backend_failure()),
+        }
     }
 
     fn classify_services(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+        if self.mode != MacOsInstallMode::FreshInstall {
+            MacOsLaunchdManager::require_offline()?;
+            return Ok(MacOsAssetPresence::ExactPresent);
+        }
         let presence = MacOsLaunchdManager::classify_activation().map(|active| {
             if active {
                 MacOsAssetPresence::ExactPresent
@@ -256,7 +362,13 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn classify_ownership_receipt(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        let presence = self.assets.classify_uninstall_manifest()?;
+        let presence = if self.mode == MacOsInstallMode::FreshInstall {
+            self.assets.classify_uninstall_manifest()?
+        } else if self.assets.installed_uninstall_manifest()?.is_some() {
+            MacOsAssetPresence::ExactPresent
+        } else {
+            MacOsAssetPresence::Absent
+        };
         self.classify_preview_presence(presence)
     }
 
@@ -287,7 +399,11 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn recover_ownership_receipt(&mut self) -> Result<(), MacOsError> {
-        self.assets.recover_uninstall_manifest()
+        if self.mode == MacOsInstallMode::OfflineUpgrade {
+            self.assets.rollback_uninstall_manifest_replacement()
+        } else {
+            self.assets.recover_uninstall_manifest()
+        }
     }
 
     fn verify_release_bundle(&mut self) -> Result<(), MacOsError> {
@@ -321,7 +437,28 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn ensure_asset(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
-        let created = self.assets.ensure_asset(asset)?;
+        if asset.id() == "nix-root" {
+            if self.assets.classify_asset(asset)? != MacOsAssetPresence::ExactPresent {
+                return Err(MacOsError::backend_failure());
+            }
+            self.assets.record_preexisting(asset);
+            return Ok(false);
+        }
+        let created = if self.mode != MacOsInstallMode::FreshInstall
+            && asset.kind() == crate::MacOsAssetKind::File
+        {
+            if self.assets.classify_asset(asset) == Ok(MacOsAssetPresence::Absent) {
+                self.assets.ensure_asset(asset)?
+            } else {
+                self.assets.replace_owned_file(
+                    asset,
+                    self.prior_digest(asset)?,
+                    self.mode == MacOsInstallMode::OfflineRepair,
+                )?
+            }
+        } else {
+            self.assets.ensure_asset(asset)?
+        };
         if self.store_created && asset.id() == "nix-root" {
             self.assets.record_created(asset);
             Ok(true)
@@ -335,7 +472,19 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         asset: MacOsInstallAsset,
         contents: &'static str,
     ) -> Result<bool, MacOsError> {
-        self.assets.install_static_asset(asset, contents)
+        if self.mode == MacOsInstallMode::FreshInstall
+            || self.assets.classify_asset(asset) == Ok(MacOsAssetPresence::Absent)
+        {
+            self.assets.install_static_asset(asset, contents)
+        } else {
+            let prior = self.prior_digest(asset)?;
+            self.assets.replace_static_owned_file(
+                asset,
+                contents,
+                prior,
+                self.mode == MacOsInstallMode::OfflineRepair,
+            )
+        }
     }
 
     fn install_nix_config(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
@@ -347,6 +496,10 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn rollback_managed_runtime(&mut self) -> Result<(), MacOsError> {
+        Ok(())
+    }
+
+    fn accept_base_nix_handoff(&mut self) -> Result<(), MacOsError> {
         Ok(())
     }
 
@@ -363,16 +516,24 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn activate_services(&mut self) -> Result<bool, MacOsError> {
-        self.services.activate()
+        if self.mode == MacOsInstallMode::FreshInstall {
+            self.services.activate()
+        } else {
+            MacOsLaunchdManager::require_offline()?;
+            Ok(false)
+        }
     }
 
     fn rollback_services(&mut self) -> Result<(), MacOsError> {
-        self.services.rollback()
+        if self.mode == MacOsInstallMode::FreshInstall {
+            self.services.rollback()
+        } else {
+            MacOsLaunchdManager::require_offline()
+        }
     }
 
     fn check_managed_daemon(&mut self) -> Result<(), MacOsError> {
-        MacOsLaunchdManager::verify_active()?;
-        let adapter = RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), Path::new(BROKER_HOME))
+        let adapter = RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
             .map_err(|_| MacOsError::backend_failure())?;
         adapter
             .wait_for_managed_store()
@@ -455,19 +616,104 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     fn rollback_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         if store_volume_owns_rollback(asset) {
             self.recover_asset(asset)
+        } else if self.mode == MacOsInstallMode::OfflineRepair
+            && asset.kind() == crate::MacOsAssetKind::File
+        {
+            self.assets.roll_forward_owned_file(asset)
         } else {
             self.assets.rollback_asset(asset)
         }
+    }
+
+    fn prior_file_digest(
+        &mut self,
+        asset: MacOsInstallAsset,
+    ) -> Result<Option<Digest>, MacOsError> {
+        self.prior_digest(asset)
+    }
+
+    fn recover_replaced_asset(
+        &mut self,
+        asset: MacOsInstallAsset,
+        prior_digest: Digest,
+    ) -> Result<(), MacOsError> {
+        self.assets.recover_owned_file(asset, prior_digest)
+    }
+
+    fn roll_forward_replaced_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        self.assets.roll_forward_owned_file(asset)
+    }
+
+    fn finalize_replaced_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
+        if self.mode == MacOsInstallMode::FreshInstall {
+            Ok(())
+        } else {
+            self.preflight_product_mutation()?;
+            self.assets.finalize_owned_file(asset)
+        }
+    }
+
+    fn prior_ownership_receipt_digest(&mut self) -> Result<Option<Digest>, MacOsError> {
+        let Some(manifest) = self.prior_manifest.as_ref() else {
+            return Ok(None);
+        };
+        let bytes = crate::encode_uninstall_manifest(manifest)
+            .map_err(|_| MacOsError::backend_failure())?;
+        Ok(Some(Digest::from_bytes(Sha256::digest(bytes).into())))
+    }
+
+    fn recover_replaced_ownership_receipt(
+        &mut self,
+        prior_digest: Digest,
+    ) -> Result<(), MacOsError> {
+        if self.prior_manifest.is_none() {
+            return self
+                .assets
+                .recover_uninstall_manifest_replacement_by_digest(
+                    self.system,
+                    self.release_identity
+                        .ok_or_else(MacOsError::backend_failure)?,
+                    prior_digest,
+                );
+        }
+        if self.prior_ownership_receipt_digest()? != Some(prior_digest) {
+            return Err(MacOsError::backend_failure());
+        }
+        let prior = self
+            .prior_manifest
+            .clone()
+            .ok_or_else(MacOsError::backend_failure)?;
+        self.assets.recover_uninstall_manifest_replacement(&prior)
+    }
+
+    fn roll_forward_replaced_ownership_receipt(&mut self) -> Result<(), MacOsError> {
+        (self.assets.classify_uninstall_manifest()? == MacOsAssetPresence::ExactPresent)
+            .then_some(())
+            .ok_or_else(MacOsError::backend_failure)
+    }
+}
+
+impl ProductionMacOsInstallBackend {
+    fn prior_digest(&self, asset: MacOsInstallAsset) -> Result<Option<Digest>, MacOsError> {
+        let digest = self
+            .prior_manifest
+            .as_ref()
+            .and_then(|manifest| {
+                manifest
+                    .assets()
+                    .iter()
+                    .find(|record| record.id() == asset.id())
+            })
+            .and_then(crate::RecordedAsset::content_digest);
+        if self.mode == MacOsInstallMode::OfflineUpgrade && digest.is_none() {
+            return Err(MacOsError::backend_failure());
+        }
+        Ok(digest)
     }
 }
 
 fn store_volume_owns_rollback(asset: MacOsInstallAsset) -> bool {
     asset.id() == "nix-root"
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn report_is_recovered_mountpoint_only(report: &DetectionReport) -> bool {
-    matches!(report.findings(), [finding] if finding.id() == "NIX_ROOT" && finding.kind() == FindingKind::Unmanaged)
 }
 
 fn valid_tool_path(bytes: &[u8]) -> bool {
@@ -500,6 +746,92 @@ mod tests {
     }
 
     #[test]
+    fn install_mode_requires_an_exact_accepted_handoff_and_receipt() {
+        let system = System::Aarch64Darwin;
+        let current = Digest::from_bytes([1; 32]);
+        let prior = Digest::from_bytes([2; 32]);
+        assert_eq!(
+            select_install_mode(
+                DeterminateHandoffState::NotStarted,
+                None,
+                false,
+                system,
+                current,
+            ),
+            Ok(MacOsInstallMode::FreshInstall)
+        );
+        assert_eq!(
+            select_install_mode(
+                DeterminateHandoffState::Accepted,
+                Some((system, current)),
+                false,
+                system,
+                current,
+            ),
+            Ok(MacOsInstallMode::FreshInstall)
+        );
+        assert_eq!(
+            select_install_mode(
+                DeterminateHandoffState::Accepted,
+                Some((system, prior)),
+                false,
+                system,
+                current,
+            ),
+            Ok(MacOsInstallMode::OfflineUpgrade)
+        );
+        assert_eq!(
+            select_install_mode(
+                DeterminateHandoffState::Accepted,
+                Some((system, current)),
+                true,
+                system,
+                current,
+            ),
+            Ok(MacOsInstallMode::OfflineRepair)
+        );
+        for refused in [
+            select_install_mode(
+                DeterminateHandoffState::Started,
+                None,
+                false,
+                system,
+                current,
+            ),
+            select_install_mode(
+                DeterminateHandoffState::NotStarted,
+                None,
+                true,
+                system,
+                current,
+            ),
+            select_install_mode(
+                DeterminateHandoffState::Accepted,
+                None,
+                false,
+                system,
+                current,
+            ),
+            select_install_mode(
+                DeterminateHandoffState::Accepted,
+                Some((system, prior)),
+                true,
+                system,
+                current,
+            ),
+            select_install_mode(
+                DeterminateHandoffState::Accepted,
+                Some((System::Aarch64Linux, current)),
+                false,
+                system,
+                current,
+            ),
+        ] {
+            assert!(refused.is_err());
+        }
+    }
+
+    #[test]
     fn clean_preview_refuses_preexisting_assets() -> Result<(), Box<dyn std::error::Error>> {
         let groups = ManagedGroupBindings::new(333, 350)?;
         let mut backend = ProductionMacOsInstallBackend::new(System::Aarch64Darwin, groups)?;
@@ -508,9 +840,7 @@ mod tests {
                 .classify_preview_presence(MacOsAssetPresence::ExactPresent)
                 .is_err()
         );
-        let nix_root = macos_install_assets()
-            .iter()
-            .copied()
+        let nix_root = macos_product_install_assets()
             .find(|asset| asset.id() == "nix-root")
             .ok_or("missing nix-root asset")?;
         assert!(store_volume_owns_rollback(nix_root));
@@ -530,20 +860,6 @@ mod tests {
             backend.classify_preview_presence(MacOsAssetPresence::ExactPresent),
             Ok(MacOsAssetPresence::ExactPresent)
         );
-        Ok(())
-    }
-
-    #[test]
-    fn authenticated_recovery_allows_only_an_empty_nix_root_finding()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        std::fs::create_dir(root.path().join("nix"))?;
-        let report = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
-        assert!(report_is_recovered_mountpoint_only(&report));
-
-        std::fs::create_dir(root.path().join("nix/store"))?;
-        let report = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
-        assert!(!report_is_recovered_mountpoint_only(&report));
         Ok(())
     }
 }

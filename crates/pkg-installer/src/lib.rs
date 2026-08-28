@@ -89,7 +89,7 @@ pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode};
 pub use linux_uninstall::ProductionLinuxUninstallBackend;
 pub use macos_backend::ProductionMacOsInstallBackend;
 pub use macos_install_journal::{
-    MacOsInstallJournal, MacOsInstallJournalError, MacOsInstallJournalErrorCode,
+    MacOsInstallJournal, MacOsInstallJournalError, MacOsInstallJournalErrorCode, MacOsInstallMode,
     MacOsInstallMutation, MacOsInstallMutationState, MacOsInstallRecoveryAction,
 };
 pub use macos_install_journal_file::{MacOsInstallJournalFileError, MacOsInstallJournalStorage};
@@ -104,7 +104,8 @@ pub use platform::macos::{
     MacOsInstallBackend, MacOsInstallReport, MacOsLaunchdAssets, MacOsPeerCredentials,
     MacOsReleaseStep, MacOsReleaseTarget, MacOsRootSetStore, MacOsSandboxReadiness,
     MacOsSocketContract, MacOsStoreVolumeContract, MacOsToolchainReadiness, install_macos,
-    macos_install_assets, macos_release_steps, recover_macos_install,
+    is_macos_product_asset, macos_install_assets, macos_product_install_assets,
+    macos_release_steps, recover_macos_install,
 };
 pub use production_repair::ProductionRepairAuthority;
 pub use repair::{
