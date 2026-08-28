@@ -234,17 +234,49 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertIn("path.resolve(strict=True)", LINUX_HARNESS)
         self.assertIn('print("gc-root\\t"', LINUX_HARNESS)
-        for boundary in (
-            "package-state-after-upgrade.txt",
-            "package-state-after-active-repair-refusal.txt",
-            "package-state-after-repair.txt",
-        ):
-            self.assertIn(boundary, LINUX_HARNESS)
-            self.assertIn(
-                'cmp "$product_evidence/package-state-before.txt" \\\n'
-                f'    "$product_evidence/{boundary}"',
-                LINUX_HARNESS,
-            )
+        active_repair = LINUX_HARNESS.split(
+            'echo "+ active product repair refusal without mutation"', 1
+        )[1].split('echo "+ authenticated offline product asset repair"', 1)[0]
+        active_sequence = """snapshot_package_state "$product_evidence/package-state-before-active-repair-refusal.txt"
+set +e
+docker exec "$container" "$n_plus_1_installer" --repair-product-assets \\
+    > "$product_evidence/repair-active.stdout" \\
+    2> "$product_evidence/repair-active.stderr"
+repair_active_status=$?
+set -e
+snapshot_package_state "$product_evidence/package-state-after-active-repair-refusal.txt"
+cmp "$product_evidence/package-state-before-active-repair-refusal.txt" \\
+    "$product_evidence/package-state-after-active-repair-refusal.txt"""
+        self.assertIn(active_sequence, active_repair)
+
+        offline_repair = LINUX_HARNESS.split(
+            'echo "+ authenticated offline product asset repair"', 1
+        )[1].split('echo "+ activate verified repaired N+1 product services"', 1)[0]
+        offline_sequence = """snapshot_package_state "$product_evidence/package-state-before-offline-repair.txt"
+repair_output=$(docker exec "$container" "$n_plus_1_installer" --repair-product-assets)
+snapshot_package_state "$product_evidence/package-state-after-repair.txt"
+cmp "$product_evidence/package-state-before-offline-repair.txt" \\
+    "$product_evidence/package-state-after-repair.txt"""
+        self.assertIn(offline_sequence, offline_repair)
+
+        active_before = (
+            'snapshot_package_state '
+            '"$product_evidence/package-state-before-active-repair-refusal.txt"'
+        )
+        upgrade_compare = (
+            'cmp "$product_evidence/package-state-before.txt" '
+            '\\\n    "$product_evidence/package-state-after-upgrade.txt"'
+        )
+        intervening_list = (
+            'docker exec "$container" su - proof-user -c '
+            '"/usr/local/bin/pkg --json list"'
+        )
+        upgrade_compare_index = LINUX_HARNESS.index(upgrade_compare)
+        intervening_list_index = LINUX_HARNESS.index(
+            intervening_list, upgrade_compare_index
+        )
+        self.assertLess(upgrade_compare_index, intervening_list_index)
+        self.assertLess(intervening_list_index, LINUX_HARNESS.index(active_before))
         self.assertEqual(LINUX_HARNESS.count("run_filter_group product-upgrade"), 1)
         self.assertEqual(
             LINUX_HARNESS.count("run_filter_group product-asset-repair"), 1

@@ -1087,21 +1087,22 @@ run_filter_group product-upgrade "$1" "native N to N+1; Base Nix unchanged; veri
 
 echo "+ active product repair refusal without mutation"
 snapshot_product_boundary "$product_evidence/repair-active-before.json"
+snapshot_package_state "$product_evidence/package-state-before-active-repair-refusal.txt"
 set +e
 docker exec "$container" "$n_plus_1_installer" --repair-product-assets \
     > "$product_evidence/repair-active.stdout" \
     2> "$product_evidence/repair-active.stderr"
 repair_active_status=$?
 set -e
+snapshot_package_state "$product_evidence/package-state-after-active-repair-refusal.txt"
+cmp "$product_evidence/package-state-before-active-repair-refusal.txt" \
+    "$product_evidence/package-state-after-active-repair-refusal.txt"
 test "$repair_active_status" -eq 1
 test ! -s "$product_evidence/repair-active.stdout"
 grep -Fx "Stop and disable all pkg product services. Remove all product unit drop-ins. Then run pkg-install again." \
     "$product_evidence/repair-active.stderr" >/dev/null
 snapshot_product_boundary "$product_evidence/repair-active-after.json"
 cmp "$product_evidence/repair-active-before.json" "$product_evidence/repair-active-after.json"
-snapshot_package_state "$product_evidence/package-state-after-active-repair-refusal.txt"
-cmp "$product_evidence/package-state-before.txt" \
-    "$product_evidence/package-state-after-active-repair-refusal.txt"
 
 echo "+ authenticated offline product asset repair"
 stop_disable_product_units
@@ -1119,7 +1120,11 @@ docker exec "$container" sh -eu -c '
 '
 test "$(docker exec "$container" sha256sum /usr/local/bin/pkg | awk '{print $1}')" != "$repair_pkg"
 test "$(docker exec "$container" sha256sum /usr/lib/systemd/system/pkg-nix-broker.service | awk '{print $1}')" != "$repair_service"
+snapshot_package_state "$product_evidence/package-state-before-offline-repair.txt"
 repair_output=$(docker exec "$container" "$n_plus_1_installer" --repair-product-assets)
+snapshot_package_state "$product_evidence/package-state-after-repair.txt"
+cmp "$product_evidence/package-state-before-offline-repair.txt" \
+    "$product_evidence/package-state-after-repair.txt"
 test "$repair_output" = "pkg product files are repaired. Product services remain offline."
 assert_product_units_offline
 assert_publication_product /srv/pkg-releases/2
@@ -1135,9 +1140,6 @@ docker exec "$container" sh -eu -c '
     test "$(find /nix/var/nix/gcroots/pkg -type l | wc -l)" -gt 0
 '
 snapshot_product_boundary "$product_evidence/repair-offline-after.json"
-snapshot_package_state "$product_evidence/package-state-after-repair.txt"
-cmp "$product_evidence/package-state-before.txt" \
-    "$product_evidence/package-state-after-repair.txt"
 
 echo "+ activate verified repaired N+1 product services"
 activate_product_units /srv/pkg-releases/2
