@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::platform::macos::{MacOsAssetKind, macos_product_install_assets};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 const PRODUCT: &str = "pkg";
 const MAX_JOURNAL_BYTES: usize = 32 * 1024;
 
@@ -106,6 +106,8 @@ pub struct MacOsInstallJournal {
     mode: MacOsInstallMode,
     committed: bool,
     entries: Vec<MacOsInstallJournalEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uninstall_registered_uids: Option<Vec<u32>>,
 }
 
 /// One bounded recovery decision in safe reverse order.
@@ -163,6 +165,7 @@ impl MacOsInstallJournal {
             mode,
             committed: false,
             entries: Vec::new(),
+            uninstall_registered_uids: None,
         })
     }
 
@@ -375,9 +378,37 @@ impl MacOsInstallJournal {
         self.committed
     }
 
-    /// Returns true for the empty snapshot used as an uninstall-start marker.
+    /// Records the bounded ordered user snapshot before any product root deletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidTransition` for install state, a repeated snapshot, or
+    /// zero, duplicate, unsorted, or excessive UIDs.
+    pub fn record_uninstall_user_snapshot(
+        &mut self,
+        uids: &[u32],
+    ) -> Result<(), MacOsInstallJournalError> {
+        if self.committed
+            || !self.entries.is_empty()
+            || self.mode != MacOsInstallMode::FreshInstall
+            || self.uninstall_registered_uids.is_some()
+            || !valid_uninstall_user_snapshot(uids)
+        {
+            return Err(invalid_transition());
+        }
+        self.uninstall_registered_uids = Some(uids.to_vec());
+        Ok(())
+    }
+
+    /// Returns the durable user snapshot for an uninstall retry.
     #[must_use]
-    pub const fn is_empty_uncommitted(&self) -> bool {
+    pub fn uninstall_registered_uids(&self) -> Option<&[u32]> {
+        self.uninstall_registered_uids.as_deref()
+    }
+
+    /// Returns true for the snapshot used only as an uninstall marker.
+    #[must_use]
+    pub const fn is_uninstall_marker(&self) -> bool {
         !self.committed && self.entries.is_empty()
     }
 
@@ -491,6 +522,15 @@ impl MacOsInstallJournal {
             || Digest::from_str(&self.ownership_manifest_digest).is_err()
             || Digest::from_str(&self.recovery_context_digest).is_err()
             || self.entries.len() > install_sequence().len()
+            || self
+                .uninstall_registered_uids
+                .as_deref()
+                .is_some_and(|uids| {
+                    self.committed
+                        || !self.entries.is_empty()
+                        || self.mode != MacOsInstallMode::FreshInstall
+                        || !valid_uninstall_user_snapshot(uids)
+                })
         {
             return Err(invalid_journal());
         }
@@ -525,6 +565,12 @@ impl MacOsInstallJournal {
         }
         Ok(())
     }
+}
+
+fn valid_uninstall_user_snapshot(uids: &[u32]) -> bool {
+    uids.len() <= crate::linux_user_cleanup::MAX_DURABLE_USER_SNAPSHOT
+        && !uids.contains(&0)
+        && uids.windows(2).all(|pair| pair[0] < pair[1])
 }
 
 pub fn install_sequence() -> Vec<MacOsInstallMutation> {
@@ -688,6 +734,52 @@ mod tests {
         let mutation = advance_to_first_product_file(&mut journal)?;
         journal.intend_replacement(mutation, Some(Digest::from_bytes([0x7a; 32])))?;
         assert!(journal.complete_created().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn uninstall_user_snapshot_is_bounded_strict_and_marker_only() -> Result<(), Box<dyn Error>> {
+        let mut marker = journal()?;
+        marker.record_uninstall_user_snapshot(&[501, 1_001])?;
+        assert_eq!(marker.uninstall_registered_uids(), Some(&[501, 1_001][..]));
+        assert!(marker.is_uninstall_marker());
+        assert_eq!(MacOsInstallJournal::decode(&marker.encode()?)?, marker);
+        assert!(
+            marker
+                .record_uninstall_user_snapshot(&[501, 1_001])
+                .is_err()
+        );
+
+        let mut empty = journal()?;
+        empty.record_uninstall_user_snapshot(&[])?;
+        assert_eq!(empty.uninstall_registered_uids(), Some(&[][..]));
+        assert_eq!(MacOsInstallJournal::decode(&empty.encode()?)?, empty);
+
+        for invalid in [&[0][..], &[1_001, 501], &[501, 501]] {
+            assert!(journal()?.record_uninstall_user_snapshot(invalid).is_err());
+        }
+        let oversized =
+            (1..=u32::try_from(crate::linux_user_cleanup::MAX_DURABLE_USER_SNAPSHOT + 1)?)
+                .collect::<Vec<_>>();
+        assert!(
+            journal()?
+                .record_uninstall_user_snapshot(&oversized)
+                .is_err()
+        );
+
+        let mut install = journal()?;
+        let first = install_sequence()
+            .first()
+            .cloned()
+            .ok_or_else(|| std::io::Error::other("empty sequence"))?;
+        install.intend(first)?;
+        assert!(install.record_uninstall_user_snapshot(&[501]).is_err());
+
+        let mut corrupted = serde_json::to_value(marker)?;
+        corrupted["uninstallRegisteredUids"] = serde_json::json!([1_001, 501]);
+        assert!(MacOsInstallJournal::decode(&serde_json::to_vec(&corrupted)?).is_err());
+        let oversized_bytes = vec![b' '; MAX_JOURNAL_BYTES + 1];
+        assert!(MacOsInstallJournal::decode(&oversized_bytes).is_err());
         Ok(())
     }
 

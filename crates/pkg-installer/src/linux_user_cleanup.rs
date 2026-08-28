@@ -5,6 +5,8 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
+#[cfg(test)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use nix::unistd::{Uid, User};
@@ -26,6 +28,7 @@ const USER_STATE_COMPONENTS: &[&str] = &["Library", "Application Support", "pkg"
 const USER_STATE_COMPONENTS: &[&str] = &[".local", "share", "pkg"];
 const MAX_USERS: usize = 4_096;
 const MAX_ENTRIES: usize = 65_536;
+pub const MAX_DURABLE_USER_SNAPSHOT: usize = 2_048;
 
 pub fn remove_owned_tree(
     root: &Path,
@@ -115,12 +118,30 @@ impl HomeDirectoryResolver for ProductionHomeDirectoryResolver {
     }
 }
 
+#[cfg(test)]
+struct FixedHomeDirectoryResolver {
+    uid: u32,
+    home: PathBuf,
+}
+
+#[cfg(test)]
+impl HomeDirectoryResolver for FixedHomeDirectoryResolver {
+    fn home_for_uid(&mut self, uid: u32) -> Result<PathBuf, LinuxUserCleanupError> {
+        if uid == self.uid {
+            Ok(self.home.clone())
+        } else {
+            Err(unsafe_state())
+        }
+    }
+}
+
 /// Production owner for fixed product GC roots and matching user state.
 pub struct LinuxUserCleanup {
     root: PathBuf,
     root_owner_uid: u32,
     resolver: Box<dyn HomeDirectoryResolver>,
     registered_uids: Vec<u32>,
+    registered_uids_bound: bool,
     store_roots: Vec<StorePath>,
     root_snapshot: Vec<RootSnapshotEntry>,
 }
@@ -163,9 +184,26 @@ impl LinuxUserCleanup {
             root_owner_uid: 0,
             resolver: Box::new(ProductionHomeDirectoryResolver),
             registered_uids: Vec::new(),
+            registered_uids_bound: false,
             store_roots: Vec::new(),
             root_snapshot: Vec::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(root: &Path, home: &Path) -> Result<Self, LinuxUserCleanupError> {
+        let root = root.canonicalize().map_err(|_| unsafe_state())?;
+        let home = home.canonicalize().map_err(|_| unsafe_state())?;
+        let uid = home.metadata().map_err(|_| unsafe_state())?.uid();
+        Ok(Self {
+            root,
+            root_owner_uid: uid,
+            resolver: Box::new(FixedHomeDirectoryResolver { uid, home }),
+            registered_uids: Vec::new(),
+            registered_uids_bound: false,
+            store_roots: Vec::new(),
+            root_snapshot: Vec::new(),
+        })
     }
 
     /// Removes only roots below the fixed product user-root directory.
@@ -183,10 +221,22 @@ impl LinuxUserCleanup {
         }
         let path = rooted(&self.root, Path::new(USER_ROOTS));
         let Some(root) = open_absolute_directory(&path, self.root_owner_uid)? else {
+            if !self.registered_uids_bound {
+                self.registered_uids_bound = true;
+            }
             return Ok(());
         };
         let root_boundary = mount_boundary_fd(&root)?;
         let names = directory_names(&root)?;
+        if !self.registered_uids_bound
+            || names.iter().any(|name| {
+                name.to_str()
+                    .and_then(|name| parse_uid(name).ok())
+                    .is_none_or(|uid| self.registered_uids.binary_search(&uid).is_err())
+            })
+        {
+            return Err(unsafe_state());
+        }
         let mut count = 0;
         for name in names {
             remove_entry(&root, &name, self.root_owner_uid, root_boundary, &mut count)?;
@@ -197,11 +247,14 @@ impl LinuxUserCleanup {
 
     /// Captures product root identities and targets without mutation.
     pub fn capture_user_roots(&mut self) -> Result<(), LinuxUserCleanupError> {
-        if !self.registered_uids.is_empty() || !self.root_snapshot.is_empty() {
+        if !self.root_snapshot.is_empty() {
             return Err(unsafe_state());
         }
         let path = rooted(&self.root, Path::new(USER_ROOTS));
         let Some(root) = open_absolute_directory(&path, self.root_owner_uid)? else {
+            if !self.registered_uids_bound {
+                self.registered_uids_bound = true;
+            }
             return Ok(());
         };
         let root_boundary = mount_boundary_fd(&root)?;
@@ -214,7 +267,14 @@ impl LinuxUserCleanup {
                 return Err(unsafe_state());
             }
         }
-        let registered_uids = uids.iter().copied().collect::<Vec<_>>();
+        let observed_uids = uids.iter().copied().collect::<Vec<_>>();
+        if self.registered_uids_bound
+            && observed_uids
+                .iter()
+                .any(|uid| self.registered_uids.binary_search(uid).is_err())
+        {
+            return Err(unsafe_state());
+        }
         let mut store_roots = BTreeMap::new();
         let mut root_snapshot = Vec::new();
         let mut root_entry_count = 0;
@@ -228,9 +288,42 @@ impl LinuxUserCleanup {
         for name in &names {
             collect_store_targets(&root, name, Path::new(name), &mut capture)?;
         }
-        self.registered_uids = registered_uids;
+        if !self.registered_uids_bound {
+            self.registered_uids = observed_uids;
+            self.registered_uids_bound = true;
+        }
         self.store_roots = store_roots.into_values().collect();
         self.root_snapshot = root_snapshot;
+        Ok(())
+    }
+
+    /// Returns the ordered UIDs captured from product roots.
+    #[must_use]
+    pub fn registered_uids(&self) -> Option<&[u32]> {
+        self.registered_uids_bound
+            .then_some(self.registered_uids.as_slice())
+    }
+
+    /// Binds a durable ordered UID snapshot before retrying root cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed error for zero, duplicate, unsorted, or excessive UIDs,
+    /// or when a different snapshot is already bound.
+    pub fn bind_registered_uids(&mut self, uids: &[u32]) -> Result<(), LinuxUserCleanupError> {
+        if uids.len() > MAX_DURABLE_USER_SNAPSHOT
+            || uids.contains(&0)
+            || uids.windows(2).any(|pair| pair[0] >= pair[1])
+            || self.registered_uids_bound && self.registered_uids != uids
+            || !self.root_snapshot.is_empty()
+            || !self.store_roots.is_empty()
+        {
+            return Err(unsafe_state());
+        }
+        if !self.registered_uids_bound {
+            self.registered_uids = uids.to_vec();
+            self.registered_uids_bound = true;
+        }
         Ok(())
     }
 
@@ -845,37 +938,11 @@ mod tests {
     use std::process::Command;
     use tempfile::TempDir;
 
-    struct FixedHome {
-        uid: u32,
-        home: PathBuf,
-    }
-
-    impl HomeDirectoryResolver for FixedHome {
-        fn home_for_uid(&mut self, uid: u32) -> Result<PathBuf, LinuxUserCleanupError> {
-            if uid == self.uid {
-                Ok(self.home.clone())
-            } else {
-                Err(unsafe_state())
-            }
-        }
-    }
-
     fn cleaner(
         temp: &TempDir,
         home: &Path,
     ) -> Result<LinuxUserCleanup, Box<dyn std::error::Error>> {
-        let uid = fs::metadata(home)?.uid();
-        Ok(LinuxUserCleanup {
-            root: temp.path().canonicalize()?,
-            root_owner_uid: uid,
-            resolver: Box::new(FixedHome {
-                uid,
-                home: home.canonicalize()?,
-            }),
-            registered_uids: Vec::new(),
-            store_roots: Vec::new(),
-            root_snapshot: Vec::new(),
-        })
+        Ok(LinuxUserCleanup::for_test(temp.path(), home)?)
     }
 
     #[test]
@@ -914,6 +981,42 @@ mod tests {
             )?]
         );
         assert_eq!(fs::read(outside)?, b"keep");
+        Ok(())
+    }
+
+    #[test]
+    fn durable_uid_snapshot_refuses_a_new_foreign_root_before_deletion()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let home = temp.path().join("home");
+        let roots = rooted(temp.path(), Path::new(USER_ROOTS));
+        fs::create_dir_all(&home)?;
+        fs::create_dir_all(&roots)?;
+        let uid = fs::metadata(&home)?.uid();
+        if uid == 0 || uid == u32::MAX {
+            return Err("test requires a non-root bounded uid".into());
+        }
+        symlink(
+            "/nix/store/22222222222222222222222222222222-example",
+            roots.join(uid.to_string()),
+        )?;
+        let mut first_process = cleaner(&temp, &home)?;
+        first_process.capture_user_roots()?;
+        let snapshot = first_process
+            .registered_uids()
+            .ok_or("missing uid snapshot")?
+            .to_vec();
+        first_process.remove_user_roots()?;
+        let foreign = roots.join((uid + 1).to_string());
+        symlink(
+            "/nix/store/33333333333333333333333333333333-foreign",
+            &foreign,
+        )?;
+
+        let mut second_process = cleaner(&temp, &home)?;
+        second_process.bind_registered_uids(&snapshot)?;
+        assert!(second_process.remove_user_roots().is_err());
+        assert!(foreign.symlink_metadata().is_ok());
         Ok(())
     }
 

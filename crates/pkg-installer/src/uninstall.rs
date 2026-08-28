@@ -17,7 +17,7 @@ use crate::{
     LinuxAssetKind,
     assets::is_linux_product_asset,
     linux_install_assets,
-    platform::macos::{MacOsAssetKind, macos_install_assets},
+    platform::macos::{MacOsAssetKind, macos_product_install_assets},
 };
 
 const MAX_RECORDED_ASSETS: usize = 256;
@@ -197,17 +197,28 @@ impl UninstallManifest {
             let has_digest = records
                 .get(asset.id)
                 .is_some_and(|(_, digest)| digest.is_some());
-            let needs_digest = matches!(system, System::X8664Linux | System::Aarch64Linux)
-                && asset.kind == UninstallAssetKind::File
+            let needs_digest = matches!(
+                system,
+                System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin
+            ) && asset.kind == UninstallAssetKind::File
                 && asset.id != "uninstall-manifest";
             if has_digest != needs_digest {
                 return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
             }
         }
-        if matches!(system, System::X8664Linux | System::Aarch64Linux)
+        if matches!(
+            system,
+            System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin
+        ) && records
+            .get("uninstall-manifest")
+            .is_none_or(|(state, _)| *state != RecordedAssetState::Created)
+        {
+            return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
+        }
+        if system == System::Aarch64Darwin
             && records
-                .get("uninstall-manifest")
-                .is_none_or(|(state, _)| *state != RecordedAssetState::Created)
+                .get("nix-root")
+                .is_none_or(|(state, _)| *state != RecordedAssetState::PreExisting)
         {
             return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
         }
@@ -453,7 +464,11 @@ impl UninstallPlan {
 /// cannot be resolved to the exact compiled platform allowlist.
 pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, UninstallError> {
     let platform = platform_assets(manifest.system);
-    let receipt_last = matches!(manifest.system, System::X8664Linux | System::Aarch64Linux);
+    let determinate_system = matches!(
+        manifest.system,
+        System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin
+    );
+    let receipt_last = determinate_system;
     let states = manifest
         .assets
         .iter()
@@ -489,15 +504,15 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
         .copied()
         .ok_or_else(|| UninstallError::new(UninstallErrorCode::InvalidManifest))?;
     let mut actions = vec![UninstallAction::StopServices];
-    let mut linux_terminal_vendor = false;
+    let mut terminal_vendor = false;
     match nix_root_state {
         RecordedAssetState::Created => {
             actions.push(UninstallAction::RemoveManagedStoreIfExclusive);
         }
         RecordedAssetState::PreExisting => {
             actions.push(UninstallAction::RemoveUserRoots);
-            if matches!(manifest.system, System::X8664Linux | System::Aarch64Linux) {
-                linux_terminal_vendor = true;
+            if determinate_system {
+                terminal_vendor = true;
             } else {
                 actions.push(UninstallAction::RemoveManagedRuntimePreservingStore);
             }
@@ -532,7 +547,7 @@ pub fn plan_uninstall(manifest: &UninstallManifest) -> Result<UninstallPlan, Uni
         );
     }
     actions.push(UninstallAction::VerifyNoPrivilegedResidue);
-    if linux_terminal_vendor {
+    if terminal_vendor {
         actions.push(UninstallAction::ExecDeterminateUninstall);
     }
 
@@ -631,8 +646,11 @@ pub fn execute_uninstall(
 
     let mut cleanup_failed = false;
     let mut residue_failed = false;
-    let linux_terminal_vendor = matches!(plan.system, System::X8664Linux | System::Aarch64Linux)
-        && plan.actions.last() == Some(&UninstallAction::ExecDeterminateUninstall);
+    let terminal_vendor = matches!(
+        plan.system,
+        System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin
+    ) && plan.actions.last()
+        == Some(&UninstallAction::ExecDeterminateUninstall);
     for action in rest {
         if cleanup_failed
             && matches!(
@@ -645,7 +663,7 @@ pub fn execute_uninstall(
         {
             continue;
         }
-        if linux_terminal_vendor
+        if terminal_vendor
             && *action == UninstallAction::ExecDeterminateUninstall
             && (cleanup_failed || residue_failed)
         {
@@ -702,8 +720,8 @@ fn platform_assets(system: System) -> Vec<PlatformAsset> {
                 target: asset.path_or_name(),
             })
             .collect(),
-        System::X8664Darwin | System::Aarch64Darwin => macos_install_assets()
-            .iter()
+        System::X8664Darwin => Vec::new(),
+        System::Aarch64Darwin => macos_product_install_assets()
             .map(|asset| PlatformAsset {
                 id: asset.id(),
                 kind: match asset.kind() {
@@ -779,10 +797,19 @@ mod tests {
         let assets = platform_assets(system)
             .into_iter()
             .map(|asset| {
-                let record = RecordedAsset::new(asset.id, state)?;
+                let record = RecordedAsset::new(
+                    asset.id,
+                    if system == System::Aarch64Darwin && asset.id == "nix-root" {
+                        RecordedAssetState::PreExisting
+                    } else {
+                        state
+                    },
+                )?;
                 Ok(
-                    if matches!(system, System::X8664Linux | System::Aarch64Linux)
-                        && asset.kind == UninstallAssetKind::File
+                    if matches!(
+                        system,
+                        System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin
+                    ) && asset.kind == UninstallAssetKind::File
                         && asset.id != "uninstall-manifest"
                     {
                         record.with_content_digest(Digest::from_bytes([9; 32]))
@@ -987,7 +1014,11 @@ mod tests {
 
     #[test]
     fn dry_run_is_deterministic_closed_and_non_mutating() -> Result<(), UninstallError> {
-        for system in System::ALL {
+        for system in [
+            System::X8664Linux,
+            System::Aarch64Linux,
+            System::Aarch64Darwin,
+        ] {
             let manifest = manifest(system, RecordedAssetState::Created)?;
             let first = plan_uninstall(&manifest)?;
             let second = plan_uninstall(&manifest)?;
@@ -998,7 +1029,11 @@ mod tests {
             );
             assert_eq!(
                 first.actions().last(),
-                Some(&UninstallAction::VerifyNoPrivilegedResidue)
+                Some(if system == System::Aarch64Darwin {
+                    &UninstallAction::ExecDeterminateUninstall
+                } else {
+                    &UninstallAction::VerifyNoPrivilegedResidue
+                })
             );
             if first.actions().iter().any(|action| {
                 matches!(
@@ -1031,32 +1066,36 @@ mod tests {
                     assert!(receipt < parent);
                 }
             }
-            assert!(
-                first
-                    .actions()
-                    .contains(&UninstallAction::RemoveManagedStoreIfExclusive)
-            );
-            assert!(first.actions().iter().any(|action| matches!(
-                action,
-                UninstallAction::RemoveAsset { target: "/nix", .. }
-            )));
+            if system == System::Aarch64Darwin {
+                assert!(first.actions().contains(&UninstallAction::RemoveUserRoots));
+                assert!(!first.actions().iter().any(|action| matches!(
+                    action,
+                    UninstallAction::RemoveAsset { target: "/nix", .. }
+                )));
+            } else {
+                assert!(
+                    first
+                        .actions()
+                        .contains(&UninstallAction::RemoveManagedStoreIfExclusive)
+                );
+                assert!(first.actions().iter().any(|action| matches!(
+                    action,
+                    UninstallAction::RemoveAsset { target: "/nix", .. }
+                )));
+            }
         }
         Ok(())
     }
 
     #[test]
-    fn preexisting_assets_are_never_removal_targets() -> Result<(), UninstallError> {
-        let manifest = manifest(System::Aarch64Darwin, RecordedAssetState::PreExisting)?;
+    fn preexisting_base_nix_is_never_a_product_removal_target() -> Result<(), UninstallError> {
+        let manifest = manifest(System::Aarch64Darwin, RecordedAssetState::Created)?;
         let plan = plan_uninstall(&manifest)?;
         assert!(
-            !plan
-                .actions()
-                .iter()
-                .any(|action| matches!(action, UninstallAction::RemoveAsset { .. }))
-        );
-        assert!(
-            plan.actions()
-                .contains(&UninstallAction::RemoveManagedRuntimePreservingStore)
+            !plan.actions().iter().any(|action| matches!(
+                action,
+                UninstallAction::RemoveAsset { target: "/nix", .. }
+            ))
         );
         assert!(!plan.actions().contains(&UninstallAction::CollectGarbage));
         assert!(
@@ -1065,14 +1104,8 @@ mod tests {
                 .contains(&UninstallAction::RemoveManagedStoreIfExclusive)
         );
         assert_eq!(
-            plan.actions(),
-            [
-                UninstallAction::StopServices,
-                UninstallAction::RemoveUserRoots,
-                UninstallAction::RemoveManagedRuntimePreservingStore,
-                UninstallAction::RemoveRegisteredUserState,
-                UninstallAction::VerifyNoPrivilegedResidue,
-            ]
+            plan.actions().last(),
+            Some(&UninstallAction::ExecDeterminateUninstall)
         );
         Ok(())
     }
@@ -1120,12 +1153,18 @@ mod tests {
                 .ok_or_else(UninstallError::backend_failure)
         };
         let broker = position("broker-user")?;
-        assert!(position("uninstall-manifest")? < broker);
-        assert!(position("uninstall-root")? < broker);
-        assert!(position("product-root")? < broker);
-        assert!(position("build-user-32")? < broker);
+        assert!(broker < position("uninstall-manifest")?);
+        assert!(position("uninstall-manifest")? < position("uninstall-root")?);
+        assert!(position("uninstall-root")? < position("product-root")?);
         assert!(broker < position("broker-group")?);
-        assert!(broker < position("build-group")?);
+        assert!(!plan.actions().iter().any(|action| matches!(
+            action,
+            UninstallAction::RemoveAsset { id, .. } if id.starts_with("build-")
+        )));
+        assert_eq!(
+            plan.actions().last(),
+            Some(&UninstallAction::ExecDeterminateUninstall)
+        );
         Ok(())
     }
 
@@ -1201,59 +1240,66 @@ mod tests {
     }
 
     #[test]
-    fn linux_product_cleanup_failure_never_dispatches_terminal_vendor() -> Result<(), UninstallError>
-    {
-        let manifest = linux_determinate_manifest()?;
-        let plan = plan_uninstall(&manifest)?;
-        let failed = plan
-            .actions()
-            .iter()
-            .copied()
-            .find(|action| matches!(action, UninstallAction::RemoveAsset { .. }))
-            .ok_or_else(UninstallError::backend_failure)?;
-        let mut backend = FakeBackend {
-            fail: Some(failed),
-            ..FakeBackend::default()
-        };
+    fn product_cleanup_failure_never_dispatches_terminal_vendor() -> Result<(), UninstallError> {
+        for manifest in [
+            linux_determinate_manifest()?,
+            manifest(System::Aarch64Darwin, RecordedAssetState::Created)?,
+        ] {
+            let plan = plan_uninstall(&manifest)?;
+            let failed = plan
+                .actions()
+                .iter()
+                .copied()
+                .find(|action| matches!(action, UninstallAction::RemoveAsset { .. }))
+                .ok_or_else(UninstallError::backend_failure)?;
+            let mut backend = FakeBackend {
+                fail: Some(failed),
+                ..FakeBackend::default()
+            };
 
-        assert_eq!(
-            error_code(execute_uninstall(&manifest, &plan, &mut backend)),
-            Some(UninstallErrorCode::CleanupIncomplete)
-        );
-        assert!(backend.calls.contains(&"VerifyNoPrivilegedResidue".into()));
-        assert!(
-            !backend
-                .calls
-                .contains(&format!("{:?}", UninstallAction::ExecDeterminateUninstall))
-        );
+            assert_eq!(
+                error_code(execute_uninstall(&manifest, &plan, &mut backend)),
+                Some(UninstallErrorCode::CleanupIncomplete)
+            );
+            assert!(backend.calls.contains(&"VerifyNoPrivilegedResidue".into()));
+            assert!(
+                !backend
+                    .calls
+                    .contains(&format!("{:?}", UninstallAction::ExecDeterminateUninstall))
+            );
+        }
         Ok(())
     }
 
     #[test]
-    fn linux_residue_failure_never_dispatches_terminal_vendor() -> Result<(), UninstallError> {
-        let manifest = linux_determinate_manifest()?;
-        let plan = plan_uninstall(&manifest)?;
-        let mut backend = FakeBackend {
-            fail: Some(UninstallAction::VerifyNoPrivilegedResidue),
-            ..FakeBackend::default()
-        };
+    fn residue_failure_never_dispatches_terminal_vendor() -> Result<(), UninstallError> {
+        for manifest in [
+            linux_determinate_manifest()?,
+            manifest(System::Aarch64Darwin, RecordedAssetState::Created)?,
+        ] {
+            let plan = plan_uninstall(&manifest)?;
+            let mut backend = FakeBackend {
+                fail: Some(UninstallAction::VerifyNoPrivilegedResidue),
+                ..FakeBackend::default()
+            };
 
-        assert_eq!(
-            error_code(execute_uninstall(&manifest, &plan, &mut backend)),
-            Some(UninstallErrorCode::ResidueRemaining)
-        );
-        assert!(backend.calls.contains(&"VerifyNoPrivilegedResidue".into()));
-        assert!(
-            !backend
-                .calls
-                .contains(&format!("{:?}", UninstallAction::ExecDeterminateUninstall))
-        );
+            assert_eq!(
+                error_code(execute_uninstall(&manifest, &plan, &mut backend)),
+                Some(UninstallErrorCode::ResidueRemaining)
+            );
+            assert!(backend.calls.contains(&"VerifyNoPrivilegedResidue".into()));
+            assert!(
+                !backend
+                    .calls
+                    .contains(&format!("{:?}", UninstallAction::ExecDeterminateUninstall))
+            );
+        }
         Ok(())
     }
 
     #[test]
     fn residue_failure_has_priority_and_success_is_total() -> Result<(), UninstallError> {
-        let manifest = manifest(System::X8664Darwin, RecordedAssetState::Created)?;
+        let manifest = manifest(System::Aarch64Darwin, RecordedAssetState::Created)?;
         let plan = plan_uninstall(&manifest)?;
         let mut residue = FakeBackend {
             fail: Some(UninstallAction::VerifyNoPrivilegedResidue),

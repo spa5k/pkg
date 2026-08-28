@@ -140,7 +140,12 @@ fn run_uninstall(cli: &Cli) -> ProcessExitCode {
 }
 
 fn validate_live_uninstall_output(cli: &Cli) -> Result<(), CommandError> {
-    if cfg!(target_os = "linux") && !cli.dry_run() && (cli.json() || cli.jsonl()) {
+    if cfg!(any(
+        target_os = "linux",
+        all(target_os = "macos", target_arch = "aarch64")
+    )) && !cli.dry_run()
+        && (cli.json() || cli.jsonl())
+    {
         return Err(CommandError::new(
             ExitCode::Config,
             "live uninstall requires plain output",

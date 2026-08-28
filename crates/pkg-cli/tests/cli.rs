@@ -208,7 +208,7 @@ fn semantic_usage_failure_uses_the_selected_machine_format() {
     assert_eq!(value["error"]["symbol"], "USAGE");
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", all(target_os = "macos", target_arch = "aarch64")))]
 #[test]
 fn live_structured_uninstall_refuses_before_privilege_or_mutation() {
     for flag in ["--json", "--jsonl"] {
