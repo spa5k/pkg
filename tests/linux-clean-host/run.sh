@@ -267,6 +267,75 @@ capture_failure() {
             >/dev/null 2>&1 || true
         copy_container_file "$container" /run/pkg-failure-capture/stdout \
             "$failure/broker-acquisition.txt" 4096 || true
+        docker exec "$container" python3 /usr/local/libexec/pkg_bounded_capture.py 1048576 \
+            /run/pkg-failure-capture/trust/status.txt \
+            /run/pkg-failure-capture/trust/stdout \
+            /run/pkg-failure-capture/trust/stderr -- \
+            timeout --signal=TERM --kill-after=5s 300s \
+            runuser --user pkg-nix-broker -- env -i \
+                HOME=/var/lib/pkg/broker-home \
+                TMPDIR=/var/lib/pkg/broker-home/tmp \
+                NIX_USER_CONF_FILES= \
+                PATH=/usr/bin:/bin \
+                /bin/sh -eu -c '
+                exec 2>/dev/null
+                cd /var/lib/pkg/broker-home
+                nix=/nix/var/nix/profiles/default/bin/nix
+                nix_cmd() {
+                    "$nix" --extra-experimental-features "nix-command flakes" \
+                        --option allow-import-from-derivation false "$@"
+                }
+                fail() {
+                    printf "diagnostic_status=failed\n"
+                    exit 1
+                }
+                valid_store_path() {
+                    printf "%s\n" "$1" | grep -Eq \
+                        "^/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[-A-Za-z0-9+._?=]+$"
+                }
+
+                root_count=0
+                for candidate in /nix/store/*-ripgrep-15.1.0; do
+                    test -d "$candidate" || continue
+                    valid_store_path "$candidate" || fail
+                    root=$candidate
+                    root_count=$((root_count + 1))
+                    test "$root_count" -lt 4096 || break
+                done
+                case "$root_count" in
+                    0) printf "root_status=absent\n"; exit 0 ;;
+                    1) printf "root_status=present\n" ;;
+                    *) printf "root_status=ambiguous count=%s\n" "$root_count"; exit 0 ;;
+                esac
+                set -f
+                closure=$(nix_cmd path-info --recursive "$root" 2>/dev/null) || fail
+                set -- $closure
+                test "$#" -gt 0 && test "$#" -le 4096 || fail
+                for path do
+                    valid_store_path "$path" || fail
+                done
+
+                printf "require-sigs="
+                nix_cmd config show require-sigs 2>/dev/null || fail
+                printf "trusted-public-keys="
+                nix_cmd config show trusted-public-keys 2>/dev/null || fail
+                nix_cmd path-info --json --json-format 2 --recursive "$root" \
+                    2>/dev/null || fail
+                set -- $closure
+                for path do
+                    if nix_cmd store verify --no-contents "$path" \
+                        >/dev/null 2>&1; then
+                        status=0
+                    else
+                        status=$?
+                    fi
+                    printf "status=%s path=%s\n" "$status" "$path"
+                done
+            ' >/dev/null 2>&1 || true
+        copy_container_file "$container" /run/pkg-failure-capture/trust/status.txt \
+            "$failure/trust-diagnostic-status.txt" 4096 || true
+        copy_container_file "$container" /run/pkg-failure-capture/trust/stdout \
+            "$failure/trust-diagnostic.txt" 1048576 || true
         bootstrap=$failure/bootstrap
         mkdir -m 0700 "$bootstrap"
         copy_container_file "$container" /run/pkg-bootstrap-capture/status.txt \

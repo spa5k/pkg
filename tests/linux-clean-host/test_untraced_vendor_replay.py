@@ -70,6 +70,7 @@ with tempfile.TemporaryDirectory() as directory:
 
 run = (HERE / "run.sh").read_text()
 dockerfile = (HERE / "Dockerfile").read_text()
+subprocess.run(["sh", "-n", str(HERE / "run.sh")], check=True)
 capture = run.split("capture_failure() {", 1)[1].split("\ncleanup() {", 1)[0]
 replay = run.split("capture_vendor_replay() {", 1)[1].split("\ncapture_failure() {", 1)[0]
 for snapshot in (
@@ -144,6 +145,29 @@ assert "adapter_failure|unapproved_signature|integrity_failure|trust_failure|met
 assert "validation_failure|timeout|unavailable|trust_failure|integrity_failure" in capture
 assert "permission_denied|operation_failed" in capture
 assert capture.index("pkg_bounded_capture.py 4096") < capture.index("broker-acquisition.txt")
+trust = capture.split('"$failure/broker-acquisition.txt" 4096 || true', 1)[1].split("bootstrap=$failure/bootstrap", 1)[0]
+trust_shell = trust.split("/bin/sh -eu -c '\n", 1)[1].split("\n            ' >/dev/null", 1)[0]
+subprocess.run(["sh", "-n"], input=trust_shell, text=True, check=True)
+assert "pkg_bounded_capture.py 1048576" in trust
+assert "runuser --user pkg-nix-broker -- env -i" in trust
+for variable in ("HOME=/var/lib/pkg/broker-home", "TMPDIR=/var/lib/pkg/broker-home/tmp", "NIX_USER_CONF_FILES=", "PATH=/usr/bin:/bin"):
+    assert variable in trust
+for variable in ("NIX_CONFIG", "NIX_DAEMON_SOCKET_PATH", "NIX_REMOTE", "NIX_STATE_DIR"):
+    assert variable not in trust
+assert "/nix/var/nix/profiles/default/bin/nix" in trust
+assert "/nix/store/*-ripgrep-15.1.0" in trust
+assert '0) printf "root_status=absent\\n"; exit 0' in trust
+assert '1) printf "root_status=present\\n"' in trust
+assert 'printf "root_status=ambiguous count=%s\\n" "$root_count"; exit 0' in trust
+assert "path-info --json --json-format 2 --recursive" in trust
+assert 'nix_cmd store verify --no-contents "$path"' in trust
+verify = trust.split("nix_cmd store verify", 1)[1].split('printf "status=', 1)[0]
+assert "--recursive" not in verify and ">/dev/null 2>&1" in verify
+assert 'printf "status=%s path=%s\\n" "$status" "$path"' in trust
+assert "config show require-sigs" in trust and "config show trusted-public-keys" in trust
+assert "exec 2>/dev/null" in trust
+assert "trust-diagnostic-status.txt" in trust and "trust-diagnostic.txt" in trust
+assert 'copy_container_file "$container" /run/pkg-failure-capture/trust/stderr' not in capture
 assert "def verified_read(path, limit, expected_uid=0, expected_gid=0)" in capture_source
 for metadata_check in (
     "stat.S_ISREG(metadata.st_mode)", "metadata.st_uid != expected_uid",
