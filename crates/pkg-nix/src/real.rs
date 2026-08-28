@@ -752,6 +752,21 @@ impl RealNixAdapter {
         Ok(outcome.stdout)
     }
 
+    fn copy_cache_signatures(&self, paths: &[&StorePath]) -> Result<(), NixAdapterError> {
+        let mut args = base_args();
+        args.extend(os_args([
+            "store",
+            "copy-sigs",
+            "--substituter",
+            CACHE_URL,
+            "--recursive",
+        ]));
+        args.extend(paths.iter().map(|path| OsString::from(path.as_str())));
+        self.require_success(MethodKind::Substitute, args, BUILD_TIMEOUT)
+            .map(|_| ())
+            .map_err(|_| NixAdapterError::TrustFailure)
+    }
+
     fn raw_path_info(
         &self,
         path: &StorePath,
@@ -1274,6 +1289,7 @@ impl NixAdapter for RealNixAdapter {
         copy.push(path.as_str().into());
         self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)
             .map_err(|_| NixAdapterError::TrustFailure)?;
+        self.copy_cache_signatures(&[path])?;
         let local = self.raw_path_info(path, false, false)?;
         let local_entry = root_path_info(&local, path)?;
         if local_entry.nar_hash != remote_entry.nar_hash {
@@ -1350,6 +1366,7 @@ impl NixAdapter for RealNixAdapter {
                 );
                 self.require_success(MethodKind::Substitute, copy, BUILD_TIMEOUT)
                     .map_err(|_| NixAdapterError::TrustFailure)?;
+                self.copy_cache_signatures(&authenticated_paths)?;
                 let local = self.raw_path_infos(&authenticated_paths, false, false)?;
                 for (index, path, remote_hash, nar_hash, signatures) in authenticated {
                     let local_entry = root_path_info(&local, path)?;
@@ -3717,6 +3734,56 @@ mod tests {
     }
 
     #[test]
+    fn substitution_copies_signatures_before_local_metadata_and_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = StorePath::new("/nix/store/22222222222222222222222222222222-first")?;
+        let path_info = br#"{"info":{"22222222222222222222222222222222-first":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/first.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
+        for (copy_sigs, succeeds) in [
+            (Ok(success(Vec::new())), true),
+            (Ok(failure(2)), false),
+            (Err(NixAdapterError::Unavailable), false),
+        ] {
+            let executor = Scripted::with_results(vec![
+                Ok(success(Vec::new())),
+                Ok(success(path_info.as_slice())),
+                Ok(success(Vec::new())),
+                copy_sigs,
+                Ok(success(path_info.as_slice())),
+            ]);
+            let calls = Arc::clone(&executor.calls);
+
+            let result = RealNixAdapter::scripted(executor).substitute(&path);
+
+            let calls = calls.lock().map_err(|_| "poisoned call log")?;
+            assert!(calls[2].iter().any(|argument| argument == "copy"));
+            assert_eq!(
+                &calls[3][5..],
+                &os_args([
+                    "store",
+                    "copy-sigs",
+                    "--substituter",
+                    CACHE_URL,
+                    "--recursive",
+                    path.as_str(),
+                ])
+            );
+            if succeeds {
+                assert_eq!(result?.outcome(), SubstituteOutcome::Fetched);
+                assert_eq!(calls.len(), 5);
+                assert!(calls[4].iter().any(|argument| argument == "path-info"));
+                assert!(!calls[4].iter().any(|argument| argument == "--store"));
+            } else {
+                assert_eq!(
+                    result.expect_err("copy-sigs failure must refuse").code(),
+                    crate::NixAdapterErrorCode::TrustFailure
+                );
+                assert_eq!(calls.len(), 4);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn substitution_batch_uses_one_remote_query_and_copy() -> Result<(), Box<dyn std::error::Error>>
     {
         let first = StorePath::new("/nix/store/22222222222222222222222222222222-first")?;
@@ -3725,6 +3792,7 @@ mod tests {
         let executor = Scripted::new(vec![
             success(Vec::new()),
             success(path_info.as_slice()),
+            success(Vec::new()),
             success(Vec::new()),
             success(path_info.as_slice()),
         ]);
@@ -3740,14 +3808,26 @@ mod tests {
                 .all(|report| report.outcome() == SubstituteOutcome::Fetched)
         );
         let calls = calls.lock().map_err(|_| "poisoned call log")?;
-        assert_eq!(calls.len(), 4);
-        for call in [&calls[1], &calls[2], &calls[3]] {
+        assert_eq!(calls.len(), 5);
+        for call in [&calls[1], &calls[2], &calls[3], &calls[4]] {
             assert!(call.contains(&OsString::from(first.as_str())));
             assert!(call.contains(&OsString::from(second.as_str())));
         }
         assert!(calls[1].iter().any(|argument| argument == "path-info"));
         assert!(calls[2].iter().any(|argument| argument == "copy"));
-        assert!(!calls[3].iter().any(|argument| argument == "--store"));
+        assert_eq!(
+            &calls[3][5..],
+            &os_args([
+                "store",
+                "copy-sigs",
+                "--substituter",
+                CACHE_URL,
+                "--recursive",
+                first.as_str(),
+                second.as_str(),
+            ])
+        );
+        assert!(!calls[4].iter().any(|argument| argument == "--store"));
         Ok(())
     }
 
@@ -3764,6 +3844,7 @@ mod tests {
             success(first_only.as_slice()),
             success(second_only.as_slice()),
             success(Vec::new()),
+            success(Vec::new()),
             success(both.as_slice()),
         ]);
         let calls = Arc::clone(&executor.calls);
@@ -3777,7 +3858,7 @@ mod tests {
                 .all(|report| report.outcome() == SubstituteOutcome::Fetched)
         );
         let calls = calls.lock().map_err(|_| "poisoned call log")?;
-        assert_eq!(calls.len(), 5);
+        assert_eq!(calls.len(), 6);
         assert!(calls[2].contains(&OsString::from(second.as_str())));
         assert!(!calls[2].contains(&OsString::from(first.as_str())));
         Ok(())
