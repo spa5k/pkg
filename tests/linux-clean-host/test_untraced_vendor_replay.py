@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+import importlib.util
+import json
+import os
 import stat
 import subprocess
 import sys
 import tempfile
-import importlib.util
-import os
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -198,6 +199,75 @@ raise SystemExit(79)
 run = (HERE / "run.sh").read_text()
 dockerfile = (HERE / "Dockerfile").read_text()
 subprocess.run(["sh", "-n", str(HERE / "run.sh")], check=True)
+snapshot = run.split("snapshot_uninstall_state() {", 1)[1].split("\nPY\n}", 1)[0]
+snapshot_source = snapshot.split("<<'PY'\n", 1)[1]
+
+
+def replace_snapshot_list(source, name, values):
+    start = source.index(f"{name} = [")
+    end = source.index("]", start) + 1
+    return source[:start] + f"{name} = {values!r}" + source[end:]
+
+
+with tempfile.TemporaryDirectory() as directory:
+    fixture = Path(directory)
+    required = fixture / "required"
+    required.write_text("required")
+    expected_absent = fixture / "journal"
+    fixture_source = snapshot_source
+    fixture_source = replace_snapshot_list(fixture_source, "paths", [str(required)])
+    fixture_source = replace_snapshot_list(
+        fixture_source, "expected_absent_paths", [str(expected_absent)]
+    )
+    fixture_source = replace_snapshot_list(fixture_source, "units", [])
+
+    def run_snapshot_fixture():
+        return subprocess.run(
+            [sys.executable, "-c", fixture_source],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    result = run_snapshot_fixture()
+    assert result.returncode == 0
+    assert str(required) in json.loads(result.stdout)["paths"]
+
+    expected_absent.mkdir()
+    result = run_snapshot_fixture()
+    assert result.returncode != 0
+    assert "expected absent uninstall snapshot path" in result.stderr
+    expected_absent.rmdir()
+
+    expected_absent.write_text("stale")
+    result = run_snapshot_fixture()
+    assert result.returncode != 0
+    assert "expected absent uninstall snapshot path" in result.stderr
+    expected_absent.unlink()
+
+    expected_absent.symlink_to(fixture / "missing-target")
+    result = run_snapshot_fixture()
+    assert result.returncode != 0
+    assert "expected absent uninstall snapshot path" in result.stderr
+    expected_absent.unlink()
+
+    required.unlink()
+    result = run_snapshot_fixture()
+    assert result.returncode != 0
+    assert "FileNotFoundError" in result.stderr
+
+assert "/var/lib/pkg-install-journal/transaction-v1.json" not in snapshot
+assert 'expected_absent_paths = ["/var/lib/pkg-install-journal"]' in snapshot
+assert "os.path.lexists(path)" in snapshot
+assert snapshot.index("for path in expected_absent_paths:") < snapshot.index("state = {")
+assert "except FileNotFoundError" not in snapshot
+structured_uninstall = run.split("prove_structured_uninstall_refusal() {", 1)[1].split(
+    "\n}", 1
+)[0]
+assert structured_uninstall.count("snapshot_uninstall_state") == 2
+assert 'cmp "$before" "$after"' in structured_uninstall
+assert 'prove_structured_uninstall_refusal json "$1"' in run
+assert 'prove_structured_uninstall_refusal jsonl "$1"' in run
 capture = run.split("capture_failure() {", 1)[1].split("\ncleanup() {", 1)[0]
 replay = run.split("capture_vendor_replay() {", 1)[1].split("\ncapture_failure() {", 1)[0]
 for snapshot in (

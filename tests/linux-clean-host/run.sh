@@ -539,7 +539,6 @@ import sys
 
 paths = [
     "/var/lib/pkg-install/determinate-handoff-v1.json",
-    "/var/lib/pkg-install-journal/transaction-v1.json",
     "/run/pkg-install-handoff.lock",
     "/nix/nix-installer",
     "/nix/receipt.json",
@@ -551,6 +550,7 @@ paths = [
     "/run/pkg-helper/root-helper.sock",
     "/run/pkg/broker.sock",
 ]
+expected_absent_paths = ["/var/lib/pkg-install-journal"]
 units = [
     "nix-daemon.service",
     "nix-daemon.socket",
@@ -584,6 +584,10 @@ def path_state(path):
         value["target"] = os.readlink(path)
     return value
 
+
+for path in expected_absent_paths:
+    if os.path.lexists(path):
+        raise SystemExit(f"expected absent uninstall snapshot path exists: {path}")
 
 state = {"paths": {path: path_state(path) for path in paths}, "units": {}}
 for unit in units:
