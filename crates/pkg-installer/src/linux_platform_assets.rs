@@ -2,10 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use pkg_core::{
-    System,
-    state::{Digest, body_digest},
-};
+use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
@@ -71,6 +68,8 @@ pub struct LinuxPlatformAssetManager {
     filesystem: Option<LinuxFilesystemManager>,
     payloads: Option<LinuxReleasePayloads>,
     config: Option<AuthenticatedManagedNixConfig>,
+    #[cfg(test)]
+    authenticated_config_system_for_test: Option<System>,
     receipt_binding: Option<(System, Digest)>,
     intent: LinuxProductAssetIntent,
     installed_manifest: InstalledManifest,
@@ -119,6 +118,8 @@ impl LinuxPlatformAssetManager {
             filesystem: None,
             payloads: None,
             config: None,
+            #[cfg(test)]
+            authenticated_config_system_for_test: None,
             receipt_binding: None,
             intent,
             installed_manifest: InstalledManifest::Unloaded,
@@ -205,6 +206,7 @@ impl LinuxPlatformAssetManager {
                 filesystem: Some(filesystem),
                 payloads: Some(payloads),
                 config: None,
+                authenticated_config_system_for_test: Some(system),
                 receipt_binding: Some((system, release)),
                 intent: LinuxProductAssetIntent::InstallOrUpgrade,
                 installed_manifest: InstalledManifest::Unloaded,
@@ -556,11 +558,13 @@ impl LinuxPlatformAssetManager {
         let (system, digest) = self
             .receipt_binding
             .ok_or_else(InstallError::backend_failure)?;
-        if self
+        let config_system = self
             .config
             .as_ref()
-            .is_none_or(|config| config.system() != system)
-        {
+            .map(AuthenticatedManagedNixConfig::system);
+        #[cfg(test)]
+        let config_system = config_system.or(self.authenticated_config_system_for_test);
+        if config_system != Some(system) {
             return Err(InstallError::backend_failure());
         }
 
@@ -592,17 +596,10 @@ impl LinuxPlatformAssetManager {
             let records = self.current_records(Some(&existing))?;
             let manifest = UninstallManifest::new(system, digest, records)
                 .map_err(|_| InstallError::backend_failure())?;
-            let old_digest = body_digest(
-                &crate::encode_uninstall_manifest(&existing)
-                    .map_err(|_| InstallError::backend_failure())?,
-            );
             let filesystem = self.ensure_filesystem()?;
-            filesystem
-                .bind_uninstall_manifest(&manifest)
-                .map_err(|_| InstallError::backend_failure())?;
             let asset = uninstall_manifest_asset()?;
             let created = filesystem
-                .replace_owned_file(asset, Some(old_digest), false)
+                .replace_uninstall_manifest(asset, &existing, &manifest)
                 .map_err(|_| InstallError::backend_failure())?;
             if !created {
                 return Err(InstallError::backend_failure());
@@ -702,11 +699,29 @@ impl LinuxPlatformAssetManager {
                 .rollback_asset(asset)
                 .map_err(|_| InstallError::backend_failure())?;
         } else {
-            self.filesystem
+            let filesystem = self
+                .filesystem
                 .as_mut()
-                .ok_or_else(InstallError::backend_failure)?
-                .rollback_asset(asset)
-                .map_err(|_| InstallError::backend_failure())?;
+                .ok_or_else(InstallError::backend_failure)?;
+            if asset.id() == "uninstall-manifest"
+                && filesystem
+                    .replacement_backup_exists(asset)
+                    .map_err(|_| InstallError::backend_failure())?
+            {
+                filesystem
+                    .rollback_uninstall_manifest_replacement(asset)
+                    .map_err(|_| InstallError::backend_failure())?;
+                self.installed_manifest = InstalledManifest::Present(
+                    filesystem
+                        .existing_uninstall_manifest()
+                        .map_err(|_| InstallError::backend_failure())?
+                        .ok_or_else(InstallError::backend_failure)?,
+                );
+            } else {
+                filesystem
+                    .rollback_asset(asset)
+                    .map_err(|_| InstallError::backend_failure())?;
+            }
         }
         self.states.remove(asset.id());
         Ok(())
@@ -988,12 +1003,8 @@ impl LinuxPlatformAssetManager {
             self.ensure_filesystem()?
                 .bind_uninstall_manifest(&candidate)
                 .map_err(|_| InstallError::backend_failure())?;
-            let prior_digest = body_digest(
-                &crate::encode_uninstall_manifest(prior)
-                    .map_err(|_| InstallError::backend_failure())?,
-            );
             self.ensure_filesystem()?
-                .recover_owned_file(uninstall_manifest_asset()?, prior_digest)
+                .recover_uninstall_manifest_replacement(uninstall_manifest_asset()?, prior)
                 .map_err(|_| InstallError::backend_failure())?;
             self.installed_manifest = InstalledManifest::Present(prior.clone());
             return Ok(());
@@ -1015,12 +1026,8 @@ impl LinuxPlatformAssetManager {
             self.ensure_filesystem()?
                 .bind_uninstall_manifest(&current)
                 .map_err(|_| InstallError::backend_failure())?;
-            let prior_digest = body_digest(
-                &crate::encode_uninstall_manifest(&prior)
-                    .map_err(|_| InstallError::backend_failure())?,
-            );
             self.ensure_filesystem()?
-                .recover_owned_file(uninstall_manifest_asset()?, prior_digest)
+                .recover_uninstall_manifest_replacement(uninstall_manifest_asset()?, &prior)
                 .map_err(|_| InstallError::backend_failure())?;
             self.installed_manifest = InstalledManifest::Present(prior);
             return Ok(());
@@ -1226,6 +1233,8 @@ fn uninstall_manifest_asset() -> Result<LinuxInstallAsset, InstallError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkg_core::state::body_digest;
+    use std::os::unix::fs::PermissionsExt;
 
     fn manifest(
         system: System,
@@ -1270,6 +1279,61 @@ mod tests {
             .unwrap_or_else(|| unreachable!("test asset is in the closed set"))
     }
 
+    fn restart_fixture_filesystem(
+        fixture: &mut ExistingNonFilePreflightAssets,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let payloads = fixture
+            .manager
+            .payloads
+            .clone()
+            .ok_or_else(|| std::io::Error::other("test payloads are absent"))?;
+        let mut filesystem = LinuxFilesystemManager::for_existing_preflight_test(
+            fixture.temporary.path().to_path_buf(),
+            payloads,
+        );
+        filesystem.bind_config_bytes_for_test(b"test-nix-config");
+        fixture.manager.filesystem = Some(filesystem);
+        fixture.manager.installed_manifest = InstalledManifest::Unloaded;
+        Ok(())
+    }
+
+    fn assert_exact_prior_receipt_recovered(
+        fixture: &mut ExistingNonFilePreflightAssets,
+        prior: &UninstallManifest,
+        candidate: &UninstallManifest,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let receipt_asset = uninstall_manifest_asset()?;
+        assert_eq!(
+            fixture
+                .manager
+                .ensure_filesystem()?
+                .existing_uninstall_manifest()?,
+            Some(prior.clone())
+        );
+        assert_eq!(
+            fixture.manager.load_installed_manifest()?,
+            Some(prior.clone())
+        );
+        assert!(
+            !fixture
+                .manager
+                .ensure_filesystem()?
+                .replacement_backup_exists(receipt_asset)?
+        );
+        fixture
+            .manager
+            .ensure_filesystem()?
+            .bind_uninstall_manifest(prior)?;
+        assert!(
+            fixture
+                .manager
+                .ensure_filesystem()?
+                .bind_uninstall_manifest(candidate)
+                .is_err()
+        );
+        Ok(())
+    }
+
     #[test]
     fn exact_release_classification_accepts_only_same_undrifted_assets()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1299,6 +1363,152 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn offline_upgrade_publishes_and_finalizes_the_candidate_receipt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let system = System::X8664Linux;
+        let prior = Digest::from_bytes([0xb1; 32]);
+        let candidate = Digest::from_bytes([0xb2; 32]);
+        let mut fixture = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            ManagedGroupBindings::new(30_000, 30_001)?,
+            system,
+            prior,
+            "none",
+        )?;
+        fixture.manager.receipt_binding = Some((system, candidate));
+
+        fixture.manager.preflight_existing_non_files()?;
+        assert!(fixture.manager.publish_uninstall_manifest()?);
+        let receipt_asset = uninstall_manifest_asset()?;
+        fixture.manager.finalize_replacement_backups(|| Ok(()))?;
+
+        let receipt = fixture
+            .manager
+            .ensure_filesystem()?
+            .existing_uninstall_manifest()?
+            .ok_or_else(|| std::io::Error::other("candidate receipt is absent"))?;
+        assert_eq!(receipt.ownership_manifest_digest(), candidate);
+        assert!(
+            !fixture
+                .manager
+                .ensure_filesystem()?
+                .replacement_backup_exists(receipt_asset)?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_offline_upgrade_rollback_restores_the_exact_prior_receipt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let system = System::X8664Linux;
+        let prior = Digest::from_bytes([0xc1; 32]);
+        let candidate = Digest::from_bytes([0xc2; 32]);
+        let mut fixture = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            ManagedGroupBindings::new(30_000, 30_001)?,
+            system,
+            prior,
+            "none",
+        )?;
+        fixture.manager.receipt_binding = Some((system, candidate));
+
+        fixture.manager.preflight_existing_non_files()?;
+        let prior_receipt = fixture
+            .manager
+            .load_installed_manifest()?
+            .ok_or_else(|| std::io::Error::other("prior receipt is absent"))?;
+        assert!(fixture.manager.publish_uninstall_manifest()?);
+        let receipt_asset = uninstall_manifest_asset()?;
+        fixture.manager.rollback_asset(receipt_asset)?;
+
+        let receipt = fixture
+            .manager
+            .ensure_filesystem()?
+            .existing_uninstall_manifest()?
+            .ok_or_else(|| std::io::Error::other("prior receipt is absent"))?;
+        assert_eq!(receipt.ownership_manifest_digest(), prior);
+        assert!(
+            !fixture
+                .manager
+                .ensure_filesystem()?
+                .replacement_backup_exists(receipt_asset)?
+        );
+        fixture
+            .manager
+            .ensure_filesystem()?
+            .bind_uninstall_manifest(&prior_receipt)?;
+        assert_eq!(
+            fixture.manager.load_installed_manifest()?,
+            Some(prior_receipt)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recovery_before_receipt_exchange_restores_the_prior_disk_cache_and_binding()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let system = System::X8664Linux;
+        let prior_release = Digest::from_bytes([0xd1; 32]);
+        let candidate_release = Digest::from_bytes([0xd2; 32]);
+        let mut fixture = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            ManagedGroupBindings::new(30_000, 30_001)?,
+            system,
+            prior_release,
+            "none",
+        )?;
+        fixture.manager.receipt_binding = Some((system, candidate_release));
+        fixture.manager.preflight_existing_non_files()?;
+        let prior = fixture
+            .manager
+            .load_installed_manifest()?
+            .ok_or_else(|| std::io::Error::other("prior receipt is absent"))?;
+        let candidate = UninstallManifest::new(
+            system,
+            candidate_release,
+            fixture.manager.current_records(Some(&prior))?,
+        )?;
+        let staging = fixture
+            .temporary
+            .path()
+            .join("opt/pkg/uninstall/.pkg-install-rollback-uninstall-manifest");
+        std::fs::write(&staging, crate::encode_uninstall_manifest(&candidate)?)?;
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o600))?;
+
+        restart_fixture_filesystem(&mut fixture)?;
+        fixture.manager.recover_asset(uninstall_manifest_asset()?)?;
+
+        assert_exact_prior_receipt_recovered(&mut fixture, &prior, &candidate)
+    }
+
+    #[test]
+    fn recovery_after_receipt_exchange_restores_the_prior_disk_cache_and_binding()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let system = System::X8664Linux;
+        let prior_release = Digest::from_bytes([0xe1; 32]);
+        let candidate_release = Digest::from_bytes([0xe2; 32]);
+        let mut fixture = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            ManagedGroupBindings::new(30_000, 30_001)?,
+            system,
+            prior_release,
+            "none",
+        )?;
+        fixture.manager.receipt_binding = Some((system, candidate_release));
+        fixture.manager.preflight_existing_non_files()?;
+        let prior = fixture
+            .manager
+            .load_installed_manifest()?
+            .ok_or_else(|| std::io::Error::other("prior receipt is absent"))?;
+        assert!(fixture.manager.publish_uninstall_manifest()?);
+        let candidate = fixture
+            .manager
+            .load_installed_manifest()?
+            .ok_or_else(|| std::io::Error::other("candidate receipt is absent"))?;
+
+        restart_fixture_filesystem(&mut fixture)?;
+        fixture.manager.recover_asset(uninstall_manifest_asset()?)?;
+
+        assert_exact_prior_receipt_recovered(&mut fixture, &prior, &candidate)
+    }
+
     fn manager_before_broker(
         groups: ManagedGroupBindings,
         payloads: LinuxReleasePayloads,
@@ -1317,6 +1527,7 @@ mod tests {
                 filesystem: None,
                 payloads: Some(payloads),
                 config: None,
+                authenticated_config_system_for_test: None,
                 receipt_binding: None,
                 intent: LinuxProductAssetIntent::InstallOrUpgrade,
                 installed_manifest: InstalledManifest::Unloaded,

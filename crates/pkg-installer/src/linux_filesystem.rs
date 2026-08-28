@@ -490,6 +490,109 @@ impl LinuxFilesystemManager {
         Ok(())
     }
 
+    /// Replaces the exact bound prior receipt with one canonical candidate receipt.
+    pub(crate) fn replace_uninstall_manifest(
+        &mut self,
+        asset: LinuxInstallAsset,
+        prior: &UninstallManifest,
+        candidate: &UninstallManifest,
+    ) -> Result<bool, LinuxFilesystemError> {
+        let prior_bytes = encode_uninstall_manifest(prior)
+            .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::MissingPayload))?;
+        let candidate_bytes = encode_uninstall_manifest(candidate)
+            .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::MissingPayload))?;
+        if asset.id() != "uninstall-manifest"
+            || asset.kind() != LinuxAssetKind::File
+            || prior.system() != candidate.system()
+            || prior.ownership_manifest_digest() == candidate.ownership_manifest_digest()
+            || self.uninstall_manifest.as_deref() != Some(prior_bytes.as_slice())
+        {
+            return Err(LinuxFilesystemError::new(
+                LinuxFilesystemErrorCode::Conflict,
+            ));
+        }
+        let replacement = self.replace_owned_file_with_payload(
+            asset,
+            &candidate_bytes,
+            Some(body_digest(&prior_bytes)),
+        );
+        let binding =
+            self.reconcile_uninstall_manifest_binding(asset, &prior_bytes, &candidate_bytes);
+        match (replacement, binding) {
+            (Ok(changed), Ok(())) => Ok(changed),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        }
+    }
+
+    /// Rolls back one attempted receipt replacement and restores its exact binding.
+    pub(crate) fn rollback_uninstall_manifest_replacement(
+        &mut self,
+        asset: LinuxInstallAsset,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.id() != "uninstall-manifest" || asset.kind() != LinuxAssetKind::File {
+            return Err(unsupported());
+        }
+        let candidate_bytes = self
+            .uninstall_manifest
+            .as_ref()
+            .ok_or_else(|| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))?
+            .to_vec();
+        let candidate = crate::decode_uninstall_manifest(&candidate_bytes)
+            .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))?;
+        let prior = self
+            .replacement_uninstall_manifest()?
+            .ok_or_else(|| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))?;
+        let prior_bytes = encode_uninstall_manifest(&prior)
+            .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::MissingPayload))?;
+        if prior.system() != candidate.system()
+            || prior.ownership_manifest_digest() == candidate.ownership_manifest_digest()
+        {
+            return Err(LinuxFilesystemError::new(
+                LinuxFilesystemErrorCode::Conflict,
+            ));
+        }
+        let rollback = self.rollback_asset(asset);
+        let binding =
+            self.reconcile_uninstall_manifest_binding(asset, &prior_bytes, &candidate_bytes);
+        match (rollback, binding) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), _) | (Ok(()), Err(error)) => Err(error),
+        }
+    }
+
+    /// Restores the exact prior receipt after an interrupted replacement.
+    pub(crate) fn recover_uninstall_manifest_replacement(
+        &mut self,
+        asset: LinuxInstallAsset,
+        prior: &UninstallManifest,
+    ) -> Result<(), LinuxFilesystemError> {
+        if asset.id() != "uninstall-manifest" || asset.kind() != LinuxAssetKind::File {
+            return Err(unsupported());
+        }
+        let candidate = self
+            .uninstall_manifest
+            .as_ref()
+            .ok_or_else(|| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))?
+            .as_ref();
+        let candidate = crate::decode_uninstall_manifest(candidate)
+            .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))?;
+        if prior.system() != candidate.system()
+            || prior.ownership_manifest_digest() == candidate.ownership_manifest_digest()
+        {
+            return Err(LinuxFilesystemError::new(
+                LinuxFilesystemErrorCode::Conflict,
+            ));
+        }
+        let prior_bytes = encode_uninstall_manifest(prior)
+            .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::MissingPayload))?;
+        let recovery = self.recover_owned_file(asset, body_digest(&prior_bytes));
+        let binding = self.reconcile_exact_uninstall_manifest_binding(asset, &prior_bytes);
+        match (recovery, binding) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), _) | (Ok(()), Err(error)) => Err(error),
+        }
+    }
+
     /// Reads and validates an existing root-owned uninstall manifest, if present.
     ///
     /// # Errors
@@ -688,13 +791,22 @@ impl LinuxFilesystemManager {
             return Err(unsupported());
         }
         let payload = self.payload_for(asset)?;
+        self.replace_owned_file_with_payload(asset, &payload, prior_digest)
+    }
+
+    fn replace_owned_file_with_payload(
+        &mut self,
+        asset: LinuxInstallAsset,
+        payload: &[u8],
+        prior_digest: Option<Digest>,
+    ) -> Result<bool, LinuxFilesystemError> {
         let (parent, name) = self.open_parent(asset)?;
         let current = open_child(&parent, &name, LinuxAssetKind::File).map_err(open_error)?;
         if self
             .verify_file(
                 asset,
                 current.try_clone().map_err(|_| io_failure())?,
-                &payload,
+                payload,
             )
             .is_ok()
         {
@@ -739,10 +851,10 @@ impl LinuxFilesystemManager {
                 identity: candidate_identity,
             });
         }
-        staging.write_all(&payload).map_err(|_| io_failure())?;
+        staging.write_all(payload).map_err(|_| io_failure())?;
         self.apply_metadata(asset, &staging)?;
         staging.sync_all().map_err(|_| io_failure())?;
-        self.verify_file(asset, staging, &payload)?;
+        self.verify_file(asset, staging, payload)?;
         fsync(&parent).map_err(|_| io_failure())?;
         renameat_with(&parent, &backup_name, &parent, &name, RenameFlags::EXCHANGE)
             .map_err(|_| io_failure())?;
@@ -756,7 +868,7 @@ impl LinuxFilesystemManager {
         }
         fsync(&parent).map_err(|_| io_failure())?;
         let installed = open_child(&parent, &name, LinuxAssetKind::File).map_err(open_error)?;
-        self.verify_file(asset, installed, &payload)?;
+        self.verify_file(asset, installed, payload)?;
         let previous =
             open_child(&parent, &backup_name, LinuxAssetKind::File).map_err(open_error)?;
         if identity(&previous, LinuxAssetKind::File)? != previous_identity {
@@ -765,6 +877,51 @@ impl LinuxFilesystemManager {
             ));
         }
         Ok(true)
+    }
+
+    fn reconcile_uninstall_manifest_binding(
+        &mut self,
+        asset: LinuxInstallAsset,
+        prior: &[u8],
+        candidate: &[u8],
+    ) -> Result<(), LinuxFilesystemError> {
+        let current = self.current_uninstall_manifest_bytes(asset);
+        self.uninstall_manifest = match current {
+            Ok(bytes) if bytes == prior => Some(Arc::from(prior)),
+            Ok(bytes) if bytes == candidate => Some(Arc::from(candidate)),
+            Ok(_) | Err(_) => None,
+        };
+        self.uninstall_manifest
+            .is_some()
+            .then_some(())
+            .ok_or_else(|| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))
+    }
+
+    fn reconcile_exact_uninstall_manifest_binding(
+        &mut self,
+        asset: LinuxInstallAsset,
+        expected: &[u8],
+    ) -> Result<(), LinuxFilesystemError> {
+        let current = self.current_uninstall_manifest_bytes(asset);
+        self.uninstall_manifest = match current {
+            Ok(bytes) if bytes == expected => Some(Arc::from(expected)),
+            Ok(_) | Err(_) => None,
+        };
+        self.uninstall_manifest
+            .is_some()
+            .then_some(())
+            .ok_or_else(|| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))
+    }
+
+    fn current_uninstall_manifest_bytes(
+        &self,
+        asset: LinuxInstallAsset,
+    ) -> Result<Vec<u8>, LinuxFilesystemError> {
+        let manifest = self
+            .existing_uninstall_manifest_for(asset)?
+            .ok_or_else(|| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))?;
+        encode_uninstall_manifest(&manifest)
+            .map_err(|_| LinuxFilesystemError::new(LinuxFilesystemErrorCode::Conflict))
     }
 
     pub(crate) fn replace_static_owned_file(
@@ -2007,6 +2164,104 @@ mod tests {
             b"root-helper"
         );
         assert!(!fixture.manager.ensure_asset(Fixture::asset("nix-config"))?);
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_transition_requires_the_exact_bound_prior() -> Result<(), Box<dyn Error>> {
+        let receipt = |release| -> Result<UninstallManifest, Box<dyn Error>> {
+            let records = crate::assets::linux_product_install_assets()
+                .map(|asset| {
+                    let record =
+                        crate::RecordedAsset::new(asset.id(), crate::RecordedAssetState::Created)?;
+                    Ok::<_, crate::UninstallError>(
+                        if asset.kind() == LinuxAssetKind::File
+                            && asset.id() != "uninstall-manifest"
+                        {
+                            record.with_content_digest(body_digest(asset.id().as_bytes()))
+                        } else {
+                            record
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(UninstallManifest::new(
+                System::X8664Linux,
+                release,
+                records,
+            )?)
+        };
+        let prior = receipt(Digest::from_bytes([1; 32]))?;
+        let candidate = receipt(Digest::from_bytes([2; 32]))?;
+        let wrong_prior = receipt(Digest::from_bytes([3; 32]))?;
+        let mut fixture = Fixture::new()?;
+        let asset = Fixture::asset("uninstall-manifest");
+        for id in ["product-root", "uninstall-root"] {
+            fixture.manager.ensure_asset(Fixture::asset(id))?;
+        }
+
+        fixture.manager.bind_uninstall_manifest(&prior)?;
+        fixture.manager.bind_uninstall_manifest(&prior)?;
+        assert!(fixture.manager.ensure_asset(asset)?);
+        assert_eq!(
+            failure_code(&fixture.manager.bind_uninstall_manifest(&candidate))?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+        assert_eq!(
+            failure_code(&fixture.manager.replace_uninstall_manifest(
+                asset,
+                &wrong_prior,
+                &candidate
+            ),)?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+
+        let path = fixture
+            .temporary
+            .path()
+            .join("opt/pkg/uninstall/manifest.json");
+        fs::write(&path, crate::encode_uninstall_manifest(&wrong_prior)?)?;
+        assert!(
+            fixture
+                .manager
+                .replace_uninstall_manifest(asset, &prior, &candidate)
+                .is_err()
+        );
+        assert_eq!(
+            crate::decode_uninstall_manifest(&fs::read(&path)?)?,
+            wrong_prior
+        );
+        assert!(!fixture.manager.replacement_backup_exists(asset)?);
+
+        fs::write(&path, crate::encode_uninstall_manifest(&prior)?)?;
+        fixture.manager.bind_uninstall_manifest(&prior)?;
+        assert!(
+            fixture
+                .manager
+                .replace_uninstall_manifest(asset, &prior, &candidate)?
+        );
+        assert_eq!(
+            fixture.manager.existing_uninstall_manifest()?,
+            Some(candidate.clone())
+        );
+        fixture.manager.bind_uninstall_manifest(&candidate)?;
+        assert_eq!(
+            failure_code(&fixture.manager.bind_uninstall_manifest(&prior))?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+
+        fixture
+            .manager
+            .rollback_uninstall_manifest_replacement(asset)?;
+        assert_eq!(
+            fixture.manager.existing_uninstall_manifest()?,
+            Some(prior.clone())
+        );
+        fixture.manager.bind_uninstall_manifest(&prior)?;
+        assert_eq!(
+            failure_code(&fixture.manager.bind_uninstall_manifest(&candidate))?,
+            LinuxFilesystemErrorCode::Conflict
+        );
         Ok(())
     }
 
