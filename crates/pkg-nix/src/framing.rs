@@ -219,6 +219,8 @@ pub enum CliBrokerResponse {
     BuildPreview(BuildPreview),
     /// Sanitized view returned after authenticated preparation succeeds.
     BuildPrepared(BuildPreview),
+    /// Stable redacted refusal from authenticated build preparation.
+    BuildPreparationRefused(BuildPreparationErrorCode),
     /// Validated report from broker-owned build execution.
     BuildExecuted(BuildReport),
     /// Sanitized best-effort live estimate for method 19.
@@ -271,6 +273,32 @@ pub enum CliBrokerResponse {
     RepairGenerationRefused(RepairGenerationErrorCode),
     /// Redacted adapter failure for one exposed typed method.
     AdapterFailure(MethodKind, NixAdapterErrorCode),
+}
+
+/// Stable authenticated-build preparation refusal categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildPreparationErrorCode {
+    /// Linux Determinate host facts or macOS managed configuration were unavailable.
+    HostRefused,
+    /// The typed selector batch was invalid under the verified channel.
+    IntentRefused,
+    /// Source, resolution, cache classification, or plan construction refused.
+    PlanningRefused,
+    /// The caller-bound broker handle would not retain this preparation.
+    BrokerRefused,
+}
+
+impl BuildPreparationErrorCode {
+    /// Returns the stable wire code.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HostRefused => "host_refused",
+            Self::IntentRefused => "intent_refused",
+            Self::PlanningRefused => "planning_refused",
+            Self::BrokerRefused => "broker_refused",
+        }
+    }
 }
 
 /// Closed caller intent for one rooted-generation repair.
@@ -1173,6 +1201,12 @@ impl ProductFrameCodec {
             CliBrokerResponse::Gc(report) => (16, report.encode().map_err(adapter_payload)?),
             CliBrokerResponse::BuildPreview(preview) => (17, encode_build_preview(preview)?),
             CliBrokerResponse::BuildPrepared(preview) => (18, encode_build_preview(preview)?),
+            CliBrokerResponse::BuildPreparationRefused(code) => (
+                18,
+                encode_json(&BuildPreparationFailureWire {
+                    error: code.as_str(),
+                })?,
+            ),
             CliBrokerResponse::BuildExecuted(report) => {
                 (19, report.encode().map_err(adapter_payload)?)
             }
@@ -1360,6 +1394,14 @@ impl ProductFrameCodec {
             return Ok((
                 frame.request_id,
                 CliBrokerResponse::BuildExecutionRefused(code),
+            ));
+        }
+        if frame.method == 18
+            && let Some(code) = decode_build_preparation_failure(frame.payload)?
+        {
+            return Ok((
+                frame.request_id,
+                CliBrokerResponse::BuildPreparationRefused(code),
             ));
         }
         if frame.method == 19
@@ -2620,6 +2662,15 @@ fn decode_build_execution_failure(
     parse_build_execution_error_code(&wire.error).map(Some)
 }
 
+fn decode_build_preparation_failure(
+    bytes: &[u8],
+) -> Result<Option<BuildPreparationErrorCode>, FrameError> {
+    let Ok(wire) = serde_json::from_slice::<BuildPreparationFailureOwnedWire>(bytes) else {
+        return Ok(None);
+    };
+    parse_build_preparation_error_code(&wire.error).map(Some)
+}
+
 fn decode_build_root_publication_failure(
     bytes: &[u8],
 ) -> Result<Option<BuildRootPublicationErrorCode>, FrameError> {
@@ -2801,6 +2852,18 @@ fn parse_build_execution_error_code(value: &str) -> Result<BuildExecutionErrorCo
         "execution_failed" => Ok(BuildExecutionErrorCode::ExecutionFailed),
         "cancelled" => Ok(BuildExecutionErrorCode::Cancelled),
         "authority_unavailable" => Ok(BuildExecutionErrorCode::AuthorityUnavailable),
+        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
+    }
+}
+
+fn parse_build_preparation_error_code(
+    value: &str,
+) -> Result<BuildPreparationErrorCode, FrameError> {
+    match value {
+        "host_refused" => Ok(BuildPreparationErrorCode::HostRefused),
+        "intent_refused" => Ok(BuildPreparationErrorCode::IntentRefused),
+        "planning_refused" => Ok(BuildPreparationErrorCode::PlanningRefused),
+        "broker_refused" => Ok(BuildPreparationErrorCode::BrokerRefused),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
     }
 }
@@ -3313,6 +3376,18 @@ struct BuildExecutionFailureWire<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BuildExecutionFailureOwnedWire {
+    error: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct BuildPreparationFailureWire<'a> {
+    error: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuildPreparationFailureOwnedWire {
     error: String,
 }
 
@@ -4414,6 +4489,42 @@ mod tests {
             .map(|entry| entry.name().clone())
             .collect();
         RootSetPublicationRequest::new(root_set, None, added_names).unwrap()
+    }
+
+    #[test]
+    fn build_preparation_method_round_trips_success_and_closed_refusals() {
+        let success = CliBrokerResponse::BuildPrepared(normal_build_preview());
+        let encoded = ProductFrameCodec::encode_cli_response(18, &success).unwrap();
+        assert_eq!(
+            ProductFrameCodec::decode_cli_response(&encoded),
+            Ok((18, success))
+        );
+
+        for code in [
+            BuildPreparationErrorCode::HostRefused,
+            BuildPreparationErrorCode::IntentRefused,
+            BuildPreparationErrorCode::PlanningRefused,
+            BuildPreparationErrorCode::BrokerRefused,
+        ] {
+            let refusal = CliBrokerResponse::BuildPreparationRefused(code);
+            let encoded = ProductFrameCodec::encode_cli_response(18, &refusal).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Ok((18, refusal))
+            );
+        }
+
+        for payload in [
+            br#"{"error":"unknown"}"#.as_slice(),
+            br#"{"error":"host_refused","detail":"forbidden"}"#.as_slice(),
+            br#"{"error":1}"#.as_slice(),
+        ] {
+            let encoded = encode_frame(CHANNEL_CLI_BROKER, 18, 18, payload).unwrap();
+            assert_eq!(
+                ProductFrameCodec::decode_cli_response(&encoded),
+                Err(FrameError::new(FrameErrorCode::InvalidPayload))
+            );
+        }
     }
 
     #[test]

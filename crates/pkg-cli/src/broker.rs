@@ -14,15 +14,15 @@ use std::{
 use pkg_core::PackageSelector;
 use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildPreview, BuildProgressEstimate, BuildReport, BuildRequest, BuildRootPublicationErrorCode,
-    CacheInstallErrorCode, CacheInstallOutcome, ChannelRefreshReport, CliBrokerRequest,
-    CliBrokerResponse, DerivationPlanReport, Digest, EvaluateDerivationRequest, GcReport,
-    GenerationId, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, InstallDownloadProgress, MethodKind, NixAdapter,
-    NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus, PathInfoReport,
-    ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
-    RootSetIntent, RootSetReport, RootSetTransitionIntent, RootSetTransitionReport, StorePath,
-    SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
+    BuildPreparationErrorCode, BuildPreview, BuildProgressEstimate, BuildReport, BuildRequest,
+    BuildRootPublicationErrorCode, CacheInstallErrorCode, CacheInstallOutcome,
+    ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, DerivationPlanReport, Digest,
+    EvaluateDerivationRequest, GcReport, GenerationId, GenerationRootAttestationErrorCode,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, InstallDownloadProgress,
+    MethodKind, NixAdapter, NixAdapterError, NixAdapterErrorCode, OperationHandle, OperationStatus,
+    PathInfoReport, ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport,
+    RepairGenerationRequest, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport, StorePath, SubstituteReport, VerifyReport, VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 
@@ -58,6 +58,8 @@ pub enum BrokerClientErrorCode {
     AdapterFailure,
     /// Broker-owned build execution returned a stable refusal code.
     BuildRefused,
+    /// Broker-owned build preparation returned a stable refusal code.
+    BuildPreparationRefused,
     /// Protected post-build root publication returned a stable refusal code.
     BuildRootRefused,
     /// Protected generation root transition returned a stable refusal code.
@@ -100,6 +102,7 @@ pub enum BrokerClientErrorCode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BrokerClientError {
     code: BrokerClientErrorCode,
+    build_preparation_code: Option<BuildPreparationErrorCode>,
     adapter_code: Option<NixAdapterErrorCode>,
     build_execution_code: Option<BuildExecutionErrorCode>,
     build_root_code: Option<BuildRootPublicationErrorCode>,
@@ -113,6 +116,7 @@ impl BrokerClientError {
     const fn new(code: BrokerClientErrorCode) -> Self {
         Self {
             code,
+            build_preparation_code: None,
             adapter_code: None,
             build_execution_code: None,
             build_root_code: None,
@@ -125,40 +129,29 @@ impl BrokerClientError {
 
     const fn adapter_failure(adapter_code: NixAdapterErrorCode) -> Self {
         Self {
-            code: BrokerClientErrorCode::AdapterFailure,
             adapter_code: Some(adapter_code),
-            build_execution_code: None,
-            build_root_code: None,
-            generation_root_transition_code: None,
-            generation_root_removal_code: None,
-            generation_root_attestation_code: None,
-            cache_install_code: None,
+            ..Self::new(BrokerClientErrorCode::AdapterFailure)
+        }
+    }
+
+    const fn build_preparation_refused(code: BuildPreparationErrorCode) -> Self {
+        Self {
+            build_preparation_code: Some(code),
+            ..Self::new(BrokerClientErrorCode::BuildPreparationRefused)
         }
     }
 
     const fn build_refused(build_execution_code: BuildExecutionErrorCode) -> Self {
         Self {
-            code: BrokerClientErrorCode::BuildRefused,
-            adapter_code: None,
             build_execution_code: Some(build_execution_code),
-            build_root_code: None,
-            generation_root_transition_code: None,
-            generation_root_removal_code: None,
-            generation_root_attestation_code: None,
-            cache_install_code: None,
+            ..Self::new(BrokerClientErrorCode::BuildRefused)
         }
     }
 
     const fn build_root_refused(build_root_code: BuildRootPublicationErrorCode) -> Self {
         Self {
-            code: BrokerClientErrorCode::BuildRootRefused,
-            adapter_code: None,
-            build_execution_code: None,
             build_root_code: Some(build_root_code),
-            generation_root_transition_code: None,
-            generation_root_removal_code: None,
-            generation_root_attestation_code: None,
-            cache_install_code: None,
+            ..Self::new(BrokerClientErrorCode::BuildRootRefused)
         }
     }
 
@@ -166,14 +159,8 @@ impl BrokerClientError {
         generation_root_transition_code: GenerationRootTransitionErrorCode,
     ) -> Self {
         Self {
-            code: BrokerClientErrorCode::GenerationRootTransitionRefused,
-            adapter_code: None,
-            build_execution_code: None,
-            build_root_code: None,
             generation_root_transition_code: Some(generation_root_transition_code),
-            generation_root_removal_code: None,
-            generation_root_attestation_code: None,
-            cache_install_code: None,
+            ..Self::new(BrokerClientErrorCode::GenerationRootTransitionRefused)
         }
     }
 
@@ -181,14 +168,8 @@ impl BrokerClientError {
         generation_root_removal_code: GenerationRootRemovalErrorCode,
     ) -> Self {
         Self {
-            code: BrokerClientErrorCode::GenerationRootRemovalRefused,
-            adapter_code: None,
-            build_execution_code: None,
-            build_root_code: None,
-            generation_root_transition_code: None,
             generation_root_removal_code: Some(generation_root_removal_code),
-            generation_root_attestation_code: None,
-            cache_install_code: None,
+            ..Self::new(BrokerClientErrorCode::GenerationRootRemovalRefused)
         }
     }
 
@@ -196,27 +177,15 @@ impl BrokerClientError {
         generation_root_attestation_code: GenerationRootAttestationErrorCode,
     ) -> Self {
         Self {
-            code: BrokerClientErrorCode::GenerationRootAttestationRefused,
-            adapter_code: None,
-            build_execution_code: None,
-            build_root_code: None,
-            generation_root_transition_code: None,
-            generation_root_removal_code: None,
             generation_root_attestation_code: Some(generation_root_attestation_code),
-            cache_install_code: None,
+            ..Self::new(BrokerClientErrorCode::GenerationRootAttestationRefused)
         }
     }
 
     const fn install_acquisition_refused(cache_install_code: CacheInstallErrorCode) -> Self {
         Self {
-            code: BrokerClientErrorCode::InstallAcquisitionRefused,
-            adapter_code: None,
-            build_execution_code: None,
-            build_root_code: None,
-            generation_root_transition_code: None,
-            generation_root_removal_code: None,
-            generation_root_attestation_code: None,
             cache_install_code: Some(cache_install_code),
+            ..Self::new(BrokerClientErrorCode::InstallAcquisitionRefused)
         }
     }
 
@@ -224,6 +193,12 @@ impl BrokerClientError {
     #[must_use]
     pub const fn code(self) -> BrokerClientErrorCode {
         self.code
+    }
+
+    /// Returns the closed refusal code from authenticated build preparation.
+    #[must_use]
+    pub const fn build_preparation_code(self) -> Option<BuildPreparationErrorCode> {
+        self.build_preparation_code
     }
 
     /// Returns the redacted adapter code when the broker completed the RPC with
@@ -503,6 +478,9 @@ impl BrokerLifecycleClient {
             LONG_RUNNING_RESPONSE_TIMEOUT,
         )? {
             CliBrokerResponse::BuildPrepared(preview) => Ok(preview),
+            CliBrokerResponse::BuildPreparationRefused(code) => {
+                Err(BrokerClientError::build_preparation_refused(code))
+            }
             _ => Err(self.fail(BrokerClientErrorCode::UnexpectedResponse)),
         }
     }
@@ -1197,6 +1175,7 @@ fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
         | BrokerClientErrorCode::UnexpectedResponse
         | BrokerClientErrorCode::RequestIdExhausted
         | BrokerClientErrorCode::AdapterFailure
+        | BrokerClientErrorCode::BuildPreparationRefused
         | BrokerClientErrorCode::BuildRefused
         | BrokerClientErrorCode::BuildRootRefused
         | BrokerClientErrorCode::GenerationRootTransitionRefused
@@ -1553,6 +1532,43 @@ mod tests {
         assert!(!snapshot.build_held());
         assert_eq!(snapshot.gc_inhibitor_count(), 0);
         fake.assert_exhausted()?;
+        Ok(())
+    }
+
+    #[test]
+    fn build_preparation_refusal_is_typed_and_keeps_the_connection_usable()
+    -> Result<(), Box<dyn Error>> {
+        let (mut server, client) = UnixStream::pair()?;
+        let handle = InProcessBroker::new()?
+            .connect(InProcessCallerPeer::authenticated(1001))?
+            .begin(BrokerOperationKind::Build)?;
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_hello")?,
+            SelectorInput::new("hello")?,
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            1,
+            &CliBrokerResponse::BuildPreparationRefused(BuildPreparationErrorCode::PlanningRefused),
+        )?)?;
+        server.write_all(&ProductFrameCodec::encode_cli_response(
+            2,
+            &CliBrokerResponse::Status(OperationStatus::Running),
+        )?)?;
+        let mut client = BrokerLifecycleClient::from_stream(client);
+
+        let error = client
+            .prepare_build(handle.clone(), vec![selector])
+            .unwrap_err();
+        assert_eq!(error.code(), BrokerClientErrorCode::BuildPreparationRefused);
+        assert_eq!(
+            error.build_preparation_code(),
+            Some(BuildPreparationErrorCode::PlanningRefused)
+        );
+        assert_eq!(client.poll(handle)?, OperationStatus::Running);
+        assert!(client.healthy);
         Ok(())
     }
 

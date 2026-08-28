@@ -94,12 +94,12 @@ pub use contract::{
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildRootPublicationErrorCode, CacheInstallErrorCode, ChannelRefreshErrorCode,
-    ChannelRefreshMode, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, FrameError,
-    FrameErrorCode, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, HELPER_FRAME_PAYLOAD_LIMIT, InstallDownloadProgress,
-    ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
-    RepairGenerationStatus,
+    BuildPreparationErrorCode, BuildRootPublicationErrorCode, CacheInstallErrorCode,
+    ChannelRefreshErrorCode, ChannelRefreshMode, ChannelRefreshReport, CliBrokerRequest,
+    CliBrokerResponse, FrameError, FrameErrorCode, GenerationRootAttestationErrorCode,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HELPER_FRAME_PAYLOAD_LIMIT,
+    InstallDownloadProgress, ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport,
+    RepairGenerationRequest, RepairGenerationStatus,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,

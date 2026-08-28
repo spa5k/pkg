@@ -301,9 +301,11 @@ impl AuthenticatedBuildAuthority {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
-    ) -> Result<BuildPreview, BuildAuthorityError> {
+    ) -> Result<BuildPreview, crate::BuildPreparationError> {
         let (channel, index) = {
-            let state = self.lock_state()?;
+            let state = self.lock_state().map_err(|_| {
+                crate::BuildPreparationError::new(crate::BuildPreparationErrorCode::BrokerRefused)
+            })?;
             (state.channel.clone(), state.index.clone())
         };
         AuthenticatedBuildPreparation::from_verified_channel(
@@ -313,7 +315,6 @@ impl AuthenticatedBuildAuthority {
             Arc::clone(&self.adapter),
         )
         .and_then(|preparation| preparation.install(caller, handle))
-        .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::PreparationRefused))
     }
 
     /// Acquires one cache-first install from the current authenticated authority snapshot.

@@ -9,16 +9,17 @@ use nix::{
 };
 use pkg_core::PackageSelector;
 use pkg_nix::{
-    AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview,
-    BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode, CacheInstallErrorCode,
-    CacheInstallOutcome, CatalogInfoReport, CatalogInfoRequest, CatalogSearchReport,
-    CatalogSearchRequest, ChannelRefreshErrorCode, ChannelRefreshMode, ChannelRefreshReport,
-    CliBrokerRequest, CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
-    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
-    InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
-    NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RepairGenerationErrorCode,
-    RepairGenerationReport, RepairGenerationRequest, RootSetIntent, RootSetReport,
-    RootSetTransitionIntent, RootSetTransitionReport,
+    AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreparationErrorCode,
+    BuildPreview, BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode,
+    CacheInstallErrorCode, CacheInstallOutcome, CatalogInfoReport, CatalogInfoRequest,
+    CatalogSearchReport, CatalogSearchRequest, ChannelRefreshErrorCode, ChannelRefreshMode,
+    ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, Digest, GenerationId,
+    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
+    InstallDownloadProgress, MaintenanceError, MethodKind, NixAdapter, NixAdapterError,
+    OperationHandle, ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport,
+    RepairGenerationRequest, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport,
 };
 use pkg_pipeline::{AuthenticatedBuildAuthority, BuildAuthorityErrorCode};
 use std::{
@@ -338,7 +339,7 @@ trait BuildAuthorityDispatch: Send + Sync {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
-    ) -> Result<BuildPreview, ()>;
+    ) -> Result<BuildPreview, BuildPreparationErrorCode>;
 
     fn execute(
         &self,
@@ -503,9 +504,9 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
-    ) -> Result<BuildPreview, ()> {
+    ) -> Result<BuildPreview, BuildPreparationErrorCode> {
         self.prepare_and_install(selectors, caller, handle)
-            .map_err(|_| ())
+            .map_err(pkg_pipeline::BuildPreparationError::code)
     }
 
     fn execute(
@@ -693,11 +694,13 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::AcquireGc(handle) => gc_admission_response(caller, &handle),
         CliBrokerRequest::GetInstallEvidence(handle) => install_evidence_response(caller, &handle),
         CliBrokerRequest::GetBuildPreview(handle) => build_preview_response(caller, &handle),
-        CliBrokerRequest::PrepareBuild(handle, selectors) => authorities
-            .build
-            .ok_or(())?
-            .prepare(selectors, caller, &handle)
-            .map(CliBrokerResponse::BuildPrepared),
+        CliBrokerRequest::PrepareBuild(handle, selectors) => Ok(authorities.build.map_or(
+            CliBrokerResponse::BuildPreparationRefused(BuildPreparationErrorCode::BrokerRefused),
+            |authority| match authority.prepare(selectors, caller, &handle) {
+                Ok(preview) => CliBrokerResponse::BuildPrepared(preview),
+                Err(code) => CliBrokerResponse::BuildPreparationRefused(code),
+            },
+        )),
         CliBrokerRequest::ExecuteBuild(handle, digest) => Ok(build_execution_response(
             authorities.build,
             caller,
@@ -1645,15 +1648,24 @@ mod tests {
             selectors: Vec<PackageSelector>,
             caller: &AuthenticatedCaller,
             handle: &OperationHandle,
-        ) -> Result<BuildPreview, ()> {
-            if selectors.len() != 1 || selectors[0].selector().as_str() != "hello" {
-                return Err(());
+        ) -> Result<BuildPreview, BuildPreparationErrorCode> {
+            if selectors.len() != 1 {
+                return Err(BuildPreparationErrorCode::IntentRefused);
+            }
+            match selectors[0].selector().as_str() {
+                "host-refusal" => return Err(BuildPreparationErrorCode::HostRefused),
+                "planning-refusal" => return Err(BuildPreparationErrorCode::PlanningRefused),
+                "broker-refusal" => return Err(BuildPreparationErrorCode::BrokerRefused),
+                "hello" => {}
+                _ => return Err(BuildPreparationErrorCode::IntentRefused),
             }
             let plan = self.0.clone();
-            let preview = plan.preview().map_err(|_| ())?;
+            let preview = plan
+                .preview()
+                .map_err(|_| BuildPreparationErrorCode::PlanningRefused)?;
             caller
                 .prepare_build_with_replanner(handle, plan.clone(), Arc::new(TestReplanner(plan)))
-                .map_err(|_| ())?;
+                .map_err(|_| BuildPreparationErrorCode::BrokerRefused)?;
             Ok(preview)
         }
 
@@ -2435,6 +2447,69 @@ mod tests {
             Err(BrokerTransportErrorCode::TransportFailure)
         );
         Ok(())
+    }
+
+    #[test]
+    fn preparation_dispatch_returns_every_refusal_without_closing_the_operation() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let authority = TestAuthority(build_plan());
+        for (selector, code) in [
+            ("host-refusal", BuildPreparationErrorCode::HostRefused),
+            ("intent-refusal", BuildPreparationErrorCode::IntentRefused),
+            (
+                "planning-refusal",
+                BuildPreparationErrorCode::PlanningRefused,
+            ),
+            ("broker-refusal", BuildPreparationErrorCode::BrokerRefused),
+        ] {
+            let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+            let selector = PackageSelector::new(
+                SelectorId::new(&format!("sel_{}", selector.replace('-', "_"))).unwrap(),
+                SelectorInput::new(selector).unwrap(),
+                VersionPreference::Any,
+                OutputSelection::default_selection(),
+                SourceRevision::CurrentChannel,
+            );
+            assert_eq!(
+                dispatch_request(
+                    &caller,
+                    CliBrokerRequest::PrepareBuild(handle.clone(), vec![selector]),
+                    None,
+                    None,
+                    Some(&authority),
+                    None,
+                ),
+                Ok(CliBrokerResponse::BuildPreparationRefused(code))
+            );
+            assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
+            caller.cancel(&handle).unwrap();
+        }
+
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_missing_authority").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::PrepareBuild(handle.clone(), vec![selector]),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::BuildPreparationRefused(
+                BuildPreparationErrorCode::BrokerRefused
+            ))
+        );
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
     }
 
     #[test]

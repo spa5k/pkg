@@ -5,6 +5,7 @@ use std::{error::Error, fmt, sync::Arc};
 use pkg_channel::VerifiedChannel;
 use pkg_core::PackageSelector;
 use pkg_index::VerifiedIndex;
+pub use pkg_nix::BuildPreparationErrorCode;
 use pkg_nix::{AuthenticatedCaller, BuildPreview, BuildPreviewEstimates, OperationHandle};
 
 use crate::{
@@ -88,19 +89,6 @@ impl AuthenticatedBuildPreparation {
     }
 }
 
-/// Stable authenticated-build preparation refusal categories.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuildPreparationErrorCode {
-    /// Linux Determinate host facts or macOS managed configuration were unavailable.
-    HostRefused,
-    /// The typed selector batch was invalid under the verified channel.
-    IntentRefused,
-    /// Source, resolution, cache classification, or plan construction refused.
-    PlanningRefused,
-    /// The caller-bound broker handle would not retain this preparation.
-    BrokerRefused,
-}
-
 /// Redacted failure at the production build-preparation boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildPreparationError {
@@ -108,7 +96,7 @@ pub struct BuildPreparationError {
 }
 
 impl BuildPreparationError {
-    const fn new(code: BuildPreparationErrorCode) -> Self {
+    pub(crate) const fn new(code: BuildPreparationErrorCode) -> Self {
         Self { code }
     }
 
