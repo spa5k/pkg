@@ -285,7 +285,7 @@ impl AuthenticatedInstallerBundle {
         self.source.system()
     }
 
-    /// Returns the authenticated descriptor digest used as the Linux release identity.
+    /// Returns the authenticated descriptor digest used as the product release identity.
     #[must_use]
     pub const fn release_identity_digest(&self) -> Digest {
         Digest::from_bytes(self.source.descriptor_sha256())
@@ -789,8 +789,10 @@ async fn load_authenticated_installer_bundle_with_owner(
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?,
     };
     let base_nix = match source.system() {
-        System::X8664Linux | System::Aarch64Linux => AuthenticatedBaseNix::Determinate,
-        System::X8664Darwin | System::Aarch64Darwin => {
+        System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin => {
+            AuthenticatedBaseNix::Determinate
+        }
+        System::X8664Darwin => {
             let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
             let manifest_bytes = read_target_bytes(
                 &source,

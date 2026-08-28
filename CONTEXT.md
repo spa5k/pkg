@@ -67,7 +67,7 @@ One recoverable attempt to change Lifecycle State in the Package Lifecycle.
 _Avoid_: Command, transaction, job
 
 **Base Nix Handoff**:
-The durable product evidence that a Base Nix installation is accepted or is not safe to trust.
+The durable product evidence that a started Base Nix operation has an unknown outcome, or that the exact installed Base Nix state was validated and accepted.
 _Avoid_: Handoff, install journal, Vendor Receipt
 
 **Unknown Base Nix Outcome**:
@@ -79,17 +79,17 @@ The user-initiated, verified restore of damaged store content. It is not atomic.
 _Avoid_: Repair, Base Nix repair, self-heal, auto-repair
 
 **Product Asset**:
-A release-authenticated file that belongs to the installed product rather than to Base Nix or a user package.
+A release-authenticated host object that the product owns. It excludes Base Nix and user packages.
 _Avoid_: Package asset, Nix asset
 
 **Product Asset Repair**:
-The user-initiated replacement of damaged Product Assets with authenticated bytes from the same product release.
+The explicit restore of Product Assets from authenticated bytes in the same product release. Product services stay offline during the operation.
 _Avoid_: Package Repair, Base Nix repair, product reinstall
 
 ## Lifecycle Ownership
 
 **Base Nix**:
-The machine-wide Nix installation that provides the shared store and package realization runtime.
+The machine-wide Nix system whose lifecycle is separate from product and package work.
 _Avoid_: Managed Nix, private Nix, system Nix
 
 **Base Nix Lifecycle**:
@@ -107,7 +107,7 @@ An authenticated, monotonic release of product policy, Catalog identity, product
 _Avoid_: Repository, feed, branch
 
 **Broker**:
-The authenticated authority that mediates Package Lifecycle work and machine-wide package admission.
+The authenticated authority that mediates Package Lifecycle work and machine-wide package admission. It does not own Base Nix Lifecycle changes.
 _Avoid_: Daemon, server, engine
 
 **Root Helper**:

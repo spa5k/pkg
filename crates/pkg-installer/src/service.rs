@@ -52,8 +52,6 @@ const MAX_HELPER_WORKERS: usize = 8;
 pub const LINUX_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
-#[cfg(target_os = "macos")]
-const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_HOME: &str = "/var/lib/pkg/helper-home";
 #[cfg(target_os = "linux")]
@@ -211,7 +209,7 @@ fn run_broker_listener(
     );
     #[cfg(target_os = "macos")]
     let adapter = Arc::new(
-        RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), home)
+        RealNixAdapter::new_standard_determinate(home)
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
     let planning_adapter: Arc<dyn BuildPlanningAdapter> =
@@ -483,7 +481,7 @@ pub fn run_macos_root_helper() -> Result<(), ServiceError> {
         &parents,
     )?;
     let repair_executor: Arc<dyn VerifiedRepairExecutor> = Arc::new(
-        RootNixRepairExecutor::new(Path::new(MANAGED_NIX_BINARY), Path::new(MACOS_HELPER_HOME))
+        RootNixRepairExecutor::new_standard_determinate(Path::new(MACOS_HELPER_HOME))
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
     let helper = InProcessHelper::with_repair_executor(identity.uid, repair_executor)

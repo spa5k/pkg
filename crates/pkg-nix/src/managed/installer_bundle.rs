@@ -196,6 +196,9 @@ pub(super) async fn load_installer_bundle(
     host: System,
     datastore_owner: Option<DatastoreOwner>,
 ) -> Result<VerifiedRuntimeBundle, ChannelError> {
+    if host == System::X8664Darwin {
+        return Err(ChannelError::InstallerBundleUnavailable);
+    }
     let local_urls = match source {
         InstallerRepository::Bundle(bundle_root) => {
             let root = canonical_directory(bundle_root)?;
@@ -295,7 +298,7 @@ async fn load_verified_repository(
         .await
         .map_err(redact_repository_error)?;
     let base_nix = match host {
-        System::X8664Linux | System::Aarch64Linux => {
+        System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin => {
             let (target, length, sha256) = determinate_installer_identity(host)?;
             let installer =
                 snapshot_exact_target(&repository, target, length, Some(*sha256.as_bytes()))
@@ -314,7 +317,7 @@ async fn load_verified_repository(
                 sha256,
             }
         }
-        System::X8664Darwin | System::Aarch64Darwin => {
+        System::X8664Darwin => {
             let runtime = channel.descriptor().runtime();
             let archive = snapshot_exact_target(
                 &repository,
@@ -371,9 +374,12 @@ fn determinate_installer_identity(
             69_625_424,
             "9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179",
         ),
-        System::X8664Darwin | System::Aarch64Darwin => {
-            return Err(ChannelError::InstallerBundleUnavailable);
-        }
+        System::Aarch64Darwin => (
+            "determinate/3.22.1/nix-installer-aarch64-darwin",
+            58_427_232,
+            "90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b",
+        ),
+        System::X8664Darwin => return Err(ChannelError::InstallerBundleUnavailable),
     };
     debug_assert!(target.starts_with(&format!("determinate/{DETERMINATE_VERSION}/")));
     let digest = format!("sha256-{sha256}")
@@ -904,13 +910,12 @@ fn validate_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pkg_channel::ChannelClient;
     use tempfile::TempDir;
 
     const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
 
     #[test]
-    fn platform_route_selects_only_the_two_linux_determinate_targets() {
+    fn platform_route_selects_only_supported_determinate_targets() {
         let (x86_target, x86_length, x86_digest) =
             determinate_installer_identity(System::X8664Linux).unwrap();
         assert_eq!(x86_target, "determinate/3.22.1/nix-installer-x86_64-linux");
@@ -929,8 +934,19 @@ mod tests {
             "sha256-9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179"
         );
 
+        let (darwin_target, darwin_length, darwin_digest) =
+            determinate_installer_identity(System::Aarch64Darwin).unwrap();
+        assert_eq!(
+            darwin_target,
+            "determinate/3.22.1/nix-installer-aarch64-darwin"
+        );
+        assert_eq!(darwin_length, 58_427_232);
+        assert_eq!(
+            darwin_digest.to_string(),
+            "sha256-90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b"
+        );
+
         assert!(determinate_installer_identity(System::X8664Darwin).is_err());
-        assert!(determinate_installer_identity(System::Aarch64Darwin).is_err());
     }
 
     #[tokio::test]
@@ -957,7 +973,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bundle_targets_are_private_and_floor_is_explicit() {
+    async fn darwin_bundle_has_no_legacy_runtime_fallback() {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/channel-v1")
             .canonicalize()
@@ -968,46 +984,24 @@ mod tests {
         #[cfg(unix)]
         fs::set_permissions(&datastore, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let mut bundle = load_installer_bundle(
+        let result = load_installer_bundle(
             TrustedRoot::from_embedded(ROOT).unwrap(),
             InstallerRepository::Bundle(&fixture),
             &datastore,
             System::Aarch64Darwin,
             None,
         )
-        .await
-        .unwrap();
-        assert_eq!(bundle.channel().sequence().get().get(), 42);
-        assert!(!bundle.take_index().unwrap().is_empty());
+        .await;
+        assert!(matches!(
+            result,
+            Err(ChannelError::MissingTufTarget(target))
+                if target == "determinate/3.22.1/nix-installer-aarch64-darwin"
+        ));
         assert!(!datastore.join(STATE_FILE).exists());
-        let runtime_target = bundle.channel().descriptor().runtime().target();
-        assert!(
-            bundle
-                .open_target(runtime_target)
-                .unwrap()
-                .metadata()
-                .unwrap()
-                .is_file()
-        );
-        for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
-            let target = format!("installer/aarch64-darwin/{name}");
-            let mut bytes = Vec::new();
-            bundle
-                .open_target(&target)
-                .unwrap()
-                .read_to_end(&mut bytes)
-                .unwrap();
-            assert_eq!(
-                bytes,
-                format!("installer payload {name} aarch64-darwin\n").as_bytes()
-            );
-        }
-        bundle.commit_accepted_channel().unwrap();
-        assert!(datastore.join(STATE_FILE).is_file());
     }
 
     #[tokio::test]
-    async fn accepted_floor_commit_releases_the_datastore_lease() {
+    async fn intel_darwin_refuses_before_datastore_mutation() {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/channel-v1")
             .canonicalize()
@@ -1016,35 +1010,19 @@ mod tests {
         let datastore = temporary.path().join("datastore");
         fs::create_dir(&datastore).unwrap();
         fs::set_permissions(&datastore, fs::Permissions::from_mode(0o700)).unwrap();
-        let root = TrustedRoot::from_embedded(ROOT).unwrap();
-        let metadata = Url::parse("https://updates.example/metadata/").unwrap();
-        let targets = Url::parse("https://updates.example/targets/").unwrap();
-        let mut bundle = load_installer_bundle(
-            root.clone(),
+        let result = load_installer_bundle(
+            TrustedRoot::from_embedded(ROOT).unwrap(),
             InstallerRepository::Bundle(&fixture),
             &datastore,
-            System::Aarch64Darwin,
+            System::X8664Darwin,
             None,
         )
-        .await
-        .unwrap();
-
+        .await;
         assert!(matches!(
-            ChannelClient::new(root.clone(), metadata.clone(), targets.clone(), &datastore),
-            Err(ChannelError::DatastoreBusy)
+            result,
+            Err(ChannelError::InstallerBundleUnavailable)
         ));
-        bundle.accepted.directory = temporary.path().join("missing");
-        assert!(bundle.commit_accepted_channel().is_err());
-        assert!(matches!(
-            ChannelClient::new(root.clone(), metadata.clone(), targets.clone(), &datastore),
-            Err(ChannelError::DatastoreBusy)
-        ));
-
-        bundle.accepted.directory = datastore.clone();
-        bundle.commit_accepted_channel().unwrap();
-        let _client = ChannelClient::new(root, metadata, targets, &datastore).unwrap();
-        bundle.accepted.directory = temporary.path().join("missing");
-        bundle.commit_accepted_channel().unwrap();
+        assert!(fs::read_dir(&datastore).unwrap().next().is_none());
     }
 
     #[test]
