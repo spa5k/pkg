@@ -275,23 +275,42 @@ can be local or on a disposable GitHub-hosted runner. A GitHub-hosted result is
 accepted only for its exact signed commit. Complete logs, its results matrix,
 and retained artifacts need independent review.
 
-Use `tests/macos-clean-host/prove.sh` only in a disposable Tart virtual machine
-or on another disposable Apple Silicon Mac. Linux and Docker results do not
-satisfy macOS proof. Both proofs stop on the first failed check.
+`tests/macos-clean-host/prove.sh` is not a user command. Do not run it directly.
+Maintainers can run it only through the
+[manual macOS proof workflow](../.github/workflows/macos-alpha-proof.yml). The
+workflow can start only after two exact disposable Apple silicon runners and
+two authenticated, signed DN-16 release inputs exist, and after a staged
+channel or snapshot protocol is ready. The signed inputs establish shipping
+identity. They do not prove an N-to-N+1 upgrade because both tags use one live
+channel. Linux and Docker results do not satisfy macOS proof.
 
 The current Linux harness covers foreign-state refusal, ownership drift,
 one-start vendor install, repeat product install, cached installs, one approved
 local build, package update, package upgrade, package rollback, Package Repair,
 isolation, package roots, garbage collection, and terminal vendor uninstall.
 
-The current signed Linux commit passed its native x86-64 clean-host proof. The
-retained result covers a real N-to-N+1 product upgrade, same-release Product
-Asset Repair, vendor process behavior, and real systemd offline-state behavior.
+The signed Linux commit `9bd17b716503d7be3bcf5bd310ceddd9aecede50`
+passed its native x86-64 clean-host proof in GitHub Actions run
+[`33198985687`](https://github.com/spa5k/pkg/actions/runs/33198985687).
+The retained result covers a real N-to-N+1 product upgrade, same-release
+Product Asset Repair, vendor process behavior, and real systemd offline-state
+behavior. This proof did not publish a release.
 
-The current macOS Determinate cutover still needs a disposable Apple silicon
-clean-host proof. Linux and Docker results do not satisfy this gate. A local
-virtual-machine result does not prove Developer ID signing, notarization, or
-Gatekeeper acceptance.
+The macOS production code at
+`8ffd325a4be12a998f3a5684097b57841a11540e` is reviewed and backed up. It is not
+merged. The proof workflow structure is still work in progress. No macOS proof
+has passed.
+
+Four external items block the macOS proof:
+
+- no required disposable DN-16 runner is registered;
+- no two authenticated, signed DN-16 release inputs exist;
+- no staged channel or snapshot protocol installs N before the channel advances
+  to N+1;
+- no two-phase product lifecycle reboot proof exists.
+
+A local virtual-machine result does not prove Developer ID signing,
+notarization, or Gatekeeper acceptance.
 
 ## Uninstall
 

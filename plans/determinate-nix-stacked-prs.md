@@ -2,7 +2,7 @@
 
 Status: active implementation plan for an alpha product.
 
-Current status: **Delivery PR 1 and PR 2 are complete. DN-15 Linux code is active. Its native x86-64 proof is not complete.**
+Current status: **Delivery PR 1 and PR 2 are complete. DN-15 Linux proof passed. DN-16 production code is reviewed and backed up, but it is not merged or proved.**
 
 The current migration delivery has exactly four delivery PRs. PR 1 and PR 2 group several work packages. PR 3 has the single delivery label DN-15. PR 4 has the single delivery label DN-16. DN-17 through DN-32 remain work-package IDs inside PR 4. They do not create more delivery PRs.
 
@@ -10,13 +10,20 @@ The current migration delivery has exactly four delivery PRs. PR 1 and PR 2 grou
 |---|---|---|
 | 1 | DN-00 through DN-07: plan, alpha fixes, evidence, contract, and authenticated vendor foundation | Complete |
 | 2 | DN-08 through DN-14: inactive integration foundation and decision evidence | Complete |
-| 3 | DN-15: Linux completion | Active; native x86-64 proof remains |
-| 4 | DN-16: Apple Silicon macOS completion; DN-17 through DN-32 are later cleanup, proof, and optional simplification checkpoints inside this PR | Blocked by Linux completion and macOS proof |
+| 3 | DN-15: Linux completion | Native proof passed at `9bd17b`; not published |
+| 4 | DN-16: Apple Silicon macOS completion; DN-17 through DN-32 are later cleanup, proof, and optional simplification checkpoints inside this PR | Production code reviewed at `8ffd325a`; not merged; native proof blocked |
 
 PR 2 does not deliver a platform cutover. It records safe inactive code,
 evidence limits, and the accepted ownership policy. PR 3 activates that work on
-Linux. DN-15 remains incomplete until the native x86-64 proof passes and its
-evidence is independently reviewed.
+Linux. The signed Linux commit
+`9bd17b716503d7be3bcf5bd310ceddd9aecede50` passed native x86-64 workflow run
+[`33198985687`](https://github.com/spa5k/pkg/actions/runs/33198985687). The
+evidence received independent review. The run did not publish a release.
+
+The macOS production code at
+`8ffd325a4be12a998f3a5684097b57841a11540e` is reviewed and backed up. It is not
+merged. The separate proof branch contains work-in-progress workflow and
+harness structure. It is not proof evidence.
 
 DN-03 completed the standalone vendor evidence gate. This does not mean that vendor uninstall is clean. It does not mean that crash recovery succeeds. Linux functional behavior checks passed, but strict vendor cleanup failed. In the accepted macOS crash observation, state validation stops after the recovery install exits 0 because `_nixbld1` is missing.
 
@@ -26,16 +33,17 @@ The public evidence is in the [DN-03 parent decision](../spikes/s6-determinate-i
 - macOS R10 completes the standalone lifecycle and residue evidence. Its functional lifecycle and reboots passed, but strict vendor cleanup failed. Crash R1 completes the required negative SIGKILL and reboot observation.
 - Clean vendor uninstall remains false on both platforms. DN-13 uses the fixed installed vendor executable and receipt paths. Determinate owns any self-copy and vendor residue. Vendor-owned residue is an accepted alpha limit. `pkg` removes only product-owned residue.
 - Successful crash recovery is unproved. DN-06 and DN-07 delivered the product controls. DN-16 owns the later macOS crash proof. The landed DN-12 report concludes that there is no safe general vendor repair route.
-- Linux alpha proof can use a disposable native x86-64 GitHub-hosted runner. The checked-in harness uses privileged Docker with systemd. The result proves only that runner and container environment. It does not prove boot, reboot, SELinux, foreign-host behavior, or a full distribution matrix.
-- macOS proof needs an Apple Silicon macOS VM or another disposable Mac. Docker cannot prove launchd, APFS, or `diskutil` behavior.
+- Linux alpha proof passed on a disposable native x86-64 GitHub-hosted runner at exact commit `9bd17b716503d7be3bcf5bd310ceddd9aecede50` in run `33198985687`. The checked-in harness used privileged Docker with systemd. The result proves only that runner and container environment. It does not prove boot, reboot, SELinux, foreign-host behavior, or a full distribution matrix. Nothing was published.
+- macOS proof needs two exact disposable Apple Silicon runners. Docker cannot prove launchd or native reboot behavior. No required runner is registered. No two authenticated, signed DN-16 release inputs exist. Those inputs establish shipping identity only. Both tags use one live channel, so they do not prove native N-to-N+1. No staged channel or snapshot protocol installs N before the channel advances to N+1. No two-phase product lifecycle reboot proof exists.
 - DN-04 documents the proved ownership and executable contract.
 
 This plan replaces the old custom Managed Nix implementation plan. The old plan is preserved in the [dated legacy archive](archive/2026-08-22-custom-managed-nix-v1/README.md). The design reasons and research are in the [architecture report](../architecture-report.html).
 
 DN-15 changes the current Linux source and candidate behavior. Its user
-documents describe that Linux behavior now. The published alpha release remains
-separate. DN-16 updates macOS behavior and documents after real macOS proof.
-DN-20 completes the release documents after final proof.
+documents describe that Linux behavior now. The published alpha.7 release
+remains separate. DN-16 changes current macOS source and candidate behavior.
+It is not in alpha.7. Its production code is not merged, and its native proof
+has not run. DN-20 completes the release documents after final proof.
 
 ## 1. Accepted ownership
 
@@ -179,9 +187,23 @@ become a release branch.
 A local native x86-64 host can also satisfy Linux proof when it produces the
 same evidence. An emulated x86-64 Docker server cannot satisfy the proof.
 
-macOS proof still requires an Apple Silicon macOS VM or another disposable Mac.
-A GitHub-hosted Linux result and Docker do not satisfy any macOS row. A skipped
-platform check blocks production cutover for that platform.
+The macOS harness runs only through the manual
+[macOS Apple Silicon lifecycle proof workflow](../.github/workflows/macos-alpha-proof.yml).
+Do not run `tests/macos-clean-host/prove.sh` directly. The workflow needs two
+exact disposable Apple Silicon runners and two authenticated, signed DN-16
+release inputs. It also needs a staged channel or snapshot protocol that
+installs N before the channel advances to N+1. The signed inputs establish
+shipping identity only. They do not prove N-to-N+1 because both tags use one
+live channel. A GitHub-hosted Linux result and Docker do not satisfy any macOS
+row. A skipped platform check blocks production cutover for that platform.
+
+The current external blockers are exact:
+
+- no required disposable DN-16 runner is registered;
+- no two authenticated, signed DN-16 release inputs exist;
+- no staged channel or snapshot protocol installs N before the channel advances
+  to N+1;
+- no two-phase product lifecycle reboot proof exists.
 
 ## 4. Dependency diagram and stop gates
 
@@ -202,7 +224,7 @@ Stop gates:
 - **DN-03** is complete for standalone evidence. Its negative results define product limits and later platform proof.
 - **DN-05–07** blocks integration if asset authentication, safe process execution, or minimal Base Nix Handoff handling fails. It must not add a second vendor journal.
 - **DN-08–14** is a complete inactive foundation and evidence PR. PR 2 removes the unused ownership partition and its exact-partition tests while preserving the normalized install inventory. Determinate owns supported repair, update, and uninstall. Vendor residue is accepted for alpha. Old private-alpha migration is separate.
-- **DN-15** blocks Linux deletion until clean-host Base Nix install, terminal vendor uninstall, package behavior, and the honest process cases pass on a native x86-64 proof host. The complete evidence must receive independent review.
+- **DN-15** passed its native x86-64 proof and independent evidence review at exact commit `9bd17b716503d7be3bcf5bd310ceddd9aecede50` in run `33198985687`. The proof did not publish a release.
 - **DN-16** blocks macOS deletion until Apple Silicon proves Base Nix install, terminal vendor uninstall, package operations, interruption and crash behavior, real reboot behavior, and the documented failure cases.
 - **DN-20** blocks the optional simplification tail until the core cutover is complete.
 - **DN-26** blocks local-build admission changes until every build duty has a proved replacement.
@@ -423,7 +445,7 @@ Current work-area result:
 
 ### DN-15 delivery label — Cut over Linux Base Nix install and uninstall
 
-- **Status:** active. Linux code and local tests are present. Native x86-64 lifecycle proof and independent evidence review remain.
+- **Status:** native x86-64 lifecycle proof and independent evidence review are complete at signed commit `9bd17b716503d7be3bcf5bd310ceddd9aecede50`. GitHub Actions run `33198985687` passed. It did not publish a release.
 - **Branch:** `dn/15-linux-lifecycle-cutover`.
 - **Delivery PR:** PR 3, based on PR 2.
 - **Goal:** activate and prove clean-host Linux Base Nix install and uninstall through Determinate.
@@ -436,10 +458,9 @@ Current work-area result:
 - **Deletion:** none. Old Linux Base Nix code remains until DN-17.
 - **Rollback or stop rule:** revert before release if any lifecycle row fails. Do not add a runtime fallback.
 - **Review focus:** authenticated one-start install, supervisor wait and reap, honest post-start limits, Base Nix Handoff acceptance, terminal vendor uninstall, vendor-action-last ordering, synchronous restore, unmarked crash refusal, Unknown Base Nix Outcome handling, accepted vendor residue, and no Base Nix repair or update product route.
-- **Child-unblock condition:** all blocking Linux install, terminal vendor uninstall, synchronous-restore, unmarked-crash, Unknown Base Nix Outcome, and package rows pass twice with no old runtime path used. The native x86-64 evidence receives independent review.
+- **Child-unblock condition:** complete. All blocking Linux install, terminal vendor uninstall, synchronous-restore, unmarked-crash, Unknown Base Nix Outcome, and package rows passed twice with no old runtime path used. The native x86-64 evidence received independent review.
 
-The remaining native Linux gates are separate rows. One result cannot stand in
-for another:
+The completed native Linux proof included these separate rows:
 
 1. **N-to-N+1 Offline Upgrade:** install N, stop and disable the fixed units,
    run N+1, prove product identity changed, prove Base Nix Handoff and package
@@ -455,25 +476,26 @@ for another:
    inactive and disabled exact unit set can upgrade and repair without a
    systemd mutation command.
 
-These four rows require a native x86-64 run on the exact signed commit. Local
-unit tests and an emulated Docker server do not complete them.
+All four rows passed in run `33198985687` at exact signed commit
+`9bd17b716503d7be3bcf5bd310ceddd9aecede50`. The result did not publish a
+release.
 
 ### DN-16 delivery label — Cut over Apple Silicon macOS Base Nix install and uninstall
 
-- **Status:** blocked by Linux completion and disposable macOS proof.
+- **Status:** production code is reviewed and backed up at `8ffd325a4be12a998f3a5684097b57841a11540e`. It is not merged. Proof workflow structure is work in progress. Native proof has not run.
 - **Branch:** `dn/16-macos-lifecycle-cutover`.
 - **Delivery PR:** PR 4, based on PR 3.
 - **Goal:** activate and prove Apple Silicon macOS Base Nix install and uninstall through Determinate.
-- **Why later:** start after Linux completion. Use an Apple Silicon macOS VM or another disposable Mac. Docker cannot prove launchd, APFS, or `diskutil` behavior.
+- **Why later:** Linux completion is done. Native proof still needs the manual workflow, two exact disposable Apple Silicon runners, two authenticated signed DN-16 release inputs, a staged channel or snapshot protocol that installs N before the channel advances to N+1, and two-phase product lifecycle reboot proof. The signed inputs establish shipping identity only. Docker cannot prove launchd or native reboot behavior.
 - **Likely files and symbols:** macOS bootstrap, APFS detection, inactive lifecycle routes, Base Nix Handoff, product launchd assets, release target selection, and macOS user documents.
 - **Interface and invariants:** no runtime fallback. Determinate owns Base Nix APFS setup, daemon setup, any supported native repair or update behavior, and uninstall. `pkg` exposes no Base Nix repair or update action on any alpha platform. Package Repair remains product-owned. Install uses the same one-start, one-supervisor, fail-closed Base Nix Handoff contract as Linux. The macOS store-preserving uninstall action remains distinct until PR 4 proves and adopts the terminal vendor uninstall boundary. Keep the shared runtime schema and artifacts until the later PR 4 cleanup work. Intel macOS is not claimed without full proof. Apple Silicon user documents describe the new behavior in this PR.
 - **Implementation steps:** enable Base Nix install and terminal vendor uninstall on Apple Silicon after real proof. Authenticate the vendor executable. Persist `Started`, start it once, wait and reap, and accept only exit status `0` plus installed-state validation. For live uninstall, reject structured JSON or JSONL, finish and verify every product action, hold the stable lock, revalidate the exact installed executable and opaque receipt, consume Accepted Base Nix Handoff immediately before `exec`, then start terminal vendor uninstall as the last action. Prove synchronous restore, restore failure, unmarked crash refusal, product launchd ownership, Package Repair, package behavior, and real reboot behavior. Update macOS install and uninstall documents. Add no Base Nix repair or update product action.
-- **Tests:** run fake install-process integration and the Apple Silicon macOS one-start install, supervisor wait and reap, persisted-`Started` refusal, terminal plain-output vendor uninstall, synchronous-restore, restore-failure, unmarked-`SIGKILL`, Unknown Base Nix Outcome, Package Repair, package-operation, crash, and real reboot matrix on a macOS VM or another disposable Mac.
-- **Proof and evidence:** clean install, repeat install, one-start supervision, persisted-`Started` refusal, crash, real reboot, Package Repair, package update, product upgrade, terminal vendor uninstall, synchronous restore, restore failure, unmarked refusal, Unknown Base Nix Outcome, and residue reports pass twice. Vendor action is last. Do not claim Base Nix repair or update proof. Linux or Docker evidence cannot satisfy this gate.
+- **Tests:** the manual workflow must run fake install-process integration and the Apple Silicon macOS one-start install, supervisor wait and reap, persisted-`Started` refusal, terminal plain-output vendor uninstall, synchronous-restore, restore-failure, unmarked-`SIGKILL`, Unknown Base Nix Outcome, Package Repair, package-operation, crash, and real reboot matrix. Do not run `tests/macos-clean-host/prove.sh` directly.
+- **Proof and evidence:** no DN-16 native result exists. The manual workflow must use two exact disposable runners and authenticated signed N and N+1 DN-16 inputs. Those inputs establish shipping identity only. The upgrade proof also needs a staged channel or snapshot protocol that installs N before the channel advances to N+1. Clean install, repeat install, one-start supervision, persisted-`Started` refusal, crash, real reboot, Package Repair, package update, product upgrade, terminal vendor uninstall, synchronous restore, restore failure, unmarked refusal, Unknown Base Nix Outcome, and residue reports must pass twice. Vendor action is last. Do not claim Base Nix repair or update proof. Linux or Docker evidence cannot satisfy this gate.
 - **Deletion:** none. Old macOS Base Nix code remains until DN-18.
 - **Rollback or stop rule:** revert before release if APFS, launchd, installed-executable or receipt identity, package, terminal-uninstall, interruption, crash, or real-reboot proof fails.
 - **Review focus:** authenticated one-start install, supervisor wait and reap, honest post-start limits, distinct pre-PR4 store-preserving action, terminal vendor uninstall, vendor-action-last ordering, synchronous restore, unmarked crash refusal, Unknown Base Nix Outcome handling, APFS, launchd, real reboot, accepted vendor residue, target support, and no Base Nix repair or update product route.
-- **Child-unblock condition:** all blocking Apple Silicon install, terminal vendor uninstall, synchronous-restore, unmarked-crash, Unknown Base Nix Outcome, package, crash, and real reboot rows pass twice with no old runtime path used.
+- **Child-unblock condition:** blocked. No required disposable DN-16 runner is registered. No two authenticated, signed DN-16 release inputs exist. No staged channel or snapshot protocol installs N before the channel advances to N+1. No two-phase product lifecycle reboot proof exists. After these prerequisites exist, all blocking Apple Silicon install, terminal vendor uninstall, synchronous-restore, unmarked-crash, Unknown Base Nix Outcome, package, crash, and real reboot rows must pass twice with no old runtime path used.
 
 ### DN-17 work package — Delete proved Linux Base Nix implementation
 
@@ -852,7 +874,17 @@ Mac.
 | Optional transport and dependency pruning | DN-30 through DN-32 | Blocking | Target check | Blocking | Only dead grammar, edges, and dependencies are removed |
 | Intel macOS | DN-03 asset probe; full proof not scheduled | Not applicable | Not applicable | Unsupported-target probe | Do not claim support without a full asset and lifecycle matrix |
 
-`Blocking` means the PR cannot merge without the result. `Sample` means the architecture result must match the blocking platforms, but the release owner can define the exact repeated sample count. `Separate` means the old private-alpha migration is outside the clean-host cutover. Linux aarch64 becomes fully blocking for all rows before a Linux aarch64 release. Linux runner and container results do not prove host boot, reboot, SELinux, foreign-host behavior, or a complete distribution matrix. Docker and Linux-hosted proof do not satisfy any macOS row.
+`Blocking` records a required gate. It is not the current result. The DN-15
+Linux gates passed at `9bd17b716503d7be3bcf5bd310ceddd9aecede50` in run
+[`33198985687`](https://github.com/spa5k/pkg/actions/runs/33198985687). The Apple
+Silicon macOS gates remain blocked. `Sample` means the architecture result must
+match the blocking platforms, but the release owner can define the exact
+repeated sample count. `Separate` means the old private-alpha migration is
+outside the clean-host cutover. Linux aarch64 becomes fully blocking for all
+rows before a Linux aarch64 release. Linux runner and container results do not
+prove host boot, reboot, SELinux, foreign-host behavior, or a complete
+distribution matrix. Docker and Linux-hosted proof do not satisfy any macOS
+row.
 
 ## 11. Agent review synthesis
 

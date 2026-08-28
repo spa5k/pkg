@@ -3,7 +3,7 @@
 The only active implementation plan is
 [`determinate-nix-stacked-prs.md`](determinate-nix-stacked-prs.md).
 It defines the accepted target and future work. It does not claim that the
-target is delivered.
+DN-16 proof has passed. The active plan records both completed and blocked work.
 
 The supporting architecture evidence is
 [`architecture-report.html`](../architecture-report.html).
