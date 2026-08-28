@@ -1230,6 +1230,28 @@ mod tests {
     }
 
     #[test]
+    fn linux_residue_failure_never_dispatches_terminal_vendor() -> Result<(), UninstallError> {
+        let manifest = linux_determinate_manifest()?;
+        let plan = plan_uninstall(&manifest)?;
+        let mut backend = FakeBackend {
+            fail: Some(UninstallAction::VerifyNoPrivilegedResidue),
+            ..FakeBackend::default()
+        };
+
+        assert_eq!(
+            error_code(execute_uninstall(&manifest, &plan, &mut backend)),
+            Some(UninstallErrorCode::ResidueRemaining)
+        );
+        assert!(backend.calls.contains(&"VerifyNoPrivilegedResidue".into()));
+        assert!(
+            !backend
+                .calls
+                .contains(&format!("{:?}", UninstallAction::ExecDeterminateUninstall))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn residue_failure_has_priority_and_success_is_total() -> Result<(), UninstallError> {
         let manifest = manifest(System::X8664Darwin, RecordedAssetState::Created)?;
         let plan = plan_uninstall(&manifest)?;

@@ -238,6 +238,7 @@ capture_failure() {
         ' > "$failure/final-state.txt" 2>&1 || true
         docker exec "$container" sh -c '
             for path in /nix /etc/nix /opt/pkg /var/lib/pkg /var/lib/pkg-install \
+                /var/lib/pkg-install-journal \
                 /run/pkg /run/pkg-helper /home/proof-user/.local/share/pkg; do
                 if test -e "$path" || test -L "$path"; then
                     find "$path" -xdev -maxdepth 4 \
@@ -252,7 +253,7 @@ capture_failure() {
         copy_container_file "$container" \
             /var/lib/pkg-install/determinate-handoff-v1.json \
             "$failure/handoff.json" 4096 || true
-        copy_container_file "$container" /var/lib/pkg-install/transaction-v1.json \
+        copy_container_file "$container" /var/lib/pkg-install-journal/transaction-v1.json \
             "$failure/transaction-journal.json" 65536 || true
         bootstrap=$failure/bootstrap
         mkdir -m 0700 "$bootstrap"
@@ -526,6 +527,7 @@ import sys
 
 paths = [
     "/var/lib/pkg-install/determinate-handoff-v1.json",
+    "/var/lib/pkg-install-journal/transaction-v1.json",
     "/run/pkg-install-handoff.lock",
     "/nix/nix-installer",
     "/nix/receipt.json",
@@ -642,7 +644,7 @@ import sys
 
 paths = [
     "/var/lib/pkg-install/determinate-handoff-v1.json",
-    "/var/lib/pkg-install/transaction-v1.json",
+    "/var/lib/pkg-install-journal/transaction-v1.json",
     "/nix/nix-installer",
     "/nix/receipt.json",
     "/opt/pkg/uninstall/manifest.json",
@@ -880,6 +882,7 @@ docker exec "$container" sh -eu -c '
     test ! -e /opt/pkg
     test ! -e /var/lib/pkg
     test ! -e /var/lib/pkg-install
+    test ! -e /var/lib/pkg-install-journal
     ! getent passwd pkg-nix-broker
     ! getent group pkg-nix-broker
     ! getent group nixbld
@@ -1053,7 +1056,7 @@ test "$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}'
 test "$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')" = "$base_receipt"
 test "$(docker exec "$container" sha256sum /var/lib/pkg-install/determinate-handoff-v1.json | awk '{print $1}')" = "$base_handoff"
 docker exec "$container" sh -eu -c '
-    test ! -e /var/lib/pkg-install/transaction-v1.json
+    test ! -e /var/lib/pkg-install-journal
     python3 -c '\''
 import json, sys
 record = json.load(open("/var/lib/pkg-install/determinate-handoff-v1.json"))
@@ -1120,7 +1123,7 @@ test "$(docker exec "$container" sha256sum /nix/nix-installer | awk '{print $1}'
 test "$(docker exec "$container" sha256sum /nix/receipt.json | awk '{print $1}')" = "$repair_base_receipt"
 test "$(docker exec "$container" sha256sum /var/lib/pkg-install/determinate-handoff-v1.json | awk '{print $1}')" = "$repair_handoff"
 docker exec "$container" sh -eu -c '
-    test ! -e /var/lib/pkg-install/transaction-v1.json
+    test ! -e /var/lib/pkg-install-journal
     test -d /nix/var/nix/gcroots/pkg
     test "$(find /nix/var/nix/gcroots/pkg -type l | wc -l)" -gt 0
 '
@@ -1289,6 +1292,7 @@ docker exec "$container" sh -eu -c '
     test ! -e /opt/pkg
     test ! -e /var/lib/pkg
     test ! -e /var/lib/pkg-install
+    test ! -e /var/lib/pkg-install-journal
     test ! -e /run/pkg
     test ! -e /run/pkg-helper
     test ! -e /home/proof-user/.local/share/pkg

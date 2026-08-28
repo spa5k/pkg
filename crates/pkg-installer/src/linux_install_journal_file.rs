@@ -22,7 +22,7 @@ use pkg_core::{System, state::Digest};
 
 use crate::{LinuxInstallJournal, LinuxInstallJournalErrorCode};
 
-const DIRECTORY_NAME: &str = "pkg-install";
+const DIRECTORY_NAME: &str = "pkg-install-journal";
 const JOURNAL_NAME: &str = "transaction-v1.json";
 const TEMP_NAME: &str = ".transaction-v1.json.tmp";
 const MAX_JOURNAL_BYTES: u64 = 16 * 1024;
@@ -72,7 +72,7 @@ impl fmt::Display for LinuxInstallJournalFileError {
 
 impl Error for LinuxInstallJournalFileError {}
 
-/// Locked access to the fixed root-only Linux install journal.
+/// Locked access to `/var/lib/pkg-install-journal/transaction-v1.json`.
 pub struct LinuxInstallJournalStorage {
     base: File,
     directory: File,
@@ -609,6 +609,9 @@ mod tests {
     fn create_replace_load_and_remove_are_private_and_durable() {
         let temporary = temporary();
         let (uid, gid) = identity();
+        let determinate = temporary.path().join("pkg-install");
+        fs::create_dir(&determinate).unwrap();
+        fs::write(determinate.join("determinate-handoff-v1.json"), b"accepted").unwrap();
         assert!(
             LinuxInstallJournalStorage::open_existing_for_test(
                 temporary.path(),
@@ -649,6 +652,10 @@ mod tests {
         assert_eq!(metadata.nlink(), 1);
         storage.remove().unwrap();
         assert!(!directory.exists());
+        assert_eq!(
+            fs::read(determinate.join("determinate-handoff-v1.json")).unwrap(),
+            b"accepted"
+        );
     }
 
     #[test]

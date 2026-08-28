@@ -132,7 +132,7 @@ assert 'copy "$source" "$limit"' in run
 assert 'capture_vendor_replay "$failure" || true' in capture
 assert run.count('capture_vendor_replay "$failure"') == 1
 assert capture.index("transaction-journal.json") < capture.index('capture_vendor_replay "$failure"')
-assert "/var/lib/pkg-install/transaction-v1.json" in capture
+assert "/var/lib/pkg-install-journal/transaction-v1.json" in capture
 assert "/run/pkg-install/transaction-v1.json" not in run
 assert "65536" in capture
 assert "def verified_read(path, limit, expected_uid=0, expected_gid=0)" in capture_source

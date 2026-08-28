@@ -22,6 +22,8 @@ use crate::{
 };
 
 const MANAGED_RUNTIME_ROOT: &str = "/opt/pkg/nix";
+const INSTALL_JOURNAL_ROOT: &str = "/var/lib/pkg-install-journal";
+const PRODUCT_RESIDUE_ROOTS: [&str; 2] = [MANAGED_RUNTIME_ROOT, INSTALL_JOURNAL_ROOT];
 
 trait LinuxUninstallRuntime {
     fn installed_manifest(&mut self) -> Result<Option<UninstallManifest>, UninstallError>;
@@ -288,7 +290,9 @@ impl ProductionRuntime {
                     .map_err(|_| UninstallError::backend_failure())?;
             }
         }
-        verify_fixed_path_absent(Path::new(MANAGED_RUNTIME_ROOT))?;
+        for path in PRODUCT_RESIDUE_ROOTS {
+            verify_fixed_path_absent(Path::new(path))?;
+        }
         self.product_cleanup_verified = true;
         Ok(())
     }
@@ -460,7 +464,9 @@ pub fn verify_linux_install_absent() -> Result<(), UninstallError> {
             verify_fixed_path_absent(Path::new(asset.path_or_name()))?;
         }
     }
-    verify_fixed_path_absent(Path::new(MANAGED_RUNTIME_ROOT))?;
+    for path in PRODUCT_RESIDUE_ROOTS {
+        verify_fixed_path_absent(Path::new(path))?;
+    }
     verify_fixed_path_absent(Path::new("/var/lib/pkg-install"))?;
     verify_fixed_path_absent(Path::new("/run/pkg-install-auth"))
 }
@@ -1091,6 +1097,14 @@ mod tests {
     fn fixed_path_absence_refuses_an_existing_or_symlinked_target() {
         assert!(verify_fixed_path_absent(Path::new("/definitely/not/a/pkg/path")).is_ok());
         assert!(verify_fixed_path_absent(Path::new("/tmp")).is_err());
+    }
+
+    #[test]
+    fn terminal_residue_inventory_includes_the_install_journal() {
+        assert_eq!(
+            PRODUCT_RESIDUE_ROOTS,
+            ["/opt/pkg/nix", "/var/lib/pkg-install-journal"]
+        );
     }
 
     #[test]
