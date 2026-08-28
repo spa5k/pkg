@@ -128,7 +128,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             "--repair-product-assets",
             "live uninstall requires plain output",
             "determinate-handoff-v1.json",
-            "PKG-DN16-REBOOT-V1",
+            "PKG-DN16-REBOOT-V2",
         ):
             self.assertIn(required, PROOF)
         for obsolete in (
@@ -147,7 +147,11 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("/usr/bin/tail -c 65536", PROOF)
         self.assertIn("expected-results.tsv", PROOF)
         self.assertIn("runner\tfresh-runner-reboot\tpass", PROOF)
-        self.assertIn("compiled\tprocess-and-handoff-faults\tpass", PROOF)
+        self.assertIn("compiled\tprocess-handoff-and-ordering\tpass", PROOF)
+        self.assertIn("external\tstaged-channel-upgrade\tblocked", PROOF)
+        self.assertIn("external\tlifecycle-reboot-recovery\tblocked", PROOF)
+        self.assertNotIn("native\toffline-product-upgrade\tpass", PROOF)
+        self.assertIn("native\tterminal-uninstall-completion\tpass", PROOF)
         self.assertNotIn("real-reboot\tpass", PROOF)
         self.assertIn("candidate/from", PROOF)
         self.assertIn("candidate/to", PROOF)
@@ -160,6 +164,52 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b", PROOF)
         self.assertIn("handoff_before", PROOF)
         self.assertIn("It does not prove product lifecycle recovery across a reboot.", README)
+        self.assertIn("The manual GitHub workflow is the only supported entry point.", README)
+        self.assertNotIn("run `prove.sh`", README)
+        self.assertIn("authenticates each `SHA256SUMS`", README)
+        self.assertIn("authenticated `SHA256SUMS` binds", README)
+        self.assertIn("SHA256SUMS.sigstore.json", WORKFLOW)
+        self.assertRegex(
+            WORKFLOW,
+            r'cosign verify-blob[\s\S]+SHA256SUMS\.sigstore\.json[\s\S]+"\$dir/SHA256SUMS"',
+        )
+
+    def test_reboot_marker_binds_one_fresh_runner_job(self) -> None:
+        for required in (
+            "preflight.txt",
+            "/var/tmp/pkg-disposable-macos-instance",
+            "GITHUB_RUN_ID",
+            "RUNNER_NAME",
+            "preflight_nonce",
+            "reboot_slot",
+            "reboot_runner",
+            "reboot_nonce",
+            "reboot_time",
+            "root:wheel:600",
+            '"$reboot_age" -le 300',
+            '"$marker_age" -le 300',
+            "^[0-9a-f]{64}$",
+        ):
+            self.assertIn(required, PROOF)
+        self.assertIn("/usr/bin/wc -l", PROOF)
+        self.assertIn("/usr/bin/tail -c 1", PROOF)
+        for binding in (
+            '"$preflight_nonce" = "$instance_nonce"',
+            '"$reboot_run" = "$GITHUB_RUN_ID"',
+            '"$reboot_slot" = "$PKG_PROOF_LIFECYCLE_RUN"',
+            '"$reboot_runner" = "$RUNNER_NAME"',
+            '"$reboot_nonce" = "$instance_nonce"',
+            '[ -z "$reboot_extra" ]',
+        ):
+            self.assertIn(binding, PROOF)
+        self.assertIn("trusted scheduler must receive the GitHub run ID", README)
+
+    def test_release_inputs_do_not_claim_a_live_channel_upgrade(self) -> None:
+        self.assertIn('"$from_pkg_sha" != "$to_pkg_sha"', PROOF)
+        self.assertIn('manifest["releaseId"] == release', PROOF)
+        self.assertIn("pkgutil --expand-full", PROOF)
+        self.assertNotIn("capture offline-upgrade", PROOF)
+        self.assertIn("The public packages resolve one live channel.", PROOF)
 
     def test_third_party_actions_are_commit_pinned(self) -> None:
         for line in WORKFLOW.splitlines():

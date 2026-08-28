@@ -12,7 +12,7 @@ require_env() {
 }
 
 for name in PKG_PROOF_FROM_RELEASE PKG_PROOF_TO_RELEASE PKG_PROOF_ROOT \
-    PKG_PROOF_REBOOT_MARKER PKG_PROOF_LIFECYCLE_RUN; do
+    PKG_PROOF_REBOOT_MARKER PKG_PROOF_LIFECYCLE_RUN GITHUB_RUN_ID RUNNER_NAME; do
     require_env "$name"
 done
 
@@ -29,6 +29,40 @@ for tag in "$PKG_PROOF_FROM_RELEASE" "$PKG_PROOF_TO_RELEASE"; do
 done
 [ "$PKG_PROOF_FROM_RELEASE" != "$PKG_PROOF_TO_RELEASE" ] || fail "the release tags are equal"
 
+root=$PKG_PROOF_ROOT
+case "$root" in "${RUNNER_TEMP:-/no-runner-temp}"/*) ;; *) fail "the proof root is unsafe" ;; esac
+evidence="$root/evidence"
+preflight="$evidence/preflight.txt"
+instance_marker=/var/tmp/pkg-disposable-macos-instance
+[ -f "$instance_marker" ] && [ ! -L "$instance_marker" ] \
+    && [ "$(/usr/bin/stat -f '%z' "$instance_marker")" -le 128 ] \
+    && [ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$instance_marker")" = root:wheel:600 ] \
+    || fail "the instance marker is unsafe"
+instance_record=$(/bin/cat "$instance_marker")
+printf '%s\n' "$instance_record" \
+    | /usr/bin/grep -Eq '^PKG-DN16-INSTANCE-V1:[0-9a-f]{64}$' \
+    || fail "the instance marker is invalid"
+instance_nonce=${instance_record#PKG-DN16-INSTANCE-V1:}
+instance_age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f '%m' "$instance_marker") ))
+[ "$instance_age" -ge 0 ] && [ "$instance_age" -le 300 ] \
+    || fail "the instance marker is stale"
+[ -f "$preflight" ] && [ ! -L "$preflight" ] \
+    && [ "$(/usr/bin/stat -f '%z' "$preflight")" -le 512 ] \
+    && [ "$(/usr/bin/wc -l <"$preflight" | /usr/bin/tr -d ' ')" -eq 4 ] \
+    || fail "the bounded preflight evidence is invalid"
+preflight_slot=$(/usr/bin/sed -n 's/^lifecycle_run=//p' "$preflight")
+preflight_runner=$(/usr/bin/sed -n 's/^runner_name=//p' "$preflight")
+preflight_nonce=$(/usr/bin/sed -n 's/^instance_nonce=//p' "$preflight")
+[ "$(/bin/cat "$preflight")" = "$(printf '%s\n' \
+    "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+    "runner_name=$RUNNER_NAME" \
+    "instance_nonce=$preflight_nonce" \
+    "status=preflight-passed")" ] || fail "the preflight evidence does not bind this job"
+[ "$preflight_slot" = "$PKG_PROOF_LIFECYCLE_RUN" ] \
+    && [ "$preflight_runner" = "$RUNNER_NAME" ] \
+    && [ "$preflight_nonce" = "$instance_nonce" ] \
+    || fail "the preflight identity is invalid"
+
 disposable=/var/tmp/pkg-disposable-macos-proof
 [ -f "$disposable" ] && [ ! -L "$disposable" ] \
     && [ "$(/usr/bin/stat -f '%z' "$disposable")" -le 128 ] \
@@ -40,27 +74,43 @@ disposable=/var/tmp/pkg-disposable-macos-proof
     || fail "the disposable marker does not bind this run"
 /usr/bin/sudo -n /usr/bin/true || fail "passwordless administrative authority is unavailable"
 
-# The external runner creates this marker, records the old boot session, reboots,
-# and only then starts the workflow runner. A workflow step cannot resume itself.
+# The external provisioner binds one pre-job reboot to this exact job and VM.
 [ -f "$PKG_PROOF_REBOOT_MARKER" ] && [ ! -L "$PKG_PROOF_REBOOT_MARKER" ] \
-    && [ "$(/usr/bin/stat -f '%z' "$PKG_PROOF_REBOOT_MARKER")" -le 128 ] \
-    || fail "the real-reboot marker is unsafe or absent"
+    && [ "$(/usr/bin/stat -f '%z' "$PKG_PROOF_REBOOT_MARKER")" -le 256 ] \
+    && [ "$(/usr/bin/wc -l <"$PKG_PROOF_REBOOT_MARKER" | /usr/bin/tr -d ' ')" -eq 1 ] \
+    && [ "$(/usr/bin/tail -c 1 "$PKG_PROOF_REBOOT_MARKER" | /usr/bin/od -An -tuC \
+        | /usr/bin/tr -d ' ')" = 10 ] \
+    || fail "the fresh-runner reboot marker is unsafe or absent"
 [ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$PKG_PROOF_REBOOT_MARKER")" = root:wheel:600 ] \
-    || fail "the real-reboot marker is unsafe or absent"
-old_boot=$(/usr/bin/sed -n \
-    "s/^PKG-DN16-REBOOT-V1:$PKG_PROOF_LIFECYCLE_RUN://p" "$PKG_PROOF_REBOOT_MARKER")
-current_boot=$(/usr/sbin/sysctl -n kern.bootsessionuuid)
-[ "$(printf '%s' "$old_boot" | /usr/bin/grep -Ec '^[0-9A-Fa-f-]{36}$')" -eq 1 ] \
+    || fail "the fresh-runner reboot marker is unsafe or absent"
+IFS=: read -r reboot_kind reboot_run reboot_slot reboot_runner reboot_nonce old_boot \
+    reboot_time reboot_extra <<EOF
+$(/bin/cat "$PKG_PROOF_REBOOT_MARKER")
+EOF
+[ "$reboot_kind" = PKG-DN16-REBOOT-V2 ] \
+    && [ "$reboot_run" = "$GITHUB_RUN_ID" ] \
+    && [ "$reboot_slot" = "$PKG_PROOF_LIFECYCLE_RUN" ] \
+    && [ "$reboot_runner" = "$RUNNER_NAME" ] \
+    && [ "$reboot_nonce" = "$instance_nonce" ] \
+    && [ -z "$reboot_extra" ] \
+    || fail "the fresh-runner reboot marker does not bind this job and VM"
+printf '%s\n' "$reboot_nonce" | /usr/bin/grep -Eq '^[0-9a-f]{64}$' \
+    || fail "the reboot instance nonce is invalid"
+printf '%s\n' "$old_boot" | /usr/bin/grep -Eq \
+    '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' \
     || fail "the saved boot session is invalid"
-[ -n "$old_boot" ] && [ "$old_boot" != "$current_boot" ] \
-    || fail "the external runner did not prove a real reboot"
+case "$reboot_time" in ''|*[!0-9]*) fail "the reboot timestamp is invalid" ;; esac
+current_boot=$(/usr/sbin/sysctl -n kern.bootsessionuuid)
+[ "$old_boot" != "$current_boot" ] || fail "the external runner did not reboot"
+reboot_age=$(( $(/bin/date +%s) - reboot_time ))
+marker_age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f '%m' "$PKG_PROOF_REBOOT_MARKER") ))
+[ "$reboot_age" -ge 0 ] && [ "$reboot_age" -le 300 ] \
+    && [ "$marker_age" -ge 0 ] && [ "$marker_age" -le 300 ] \
+    || fail "the fresh-runner reboot marker is stale"
 
-root=$PKG_PROOF_ROOT
-case "$root" in "${RUNNER_TEMP:-/no-runner-temp}"/*) ;; *) fail "the proof root is unsafe" ;; esac
 harness=$(CDPATH= cd -- "$(/usr/bin/dirname "$0")" && /bin/pwd -P)
 from="$root/candidate/from"
 to="$root/candidate/to"
-evidence="$root/evidence"
 work="$root/work"
 /bin/mkdir -p -m 0700 "$evidence" "$work"
 
@@ -72,8 +122,11 @@ for path in "$from_pkg" "$to_pkg" "$from/pkg-aarch64-darwin" \
     "$to/pkg-aarch64-darwin" "$harness/pkg-installer-tests"; do
     [ -f "$path" ] && [ ! -L "$path" ] || fail "an authenticated input is absent or unsafe"
 done
-from_cli_sha=$(/usr/bin/shasum -a 256 "$from/pkg-aarch64-darwin" | /usr/bin/awk '{print $1}')
 to_cli_sha=$(/usr/bin/shasum -a 256 "$to/pkg-aarch64-darwin" | /usr/bin/awk '{print $1}')
+from_pkg_sha=$(/usr/bin/shasum -a 256 "$from_pkg" | /usr/bin/awk '{print $1}')
+to_pkg_sha=$(/usr/bin/shasum -a 256 "$to_pkg" | /usr/bin/awk '{print $1}')
+[ "$from_pkg_sha" != "$to_pkg_sha" ] \
+    || fail "release N and N+1 packages have the same authenticated digest"
 for side in from to; do
     eval "directory=\$$side"
     (cd "$directory" && /usr/bin/shasum -a 256 --check "$evidence/$side-selected-sha256.txt") \
@@ -108,27 +161,55 @@ for path, release in zip(sys.argv[1::2], sys.argv[2::2]):
     assert installer["target"] == "determinate/3.22.1/nix-installer-aarch64-darwin"
     assert installer["length"] == 58427232
     assert installer["sha256"] == "90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b"
-    print(f"{release}: dn16-reviewed determinate-3.22.1")
+    print(f"{release}: manifest-consistent dn16-reviewed determinate-3.22.1")
 PY
+
+echo "+ inspect the two authenticated packages"
+/usr/sbin/pkgutil --expand-full "$from_pkg" "$work/from-package"
+/usr/sbin/pkgutil --expand-full "$to_pkg" "$work/to-package"
+from_installer="$work/from-package/Scripts/pkg-install"
+to_installer="$work/to-package/Scripts/pkg-install"
+for path in "$from_installer" "$to_installer"; do
+    [ -x "$path" ] && [ ! -L "$path" ] || fail "the package installer is absent"
+    /usr/bin/codesign --verify --strict --verbose=2 "$path"
+done
+/usr/bin/python3 - "$work/from-package/PackageInfo" "$from_version" \
+    "$work/to-package/PackageInfo" "$to_version" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+for path, version in zip(sys.argv[1::2], sys.argv[2::2]):
+    package = ET.parse(path).getroot()
+    assert package.tag == "pkg-info"
+    assert package.attrib["identifier"] == "org.pkg.installer.preview"
+    assert package.attrib["version"] == version
+PY
+printf '%s\n' \
+    "from_release=$PKG_PROOF_FROM_RELEASE package_sha256=$from_pkg_sha" \
+    "to_release=$PKG_PROOF_TO_RELEASE package_sha256=$to_pkg_sha" \
+    >"$evidence/authenticated-package-identities.txt"
 
 cat >"$evidence/expected-results.tsv" <<'EOF'
 class	row	result
 runner	fresh-runner-reboot	pass
-input	dn16-release-compatibility	pass
-compiled	process-and-handoff-faults	pass
-native	fresh-install	pass
+input	dn16-source-compatibility	pass
+input	release-manifest-consistency	pass
+input	authenticated-package-distinctness	pass
+compiled	process-handoff-and-ordering	pass
+native	fresh-current-release-install	pass
 native	accepted-state-and-running-jobs	pass
 native	exact-product-jobs	pass
 native	repeat-noop	pass
 native	offline-product-repair	pass
-native	offline-product-upgrade	pass
 native	package-lifecycle	pass
 native	structured-uninstall-refusal	pass
-native	terminal-uninstall	pass
+native	terminal-uninstall-completion	pass
 native	final-absence	pass
 native	vendor-residue	pass
+external	staged-channel-upgrade	blocked
+external	lifecycle-reboot-recovery	blocked
 EOF
-printf 'class\trow\tresult\nrunner\tfresh-runner-reboot\tpass\ninput\tdn16-release-compatibility\tpass\n' \
+printf 'class\trow\tresult\nrunner\tfresh-runner-reboot\tpass\ninput\tdn16-source-compatibility\tpass\ninput\trelease-manifest-consistency\tpass\ninput\tauthenticated-package-distinctness\tpass\n' \
     >"$evidence/results.tsv"
 printf '%s\n' "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" "status=incomplete" \
     "from=$PKG_PROOF_FROM_RELEASE" "to=$PKG_PROOF_TO_RELEASE" >"$evidence/result.txt"
@@ -239,23 +320,13 @@ for test in \
     capture "test-$(printf '%s' "$test" | /usr/bin/tr ':_' '..')" \
         "$harness/pkg-installer-tests" --exact "$test" --nocapture
 done
-pass compiled process-and-handoff-faults
+pass compiled process-handoff-and-ordering
 
-echo "+ extract the authenticated package installers"
-/usr/sbin/pkgutil --expand-full "$from_pkg" "$work/from-package"
-/usr/sbin/pkgutil --expand-full "$to_pkg" "$work/to-package"
-from_installer="$work/from-package/Scripts/pkg-install"
-to_installer="$work/to-package/Scripts/pkg-install"
-for path in "$from_installer" "$to_installer"; do
-    [ -x "$path" ] && [ ! -L "$path" ] || fail "the package installer is absent"
-    /usr/bin/codesign --verify --strict --verbose=2 "$path"
-done
-
-echo "+ clean install from signed release N"
-capture fresh-install /usr/bin/sudo /usr/sbin/installer -pkg "$from_pkg" -target /
-[ "$(/usr/bin/shasum -a 256 /usr/local/bin/pkg | /usr/bin/awk '{print $1}')" = "$from_cli_sha" ] \
-    || fail "fresh install did not publish release N product CLI"
-pass native fresh-install
+echo "+ clean install from the current signed release"
+capture fresh-install /usr/bin/sudo /usr/sbin/installer -pkg "$to_pkg" -target /
+[ "$(/usr/bin/shasum -a 256 /usr/local/bin/pkg | /usr/bin/awk '{print $1}')" = "$to_cli_sha" ] \
+    || fail "fresh install did not publish the current release product CLI"
+pass native fresh-current-release-install
 assert_accepted
 assert_jobs_running
 pass native accepted-state-and-running-jobs
@@ -265,7 +336,7 @@ pass native exact-product-jobs
 echo "+ exact active repeat is a no-op"
 handoff_before=$(/usr/bin/sudo /usr/bin/shasum -a 256 \
     /private/var/db/pkg-install/determinate-handoff-v1.json | /usr/bin/awk '{print $1}')
-capture repeat-noop /usr/bin/sudo "$from_installer"
+capture repeat-noop /usr/bin/sudo "$to_installer"
 /usr/bin/grep -Fx 'pkg is installed.' "$evidence/repeat-noop.log" >/dev/null \
     || fail "the repeated install did not report success"
 assert_accepted
@@ -281,24 +352,13 @@ stop_product
 /usr/bin/sudo /bin/chmod u+w /usr/local/bin/pkg
 printf 'damaged product asset\n' | /usr/bin/sudo /usr/bin/tee /usr/local/bin/pkg >/dev/null
 /usr/bin/sudo /bin/chmod 0755 /usr/local/bin/pkg
-capture offline-repair /usr/bin/sudo "$from_installer" --repair-product-assets
+capture offline-repair /usr/bin/sudo "$to_installer" --repair-product-assets
 /usr/bin/grep -Fx 'pkg product files are repaired. Product services remain offline.' \
     "$evidence/offline-repair.log" >/dev/null || fail "repair did not remain offline"
 [ "$(/usr/bin/shasum -a 256 /usr/local/bin/pkg | /usr/bin/awk '{print $1}')" = "$original_pkg" ] \
     || fail "repair did not restore the product CLI"
 start_product
 pass native offline-product-repair
-
-echo "+ offline product upgrade from N to N+1"
-stop_product
-capture offline-upgrade /usr/bin/sudo "$to_installer"
-/usr/bin/grep -Fx 'pkg product files are upgraded. Product services remain offline.' \
-    "$evidence/offline-upgrade.log" >/dev/null || fail "upgrade did not remain offline"
-assert_accepted
-[ "$(/usr/bin/shasum -a 256 /usr/local/bin/pkg | /usr/bin/awk '{print $1}')" = "$to_cli_sha" ] \
-    || fail "upgrade did not publish release N+1 product CLI"
-start_product
-pass native offline-product-upgrade
 
 echo "+ package lifecycle"
 pkg=/usr/local/bin/pkg
@@ -331,11 +391,13 @@ snapshot_uninstall_boundary "$work/uninstall-after"
     || fail "structured uninstall changed product state"
 pass native structured-uninstall-refusal
 
-echo "+ product cleanup, then terminal Determinate uninstall"
+echo "+ run plain terminal uninstall"
 /bin/cp "$pkg" "$work/pkg-after-removal"
 /bin/chmod 0755 "$work/pkg-after-removal"
 capture terminal-uninstall /usr/bin/sudo "$work/pkg-after-removal" --yes uninstall
-pass native terminal-uninstall
+/usr/bin/grep -F 'Nix was uninstalled successfully' "$evidence/terminal-uninstall.log" >/dev/null \
+    || fail "the terminal vendor uninstall did not report completion"
+pass native terminal-uninstall-completion
 
 echo "+ final product and Base Nix absence"
 for label in org.pkg.root-helper org.pkg.nix-broker org.nixos.nix-daemon \
@@ -372,7 +434,14 @@ echo "+ record permitted vendor residue"
 } >"$evidence/vendor-residue.txt"
 pass native vendor-residue
 
+printf '%s\n' \
+    'The public packages resolve one live channel.' \
+    'They cannot prove N then N+1 without two pinned staged channel states.' \
+    >"$evidence/external-blockers.txt"
+printf '%s\t%s\tblocked\n' external staged-channel-upgrade >>"$evidence/results.tsv"
+printf '%s\t%s\tblocked\n' external lifecycle-reboot-recovery >>"$evidence/results.tsv"
+
 /usr/bin/cmp "$evidence/expected-results.tsv" "$evidence/results.tsv" \
     || fail "the proof result matrix is incomplete"
-/usr/bin/sed -i '' 's/^status=incomplete$/status=passed/' "$evidence/result.txt"
-echo "macOS Apple Silicon lifecycle proof passed"
+/usr/bin/sed -i '' 's/^status=incomplete$/status=blocked/' "$evidence/result.txt"
+fail "external staged-channel upgrade and lifecycle reboot recovery proofs are required"
