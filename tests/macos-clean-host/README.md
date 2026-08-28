@@ -37,7 +37,7 @@ GitHub Actions does not create or update these root-owned markers.
 3. Record `sysctl -n kern.bootsessionuuid`.
 4. Write a root-owned mode `0600` reboot marker.
 
-   `/var/tmp/pkg-disposable-macos-reboot-v1`
+   `/var/tmp/pkg-disposable-macos-reboot-v2`
 
    It must have one newline-terminated line with this form:
 
