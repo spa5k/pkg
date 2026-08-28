@@ -1409,7 +1409,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 .commit_channel()
                 .map_err(|_| InstallError::backend_failure())?;
         }
-        if let Some(BootstrapOutcome::DeterminatePending { bundle, .. }) = self.outcome.as_ref() {
+        if let Some(BootstrapOutcome::DeterminatePending { bundle, .. }) = self.outcome.as_mut() {
             bundle
                 .commit_authenticated_channel()
                 .map_err(|_| InstallError::backend_failure())?;

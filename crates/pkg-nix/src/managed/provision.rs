@@ -124,7 +124,7 @@ impl RuntimeSource for VerifiedRuntimeBundle {
 
     #[cfg(test)]
     fn commit_accepted_channel(&self) -> Result<(), ProvisionError> {
-        VerifiedRuntimeBundle::commit_accepted_channel(self)
+        self.persist_accepted_channel()
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
     }
 }
@@ -374,7 +374,7 @@ impl AuthenticatedInstallerBundle {
     }
 
     /// Commits the authenticated release rollback floor after installation.
-    pub fn commit_authenticated_channel(&self) -> Result<(), ProvisionError> {
+    pub fn commit_authenticated_channel(&mut self) -> Result<(), ProvisionError> {
         self.source
             .commit_accepted_channel()
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
@@ -519,7 +519,7 @@ impl ProvisionedBootstrapTransaction<'_> {
             return Ok(());
         }
         self.source
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))?
             .commit_accepted_channel()
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))?;

@@ -78,7 +78,7 @@ pub(super) struct VerifiedRuntimeBundle {
     installer_payloads: BTreeMap<String, File>,
     accepted_state: AcceptedChannel,
     accepted: AcceptedChannelStore,
-    _datastore_lease: File,
+    datastore_lease: Option<File>,
 }
 
 enum VerifiedBaseNix {
@@ -172,7 +172,16 @@ impl VerifiedRuntimeBundle {
         }
     }
 
-    pub(super) fn commit_accepted_channel(&self) -> Result<(), ChannelError> {
+    pub(super) fn commit_accepted_channel(&mut self) -> Result<(), ChannelError> {
+        if self.datastore_lease.is_none() {
+            return Ok(());
+        }
+        self.persist_accepted_channel()?;
+        drop(self.datastore_lease.take());
+        Ok(())
+    }
+
+    pub(super) fn persist_accepted_channel(&self) -> Result<(), ChannelError> {
         self.accepted.persist(&self.accepted_state)
     }
 }
@@ -344,7 +353,7 @@ async fn load_verified_repository(
         base_nix,
         installer_payloads,
         accepted,
-        _datastore_lease: datastore_lease,
+        datastore_lease: Some(datastore_lease),
     })
 }
 
@@ -895,6 +904,7 @@ fn validate_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkg_channel::ChannelClient;
     use tempfile::TempDir;
 
     const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
@@ -994,6 +1004,47 @@ mod tests {
         }
         bundle.commit_accepted_channel().unwrap();
         assert!(datastore.join(STATE_FILE).is_file());
+    }
+
+    #[tokio::test]
+    async fn accepted_floor_commit_releases_the_datastore_lease() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/channel-v1")
+            .canonicalize()
+            .unwrap();
+        let temporary = TempDir::new().unwrap();
+        let datastore = temporary.path().join("datastore");
+        fs::create_dir(&datastore).unwrap();
+        fs::set_permissions(&datastore, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = TrustedRoot::from_embedded(ROOT).unwrap();
+        let metadata = Url::parse("https://updates.example/metadata/").unwrap();
+        let targets = Url::parse("https://updates.example/targets/").unwrap();
+        let mut bundle = load_installer_bundle(
+            root.clone(),
+            InstallerRepository::Bundle(&fixture),
+            &datastore,
+            System::Aarch64Darwin,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            ChannelClient::new(root.clone(), metadata.clone(), targets.clone(), &datastore),
+            Err(ChannelError::DatastoreBusy)
+        ));
+        bundle.accepted.directory = temporary.path().join("missing");
+        assert!(bundle.commit_accepted_channel().is_err());
+        assert!(matches!(
+            ChannelClient::new(root.clone(), metadata.clone(), targets.clone(), &datastore),
+            Err(ChannelError::DatastoreBusy)
+        ));
+
+        bundle.accepted.directory = datastore.clone();
+        bundle.commit_accepted_channel().unwrap();
+        let _client = ChannelClient::new(root, metadata, targets, &datastore).unwrap();
+        bundle.accepted.directory = temporary.path().join("missing");
+        bundle.commit_accepted_channel().unwrap();
     }
 
     #[test]
