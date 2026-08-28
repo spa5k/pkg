@@ -13,8 +13,8 @@ import sys
 from urllib.parse import urlsplit
 
 
-RELEASE = "v0.1.0-alpha.7"
 ARTIFACT = "pkg-installer-x86_64-linux"
+ALPHA_RELEASE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[1-9][0-9]*$")
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -53,23 +53,31 @@ def require_https_base_url(value: str) -> str:
     return value.rstrip("/")
 
 
+def require_release(value: str) -> str:
+    if ALPHA_RELEASE.fullmatch(value) is None:
+        raise ValueError("release must be an exact alpha tag")
+    return value
+
+
 def stage(
     pkg_install: pathlib.Path,
     template: pathlib.Path,
     destination: pathlib.Path,
+    release: str,
     base_url: str,
 ) -> None:
     require_x86_64_linux_elf(pkg_install)
+    release = require_release(release)
     base_url = require_https_base_url(base_url)
     destination.mkdir(parents=True)
-    release_dir = destination / RELEASE
+    release_dir = destination / release
     release_dir.mkdir()
     artifact = release_dir / ARTIFACT
     shutil.copyfile(pkg_install, artifact)
     artifact.chmod(0o755)
 
     replacements = {
-        "@PKG_RELEASE@": RELEASE,
+        "@PKG_RELEASE@": release,
         "@PKG_RELEASE_BASE_URL@": base_url,
         "@PKG_SHA256_X86_64_LINUX@": sha256(artifact),
     }
@@ -86,7 +94,7 @@ def stage(
 
     checksums = destination / "SHA256SUMS"
     checksums.write_text(
-        f"{sha256(artifact)}  {RELEASE}/{ARTIFACT}\n"
+        f"{sha256(artifact)}  {release}/{ARTIFACT}\n"
         f"{sha256(bootstrap)}  install.sh\n",
         encoding="ascii",
     )
@@ -97,10 +105,17 @@ def main() -> int:
     parser.add_argument("pkg_install", type=pathlib.Path)
     parser.add_argument("template", type=pathlib.Path)
     parser.add_argument("destination", type=pathlib.Path)
+    parser.add_argument("release")
     parser.add_argument("release_base_url")
     args = parser.parse_args()
     try:
-        stage(args.pkg_install, args.template, args.destination, args.release_base_url)
+        stage(
+            args.pkg_install,
+            args.template,
+            args.destination,
+            args.release,
+            args.release_base_url,
+        )
     except (OSError, ValueError) as error:
         print(f"stage-linux-alpha: {error}", file=sys.stderr)
         return 1

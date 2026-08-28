@@ -70,11 +70,12 @@ temporarily for the macOS flow through PR4. The Linux installer ignores them.
 Linux installs and removes Base Nix only through the authenticated Determinate
 installer target.
 
-`stage_linux_alpha.py` accepts one already-built x86-64 Linux `pkg-install`,
-places it under `v0.1.0-alpha.7/`, computes its SHA-256, and renders the small
-bootstrap template with one fixed HTTPS release path. It does not build, sign,
-or publish. The retained CI artifact uses an ephemeral test root. Production
-staging waits for the external key ceremony and hosting activation.
+`stage_linux_alpha.py` accepts an exact alpha release tag and one already-built
+x86-64 Linux `pkg-install`. It places the installer under that release tag,
+computes its SHA-256, and renders the small bootstrap template with one fixed
+HTTPS release path. It does not build, sign, or publish. The retained CI
+artifact uses an ephemeral test root. Production staging waits for the external
+key ceremony and hosting activation.
 
 Build one native index on a release host that has the installed vendor Nix:
 

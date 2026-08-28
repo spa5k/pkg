@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import io
 import pathlib
-import re
 import struct
 import subprocess
 import tarfile
@@ -22,6 +21,9 @@ assert SPEC and SPEC.loader
 PACKAGER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PACKAGER)
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+RELEASE = "v0.1.0-alpha.7"
+VERSION = RELEASE.removeprefix("v")
+MACOS_PACKAGE = f"pkg-{VERSION}-preview.pkg"
 
 
 def elf(machine: int = 62) -> bytes:
@@ -106,7 +108,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         ]
         if platform == "macos-aarch64":
             installer = (
-                staged / PACKAGER.RELEASE / PACKAGER.MACOS_INSTALLER
+                staged / RELEASE / PACKAGER.MACOS_INSTALLER
             ).read_bytes()
 
             def expand(arguments: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
@@ -129,6 +131,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
                 stack.enter_context(patch)
             if platform == "linux-x86_64":
                 PACKAGER.package_linux_candidate(
+                    RELEASE,
                     staged,
                     ROOT / "LICENSE",
                     self.root / "cargo-about",
@@ -136,6 +139,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
                 )
             else:
                 PACKAGER.package_macos_candidate(
+                    RELEASE,
                     staged,
                     ROOT / "LICENSE",
                     self.root / "cargo-about",
@@ -152,18 +156,16 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         )
         (root / "PackageInfo").write_text(
             '<pkg-info identifier="org.pkg.installer.preview" '
-            'version="0.1.0-alpha.7" auth="root">'
+            f'version="{VERSION}" auth="root">'
             '<scripts><postinstall file="./postinstall"/></scripts></pkg-info>'
         )
 
-    def test_release_matches_workspace_version(self) -> None:
-        version = re.search(
-            r'^version = "([^"]+)"$',
-            (ROOT / "Cargo.toml").read_text(),
-            re.MULTILINE,
-        )
-        self.assertIsNotNone(version)
-        self.assertEqual(PACKAGER.RELEASE, f"v{version.group(1)}")
+    def test_release_is_an_explicit_exact_alpha_tag(self) -> None:
+        self.assertEqual(PACKAGER.release_version(RELEASE), VERSION)
+        self.assertEqual(PACKAGER.macos_package(RELEASE), MACOS_PACKAGE)
+        for value in ("0.1.0-alpha.7", "v0.1.0-alpha.0", "v0.1.0", "latest"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                PACKAGER.require_release(value)
 
     def test_cli_has_distinct_linux_and_legacy_macos_inputs(self) -> None:
         with (
@@ -173,6 +175,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
                 [
                     "package",
                     "linux-x86_64",
+                    RELEASE,
                     "staged",
                     "LICENSE",
                     "cargo-about",
@@ -183,6 +186,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         ):
             self.assertEqual(PACKAGER.main(), 0)
         package_linux.assert_called_once_with(
+            RELEASE,
             pathlib.Path("staged"),
             pathlib.Path("LICENSE"),
             pathlib.Path("cargo-about"),
@@ -197,6 +201,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
                 [
                     "package",
                     "macos-aarch64",
+                    RELEASE,
                     "staged",
                     "LICENSE",
                     "cargo-about",
@@ -208,6 +213,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         ):
             self.assertEqual(PACKAGER.main(), 0)
         package_macos.assert_called_once_with(
+            RELEASE,
             pathlib.Path("staged"),
             pathlib.Path("LICENSE"),
             pathlib.Path("cargo-about"),
@@ -217,17 +223,21 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         )
 
     def test_published_preview_notes_do_not_claim_local_proof(self) -> None:
-        notes = PACKAGER.release_notes("linux-x86_64", published_preview=True)
+        notes = PACKAGER.release_notes(
+            "linux-x86_64", RELEASE, published_preview=True
+        )
         self.assertEqual(
             notes,
-            PACKAGER.release_notes("macos-aarch64", published_preview=True),
+            PACKAGER.release_notes(
+                "macos-aarch64", RELEASE, published_preview=True
+            ),
         )
         self.assertIn(
-            f"releases/download/{PACKAGER.RELEASE}/install.sh".encode(),
+            f"releases/download/{RELEASE}/install.sh".encode(),
             notes,
         )
         self.assertIn(
-            f"releases/download/{PACKAGER.RELEASE}/{PACKAGER.MACOS_PACKAGE}".encode(),
+            f"releases/download/{RELEASE}/{MACOS_PACKAGE}".encode(),
             notes,
         )
         self.assertIn(b"## Downloads", notes)
@@ -236,10 +246,10 @@ class PackageAlphaCandidateTests(unittest.TestCase):
 
     def test_linux_archive_has_exact_checked_contents(self) -> None:
         staged = self.root / "linux"
-        (staged / PACKAGER.RELEASE).mkdir(parents=True)
+        (staged / RELEASE).mkdir(parents=True)
         (staged / "test-binaries").mkdir()
         (staged / "install.sh").write_text("#!/bin/sh\n")
-        (staged / PACKAGER.RELEASE / PACKAGER.LINUX_ARTIFACT).write_bytes(elf())
+        (staged / RELEASE / PACKAGER.LINUX_ARTIFACT).write_bytes(elf())
         (staged / "test-binaries/pkg-installer-lib-tests").write_bytes(elf())
         output = self.root / "linux.tar.gz"
         self.package("linux-x86_64", staged, output)
@@ -252,7 +262,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
                 "SHA256SUMS",
                 "THIRD_PARTY_LICENSES.html",
                 "install.sh",
-                f"{PACKAGER.RELEASE}/{PACKAGER.LINUX_ARTIFACT}",
+                f"{RELEASE}/{PACKAGER.LINUX_ARTIFACT}",
             }
             self.assertEqual(set(members), expected)
             checksums = archive.extractfile(members["SHA256SUMS"]).read().decode()
@@ -272,9 +282,9 @@ class PackageAlphaCandidateTests(unittest.TestCase):
 
     def test_macos_archive_refuses_wrong_formats_before_output(self) -> None:
         staged = self.root / "macos"
-        (staged / PACKAGER.RELEASE).mkdir(parents=True)
-        installer = staged / PACKAGER.RELEASE / PACKAGER.MACOS_INSTALLER
-        package = staged / PACKAGER.RELEASE / PACKAGER.MACOS_PACKAGE
+        (staged / RELEASE).mkdir(parents=True)
+        installer = staged / RELEASE / PACKAGER.MACOS_INSTALLER
+        package = staged / RELEASE / MACOS_PACKAGE
         output = self.root / "macos.tar.gz"
         installer.write_bytes(elf())
         package.write_bytes(xar())
@@ -290,9 +300,9 @@ class PackageAlphaCandidateTests(unittest.TestCase):
 
     def test_macos_archive_accepts_structural_executables(self) -> None:
         staged = self.root / "macos-valid"
-        (staged / PACKAGER.RELEASE).mkdir(parents=True)
-        (staged / PACKAGER.RELEASE / PACKAGER.MACOS_INSTALLER).write_bytes(macho())
-        (staged / PACKAGER.RELEASE / PACKAGER.MACOS_PACKAGE).write_bytes(xar())
+        (staged / RELEASE).mkdir(parents=True)
+        (staged / RELEASE / PACKAGER.MACOS_INSTALLER).write_bytes(macho())
+        (staged / RELEASE / MACOS_PACKAGE).write_bytes(xar())
         output = self.root / "macos-valid.tar.gz"
         self.package("macos-aarch64", staged, output)
         with tarfile.open(output, "r:gz") as archive:
@@ -305,16 +315,16 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         expanded = self.root / "expanded"
         installer = macho()
         self.write_expanded(expanded, installer)
-        PACKAGER.validate_expanded_macos_package(expanded, installer)
+        PACKAGER.validate_expanded_macos_package(expanded, installer, VERSION)
 
         (expanded / "Scripts/pkg-install").write_bytes(installer[:-1] + b"x")
         with self.assertRaisesRegex(ValueError, "different pkg-install"):
-            PACKAGER.validate_expanded_macos_package(expanded, installer)
+            PACKAGER.validate_expanded_macos_package(expanded, installer, VERSION)
 
         (expanded / "Scripts/pkg-install").write_bytes(installer)
         (expanded / "Scripts/postinstall").write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "different postinstall"):
-            PACKAGER.validate_expanded_macos_package(expanded, installer)
+            PACKAGER.validate_expanded_macos_package(expanded, installer, VERSION)
 
     def test_expanded_macos_package_refuses_unexpected_file(self) -> None:
         expanded = self.root / "expanded-extra"
@@ -322,7 +332,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         self.write_expanded(expanded, installer)
         (expanded / "unexpected").write_bytes(b"data")
         with self.assertRaisesRegex(ValueError, "unexpected expanded files"):
-            PACKAGER.validate_expanded_macos_package(expanded, installer)
+            PACKAGER.validate_expanded_macos_package(expanded, installer, VERSION)
 
     @unittest.skipUnless(PACKAGER.sys.platform == "darwin", "requires macOS")
     def test_real_script_only_package_has_the_expected_expansion(self) -> None:
@@ -334,7 +344,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
         source.chmod(0o755)
         package = self.root / "preview.pkg"
         subprocess.run(
-            [ROOT / "packaging/macos/build-preview.sh", source, package],
+            [ROOT / "packaging/macos/build-preview.sh", source, package, VERSION],
             check=True,
             capture_output=True,
         )
@@ -350,7 +360,7 @@ class PackageAlphaCandidateTests(unittest.TestCase):
             mock.patch.object(PACKAGER, "MIN_PACKAGE_SIZE", 0),
         ):
             PACKAGER.require_macos_installer(installer)
-            PACKAGER.require_macos_package(package.read_bytes(), installer)
+            PACKAGER.require_macos_package(package.read_bytes(), installer, RELEASE)
 
     def test_truncated_executable_and_license_report_are_refused(self) -> None:
         with self.assertRaisesRegex(ValueError, "x86-64 ELF"):
@@ -404,9 +414,9 @@ class PackageAlphaCandidateTests(unittest.TestCase):
 
     def test_output_is_deterministic(self) -> None:
         staged = self.root / "linux"
-        (staged / PACKAGER.RELEASE).mkdir(parents=True)
+        (staged / RELEASE).mkdir(parents=True)
         (staged / "install.sh").write_text("#!/bin/sh\n")
-        (staged / PACKAGER.RELEASE / PACKAGER.LINUX_ARTIFACT).write_bytes(elf())
+        (staged / RELEASE / PACKAGER.LINUX_ARTIFACT).write_bytes(elf())
         first = self.root / "first.tar.gz"
         second = self.root / "second.tar.gz"
         self.package("linux-x86_64", staged, first)

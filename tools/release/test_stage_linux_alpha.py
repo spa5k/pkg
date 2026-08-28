@@ -16,6 +16,7 @@ assert SPEC and SPEC.loader
 STAGER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(STAGER)
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+RELEASE = "v0.1.0-alpha.7"
 
 
 def elf(machine: int) -> bytes:
@@ -26,11 +27,11 @@ def elf(machine: int) -> bytes:
 
 
 class StageLinuxAlphaTests(unittest.TestCase):
-    def test_release_matches_workspace_version(self) -> None:
-        workspace = (ROOT / "Cargo.toml").read_text()
-        version = re.search(r'^version = "([^"]+)"$', workspace, re.MULTILINE)
-        self.assertIsNotNone(version)
-        self.assertEqual(STAGER.RELEASE, f"v{version.group(1)}")
+    def test_release_is_an_explicit_exact_alpha_tag(self) -> None:
+        self.assertEqual(STAGER.require_release(RELEASE), RELEASE)
+        for value in ("0.1.0-alpha.7", "v0.1.0-alpha.0", "v0.1.0", "latest"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                STAGER.require_release(value)
 
     def test_stages_exact_versioned_artifact_and_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -42,9 +43,10 @@ class StageLinuxAlphaTests(unittest.TestCase):
                 binary,
                 ROOT / "docs/install.sh",
                 output,
+                RELEASE,
                 "https://releases.pkg.example/alpha",
             )
-            artifact = output / STAGER.RELEASE / STAGER.ARTIFACT
+            artifact = output / RELEASE / STAGER.ARTIFACT
             bootstrap = output / "install.sh"
             self.assertEqual(artifact.read_bytes(), elf(62))
             self.assertEqual(stat.S_IMODE(artifact.stat().st_mode), 0o755)
@@ -53,7 +55,7 @@ class StageLinuxAlphaTests(unittest.TestCase):
                 "PKG_RELEASE_BASE_URL='https://releases.pkg.example/alpha'",
                 bootstrap.read_text(),
             )
-            self.assertIn(f"PKG_RELEASE='{STAGER.RELEASE}'", bootstrap.read_text())
+            self.assertIn(f"PKG_RELEASE='{RELEASE}'", bootstrap.read_text())
             self.assertIn(
                 'pkg_url="$PKG_RELEASE_BASE_URL/$PKG_RELEASE/$pkg_artifact"',
                 bootstrap.read_text(),
@@ -72,6 +74,7 @@ class StageLinuxAlphaTests(unittest.TestCase):
                     binary,
                     ROOT / "docs/install.sh",
                     output,
+                    RELEASE,
                     "https://releases.pkg.example/alpha",
                 )
             self.assertFalse(output.exists())

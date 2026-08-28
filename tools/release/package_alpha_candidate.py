@@ -9,6 +9,7 @@ import hashlib
 import io
 import os
 import pathlib
+import re
 import stat
 import struct
 import subprocess
@@ -18,27 +19,31 @@ import tempfile
 import xml.etree.ElementTree as etree
 
 
-RELEASE = "v0.1.0-alpha.7"
 LINUX_ARTIFACT = "pkg-installer-x86_64-linux"
 MACOS_INSTALLER = "pkg-install"
-MACOS_PACKAGE = "pkg-0.1.0-alpha.7-preview.pkg"
+ALPHA_RELEASE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[1-9][0-9]*$")
 NIX_SOURCE_SHA256 = "ecc2f226a1ba27ad56eb85f42af8f078067fe5a219fceb82cb3fda9ba24387a5"
 NIX_SOURCE_MEMBER = "nix-2.34.8/COPYING"
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 MIN_INSTALLER_SIZE = 1024 * 1024
 MIN_PACKAGE_SIZE = 1024 * 1024
 
-PLATFORM_FILES = {
-    "linux-x86_64": ("install.sh", f"{RELEASE}/{LINUX_ARTIFACT}"),
-    "macos-aarch64": (
-        f"{RELEASE}/{MACOS_INSTALLER}",
-        f"{RELEASE}/{MACOS_PACKAGE}",
-    ),
-}
-
-
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def require_release(value: str) -> str:
+    if ALPHA_RELEASE.fullmatch(value) is None:
+        raise ValueError("release must be an exact alpha tag")
+    return value
+
+
+def release_version(release: str) -> str:
+    return require_release(release).removeprefix("v")
+
+
+def macos_package(release: str) -> str:
+    return f"pkg-{release_version(release)}-preview.pkg"
 
 
 def require_regular(path: pathlib.Path, name: str) -> bytes:
@@ -118,7 +123,9 @@ def require_macos_installer(data: bytes) -> None:
         raise ValueError("pkg-install is not an executable Mach-O image")
 
 
-def validate_expanded_macos_package(expanded: pathlib.Path, installer: bytes) -> None:
+def validate_expanded_macos_package(
+    expanded: pathlib.Path, installer: bytes, version: str
+) -> None:
     expected = {"PackageInfo", "Scripts", "Scripts/pkg-install", "Scripts/postinstall"}
     actual = set()
     for path in expanded.rglob("*"):
@@ -150,7 +157,7 @@ def validate_expanded_macos_package(expanded: pathlib.Path, installer: bytes) ->
     if (
         package_info.tag != "pkg-info"
         or package_info.get("identifier") != "org.pkg.installer.preview"
-        or package_info.get("version") != "0.1.0-alpha.7"
+        or package_info.get("version") != version
         or package_info.get("auth") != "root"
         or postinstall is None
         or postinstall.get("file") != "./postinstall"
@@ -158,7 +165,8 @@ def validate_expanded_macos_package(expanded: pathlib.Path, installer: bytes) ->
         raise ValueError("macOS preview package has unexpected PackageInfo")
 
 
-def require_macos_package(data: bytes, installer: bytes) -> None:
+def require_macos_package(data: bytes, installer: bytes, release: str) -> None:
+    version = release_version(release)
     if len(data) < MIN_PACKAGE_SIZE or data[:4] != b"xar!":
         raise ValueError("macOS preview package is not a XAR archive")
     if sys.platform != "darwin":
@@ -195,7 +203,7 @@ def require_macos_package(data: bytes, installer: bytes) -> None:
             raise ValueError("pkg-install has an invalid code signature") from error
         if "Signature=adhoc" not in signature.stderr.splitlines():
             raise ValueError("pkg-install does not have an ad-hoc code signature")
-        package = root / MACOS_PACKAGE
+        package = root / macos_package(release)
         package.write_bytes(data)
         expanded = root / "expanded"
         try:
@@ -206,7 +214,7 @@ def require_macos_package(data: bytes, installer: bytes) -> None:
             )
         except subprocess.CalledProcessError as error:
             raise ValueError("macOS preview package cannot be expanded") from error
-        validate_expanded_macos_package(expanded, installer)
+        validate_expanded_macos_package(expanded, installer, version)
 
 
 def require_nix_copying(source: pathlib.Path) -> bytes:
@@ -229,11 +237,15 @@ def require_nix_copying(source: pathlib.Path) -> bytes:
     return copying
 
 
-def release_notes(platform: str, published_preview: bool = False) -> bytes:
+def release_notes(
+    platform: str, release: str, published_preview: bool = False
+) -> bytes:
+    release = require_release(release)
+    package = macos_package(release)
     if published_preview:
-        release_url = f"https://github.com/spa5k/pkg/releases/download/{RELEASE}"
+        release_url = f"https://github.com/spa5k/pkg/releases/download/{release}"
         return (
-            f"# pkg {RELEASE} technical preview\n\n"
+            f"# pkg {release} technical preview\n\n"
             "This preview uses signed release metadata.\n\n"
             "## Linux x86-64\n\n"
             "```sh\n"
@@ -244,23 +256,23 @@ def release_notes(platform: str, published_preview: bool = False) -> bytes:
             "## macOS Apple silicon\n\n"
             "The package has an ad-hoc signature. It is not notarized.\n\n"
             "```sh\n"
-            f"curl -fsSLO {release_url}/{MACOS_PACKAGE}\n"
+            f"curl -fsSLO {release_url}/{package}\n"
             f"curl -fsSLO {release_url}/SHA256SUMS\n"
-            f"grep '  {MACOS_PACKAGE}$' SHA256SUMS | shasum -a 256 --check\n"
-            f"sudo installer -pkg ./{MACOS_PACKAGE} -target /\n"
+            f"grep '  {package}$' SHA256SUMS | shasum -a 256 --check\n"
+            f"sudo installer -pkg ./{package} -target /\n"
             "```\n\n"
             "## Downloads\n\n"
             f"- [Linux installer]({release_url}/install.sh)\n"
-            f"- [Linux archive]({release_url}/pkg-{RELEASE}-linux-x86_64.tar.gz)\n"
-            f"- [macOS package]({release_url}/{MACOS_PACKAGE})\n"
-            f"- [macOS archive]({release_url}/pkg-{RELEASE}-macos-aarch64.tar.gz)\n"
+            f"- [Linux archive]({release_url}/pkg-{release}-linux-x86_64.tar.gz)\n"
+            f"- [macOS package]({release_url}/{package})\n"
+            f"- [macOS archive]({release_url}/pkg-{release}-macos-aarch64.tar.gz)\n"
             f"- [Checksums]({release_url}/SHA256SUMS)\n\n"
             "This is a preview release. It is not the v1 release.\n"
         ).encode()
     install = (
         "Run `sh install.sh` only while the local proof service is active."
         if platform == "linux-x86_64"
-        else f"Run `sudo installer -pkg {RELEASE}/{MACOS_PACKAGE} -target /` in the disposable test host."
+        else f"Run `sudo installer -pkg {release}/{package} -target /` in the disposable test host."
     )
     macos_limit = (
         "\nThe embedded pkg-install uses an ad-hoc signature.\n"
@@ -270,7 +282,7 @@ def release_notes(platform: str, published_preview: bool = False) -> bytes:
         else "\n"
     )
     return (
-        f"# pkg {RELEASE} local candidate\n\n"
+        f"# pkg {release} local candidate\n\n"
         "TEST KEYS. LOOPBACK SERVICE. NOT FOR PUBLICATION.\n\n"
         "This archive is for local product proof only.\n"
         "The installer trusts test TUF keys and fixed loopback URLs.\n"
@@ -367,17 +379,20 @@ def write_archive(files: dict[str, tuple[bytes, int]], output: pathlib.Path) -> 
 
 
 def package_linux_candidate(
+    release: str,
     staged: pathlib.Path,
     project_license: pathlib.Path,
     cargo_about: pathlib.Path,
     output: pathlib.Path,
     published_preview: bool = False,
 ) -> None:
+    release = require_release(release)
+    platform_files = ("install.sh", f"{release}/{LINUX_ARTIFACT}")
     payload: dict[str, tuple[bytes, int]] = {}
-    for name in PLATFORM_FILES["linux-x86_64"]:
+    for name in platform_files:
         data = require_regular(staged / name, name)
         payload[name] = (data, 0o755)
-    require_linux_installer(payload[f"{RELEASE}/{LINUX_ARTIFACT}"][0])
+    require_linux_installer(payload[f"{release}/{LINUX_ARTIFACT}"][0])
 
     license_text = require_regular(project_license, "Apache-2.0 license")
     if b"Apache License\n                           Version 2.0" not in license_text:
@@ -387,7 +402,7 @@ def package_linux_candidate(
         {
             "LICENSE": (license_text, 0o644),
             "RELEASE_NOTES.md": (
-                release_notes("linux-x86_64", published_preview),
+                release_notes("linux-x86_64", release, published_preview),
                 0o644,
             ),
             "THIRD_PARTY_LICENSES.html": (notices, 0o644),
@@ -401,6 +416,7 @@ def package_linux_candidate(
 
 
 def package_macos_candidate(
+    release: str,
     staged: pathlib.Path,
     project_license: pathlib.Path,
     cargo_about: pathlib.Path,
@@ -408,8 +424,11 @@ def package_macos_candidate(
     output: pathlib.Path,
     published_preview: bool = False,
 ) -> None:
+    release = require_release(release)
+    package = macos_package(release)
+    platform_files = (f"{release}/{MACOS_INSTALLER}", f"{release}/{package}")
     payload: dict[str, tuple[bytes, int]] = {}
-    for name in PLATFORM_FILES["macos-aarch64"]:
+    for name in platform_files:
         data = require_regular(staged / name, name)
         payload[name] = (
             data,
@@ -418,9 +437,9 @@ def package_macos_candidate(
             else 0o644,
         )
 
-    installer = payload[f"{RELEASE}/{MACOS_INSTALLER}"][0]
+    installer = payload[f"{release}/{MACOS_INSTALLER}"][0]
     require_macos_installer(installer)
-    require_macos_package(payload[f"{RELEASE}/{MACOS_PACKAGE}"][0], installer)
+    require_macos_package(payload[f"{release}/{package}"][0], installer, release)
 
     license_text = require_regular(project_license, "Apache-2.0 license")
     if b"Apache License\n                           Version 2.0" not in license_text:
@@ -433,7 +452,7 @@ def package_macos_candidate(
             "NIX-LICENSE": (require_nix_copying(nix_source), 0o644),
             "NIX-SOURCE.md": (nix_source_notice(), 0o644),
             "RELEASE_NOTES.md": (
-                release_notes("macos-aarch64", published_preview),
+                release_notes("macos-aarch64", release, published_preview),
                 0o644,
             ),
             "THIRD_PARTY_LICENSES.html": (notices, 0o644),
@@ -450,12 +469,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     modes = parser.add_subparsers(dest="platform", required=True)
     linux = modes.add_parser("linux-x86_64")
+    linux.add_argument("release")
     linux.add_argument("staged", type=pathlib.Path)
     linux.add_argument("project_license", type=pathlib.Path)
     linux.add_argument("cargo_about", type=pathlib.Path)
     linux.add_argument("output", type=pathlib.Path)
     linux.add_argument("--published-preview", action="store_true")
     macos = modes.add_parser("macos-aarch64")
+    macos.add_argument("release")
     macos.add_argument("staged", type=pathlib.Path)
     macos.add_argument("project_license", type=pathlib.Path)
     macos.add_argument("cargo_about", type=pathlib.Path)
@@ -466,6 +487,7 @@ def main() -> int:
     try:
         if args.platform == "linux-x86_64":
             package_linux_candidate(
+                args.release,
                 args.staged,
                 args.project_license,
                 args.cargo_about,
@@ -474,6 +496,7 @@ def main() -> int:
             )
         else:
             package_macos_candidate(
+                args.release,
                 args.staged,
                 args.project_license,
                 args.cargo_about,

@@ -318,6 +318,7 @@ python3 "$repo/tools/release/stage_linux_alpha.py" \
     "$raw_stage/binaries/pkg-install" \
     "$repo/docs/install.sh" \
     "$artifact_context" \
+    v0.1.0-alpha.7 \
     https://127.0.0.1:8443
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -330,6 +331,7 @@ if [ -n "$artifact_output" ]; then
     candidate="$artifact_output/pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz"
     python3 "$repo/tools/release/package_alpha_candidate.py" \
         linux-x86_64 \
+        v0.1.0-alpha.7 \
         "$artifact_context" \
         "$repo/LICENSE" \
         "$PKG_CARGO_ABOUT" \
