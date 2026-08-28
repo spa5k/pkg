@@ -263,21 +263,28 @@ dispatch a destructive run.
     The pre-job hook writes the third marker before workflow steps start.
 17. Monitor free disk space and the runner log. Stop if host free space
     approaches the 20 GiB reserve.
-18. After slot 1 evidence uploads, stop and delete its VM. Confirm that its
-    ephemeral runner registration disappeared.
+18. Wait until the slot 1 matrix job has a terminal result. Confirm that all
+    required slot 1 artifact uploads for that result completed. Confirm that
+    the ephemeral slot 1 runner deregistered. Only then stop and delete its VM.
 19. Confirm that free space is again at least 70 GiB. Clone a new guest from
     the same immutable image for lifecycle slot 2.
-20. Repeat steps 4 through 17 with exact runner name
-    `pkg-dn16-proof-runner-2`, the slot 2 custom label, a new registration
-    token, and a different 32-byte nonce. Never reuse the slot 1 VM or nonce.
-21. After slot 2 evidence uploads, stop and delete its VM. Confirm that its
-    ephemeral registration disappeared. Remove any stale offline registration
-    through GitHub before declaring cleanup complete.
+20. Continue the same workflow run and use the same GitHub run ID from step
+    10. Do not enable or dispatch the workflow again for slot 2.
+21. Prepare slot 2 with the per-guest actions in steps 4 through 8 and 11
+    through 17. Use the exact runner name `pkg-dn16-proof-runner-2`, the slot
+    2 custom label, a new registration token, and a different 32-byte nonce.
+    Never reuse the slot 1 VM or nonce.
+22. Wait until the slot 2 matrix job has a terminal result. Confirm that all
+    required slot 2 artifact uploads for that result completed. Confirm that
+    the ephemeral slot 2 runner deregistered. Only then stop and delete its
+    VM. Remove any stale offline registration through GitHub before declaring
+    cleanup complete.
 
 The five-minute marker limit controls steps 13 through the slot 1 preflight and
-the equivalent slot 2 steps. Do not create either slot's markers when the
-workflow is first dispatched. The hosted harness can run for up to 30 minutes,
-so early markers will be stale.
+the equivalent slot 2 steps. Both slots use the same workflow run ID. They use
+different lifecycle slots, runner names, and nonces. Do not create either
+slot's markers when the workflow is first dispatched. The hosted harness can
+run for up to 30 minutes, so early markers will be stale.
 
 GitHub recommends `--ephemeral` for one-job runners. It automatically
 deregisters an ephemeral runner after one job. Registration tokens expire after
