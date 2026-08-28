@@ -68,6 +68,133 @@ with tempfile.TemporaryDirectory() as directory:
         )
         assert copied.returncode == 1 and copied.stdout == b""
 
+    gc_payload = root / "gc-payload"
+    gc_child = """import os, signal, sys
+os.write(1, open(sys.argv[1], "rb").read())
+os.write(2, b"private gc diagnostic\\n")
+if sys.argv[2] == "kill":
+    os.kill(os.getpid(), signal.SIGKILL)
+raise SystemExit(int(sys.argv[2]))
+"""
+
+    def run_gc(payload, status, limit=1024):
+        gc_payload.write_bytes(payload)
+        environment = os.environ.copy()
+        environment["PYTHONOPTIMIZE"] = "1"
+        return subprocess.run(
+            [
+                sys.executable,
+                str(CAPTURE),
+                "gc",
+                str(limit),
+                "--",
+                sys.executable,
+                "-c",
+                gc_child,
+                str(gc_payload),
+                str(status),
+            ],
+            check=False,
+            capture_output=True,
+            env=environment,
+        )
+
+    for status, symbol in (
+        (72, "STATE_LOCKED"),
+        (73, "STATE_CORRUPT"),
+        (79, "ENGINE_UNAVAILABLE"),
+    ):
+        payload = (
+            f'{{"schemaVersion":1,"ok":false,"command":"gc",'
+            f'"error":{{"code":{status},"symbol":"{symbol}"}}}}\n'
+        ).encode()
+        result = run_gc(payload, status)
+        assert result.returncode == status
+        assert result.stdout == (
+            f"stage=gc exit_status={status} symbol={symbol} code={status}\n"
+        ).encode()
+        assert result.stderr == b""
+
+    unknown = b'{"schemaVersion":1,"ok":false,"command":"gc","error":{"code":78,"symbol":"CONFIG"}}\n'
+    hostile = b'{"schemaVersion":1,"ok":false,"command":"gc","error":{"code":79,"symbol":"private\\ntext"}}\n'
+    for payload, status in (
+        (b"", 79),
+        (b"not-json", 123),
+        (unknown, 78),
+        (hostile, 79),
+        (b"x" * 1025, 79),
+        (b"", "kill"),
+    ):
+        result = run_gc(payload, status)
+        expected_status = 137 if status == "kill" else status
+        assert result.returncode == expected_status
+        assert result.stdout == (
+            f"stage=gc exit_status={expected_status} public_error=unavailable\n"
+        ).encode()
+        assert result.stderr == b""
+
+    invalid_integer = b'{"schemaVersion":1,"error":{"code":' + b"9" * 5000 + b"}}"
+    result = run_gc(invalid_integer, 79, 8192)
+    assert result.returncode == 79
+    assert result.stdout == b"stage=gc exit_status=79 public_error=unavailable\n"
+    assert result.stderr == b""
+
+    result = run_gc(b'{"schemaVersion":1,"ok":true,"command":"gc"}\n', 0)
+    assert result.returncode == 0
+    assert result.stdout == b'{"schemaVersion":1,"ok":true,"command":"gc"}\n'
+    assert result.stderr == b"private gc diagnostic\n"
+
+    backpressure_child = """import os, threading
+def write(fd, byte):
+    for _ in range(32):
+        os.write(fd, byte * 65536)
+threads = [
+    threading.Thread(target=write, args=(1, b"o")),
+    threading.Thread(target=write, args=(2, b"e")),
+]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+raise SystemExit(79)
+"""
+    backpressure_command = [sys.executable, "-c", backpressure_child]
+    stress = root / "stress"
+    stress_result = subprocess.run(
+        [
+            sys.executable,
+            str(CAPTURE),
+            "4096",
+            str(stress / "status"),
+            str(stress / "stdout"),
+            str(stress / "stderr"),
+            "--",
+            *backpressure_command,
+        ],
+        check=False,
+        capture_output=True,
+        timeout=10,
+    )
+    assert stress_result.returncode == 79
+    assert stress_result.stdout == b"" and stress_result.stderr == b""
+    assert sum((stress / name).stat().st_size for name in ("stdout", "stderr")) == 4096
+    assert (stress / "status").read_text() == (
+        "exit_status=79\ncaptured_bytes=4096\ntruncated=true\n"
+    )
+
+    environment = os.environ.copy()
+    environment["PYTHONOPTIMIZE"] = "1"
+    stress_result = subprocess.run(
+        [sys.executable, str(CAPTURE), "gc", "4096", "--", *backpressure_command],
+        check=False,
+        capture_output=True,
+        env=environment,
+        timeout=10,
+    )
+    assert stress_result.returncode == 79
+    assert stress_result.stdout == b"stage=gc exit_status=79 public_error=unavailable\n"
+    assert stress_result.stderr == b""
+
 run = (HERE / "run.sh").read_text()
 dockerfile = (HERE / "Dockerfile").read_text()
 subprocess.run(["sh", "-n", str(HERE / "run.sh")], check=True)
@@ -201,7 +328,19 @@ proof_check = 'python3 "$repo/tests/linux-clean-host/test_untraced_vendor_replay
 assert run.index(proof_check) < run.index('echo "+ stage x86_64 Linux release inputs"')
 assert run.index("package_alpha_candidate.py") < run.index('"$repo/tests/linux-clean-host/pkg_bounded_capture.py"')
 assert "COPY pkg_bounded_capture.py /usr/local/libexec/" in dockerfile
-assert 'sleep 1\ngc_output=$(docker exec "$container" su - proof-user -c' in run
+gc_proof = run.split('echo "+ prove package roots and explicit GC"', 1)[1].split(
+    'echo "+ pkg remove all installed packages"', 1
+)[0]
+helper_active = gc_proof.index('systemctl is-active --quiet pkg-root-helper.service')
+helper_protect_home = gc_proof.index('systemctl show --property=ProtectHome --value')
+gc_capture = gc_proof.index('pkg_bounded_capture.py gc 1048576 --')
+assert helper_active < helper_protect_home < gc_capture
+assert 'pkg-root-helper.service)" = read-only' in gc_proof
+assert 'gc_status=$?\nset -e' in gc_proof
+assert 'exit "$gc_status"' in gc_proof
+assert 'public_error=unavailable' in gc_proof
+assert "def gc_failure_line(output, status, truncated)" in capture_source
+assert "assert result.get" not in capture_source
 for shipping_path in (ROOT / "crates", ROOT / "docs" / "install.sh"):
     paths = shipping_path.rglob("*") if shipping_path.is_dir() else (shipping_path,)
     for path in paths:

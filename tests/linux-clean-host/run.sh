@@ -1226,9 +1226,29 @@ docker exec "$container" sh -eu -c '
     printf "before GC roots:\n%s\n" "$roots"
 ' > "$roots_evidence"
 test -s "$roots_evidence"
+docker exec "$container" systemctl is-active --quiet pkg-root-helper.service
+test "$(docker exec "$container" systemctl show --property=ProtectHome --value \
+    pkg-root-helper.service)" = read-only
 sleep 1
-gc_output=$(docker exec "$container" su - proof-user -c \
+set +e
+gc_output=$(docker exec "$container" python3 \
+    /usr/local/libexec/pkg_bounded_capture.py gc 1048576 -- \
+    su - proof-user -c \
     "/usr/local/bin/pkg --yes --json gc --keep-generations 1 --max-age-days 0")
+gc_status=$?
+set -e
+if [ "$gc_status" -ne 0 ]; then
+    case "$gc_output" in
+        "stage=gc exit_status=$gc_status symbol=STATE_LOCKED code=72" | \
+        "stage=gc exit_status=$gc_status symbol=STATE_CORRUPT code=73" | \
+        "stage=gc exit_status=$gc_status symbol=ENGINE_UNAVAILABLE code=79" | \
+        "stage=gc exit_status=$gc_status public_error=unavailable") ;;
+        *) gc_output="stage=gc exit_status=$gc_status public_error=unavailable" ;;
+    esac
+    printf '%s\n' "$gc_output" >> "$roots_evidence" || :
+    printf '%s\n' "$gc_output" >&2 || :
+    exit "$gc_status"
+fi
 printf 'gc: %s\n' "$gc_output" >> "$roots_evidence"
 printf '%s\n' "$gc_output" | python3 -c '
 import json
