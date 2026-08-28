@@ -726,6 +726,63 @@ mod tests {
     }
 
     #[test]
+    fn prepared_manifest_validates_payloads_without_bundle_files_and_refuses_partial_state() {
+        let temporary = TempDir::new().expect("temporary release");
+        let root = temporary.path();
+        let mut manifest = release_fixture_json(root);
+        for artifact in manifest["cliArtifacts"]
+            .as_array_mut()
+            .expect("CLI artifacts")
+        {
+            let artifact = artifact.as_object_mut().expect("CLI artifact");
+            let bundle = artifact
+                .remove("sigstoreBundle")
+                .expect("bundle path")
+                .as_str()
+                .expect("bundle path")
+                .to_owned();
+            artifact.remove("sigstoreBundleSha256");
+            artifact.remove("sigstoreBundleLength");
+            fs::remove_file(root.join(bundle)).expect("remove bundle file");
+        }
+        let prepared = serde_json::to_vec(&manifest).expect("prepared manifest");
+        ReleaseManifest::from_prepared_json_with_determinate_fixture(
+            &prepared,
+            root,
+            &TestAuthority,
+        )
+        .expect("valid prepared release");
+
+        fs::write(root.join("cli/pkg-aarch64-darwin"), b"changed payload").expect("mutate payload");
+        assert_eq!(
+            ReleaseManifest::from_prepared_json_with_determinate_fixture(
+                &prepared,
+                root,
+                &TestAuthority,
+            )
+            .err()
+            .expect("changed prepared payload must fail"),
+            ValidationError::ArtifactMismatch
+        );
+        manifest["cliArtifacts"][0]["sha256"] =
+            serde_json::json!(hex::encode(Sha256::digest(b"changed payload")));
+        manifest["cliArtifacts"][0]["length"] = serde_json::json!(15);
+
+        manifest["cliArtifacts"][0]["sigstoreBundle"] =
+            serde_json::json!("cli/pkg-aarch64-darwin.sigstore.json");
+        assert_eq!(
+            ReleaseManifest::from_prepared_json_with_determinate_fixture(
+                &serde_json::to_vec(&manifest).expect("partial manifest"),
+                root,
+                &TestAuthority,
+            )
+            .err()
+            .expect("partial bundle state must fail"),
+            ValidationError::InvalidArtifactSet
+        );
+    }
+
+    #[test]
     fn manifest_refuses_forged_approval_extended_schema_and_target_confusion() {
         let temporary = TempDir::new().expect("temporary release");
         let root = temporary.path();

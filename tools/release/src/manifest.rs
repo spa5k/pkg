@@ -178,9 +178,18 @@ pub struct CliArtifact {
     source: String,
     sha256: String,
     length: u64,
-    sigstore_bundle: String,
-    sigstore_bundle_sha256: String,
-    sigstore_bundle_length: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sigstore_bundle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sigstore_bundle_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sigstore_bundle_length: Option<u64>,
+}
+
+#[derive(Clone, Copy)]
+enum ManifestState {
+    Prepared,
+    Sealed,
 }
 
 /// Human approval role required before publication.
@@ -349,6 +358,10 @@ impl ValidatedRelease {
 
     pub(crate) fn cli_files(&self) -> impl Iterator<Item = (&str, PathBuf, &str, u64)> {
         self.manifest.cli_artifacts.iter().flat_map(|artifact| {
+            let bundle = artifact
+                .sigstore_bundle
+                .as_deref()
+                .expect("validated sealed release");
             [
                 (
                     artifact.source.as_str(),
@@ -357,10 +370,15 @@ impl ValidatedRelease {
                     artifact.length,
                 ),
                 (
-                    artifact.sigstore_bundle.as_str(),
-                    self.artifact_root.join(&artifact.sigstore_bundle),
-                    artifact.sigstore_bundle_sha256.as_str(),
-                    artifact.sigstore_bundle_length,
+                    bundle,
+                    self.artifact_root.join(bundle),
+                    artifact
+                        .sigstore_bundle_sha256
+                        .as_deref()
+                        .expect("validated sealed release"),
+                    artifact
+                        .sigstore_bundle_length
+                        .expect("validated sealed release"),
                 ),
             ]
         })
@@ -439,9 +457,17 @@ impl ValidatedRelease {
             )?;
             validate_file(
                 &self.artifact_root,
-                &artifact.sigstore_bundle,
-                &artifact.sigstore_bundle_sha256,
-                artifact.sigstore_bundle_length,
+                artifact
+                    .sigstore_bundle
+                    .as_deref()
+                    .expect("validated sealed release"),
+                artifact
+                    .sigstore_bundle_sha256
+                    .as_deref()
+                    .expect("validated sealed release"),
+                artifact
+                    .sigstore_bundle_length
+                    .expect("validated sealed release"),
             )?;
         }
         Ok(())
@@ -512,6 +538,54 @@ impl ReleaseManifest {
         Self::from_json_with_catalog(bytes, artifact_root, authority, &DETERMINATE_CATALOG)
     }
 
+    /// Parses a prepared schema-2 manifest and validates every non-bundle input.
+    pub fn from_prepared_json(
+        bytes: &[u8],
+        artifact_root: &Path,
+        authority: &dyn ReleaseAuthority,
+    ) -> Result<ValidatedPreparedRelease, ValidationError> {
+        Self::from_prepared_json_with_catalog(bytes, artifact_root, authority, &DETERMINATE_CATALOG)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_prepared_json_with_determinate_fixture(
+        bytes: &[u8],
+        artifact_root: &Path,
+        authority: &dyn ReleaseAuthority,
+    ) -> Result<ValidatedPreparedRelease, ValidationError> {
+        Self::from_prepared_json_with_catalog(
+            bytes,
+            artifact_root,
+            authority,
+            &TEST_DETERMINATE_CATALOG,
+        )
+    }
+
+    fn from_prepared_json_with_catalog(
+        bytes: &[u8],
+        artifact_root: &Path,
+        authority: &dyn ReleaseAuthority,
+        determinate_catalog: &[ExpectedDeterminateArtifact],
+    ) -> Result<ValidatedPreparedRelease, ValidationError> {
+        let manifest: Self =
+            serde_json::from_slice(bytes).map_err(|_| ValidationError::InvalidManifest)?;
+        manifest.validate_inputs(artifact_root, determinate_catalog, ManifestState::Prepared)?;
+        let canonical =
+            serde_json::to_vec(&manifest).map_err(|_| ValidationError::InvalidManifest)?;
+        let release_digest = hex::encode(Sha256::digest(&canonical));
+        let authorization = authority.authorize(
+            &release_digest,
+            manifest.channel_sequence,
+            manifest.timestamp_version,
+            &manifest.approvals,
+        )?;
+        Ok(ValidatedPreparedRelease {
+            manifest: canonical,
+            release_digest,
+            _authorization: authorization,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn from_json_with_determinate_fixture(
         bytes: &[u8],
@@ -538,6 +612,30 @@ impl ReleaseManifest {
         authority: &dyn ReleaseAuthority,
         determinate_catalog: &[ExpectedDeterminateArtifact],
     ) -> Result<ValidatedRelease, ValidationError> {
+        self.validate_inputs(artifact_root, determinate_catalog, ManifestState::Sealed)?;
+        let canonical = serde_json::to_vec(&self).map_err(|_| ValidationError::InvalidManifest)?;
+        let release_digest = hex::encode(Sha256::digest(&canonical));
+        let authorization = authority.authorize(
+            &release_digest,
+            self.channel_sequence,
+            self.timestamp_version,
+            &self.approvals,
+        )?;
+        Ok(ValidatedRelease {
+            manifest: self,
+            artifact_root: artifact_root.to_path_buf(),
+            release_digest,
+            canonical_manifest: canonical,
+            authorization: Some(authorization),
+        })
+    }
+
+    fn validate_inputs(
+        &self,
+        artifact_root: &Path,
+        determinate_catalog: &[ExpectedDeterminateArtifact],
+        state: ManifestState,
+    ) -> Result<(), ValidationError> {
         if self.schema_version != 2
             || self.channel_sequence == 0
             || self.timestamp_version == 0
@@ -554,6 +652,7 @@ impl ReleaseManifest {
             determinate_catalog,
             &self.artifacts,
             &self.cli_artifacts,
+            state,
         )?;
 
         let root_meta =
@@ -586,28 +685,24 @@ impl ReleaseManifest {
                 &artifact.sha256,
                 artifact.length,
             )?;
-            validate_file(
-                artifact_root,
-                &artifact.sigstore_bundle,
-                &artifact.sigstore_bundle_sha256,
-                artifact.sigstore_bundle_length,
-            )?;
+            if matches!(state, ManifestState::Sealed) {
+                validate_file(
+                    artifact_root,
+                    artifact
+                        .sigstore_bundle
+                        .as_deref()
+                        .ok_or(ValidationError::InvalidManifest)?,
+                    artifact
+                        .sigstore_bundle_sha256
+                        .as_deref()
+                        .ok_or(ValidationError::InvalidManifest)?,
+                    artifact
+                        .sigstore_bundle_length
+                        .ok_or(ValidationError::InvalidManifest)?,
+                )?;
+            }
         }
-        let canonical = serde_json::to_vec(&self).map_err(|_| ValidationError::InvalidManifest)?;
-        let release_digest = hex::encode(Sha256::digest(&canonical));
-        let authorization = authority.authorize(
-            &release_digest,
-            self.channel_sequence,
-            self.timestamp_version,
-            &self.approvals,
-        )?;
-        Ok(ValidatedRelease {
-            manifest: self,
-            artifact_root: artifact_root.to_path_buf(),
-            release_digest,
-            canonical_manifest: canonical,
-            authorization: Some(authorization),
-        })
+        Ok(())
     }
 }
 
@@ -658,16 +753,17 @@ fn validate_sets(
     determinate_catalog: &[ExpectedDeterminateArtifact],
     artifacts: &[ReleaseArtifact],
     cli: &[CliArtifact],
+    state: ManifestState,
 ) -> Result<(), ValidationError> {
     let mut counts = BTreeMap::new();
     let mut targets = BTreeSet::new();
-    let mut sources = BTreeSet::new();
+    let mut sources = BTreeSet::<&str>::new();
     let mut runtime_versions = BTreeSet::new();
     for artifact in artifacts {
         *counts
             .entry((artifact.kind, artifact.system.clone()))
             .or_insert(0usize) += 1;
-        if !targets.insert(&artifact.target) || !sources.insert(&artifact.source) {
+        if !targets.insert(&artifact.target) || !sources.insert(artifact.source.as_str()) {
             return Err(ValidationError::InvalidArtifactSet);
         }
         match artifact.kind {
@@ -723,7 +819,7 @@ fn validate_sets(
     let mut actual_determinate = BTreeMap::new();
     for artifact in &determinate.artifacts {
         if !targets.insert(&artifact.target)
-            || !sources.insert(&artifact.source)
+            || !sources.insert(artifact.source.as_str())
             || artifact.source != artifact.target
             || actual_determinate
                 .insert((artifact.kind, artifact.system.as_deref()), artifact)
@@ -768,21 +864,38 @@ fn validate_sets(
         .iter()
         .map(|item| (item.kind, item.system.as_str()))
         .collect();
-    if cli.len() != CLI_ARTIFACTS.len()
-        || cli_artifacts != CLI_ARTIFACTS.into_iter().collect()
-        || cli.iter().any(|item| {
-            let expected_source = match item.kind {
-                CliArtifactKind::Pkg => format!("cli/pkg-{}", item.system),
-                CliArtifactKind::PkgInstall => format!("cli/pkg-installer-{}", item.system),
-            };
-            item.source != expected_source
-                || item.sigstore_bundle != format!("{expected_source}.sigstore.json")
-                || !sources.insert(&item.source)
-                || !sources.insert(&item.sigstore_bundle)
-                || item.source == item.sigstore_bundle
-        })
-    {
+    if cli.len() != CLI_ARTIFACTS.len() || cli_artifacts != CLI_ARTIFACTS.into_iter().collect() {
         return Err(ValidationError::InvalidArtifactSet);
+    }
+    for item in cli {
+        let expected_source = match item.kind {
+            CliArtifactKind::Pkg => format!("cli/pkg-{}", item.system),
+            CliArtifactKind::PkgInstall => format!("cli/pkg-installer-{}", item.system),
+        };
+        if item.source != expected_source || !sources.insert(item.source.as_str()) {
+            return Err(ValidationError::InvalidArtifactSet);
+        }
+        let bundle_fields = (
+            item.sigstore_bundle.as_deref(),
+            item.sigstore_bundle_sha256.as_deref(),
+            item.sigstore_bundle_length,
+        );
+        match state {
+            ManifestState::Prepared if bundle_fields != (None, None, None) => {
+                return Err(ValidationError::InvalidArtifactSet);
+            }
+            ManifestState::Prepared => {}
+            ManifestState::Sealed => {
+                let bundle = bundle_fields.0.ok_or(ValidationError::InvalidArtifactSet)?;
+                if bundle != format!("{expected_source}.sigstore.json")
+                    || bundle_fields.1.is_none_or(|digest| !valid_digest(digest))
+                    || bundle_fields.2.is_none()
+                    || !sources.insert(bundle)
+                {
+                    return Err(ValidationError::InvalidArtifactSet);
+                }
+            }
+        }
     }
     Ok(())
 }
