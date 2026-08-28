@@ -228,7 +228,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "product-cli",
         ):
             self.assertIn(f'"{asset}"', receipt_files)
-        self.assertIn('records[asset].get("contentDigest") != actual', LINUX_HARNESS)
+        self.assertIn(
+            'records[asset].get("contentDigest") != receipt_digest(actual)',
+            LINUX_HARNESS,
+        )
         self.assertIn("path.resolve(strict=True)", LINUX_HARNESS)
         self.assertIn('print("gc-root\\t"', LINUX_HARNESS)
         for boundary in (

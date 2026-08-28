@@ -735,6 +735,11 @@ import json
 import pathlib
 import sys
 
+
+def receipt_digest(hex_digest):
+    return f"sha256-{hex_digest}"
+
+
 root = pathlib.Path(sys.argv[1])
 manifest = json.loads((root / "release-manifest.json").read_text())
 installed = {
@@ -756,7 +761,7 @@ for target, path in installed.items():
 
 receipt = json.loads(pathlib.Path("/opt/pkg/uninstall/manifest.json").read_text())
 descriptor = next(item for item in manifest["artifacts"] if item["kind"] == "descriptor")
-if receipt["ownershipManifestDigest"] != descriptor["sha256"]:
+if receipt["ownershipManifestDigest"] != receipt_digest(descriptor["sha256"]):
     raise SystemExit("receipt release identity does not match the publication")
 records = {item["id"]: item for item in receipt["assets"]}
 expected_records = {
@@ -779,7 +784,7 @@ for asset, target in {
     "broker-binary": "installer/x86_64-linux/pkg-nix-broker",
     "product-cli": "installer/x86_64-linux/pkg",
 }.items():
-    if records[asset]["state"] != "created" or records[asset]["contentDigest"] != expected[target]:
+    if records[asset]["state"] != "created" or records[asset]["contentDigest"] != receipt_digest(expected[target]):
         raise SystemExit(f"receipt product digest mismatch: {asset}")
 file_paths = {
     "root-helper-binary": pathlib.Path("/opt/pkg/bin/pkg-root-helper"),
@@ -795,7 +800,7 @@ file_paths = {
 }
 for asset, path in file_paths.items():
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
-    if records[asset].get("contentDigest") != actual:
+    if records[asset].get("contentDigest") != receipt_digest(actual):
         raise SystemExit(f"receipt file digest mismatch: {asset}")
 for asset in expected_records - file_paths.keys() - {"uninstall-manifest"}:
     if records[asset].get("contentDigest") is not None:

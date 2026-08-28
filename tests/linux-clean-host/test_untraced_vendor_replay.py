@@ -180,6 +180,11 @@ assert '*.service) test "$(docker exec "$container" systemctl show --property=Ma
 assert offline.count("--property=MainPID") == 1
 publication_product = run.split("assert_publication_product() {", 1)[1].split("\n}", 1)[0]
 assert 'docker exec -i "$container" python3 - "$publication"' in publication_product
+publication_product_full = run.split("assert_publication_product() {", 1)[1].split("\nsnapshot_package_state()", 1)[0]
+assert 'return f"sha256-{hex_digest}"' in publication_product_full
+assert 'receipt["ownershipManifestDigest"] != receipt_digest(descriptor["sha256"])' in publication_product_full
+assert 'records[asset]["contentDigest"] != receipt_digest(expected[target])' in publication_product_full
+assert 'records[asset].get("contentDigest") != receipt_digest(actual)' in publication_product_full
 publication = run.split("publication_installer() {", 1)[1].split("\n}", 1)[0]
 assert 'docker exec -i "$container" python3 - "$1"' in publication
 proof_check = 'python3 "$repo/tests/linux-clean-host/test_untraced_vendor_replay.py" >/dev/null'
