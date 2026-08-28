@@ -704,7 +704,9 @@ assert_product_units_offline() {
     for unit in $product_units; do
         docker exec "$container" systemctl is-active --quiet "$unit" && return 1
         test "$(docker exec "$container" systemctl is-enabled "$unit" 2>/dev/null || true)" = disabled
-        test "$(docker exec "$container" systemctl show --property=MainPID --value "$unit")" = 0
+        case "$unit" in
+            *.service) test "$(docker exec "$container" systemctl show --property=MainPID --value "$unit")" = 0 ;;
+        esac
     done
 }
 
