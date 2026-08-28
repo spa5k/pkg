@@ -1,61 +1,100 @@
-# macOS alpha clean-host proof
+# macOS Apple Silicon lifecycle proof
 
-This proof runs through the manual `macOS alpha clean-host proof` workflow or an explicitly gated disposable local Tart VM.
-
-The build job creates an ad-hoc-signed technical-preview package.
-It also creates two ephemeral signed product publications.
-
-The proof job starts on a separate fresh GitHub-hosted macOS runner.
-It receives one tar artifact.
-It does not receive source code.
-It does not compile `pkg-install`.
-
-The proof uses the shipping package, the shipping `pkg-install` artifact, and the public `pkg` CLI.
-It performs real APFS, Keychain, Directory Services, launchd, and `/nix` mutations.
+This is a destructive proof for the DN-16 product lifecycle.
 Do not run `prove.sh` on a developer Mac.
 
-For a local Tart proof, copy only the staged proof bundle into a fresh macOS arm64 VM.
-Inside that VM, create and remove the disposable marker around the proof:
+The workflow runs only by manual dispatch.
+Its destructive jobs require two different self-hosted runner labels:
 
-```sh
-sudo install -m 0600 /dev/null /var/tmp/pkg-disposable-macos-proof
-trap 'sudo rm -f /var/tmp/pkg-disposable-macos-proof' EXIT
-PKG_DISPOSABLE_MACOS_PROOF=local-tart ./prove.sh
-```
+- `pkg-disposable-macos-proof-1`
+- `pkg-disposable-macos-proof-2`
 
-The local gate requires an arm64 `VirtualMac*` model, kernel hypervisor presence, and a root-owned marker that is not older than five minutes.
+Each label must select one fresh Apple Silicon `VirtualMac`.
+The proof is blocked until both disposable runners exist.
+GitHub-hosted runners are not permitted.
 
-macOS cannot remove a live synthetic root object before reboot.
-The proof therefore permits one empty and unmounted `/nix` virtual directory after uninstall.
-It requires `synthetic.conf`, the APFS volume, the Keychain item, and all product state to be absent.
-The virtual directory disappears at the runner's next reboot.
+The trusted provisioner must map the labels to these exact runner names:
 
-The workflow is a technical-preview gate.
-It does not publish a release.
-It does not use Developer ID signing.
-It does not notarize the package.
-It does not claim Gatekeeper-clean or stable behavior.
+- `pkg-disposable-macos-proof-1` maps to `pkg-dn16-proof-runner-1`.
+- `pkg-disposable-macos-proof-2` maps to `pkg-dn16-proof-runner-2`.
 
-Developer ID signing and notarization remain explicit TODO items.
+The two names must identify different virtual machines.
+Each machine must have a different 64-character lowercase hexadecimal instance nonce.
+The provisioner writes the nonce to `/var/tmp/pkg-disposable-macos-instance`.
+The file must be owned by `root:wheel` and have mode `0600`.
+Its one line must have the form `PKG-DN16-INSTANCE-V1:<nonce>`.
 
-## Deferred hosted rerun
+## External runner contract
 
-GitHub Actions was disabled at the repository level on 2026-08-15.
-Do not count local tests as macOS clean-host proof.
+The runner provisioner must do these steps before it starts the Actions runner.
 
-Hosted run `31873974181` used macOS 15.7.7 arm64 image `20260727.0256.1`.
-It used artifact digest `12e854d8d05e5e050d8e6e2aedc57726f93e6b39ab43b529b585ff6abf81948c`.
-The shipping package hash was `da08f483100b03bf09cea679186a5f26cada7dc5f9e7df075d5a922354b65d34`.
-The shipping `pkg-install` hash was `b9dee3f83e9e87b4a74bffea5ddff51b1f3bbe51f4072bbc7b74383b3ee238ed`.
-The host had no detected Nix state.
-Authentication succeeded, but account preflight failed before the first journal entry.
-Commit `05d4509` fixes the signed Directory Services ID parser that caused this failure.
+1. Create a fresh macOS Apple Silicon virtual machine.
+2. Confirm that Nix and pkg are absent.
+3. Record `sysctl -n kern.bootsessionuuid`.
+4. Write this root-owned mode `0600` file:
 
-After Kamran explicitly re-enables GitHub Actions, run this command once:
+   `/var/tmp/pkg-disposable-macos-reboot-v1`
 
-```sh
-gh workflow run nightly.yml --ref agent/macos-alpha -f macos_alpha_proof=true
-```
+   Its one line must have this form:
 
-Save the run URL, runner image, artifact hashes, command log, assertion count, and retained-state report.
-Require every assertion in `prove.sh` to pass before claiming macOS clean-host proof.
+   `PKG-DN16-REBOOT-V1:<lifecycle-run>:<boot-session-before-reboot>`
+
+5. Reboot the virtual machine.
+6. Start the Actions runner after the reboot.
+7. When a workflow job is assigned, write this root-owned mode `0600` file:
+
+   `/var/tmp/pkg-disposable-macos-proof`
+
+   Its one line must have this form:
+
+   `PKG-DN16-DISPOSABLE-V1:<github-run-id>:<lifecycle-run>`
+
+The harness compares the saved boot session with the current boot session.
+Equal values fail the proof.
+This proves that the fresh runner rebooted before the job.
+It does not prove product lifecycle recovery across a reboot.
+That row needs an external two-phase runner protocol.
+An Actions step cannot resume itself after a reboot.
+
+The runner must provide passwordless `sudo` only inside the disposable VM.
+The VM must be destroyed after the job.
+
+## Signed input contract
+
+The workflow downloads release N into `candidate/from`.
+It downloads release N+1 into `candidate/to`.
+It verifies release checksums and Sigstore bundles before `prove.sh` starts.
+Both release tags must resolve to reviewed DN-16 commit `8ffd325a4be12a998f3a5684097b57841a11540e`.
+Both signed manifests must identify Determinate 3.22.1 and the pinned Apple Silicon installer digest.
+The current public release N predates DN-16 and is not a valid baseline.
+The proof stays blocked until two compatible signed releases exist.
+The harness does not download or authenticate a second release source.
+It rechecks the selected checksum files for both local candidate directories.
+
+The proof-only harness artifact contains exactly these files:
+
+- `README.md`
+- `pkg-installer-tests`
+- `prove.sh`
+- `INVENTORY`
+- `SHA256SUMS`
+
+The destructive host receives no source code.
+It does not run Cargo.
+It does not receive repository secrets.
+
+The release does not publish a separate macOS `pkg-install` file.
+The harness uses native `pkgutil --expand-full` to read `pkg-install` from the already authenticated preview package.
+It verifies the embedded code signature before use.
+
+## Proof result
+
+The harness writes a small TSV result matrix.
+It labels runner, input, compiled, and native evidence separately.
+It keeps command output at 64 KiB per row.
+It records hashes and fixed state only.
+It does not record the environment or secret file contents.
+
+The workflow uploads evidence on success and failure.
+It retains evidence for three days.
+It does not publish a package or release.
