@@ -367,7 +367,7 @@ impl RepairGenerationReport {
         damaged_paths: u32,
         build_preview: BuildPreview,
     ) -> Result<Self, FrameError> {
-        if damaged_paths == 0 {
+        if damaged_paths == 0 || !build_preview.is_repair_approval() {
             return Err(FrameError::new(FrameErrorCode::InvalidPayload));
         }
         Ok(Self {
@@ -1171,18 +1171,8 @@ impl ProductFrameCodec {
             CliBrokerResponse::BuildApproved => (14, encode_json(&EmptyWire {})?),
             CliBrokerResponse::Verify(report) => (15, report.encode().map_err(adapter_payload)?),
             CliBrokerResponse::Gc(report) => (16, report.encode().map_err(adapter_payload)?),
-            CliBrokerResponse::BuildPreview(preview) => (
-                17,
-                preview
-                    .to_json_bytes()
-                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
-            ),
-            CliBrokerResponse::BuildPrepared(preview) => (
-                18,
-                preview
-                    .to_json_bytes()
-                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
-            ),
+            CliBrokerResponse::BuildPreview(preview) => (17, encode_build_preview(preview)?),
+            CliBrokerResponse::BuildPrepared(preview) => (18, encode_build_preview(preview)?),
             CliBrokerResponse::BuildExecuted(report) => {
                 (19, report.encode().map_err(adapter_payload)?)
             }
@@ -1468,14 +1458,8 @@ impl ProductFrameCodec {
             16 => CliBrokerResponse::Gc(
                 GcReport::decode(&JsonCodec::default(), frame.payload).map_err(adapter_payload)?,
             ),
-            17 => CliBrokerResponse::BuildPreview(
-                BuildPreview::from_json_bytes(frame.payload)
-                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
-            ),
-            18 => CliBrokerResponse::BuildPrepared(
-                BuildPreview::from_json_bytes(frame.payload)
-                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
-            ),
+            17 => CliBrokerResponse::BuildPreview(decode_build_preview(frame.payload)?),
+            18 => CliBrokerResponse::BuildPrepared(decode_build_preview(frame.payload)?),
             19 => CliBrokerResponse::BuildExecuted(
                 BuildReport::decode(&JsonCodec::default(), frame.payload)
                     .map_err(adapter_payload)?,
@@ -2557,6 +2541,24 @@ fn encode_json(value: &impl Serialize) -> Result<Vec<u8>, FrameError> {
 
 fn decode_json<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, FrameError> {
     serde_json::from_slice(bytes).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+}
+
+fn encode_build_preview(preview: &BuildPreview) -> Result<Vec<u8>, FrameError> {
+    if !preview.is_build() {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    preview
+        .to_json_bytes()
+        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
+}
+
+fn decode_build_preview(bytes: &[u8]) -> Result<BuildPreview, FrameError> {
+    let preview = BuildPreview::from_json_bytes(bytes)
+        .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
+    if !preview.is_build() {
+        return Err(FrameError::new(FrameErrorCode::InvalidPayload));
+    }
+    Ok(preview)
 }
 
 fn adapter_payload<T>(_: T) -> FrameError {
@@ -4377,10 +4379,19 @@ mod tests {
 
     fn repair_proof() -> RootRepairPlanProof {
         let preview = BuildPreview::from_json_bytes(
-            br#"{"schemaVersion":1,"platform":{"os":"linux","arch":"x86_64"},"policyVersion":7,"buildPlanDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","targets":[{"selector":"hello","packageName":"hello","version":"1.0","outputsToInstall":["out"],"localBuildRequired":false}],"build":{"count":0,"names":[],"hasFixedOutput":false},"cache":{"knownDownloadBytes":0,"knownContentBytes":0},"unknownLocalOutputs":0,"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null},"readiness":{"sandboxed":true,"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","perBuildResourceCap":false,"notice":"Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation."}},"approvalRequired":false}"#,
+            br#"{"schemaVersion":1,"purpose":"repair","platform":{"os":"linux","arch":"x86_64"},"policyVersion":7,"buildPlanDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","targets":[{"selector":"repair-1","packageName":"hello-1.0","version":"installed","outputsToInstall":["out"],"localBuildRequired":true}],"build":{"count":1,"names":["hello-1.0"],"hasFixedOutput":false},"cache":{"knownDownloadBytes":0,"knownContentBytes":0},"unknownLocalOutputs":1,"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null},"readiness":{"sandboxed":true,"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","perBuildResourceCap":false,"notice":"Repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits."}},"approvalRequired":true}"#,
         )
         .unwrap();
         RootRepairPlanProof::new(preview).unwrap()
+    }
+
+    fn normal_build_preview() -> BuildPreview {
+        let mut value = repair_proof().preview().to_json_value().unwrap();
+        value["purpose"] = serde_json::json!("build");
+        value["readiness"]["resourceBoundary"]["notice"] = serde_json::json!(
+            "Builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap."
+        );
+        BuildPreview::from_json_bytes(&serde_json::to_vec(&value).unwrap()).unwrap()
     }
 
     fn root_set() -> RootSet {
@@ -5151,6 +5162,106 @@ mod tests {
             ProductFrameCodec::decode_helper_response(&encoded),
             Ok((78, progress))
         );
+    }
+
+    #[test]
+    fn preview_purpose_is_bound_to_each_enclosing_operation() {
+        let repair = repair_proof().preview().clone();
+        let build = normal_build_preview();
+        let repair_notice =
+            repair.to_json_value().unwrap()["readiness"]["resourceBoundary"]["notice"].clone();
+        let mut repair_for_normal_frame = build.to_json_value().unwrap();
+        repair_for_normal_frame["purpose"] = serde_json::json!("repair");
+        repair_for_normal_frame["readiness"]["resourceBoundary"]["notice"] = repair_notice;
+        let repair_for_normal_frame =
+            BuildPreview::from_json_bytes(&serde_json::to_vec(&repair_for_normal_frame).unwrap())
+                .unwrap();
+
+        let proof = repair_proof();
+        assert!(repair_request().accepts(&proof));
+        let other_system = RootRepairPlanRequest::new(
+            vec![path("hello")],
+            PolicyVersion::from_u64(7).unwrap(),
+            System::Aarch64Linux,
+            BuildReadiness::new(true, false, true, true, true),
+            8,
+        )
+        .unwrap();
+        assert!(!other_system.accepts(&proof));
+
+        assert!(RootRepairPlanProof::new(build.clone()).is_none());
+        let mut root_payload = vec![ROOT_NIX_SUCCESS];
+        root_payload.extend_from_slice(&build.to_json_bytes().unwrap());
+        let root_frame = encode_frame(
+            CHANNEL_BROKER_HELPER,
+            RootNixOperation::RepairPlan.method_id(),
+            71,
+            &root_payload,
+        )
+        .unwrap();
+        assert!(ProductFrameCodec::decode_helper_response(&root_frame).is_err());
+
+        assert!(RepairGenerationReport::needs_approval(1, build.clone()).is_err());
+        let repair_report = encode_json(&serde_json::json!({
+            "status": repair_generation_status_name(RepairGenerationStatus::NeedsApproval),
+            "damagedPaths": 1,
+            "buildPreview": build.to_json_value().unwrap()
+        }))
+        .unwrap();
+        let repair_frame = encode_frame(CHANNEL_CLI_BROKER, 30, 72, &repair_report).unwrap();
+        assert!(ProductFrameCodec::decode_cli_response(&repair_frame).is_err());
+
+        for response in [
+            CliBrokerResponse::BuildPreview(repair_for_normal_frame.clone()),
+            CliBrokerResponse::BuildPrepared(repair_for_normal_frame.clone()),
+        ] {
+            assert!(ProductFrameCodec::encode_cli_response(73, &response).is_err());
+        }
+        for method in [17, 18] {
+            let frame = encode_frame(
+                CHANNEL_CLI_BROKER,
+                method,
+                74,
+                &repair_for_normal_frame.to_json_bytes().unwrap(),
+            )
+            .unwrap();
+            assert!(ProductFrameCodec::decode_cli_response(&frame).is_err());
+        }
+
+        let mut impossible_cache_only = build.to_json_value().unwrap();
+        impossible_cache_only["purpose"] = serde_json::json!("repair");
+        impossible_cache_only["readiness"]["resourceBoundary"]["notice"] =
+            repair.to_json_value().unwrap()["readiness"]["resourceBoundary"]["notice"].clone();
+        impossible_cache_only["targets"][0]["localBuildRequired"] = serde_json::json!(false);
+        impossible_cache_only["build"]["count"] = serde_json::json!(0);
+        impossible_cache_only["build"]["names"] = serde_json::json!([]);
+        impossible_cache_only["unknownLocalOutputs"] = serde_json::json!(0);
+        impossible_cache_only["approvalRequired"] = serde_json::json!(false);
+        let impossible_cache_only =
+            BuildPreview::from_json_bytes(&serde_json::to_vec(&impossible_cache_only).unwrap())
+                .unwrap();
+        assert!(RootRepairPlanProof::new(impossible_cache_only.clone()).is_none());
+        assert!(RepairGenerationReport::needs_approval(1, impossible_cache_only.clone()).is_err());
+
+        let mut root_payload = vec![ROOT_NIX_SUCCESS];
+        root_payload.extend_from_slice(&impossible_cache_only.to_json_bytes().unwrap());
+        let root_frame = encode_frame(
+            CHANNEL_BROKER_HELPER,
+            RootNixOperation::RepairPlan.method_id(),
+            75,
+            &root_payload,
+        )
+        .unwrap();
+        assert!(ProductFrameCodec::decode_helper_response(&root_frame).is_err());
+
+        let report = encode_json(&serde_json::json!({
+            "status": repair_generation_status_name(RepairGenerationStatus::NeedsApproval),
+            "damagedPaths": 1,
+            "buildPreview": impossible_cache_only.to_json_value().unwrap()
+        }))
+        .unwrap();
+        let report_frame = encode_frame(CHANNEL_CLI_BROKER, 30, 76, &report).unwrap();
+        assert!(ProductFrameCodec::decode_cli_response(&report_frame).is_err());
     }
 
     #[test]

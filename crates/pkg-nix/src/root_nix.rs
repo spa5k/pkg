@@ -164,6 +164,12 @@ impl RootRepairPlanRequest {
         self.system
     }
 
+    /// Returns whether a repair proof targets this request's exact system.
+    #[must_use]
+    pub fn accepts(&self, proof: &RootRepairPlanProof) -> bool {
+        proof.preview.matches_system(self.system)
+    }
+
     /// Returns the fixed build-readiness facts.
     #[must_use]
     pub const fn readiness(&self) -> &BuildReadiness {
@@ -185,8 +191,11 @@ pub struct RootRepairPlanProof {
 }
 
 impl RootRepairPlanProof {
-    /// Promotes one validated sanitized preview.
+    /// Promotes one validated local-rebuild repair preview.
     pub fn new(preview: BuildPreview) -> Option<Self> {
+        if !preview.is_repair_approval() {
+            return None;
+        }
         let hex = preview.build_plan_digest().strip_prefix("sha256:")?;
         let digest = Digest::from_str(&format!("sha256-{hex}")).ok()?;
         Some(Self { preview, digest })

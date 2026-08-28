@@ -363,11 +363,8 @@ pub fn run_linux_root_helper_from_activation() -> Result<(), ServiceError> {
     let broker_uid = broker_identity()?.uid;
     let listener = activated_unix_listener(LINUX_HELPER_SOCKET)?;
     let repair_executor: Arc<dyn VerifiedRepairExecutor> = Arc::new(
-        RootNixRepairExecutor::new(
-            Path::new("/nix/var/nix/profiles/default/bin/nix"),
-            Path::new(LINUX_HELPER_HOME),
-        )
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+        RootNixRepairExecutor::new_standard_determinate(Path::new(LINUX_HELPER_HOME))
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
     let helper = InProcessHelper::with_repair_executor(broker_uid, repair_executor)
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;

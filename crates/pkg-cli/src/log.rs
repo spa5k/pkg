@@ -213,7 +213,7 @@ impl PublicOperationLog {
             file.seek(SeekFrom::End(-1))?;
             let mut final_byte = [0_u8; 1];
             file.read_exact(&mut final_byte)?;
-            if final_byte != [b'\n'] {
+            if final_byte != *b"\n" {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "public operation log has a torn final record",

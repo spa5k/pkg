@@ -28,7 +28,9 @@ use crate::{
 
 const MAX_TEXT: usize = 256;
 const MAX_PREVIEW_ITEMS: usize = 4096;
-const RESOURCE_NOTICE: &str = "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation.";
+const LINUX_RESOURCE_NOTICE: &str = "Builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.";
+const LINUX_REPAIR_RESOURCE_NOTICE: &str = "Repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits.";
+const MACOS_RESOURCE_NOTICE: &str = "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation.";
 const BUILD_USERS_GROUP: &str = "nixbld";
 const MAX_JOBS: u32 = 1;
 const CORES_HINT: u32 = 0;
@@ -258,27 +260,41 @@ impl BuildReadiness {
     }
 }
 
-/// Fixed, unit-bearing V1 daemon resource settings.
+/// Approval-bound resource controls that the active runtime enforces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildResources {
-    max_jobs_per_connection: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_jobs_per_connection: Option<u32>,
     machine_global_max_concurrent_build_operations: u32,
-    cores_hint: u32,
-    max_silent_time_seconds: u64,
-    timeout_seconds_per_derivation: u64,
-    max_build_log_size_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cores_hint: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_silent_time_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeout_seconds_per_derivation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_build_log_size_bytes: Option<u64>,
 }
 
-impl Default for BuildResources {
-    fn default() -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum BuildPurpose {
+    Build,
+    Repair,
+}
+
+impl BuildResources {
+    fn for_system(system: System, purpose: BuildPurpose) -> Self {
+        let product_managed = matches!(system, System::X8664Darwin | System::Aarch64Darwin);
         Self {
-            max_jobs_per_connection: MAX_JOBS,
+            max_jobs_per_connection: (product_managed || purpose == BuildPurpose::Repair)
+                .then_some(MAX_JOBS),
             machine_global_max_concurrent_build_operations: 1,
-            cores_hint: CORES_HINT,
-            max_silent_time_seconds: MAX_SILENT_SECONDS,
-            timeout_seconds_per_derivation: TIMEOUT_SECONDS,
-            max_build_log_size_bytes: MAX_LOG_BYTES,
+            cores_hint: product_managed.then_some(CORES_HINT),
+            max_silent_time_seconds: product_managed.then_some(MAX_SILENT_SECONDS),
+            timeout_seconds_per_derivation: product_managed.then_some(TIMEOUT_SECONDS),
+            max_build_log_size_bytes: product_managed.then_some(MAX_LOG_BYTES),
         }
     }
 }
@@ -580,7 +596,7 @@ impl RepairBuildPlan {
             targets,
             derivations,
             readiness,
-            resources: BuildResources::default(),
+            resources: BuildResources::for_system(system, BuildPurpose::Repair),
             admission: BuildAdmissionPolicy::for_host_cores(host_cores)?,
             policy_identity: policy_version,
             system_identity: system,
@@ -639,6 +655,7 @@ impl RepairBuildPlan {
         })?;
         let preview = BuildPreview {
             schema_version: 1,
+            purpose: BuildPurpose::Repair,
             platform: PreviewPlatform {
                 os: os.to_owned(),
                 arch: arch.to_owned(),
@@ -671,7 +688,9 @@ impl RepairBuildPlan {
                 resource_boundary: PreviewResourceBoundary {
                     isolation: "sandbox".to_owned(),
                     per_build_resource_cap: false,
-                    notice: RESOURCE_NOTICE.to_owned(),
+                    notice: resource_notice(os, BuildPurpose::Repair)
+                        .unwrap()
+                        .to_owned(),
                 },
             },
             approval_required: true,
@@ -900,7 +919,7 @@ impl BuildPlan {
             builds,
             cache_classification,
             readiness,
-            resources: BuildResources::default(),
+            resources: BuildResources::for_system(system, BuildPurpose::Build),
             admission: BuildAdmissionPolicy::for_host_cores(host_cores)?,
             system_identity: system,
             policy_identity: policy_version,
@@ -977,6 +996,7 @@ impl BuildPlan {
         names.sort();
         Ok(BuildPreview {
             schema_version: 1,
+            purpose: BuildPurpose::Build,
             platform: PreviewPlatform {
                 os: os.to_owned(),
                 arch: arch.to_owned(),
@@ -1012,7 +1032,7 @@ impl BuildPlan {
                 resource_boundary: PreviewResourceBoundary {
                     isolation: "sandbox".to_owned(),
                     per_build_resource_cap: false,
-                    notice: RESOURCE_NOTICE.to_owned(),
+                    notice: resource_notice(os, BuildPurpose::Build).unwrap().to_owned(),
                 },
             },
             approval_required: !self.builds.is_empty(),
@@ -1885,11 +1905,21 @@ fn product_platform(system: System) -> (&'static str, &'static str) {
     }
 }
 
+fn resource_notice(os: &str, purpose: BuildPurpose) -> Option<&'static str> {
+    match (os, purpose) {
+        ("linux", BuildPurpose::Build) => Some(LINUX_RESOURCE_NOTICE),
+        ("linux", BuildPurpose::Repair) => Some(LINUX_REPAIR_RESOURCE_NOTICE),
+        ("macos", BuildPurpose::Build | BuildPurpose::Repair) => Some(MACOS_RESOURCE_NOTICE),
+        _ => None,
+    }
+}
+
 /// Public sanitized local-build preview; no store or derivation identity exists.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildPreview {
     schema_version: u32,
+    purpose: BuildPurpose,
     platform: PreviewPlatform,
     policy_version: u64,
     build_plan_digest: String,
@@ -1958,6 +1988,30 @@ struct PreviewTarget {
 }
 
 impl BuildPreview {
+    pub(crate) const fn is_build(&self) -> bool {
+        matches!(self.purpose, BuildPurpose::Build)
+    }
+
+    pub(crate) const fn is_repair(&self) -> bool {
+        matches!(self.purpose, BuildPurpose::Repair)
+    }
+
+    pub(crate) fn is_repair_approval(&self) -> bool {
+        self.is_repair()
+            && self.approval_required
+            && self.build.count > 0
+            && self.unknown_local_outputs > 0
+            && self
+                .targets
+                .iter()
+                .any(|target| target.local_build_required)
+    }
+
+    pub(crate) fn matches_system(&self, system: System) -> bool {
+        let (os, arch) = product_platform(system);
+        self.platform.os == os && self.platform.arch == arch
+    }
+
     /// Returns the private plan digest pointer displayed to the user.
     #[must_use]
     pub fn build_plan_digest(&self) -> &str {
@@ -2035,7 +2089,8 @@ impl BuildPreview {
             || !self.readiness.native_build
             || self.readiness.resource_boundary.isolation != "sandbox"
             || self.readiness.resource_boundary.per_build_resource_cap
-            || self.readiness.resource_boundary.notice != RESOURCE_NOTICE
+            || resource_notice(&self.platform.os, self.purpose)
+                != Some(self.readiness.resource_boundary.notice.as_str())
         {
             return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
         }
@@ -2965,6 +3020,10 @@ mod tests {
         BuildReadiness::new(true, false, true, true, true)
     }
 
+    fn macos_readiness() -> BuildReadiness {
+        BuildReadiness::new(true, false, true, false, false)
+    }
+
     #[derive(Default)]
     struct Journal {
         rows: Mutex<Vec<ApprovalJournalRecord>>,
@@ -3144,6 +3203,7 @@ mod tests {
             preview_object
         );
         let preview = String::from_utf8(preview_bytes).unwrap();
+        assert!(preview.contains("\"purpose\":\"build\""));
         assert!(preview.contains("\"approvalRequired\":true"));
         assert!(preview.contains("\"buildPlanDigest\":\"sha256:"));
         assert!(preview.contains("\"selector\":\"hello\""));
@@ -3196,6 +3256,63 @@ mod tests {
     }
 
     #[test]
+    fn resource_claims_match_runtime_ownership_and_change_digest() {
+        let mut linux = plan(1, System::X8664Linux, linux_readiness());
+        let linux_resources = serde_json::to_value(&linux.resources).unwrap();
+        assert_eq!(
+            linux_resources,
+            serde_json::json!({"machineGlobalMaxConcurrentBuildOperations": 1})
+        );
+
+        let macos = plan(1, System::Aarch64Darwin, macos_readiness());
+        assert_eq!(
+            serde_json::to_value(&macos.resources).unwrap(),
+            serde_json::json!({
+                "maxJobsPerConnection": 1,
+                "machineGlobalMaxConcurrentBuildOperations": 1,
+                "coresHint": 0,
+                "maxSilentTimeSeconds": 3600,
+                "timeoutSecondsPerDerivation": 86400,
+                "maxBuildLogSizeBytes": 268435456
+            })
+        );
+
+        let truthful_digest = linux.digest().unwrap();
+        linux.resources = BuildResources::for_system(System::Aarch64Darwin, BuildPurpose::Build);
+        assert_ne!(truthful_digest, linux.digest().unwrap());
+    }
+
+    #[test]
+    fn preview_notice_is_strictly_platform_specific() {
+        let linux = plan(1, System::X8664Linux, linux_readiness())
+            .preview()
+            .unwrap();
+        assert_eq!(
+            linux.readiness.resource_boundary.notice,
+            LINUX_RESOURCE_NOTICE
+        );
+        assert!(BuildPreview::from_json_bytes(&linux.to_json_bytes().unwrap()).is_ok());
+        let mut wrong_purpose = linux.clone();
+        wrong_purpose.purpose = BuildPurpose::Repair;
+        assert!(BuildPreview::from_json_bytes(&wrong_purpose.to_json_bytes().unwrap()).is_err());
+        let mut wrong_linux = linux;
+        wrong_linux.readiness.resource_boundary.notice = MACOS_RESOURCE_NOTICE.to_owned();
+        assert!(BuildPreview::from_json_bytes(&wrong_linux.to_json_bytes().unwrap()).is_err());
+
+        let macos = plan(1, System::Aarch64Darwin, macos_readiness())
+            .preview()
+            .unwrap();
+        assert_eq!(
+            macos.readiness.resource_boundary.notice,
+            MACOS_RESOURCE_NOTICE
+        );
+        assert!(BuildPreview::from_json_bytes(&macos.to_json_bytes().unwrap()).is_ok());
+        let mut wrong_macos = macos;
+        wrong_macos.readiness.resource_boundary.notice = LINUX_RESOURCE_NOTICE.to_owned();
+        assert!(BuildPreview::from_json_bytes(&wrong_macos.to_json_bytes().unwrap()).is_err());
+    }
+
+    #[test]
     fn repair_plan_binds_every_deriver_output_and_preview_hides_store_identity() {
         let derivation =
             DerivationPath::from_str("/nix/store/00000000000000000000000000000000-demo.drv")
@@ -3236,7 +3353,26 @@ mod tests {
 
         let first = make();
         assert_eq!(first.digest().unwrap(), make().digest().unwrap());
+        assert_eq!(
+            serde_json::to_value(&first.resources).unwrap(),
+            serde_json::json!({
+                "maxJobsPerConnection": 1,
+                "machineGlobalMaxConcurrentBuildOperations": 1
+            })
+        );
         let preview = first.preview().unwrap();
+        assert_eq!(preview.purpose, BuildPurpose::Repair);
+        assert_eq!(
+            preview.readiness.resource_boundary.notice,
+            LINUX_REPAIR_RESOURCE_NOTICE
+        );
+        assert!(BuildPreview::from_json_bytes(&preview.to_json_bytes().unwrap()).is_ok());
+        let mut wrong_purpose = preview.clone();
+        wrong_purpose.purpose = BuildPurpose::Build;
+        assert!(BuildPreview::from_json_bytes(&wrong_purpose.to_json_bytes().unwrap()).is_err());
+        let mut wrong_notice = preview.clone();
+        wrong_notice.readiness.resource_boundary.notice = LINUX_RESOURCE_NOTICE.to_owned();
+        assert!(BuildPreview::from_json_bytes(&wrong_notice.to_json_bytes().unwrap()).is_err());
         let json = serde_json::to_string(&preview).unwrap();
         assert!(json.contains("\"man\""));
         assert!(json.contains("\"out\""));

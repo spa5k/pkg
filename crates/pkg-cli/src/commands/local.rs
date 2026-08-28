@@ -2713,6 +2713,7 @@ mod tests {
         BuildPreview::from_json_bytes(
             &serde_json::to_vec(&serde_json::json!({
                 "schemaVersion": 1,
+                "purpose": "build",
                 "platform": { "os": "linux", "arch": "x86_64" },
                 "policyVersion": 7,
                 "buildPlanDigest": format!("sha256:{}", "1".repeat(64)),
@@ -2738,7 +2739,7 @@ mod tests {
                     "resourceBoundary": {
                         "isolation": "sandbox",
                         "perBuildResourceCap": false,
-                        "notice": "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation."
+                        "notice": "Builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap."
                     }
                 },
                 "approvalRequired": true
@@ -4821,19 +4822,20 @@ mod tests {
             // Drop without responding so the exact-handle poll is unreadable.
         }));
         let mut reconnects = 0;
-        let mut reconnect = || -> Result<BrokerLifecycleClient, BrokerClientError> {
-            reconnects += 1;
-            Ok(fresh_client
-                .take()
-                .expect("cancellation opened an unexpected fresh connection"))
-        };
+        {
+            let mut reconnect = || -> Result<BrokerLifecycleClient, BrokerClientError> {
+                reconnects += 1;
+                Ok(fresh_client
+                    .take()
+                    .expect("cancellation opened an unexpected fresh connection"))
+            };
 
-        assert!(!cancel_operation(
-            &mut client,
-            &mut reconnect,
-            handle.clone()
-        ));
-        drop(reconnect);
+            assert!(!cancel_operation(
+                &mut client,
+                &mut reconnect,
+                handle.clone()
+            ));
+        }
         assert_eq!(reconnects, 1);
         for worker in workers {
             worker.join().unwrap();

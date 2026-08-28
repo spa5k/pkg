@@ -120,8 +120,7 @@ impl std::fmt::Debug for RootNixRepairExecutor {
 }
 
 impl RootNixRepairExecutor {
-    /// Constructs the root-only repair executor from installer-authenticated
-    /// absolute binary and private-home paths.
+    /// Constructs the managed root-only repair executor used on macOS.
     pub fn new(nix_binary: &Path, private_home: &Path) -> Result<Self, NixAdapterError> {
         Ok(Self {
             executor: Arc::new(validated_process_executor(
@@ -129,6 +128,16 @@ impl RootNixRepairExecutor {
                 private_home,
                 Some(Path::new(MANAGED_DAEMON_SOCKET)),
             )?),
+        })
+    }
+
+    /// Constructs the Linux repair executor for the fixed standard Determinate profile.
+    ///
+    /// The vendor environment is preserved. No caller can select a binary,
+    /// daemon socket, Nix configuration, state directory, or remote.
+    pub fn new_standard_determinate(private_home: &Path) -> Result<Self, NixAdapterError> {
+        Ok(Self {
+            executor: Arc::new(standard_determinate_process_executor(private_home)?),
         })
     }
 
@@ -396,15 +405,9 @@ impl RealNixAdapter {
     /// This mode uses the vendor configuration unchanged. It accepts no
     /// caller-selected executable, Nix configuration, daemon socket, state
     /// directory, or remote.
-    ///
-    /// This constructor is inactive until DN15/DN16 wires it into the root helper.
     pub fn new_standard_determinate(private_home: &Path) -> Result<Self, NixAdapterError> {
         Ok(Self {
-            executor: Arc::new(validated_process_executor(
-                Path::new(STANDARD_DETERMINATE_NIX_BINARY),
-                private_home,
-                None,
-            )?),
+            executor: Arc::new(standard_determinate_process_executor(private_home)?),
             expected_nix_brand: STANDARD_DETERMINATE_NIX_BRAND,
             expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
             operation_deadline: None,
@@ -622,7 +625,7 @@ impl RealNixAdapter {
             .preview()
             .map_err(|_| NixAdapterError::OperationFailed)?;
         let proof = RootRepairPlanProof::new(preview).ok_or(NixAdapterError::OperationFailed)?;
-        if proof.digest() != digest {
+        if proof.digest() != digest || !request.accepts(&proof) {
             return Err(NixAdapterError::OperationFailed);
         }
         Ok(proof)
@@ -1527,6 +1530,16 @@ fn validated_process_executor(
         private_home: private_home.to_path_buf(),
         daemon_socket: daemon_socket.map(Path::to_path_buf),
     })
+}
+
+fn standard_determinate_process_executor(
+    private_home: &Path,
+) -> Result<ProcessExecutor, NixAdapterError> {
+    validated_process_executor(
+        Path::new(STANDARD_DETERMINATE_NIX_BINARY),
+        private_home,
+        None,
+    )
 }
 
 fn execute_checked(
@@ -2614,7 +2627,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn standard_determinate_executor_uses_fixed_binary_and_clean_nix_environment()
+    fn repair_executors_keep_standard_determinate_and_managed_environments_distinct()
     -> Result<(), Box<dyn std::error::Error>> {
         const CHILD: &str = "PKG_NIX_STANDARD_EXECUTOR_ENV_CHILD";
         if std::env::var_os(CHILD).is_none() {
@@ -2637,6 +2650,12 @@ mod tests {
             Path::new(STANDARD_DETERMINATE_NIX_BINARY),
             Path::new("/nix/var/nix/profiles/default/bin/nix")
         );
+        let _fixed_constructor: fn(&Path) -> Result<RootNixRepairExecutor, NixAdapterError> =
+            RootNixRepairExecutor::new_standard_determinate;
+        let _managed_constructor: fn(
+            &Path,
+            &Path,
+        ) -> Result<RootNixRepairExecutor, NixAdapterError> = RootNixRepairExecutor::new;
 
         let temporary = tempfile::tempdir()?;
         let home = temporary.path().join("home");

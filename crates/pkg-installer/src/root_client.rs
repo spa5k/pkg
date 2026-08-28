@@ -343,7 +343,7 @@ impl RootHelperClient {
         request: &RootRepairPlanRequest,
     ) -> Result<RootRepairPlanProof, NixAdapterError> {
         match self.adapter_response(RootNixRequest::RepairPlan(request.clone()))? {
-            RootNixResponse::RepairPlan(proof) => Ok(proof),
+            RootNixResponse::RepairPlan(proof) if request.accepts(&proof) => Ok(proof),
             _ => Err(NixAdapterError::OperationFailed),
         }
     }
@@ -806,7 +806,7 @@ mod tests {
 
     fn repair_proof() -> RootRepairPlanProof {
         let preview = BuildPreview::from_json_bytes(
-            br#"{"schemaVersion":1,"platform":{"os":"linux","arch":"x86_64"},"policyVersion":7,"buildPlanDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","targets":[{"selector":"hello","packageName":"hello","version":"1.0","outputsToInstall":["out"],"localBuildRequired":false}],"build":{"count":0,"names":[],"hasFixedOutput":false},"cache":{"knownDownloadBytes":0,"knownContentBytes":0},"unknownLocalOutputs":0,"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null},"readiness":{"sandboxed":true,"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","perBuildResourceCap":false,"notice":"Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation."}},"approvalRequired":false}"#,
+            br#"{"schemaVersion":1,"purpose":"repair","platform":{"os":"linux","arch":"x86_64"},"policyVersion":7,"buildPlanDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","targets":[{"selector":"repair-1","packageName":"hello-1.0","version":"installed","outputsToInstall":["out"],"localBuildRequired":true}],"build":{"count":1,"names":["hello-1.0"],"hasFixedOutput":false},"cache":{"knownDownloadBytes":0,"knownContentBytes":0},"unknownLocalOutputs":1,"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null},"readiness":{"sandboxed":true,"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","perBuildResourceCap":false,"notice":"Repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits."}},"approvalRequired":true}"#,
         )
         .unwrap();
         RootRepairPlanProof::new(preview).unwrap()
