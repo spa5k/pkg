@@ -445,7 +445,7 @@ impl LinuxSystemdAssets {
     pub const HELPER_SOCKET: &'static str = "[Unit]\nDescription=pkg privileged root helper socket\n\n[Socket]\nListenStream=/run/pkg-helper/root-helper.sock\nSocketUser=root\nSocketGroup=pkg-nix-broker\nSocketMode=0660\nDirectoryMode=0750\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
 
     /// Narrow root helper; it has no shell and no public command grammar.
-    pub const HELPER_SERVICE: &'static str = "[Unit]\nDescription=pkg privileged root helper\nRequires=pkg-root-helper.socket\nAfter=pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-root-helper\nUser=root\nGroup=root\nEnvironment=HOME=/var/lib/pkg/helper-home\nEnvironment=TMPDIR=/var/lib/pkg/helper-home/tmp\nWorkingDirectory=/var/lib/pkg/helper-home\nUMask=0077\nPrivateTmp=true\nProtectHome=true\nProtectSystem=strict\nReadWritePaths=/nix/var/nix/gcroots/pkg /nix/store /nix/var/nix /var/lib/pkg/log/helper /var/lib/pkg/helper-home\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
+    pub const HELPER_SERVICE: &'static str = "[Unit]\nDescription=pkg privileged root helper\nRequires=pkg-root-helper.socket\nAfter=pkg-root-helper.socket\n\n[Service]\nType=simple\nExecStart=/opt/pkg/bin/pkg-root-helper\nUser=root\nGroup=root\nEnvironment=HOME=/var/lib/pkg/helper-home\nEnvironment=TMPDIR=/var/lib/pkg/helper-home/tmp\nWorkingDirectory=/var/lib/pkg/helper-home\nUMask=0077\nPrivateTmp=true\nProtectHome=read-only\nProtectSystem=strict\nReadWritePaths=/nix/var/nix/gcroots/pkg /nix/store /nix/var/nix /var/lib/pkg/log/helper /var/lib/pkg/helper-home\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n";
 
     /// End-user broker socket. The broker authenticates every uid with peer creds.
     pub const BROKER_SOCKET: &'static str = "[Unit]\nDescription=pkg broker socket\n\n[Socket]\nListenStream=/run/pkg/broker.sock\nSocketUser=root\nSocketGroup=root\nSocketMode=0666\nDirectoryMode=0755\nRemoveOnStop=true\n\n[Install]\nWantedBy=sockets.target\n";
@@ -470,7 +470,7 @@ mod tests {
     use super::*;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    use std::{collections::BTreeSet, error::Error, fs, process::Command};
+    use std::{collections::BTreeSet, error::Error, fs, path::Path, process::Command};
 
     #[test]
     fn assets_are_unique_absolute_or_fixed_accounts_and_never_schedule_gc() {
@@ -593,6 +593,29 @@ mod tests {
                 .contains("Environment=TMPDIR=/var/lib/pkg/broker-home/tmp")
         );
         assert!(LinuxSystemdAssets::HELPER_SERVICE.contains("User=root"));
+        let helper_protect_home = LinuxSystemdAssets::HELPER_SERVICE
+            .lines()
+            .filter(|line| line.starts_with("ProtectHome="))
+            .collect::<Vec<_>>();
+        let broker_protect_home = LinuxSystemdAssets::BROKER_SERVICE
+            .lines()
+            .filter(|line| line.starts_with("ProtectHome="))
+            .collect::<Vec<_>>();
+        assert_eq!(helper_protect_home, ["ProtectHome=read-only"]);
+        assert!(!helper_protect_home.contains(&"ProtectHome=true"));
+        assert_eq!(broker_protect_home, ["ProtectHome=true"]);
+        assert!(!broker_protect_home.contains(&"ProtectHome=read-only"));
+        let helper_write_paths = LinuxSystemdAssets::HELPER_SERVICE
+            .lines()
+            .filter_map(|line| line.strip_prefix("ReadWritePaths="))
+            .collect::<Vec<_>>();
+        assert_eq!(helper_write_paths.len(), 1);
+        for path in helper_write_paths[0].split_ascii_whitespace() {
+            let path = Path::new(path.trim_start_matches(['-', '+', '!']));
+            for protected in ["/home", "/root", "/run/user"] {
+                assert!(path != Path::new(protected) && !path.starts_with(protected));
+            }
+        }
         assert!(
             LinuxSystemdAssets::HELPER_SERVICE
                 .contains("Environment=HOME=/var/lib/pkg/helper-home")
