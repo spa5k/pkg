@@ -15,14 +15,17 @@ DN-16 release inputs, an immutable staged N/N+1 channel, and a two-phase reboot
 proof are still absent. The proof harness records the last two items as
 externally blocked and ends with a failed result.
 
-When those inputs are ready, use the existing local M4 Mac mini and two Tart
-VMs. This has zero new provider cost. It meets the repository's current
-contract, which requires two different `VirtualMac` guests, runner names, and
-instance nonces. The contract does not prove that the guests use two different
-physical Macs.
+When those inputs are ready, use the existing local M4 Mac mini and run the two
+lifecycle slots sequentially. Create, run, and destroy the slot 1 Tart VM.
+Then create, run, and destroy a fresh slot 2 Tart VM. This has zero new provider
+cost. It meets the repository's current contract, which requires two different
+`VirtualMac` guests, runner names, and instance nonces. The contract does not
+prove that the guests use two different physical Macs.
 
-The host now has about 74 GiB free. This satisfies the 60 GiB setup gate.
-Continue to monitor free space while both destructive guests run.
+The strict sequential storage gate is about 70 GiB: one 50 GB guest plus a
+20 GiB host reserve. The host now has about 74 GiB free, so this gate is
+satisfied. A strict simultaneous two-guest gate is about 120 GiB. The current
+host does not satisfy that gate. Monitor free space during each lifecycle run.
 
 If two different physical Macs are a new requirement, the lowest published
 external price found is two Scaleway M1 Mac minis for a 24-hour minimum. The
@@ -64,15 +67,18 @@ changes the machine:
 
 The aggregate job proves that the two runner names and the two 64-character
 lowercase hexadecimal instance nonces differ. It does not read or compare a
-physical-host identity. Therefore one physical M4 host with two Tart guests
-satisfies the current code. It does not satisfy a stronger two-physical-host
-claim.
+physical-host identity. Therefore one physical M4 host with two fresh,
+sequential Tart guests satisfies the current code. It does not satisfy a
+stronger two-physical-host claim.
 
 GitHub routes a self-hosted job only to an online, idle runner that matches all
-requested labels. Default labels include `self-hosted`, the operating system,
-and the architecture. Custom labels can be supplied during configuration.
-GitHub states that label values are not hardware attestation, so the workflow's
-native checks remain necessary. [GitHub label and routing documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-in-a-workflow)
+requested labels. The standard runner registration assigns `self-hosted`, an
+operating-system label, and an architecture label. Custom labels can be
+supplied during configuration. GitHub also states that it accepts labels as
+given and does not validate that they match the runner's operating system or
+architecture. Labels are routing metadata, not hardware attestation. The
+workflow's native checks remain necessary. [GitHub label routing documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-in-a-workflow)
+[GitHub label assignment documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/apply-labels)
 
 ## Current local state
 
@@ -83,7 +89,7 @@ Read-only commands gave this result:
 | Host | Apple M4 Mac mini |
 | Host CPU and memory | 10 cores, 32 GiB |
 | Free host storage | About 74 GiB on `/` and `/System/Volumes/Data` |
-| Tart | 2.35.0 |
+| Tart | 2.35.0 installed; 2.36.0 current |
 | Local Tart guests | 0 |
 | Cached image | `ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c` |
 | Cached image logical disk | 50 GB |
@@ -97,22 +103,24 @@ The installed `tart clone --help` states that local clones use APFS
 copy-on-write. A new clone therefore starts with a small unique-storage cost.
 Only blocks changed by a clone consume new physical space.
 
-Each 50 GB guest reports about 17 GB unused. Two guests can therefore create
-about 34 GB of unique blocks before they fill their own disks. The runner,
-candidates, Determinate Nix install, logs, APFS metadata, and normal host writes
-need more space. The current 74 GiB satisfies the 60 GiB setup gate and leaves
-about 40 GiB after that simple worst-case guest-write bound. This is a safety
-estimate, not a guaranteed Tart requirement. Continue to monitor space while
-both guests run.
+Copy-on-write can make the actual clone cost much smaller than its logical
+disk. The strict gate does not depend on that saving. It reserves the full
+50 GB logical disk for the active guest and 20 GiB for the host. The sequential
+gate is therefore about 70 GiB, and the current 74 GiB satisfies it. Running two
+50 GB guests together would require a strict gate of about 120 GiB. The host
+does not satisfy that simultaneous gate. The runner, candidates, Determinate
+Nix install, logs, APFS metadata, and normal host writes still require runtime
+monitoring.
 
-The host has enough memory for two default Tart guests. Tart defaults to two
-CPUs and 4 GB of memory per guest. The destructive guests do not compile Rust;
-the GitHub-hosted harness job compiles the proof executable. Do not increase
-guest CPU or memory without evidence.
+Tart defaults to two CPUs and 4 GB of memory per guest. The destructive guests
+do not compile Rust; the GitHub-hosted harness job compiles the proof
+executable. Keep one default guest active at a time. Do not increase guest CPU
+or memory without evidence.
 
 Tart's current quick start lists the Sequoia base image, `admin`/`admin` guest
 credentials, SSH access, and a two-CPU, 4 GB default guest. [Tart quick start](https://tart.run/quick-start/)
-The installed Tart 2.35.0 release is also current. [Tart 2.35.0 release](https://github.com/openai/tart/releases/tag/2.35.0)
+The installed Tart 2.35.0 is one release behind 2.36.0. Upgrade Tart and verify
+version 2.36.0 before any clone or runner provisioning. [Tart 2.36.0 release](https://github.com/openai/tart/releases/tag/2.36.0)
 
 The local ten-core host is below Tart's published 100-host-core free tier.
 [Tart licensing](https://tart.run/licensing/)
@@ -124,14 +132,14 @@ transfer, and setup labor are excluded unless stated.
 
 | Option | Minimum published compute cost for this proof | Two fresh Apple Silicon environments | Meets the current DN-16 workflow without weakening it |
 |---|---:|---|---|
-| Existing local M4 + two Tart VMs | $0 new provider cost | Yes, two VMs on one physical Mac | Yes, after disk space and proof inputs are ready |
+| Existing local M4 + sequential Tart VMs | $0 new provider cost | Yes, two fresh VMs run one at a time on one physical Mac | Yes, after the Tart upgrade and proof inputs are ready |
 | GitHub standard hosted macOS | $0 for this public repository | Yes, each job gets a fresh VM | No |
 | Apple Xcode Cloud | $0 incremental if the existing developer membership has unused included hours | It provides ephemeral build environments | No |
 | Scaleway, one M2 physical Mac + two Tart VMs | `24 × €0.17 = €4.08` before tax | Yes, two VMs on one physical Mac | In principle; needs setup and validation |
 | Scaleway, two M1 physical Macs + one Tart VM each | `2 × 24 × €0.11 = €5.28` before tax | Yes, two VMs on two physical Macs | In principle; this is the cheapest stronger physical-host option found |
-| AWS, one `mac2` M1 Dedicated Host + two Tart VMs | `24 × $0.65 = $15.60`, plus EBS | Yes, two VMs on one physical Mac | In principle; needs setup and validation |
-| AWS, two `mac2` M1 Dedicated Hosts + one Tart VM each | `2 × 24 × $0.65 = $31.20`, plus EBS | Yes, two VMs on two physical Macs | In principle |
-| MacStadium, one M2.M physical Mac + two Tart VMs | $199 per month | Yes, two VMs on one physical Mac | In principle |
+| AWS, one `mac2` M1 Dedicated Host + two Tart VMs | `24 × $0.65 = $15.60`, plus EBS | Not established for Tart on Apple Silicon EC2 Mac | Not established by the cited AWS documentation |
+| AWS, two `mac2` M1 Dedicated Hosts + one Tart VM each | `2 × 24 × $0.65 = $31.20`, plus EBS | Not established for Tart on Apple Silicon EC2 Mac | Not established by the cited AWS documentation |
+| MacStadium, one M4.S physical Mac + two sequential Tart VMs | $149 per month | Yes, two VMs on one physical Mac | In principle |
 | MacStadium, two M2.S physical Macs + one Tart VM each | `2 × $109 = $218` per month | Yes, two VMs on two physical Macs | In principle |
 
 ### GitHub-hosted macOS
@@ -185,16 +193,20 @@ block immediate allocation. AWS scrubs an Apple Silicon host after stop or
 termination, and the scrub can take up to 4.5 hours. Billing pauses during the
 scrub, but a host cannot be released before the 24-hour minimum. [AWS Mac stop and release behavior](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/mac-instance-stop.html)
 
-AWS Mac is bare metal, so Tart must still create the `VirtualMac` guests. AWS
-documents type-2 virtualization on EC2 Mac, but the exact Apple Silicon Tart
-combination still needs a small preflight before runner registration.
-[AWS EC2 Mac virtualization FAQ](https://aws.amazon.com/ec2/instance-types/mac/faqs/)
+AWS Mac is bare metal, so Tart must still create the `VirtualMac` guests. The
+cited AWS FAQ documents type-2 virtualization only for x86 EC2 Mac. Its Apple
+Silicon statement says that older macOS versions cannot run; it does not state
+that Tart or Apple's Virtualization framework is supported on Apple Silicon
+EC2 Mac. This review must not present AWS as a supported DN-16 runner option.
+It remains unqualified until a separate native preflight proves the exact
+combination. [AWS EC2 Mac virtualization FAQ](https://aws.amazon.com/ec2/instance-types/mac/faqs/)
 
 ### MacStadium
 
-MacStadium publishes $109/month for an 8 GB M2 Mac mini and $199/month for a
-16 GB M2 Mac mini. It does not offer a free trial for individual dedicated
-Macs. [MacStadium pricing](https://macstadium.com/pricing)
+MacStadium publishes $109/month for an 8 GB M2.S Mac mini and $149/month for a
+16 GB M4.S Mac mini. The M4.S is the one-host comparison because it has enough
+memory for the host and a sequential 4 GB Tart guest. MacStadium does not offer
+a free trial for individual dedicated Macs. [MacStadium pricing](https://macstadium.com/pricing)
 
 Orka supports Apple Silicon VMs and allows up to two VMs per Apple Silicon
 node. [MacStadium Orka Apple Silicon support](https://docs.macstadium.com/orka/orka-resources/apple-silicon-based-support)
@@ -210,12 +222,15 @@ Do these steps only after the three non-runner proof blockers are resolved and
 after explicit authority is given to enable a workflow, register runners, and
 dispatch a destructive run.
 
-1. Confirm that host free space is still at least 60 GiB. The current reading
-   is about 74 GiB, so this gate is satisfied.
-2. Clone the cached image by immutable digest into two new names.
-3. Keep the default two CPUs and 4 GB guest memory.
-4. Run both guests headless. Do not expose host directories to them.
-5. In each guest, verify `VirtualMac`, arm64, passwordless `sudo`, and the exact
+1. Confirm that host free space is still at least 70 GiB. This is one 50 GB
+   guest plus a 20 GiB host reserve. The current reading is about 74 GiB, so
+   the sequential gate is satisfied.
+2. Upgrade Tart from 2.35.0 to 2.36.0. Verify the installed version before any
+   clone or runner provisioning.
+3. Clone the cached image by immutable digest for lifecycle slot 1 only.
+4. Keep the default two CPUs and 4 GB guest memory. Run the guest headless. Do
+   not expose host directories to it.
+5. In the guest, verify `VirtualMac`, arm64, passwordless `sudo`, and the exact
    clean-state checks already present in the workflow.
 6. Install only `gh`, `cosign`, `python3`, and the official arm64 Actions
    runner if any is absent. Do not install Nix.
@@ -230,31 +245,39 @@ dispatch a destructive run.
    release tags.
 10. Get the GitHub run ID. Wait until the hosted `harness` job passes and both
     destructive jobs are queued.
-11. Create one fresh repository registration token for each guest. Register
-    each runner with its exact name, its one custom slot label, and
+11. Create one fresh repository registration token for slot 1. Register the
+    guest as `pkg-dn16-proof-runner-1`, with only its custom slot label and
     `--ephemeral`. Do not use `--replace`.
 12. Configure an `ACTIONS_RUNNER_HOOK_JOB_STARTED` script outside the Actions
     runner directory. Give it the fixed run ID and lifecycle slot. The hook
     must use `sudo -n` to write the disposable marker as `root:wheel` mode
     `0600`. GitHub runs this hook synchronously after assignment and before the
     job starts. [GitHub pre-job hook documentation](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts)
-13. In each guest, generate a different 32-byte random nonce. Write the exact
-    instance and reboot records as `root:wheel` mode `0600`. Record the current
-    boot UUID in the reboot record.
-14. Reboot both guests immediately.
-15. Resolve each guest IP again. Start `run.sh` only after the reboot. A service
-    is not needed for one ephemeral job.
-16. Confirm both exact runner names are online. Let the queued jobs assign.
+13. Generate a 32-byte random nonce for slot 1. Write the exact instance and
+    reboot records as `root:wheel` mode `0600`. Record the current boot UUID in
+    the reboot record.
+14. Reboot the slot 1 guest immediately.
+15. Resolve its IP again. Start `run.sh` only after the reboot. A service is not
+    needed for one ephemeral job.
+16. Confirm that only `pkg-dn16-proof-runner-1` is online. Let slot 1 assign.
     The pre-job hook writes the third marker before workflow steps start.
-17. Monitor free disk space and both runner logs from the host. Stop if host
-    free space approaches 20 GiB.
-18. After evidence upload, stop and delete both guests. Confirm that the two
-    ephemeral runner registrations disappeared. Remove any stale offline
-    registration through GitHub before declaring cleanup complete.
+17. Monitor free disk space and the runner log. Stop if host free space
+    approaches the 20 GiB reserve.
+18. After slot 1 evidence uploads, stop and delete its VM. Confirm that its
+    ephemeral runner registration disappeared.
+19. Confirm that free space is again at least 70 GiB. Clone a new guest from
+    the same immutable image for lifecycle slot 2.
+20. Repeat steps 4 through 17 with exact runner name
+    `pkg-dn16-proof-runner-2`, the slot 2 custom label, a new registration
+    token, and a different 32-byte nonce. Never reuse the slot 1 VM or nonce.
+21. After slot 2 evidence uploads, stop and delete its VM. Confirm that its
+    ephemeral registration disappeared. Remove any stale offline registration
+    through GitHub before declaring cleanup complete.
 
-The five-minute marker limit controls steps 13 through the first proof
-preflight. Do not create the markers when the workflow is first dispatched.
-The hosted harness can run for up to 30 minutes, so early markers will be stale.
+The five-minute marker limit controls steps 13 through the slot 1 preflight and
+the equivalent slot 2 steps. Do not create either slot's markers when the
+workflow is first dispatched. The hosted harness can run for up to 30 minutes,
+so early markers will be stale.
 
 GitHub recommends `--ephemeral` for one-job runners. It automatically
 deregisters an ephemeral runner after one job. Registration tokens expire after
@@ -321,8 +344,10 @@ permission. [GitHub REST runner-token documentation](https://docs.github.com/en/
 
 ## Final recommendation
 
-Keep the current local Tart design. It is the smallest correct solution and
-has no new provider cost.
+Use the local sequential lifecycle-slot plan. Upgrade Tart to 2.36.0. Run and
+destroy slot 1 before creating slot 2. The current 74 GiB satisfies the 70 GiB
+sequential gate, but not the 120 GiB simultaneous gate. This is the smallest
+correct solution and has no new provider cost. Monitor space during each run.
 
 Do not weaken the workflow to use free GitHub-hosted or Xcode Cloud machines.
 They cannot produce the required root, reboot, and self-hosted evidence.
