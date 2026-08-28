@@ -7,16 +7,49 @@ on:
         description: Existing draft alpha release tag
         required: true
         type: string
+      expected_sha:
+        description: Exact commit signed by dn16-proof-workflow-1
+        required: true
+        type: string
 permissions: {}
 
 concurrency:
   group: publish-release
   cancel-in-progress: false
 
+env:
+  COSIGN_CERTIFICATE_IDENTITY: https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1
+  COSIGN_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+
 jobs:
+  validate-dispatch:
+    name: Validate immutable proof dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions: {}
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+    steps:
+      - name: Validate immutable proof dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = "refs/tags/dn16-proof-workflow-1"
+          test "$GITHUB_REPOSITORY" = "spa5k/pkg"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA"
+          expected_identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
+          test "$COSIGN_CERTIFICATE_IDENTITY" = "$expected_identity"
+          test "$COSIGN_CERTIFICATE_OIDC_ISSUER" = "https://token.actions.githubusercontent.com"
+
   sign-and-publish:
     name: Sign exact release assets
-    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: validate-dispatch
+    if: >-
+      github.ref == 'refs/tags/dn16-proof-workflow-1' &&
+      github.sha == inputs.expected_sha &&
+      github.workflow_sha == inputs.expected_sha
     environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -26,8 +59,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ inputs.tag }}
-      COSIGN_CERTIFICATE_IDENTITY: ${{ vars.COSIGN_CERTIFICATE_IDENTITY }}
-      COSIGN_CERTIFICATE_OIDC_ISSUER: ${{ vars.COSIGN_CERTIFICATE_OIDC_ISSUER }}
     steps:
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -37,7 +68,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
-          expected_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish-release.yml@refs/heads/main"
+          test "$GITHUB_REPOSITORY" = "spa5k/pkg"
+          expected_identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
           test "$COSIGN_CERTIFICATE_IDENTITY" = "$expected_identity"
           test "$COSIGN_CERTIFICATE_OIDC_ISSUER" = "https://token.actions.githubusercontent.com"
 

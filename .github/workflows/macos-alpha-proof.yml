@@ -313,7 +313,7 @@ jobs:
           printf '%s\n' "$from_source_commit" > "$root/evidence/from-source-commit.txt"
           printf '%s\n' "$to_source_commit" > "$root/evidence/to-source-commit.txt"
           install -d -m 0700 "$root/candidate/from" "$root/candidate/to" "$root/evidence"
-          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish-release.yml@refs/heads/main"
+          identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
           issuer=https://token.actions.githubusercontent.com
           for pair in "from:$FROM_RELEASE" "to:$TO_RELEASE"; do
             side=${pair%%:*}

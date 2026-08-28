@@ -105,6 +105,12 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             inputs,
         )
         self.assertIn('manifest.get("releaseId") != sys.argv[2]', inputs)
+        identity = (
+            "https://github.com/spa5k/pkg/.github/workflows/"
+            "publish-release.yml@refs/tags/dn16-proof-workflow-1"
+        )
+        self.assertIn(f'identity="{identity}"', inputs)
+        self.assertNotIn("@refs/heads/main", inputs)
 
     def test_hosted_aggregation_requires_distinct_runner_evidence(self) -> None:
         aggregate = WORKFLOW.split("\n  aggregate:\n", 1)[1]

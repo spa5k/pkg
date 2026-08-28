@@ -26,6 +26,17 @@ MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
 MANIFEST_SEALER = textwrap.dedent(
     PUBLISH_WORKFLOW.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
 )
+DISPATCH_GATE = textwrap.dedent(
+    PUBLISH_WORKFLOW.split("- name: Validate immutable proof dispatch", 1)[1]
+    .split("        run: |\n", 1)[1]
+    .split("\n\n  sign-and-publish:", 1)[0]
+)
+PROOF_WORKFLOW_REF = "refs/tags/dn16-proof-workflow-1"
+PROOF_WORKFLOW_SHA = "1" * 40
+PROOF_IDENTITY = (
+    "https://github.com/spa5k/pkg/.github/workflows/"
+    "publish-release.yml@refs/tags/dn16-proof-workflow-1"
+)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -455,6 +466,65 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
             checksum_signing.index('gh release upload'),
         )
         self.assertNotIn("gh release", WORKFLOW)
+
+    def test_proof_signer_ref_sha_and_identity_fail_closed(self) -> None:
+        environment = {
+            "GITHUB_REF": PROOF_WORKFLOW_REF,
+            "GITHUB_SHA": PROOF_WORKFLOW_SHA,
+            "GITHUB_WORKFLOW_SHA": PROOF_WORKFLOW_SHA,
+            "GITHUB_REPOSITORY": "spa5k/pkg",
+            "EXPECTED_SHA": PROOF_WORKFLOW_SHA,
+            "COSIGN_CERTIFICATE_IDENTITY": PROOF_IDENTITY,
+            "COSIGN_CERTIFICATE_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
+        }
+
+        accepted = subprocess.run(
+            ["bash"], input=DISPATCH_GATE, text=True, env=environment
+        )
+        self.assertEqual(accepted.returncode, 0)
+
+        for name, value in (
+            ("GITHUB_REF", "refs/heads/main"),
+            ("GITHUB_REPOSITORY", "example/pkg"),
+            ("GITHUB_SHA", "2" * 40),
+            ("GITHUB_WORKFLOW_SHA", "3" * 40),
+            ("EXPECTED_SHA", "not-a-commit"),
+            (
+                "COSIGN_CERTIFICATE_IDENTITY",
+                "https://github.com/spa5k/pkg/.github/workflows/"
+                "publish-release.yml@refs/heads/main",
+            ),
+            ("COSIGN_CERTIFICATE_OIDC_ISSUER", "https://issuer.example.test"),
+        ):
+            refused_environment = environment | {name: value}
+            refused = subprocess.run(
+                ["bash"],
+                input=DISPATCH_GATE,
+                text=True,
+                env=refused_environment,
+            )
+            self.assertNotEqual(refused.returncode, 0, name)
+
+        self.assertIn("expected_sha:", PUBLISH_WORKFLOW)
+        self.assertIn(
+            "github.ref == 'refs/tags/dn16-proof-workflow-1'",
+            PUBLISH_WORKFLOW,
+        )
+        self.assertIn("github.sha == inputs.expected_sha", PUBLISH_WORKFLOW)
+        self.assertIn("github.workflow_sha == inputs.expected_sha", PUBLISH_WORKFLOW)
+        self.assertNotIn("${{ vars.COSIGN_CERTIFICATE_IDENTITY }}", PUBLISH_WORKFLOW)
+        self.assertNotIn("${{ vars.COSIGN_CERTIFICATE_OIDC_ISSUER }}", PUBLISH_WORKFLOW)
+        self.assertNotIn("@refs/heads/main", PUBLISH_WORKFLOW)
+
+    def test_proof_signer_has_no_publication_path(self) -> None:
+        trigger = PUBLISH_WORKFLOW.split("permissions:", 1)[0]
+        self.assertNotIn("publish:", trigger)
+        self.assertNotIn("gh release edit", PUBLISH_WORKFLOW)
+        self.assertNotIn("--draft=false", PUBLISH_WORKFLOW)
+        self.assertNotIn("draft=false", PUBLISH_WORKFLOW)
+        self.assertEqual(PUBLISH_WORKFLOW.count("gh release upload"), 1)
+        self.assertEqual(PUBLISH_WORKFLOW.count('test "$draft" = true'), 1)
+        self.assertEqual(PUBLISH_WORKFLOW.count('--jq .draft)'), 2)
 
     def test_manifest_sealer_bootstraps_once_and_rejects_partial_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
