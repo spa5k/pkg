@@ -1,4 +1,4 @@
-name: Sign and publish release
+name: Sign release draft
 
 on:
   workflow_dispatch:
@@ -7,12 +7,6 @@ on:
         description: Existing draft alpha release tag
         required: true
         type: string
-      publish:
-        description: Publish the draft after signing and verification
-        required: true
-        type: boolean
-        default: true
-
 permissions: {}
 
 concurrency:
@@ -32,7 +26,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ inputs.tag }}
-      PUBLISH_RELEASE: ${{ inputs.publish }}
       COSIGN_CERTIFICATE_IDENTITY: ${{ vars.COSIGN_CERTIFICATE_IDENTITY }}
       COSIGN_CERTIFICATE_OIDC_ISSUER: ${{ vars.COSIGN_CERTIFICATE_OIDC_ISSUER }}
     steps:
@@ -122,6 +115,11 @@ jobs:
             && ((payload_generated_count != payload_generated_total)); then
             exit 1
           fi
+          if ((payload_generated_count == 0)); then
+            printf 'MANIFEST_INPUT_STATE=prepared\n' >>"$GITHUB_ENV"
+          else
+            printf 'MANIFEST_INPUT_STATE=sealed\n' >>"$GITHUB_ENV"
+          fi
 
           mkdir release-assets
           for asset in "${base_assets[@]}"; do
@@ -194,38 +192,150 @@ jobs:
           printf '%s\n' "$COSIGN_CERTIFICATE_IDENTITY" >release-assets/COSIGN_IDENTITY.txt
           printf '%s\n' "$COSIGN_CERTIFICATE_OIDC_ISSUER" >release-assets/COSIGN_ISSUER.txt
 
-      - name: Validate the signed draft manifest
+      - name: Seal and validate the draft manifest
         shell: bash
         run: |
           set -euo pipefail
           manifest=release-assets/release-manifest.json
-          test "$(jq -er .releaseId "$manifest")" = "$RELEASE_TAG"
-          root_sha256=$(sha256sum release-assets/1.root.json | awk '{ print $1 }')
-          test "$(jq -er .trustedRootSha256 "$manifest")" = "$root_sha256"
-          mapfile -t cli_artifacts < <(
-            jq -er '.cliArtifacts[] | [
-              .kind, .system, .source, .sha256, .length,
-              .sigstoreBundle, .sigstoreBundleSha256, .sigstoreBundleLength
-            ] | @tsv' "$manifest"
+          manifest_state=$(python3 - "$manifest" release-assets/1.root.json \
+            release-assets "$RELEASE_TAG" "$MANIFEST_INPUT_STATE" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          manifest_path = pathlib.Path(sys.argv[1])
+          root_path = pathlib.Path(sys.argv[2])
+          asset_root = pathlib.Path(sys.argv[3])
+          release_tag = sys.argv[4]
+          input_state = sys.argv[5]
+
+
+          def fail(message):
+              raise ValueError(message)
+
+
+          def regular_bytes(path, name):
+              if path.is_symlink() or not path.is_file():
+                  fail(f"{name} must be a regular file")
+              return path.read_bytes()
+
+
+          def unique_object(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      fail(f"duplicate JSON key: {key}")
+                  value[key] = item
+              return value
+
+
+          def identity(data):
+              return hashlib.sha256(data).hexdigest(), len(data)
+
+
+          try:
+              manifest = json.loads(
+                  regular_bytes(manifest_path, "release manifest"),
+                  object_pairs_hook=unique_object,
+                  parse_constant=lambda value: fail(f"invalid JSON value: {value}"),
+              )
+          except (UnicodeDecodeError, json.JSONDecodeError) as error:
+              raise ValueError("release manifest is not strict JSON") from error
+          if not isinstance(manifest, dict) or manifest.get("releaseId") != release_tag:
+              fail("release manifest has the wrong release ID")
+          if input_state not in {"prepared", "sealed"}:
+              fail("release manifest input state is invalid")
+          root_digest, _ = identity(regular_bytes(root_path, "trusted root"))
+          if manifest.get("trustedRootSha256") != root_digest:
+              fail("release manifest has the wrong trusted root")
+
+          expected = {
+              ("pkg", "aarch64-darwin", "cli/pkg-aarch64-darwin"):
+                  "cli/pkg-aarch64-darwin.sigstore.json",
+              ("pkg", "x86_64-linux", "cli/pkg-x86_64-linux"):
+                  "cli/pkg-x86_64-linux.sigstore.json",
+              ("pkg-install", "x86_64-linux", "cli/pkg-installer-x86_64-linux"):
+                  "cli/pkg-installer-x86_64-linux.sigstore.json",
+          }
+          records = manifest.get("cliArtifacts")
+          if not isinstance(records, list) or len(records) != len(expected):
+              fail("release manifest must contain the three exact CLI artifacts")
+
+          bundle_keys = (
+              "sigstoreBundle",
+              "sigstoreBundleSha256",
+              "sigstoreBundleLength",
           )
-          test "${#cli_artifacts[@]}" = 3
-          for record in "${cli_artifacts[@]}"; do
-            IFS=$'\t' read -r kind system source digest length \
-              bundle bundle_digest bundle_length <<<"$record"
-            case "$kind:$system:$source:$bundle" in
-              pkg:aarch64-darwin:cli/pkg-aarch64-darwin:cli/pkg-aarch64-darwin.sigstore.json | \
-              pkg:x86_64-linux:cli/pkg-x86_64-linux:cli/pkg-x86_64-linux.sigstore.json | \
-              pkg-install:x86_64-linux:cli/pkg-installer-x86_64-linux:cli/pkg-installer-x86_64-linux.sigstore.json)
-                ;;
-              *) exit 1 ;;
-            esac
-            source_path="release-assets/${source#cli/}"
-            bundle_path="release-assets/${bundle#cli/}"
-            test "$(sha256sum "$source_path" | awk '{ print $1 }')" = "$digest"
-            test "$(stat -c %s "$source_path")" = "$length"
-            test "$(sha256sum "$bundle_path" | awk '{ print $1 }')" = "$bundle_digest"
-            test "$(stat -c %s "$bundle_path")" = "$bundle_length"
-          done
+          seen = set()
+          for record in records:
+              if not isinstance(record, dict):
+                  fail("CLI artifact must be an object")
+              key = (record.get("kind"), record.get("system"), record.get("source"))
+              if key not in expected or key in seen:
+                  fail("release manifest has an unexpected CLI artifact")
+              seen.add(key)
+
+              source_data = regular_bytes(
+                  asset_root / key[2].removeprefix("cli/"), "CLI artifact"
+              )
+              source_digest, source_length = identity(source_data)
+              if (
+                  record.get("sha256") != source_digest
+                  or type(record.get("length")) is not int
+                  or record["length"] != source_length
+              ):
+                  fail("CLI artifact identity does not match the manifest")
+
+              present = [field in record for field in bundle_keys]
+              if input_state == "prepared" and any(present):
+                  fail("prepared CLI artifact already has Sigstore bundle identity")
+              if input_state == "sealed" and not all(present):
+                  fail("sealed CLI artifact has incomplete Sigstore bundle identity")
+
+              bundle_name = expected[key]
+              bundle_data = regular_bytes(
+                  asset_root / bundle_name.removeprefix("cli/"), "Sigstore bundle"
+              )
+              bundle_digest, bundle_length = identity(bundle_data)
+              if input_state == "prepared":
+                  record.update(
+                      {
+                          "sigstoreBundle": bundle_name,
+                          "sigstoreBundleSha256": bundle_digest,
+                          "sigstoreBundleLength": bundle_length,
+                      }
+                  )
+              elif (
+                  record["sigstoreBundle"] != bundle_name
+                  or record["sigstoreBundleSha256"] != bundle_digest
+                  or type(record["sigstoreBundleLength"]) is not int
+                  or record["sigstoreBundleLength"] != bundle_length
+              ):
+                  fail("Sigstore bundle identity does not match the manifest")
+
+          if seen != set(expected):
+              fail("release manifest has incomplete CLI artifacts")
+          if input_state == "prepared":
+              sealed_path = manifest_path.with_name("release-manifest.json.sealed")
+              if sealed_path.exists() or sealed_path.is_symlink():
+                  fail("temporary sealed manifest path already exists")
+              with sealed_path.open("x", encoding="utf-8") as output:
+                  output.write(
+                      json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+                      + "\n"
+                  )
+              sealed_path.replace(manifest_path)
+          print(input_state)
+          PY
+          )
+          case "$manifest_state" in
+            prepared)
+              rm -f release-assets/SHA256SUMS.sigstore.json
+              ;;
+            sealed) ;;
+            *) exit 1 ;;
+          esac
 
       - name: Upload verified signatures and checksums
         shell: bash
@@ -267,6 +377,7 @@ jobs:
           upload_assets=(
             release-assets/COSIGN_IDENTITY.txt
             release-assets/COSIGN_ISSUER.txt
+            release-assets/release-manifest.json
             "release-assets/pkg-${version}-preview.pkg.sigstore.json"
             release-assets/pkg-aarch64-darwin.sigstore.json
             release-assets/pkg-installer-x86_64-linux.sigstore.json
@@ -276,6 +387,10 @@ jobs:
             release-assets/SHA256SUMS
             release-assets/SHA256SUMS.sigstore.json
           )
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq .tag_name)" \
+            = "$RELEASE_TAG"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq .draft)" \
+            = true
           gh release upload "$RELEASE_TAG" "${upload_assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
@@ -289,30 +404,3 @@ jobs:
               --dir remote-assets
             cmp "$asset" "remote-assets/$name"
           done
-
-      - name: Publish the verified draft
-        if: ${{ inputs.publish }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          {
-            awk '{ print $2 }' release-assets/SHA256SUMS
-            printf '%s\n' SHA256SUMS
-            printf '%s\n' SHA256SUMS.sigstore.json
-          } | LC_ALL=C sort >expected-assets
-          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-            --jq '.assets[].name' | LC_ALL=C sort >actual-assets
-          diff -u expected-assets actual-assets
-
-          mkdir final-assets
-          gh release download "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --dir final-assets
-          (cd final-assets && sha256sum --check --strict SHA256SUMS)
-
-          gh release edit "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft=false \
-            --prerelease \
-            --verify-tag
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq .draft)" = false

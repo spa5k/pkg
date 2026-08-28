@@ -299,6 +299,26 @@ impl ValidatedRelease {
         &self.release_digest
     }
 
+    /// Separately approves the manifest form used before Sigstore bundle sealing.
+    pub fn authorize_prepared_manifest(
+        &self,
+        authority: &dyn ReleaseAuthority,
+    ) -> Result<ValidatedPreparedRelease, ValidationError> {
+        let manifest = prepared_manifest_bytes(&self.manifest)?;
+        let release_digest = hex::encode(Sha256::digest(&manifest));
+        let authorization = authority.authorize(
+            &release_digest,
+            self.channel_sequence(),
+            self.timestamp_version(),
+            &self.manifest.approvals,
+        )?;
+        Ok(ValidatedPreparedRelease {
+            manifest,
+            release_digest,
+            _authorization: authorization,
+        })
+    }
+
     /// Returns the monotonic product channel sequence.
     #[must_use]
     pub const fn channel_sequence(&self) -> u64 {
@@ -425,6 +445,27 @@ impl ValidatedRelease {
             )?;
         }
         Ok(())
+    }
+}
+
+/// A canonical prepared manifest with a distinct completed approval.
+pub struct ValidatedPreparedRelease {
+    manifest: Vec<u8>,
+    release_digest: String,
+    _authorization: Box<dyn ReleaseAuthorization>,
+}
+
+impl ValidatedPreparedRelease {
+    /// Returns the exact approved prepared-manifest bytes.
+    #[must_use]
+    pub fn manifest(&self) -> &[u8] {
+        &self.manifest
+    }
+
+    /// Returns the digest supplied to the prepared-manifest authority.
+    #[must_use]
+    pub fn release_digest(&self) -> &str {
+        &self.release_digest
     }
 }
 
@@ -568,6 +609,29 @@ impl ReleaseManifest {
             authorization: Some(authorization),
         })
     }
+}
+
+fn prepared_manifest_bytes(manifest: &ReleaseManifest) -> Result<Vec<u8>, ValidationError> {
+    let mut value = serde_json::to_value(manifest).map_err(|_| ValidationError::InvalidManifest)?;
+    let cli = value
+        .get_mut("cliArtifacts")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or(ValidationError::InvalidManifest)?;
+    for artifact in cli {
+        let artifact = artifact
+            .as_object_mut()
+            .ok_or(ValidationError::InvalidManifest)?;
+        for field in [
+            "sigstoreBundle",
+            "sigstoreBundleSha256",
+            "sigstoreBundleLength",
+        ] {
+            if artifact.remove(field).is_none() {
+                return Err(ValidationError::InvalidManifest);
+            }
+        }
+    }
+    serde_json::to_vec(&value).map_err(|_| ValidationError::InvalidManifest)
 }
 
 fn validate_approvals(approvals: &[Approval]) -> Result<(), ValidationError> {

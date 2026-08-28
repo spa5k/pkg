@@ -702,6 +702,30 @@ mod tests {
     }
 
     #[test]
+    fn approved_digest_covers_the_intentional_prepared_manifest() {
+        let temporary = TempDir::new().expect("temporary release");
+        let release = release_fixture(temporary.path());
+        let prepared_release = release
+            .authorize_prepared_manifest(&TestAuthority)
+            .expect("approved prepared release");
+        let prepared: serde_json::Value =
+            serde_json::from_slice(prepared_release.manifest()).expect("prepared manifest");
+        for artifact in prepared["cliArtifacts"].as_array().expect("CLI artifacts") {
+            assert!(artifact.get("sigstoreBundle").is_none());
+            assert!(artifact.get("sigstoreBundleSha256").is_none());
+            assert!(artifact.get("sigstoreBundleLength").is_none());
+        }
+        assert_eq!(
+            prepared_release.release_digest(),
+            hex::encode(Sha256::digest(prepared_release.manifest()))
+        );
+        assert_eq!(
+            release.release_digest(),
+            hex::encode(Sha256::digest(release.canonical_manifest()))
+        );
+    }
+
+    #[test]
     fn manifest_refuses_forged_approval_extended_schema_and_target_confusion() {
         let temporary = TempDir::new().expect("temporary release");
         let root = temporary.path();

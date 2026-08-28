@@ -1,7 +1,12 @@
 """Structural release-workflow security contract."""
 
+import hashlib
+import json
 from pathlib import Path
 import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 
@@ -17,6 +22,9 @@ LINUX_STAGE = (ROOT / "tests/linux-clean-host/Dockerfile.stage").read_text(
 LINUX_HOST = (ROOT / "tests/linux-clean-host/Dockerfile").read_text(encoding="utf-8")
 MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
     encoding="utf-8"
+)
+MANIFEST_SEALER = textwrap.dedent(
+    PUBLISH_WORKFLOW.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
 )
 
 
@@ -392,6 +400,7 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
             PUBLISH_WORKFLOW,
         )
         self.assertIn("test \"$draft\" = true", PUBLISH_WORKFLOW)
+        self.assertNotIn("\n      publish:\n", PUBLISH_WORKFLOW)
         self.assertIn("releases/${RELEASE_ID}", PUBLISH_WORKFLOW)
         self.assertNotIn("releases/tags/${RELEASE_TAG}", PUBLISH_WORKFLOW)
         self.assertIn(
@@ -406,17 +415,24 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
         self.assertIn("--certificate-identity", PUBLISH_WORKFLOW)
         self.assertIn("--certificate-oidc-issuer", PUBLISH_WORKFLOW)
         self.assertIn("sha256sum --check --strict", PUBLISH_WORKFLOW)
-        self.assertIn(".trustedRootSha256", PUBLISH_WORKFLOW)
-        self.assertIn('test "${#cli_artifacts[@]}" = 3', PUBLISH_WORKFLOW)
-        self.assertIn(".sigstoreBundleSha256", PUBLISH_WORKFLOW)
+        self.assertIn('manifest.get("trustedRootSha256")', PUBLISH_WORKFLOW)
+        self.assertIn('len(records) != len(expected)', PUBLISH_WORKFLOW)
+        self.assertIn('"sigstoreBundleSha256"', PUBLISH_WORKFLOW)
         self.assertIn("SHA256SUMS.sigstore.json", PUBLISH_WORKFLOW)
         manifest_validation = PUBLISH_WORKFLOW.split(
-            "- name: Validate the signed draft manifest", 1
+            "- name: Seal and validate the draft manifest", 1
         )[1].split("- name: Upload verified signatures and checksums", 1)[0]
         self.assertNotIn("if:", manifest_validation)
+        self.assertIn('rm -f release-assets/SHA256SUMS.sigstore.json', manifest_validation)
+        self.assertIn("MANIFEST_INPUT_STATE=prepared", PUBLISH_WORKFLOW)
+        self.assertIn("MANIFEST_INPUT_STATE=sealed", PUBLISH_WORKFLOW)
+        self.assertLess(
+            PUBLISH_WORKFLOW.index("- name: Sign and verify all payloads"),
+            PUBLISH_WORKFLOW.index("- name: Seal and validate the draft manifest"),
+        )
         checksum_signing = PUBLISH_WORKFLOW.split(
             "- name: Upload verified signatures and checksums", 1
-        )[1].split("- name: Publish the verified draft", 1)[0]
+        )[1]
         checksum_inputs = checksum_signing.split("checksum_assets=(", 1)[1].split(
             "\n          )", 1
         )[0]
@@ -426,14 +442,109 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
             checksum_signing.index("checksum_bundle=release-assets/SHA256SUMS.sigstore.json"),
         )
         self.assertIn("release-assets/SHA256SUMS.sigstore.json", checksum_signing)
-        publication = PUBLISH_WORKFLOW.split("- name: Publish the verified draft", 1)[1]
-        self.assertIn("if: ${{ inputs.publish }}", publication.split("run: |", 1)[0])
-        self.assertIn("printf '%s\\n' SHA256SUMS.sigstore.json", publication)
-        self.assertIn("diff -u expected-assets actual-assets", PUBLISH_WORKFLOW)
-        self.assertIn("final-assets", PUBLISH_WORKFLOW)
+        upload_inputs = checksum_signing.split("upload_assets=(", 1)[1].split(
+            "\n          )", 1
+        )[0]
+        self.assertIn("release-assets/release-manifest.json", upload_inputs)
         self.assertIn("gh release upload", PUBLISH_WORKFLOW)
-        self.assertIn("gh release edit", PUBLISH_WORKFLOW)
+        self.assertNotIn("gh release edit", PUBLISH_WORKFLOW)
+        self.assertNotIn("--draft=false", PUBLISH_WORKFLOW)
+        self.assertEqual(PUBLISH_WORKFLOW.count('--jq .draft)'), 2)
+        self.assertLess(
+            checksum_signing.rindex('--jq .draft)'),
+            checksum_signing.index('gh release upload'),
+        )
         self.assertNotIn("gh release", WORKFLOW)
+
+    def test_manifest_sealer_bootstraps_once_and_rejects_partial_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trusted_root = root / "1.root.json"
+            trusted_root.write_bytes(b"trusted root\n")
+            artifacts = (
+                ("pkg", "aarch64-darwin", "pkg-aarch64-darwin"),
+                ("pkg", "x86_64-linux", "pkg-x86_64-linux"),
+                ("pkg-install", "x86_64-linux", "pkg-installer-x86_64-linux"),
+            )
+            records = []
+            for kind, system, name in artifacts:
+                payload = f"payload {name}\n".encode()
+                (root / name).write_bytes(payload)
+                (root / f"{name}.sigstore.json").write_bytes(
+                    f"bundle {name}\n".encode()
+                )
+                records.append(
+                    {
+                        "kind": kind,
+                        "system": system,
+                        "source": f"cli/{name}",
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "length": len(payload),
+                    }
+                )
+            manifest_path = root / "release-manifest.json"
+            prepared = {
+                "releaseId": "v0.1.0-alpha.8",
+                "trustedRootSha256": hashlib.sha256(
+                    trusted_root.read_bytes()
+                ).hexdigest(),
+                "cliArtifacts": records,
+            }
+            manifest_path.write_text(json.dumps(prepared), encoding="utf-8")
+            command = [
+                "python3",
+                "-",
+                str(manifest_path),
+                str(trusted_root),
+                str(root),
+                "v0.1.0-alpha.8",
+                "prepared",
+            ]
+
+            first = subprocess.run(
+                command,
+                input=MANIFEST_SEALER,
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+            self.assertEqual(first.stdout, "prepared\n")
+            sealed_bytes = manifest_path.read_bytes()
+            sealed = json.loads(sealed_bytes)
+            for record in sealed["cliArtifacts"]:
+                bundle = root / record["sigstoreBundle"].removeprefix("cli/")
+                self.assertEqual(
+                    record["sigstoreBundleSha256"],
+                    hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                )
+                self.assertEqual(record["sigstoreBundleLength"], bundle.stat().st_size)
+
+            command[-1] = "sealed"
+            second = subprocess.run(
+                command,
+                input=MANIFEST_SEALER,
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+            self.assertEqual(second.stdout, "sealed\n")
+            self.assertEqual(manifest_path.read_bytes(), sealed_bytes)
+
+            partial = prepared.copy()
+            partial["cliArtifacts"] = [record.copy() for record in records]
+            partial["cliArtifacts"][0]["sigstoreBundle"] = (
+                "cli/pkg-aarch64-darwin.sigstore.json"
+            )
+            manifest_path.write_text(json.dumps(partial), encoding="utf-8")
+            command[-1] = "prepared"
+            refused = subprocess.run(
+                command,
+                input=MANIFEST_SEALER,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("already has Sigstore bundle identity", refused.stderr)
 
 
 if __name__ == "__main__":

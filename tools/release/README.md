@@ -58,6 +58,13 @@ manifest schema. It does not download these files. Put the five verified files
 in the release input `determinate/` directory. The signer checks regular-file
 identity, length, and SHA-256 again before it signs and seals the targets.
 
+The proof producer requests a separate approval for the canonical prepared
+manifest. The prepared manifest contains the three exact CLI payload identities,
+but it does not contain Sigstore bundle identities. The draft-signing workflow
+verifies the payloads, creates the keyless bundles, seals their identities into
+the final manifest, and signs the final checksum file. The normal publisher
+continues to approve and audit the complete manifest and bundle identities.
+
 The Linux `pkg-install` build embeds the approved root and the immutable HTTPS
 metadata and target directory URLs. The release build sets
 `PKG_RELEASE_TUF_ROOT_JSON`, `PKG_RELEASE_CHANNEL_METADATA_URL`, and

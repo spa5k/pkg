@@ -579,6 +579,8 @@ async fn main() -> Result<(), AnyError> {
         artifact_root,
         &ProofAuthority,
     )?;
+    let prepared_manifest = release.authorize_prepared_manifest(&ProofAuthority)?;
+    let prepared_manifest_bytes = prepared_manifest.manifest().to_vec();
     let online_sources = online
         .into_iter()
         .map(|key| Box::new(key) as Box<dyn KeySource>)
@@ -598,6 +600,10 @@ async fn main() -> Result<(), AnyError> {
         &output,
     )
     .await?;
+    fs::write(
+        output.join("release-manifest.json"),
+        prepared_manifest_bytes,
+    )?;
     fs::write(output.join("root.json"), root_bytes)?;
     println!("{}", output.display());
     Ok(())
