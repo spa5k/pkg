@@ -656,10 +656,10 @@ impl RollbackArgs {
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct GcArgs {
     /// Number of recent generations to preserve.
-    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32))]
     keep_generations: Option<u32>,
     /// Preserve generations no older than this many days.
-    #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, value_name = "DAYS", value_parser = clap::value_parser!(u32))]
     max_age_days: Option<u32>,
 }
 
@@ -822,6 +822,24 @@ mod tests {
             let parsed = Cli::try_parse(args).unwrap();
             assert!(parsed.validate().is_ok());
         }
+    }
+
+    #[test]
+    fn gc_accepts_zero_retention_values() {
+        let parsed = Cli::try_parse([
+            "pkg",
+            "gc",
+            "--keep-generations",
+            "0",
+            "--max-age-days",
+            "0",
+        ])
+        .unwrap();
+        let Command::Gc(args) = parsed.parsed_command() else {
+            panic!("expected gc command");
+        };
+        assert_eq!(args.keep_generations(), Some(0));
+        assert_eq!(args.max_age_days(), Some(0));
     }
 
     #[test]
