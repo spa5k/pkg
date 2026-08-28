@@ -103,7 +103,9 @@ jobs:
     timeout-minutes: 120
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
+        # GitHub creates these jobs in order and runs only one at a time.
         # The trusted provisioner must map these names to two different VMs.
         # It must never reassign both names to one VM or one reimage nonce.
         # Before the runner starts, it must reboot once and write the exact

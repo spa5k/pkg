@@ -4,13 +4,15 @@ This is a destructive proof for the DN-16 product lifecycle.
 The manual GitHub workflow is the only supported entry point.
 
 The workflow runs only by manual dispatch.
-Its destructive jobs require two different self-hosted runner labels:
+Its destructive matrix uses two self-hosted runner labels in this order:
 
 - `pkg-disposable-macos-proof-1`
 - `pkg-disposable-macos-proof-2`
 
 Each label must select one fresh Apple Silicon `VirtualMac`.
-The proof is blocked until both disposable runners exist.
+The matrix permits only one destructive job at a time.
+Both lifecycle slots use the same GitHub workflow run and GitHub run ID.
+Only the runner for the current slot must exist.
 GitHub-hosted runners are not permitted.
 
 The trusted provisioner must map the labels to these exact runner names:
@@ -26,11 +28,15 @@ Its one line must have the form `PKG-DN16-INSTANCE-V1:<nonce>`.
 
 ## External runner contract
 
-The runner provisioner must do these steps before it starts the Actions runner.
+The runner provisioner must do these steps before it starts each Actions runner.
 
 The trusted scheduler must receive the GitHub run ID and lifecycle slot out of band.
 It must select the exact runner name before it creates the VM markers.
 GitHub Actions does not create or update these root-owned markers.
+
+Start with slot 1 only.
+Do not register slot 2 before slot 1 completes.
+Register each Actions runner with `--ephemeral`.
 
 1. Create a fresh macOS Apple Silicon virtual machine.
 2. Confirm that Nix and pkg are absent.
@@ -64,7 +70,26 @@ That row needs an external two-phase runner protocol.
 An Actions step cannot resume itself after a reboot.
 
 The runner must provide passwordless `sudo` only inside the disposable VM.
-The VM must be destroyed after the job.
+
+Wait until the slot 1 matrix job has a terminal result.
+Confirm that all required slot 1 artifact uploads for that result completed.
+Confirm that the ephemeral runner registration is absent.
+Only then stop and destroy the slot 1 VM.
+
+Create and register slot 2 after the slot 1 cleanup gate passes.
+Use the same GitHub workflow run and GitHub run ID.
+Do not enable or dispatch the workflow again.
+Use the slot 2 runner name, label, lifecycle slot, and a new instance nonce.
+Repeat the VM, marker, reboot, and runner steps above.
+
+Wait until the slot 2 matrix job has a terminal result.
+Confirm that all required slot 2 artifact uploads for that result completed.
+Confirm that the ephemeral runner registration is absent.
+Only then stop and destroy the slot 2 VM.
+
+The hosted aggregate job starts after both matrix jobs are terminal.
+It downloads both bounded evidence artifacts.
+It fails if either exact runner name or instance nonce is not distinct.
 
 ## Signed input contract
 

@@ -54,7 +54,21 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("kern.hv_vmm_present", proof_job)
         self.assertIn("VirtualMac*", proof_job)
         self.assertIn("root:wheel:600", proof_job)
-        self.assertIn("both disposable runners", README)
+        self.assertIn("different virtual machines", README)
+
+    def test_destructive_slots_run_sequentially_in_one_workflow_run(self) -> None:
+        proof_job = WORKFLOW.split("\n  prove:\n", 1)[1].split("\n  aggregate:\n", 1)[0]
+        self.assertIn("fail-fast: false", proof_job)
+        self.assertIn("max-parallel: 1", proof_job)
+        self.assertLess(
+            proof_job.index("lifecycle_run: 1"), proof_job.index("lifecycle_run: 2")
+        )
+        self.assertIn("same GitHub workflow run", README)
+        self.assertIn("Do not register slot 2", README)
+        self.assertIn("Do not enable or dispatch the workflow again", README)
+        self.assertEqual(README.count("matrix job has a terminal result"), 2)
+        self.assertEqual(README.count("artifact uploads for that result completed"), 2)
+        self.assertEqual(README.count("ephemeral runner registration is absent"), 2)
 
     def test_preflight_is_retained_before_the_destructive_gate(self) -> None:
         proof_job = WORKFLOW.split("\n  prove:\n", 1)[1].split("\n  aggregate:\n", 1)[0]
