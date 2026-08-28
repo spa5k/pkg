@@ -23,6 +23,9 @@ LINUX_HOST = (ROOT / "tests/linux-clean-host/Dockerfile").read_text(encoding="ut
 PROOF_PUBLICATION = (
     ROOT / "tools/release/examples/linux_proof_publication.rs"
 ).read_text(encoding="utf-8")
+PROOF_SERVER = (ROOT / "tools/release/serve_proof_channel.py").read_text(
+    encoding="utf-8"
+)
 MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
     encoding="utf-8"
 )
@@ -221,7 +224,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertIn(mode, PROOF_PUBLICATION)
         self.assertIn("ReleaseManifest::from_prepared_json", PROOF_PUBLICATION)
         self.assertNotIn("ProofInputMode::Dn16Fixture", PROOF_PUBLICATION)
+        self.assertIn('"bootstrap": (3, bootstrap)', PROOF_SERVER)
+        self.assertIn('"activate": (2, activate)', PROOF_SERVER)
+        self.assertNotIn('"start":', PROOF_SERVER)
         self.assertIn("--bind-dn16-pair", PROOF_PUBLICATION)
+        self.assertIn("validate_pair(staging)", PROOF_SERVER)
+        self.assertIn("verify_remote(state[\"url\"], records)", PROOF_SERVER)
+        self.assertIn('state["phase"] = "active"', PROOF_SERVER)
+        self.assertLess(
+            PROOF_SERVER.index("verify_remote(state[\"url\"], records)"),
+            PROOF_SERVER.index('state["phase"] = "active"'),
+        )
         self.assertIn("$name.sigstore.json", LINUX_STAGE)
         for name in (
             "pkg-aarch64-darwin",

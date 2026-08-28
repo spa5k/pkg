@@ -65,6 +65,107 @@ verifies the payloads, creates the keyless bundles, seals their identities into
 the final manifest, and signs the final checksum file. The normal publisher
 continues to approve and audit the complete manifest and bundle identities.
 
+For an immutable N/N+1 native proof, use separate real Apple Silicon and Linux
+input directories for each release. Use these names:
+`pkg-aarch64-darwin`, `pkg-x86_64-linux`, and
+`pkg-installer-x86_64-linux`, with `.sigstore.json` appended to each bundle.
+The Apple Silicon directory supplies `pkg-aarch64-darwin`. The Linux directory
+supplies the other two payloads and the fixed `determinate/` inventory. The
+prepared-manifest command validates every payload and non-bundle schema-2 field.
+It refuses bundle fields and does not require bundle files. The reviewed OIDC
+release workflow in `.github/workflows/publish-release.yml` signs the payloads,
+performs the cryptographic Cosign identity and issuer verification, and seals
+the three bundle identities into the downloaded manifest. The final publication
+command requires that sealed manifest and all three real Sigstore v0.3 bundle
+files. It rejects any difference from the exact local payloads and bundles.
+
+The proof URL is an input to the two binaries. Bootstrap an empty origin first.
+The command prints its exact Quick Tunnel URL. It serves no release bytes yet:
+
+```sh
+python3 tools/release/serve_proof_channel.py bootstrap \
+  "$SERVED_PROOF_ORIGIN" "$PROOF_SERVER_STATE" 8080
+```
+
+Build N and N+1 with that exact URL. Then create one ephemeral signing state.
+Use the same state and root for both exact proof release IDs. Prepare both
+manifests before the reviewed signer creates any bundles:
+
+```sh
+cargo run -p pkg-release --example linux_proof_publication -- \
+  --prepare "$PROOF_SIGNING_STATE"
+cargo run -p pkg-release --example linux_proof_publication -- \
+  --prepare-dn16-manifest "$N_PREPARED_MANIFEST" "$RUNTIME_DIR" \
+  "$N_ARM_INPUTS" "$N_LINUX_INPUTS" "$PROOF_SIGNING_STATE" 1 "$N_RELEASE_ID"
+cargo run -p pkg-release --example linux_proof_publication -- \
+  --prepare-dn16-manifest "$N_PLUS_1_PREPARED_MANIFEST" "$RUNTIME_DIR" \
+  "$N_PLUS_1_ARM_INPUTS" "$N_PLUS_1_LINUX_INPUTS" \
+  "$PROOF_SIGNING_STATE" 2 "$N_PLUS_1_RELEASE_ID"
+```
+
+Send only the prepared manifests and exact payloads through the reviewed OIDC
+signer. Download its sealed manifests and bundles. Verify the bundles with the
+reviewed Cosign identity and issuer rules. Put them beside their exact payloads.
+Generate both complete publications in a private staging directory:
+
+```sh
+cargo run -p pkg-release --example linux_proof_publication -- \
+  --publish-dn16 "$PROOF_PUBLICATION_STAGE/n" "$RUNTIME_DIR" \
+  "$N_ARM_SIGNED_INPUTS" "$N_LINUX_SIGNED_INPUTS" "$N_SEALED_MANIFEST" \
+  "$PROOF_SIGNING_STATE" 1 "$N_RELEASE_ID"
+cargo run -p pkg-release --example linux_proof_publication -- \
+  --publish-dn16 "$PROOF_PUBLICATION_STAGE/n-plus-1" "$RUNTIME_DIR" \
+  "$N_PLUS_1_ARM_SIGNED_INPUTS" "$N_PLUS_1_LINUX_SIGNED_INPUTS" \
+  "$N_PLUS_1_SEALED_MANIFEST" "$PROOF_SIGNING_STATE" 2 "$N_PLUS_1_RELEASE_ID"
+cargo run -p pkg-release --example linux_proof_publication -- \
+  --bind-dn16-pair "$PROOF_PUBLICATION_STAGE" \
+  "$N_RELEASE_ID" "$N_PLUS_1_RELEASE_ID"
+python3 tools/release/serve_proof_channel.py activate \
+  "$PROOF_PUBLICATION_STAGE" "$PROOF_SERVER_STATE"
+```
+
+`legacy-linux-fixture` is only for the existing local Linux lifecycle proof.
+It accepts explicit synthetic bundle fixtures. It is not DN-16 Sigstore
+evidence and must never be used for a native release proof.
+
+The two release IDs must be the exact draft release IDs used by the proof.
+The sequence and all three online metadata versions increase from 1 to 2.
+The shared root is ephemeral 2-of-3. Root metadata expires after 365 days.
+Targets expire after 30 days. Snapshot expires after 7 days. Timestamp expires
+after 24 hours. Generate both channels immediately before the proof.
+
+The proof-only helper uses the already-installed `cloudflared` Quick Tunnel.
+It first exposes only an empty, read-only directory. The pair-binding command
+writes one sorted SHA-256 and length inventory for every channel file. Its small
+descriptor binds both exact release IDs, schema 2, versions 1 and 2, the shared
+trusted root, the inventory digests, and the required metadata and target paths.
+`activate` validates and copies the complete pair. It atomically renames that
+copy over the empty served directory. It then fetches and compares every listed
+file through the Quick Tunnel. A mismatch atomically removes the active tree,
+restores the empty origin, and leaves the state at `bootstrap` for retry. Only a
+complete remote match changes the state to `active`. The helper refuses the
+repository root, symlinks, writable served content, dead or foreign processes,
+and repeated activation:
+
+```sh
+python3 tools/release/serve_proof_channel.py status "$PROOF_SERVER_STATE"
+python3 tools/release/serve_proof_channel.py stop "$PROOF_SERVER_STATE"
+```
+
+`bootstrap` verifies the generated `https://*.trycloudflare.com` URL while the
+origin is empty. The private state records the URL, phase, and exact HTTP and
+`cloudflared` process IDs. `stop` checks the process commands, terminates them,
+and removes only its private state and helper-owned served copies. It does not
+remove the private source publication or signing state. The two binaries must
+already contain their exact HTTPS metadata and targets base URLs. Release N uses
+`https://HOST/n/metadata/` and `https://HOST/n/targets/`. Release N+1 uses
+`https://HOST/n-plus-1/metadata/` and
+`https://HOST/n-plus-1/targets/`.
+
+These keys and channels are proof-only. Do not upload them to the production
+release, production CDN, or any stable channel. Delete the signing state and
+served directory after retained proof evidence is complete.
+
 The Linux `pkg-install` build embeds the approved root and the immutable HTTPS
 metadata and target directory URLs. The release build sets
 `PKG_RELEASE_TUF_ROOT_JSON`, `PKG_RELEASE_CHANNEL_METADATA_URL`, and
