@@ -259,6 +259,7 @@ trait SystemdSystem: fmt::Debug {
 pub struct LinuxSystemdManager {
     system: Box<dyn SystemdSystem>,
     journal: Option<Vec<UnitJournal>>,
+    unit_fragments: [PathBuf; UNITS.len()],
 }
 
 impl fmt::Debug for LinuxSystemdManager {
@@ -280,14 +281,16 @@ impl LinuxSystemdManager {
         Ok(Self {
             system: Box::new(ProductionSystemdSystem::new()?),
             journal: None,
+            unit_fragments: UNIT_FRAGMENTS.map(PathBuf::from),
         })
     }
 
     #[cfg(test)]
-    fn with_system(system: Box<dyn SystemdSystem>) -> Self {
+    fn with_system(system: Box<dyn SystemdSystem>, unit_fragments: [PathBuf; UNITS.len()]) -> Self {
         Self {
             system,
             journal: None,
+            unit_fragments,
         }
     }
 
@@ -295,9 +298,12 @@ impl LinuxSystemdManager {
     pub(crate) fn inert_for_preflight_test() -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
         let calls = std::rc::Rc::new(std::cell::Cell::new(0));
         (
-            Self::with_system(Box::new(PreflightTestSystem {
-                calls: calls.clone(),
-            })),
+            Self::with_system(
+                Box::new(PreflightTestSystem {
+                    calls: calls.clone(),
+                }),
+                UNIT_FRAGMENTS.map(PathBuf::from),
+            ),
             calls,
         )
     }
@@ -707,7 +713,10 @@ impl LinuxSystemdManager {
         unit: &'static str,
     ) -> Result<(), LinuxSystemdError> {
         let definition = self.system.required_unit_definition(unit)?;
-        if definition.fragment_path != UNIT_FRAGMENTS[index] || !definition.drop_in_paths.is_empty()
+        if !same_file(
+            Path::new(&definition.fragment_path),
+            &self.unit_fragments[index],
+        ) || !definition.drop_in_paths.is_empty()
         {
             return Err(LinuxSystemdError::new(
                 LinuxSystemdErrorCode::StateQueryFailed,
@@ -1021,10 +1030,18 @@ fn terminate(child: &mut Child) {
     let _ = child.wait();
 }
 
+fn same_file(left: &Path, right: &Path) -> bool {
+    left.is_absolute()
+        && right.is_absolute()
+        && fs::canonicalize(left)
+            .and_then(|left| fs::canonicalize(right).map(|right| left == right))
+            .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+    use std::{cell::RefCell, collections::BTreeMap, os::unix::fs::symlink, rc::Rc};
 
     #[derive(Debug, Default)]
     struct FakeState {
@@ -1047,12 +1064,11 @@ mod tests {
                     units: states.into_iter().collect(),
                     definitions: UNITS
                         .into_iter()
-                        .zip(UNIT_FRAGMENTS)
-                        .map(|(unit, fragment_path)| {
+                        .map(|unit| {
                             (
                                 unit,
                                 UnitDefinition {
-                                    fragment_path: fragment_path.to_owned(),
+                                    fragment_path: "/bin/sh".to_owned(),
                                     drop_in_paths: String::new(),
                                 },
                             )
@@ -1164,6 +1180,66 @@ mod tests {
         UNITS.into_iter().map(|unit| (unit, state)).collect()
     }
 
+    fn test_manager(fake: FakeSystem) -> LinuxSystemdManager {
+        LinuxSystemdManager::with_system(Box::new(fake), UNITS.map(|_| PathBuf::from("/bin/sh")))
+    }
+
+    #[test]
+    fn same_file_accepts_merged_usr_alias() -> Result<(), Box<dyn Error>> {
+        let temp = tempfile::tempdir()?;
+        let expected = temp.path().join("usr/lib/systemd/system/pkg.service");
+        fs::create_dir_all(expected.parent().ok_or("missing parent")?)?;
+        fs::write(&expected, "unit")?;
+        symlink("usr/lib", temp.path().join("lib"))?;
+
+        assert!(same_file(
+            &temp.path().join("lib/systemd/system/pkg.service"),
+            &expected,
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn same_file_rejects_different_files() -> Result<(), Box<dyn Error>> {
+        let temp = tempfile::tempdir()?;
+        let expected = temp.path().join("expected.service");
+        let reported = temp.path().join("reported.service");
+        fs::write(&expected, "unit")?;
+        fs::write(&reported, "unit")?;
+
+        assert!(!same_file(&reported, &expected));
+        Ok(())
+    }
+
+    #[test]
+    fn same_file_rejects_exact_missing_path() -> Result<(), Box<dyn Error>> {
+        let temp = tempfile::tempdir()?;
+        let missing = temp.path().join("missing.service");
+        assert!(!same_file(&missing, &missing));
+        Ok(())
+    }
+
+    #[test]
+    fn same_file_rejects_broken_alias() -> Result<(), Box<dyn Error>> {
+        let temp = tempfile::tempdir()?;
+        let expected = temp.path().join("missing.service");
+        let reported = temp.path().join("alias.service");
+        symlink(&expected, &reported)?;
+
+        assert!(!same_file(&reported, &expected));
+        Ok(())
+    }
+
+    #[test]
+    fn same_file_rejects_relative_path() -> Result<(), Box<dyn Error>> {
+        let temp = tempfile::tempdir()?;
+        let expected = temp.path().join("expected.service");
+        fs::write(&expected, "unit")?;
+
+        assert!(!same_file(Path::new("expected.service"), &expected));
+        Ok(())
+    }
+
     #[test]
     fn absent_systemd_unit_status_is_false() -> Result<(), Box<dyn Error>> {
         let system = ProductionSystemdSystem {
@@ -1232,7 +1308,7 @@ mod tests {
             active: false,
         }));
         let state = Rc::clone(&fake.state);
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         assert!(manager.activate_fresh(|| true)?);
         manager.verify_active()?;
@@ -1252,12 +1328,47 @@ mod tests {
     }
 
     #[test]
+    fn activation_accepts_merged_usr_unit_fragments() -> Result<(), Box<dyn Error>> {
+        let temp = tempfile::tempdir()?;
+        let systemd_dir = temp.path().join("usr/lib/systemd/system");
+        fs::create_dir_all(&systemd_dir)?;
+        symlink("usr/lib", temp.path().join("lib"))?;
+        let unit_fragments = UNITS.map(|unit| systemd_dir.join(unit));
+        for fragment in &unit_fragments {
+            fs::write(fragment, "unit")?;
+        }
+        let fake = FakeSystem::new(all(UnitState {
+            enabled: false,
+            active: false,
+        }));
+        for unit in UNITS {
+            fake.state
+                .borrow_mut()
+                .definitions
+                .get_mut(unit)
+                .ok_or("missing unit definition")?
+                .fragment_path = temp
+                .path()
+                .join("lib/systemd/system")
+                .join(unit)
+                .to_string_lossy()
+                .into_owned();
+        }
+
+        assert!(
+            LinuxSystemdManager::with_system(Box::new(fake), unit_fragments)
+                .activate_fresh(|| true)?
+        );
+        Ok(())
+    }
+
+    #[test]
     fn activation_failures_retain_only_fixed_phase_and_unit_metadata() {
         let expected = |phase, unit, code| {
             LinuxSystemdFailure::new(phase, unit, code, LinuxSystemdTerminal::NotRun)
         };
         let run = |fake: FakeSystem, authenticate| {
-            LinuxSystemdManager::with_system(Box::new(fake))
+            test_manager(fake)
                 .activate_fresh(|| authenticate)
                 .err()
                 .and_then(LinuxSystemdError::failure)
@@ -1356,7 +1467,7 @@ mod tests {
                 .and_modify(|definition| {
                     definition.drop_in_paths = "synthetic-raw\x1b[31m".to_owned();
                 });
-            let failure = LinuxSystemdManager::with_system(Box::new(fake))
+            let failure = test_manager(fake)
                 .activate_fresh(|| true)
                 .err()
                 .and_then(LinuxSystemdError::failure);
@@ -1389,7 +1500,7 @@ mod tests {
                     },
                 )
             }));
-            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            let mut manager = test_manager(fake);
             assert_eq!(
                 manager
                     .verify_active()
@@ -1413,7 +1524,7 @@ mod tests {
         });
         let fake = FakeSystem::new(states.clone());
         let shared = Rc::clone(&fake.state);
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         assert!(manager.activate_fresh(|| true)?);
         manager.rollback()?;
@@ -1445,7 +1556,7 @@ mod tests {
         }));
         let shared = Rc::clone(&fake.state);
         shared.borrow_mut().fail_call = Some("start:pkg-root-helper.service".to_owned());
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         let error = manager.activate_fresh(|| true).err();
         assert_eq!(
@@ -1484,7 +1595,7 @@ mod tests {
             active: true,
         }));
         let shared = Rc::clone(&fake.state);
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         assert_eq!(
             manager
@@ -1517,7 +1628,7 @@ mod tests {
                     drop_in_paths,
                 },
             );
-            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            let mut manager = test_manager(fake);
 
             assert_eq!(
                 manager
@@ -1537,7 +1648,7 @@ mod tests {
             active: true,
         }));
         let shared = Rc::clone(&fake.state);
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         manager.deactivate_fresh_recovery(|| true)?;
         assert!(
@@ -1580,7 +1691,7 @@ mod tests {
                 },
             );
             let prior = shared.borrow().units.clone();
-            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            let mut manager = test_manager(fake);
 
             assert_eq!(
                 manager
@@ -1605,7 +1716,7 @@ mod tests {
                 active: false,
             }));
             let shared = Rc::clone(&fake.state);
-            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            let mut manager = test_manager(fake);
             assert!(manager.activate_fresh(|| true)?);
             shared.borrow_mut().calls.clear();
             shared.borrow_mut().definitions.insert(
@@ -1646,7 +1757,7 @@ mod tests {
         let fake = FakeSystem::new(states);
         let shared = Rc::clone(&fake.state);
         shared.borrow_mut().fail_call = Some(format!("disable:{absent}"));
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         manager.deactivate_fresh_recovery(|| true)?;
 
@@ -1675,18 +1786,16 @@ mod tests {
     #[test]
     fn activation_classification_accepts_only_complete_terminal_states()
     -> Result<(), Box<dyn Error>> {
-        let mut active =
-            LinuxSystemdManager::with_system(Box::new(FakeSystem::new(all(UnitState {
-                enabled: true,
-                active: true,
-            }))));
+        let mut active = test_manager(FakeSystem::new(all(UnitState {
+            enabled: true,
+            active: true,
+        })));
         assert!(active.classify_activation()?);
 
-        let mut inactive =
-            LinuxSystemdManager::with_system(Box::new(FakeSystem::new(all(UnitState {
-                enabled: false,
-                active: false,
-            }))));
+        let mut inactive = test_manager(FakeSystem::new(all(UnitState {
+            enabled: false,
+            active: false,
+        })));
         assert!(!inactive.classify_activation()?);
         Ok(())
     }
@@ -1701,7 +1810,7 @@ mod tests {
             enabled: true,
             active: false,
         };
-        let mut manager = LinuxSystemdManager::with_system(Box::new(FakeSystem::new(states)));
+        let mut manager = test_manager(FakeSystem::new(states));
 
         let error = manager.classify_activation().err();
         assert_eq!(
@@ -1724,7 +1833,7 @@ mod tests {
                 active: false,
             }));
             fake.state.borrow_mut().fail_unit_state = Some(unit);
-            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            let mut manager = test_manager(fake);
             assert_eq!(
                 manager
                     .classify_activation()
@@ -1747,7 +1856,7 @@ mod tests {
             active: false,
         }));
         let offline_state = Rc::clone(&offline.state);
-        let mut manager = LinuxSystemdManager::with_system(Box::new(offline));
+        let mut manager = test_manager(offline);
         assert_eq!(manager.require_offline(), Ok(()));
         assert!(offline_state.borrow().calls.is_empty());
 
@@ -1777,7 +1886,7 @@ mod tests {
         for states in refused {
             let fake = FakeSystem::new(states);
             let shared = Rc::clone(&fake.state);
-            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            let mut manager = test_manager(fake);
             assert_eq!(
                 manager.require_offline().map_err(LinuxSystemdError::code),
                 Err(LinuxSystemdErrorCode::StateQueryFailed)
@@ -1797,7 +1906,7 @@ mod tests {
                 drop_in_paths: String::new(),
             },
         );
-        let mut manager = LinuxSystemdManager::with_system(Box::new(wrong_fragment));
+        let mut manager = test_manager(wrong_fragment);
         assert_eq!(
             manager.require_offline().map_err(LinuxSystemdError::code),
             Err(LinuxSystemdErrorCode::StateQueryFailed)
@@ -1816,7 +1925,7 @@ mod tests {
                 drop_in_paths: "/etc/systemd/system/pkg-nix-broker.service.d/local.conf".to_owned(),
             },
         );
-        let mut manager = LinuxSystemdManager::with_system(Box::new(with_drop_in));
+        let mut manager = test_manager(with_drop_in);
         assert_eq!(
             manager.require_offline().map_err(LinuxSystemdError::code),
             Err(LinuxSystemdErrorCode::StateQueryFailed)
@@ -1831,7 +1940,7 @@ mod tests {
             active: false,
         }));
         let shared = Rc::clone(&fake.state);
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
         assert!(manager.activate_fresh(|| true)?);
         shared.borrow_mut().fail_call = Some("stop:pkg-nix-broker.service".to_owned());
 
@@ -1861,7 +1970,7 @@ mod tests {
             active: true,
         }));
         let shared = Rc::clone(&fake.state);
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         manager.deactivate_for_uninstall(|| true)?;
 
@@ -1901,7 +2010,7 @@ mod tests {
         }));
         let shared = Rc::clone(&fake.state);
         shared.borrow_mut().fail_call = Some("stop:pkg-nix-broker.service".to_owned());
-        let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+        let mut manager = test_manager(fake);
 
         assert_eq!(
             manager.deactivate_for_uninstall(|| true),
@@ -1940,7 +2049,7 @@ mod tests {
                     drop_in_paths,
                 },
             );
-            let mut manager = LinuxSystemdManager::with_system(Box::new(fake));
+            let mut manager = test_manager(fake);
 
             assert_eq!(
                 manager
