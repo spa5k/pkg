@@ -1,167 +1,354 @@
-name: macOS alpha clean-host proof
+name: macOS Apple Silicon lifecycle proof
 
 on:
   workflow_dispatch:
-  workflow_call:
+    inputs:
+      destructive_confirmation:
+        description: Type DESTROY-PKG-DISPOSABLE-MACOS
+        required: true
+        type: string
+      production_environment:
+        description: This runner is a production machine
+        required: true
+        type: boolean
+        default: true
+      from_release:
+        description: Signed release tag for lifecycle N
+        required: true
+        type: string
+      to_release:
+        description: Signed release tag for lifecycle N+1
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-alpha-clean-host-proof
+  group: macos-disposable-lifecycle-proof
   cancel-in-progress: false
 
 env:
   RUSTUP_TOOLCHAIN: "1.96.1"
   CARGO_TERM_COLOR: always
+  PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
+  PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
+  PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
+  PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
 
 jobs:
-  build:
-    name: Build shipping preview artifacts
+  harness:
+    name: Build proof-only fault harness
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
-      - name: Checkout
+      - name: Checkout the proof harness
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
+          ref: ${{ github.sha }}
+          path: proof-source
           persist-credentials: false
 
-      - name: Install pinned Rust toolchain
-        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Checkout the reviewed production source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.PKG_REVIEWED_COMMIT }}
+          path: reviewed-source
+          persist-credentials: false
 
-      - name: Compile and test the macOS installer surface
-        run: |
-          cargo check --locked -p pkg-installer -p pkg-cli
-          cargo test --locked -p pkg-installer macos
-
-      - name: Build the authenticated preview bundle
+      - name: Build the proof-only test executable
         shell: bash
         run: |
           set -euo pipefail
-          signing="$RUNNER_TEMP/pkg-proof-signing"
-          binaries="$RUNNER_TEMP/pkg-proof-binaries"
-          bundle="$RUNNER_TEMP/pkg-macos-alpha-proof"
-          archive="$RUNNER_TEMP/pkg-macos-alpha-proof.tar.gz"
-          runtimes="$RUNNER_TEMP/pkg-proof-runtimes"
+          test "$(uname -m)" = arm64
+          test "$(git -C proof-source rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest proof-source/tests/macos-clean-host/test_workflow.py
+          bash -n proof-source/tests/macos-clean-host/prove.sh
+          cd reviewed-source
+          test "$(git rev-parse HEAD)" = "$PKG_REVIEWED_COMMIT"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo test --locked --release -p pkg-installer --lib --no-run
+          test_bin=$(find target/release/deps -type f -perm -111 \
+            -name 'pkg_installer-*' ! -name '*.dSYM' -print | head -n 1)
+          test -n "$test_bin"
+          out="$RUNNER_TEMP/pkg-macos-proof-harness"
+          install -d -m 0700 "$out"
+          install -m 0755 "$test_bin" "$out/pkg-installer-tests"
+          install -m 0755 ../proof-source/tests/macos-clean-host/prove.sh "$out/prove.sh"
+          install -m 0644 ../proof-source/tests/macos-clean-host/README.md "$out/README.md"
+          (
+            cd "$out"
+            find . -type f -print | LC_ALL=C sort > INVENTORY
+            shasum -a 256 pkg-installer-tests prove.sh README.md > SHA256SUMS
+          )
 
-          cargo run --locked --release -p pkg-release \
-            --example linux_proof_publication -- --prepare "$signing"
-          PKG_RELEASE_TUF_ROOT_JSON="$(cat "$signing/root.json")" \
-          PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/ \
-          PKG_RELEASE_CHANNEL_TARGETS_URL=https://127.0.0.1:8443/targets/ \
-            cargo build --locked --release \
-              -p pkg-cli --bin pkg \
-              -p pkg-installer --bin pkg-nix-broker \
-              -p pkg-installer --bin pkg-root-helper \
-              -p pkg-installer --bin pkg-install
-
-          install -d -m 0700 "$binaries" "$binaries/determinate" "$bundle" "$runtimes"
-          for name in pkg pkg-nix-broker pkg-root-helper pkg-install; do
-            install -m 0755 "target/release/$name" "$binaries/$name"
-            codesign --force --sign - --options runtime --timestamp=none "$binaries/$name"
-            codesign --verify --strict --verbose=2 "$binaries/$name"
-          done
-
-          stage_determinate() {
-            name="$1"
-            expected_length="$2"
-            expected_sha256="$3"
-            url="$4"
-            path="$binaries/determinate/$name"
-            curl --fail --location --retry 3 --proto '=https' \
-              --proto-redir '=https' --tlsv1.2 --output "$path" "$url"
-            test "$(stat -f '%z' "$path")" = "$expected_length"
-            printf '%s  %s\n' "$expected_sha256" "$path" | shasum -a 256 --check
-          }
-          stage_determinate nix-installer-aarch64-darwin 58427232 \
-            90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b \
-            https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-darwin
-          stage_determinate nix-installer-aarch64-linux 69625424 \
-            9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179 \
-            https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-linux
-          stage_determinate nix-installer-x86_64-linux 74918096 \
-            9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c \
-            https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-x86_64-linux
-          stage_determinate nix-installer-v3.22.1.tar.gz 214322 \
-            e946ce0920e1ac0a76281d1d0d24b5ddb0fa1807f5317d1545130fe8a04ff084 \
-            https://codeload.github.com/DeterminateSystems/nix-installer/tar.gz/refs/tags/v3.22.1
-          stage_determinate LICENSE 26434 \
-            36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89 \
-            https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE
-
-          stage_runtime() {
-            candidate="$1"
-            expected_sha256="$2"
-            path="$runtimes/$candidate.tar.xz"
-            curl --fail --location --retry 3 --proto '=https' \
-              --proto-redir '=https' --tlsv1.2 --output "$path" \
-              "https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-$candidate.tar.xz"
-            printf '%s  %s\n' "$expected_sha256" "$path" \
-              | shasum -a 256 --check
-          }
-          stage_runtime aarch64-darwin \
-            ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf
-          stage_runtime x86_64-linux \
-            2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464
-
-          cargo run --locked --release -p pkg-release \
-            --example linux_proof_publication -- \
-            "$bundle/publication-1" "$runtimes" "$binaries" \
-            aarch64-darwin "$signing" 1
-          cargo run --locked --release -p pkg-release \
-            --example linux_proof_publication -- \
-            "$bundle/publication-2" "$runtimes" "$binaries" \
-            aarch64-darwin "$signing" 2
-
-          packaging/macos/build-preview.sh \
-            "$binaries/pkg-install" \
-            "$bundle/pkg-0.1.0-alpha.7-preview.pkg"
-          install -m 0755 "$binaries/pkg-install" "$bundle/pkg-install"
-          install -m 0755 tests/macos-clean-host/prove.sh "$bundle/prove.sh"
-          install -m 0755 tests/macos-clean-host/pkg-proof-server.py \
-            "$bundle/pkg-proof-server.py"
-          install -m 0644 tests/macos-clean-host/openssl.cnf "$bundle/openssl.cnf"
-          install -m 0644 tests/macos-clean-host/README.md "$bundle/README.md"
-          tar -C "$bundle" -czf "$archive" .
-
-      - name: Upload the permission-preserving proof bundle
+      - name: Upload proof-only harness
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pkg-macos-alpha-proof
-          path: ${{ runner.temp }}/pkg-macos-alpha-proof.tar.gz
+          name: pkg-macos-proof-harness
+          path: ${{ runner.temp }}/pkg-macos-proof-harness
           if-no-files-found: error
           retention-days: 3
 
   prove:
-    name: Destructive clean-host proof
-    needs: build
-    runs-on: macos-15
-    timeout-minutes: 90
+    name: Destructive native lifecycle proof
+    needs: harness
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    runs-on: [self-hosted, macOS, ARM64, "${{ matrix.runner_label }}"]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # The trusted provisioner must map these names to two different VMs.
+        # It must never reassign both names to one VM or one reimage nonce.
+        include:
+          - lifecycle_run: 1
+            runner_label: pkg-disposable-macos-proof-1
+            runner_name: pkg-dn16-proof-runner-1
+          - lifecycle_run: 2
+            runner_label: pkg-disposable-macos-proof-2
+            runner_name: pkg-dn16-proof-runner-2
     steps:
-      - name: Download the shipping proof bundle
+      - name: Initialize bounded preflight evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/pkg-macos-proof/evidence"
+          printf '%s\n' \
+            "lifecycle_run=${{ matrix.lifecycle_run }}" \
+            "expected_runner=${{ matrix.runner_name }}" \
+            "status=preflight-incomplete" \
+            > "$RUNNER_TEMP/pkg-macos-proof/evidence/preflight.txt"
+          printf '%s\n' \
+            "lifecycle_run=${{ matrix.lifecycle_run }}" \
+            "status=incomplete" \
+            "candidate=unresolved" \
+            > "$RUNNER_TEMP/pkg-macos-proof/evidence/result.txt"
+
+      - name: Refuse an unsafe host before download or mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$PKG_PROOF_CONFIRMATION" = DESTROY-PKG-DISPOSABLE-MACOS
+          test "$PKG_PROOF_PRODUCTION" = false
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$RUNNER_NAME" = "${{ matrix.runner_name }}"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(sysctl -n kern.hv_vmm_present)" = 1
+          case "$(sysctl -n hw.model)" in VirtualMac*) ;; *) exit 1 ;; esac
+          test -f /var/tmp/pkg-disposable-macos-proof
+          test ! -L /var/tmp/pkg-disposable-macos-proof
+          test "$(stat -f '%Su:%Sg:%Lp' /var/tmp/pkg-disposable-macos-proof)" = root:wheel:600
+          test "$(stat -f '%z' /var/tmp/pkg-disposable-macos-proof)" -le 128
+          test "$(cat /var/tmp/pkg-disposable-macos-proof)" = \
+            "PKG-DN16-DISPOSABLE-V1:${GITHUB_RUN_ID}:${{ matrix.lifecycle_run }}"
+          marker_age=$(( $(date +%s) - $(stat -f '%m' /var/tmp/pkg-disposable-macos-proof) ))
+          test "$marker_age" -ge 0
+          test "$marker_age" -le 300
+          instance_marker=/var/tmp/pkg-disposable-macos-instance
+          test -f "$instance_marker"
+          test ! -L "$instance_marker"
+          test "$(stat -f '%Su:%Sg:%Lp' "$instance_marker")" = root:wheel:600
+          test "$(stat -f '%z' "$instance_marker")" -le 128
+          instance_record=$(cat "$instance_marker")
+          [[ "$instance_record" =~ ^PKG-DN16-INSTANCE-V1:([0-9a-f]{64})$ ]]
+          instance_nonce=${BASH_REMATCH[1]}
+          instance_age=$(( $(date +%s) - $(stat -f '%m' "$instance_marker") ))
+          test "$instance_age" -ge 0
+          test "$instance_age" -le 300
+          sudo -n true
+          launchd_labels="$RUNNER_TEMP/pkg-macos-proof/launchd-labels.txt"
+          (ulimit -f 2048; sudo -n launchctl list) > "$launchd_labels"
+          test "$(stat -f '%z' "$launchd_labels")" -le 1048576
+          awk 'NR > 1 {
+            label=tolower($3)
+            if (label ~ /nix.*daemon/ || label ~ /daemon.*nix/) found=1
+          } END { exit found ? 1 : 0 }' "$launchd_labels"
+          for path in /nix /etc/nix /opt/pkg /private/var/db/pkg-install \
+            /private/var/db/pkg-install-journal /private/var/db/pkg-install-auth \
+            /Library/LaunchDaemons/org.pkg.root-helper.plist \
+            /Library/LaunchDaemons/org.pkg.nix-broker.plist \
+            /Library/LaunchDaemons/org.nixos.nix-daemon.plist \
+            /Library/LaunchDaemons/systems.determinate.nix-daemon.plist; do
+            test ! -e "$path" && test ! -L "$path"
+          done
+          users="$RUNNER_TEMP/pkg-macos-proof/users.txt"
+          groups="$RUNNER_TEMP/pkg-macos-proof/groups.txt"
+          (ulimit -f 128; dscl . -list /Users) > "$users"
+          (ulimit -f 128; dscl . -list /Groups) > "$groups"
+          test "$(stat -f '%z' "$users")" -le 65536
+          test "$(stat -f '%z' "$groups")" -le 65536
+          if grep -Eq '^(_?nixbld([0-9]+)?|_?pkg-nix-broker)$' "$users"; then
+            exit 1
+          else
+            test "$?" -eq 1
+          fi
+          if grep -Eq '^(_?nixbld|_?pkg-nix-broker)$' "$groups"; then
+            exit 1
+          else
+            test "$?" -eq 1
+          fi
+          for file in /private/etc/synthetic.conf /private/etc/fstab; do
+            test ! -e "$file" || test -f "$file"
+            test ! -L "$file"
+            test ! -e "$file" || test -r "$file"
+          done
+          if test -f /private/etc/synthetic.conf; then
+            awk '!/^[[:space:]]*#/ && $1 == "nix" { found=1 } END { exit found ? 1 : 0 }' \
+              /private/etc/synthetic.conf
+          fi
+          if test -f /private/etc/fstab; then
+            awk '!/^[[:space:]]*#/ { for (i=1; i<=NF; i++) if ($i == "/nix") found=1 } \
+              END { exit found ? 1 : 0 }' /private/etc/fstab
+          fi
+          shopt -s nullglob
+          for path in /Library/LaunchDaemons/* /Library/LaunchAgents/*; do
+            name=$(basename "$path" | tr '[:upper:]' '[:lower:]')
+            case "$name" in
+              *org.nixos.*|*determinate*nix*|*nix*daemon*|nix-*|nix.*|_nixbld*) exit 1 ;;
+            esac
+          done
+          require_unloaded() {
+            set +e
+            launchctl print "system/$1" >/dev/null 2>&1
+            status=$?
+            set -e
+            test "$status" -eq 113
+          }
+          for label in org.nixos.nix-daemon systems.determinate.nix-daemon \
+            org.nixos.darwin-store systems.determinate.nix-store org.pkg.nix-daemon; do
+            require_unloaded "$label"
+          done
+          for home in /private/var/root /Users/*; do
+            for name in .nix-profile .nix-defexpr .nix-channels; do
+              test ! -e "$home/$name" && test ! -L "$home/$name"
+            done
+          done
+          for directory in /bin /usr/bin /usr/local/bin /opt/homebrew/bin; do
+            for name in nix nix-daemon nix-store nix-env nix-build; do
+              test ! -e "$directory/$name" && test ! -L "$directory/$name"
+            done
+          done
+          for name in nix nix-daemon nix-store nix-env nix-build; do
+            ! command -v "$name" >/dev/null 2>&1
+          done
+          require_unloaded org.pkg.root-helper
+          require_unloaded org.pkg.nix-broker
+          command -v gh >/dev/null
+          command -v cosign >/dev/null
+          command -v python3 >/dev/null
+          printf '%s\n' \
+            "lifecycle_run=${{ matrix.lifecycle_run }}" \
+            "runner_name=$RUNNER_NAME" \
+            "instance_nonce=$instance_nonce" \
+            "status=preflight-passed" \
+            > "$RUNNER_TEMP/pkg-macos-proof/evidence/preflight.txt"
+
+      - name: Download proof-only harness
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: pkg-macos-alpha-proof
-          path: ${{ runner.temp }}/pkg-proof-download
+          name: pkg-macos-proof-harness
+          path: ${{ runner.temp }}/pkg-macos-proof/harness
 
-      - name: Extract without source checkout
+      - name: Verify the harness inventory
         shell: bash
         run: |
           set -euo pipefail
-          proof="$RUNNER_TEMP/pkg-proof"
-          mkdir -m 0700 "$proof"
-          tar -C "$proof" -xzf \
-            "$RUNNER_TEMP/pkg-proof-download/pkg-macos-alpha-proof.tar.gz"
+          cd "$RUNNER_TEMP/pkg-macos-proof/harness"
+          printf '%s\n' ./README.md ./pkg-installer-tests ./prove.sh | LC_ALL=C sort > EXPECTED
+          cmp EXPECTED INVENTORY
+          shasum -a 256 --check SHA256SUMS
 
-      - name: Run the destructive product proof
+      - name: Download and authenticate signed release inputs
         shell: bash
         env:
-          PKG_DISPOSABLE_MACOS_PROOF: confirmed
+          GH_TOKEN: ${{ github.token }}
+          FROM_RELEASE: ${{ inputs.from_release }}
+          TO_RELEASE: ${{ inputs.to_release }}
         run: |
           set -euo pipefail
-          sudo install -m 0600 /dev/null /var/tmp/pkg-disposable-macos-proof
-          "$RUNNER_TEMP/pkg-proof/prove.sh"
+          [[ "$FROM_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
+          [[ "$TO_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
+          from_sequence=${FROM_RELEASE##*.}
+          to_sequence=${TO_RELEASE##*.}
+          test "$from_sequence" -lt "$to_sequence"
+          root="$RUNNER_TEMP/pkg-macos-proof"
+          from_source_commit=$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/$FROM_RELEASE" --jq .sha)
+          to_source_commit=$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/$TO_RELEASE" --jq .sha)
+          [[ "$from_source_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$to_source_commit" =~ ^[0-9a-f]{40}$ ]]
+          test "$from_source_commit" = "$PKG_REVIEWED_COMMIT"
+          test "$to_source_commit" = "$PKG_REVIEWED_COMMIT"
+          printf '%s\n' "$from_source_commit" > "$root/evidence/from-source-commit.txt"
+          printf '%s\n' "$to_source_commit" > "$root/evidence/to-source-commit.txt"
+          install -d -m 0700 "$root/candidate/from" "$root/candidate/to" "$root/evidence"
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish-release.yml@refs/heads/main"
+          issuer=https://token.actions.githubusercontent.com
+          for pair in "from:$FROM_RELEASE" "to:$TO_RELEASE"; do
+            side=${pair%%:*}
+            tag=${pair#*:}
+            version=${tag#v}
+            dir="$root/candidate/$side"
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease \
+              --jq 'select(.isDraft == true or .isPrerelease == true) | true' | grep -Fx true >/dev/null
+            for asset in SHA256SUMS release-manifest.json COSIGN_IDENTITY.txt COSIGN_ISSUER.txt \
+              "pkg-$version-preview.pkg" "pkg-$version-preview.pkg.sigstore.json" \
+              pkg-aarch64-darwin pkg-aarch64-darwin.sigstore.json; do
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$dir"
+            done
+            test "$(cat "$dir/COSIGN_IDENTITY.txt")" = "$identity"
+            test "$(cat "$dir/COSIGN_ISSUER.txt")" = "$issuer"
+            selected="$root/evidence/$side-selected-sha256.txt"
+            : > "$selected"
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin release-manifest.json; do
+              awk -v a="$asset" '$2 == a { n++; print } END { exit n != 1 }' \
+                "$dir/SHA256SUMS" >> "$selected"
+            done
+            (cd "$dir" && shasum -a 256 --check "$selected")
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
+              cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
+                --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+                "$dir/$asset" >/dev/null
+            done
+          done
+          find "$root/candidate" -type f -print | LC_ALL=C sort > "$root/evidence/candidate-inventory.txt"
+          find "$root/candidate" -type f -exec shasum -a 256 {} \; \
+            | LC_ALL=C sort > "$root/evidence/candidate-digests.txt"
 
-      - name: Remove the disposable marker
+      - name: Run the destructive proof
+        shell: bash
+        env:
+          PKG_PROOF_FROM_RELEASE: ${{ inputs.from_release }}
+          PKG_PROOF_TO_RELEASE: ${{ inputs.to_release }}
+          PKG_PROOF_ROOT: ${{ runner.temp }}/pkg-macos-proof
+          PKG_PROOF_REBOOT_MARKER: /var/tmp/pkg-disposable-macos-reboot-v1
+          PKG_PROOF_LIFECYCLE_RUN: ${{ matrix.lifecycle_run }}
+        run: ${{ runner.temp }}/pkg-macos-proof/harness/prove.sh
+
+      - name: Upload bounded proof evidence
         if: always()
-        run: sudo rm -f /var/tmp/pkg-disposable-macos-proof
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pkg-macos-lifecycle-evidence-${{ matrix.lifecycle_run }}
+          path: ${{ runner.temp }}/pkg-macos-proof/evidence
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Retain authenticated candidates after success
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pkg-macos-authenticated-candidates-${{ matrix.lifecycle_run }}
+          path: ${{ runner.temp }}/pkg-macos-proof/candidate
+          if-no-files-found: error
+          retention-days: 3
