@@ -15,7 +15,8 @@ use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildPreview, CacheInstallAttempt, CacheInstallOutcome,
     CatalogInfoLookup, CatalogInfoReport, CatalogInfoRequest, CatalogPackageInfo,
     CatalogPackageSummary, CatalogSearchReport, CatalogSearchRequest, Digest,
-    InstallDownloadProgress, NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
+    InstallDownloadProgress, NixAdapter, NixAdapterErrorCode, NixpkgsFetchSpec, OperationHandle,
+    SubstituteErrorCode, fetch_verified_nixpkgs,
 };
 
 use crate::{
@@ -381,6 +382,10 @@ impl AuthenticatedBuildAuthority {
                     Err(AcquireError::BuildRequired) => {
                         return Ok(CacheInstallAttempt::BuildRequired);
                     }
+                    Err(AcquireError::SubstituteRefused(code, adapter_code)) => {
+                        substitution_refused(code, adapter_code);
+                        return Err(());
+                    }
                     Err(error) => {
                         acquisition_refused(error.stage());
                         return Err(());
@@ -478,8 +483,31 @@ fn acquisition_refused(stage: &'static str) {
     let _ = write_acquisition_diagnostic(&mut io::stderr().lock(), stage);
 }
 
+fn substitution_refused(code: SubstituteErrorCode, adapter_code: Option<NixAdapterErrorCode>) {
+    let _ = write_substitution_diagnostic(&mut io::stderr().lock(), code, adapter_code);
+}
+
 fn write_acquisition_diagnostic(writer: &mut impl Write, stage: &'static str) -> io::Result<()> {
     writeln!(writer, "pkg broker acquisition refused: stage={stage}")
+}
+
+fn write_substitution_diagnostic(
+    writer: &mut impl Write,
+    code: SubstituteErrorCode,
+    adapter_code: Option<NixAdapterErrorCode>,
+) -> io::Result<()> {
+    let code = match code {
+        SubstituteErrorCode::AdapterFailure => "adapter_failure",
+        SubstituteErrorCode::UnapprovedSignature => "unapproved_signature",
+        SubstituteErrorCode::IntegrityFailure => "integrity_failure",
+        SubstituteErrorCode::TrustFailure => "trust_failure",
+        SubstituteErrorCode::MetadataMismatch => "metadata_mismatch",
+    };
+    let adapter = adapter_code.map_or("none", NixAdapterErrorCode::as_str);
+    writeln!(
+        writer,
+        "pkg broker acquisition refused: stage=substitute code={code} adapter={adapter}"
+    )
 }
 
 fn catalog_summary(
@@ -679,10 +707,15 @@ mod tests {
     #[test]
     fn acquisition_diagnostics_are_one_static_redacted_line() {
         let mut output = Vec::new();
-        write_acquisition_diagnostic(&mut output, AcquireError::ProbeRefused.stage()).unwrap();
+        write_substitution_diagnostic(
+            &mut output,
+            SubstituteErrorCode::AdapterFailure,
+            Some(NixAdapterErrorCode::OperationFailed),
+        )
+        .unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "pkg broker acquisition refused: stage=probe\n"
+            "pkg broker acquisition refused: stage=substitute code=adapter_failure adapter=operation_failed\n"
         );
     }
 }

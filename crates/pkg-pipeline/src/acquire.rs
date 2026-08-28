@@ -5,7 +5,8 @@ use pkg_channel::VerifiedChannel;
 use pkg_core::{ChannelSequence, PolicyVersion};
 use pkg_nix::{
     BuildCacheProbe, Digest, InstallDownloadProgress, InstallEvidence, NixAdapter,
-    SubstituteResult, VerifiedSubstitute, acquire_substitute,
+    NixAdapterErrorCode, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,
+    acquire_substitute,
 };
 
 use crate::{PlannedOutput, PreflightInstall, ResolvedInstall, VerifiedInstall};
@@ -82,8 +83,8 @@ pub enum AcquireError {
     Refused,
     /// Cache download probing failed closed.
     ProbeRefused,
-    /// Cache substitution failed closed.
-    SubstituteRefused,
+    /// Cache substitution failed with stable, redacted nested categories.
+    SubstituteRefused(SubstituteErrorCode, Option<NixAdapterErrorCode>),
     /// Trusted progress accounting failed closed.
     ProgressRefused,
 }
@@ -93,7 +94,7 @@ impl AcquireError {
             Self::BuildRequired => "build-required",
             Self::Refused => "preflight",
             Self::ProbeRefused => "probe",
-            Self::SubstituteRefused => "substitute",
+            Self::SubstituteRefused(..) => "substitute",
             Self::ProgressRefused => "progress",
         }
     }
@@ -136,7 +137,7 @@ pub fn acquire_cache_only(
     let mut outputs = Vec::with_capacity(preflight.outputs().len());
     for planned in preflight.outputs() {
         match acquire_substitute(planned.store_path(), channel.descriptor().cache(), adapter)
-            .map_err(|_| AcquireError::SubstituteRefused)?
+            .map_err(|error| AcquireError::SubstituteRefused(error.code(), error.adapter_code()))?
         {
             SubstituteResult::Fetched(substitute) => outputs.push(AcquiredOutput {
                 planned: planned.clone(),
@@ -239,7 +240,7 @@ pub fn acquire_cache_only_with_progress(
                 channel.descriptor().cache(),
                 adapter,
             )
-            .map_err(|_| AcquireError::SubstituteRefused)?
+            .map_err(|error| AcquireError::SubstituteRefused(error.code(), error.adapter_code()))?
             {
                 SubstituteResult::Fetched(substitute) => substitute,
                 SubstituteResult::Miss(_) => return Err(AcquireError::BuildRequired),

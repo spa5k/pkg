@@ -139,7 +139,10 @@ assert "broker-acquisition.txt" in capture
 assert "pkg_bounded_capture.py 4096" in capture
 assert "--unit=pkg-nix-broker.service" in capture
 assert "--lines=1" in capture
-assert "source|fetch|resolve|preflight|probe|substitute|progress|verification|evidence" in capture
+assert "source|fetch|resolve|preflight|probe|progress|verification|evidence" in capture
+assert "adapter_failure|unapproved_signature|integrity_failure|trust_failure|metadata_mismatch" in capture
+assert "validation_failure|timeout|unavailable|trust_failure|integrity_failure" in capture
+assert "permission_denied|operation_failed" in capture
 assert capture.index("pkg_bounded_capture.py 4096") < capture.index("broker-acquisition.txt")
 assert "def verified_read(path, limit, expected_uid=0, expected_gid=0)" in capture_source
 for metadata_check in (

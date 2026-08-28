@@ -263,7 +263,7 @@ capture_failure() {
             /run/pkg-failure-capture/stderr -- \
             journalctl --quiet --no-pager --output=cat --lines=1 \
                 --unit=pkg-nix-broker.service \
-                --grep='^pkg broker acquisition refused: stage=(source|fetch|resolve|preflight|probe|substitute|progress|verification|evidence)$' \
+                --grep='^pkg broker acquisition refused: (stage=(source|fetch|resolve|preflight|probe|progress|verification|evidence)|stage=substitute code=(adapter_failure|unapproved_signature|integrity_failure|trust_failure|metadata_mismatch) adapter=(none|unexpected_call|oversized_input|malformed_payload|unsupported_schema_version|unsupported_upstream_format|validation_failure|timeout|unavailable|trust_failure|integrity_failure|permission_denied|operation_failed))$' \
             >/dev/null 2>&1 || true
         copy_container_file "$container" /run/pkg-failure-capture/stdout \
             "$failure/broker-acquisition.txt" 4096 || true
