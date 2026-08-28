@@ -3,6 +3,7 @@
 use std::{
     error::Error,
     fmt,
+    io::{self, Write},
     str::FromStr,
     sync::{Arc, Mutex},
 };
@@ -352,11 +353,12 @@ impl AuthenticatedBuildAuthority {
         let adapter = Arc::clone(&self.adapter);
         caller
             .acquire_cache_install(handle, || {
-                let source_spec =
-                    NixpkgsFetchSpec::from_verified_channel(&channel).map_err(|_| ())?;
-                let source =
-                    fetch_verified_nixpkgs(&source_spec, adapter.as_ref()).map_err(|_| ())?;
-                let system = production_native_system().map_err(|_| ())?;
+                let source_spec = NixpkgsFetchSpec::from_verified_channel(&channel)
+                    .map_err(|_| acquisition_refused("source"))?;
+                let source = fetch_verified_nixpkgs(&source_spec, adapter.as_ref())
+                    .map_err(|_| acquisition_refused("fetch"))?;
+                let system =
+                    production_native_system().map_err(|_| acquisition_refused("resolve"))?;
                 let resolved = resolve_install(
                     &selectors,
                     &source,
@@ -364,8 +366,9 @@ impl AuthenticatedBuildAuthority {
                     index.as_ref().map(VerifiedIndex::document),
                     adapter.as_ref(),
                 )
-                .map_err(|_| ())?;
-                let preflight = preflight_cache_only(&resolved).map_err(|_| ())?;
+                .map_err(|_| acquisition_refused("resolve"))?;
+                let preflight = preflight_cache_only(&resolved)
+                    .map_err(|_| acquisition_refused("preflight"))?;
                 let acquired = match acquire_cache_only_with_progress(
                     &resolved,
                     &preflight,
@@ -378,12 +381,16 @@ impl AuthenticatedBuildAuthority {
                     Err(AcquireError::BuildRequired) => {
                         return Ok(CacheInstallAttempt::BuildRequired);
                     }
-                    Err(AcquireError::Refused) => return Err(()),
+                    Err(error) => {
+                        acquisition_refused(error.stage());
+                        return Err(());
+                    }
                 };
-                let verified = verify_acquired(acquired).map_err(|_| ())?;
+                let verified =
+                    verify_acquired(acquired).map_err(|_| acquisition_refused("verification"))?;
                 let evidence =
                     assemble_cache_install_evidence(&resolved, &verified, adapter.as_ref())
-                        .map_err(|_| ())?;
+                        .map_err(|_| acquisition_refused("evidence"))?;
                 Ok(CacheInstallAttempt::Acquired(evidence))
             })
             .map_err(|error| {
@@ -465,6 +472,14 @@ impl AuthenticatedBuildAuthority {
             .lock()
             .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::StateUnavailable))
     }
+}
+
+fn acquisition_refused(stage: &'static str) {
+    let _ = write_acquisition_diagnostic(&mut io::stderr().lock(), stage);
+}
+
+fn write_acquisition_diagnostic(writer: &mut impl Write, stage: &'static str) -> io::Result<()> {
+    writeln!(writer, "pkg broker acquisition refused: stage={stage}")
 }
 
 fn catalog_summary(
@@ -658,6 +673,16 @@ mod tests {
         assert_eq!(
             BuildAuthorityError::new(BuildAuthorityErrorCode::IndexMismatch).to_string(),
             "authenticated build authority refused"
+        );
+    }
+
+    #[test]
+    fn acquisition_diagnostics_are_one_static_redacted_line() {
+        let mut output = Vec::new();
+        write_acquisition_diagnostic(&mut output, AcquireError::ProbeRefused.stage()).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "pkg broker acquisition refused: stage=probe\n"
         );
     }
 }

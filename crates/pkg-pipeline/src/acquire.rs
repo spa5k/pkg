@@ -78,8 +78,25 @@ impl CacheAuthorityIdentity {
 pub enum AcquireError {
     /// At least one output needs the PR-26 approved local-build path.
     BuildRequired,
-    /// Substitution or verification failed closed.
+    /// Cache-only acquisition failed closed.
     Refused,
+    /// Cache download probing failed closed.
+    ProbeRefused,
+    /// Cache substitution failed closed.
+    SubstituteRefused,
+    /// Trusted progress accounting failed closed.
+    ProgressRefused,
+}
+impl AcquireError {
+    pub(crate) const fn stage(self) -> &'static str {
+        match self {
+            Self::BuildRequired => "build-required",
+            Self::Refused => "preflight",
+            Self::ProbeRefused => "probe",
+            Self::SubstituteRefused => "substitute",
+            Self::ProgressRefused => "progress",
+        }
+    }
 }
 impl fmt::Display for AcquireError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -119,7 +136,7 @@ pub fn acquire_cache_only(
     let mut outputs = Vec::with_capacity(preflight.outputs().len());
     for planned in preflight.outputs() {
         match acquire_substitute(planned.store_path(), channel.descriptor().cache(), adapter)
-            .map_err(|_| AcquireError::Refused)?
+            .map_err(|_| AcquireError::SubstituteRefused)?
         {
             SubstituteResult::Fetched(substitute) => outputs.push(AcquiredOutput {
                 planned: planned.clone(),
@@ -212,9 +229,9 @@ pub fn acquire_cache_only_with_progress(
             if *selector_total > 0 && !selector_completed.contains_key(owner) {
                 progress(
                     InstallDownloadProgress::new(selector.clone(), 0, *selector_total)
-                        .map_err(|_| AcquireError::Refused)?,
+                        .map_err(|_| AcquireError::ProgressRefused)?,
                 )
-                .map_err(|()| AcquireError::Refused)?;
+                .map_err(|()| AcquireError::ProgressRefused)?;
                 selector_completed.insert(owner.clone(), 0);
             }
             let substitute = match acquire_substitute(
@@ -222,7 +239,7 @@ pub fn acquire_cache_only_with_progress(
                 channel.descriptor().cache(),
                 adapter,
             )
-            .map_err(|_| AcquireError::Refused)?
+            .map_err(|_| AcquireError::SubstituteRefused)?
             {
                 SubstituteResult::Fetched(substitute) => substitute,
                 SubstituteResult::Miss(_) => return Err(AcquireError::BuildRequired),
@@ -230,8 +247,10 @@ pub fn acquire_cache_only_with_progress(
             if total > 0 {
                 let completed = selector_completed
                     .get_mut(owner)
-                    .ok_or(AcquireError::Refused)?;
-                *completed = completed.checked_add(total).ok_or(AcquireError::Refused)?;
+                    .ok_or(AcquireError::ProgressRefused)?;
+                *completed = completed
+                    .checked_add(total)
+                    .ok_or(AcquireError::ProgressRefused)?;
                 if *completed == *selector_total {
                     progress(
                         InstallDownloadProgress::new(
@@ -239,11 +258,11 @@ pub fn acquire_cache_only_with_progress(
                             *selector_total,
                             *selector_total,
                         )
-                        .map_err(|_| AcquireError::Refused)?,
+                        .map_err(|_| AcquireError::ProgressRefused)?,
                     )
-                    .map_err(|()| AcquireError::Refused)?;
+                    .map_err(|()| AcquireError::ProgressRefused)?;
                 } else if *completed > *selector_total {
-                    return Err(AcquireError::Refused);
+                    return Err(AcquireError::ProgressRefused);
                 }
             }
             fetched.insert(path_key.to_owned(), substitute.clone());
@@ -258,7 +277,7 @@ pub fn acquire_cache_only_with_progress(
         .iter()
         .any(|(selector, (_, total))| *total > 0 && selector_completed.get(selector) != Some(total))
     {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProgressRefused);
     }
     Ok(AcquiredInstall { outputs, authority })
 }
@@ -268,36 +287,36 @@ fn trusted_download_bytes(
     probe: &dyn BuildCacheProbe,
 ) -> Result<BTreeMap<String, u64>, AcquireError> {
     if planned_paths.is_empty() || planned_paths.len() > MAX_DOWNLOAD_CLOSURE_PATHS {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let closures = probe
         .inspect_download_closures(planned_paths)
-        .map_err(|_| AcquireError::Refused)?;
+        .map_err(|_| AcquireError::ProbeRefused)?;
     if closures.len() != planned_paths.len() {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let expected = planned_paths
         .iter()
         .map(|path| path.as_str().to_owned())
         .collect::<BTreeSet<_>>();
     if expected.len() != planned_paths.len() {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let mut by_root = BTreeMap::new();
     for closure in closures {
         let key = closure.root().as_str().to_owned();
         if !expected.contains(&key) || by_root.insert(key, closure).is_some() {
-            return Err(AcquireError::Refused);
+            return Err(AcquireError::ProbeRefused);
         }
     }
     if by_root.len() != planned_paths.len() {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let mut claimed = BTreeMap::<String, ()>::new();
     let mut download_bytes = BTreeMap::new();
     for root in planned_paths {
         let root_key = root.as_str();
-        let closure = by_root.get(root_key).ok_or(AcquireError::Refused)?;
+        let closure = by_root.get(root_key).ok_or(AcquireError::ProbeRefused)?;
         let mut total = 0_u64;
         for observation in closure.paths() {
             let Some(bytes) = observation.download_bytes() else {
@@ -306,10 +325,10 @@ fn trusted_download_bytes(
             let path = observation.path().as_str().to_owned();
             if !claimed.contains_key(&path) {
                 if claimed.len() == MAX_DOWNLOAD_CLOSURE_PATHS {
-                    return Err(AcquireError::Refused);
+                    return Err(AcquireError::ProbeRefused);
                 }
                 claimed.insert(path, ());
-                total = total.checked_add(bytes).ok_or(AcquireError::Refused)?;
+                total = total.checked_add(bytes).ok_or(AcquireError::ProbeRefused)?;
             }
         }
         download_bytes.insert(root_key.to_owned(), total);
@@ -442,7 +461,7 @@ mod tests {
         ] {
             assert_eq!(
                 trusted_download_bytes(&planned, &Probe(observations)),
-                Err(AcquireError::Refused)
+                Err(AcquireError::ProbeRefused)
             );
         }
     }

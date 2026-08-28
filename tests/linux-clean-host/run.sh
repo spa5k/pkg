@@ -255,6 +255,18 @@ capture_failure() {
             "$failure/handoff.json" 4096 || true
         copy_container_file "$container" /var/lib/pkg-install-journal/transaction-v1.json \
             "$failure/transaction-journal.json" 65536 || true
+        docker exec "$container" install -d -m 0700 -o root -g root \
+            /run/pkg-failure-capture
+        docker exec "$container" python3 /usr/local/libexec/pkg_bounded_capture.py 4096 \
+            /run/pkg-failure-capture/status.txt \
+            /run/pkg-failure-capture/stdout \
+            /run/pkg-failure-capture/stderr -- \
+            journalctl --quiet --no-pager --output=cat --lines=1 \
+                --unit=pkg-nix-broker.service \
+                --grep='^pkg broker acquisition refused: stage=(source|fetch|resolve|preflight|probe|substitute|progress|verification|evidence)$' \
+            >/dev/null 2>&1 || true
+        copy_container_file "$container" /run/pkg-failure-capture/stdout \
+            "$failure/broker-acquisition.txt" 4096 || true
         bootstrap=$failure/bootstrap
         mkdir -m 0700 "$bootstrap"
         copy_container_file "$container" /run/pkg-bootstrap-capture/status.txt \

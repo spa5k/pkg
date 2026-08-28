@@ -135,6 +135,12 @@ assert capture.index("transaction-journal.json") < capture.index('capture_vendor
 assert "/var/lib/pkg-install-journal/transaction-v1.json" in capture
 assert "/run/pkg-install/transaction-v1.json" not in run
 assert "65536" in capture
+assert "broker-acquisition.txt" in capture
+assert "pkg_bounded_capture.py 4096" in capture
+assert "--unit=pkg-nix-broker.service" in capture
+assert "--lines=1" in capture
+assert "source|fetch|resolve|preflight|probe|substitute|progress|verification|evidence" in capture
+assert capture.index("pkg_bounded_capture.py 4096") < capture.index("broker-acquisition.txt")
 assert "def verified_read(path, limit, expected_uid=0, expected_gid=0)" in capture_source
 for metadata_check in (
     "stat.S_ISREG(metadata.st_mode)", "metadata.st_uid != expected_uid",
