@@ -799,15 +799,16 @@
           <li>The Cosign certificate identity is <code>https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1</code>.</li>
           <li>The Cosign issuer is <code>https://token.actions.githubusercontent.com</code>.</li>
           <li>Both inputs use TUF root SHA-256 <code>1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90</code>.</li>
-          <li>The active temporary Quick Tunnel serves exactly 53 files and 621,050,177 bytes. The complete remote file set passed verification.</li>
+          <li>The active temporary Quick Tunnel URL is <code>https://informative-steve-formal-compact.trycloudflare.com</code>. It serves exactly 53 files and 621,050,177 bytes. The retained helper state is at <code>/private/tmp/pkg-dn16-persistent-tunnel.TKGA4d/state</code>. This is temporary, public test infrastructure. It is not a permanent product endpoint.</li>
           <li>Tart <code>2.36.0</code> prepared <code>pkg-dn16-proof-slot-1</code>. The VM is stopped. Its runner registration was removed.</li>
-          <li>GitHub currently reports zero repository runners. The macOS proof workflow has no run for this execution window.</li>
+          <li>GitHub currently reports zero repository runners. <code>.github/workflows/macos-alpha-proof.yml</code> is <code>disabled_manually</code> and has no runs.</li>
         </ul>
 
         <h4>What happens after the wait</h4>
         <ol class="next-list">
           <li><div><strong>Register two exact disposable runners.</strong><span>Use fresh credentials. Do not reuse the exposed token.</span></div></li>
-          <li><div><strong>Dispatch the immutable proof workflow.</strong><span>Use the reviewed integration head and the two authenticated private inputs.</span></div></li>
+          <li><div><strong>Explicitly re-enable the proof workflow.</strong><span>Do this only after the 01:47 UTC token gate. The workflow is currently <code>disabled_manually</code>.</span></div></li>
+          <li><div><strong>Dispatch the immutable proof workflow.</strong><span>Use the reviewed integration head and the two authenticated private inputs only after the workflow is re-enabled.</span></div></li>
           <li><div><strong>Collect two-phase native evidence.</strong><span>Prove install, N to N+1, reboot recovery, repair rules, and terminal uninstall.</span></div></li>
           <li><div><strong>Publish nothing during proof.</strong><span>Keep both release inputs private. A successful run is evidence, not release approval.</span></div></li>
         </ol>
@@ -1115,7 +1116,7 @@
           <li><strong>Prepared for proof: immutable staged channel data</strong>The shared TUF root and the N and N+1 manifests are remotely verified through the temporary Quick Tunnel. A permanent real CDN route is still a separate shipping decision.</li>
           <li><strong>Open: no two-phase lifecycle reboot recovery</strong>No native runner has completed phase one, rebooted, resumed phase two, and proved the full lifecycle on the same disposable instance.</li>
         </ol>
-        <p>The remaining open gates are not Rust defects. More repository code cannot create native reboot evidence. The next safe action is fresh runner registration after the token expiry wait.</p>
+        <p>The remaining open gates are not Rust defects. More repository code cannot create native reboot evidence. After the 01:47 UTC token expiry wait, the next safe actions are fresh runner registration and an explicit re-enable of <code>.github/workflows/macos-alpha-proof.yml</code>. The workflow is currently <code>disabled_manually</code> and has no runs. Dispatch comes only after both actions.</p>
       </section>
 
       <section id="current-decisions" aria-labelledby="current-decisions-title">
