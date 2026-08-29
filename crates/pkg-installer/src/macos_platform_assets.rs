@@ -420,19 +420,18 @@ impl MacOsPlatformAssetManager {
         manifest: &UninstallManifest,
     ) -> Result<(), MacOsError> {
         for record in manifest.assets() {
-            if !macos_product_install_assets().any(|asset| asset.id() == record.id())
-                || self
-                    .states
-                    .insert(
-                        macos_product_install_assets()
-                            .find(|asset| asset.id() == record.id())
-                            .ok_or_else(MacOsError::backend_failure)?
-                            .id(),
-                        record.state(),
-                    )
-                    .is_some()
-            {
-                return Err(MacOsError::backend_failure());
+            let asset = macos_product_install_assets()
+                .find(|asset| asset.id() == record.id())
+                .ok_or_else(MacOsError::backend_failure)?;
+            // The clean-host preflight runs once in the recovery loader and
+            // once in the installer, so rebinding the exact same prior state
+            // is the normal repeat-install path. Only a conflicting prior
+            // state is refused.
+            match self.states.insert(asset.id(), record.state()) {
+                Some(prior) if prior != record.state() => {
+                    return Err(MacOsError::backend_failure());
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -577,6 +576,21 @@ mod tests {
             fs::create_dir(&path)?;
             fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn rebinding_the_same_prior_states_is_idempotent() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        prepare_receipt_parent(temporary.path())?;
+        let groups = ManagedGroupBindings::new(333, 350)?;
+        let release = Digest::from_bytes([0x31; 32]);
+        let mut manager = manager(temporary.path(), groups, release)?;
+        let manifest = manager.expected_product_manifest(System::Aarch64Darwin, release)?;
+        manager.bind_prior_asset_states(&manifest)?;
+        // The clean-host preflight runs twice on a repeat install, so the
+        // exact same prior states must rebind cleanly.
+        manager.bind_prior_asset_states(&manifest)?;
         Ok(())
     }
 
