@@ -177,6 +177,7 @@ struct ProofInventoryFile {
 struct ProofPair {
     schema_version: u64,
     channels: Vec<ProofPairChannel>,
+    product_commit: String,
 }
 
 #[derive(Serialize)]
@@ -591,9 +592,15 @@ fn bind_proof_pair(
     root: &Path,
     n_release_id: &str,
     n_plus_1_release_id: &str,
+    product_commit: &str,
 ) -> Result<(), AnyError> {
-    if n_release_id == n_plus_1_release_id {
-        return Err("proof releases must be distinct".into());
+    if n_release_id == n_plus_1_release_id
+        || product_commit.len() != 40
+        || !product_commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("proof releases or product commit are invalid".into());
     }
     let metadata = fs::symlink_metadata(root)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -684,6 +691,7 @@ fn bind_proof_pair(
     let descriptor = canonical_json(&ProofPair {
         schema_version: 1,
         channels,
+        product_commit: product_commit.to_owned(),
     })?;
     for (name, bytes) in inventories {
         write_private(&root.join(name), &bytes)?;
@@ -743,13 +751,14 @@ async fn main() -> Result<(), AnyError> {
         let root = required_argument(&mut arguments)?;
         let n_release_id = arguments.next().ok_or("missing N release id")?;
         let n_plus_1_release_id = arguments.next().ok_or("missing N+1 release id")?;
+        let product_commit = arguments.next().ok_or("missing product commit")?;
         if arguments.next().is_some() {
             return Err(
-                "usage: linux_proof_publication --bind-dn16-pair PAIR_DIR N_RELEASE_ID N_PLUS_1_RELEASE_ID"
+                "usage: linux_proof_publication --bind-dn16-pair PAIR_DIR N_RELEASE_ID N_PLUS_1_RELEASE_ID PRODUCT_COMMIT"
                     .into(),
             );
         }
-        return bind_proof_pair(&root, &n_release_id, &n_plus_1_release_id);
+        return bind_proof_pair(&root, &n_release_id, &n_plus_1_release_id, &product_commit);
     }
     let (
         output,
@@ -1188,11 +1197,14 @@ mod tests {
             .expect("write manifest");
         }
 
-        bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1").expect("bind pair");
+        let product_commit = "8ffd325a4be12a998f3a5684097b57841a11540e";
+        bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1", product_commit)
+            .expect("bind pair");
         let descriptor: serde_json::Value = serde_json::from_slice(
             &fs::read(pair.path().join("proof-pair.json")).expect("pair descriptor"),
         )
         .expect("parse pair descriptor");
+        assert_eq!(descriptor["productCommit"], product_commit);
         assert_eq!(descriptor["channels"][0]["channelSequence"], 1);
         assert_eq!(descriptor["channels"][1]["channelSequence"], 2);
         assert_eq!(
@@ -1214,7 +1226,24 @@ mod tests {
                     })
             }));
         }
-        assert!(bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1").is_err());
+        assert!(
+            bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1", product_commit,).is_err()
+        );
+    }
+
+    #[test]
+    fn proof_pair_refuses_invalid_product_commits_before_writing() {
+        for product_commit in [
+            "8ffd325a4be12a998f3a5684097b57841a11540",
+            "8ffd325a4be12a998f3a5684097b57841a11540E",
+            "8ffd325a4be12a998f3a5684097b57841a11540g",
+        ] {
+            let pair = tempfile::tempdir().expect("proof pair");
+            assert!(
+                bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1", product_commit,).is_err()
+            );
+            assert!(!pair.path().join("proof-pair.json").exists());
+        }
     }
 
     #[cfg(unix)]

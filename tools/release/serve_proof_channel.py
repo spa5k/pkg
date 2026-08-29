@@ -99,7 +99,12 @@ def validate_pair(root: Path) -> dict[str, tuple[str, int]]:
     if any(path.is_symlink() or not (path.is_dir() or path.is_file()) for path in root.rglob("*")):
         raise fail("proof pair contains a symlink or special file")
     descriptor, descriptor_raw = load_json(root / "proof-pair.json", 64 * 1024)
-    if set(descriptor) != {"schemaVersion", "channels"} or descriptor["schemaVersion"] != 1:
+    if (
+        set(descriptor) != {"schemaVersion", "channels", "productCommit"}
+        or descriptor["schemaVersion"] != 1
+        or not isinstance(descriptor["productCommit"], str)
+        or re.fullmatch(r"[0-9a-f]{40}", descriptor["productCommit"]) is None
+    ):
         raise fail("invalid proof pair descriptor")
     channels = descriptor["channels"]
     if not isinstance(channels, list) or len(channels) != 2:

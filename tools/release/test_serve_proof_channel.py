@@ -62,7 +62,11 @@ def pair(root: Path) -> Path:
             "inventoryLength": len(inventory), "requiredMetadataPaths": required,
             "requiredTargetPrefix": "targets/",
         })
-    write_json(root / "proof-pair.json", {"schemaVersion": 1, "channels": channels})
+    write_json(root / "proof-pair.json", {
+        "schemaVersion": 1,
+        "channels": channels,
+        "productCommit": "8ffd325a4be12a998f3a5684097b57841a11540e",
+    })
     return root
 
 
@@ -116,6 +120,29 @@ def kill(processes: tuple[subprocess.Popen, ...]) -> None:
 
 
 class ProofServerTests(unittest.TestCase):
+    def test_product_commit_is_required_exact_and_lowercase(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pair(Path(directory))
+            server.validate_pair(root)
+            descriptor_path = root / "proof-pair.json"
+            valid = json.loads(descriptor_path.read_bytes())
+            invalid = []
+            for commit in ("a" * 39, "A" * 40, "g" * 40, 40):
+                descriptor = valid.copy()
+                descriptor["productCommit"] = commit
+                invalid.append(descriptor)
+            missing = valid.copy()
+            del missing["productCommit"]
+            invalid.append(missing)
+            extra = valid.copy()
+            extra["extra"] = True
+            invalid.append(extra)
+            for descriptor in invalid:
+                with self.subTest(descriptor=descriptor):
+                    write_json(descriptor_path, descriptor)
+                    with self.assertRaisesRegex(ValueError, "invalid proof pair descriptor"):
+                        server.validate_pair(root)
+
     def test_cloudflared_uses_empty_config_and_keeps_bounded_readiness(self) -> None:
         self.assertEqual(
             server.CLOUDFLARED_ARGUMENTS,

@@ -119,7 +119,7 @@ cargo run -p pkg-release --example linux_proof_publication -- \
   "$N_PLUS_1_SEALED_MANIFEST" "$PROOF_SIGNING_STATE" 2 "$N_PLUS_1_RELEASE_ID"
 cargo run -p pkg-release --example linux_proof_publication -- \
   --bind-dn16-pair "$PROOF_PUBLICATION_STAGE" \
-  "$N_RELEASE_ID" "$N_PLUS_1_RELEASE_ID"
+  "$N_RELEASE_ID" "$N_PLUS_1_RELEASE_ID" "$PRODUCT_COMMIT"
 python3 tools/release/serve_proof_channel.py activate \
   "$PROOF_PUBLICATION_STAGE" "$PROOF_SERVER_STATE"
 ```
@@ -128,7 +128,8 @@ python3 tools/release/serve_proof_channel.py activate \
 It accepts explicit synthetic bundle fixtures. It is not DN-16 Sigstore
 evidence and must never be used for a native release proof.
 
-The two release IDs must be the exact draft release IDs used by the proof.
+`PRODUCT_COMMIT` must be the exact 40-character lowercase commit for both proof
+releases. The two release IDs must be the exact draft release IDs used by the proof.
 The sequence and all three online metadata versions increase from 1 to 2.
 The shared root is ephemeral 2-of-3. Root metadata expires after 365 days.
 Targets expire after 30 days. Snapshot expires after 7 days. Timestamp expires
