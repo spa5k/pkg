@@ -41,7 +41,7 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-5` annotated tag.
+`dn16-macos-proof-workflow-6` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
@@ -104,6 +104,10 @@ This job marker must be no older than five minutes.
 The initial reboot marker and instance marker must also be fresh for prepare.
 The resume phase uses the persisted instance nonce.
 It does not require a new instance nonce.
+The early host gate records the exact marker digests and current boot UUID.
+The same runner-owned record binds the run, slot, phase, runner name, and VM nonce.
+The later proof rechecks those bytes and that boot UUID after the input download.
+It does not apply the original five-minute age limit a second time.
 
 ## One slot, prepare phase
 

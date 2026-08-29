@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-5
+        description: Exact commit signed by dn16-macos-proof-workflow-6
         required: true
         type: string
       proof_channel_url:
@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-5
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-6
   PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
@@ -425,6 +425,7 @@ jobs:
           test "$(sysctl -n kern.hv_vmm_present)" = 1
           case "$(sysctl -n hw.model)" in VirtualMac*) ;; *) exit 1 ;; esac
           /usr/bin/sudo -n /usr/bin/true
+          preflight_time=$(date +%s)
           disposable=/var/tmp/pkg-disposable-macos-proof
           /usr/bin/sudo -n /bin/test -f "$disposable"
           /usr/bin/sudo -n /bin/test ! -L "$disposable"
@@ -433,7 +434,10 @@ jobs:
           test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$disposable")" -le 128
           test "$(/usr/bin/sudo -n /bin/cat "$disposable")" = \
             "PKG-DN16-DISPOSABLE-V1:${GITHUB_RUN_ID}:$PKG_PROOF_LIFECYCLE_RUN"
-          marker_age=$(( $(date +%s) - $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$disposable") ))
+          run_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 "$disposable" \
+            | /usr/bin/awk '{print $1}')
+          marker_age=$(( preflight_time - \
+            $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$disposable") ))
           test "$marker_age" -ge 0
           test "$marker_age" -le 300
           instance_marker=/var/tmp/pkg-disposable-macos-instance
@@ -445,11 +449,47 @@ jobs:
           instance_record=$(/usr/bin/sudo -n /bin/cat "$instance_marker")
           [[ "$instance_record" =~ ^PKG-DN16-INSTANCE-V1:([0-9a-f]{64})$ ]]
           instance_nonce=${BASH_REMATCH[1]}
+          instance_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 \
+            "$instance_marker" | /usr/bin/awk '{print $1}')
+          current_boot=$(sysctl -n kern.bootsessionuuid)
+          [[ "$current_boot" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
+          reboot_marker_sha256=none
           if test "$PKG_PROOF_PHASE" = prepare; then
-            instance_age=$(( $(date +%s) - \
+            instance_age=$(( preflight_time - \
               $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$instance_marker") ))
             test "$instance_age" -ge 0
             test "$instance_age" -le 300
+            reboot_marker=/var/tmp/pkg-disposable-macos-reboot-v2
+            /usr/bin/sudo -n /bin/test -f "$reboot_marker"
+            /usr/bin/sudo -n /bin/test ! -L "$reboot_marker"
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' \
+              "$reboot_marker")" = root:wheel:600
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$reboot_marker")" -le 256
+            test "$(/usr/bin/sudo -n /bin/cat "$reboot_marker" \
+              | /usr/bin/wc -l | /usr/bin/tr -d ' ')" -eq 1
+            test "$(/usr/bin/sudo -n /usr/bin/tail -c 1 "$reboot_marker" \
+              | /usr/bin/od -An -tuC | /usr/bin/tr -d ' ')" = 10
+            reboot_record=$(/usr/bin/sudo -n /bin/cat "$reboot_marker")
+            IFS=: read -r reboot_kind reboot_run reboot_slot reboot_runner reboot_nonce \
+              old_boot reboot_time reboot_extra <<<"$reboot_record"
+            test "$reboot_kind" = PKG-DN16-REBOOT-V2
+            test "$reboot_run" = "$GITHUB_RUN_ID"
+            test "$reboot_slot" = "$PKG_PROOF_LIFECYCLE_RUN"
+            test "$reboot_runner" = "$RUNNER_NAME"
+            test "$reboot_nonce" = "$instance_nonce"
+            test -z "$reboot_extra"
+            [[ "$old_boot" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
+            [[ "$reboot_time" =~ ^[0-9]+$ ]]
+            test "$old_boot" != "$current_boot"
+            reboot_age=$(( preflight_time - reboot_time ))
+            reboot_marker_age=$(( preflight_time - \
+              $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$reboot_marker") ))
+            test "$reboot_age" -ge 0
+            test "$reboot_age" -le 300
+            test "$reboot_marker_age" -ge 0
+            test "$reboot_marker_age" -le 300
+            reboot_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 \
+              "$reboot_marker" | /usr/bin/awk '{print $1}')
             for path in /nix /etc/nix /opt/pkg /private/var/db/pkg-install \
               /private/var/db/pkg-install-journal /private/var/db/pkg-install-auth \
               /Library/LaunchDaemons/org.pkg.root-helper.plist \
@@ -475,10 +515,15 @@ jobs:
           fi
           umask 077
           printf '%s\n' \
+            "run_id=$GITHUB_RUN_ID" \
             "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
             "phase=$PKG_PROOF_PHASE" \
             "runner_name=$RUNNER_NAME" \
             "instance_nonce=$instance_nonce" \
+            "boot_uuid=$current_boot" \
+            "run_marker_sha256=$run_marker_sha256" \
+            "instance_marker_sha256=$instance_marker_sha256" \
+            "reboot_marker_sha256=$reboot_marker_sha256" \
             "status=preflight-passed" \
             > "$RUNNER_TEMP/pkg-macos-proof/evidence/preflight.txt"
 
@@ -632,16 +677,36 @@ jobs:
                       return values
                   identity = records(preflight)
                   runner = f"pkg-dn16-proof-runner-{slot}"
+                  boot_pattern = (
+                      r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
+                      r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+                  )
                   if identity != {
+                      "run_id": os.environ["GITHUB_RUN_ID"],
                       "lifecycle_run": str(slot),
                       "phase": phase,
                       "runner_name": runner,
                       "instance_nonce": identity.get("instance_nonce", ""),
+                      "boot_uuid": identity.get("boot_uuid", ""),
+                      "run_marker_sha256": identity.get("run_marker_sha256", ""),
+                      "instance_marker_sha256": identity.get("instance_marker_sha256", ""),
+                      "reboot_marker_sha256": identity.get("reboot_marker_sha256", ""),
                       "status": "preflight-passed",
                   }:
                       raise SystemExit("phase identity does not match its slot")
                   if re.fullmatch(r"[0-9a-f]{64}", identity["instance_nonce"]) is None:
                       raise SystemExit("the instance nonce is invalid")
+                  if re.fullmatch(boot_pattern, identity["boot_uuid"]) is None:
+                      raise SystemExit("the preflight boot UUID is invalid")
+                  for key in ("run_marker_sha256", "instance_marker_sha256"):
+                      if re.fullmatch(r"[0-9a-f]{64}", identity[key]) is None:
+                          raise SystemExit("a preflight marker digest is invalid")
+                  if phase == "prepare":
+                      if re.fullmatch(r"[0-9a-f]{64}",
+                                      identity["reboot_marker_sha256"]) is None:
+                          raise SystemExit("the preflight reboot marker digest is invalid")
+                  elif identity["reboot_marker_sha256"] != "none":
+                      raise SystemExit("resume unexpectedly bound a reboot marker")
                   outcome = records(result)
                   if outcome != {
                       "lifecycle_run": str(slot),
@@ -665,10 +730,6 @@ jobs:
                               or continuation.stat().st_size > 1024):
                           raise SystemExit("continuation reboot evidence is absent or unsafe")
                       reboot = records(continuation)
-                      boot_pattern = (
-                          r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
-                          r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
-                      )
                       if reboot != {
                           "lifecycle_run": str(slot),
                           "runner_name": runner,

@@ -38,7 +38,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-5", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-6", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
@@ -297,6 +297,50 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             '/usr/bin/sudo /usr/bin/shasum -a 256 "$path"',
         ):
             self.assertNotIn(forbidden, continuation_proof)
+
+    def test_marker_freshness_is_early_and_late_checks_bind_exact_state(self) -> None:
+        phase = self.job("prepare-slot-1", "resume-slot-1")
+        aggregate = WORKFLOW.split("\n  aggregate:\n", 1)[1]
+        for required in (
+            'test "$marker_age" -le 300',
+            'test "$instance_age" -le 300',
+            'test "$reboot_age" -le 300',
+            'test "$reboot_marker_age" -le 300',
+            'run_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256',
+            'instance_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256',
+            'reboot_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256',
+            '"run_id=$GITHUB_RUN_ID"',
+            '"boot_uuid=$current_boot"',
+            '"reboot_marker_sha256=$reboot_marker_sha256"',
+            'reboot_marker_sha256=none',
+        ):
+            self.assertIn(required, phase)
+        for forbidden in ("instance_age=", "reboot_age=", "marker_age=", "stat -f '%m'"):
+            self.assertNotIn(forbidden, PROOF)
+        for required in (
+            '"run_id=$GITHUB_RUN_ID"',
+            '"phase=$PKG_PROOF_PHASE"',
+            '"boot_uuid=$preflight_boot"',
+            '"run_marker_sha256=$preflight_run_marker_sha"',
+            '"instance_marker_sha256=$preflight_instance_marker_sha"',
+            '"reboot_marker_sha256=$preflight_reboot_marker_sha"',
+            '"$(/usr/bin/id -u):600"',
+            '[ "$current_boot" = "$preflight_boot" ]',
+            '[ "$instance_marker_sha" = "$preflight_instance_marker_sha" ]',
+            '[ "$run_marker_sha" = "$preflight_run_marker_sha" ]',
+            '[ "$reboot_marker_sha" = "$preflight_reboot_marker_sha" ]',
+            "resume:none",
+        ):
+            self.assertIn(required, PROOF)
+        for required in (
+            '"run_id": os.environ["GITHUB_RUN_ID"]',
+            '"boot_uuid": identity.get("boot_uuid", "")',
+            '"run_marker_sha256": identity.get("run_marker_sha256", "")',
+            '"instance_marker_sha256": identity.get("instance_marker_sha256", "")',
+            '"reboot_marker_sha256": identity.get("reboot_marker_sha256", "")',
+            'identity["reboot_marker_sha256"] != "none"',
+        ):
+            self.assertIn(required, aggregate)
 
     def test_handoff_base_nix_package_and_service_state_are_byte_compared(self) -> None:
         for name in ("handoff", "base-nix", "package-state", "services"):

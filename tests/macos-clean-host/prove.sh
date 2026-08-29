@@ -49,29 +49,61 @@ printf '%s\n' "$instance_record" \
     | /usr/bin/grep -Eq '^PKG-DN16-INSTANCE-V1:[0-9a-f]{64}$' \
     || fail "the instance marker is invalid"
 instance_nonce=${instance_record#PKG-DN16-INSTANCE-V1:}
-if [ "$PKG_PROOF_PHASE" = prepare ]; then
-    instance_age=$(( $(/bin/date +%s) - \
-        $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$instance_marker") ))
-    [ "$instance_age" -ge 0 ] && [ "$instance_age" -le 300 ] \
-        || fail "the instance marker is stale"
-fi
 [ -f "$preflight" ] && [ ! -L "$preflight" ] \
-    && [ "$(/usr/bin/stat -f '%z' "$preflight")" -le 512 ] \
-    && [ "$(/usr/bin/wc -l <"$preflight" | /usr/bin/tr -d ' ')" -eq 5 ] \
+    && [ "$(/usr/bin/stat -f '%u:%Lp' "$preflight")" = \
+        "$(/usr/bin/id -u):600" ] \
+    && [ "$(/usr/bin/stat -f '%z' "$preflight")" -le 1024 ] \
+    && [ "$(/usr/bin/wc -l <"$preflight" | /usr/bin/tr -d ' ')" -eq 10 ] \
     || fail "the bounded preflight evidence is invalid"
+preflight_run=$(/usr/bin/sed -n 's/^run_id=//p' "$preflight")
 preflight_slot=$(/usr/bin/sed -n 's/^lifecycle_run=//p' "$preflight")
 preflight_runner=$(/usr/bin/sed -n 's/^runner_name=//p' "$preflight")
 preflight_nonce=$(/usr/bin/sed -n 's/^instance_nonce=//p' "$preflight")
+preflight_boot=$(/usr/bin/sed -n 's/^boot_uuid=//p' "$preflight")
+preflight_run_marker_sha=$(/usr/bin/sed -n 's/^run_marker_sha256=//p' "$preflight")
+preflight_instance_marker_sha=$(/usr/bin/sed -n \
+    's/^instance_marker_sha256=//p' "$preflight")
+preflight_reboot_marker_sha=$(/usr/bin/sed -n \
+    's/^reboot_marker_sha256=//p' "$preflight")
 [ "$(/bin/cat "$preflight")" = "$(printf '%s\n' \
+    "run_id=$GITHUB_RUN_ID" \
     "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
     "phase=$PKG_PROOF_PHASE" \
     "runner_name=$RUNNER_NAME" \
     "instance_nonce=$preflight_nonce" \
+    "boot_uuid=$preflight_boot" \
+    "run_marker_sha256=$preflight_run_marker_sha" \
+    "instance_marker_sha256=$preflight_instance_marker_sha" \
+    "reboot_marker_sha256=$preflight_reboot_marker_sha" \
     "status=preflight-passed")" ] || fail "the preflight evidence does not bind this job"
-[ "$preflight_slot" = "$PKG_PROOF_LIFECYCLE_RUN" ] \
+[ "$preflight_run" = "$GITHUB_RUN_ID" ] \
+    && [ "$preflight_slot" = "$PKG_PROOF_LIFECYCLE_RUN" ] \
     && [ "$preflight_runner" = "$RUNNER_NAME" ] \
     && [ "$preflight_nonce" = "$instance_nonce" ] \
     || fail "the preflight identity is invalid"
+printf '%s\n' "$preflight_boot" | /usr/bin/grep -Eq \
+    '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' \
+    || fail "the preflight boot UUID is invalid"
+for digest in "$preflight_run_marker_sha" "$preflight_instance_marker_sha"; do
+    printf '%s\n' "$digest" | /usr/bin/grep -Eq '^[0-9a-f]{64}$' \
+        || fail "a preflight marker digest is invalid"
+done
+case "$PKG_PROOF_PHASE:$preflight_reboot_marker_sha" in
+    prepare:[0-9a-f][0-9a-f]*)
+        printf '%s\n' "$preflight_reboot_marker_sha" \
+            | /usr/bin/grep -Eq '^[0-9a-f]{64}$' \
+            || fail "the preflight reboot marker digest is invalid"
+        ;;
+    resume:none) ;;
+    *) fail "the preflight reboot marker digest is invalid" ;;
+esac
+current_boot=$(/usr/sbin/sysctl -n kern.bootsessionuuid)
+[ "$current_boot" = "$preflight_boot" ] \
+    || fail "the VM rebooted after the early host gate"
+instance_marker_sha=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 "$instance_marker" \
+    | /usr/bin/awk '{print $1}')
+[ "$instance_marker_sha" = "$preflight_instance_marker_sha" ] \
+    || fail "the instance marker changed after the early host gate"
 
 disposable=/var/tmp/pkg-disposable-macos-proof
 /usr/bin/sudo -n /bin/test -f "$disposable" \
@@ -83,6 +115,10 @@ disposable=/var/tmp/pkg-disposable-macos-proof
 [ "$(/usr/bin/sudo -n /bin/cat "$disposable")" = \
     "PKG-DN16-DISPOSABLE-V1:${GITHUB_RUN_ID}:$PKG_PROOF_LIFECYCLE_RUN" ] \
     || fail "the disposable marker does not bind this run"
+run_marker_sha=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 "$disposable" \
+    | /usr/bin/awk '{print $1}')
+[ "$run_marker_sha" = "$preflight_run_marker_sha" ] \
+    || fail "the disposable marker changed after the early host gate"
 
 # The provisioner binds the initial fresh-VM reboot to the prepare job.
 if [ "$PKG_PROOF_PHASE" = prepare ]; then
@@ -115,14 +151,11 @@ printf '%s\n' "$old_boot" | /usr/bin/grep -Eq \
     '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' \
     || fail "the saved boot session is invalid"
 case "$reboot_time" in ''|*[!0-9]*) fail "the reboot timestamp is invalid" ;; esac
-current_boot=$(/usr/sbin/sysctl -n kern.bootsessionuuid)
 [ "$old_boot" != "$current_boot" ] || fail "the external runner did not reboot"
-reboot_age=$(( $(/bin/date +%s) - reboot_time ))
-marker_age=$(( $(/bin/date +%s) - \
-    $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$PKG_PROOF_REBOOT_MARKER") ))
-[ "$reboot_age" -ge 0 ] && [ "$reboot_age" -le 300 ] \
-    && [ "$marker_age" -ge 0 ] && [ "$marker_age" -le 300 ] \
-    || fail "the fresh-runner reboot marker is stale"
+reboot_marker_sha=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 \
+    "$PKG_PROOF_REBOOT_MARKER" | /usr/bin/awk '{print $1}')
+[ "$reboot_marker_sha" = "$preflight_reboot_marker_sha" ] \
+    || fail "the reboot marker changed after the early host gate"
 
 # Recheck the full clean-host boundary before the first product mutation.
 launchd_labels="$root/preflight-launchd-labels.txt"
