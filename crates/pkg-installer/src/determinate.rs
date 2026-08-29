@@ -32,7 +32,7 @@ const PATH: &str = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 #[cfg(target_os = "linux")]
 const TMPDIR: &str = "/var/lib/pkg-install/tmp";
 #[cfg(target_os = "macos")]
-const TMPDIR: &str = "/private/var/db/pkg-install/tmp";
+const TMPDIR: &str = "/private/var/db/pkg-install-tmp";
 
 /// Closed adapter for one exact Determinate Nix Installer executable.
 pub struct DeterminateInstaller {
@@ -415,7 +415,8 @@ fn authenticate_executable(
 
 fn validate_private_tmpdir(path: &Path, owner: u32, trust_root: &Path) -> Result<(), ()> {
     validate_directory_chain(path, owner, trust_root)?;
-    if fs::symlink_metadata(path).map_err(|_| ())?.mode() & 0o7777 == 0o700 {
+    let metadata = fs::symlink_metadata(path).map_err(|_| ())?;
+    if metadata.mode() & 0o022 == 0 {
         Ok(())
     } else {
         Err(())
@@ -937,16 +938,24 @@ for argument in "$@"; do printf 'ARG=<%s>\n' "$argument"; done
     }
 
     #[test]
-    fn private_tmpdir_requires_mode_0700() -> Result<(), Box<dyn std::error::Error>> {
+    fn private_tmpdir_rejects_group_or_other_write() -> Result<(), Box<dyn std::error::Error>> {
         let temporary = tempfile::tempdir()?;
         let tmpdir = temporary.path().join("tmp");
         fs::create_dir(&tmpdir)?;
         let owner = nix::unistd::Uid::effective().as_raw();
         fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o700))?;
-        fs::set_permissions(&tmpdir, fs::Permissions::from_mode(0o755))?;
-        assert!(validate_private_tmpdir(&tmpdir, owner, temporary.path()).is_err());
         fs::set_permissions(&tmpdir, fs::Permissions::from_mode(0o700))?;
         assert!(validate_private_tmpdir(&tmpdir, owner, temporary.path()).is_ok());
+        fs::set_permissions(&tmpdir, fs::Permissions::from_mode(0o755))?;
+        assert!(validate_private_tmpdir(&tmpdir, owner, temporary.path()).is_ok());
+        fs::set_permissions(&tmpdir, fs::Permissions::from_mode(0o750))?;
+        assert!(validate_private_tmpdir(&tmpdir, owner, temporary.path()).is_ok());
+        fs::set_permissions(&tmpdir, fs::Permissions::from_mode(0o770))?;
+        assert!(validate_private_tmpdir(&tmpdir, owner, temporary.path()).is_err());
+        fs::set_permissions(&tmpdir, fs::Permissions::from_mode(0o702))?;
+        assert!(validate_private_tmpdir(&tmpdir, owner, temporary.path()).is_err());
+        fs::set_permissions(&tmpdir, fs::Permissions::from_mode(0o777))?;
+        assert!(validate_private_tmpdir(&tmpdir, owner, temporary.path()).is_err());
         Ok(())
     }
 
