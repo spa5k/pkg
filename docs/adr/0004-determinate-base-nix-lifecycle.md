@@ -114,13 +114,20 @@ failed validation cannot become `Accepted`. Exit status `0` alone is not proof.
 
 Before terminal uninstall, `pkg` requires Accepted Base Nix Handoff. It consumes that exact state immediately before `exec`. It does not record or reconstruct the later vendor outcome.
 
-`/run/pkg-install-handoff.lock` is the one deliberate product coordination exception to product-residue removal. It is root-owned with mode `0600`. It is volatile coordination, not lifecycle state. It normally disappears at reboot.
+Linux uses root-owned mode-`0600` `/run/pkg-install-handoff.lock` as its one
+volatile coordination exception. macOS uses the persistent, zero-byte,
+root-owned mode-`0600` `/private/var/db/pkg-install-handoff.lock`. The macOS
+lock is coordination, not lifecycle state. Its safe parent avoids the native
+group-writable `/private/var/run` directory.
 
 The product does not replay vendor actions. It does not keep a second Vendor Receipt. It does not promise recovery behavior that the vendor does not support.
 
 ### Terminal uninstall failure
 
-If `exec` returns synchronously, the vendor did not start. Under the same held `/run/pkg-install-handoff.lock`, `pkg` restores the exact Accepted Base Nix Handoff and revalidates the executable and receipt identities. Restore or identity-validation failure fails closed.
+If `exec` returns synchronously, the vendor did not start. Under the same held
+platform handoff lock, `pkg` restores the exact Accepted Base Nix Handoff and
+revalidates the executable and receipt identities. Restore or
+identity-validation failure fails closed.
 
 `SIGKILL` or a crash between Accepted-state consumption and `exec` leaves Base Nix unmarked and Base Nix Handoff absent. The vendor did not start. `pkg` refuses the unmarked state. It does not infer success, retry, adopt, resume, repair, or reconstruct it. Alpha recovery is unsupported.
 

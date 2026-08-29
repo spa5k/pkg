@@ -162,7 +162,8 @@ for path in \
     /opt/pkg \
     '/Library/Application Support/pkg' \
     /private/var/db/pkg-install \
-    /private/var/db/pkg-install-auth; do
+    /private/var/db/pkg-install-auth \
+    /private/var/db/pkg-install-handoff.lock; do
     if [ -e "$path" ]; then
         /usr/bin/stat -f '%N %HT %Su:%Sg %Sp' "$path"
     else
@@ -474,6 +475,11 @@ for path in \
     "$state_root"; do
     [ ! -e "$path" ] || fail "pkg residue remains"
 done
+handoff_lock=/private/var/db/pkg-install-handoff.lock
+[ ! -L "$handoff_lock" ] || fail "the handoff lock is a symlink"
+[ "$(/usr/bin/sudo -n /usr/bin/stat -f '%HT:%Su:%Sg:%Lp:%z:%l' "$handoff_lock")" \
+    = 'Regular File:root:wheel:600:0:1' ] \
+    || fail "the persistent handoff lock metadata changed"
 for record in /Users/pkg-nix-broker /Groups/pkg-nix-broker /Groups/nixbld; do
     if /usr/bin/dscl . -read "$record" >/dev/null 2>&1; then
         fail "a pkg account remains"

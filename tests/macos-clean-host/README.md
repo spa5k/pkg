@@ -30,6 +30,12 @@ The proof therefore permits one empty and unmounted `/nix` virtual directory aft
 It requires `synthetic.conf`, the APFS volume, the Keychain item, and all product state to be absent.
 The virtual directory disappears at the runner's next reboot.
 
+The proof also permits the persistent, zero-byte coordination lock at
+`/private/var/db/pkg-install-handoff.lock`. It requires a regular non-symlink
+file with owner `root`, group `wheel`, mode `0600`, size zero, and one link.
+The lock is not lifecycle state. The safe DB parent avoids native
+`/private/var/run`, which is group-writable on macOS.
+
 The workflow is a technical-preview gate.
 It does not publish a release.
 It does not use Developer ID signing.

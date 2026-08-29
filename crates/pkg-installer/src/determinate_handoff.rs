@@ -29,7 +29,7 @@ const HANDOFF: &str = "/private/var/db/pkg-install/determinate-handoff-v1.json";
 #[cfg(target_os = "linux")]
 const LOCK: &str = "/run/pkg-install-handoff.lock";
 #[cfg(target_os = "macos")]
-const LOCK: &str = "/private/var/run/pkg-install-handoff.lock";
+const LOCK: &str = "/private/var/db/pkg-install-handoff.lock";
 #[cfg(target_os = "linux")]
 const RECEIPT_MODE: u32 = 0o600;
 #[cfg(target_os = "macos")]
@@ -1479,6 +1479,57 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
             fixture.handoff.state().unwrap_err(),
             DeterminateHandoffError::InvalidState
         );
+    }
+
+    #[test]
+    fn macos_native_run_mode_is_rejected_but_db_lock_is_exact() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(LOCK, "/private/var/db/pkg-install-handoff.lock");
+
+        let temporary = tempfile::tempdir().unwrap();
+        fs::set_permissions(temporary.path(), Permissions::from_mode(0o700)).unwrap();
+        for (relative, mode) in [
+            ("private", 0o755),
+            ("private/var", 0o755),
+            ("private/var/run", 0o775),
+            ("private/var/db", 0o755),
+        ] {
+            let path = temporary.path().join(relative);
+            fs::create_dir(&path).unwrap();
+            fs::set_permissions(path, Permissions::from_mode(mode)).unwrap();
+        }
+
+        let mut handoff =
+            DeterminateHandoff::for_test(temporary.path(), 0o600, identity(INSTALLER_BYTES))
+                .unwrap();
+        handoff.handoff = temporary
+            .path()
+            .join("private/var/db/pkg-install/determinate-handoff-v1.json");
+        let run_lock = temporary
+            .path()
+            .join("private/var/run/pkg-install-handoff.lock");
+        handoff.lock = run_lock.clone();
+        assert_eq!(
+            handoff.state().unwrap_err(),
+            DeterminateHandoffError::InvalidState
+        );
+        assert!(!run_lock.exists());
+
+        handoff.lock = temporary
+            .path()
+            .join("private/var/db/pkg-install-handoff.lock");
+        assert_eq!(
+            handoff.state().unwrap(),
+            DeterminateHandoffState::NotStarted
+        );
+        let lock = fs::symlink_metadata(&handoff.lock).unwrap();
+        assert!(lock.is_file());
+        assert!(!lock.file_type().is_symlink());
+        assert_eq!(lock.uid(), handoff.owner);
+        assert_eq!(lock.gid(), handoff.group);
+        assert_eq!(lock.mode() & 0o7777, 0o600);
+        assert_eq!(lock.len(), 0);
+        assert_eq!(lock.nlink(), 1);
     }
 
     #[test]

@@ -79,7 +79,11 @@ reconstruct it. Alpha recovery is unsupported. After `exec` starts the vendor
 program, Determinate owns signals and exit status. Later loss of the vendor result is an
 Unknown Base Nix Outcome.
 
-`/run/pkg-install-handoff.lock` is the one deliberate product coordination exception to product-residue removal. It is root-owned with mode `0600`. It is volatile coordination, not lifecycle state. It normally disappears at reboot.
+Linux uses root-owned mode-`0600` `/run/pkg-install-handoff.lock` as its one
+volatile coordination exception. macOS uses the persistent, zero-byte,
+root-owned mode-`0600` `/private/var/db/pkg-install-handoff.lock`. Both are
+coordination, not lifecycle state. The macOS path avoids the native
+group-writable `/private/var/run` directory.
 
 The trust rule for any future post-alpha update route is explicit. `pkg` authenticates the pinned outer Determinate installer and invokes vendor programs through fixed command paths. If that route uses `determinate-nixd upgrade`, `pkg` accepts Determinate's inner download and update trust chain. It does not pre-bind or re-authenticate the downloaded daemon or profile payload. After update, `pkg` runs functional installed-state health validation and reports failure. It does not create a second update ledger or extend Base Nix Handoff only to mirror vendor update state. This security trade-off trusts Determinate for the inner payload and keeps one update engine. This rule does not approve or expose an update action by itself.
 
@@ -407,7 +411,7 @@ Current work-area result:
 **DN-13 subphase — Terminal vendor uninstall**
 
 - **Invocation:** require plain output and reject live structured JSON or JSONL before mutation. Dry-run can remain structured. Finish and verify all product-owned cleanup. Revalidate exact `/nix/nix-installer` and opaque `/nix/receipt.json`. Consume Accepted Base Nix Handoff and product state. Use `exec` to replace the `pkg` process with the fixed vendor uninstall invocation.
-- **Ordering and lock:** all product cleanup finishes before the vendor action. Then hold stable `/run/pkg-install-handoff.lock`, revalidate identities, consume exact Accepted Base Nix Handoff immediately before `exec`, and start terminal vendor uninstall. The lock is root-owned mode `0600`, volatile coordination, not lifecycle state, and the one deliberate product-residue exception. It normally disappears at reboot.
+- **Ordering and lock:** all product cleanup finishes before the vendor action. Then hold the stable platform handoff lock, revalidate identities, consume exact Accepted Base Nix Handoff immediately before `exec`, and start terminal vendor uninstall. Linux uses volatile root-owned mode-`0600` `/run/pkg-install-handoff.lock`. macOS uses persistent, zero-byte, root-owned mode-`0600` `/private/var/db/pkg-install-handoff.lock` because native `/private/var/run` is group-writable. The locks are coordination, not lifecycle state, and are the deliberate product-residue exception.
 - **Policy:** Determinate owns signals and exit status after `exec`, plus self-copy, native cleanup, temporary files, and residue. `pkg` does not supervise, cancel, resume, retry, or reconstruct that phase. Product cleanup always finishes before vendor cleanup. The vendor action is last.
 - **Synchronous return:** if `exec` returns, the vendor did not start. Under the same stable lock, restore exact Accepted Base Nix Handoff and revalidate executable and receipt identities. Restore or identity-validation failure fails closed.
 - **Crash window:** `SIGKILL` or crash between Accepted-state consumption and `exec` leaves Base Nix unmarked and Base Nix Handoff absent. The vendor did not start. Refuse the state. Do not infer success, retry, adopt, resume, repair, or reconstruct it. Alpha recovery is unsupported.
@@ -846,7 +850,7 @@ Mac.
 | Real systemd offline contract | DN-15 Linux | Blocking | Sample | Not applicable | Unsafe service states refuse before file mutation; exact inactive and disabled state uses query commands only |
 | Modified product service asset | DN-15 Linux; DN-16 macOS | Blocking | Sample | Blocking | Product repair detects and handles it without changing Base Nix or package state |
 | Final release ownership | DN-20 | Blocking | Blocking | Blocking | Each remaining asset has one owner |
-| Final release residue | DN-20 | Blocking | Blocking | Blocking | No product lifecycle residue except volatile `/run/pkg-install-handoff.lock`; record accepted vendor-owned alpha residue |
+| Final release residue | DN-20 | Blocking | Blocking | Blocking | No product lifecycle residue except Linux volatile `/run/pkg-install-handoff.lock` and macOS persistent zero-byte `/private/var/db/pkg-install-handoff.lock`; record accepted vendor-owned alpha residue |
 | Optional Root Helper removal | DN-28 | Blocking | Sample | Blocking | Every helper duty has equal replacement proof |
 | Optional Broker removal | DN-29 | Blocking | Sample | Blocking | Every Broker duty has equal replacement proof |
 | Optional transport and dependency pruning | DN-30 through DN-32 | Blocking | Target check | Blocking | Only dead grammar, edges, and dependencies are removed |
@@ -968,7 +972,7 @@ Run this checklist on the plan and on every implementation PR.
 - PATH behavior matches the documented user experience.
 - Determinate owns supported native Base Nix repair and update behavior. `pkg` exposes no repair or update action on any alpha platform. A post-alpha product route needs separate approval.
 - Determinate owns Base Nix uninstall. `pkg` requires plain output, finishes product cleanup, consumes Accepted state, and terminally `exec`s the authenticated installed uninstaller. Vendor completion is not promised. Vendor residue is accepted.
-- Vendor-owned residue is accepted for alpha. `pkg` removes all product-owned lifecycle residue. Root-owned mode-`0600` `/run/pkg-install-handoff.lock` is the one volatile coordination exception. It is not lifecycle state and normally disappears at reboot.
+- Vendor-owned residue is accepted for alpha. `pkg` removes all product-owned lifecycle residue. Linux root-owned mode-`0600` `/run/pkg-install-handoff.lock` is volatile. macOS persistent, zero-byte, root-owned mode-`0600` `/private/var/db/pkg-install-handoff.lock` uses a safe parent. Both are coordination exceptions, not lifecycle state.
 - Package repair, builds, generations, roots, GC, and state remain correct.
 - Old Linux, macOS, and shared private Base Nix code is deleted only where replacement proof exists.
 - Broker, Root Helper, and high-fan-in contracts remain where package work still needs them.

@@ -140,9 +140,11 @@ Nix, the installed executable, the receipt, a service, or another vendor-owned
 path never proves uninstall success. `pkg` does not automatically retry, adopt,
 resume, or repair either unknown state.
 
-`/run/pkg-install-handoff.lock` is a deliberate volatile coordination exception.
-It is root-owned with mode `0600`. It is not lifecycle state. A reboot normally
-clears it.
+Linux `/run/pkg-install-handoff.lock` is a deliberate volatile coordination
+exception. macOS `/private/var/db/pkg-install-handoff.lock` is a persistent,
+zero-byte coordination exception because native `/private/var/run` is
+group-writable. Both locks are root-owned with mode `0600`. They are not
+lifecycle state.
 
 The existing macOS candidate flow stays separate until the macOS cutover in
 PR4. Its legacy packager mode still requires Cargo About 0.9.1 and the checked

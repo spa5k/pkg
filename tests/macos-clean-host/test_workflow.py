@@ -72,6 +72,13 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn("/usr/bin/sudo /bin/test -f", PROOF)
         self.assertNotIn("/usr/bin/sudo /usr/bin/test -f", PROOF)
 
+    def test_persistent_handoff_lock_has_exact_residue_metadata(self) -> None:
+        self.assertIn("/private/var/db/pkg-install-handoff.lock", PROOF)
+        self.assertIn("/usr/bin/sudo -n /usr/bin/stat -f", PROOF)
+        self.assertIn("Regular File:root:wheel:600:0:1", PROOF)
+        self.assertIn("the persistent handoff lock metadata changed", PROOF)
+        self.assertNotIn("/private/var/run/pkg-install-handoff.lock", PROOF)
+
     def test_transient_apfs_refusal_gets_one_exact_public_retry(self) -> None:
         uninstall = PROOF.split('echo "+ interrupt uninstall after APFS removal"', 1)[1]
         uninstall = uninstall.split('echo "+ recover uninstall', 1)[0]
