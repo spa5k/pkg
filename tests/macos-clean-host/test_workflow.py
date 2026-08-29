@@ -1,7 +1,12 @@
 """Structural safety checks for the destructive macOS lifecycle proof."""
 
+import json
 import os
 from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -13,6 +18,9 @@ WORKFLOW = WORKFLOW_PATH.read_text()
 NIGHTLY = (WORKFLOW_PATH.parent / "nightly.yml").read_text()
 PROOF = (ROOT / "tests/macos-clean-host/prove.sh").read_text()
 README = (ROOT / "tests/macos-clean-host/README.md").read_text()
+INSTALL_FAILURE_PARSER = PROOF.split(
+    '        0 0 >"$summary" <<\'PY\'\n', 1
+)[1].split("\nPY\n", 1)[0]
 
 
 class MacOsProofWorkflowTests(unittest.TestCase):
@@ -38,7 +46,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-8", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-9", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
@@ -173,6 +181,205 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertLess(verifier.index(checksum), verifier.index(controls))
         chmods = [line.strip() for line in phase.splitlines() if line.strip().startswith("chmod")]
         self.assertEqual(chmods, [executable, controls])
+
+    def run_install_failure_parser(
+        self,
+        handoff: Path,
+        journal: Path,
+        *,
+        status: int = 1,
+        owner: int | None = None,
+        group: int | None = None,
+    ) -> str:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-",
+                str(status),
+                str(handoff),
+                str(journal),
+                str(os.getuid() if owner is None else owner),
+                str(os.getgid() if group is None else group),
+            ],
+            input=INSTALL_FAILURE_PARSER,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        self.assertEqual(result.stderr, "")
+        self.assertLessEqual(len(result.stdout.encode()), 1024)
+        return result.stdout
+
+    @staticmethod
+    def write_private(path: Path, value: object | bytes) -> None:
+        raw = value if isinstance(value, bytes) else json.dumps(value).encode()
+        path.write_bytes(raw)
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+    @staticmethod
+    def handoff(state: str) -> dict[str, object]:
+        value: dict[str, object] = {"kind": state}
+        if state == "accepted":
+            identity = {"length": 1, "sha256": "sha256-" + "a" * 64}
+            value |= {"installer": identity, "receipt": identity}
+        return {"schema_version": 1, "state": value}
+
+    def test_fresh_install_failure_summary_has_exact_bounded_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = self.run_install_failure_parser(root / "handoff", root / "journal", status=17)
+        self.assertEqual(
+            output,
+            "installer_status=17\nhandoff_state=absent\njournal_present=false\n",
+        )
+        failure = PROOF.split("summarize_fresh_install_failure() {", 1)[1].split(
+            "capture_fresh_install() {", 1
+        )[0]
+        for required in (
+            'summary="$evidence/fresh-install-summary.txt"',
+            "/private/var/db/pkg-install/determinate-handoff-v1.json",
+            "/private/var/db/pkg-install-journal/macos-transaction-v1.json",
+            "/usr/bin/sudo -n /usr/bin/python3 -I -",
+            "64 * 1024",
+            "32 * 1024",
+            'stat.S_ISREG(metadata.st_mode)',
+            'stat.S_IMODE(metadata.st_mode) == 0o600',
+            'metadata.st_uid == owner',
+            'metadata.st_gid == group',
+            'metadata.st_nlink == 1',
+            'valid_private(before, limit, owner, group)',
+            'valid_private(opened, limit, owner, group)',
+            'valid_private(after, limit, owner, group)',
+            'valid_private(current, limit, owner, group)',
+            'set(record) != {"schema_version", "state"}',
+            "set(state) == {\"kind\"}",
+            "set(state) == {\"kind\", \"installer\", \"receipt\"}",
+            'handoff_state = "invalid"',
+            'journal_present = True',
+        ):
+            self.assertIn(required, failure)
+        self.assertIn("-le 1024", failure)
+        self.assertIn("-eq 3", failure)
+        self.assertIn("installer_status=$summary_status", failure)
+        self.assertIn("handoff_state=$summary_handoff", failure)
+        self.assertIn("journal_present=$summary_journal", failure)
+
+    def test_fresh_install_failure_classifies_valid_protected_state(self) -> None:
+        cases = (("started", False), ("accepted", True))
+        for state, journal_present in cases:
+            with self.subTest(state=state, journal_present=journal_present):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    handoff = root / "handoff"
+                    journal = root / "journal"
+                    self.write_private(handoff, self.handoff(state))
+                    if journal_present:
+                        self.write_private(journal, b"bounded private journal")
+                    output = self.run_install_failure_parser(handoff, journal)
+                self.assertEqual(
+                    output,
+                    f"installer_status=1\nhandoff_state={state}\n"
+                    f"journal_present={'true' if journal_present else 'false'}\n",
+                )
+
+    def test_fresh_install_failure_rejects_unsafe_or_malformed_state(self) -> None:
+        cases = {
+            "malformed": b"{",
+            "unknown-field": {
+                "schema_version": 1,
+                "state": {"kind": "started"},
+                "extra": True,
+            },
+            "oversize": b" " * (64 * 1024 + 1),
+        }
+        for name, value in cases.items():
+            with self.subTest(name=name):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    handoff = root / "handoff"
+                    self.write_private(handoff, value)
+                    output = self.run_install_failure_parser(handoff, root / "journal")
+                self.assertIn("handoff_state=invalid\n", output)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target"
+            self.write_private(target, self.handoff("started"))
+            (root / "handoff").symlink_to(target)
+            output = self.run_install_failure_parser(root / "handoff", root / "journal")
+        self.assertIn("handoff_state=invalid\n", output)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            handoff = root / "handoff"
+            self.write_private(handoff, self.handoff("started"))
+            handoff.chmod(0o644)
+            output = self.run_install_failure_parser(handoff, root / "journal")
+        self.assertIn("handoff_state=invalid\n", output)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            handoff = root / "handoff"
+            self.write_private(handoff, self.handoff("started"))
+            output = self.run_install_failure_parser(
+                handoff, root / "journal", owner=os.getuid() + 1
+            )
+        self.assertIn("handoff_state=invalid\n", output)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            handoff = root / "handoff"
+            self.write_private(handoff, self.handoff("started"))
+            output = self.run_install_failure_parser(
+                handoff, root / "journal", group=os.getgid() + 1
+            )
+        self.assertIn("handoff_state=invalid\n", output)
+
+    def test_unsafe_journal_is_present_but_invalidates_the_state_class(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            handoff = root / "handoff"
+            journal = root / "journal"
+            self.write_private(handoff, self.handoff("accepted"))
+            self.write_private(journal, b"x" * (32 * 1024 + 1))
+            output = self.run_install_failure_parser(handoff, journal)
+        self.assertEqual(
+            output,
+            "installer_status=1\nhandoff_state=invalid\njournal_present=true\n",
+        )
+
+    def test_fresh_install_dumplog_keeps_bounded_capture_and_private_summary(self) -> None:
+        install = PROOF.split("capture_fresh_install() {", 1)[1].split(
+            'echo "+ clean install from signed release N"', 1
+        )[0]
+        command = (
+            '/usr/bin/sudo /usr/sbin/installer -dumplog -pkg "$from_pkg" -target /'
+        )
+        self.assertEqual(install.count(command), 1)
+        self.assertIn(
+            '/usr/bin/tail -c 65536 "$work/fresh-install.log" '
+            '>"$evidence/fresh-install.log"',
+            install,
+        )
+        self.assertLess(install.index("[ \"$status\" -eq 0 ]"), install.index(
+            'summarize_fresh_install_failure "$status"'
+        ))
+        diagnostic = PROOF.split("summarize_fresh_install_failure() {", 1)[1].split(
+            "assert_accepted() {", 1
+        )[0]
+        for forbidden in (
+            "/var/log/install.log",
+            "/nix/receipt.json",
+            "/bin/cp",
+            "shutil",
+            "os.environ",
+            "print(record",
+            "print(raw",
+            '"$evidence/determinate-handoff',
+            '"$evidence/macos-transaction',
+        ):
+            self.assertNotIn(forbidden, diagnostic)
 
     def test_vm_uses_the_exact_provisioned_sigstore_verifier(self) -> None:
         hosted = self.job("acquire-inputs", "prepare-slot-1")

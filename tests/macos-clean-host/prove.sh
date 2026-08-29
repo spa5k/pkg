@@ -611,6 +611,193 @@ capture() {
     }
 }
 
+summarize_fresh_install_failure() {
+    installer_status=$1
+    summary="$evidence/fresh-install-summary.txt"
+    /usr/bin/sudo -n /usr/bin/python3 -I - "$installer_status" \
+        /private/var/db/pkg-install/determinate-handoff-v1.json \
+        /private/var/db/pkg-install-journal/macos-transaction-v1.json \
+        0 0 >"$summary" <<'PY'
+import json
+import os
+import re
+import stat
+import sys
+
+
+class InvalidState(Exception):
+    pass
+
+
+def valid_private(metadata, limit, owner, group):
+    return (
+        stat.S_ISREG(metadata.st_mode)
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and metadata.st_uid == owner
+        and metadata.st_gid == group
+        and metadata.st_nlink == 1
+        and metadata.st_size <= limit
+    )
+
+
+def read_private(path, limit, owner, group):
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if not valid_private(before, limit, owner, group):
+        raise InvalidState
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not valid_private(opened, limit, owner, group)
+            or opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+            or opened.st_size != before.st_size
+        ):
+            raise InvalidState
+        chunks = []
+        remaining = limit + 1
+        while remaining:
+            chunk = os.read(descriptor, min(8192, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    current = os.lstat(path)
+    if (
+        len(raw) > limit
+        or not valid_private(after, limit, owner, group)
+        or not valid_private(current, limit, owner, group)
+        or after.st_dev != opened.st_dev
+        or after.st_ino != opened.st_ino
+        or after.st_size != opened.st_size
+        or current.st_dev != opened.st_dev
+        or current.st_ino != opened.st_ino
+        or current.st_size != opened.st_size
+    ):
+        raise InvalidState
+    return raw
+
+
+def exact_object(pairs):
+    record = {}
+    for key, value in pairs:
+        if key in record:
+            raise InvalidState
+        record[key] = value
+    return record
+
+
+def invalid_constant(_value):
+    raise InvalidState
+
+
+def valid_identity(value):
+    return (
+        isinstance(value, dict)
+        and set(value) == {"length", "sha256"}
+        and type(value["length"]) is int
+        and 0 <= value["length"] <= 2**64 - 1
+        and isinstance(value["sha256"], str)
+        and re.fullmatch(r"sha256-[0-9a-f]{64}", value["sha256"]) is not None
+    )
+
+
+def parse_handoff(raw):
+    record = json.loads(
+        raw,
+        object_pairs_hook=exact_object,
+        parse_constant=invalid_constant,
+    )
+    if (
+        not isinstance(record, dict)
+        or set(record) != {"schema_version", "state"}
+        or type(record["schema_version"]) is not int
+        or record["schema_version"] != 1
+        or not isinstance(record["state"], dict)
+    ):
+        raise InvalidState
+    state = record["state"]
+    if set(state) == {"kind"} and state["kind"] == "started":
+        return "started"
+    if (
+        set(state) == {"kind", "installer", "receipt"}
+        and state["kind"] == "accepted"
+        and valid_identity(state["installer"])
+        and valid_identity(state["receipt"])
+    ):
+        return "accepted"
+    raise InvalidState
+
+
+status, handoff_path, journal_path, owner, group = sys.argv[1:]
+if re.fullmatch(r"[0-9]+", status) is None:
+    raise SystemExit(1)
+owner = int(owner)
+group = int(group)
+journal_present = False
+invalid = False
+try:
+    handoff_bytes = read_private(handoff_path, 64 * 1024, owner, group)
+    handoff_state = "absent" if handoff_bytes is None else parse_handoff(handoff_bytes)
+    del handoff_bytes
+except (InvalidState, OSError, UnicodeError, ValueError):
+    handoff_state = "invalid"
+    invalid = True
+try:
+    journal_bytes = read_private(journal_path, 32 * 1024, owner, group)
+    journal_present = journal_bytes is not None
+    del journal_bytes
+except (InvalidState, OSError):
+    journal_present = True
+    invalid = True
+if invalid:
+    handoff_state = "invalid"
+print(f"installer_status={status}")
+print(f"handoff_state={handoff_state}")
+print(f"journal_present={'true' if journal_present else 'false'}")
+PY
+    /bin/chmod 0600 "$summary"
+    [ -f "$summary" ] && [ ! -L "$summary" ] \
+        && [ "$(/usr/bin/stat -f '%u:%Lp' "$summary")" = \
+            "$(/usr/bin/id -u):600" ] \
+        && [ "$(/usr/bin/stat -f '%z' "$summary")" -le 1024 ] \
+        && [ "$(/usr/bin/wc -l <"$summary" | /usr/bin/tr -d ' ')" -eq 3 ] \
+        || fail "the fresh-install failure summary is unsafe"
+    summary_status=$(/usr/bin/sed -n 's/^installer_status=//p' "$summary")
+    summary_handoff=$(/usr/bin/sed -n 's/^handoff_state=//p' "$summary")
+    summary_journal=$(/usr/bin/sed -n 's/^journal_present=//p' "$summary")
+    printf '%s\n' "$summary_status" | /usr/bin/grep -Eq '^[0-9]+$' \
+        && printf '%s\n' "$summary_handoff" \
+            | /usr/bin/grep -Eq '^(absent|started|accepted|invalid)$' \
+        && printf '%s\n' "$summary_journal" | /usr/bin/grep -Eq '^(true|false)$' \
+        && [ "$(/bin/cat "$summary")" = "$(printf '%s\n' \
+            "installer_status=$summary_status" \
+            "handoff_state=$summary_handoff" \
+            "journal_present=$summary_journal")" ] \
+        || fail "the fresh-install failure summary is invalid"
+}
+
+capture_fresh_install() {
+    set +e
+    /usr/bin/sudo /usr/sbin/installer -dumplog -pkg "$from_pkg" -target / \
+        >"$work/fresh-install.log" 2>&1
+    status=$?
+    set -e
+    /usr/bin/tail -c 65536 "$work/fresh-install.log" >"$evidence/fresh-install.log"
+    [ "$status" -eq 0 ] || {
+        summarize_fresh_install_failure "$status"
+        /bin/cat "$evidence/fresh-install.log" >&2
+        fail "fresh-install failed"
+    }
+}
+
 assert_accepted() {
     /usr/bin/sudo /usr/bin/python3 -I -c '
 import json
@@ -962,7 +1149,7 @@ done
 pass compiled process-handoff-and-ordering
 
 echo "+ clean install from signed release N"
-capture fresh-install /usr/bin/sudo /usr/sbin/installer -pkg "$from_pkg" -target /
+capture_fresh_install
 [ "$(/usr/bin/shasum -a 256 /usr/local/bin/pkg | /usr/bin/awk '{print $1}')" = "$from_cli_sha" ] \
     || fail "fresh install did not publish the release N product CLI"
 pass native fresh-release-n-install

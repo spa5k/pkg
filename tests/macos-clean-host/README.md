@@ -41,7 +41,7 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-8` annotated tag.
+`dn16-macos-proof-workflow-9` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
@@ -148,6 +148,20 @@ The prepare job does these operations:
 The accepted N+1 installer message must state that product services remain offline.
 The proof does not claim that this installer changes Base Nix.
 It proves that the selected Base Nix state did not change.
+
+The fresh native install uses Package Installer `-dumplog` output.
+The existing evidence capture keeps only its final 65,536 bytes.
+If this install fails, the proof also records one file with these exact fields:
+
+```text
+installer_status=<integer>
+handoff_state=absent|started|accepted|invalid
+journal_present=true|false
+```
+
+This summary is at most 1 KiB.
+It validates the protected Handoff and journal file boundaries before it reads them.
+It does not copy either protected file into evidence.
 
 The continuation record is:
 
