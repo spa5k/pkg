@@ -38,7 +38,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-7", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-8", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
@@ -161,7 +161,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
     def test_harness_modes_are_restored_only_after_hash_verification(self) -> None:
         phase = self.job("prepare-slot-1", "resume-slot-1")
         verifier = phase.split("      - name: Verify the harness inventory\n", 1)[1].split(
-            "\n      - name: Install the pinned Sigstore verifier", 1
+            "\n      - name: Verify the provisioned Sigstore verifier", 1
         )[0]
         checksum = "shasum -a 256 --check SHA256SUMS"
         executable = "chmod 0755 ./prove.sh ./pkg-installer-tests"
@@ -173,6 +173,34 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertLess(verifier.index(checksum), verifier.index(controls))
         chmods = [line.strip() for line in phase.splitlines() if line.strip().startswith("chmod")]
         self.assertEqual(chmods, [executable, controls])
+
+    def test_vm_uses_the_exact_provisioned_sigstore_verifier(self) -> None:
+        hosted = self.job("acquire-inputs", "prepare-slot-1")
+        phase = self.job("prepare-slot-1", "resume-slot-1")
+        verifier = phase.split(
+            "      - name: Verify the provisioned Sigstore verifier\n", 1
+        )[1].split("\n      - name: Acquire compact authenticated proof inputs", 1)[0]
+        self.assertIn(
+            "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+            hosted,
+        )
+        self.assertNotIn("sigstore/cosign-installer", phase)
+        for required in (
+            "cosign=/usr/local/bin/cosign",
+            'test -f "$cosign"',
+            'test ! -L "$cosign"',
+            'test -x "$cosign"',
+            'test "$(/usr/bin/stat -f \'%Su:%Sg:%Lp\' "$cosign")" = root:wheel:755',
+            "77bbab240111761d50044f37541da0734d964dfe5f092cab6d584663c912372e",
+            'version=$("$cosign" version)',
+            "')\" = v3.1.3",
+        ):
+            self.assertIn(required, verifier)
+        compact = phase.split(
+            "      - name: Acquire compact authenticated proof inputs\n", 1
+        )[1].split("\n      - name: Run the selected proof phase", 1)[0]
+        self.assertEqual(compact.count("/usr/local/bin/cosign verify-blob"), 2)
+        self.assertNotIn("\n            cosign verify-blob", compact)
 
     def test_vm_acquisition_is_compact_atomic_and_fully_authenticated(self) -> None:
         phase = self.job("prepare-slot-1", "resume-slot-1")

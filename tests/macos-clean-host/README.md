@@ -41,7 +41,7 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-7` annotated tag.
+`dn16-macos-proof-workflow-8` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
@@ -64,6 +64,7 @@ It uploads only a bounded receipt for the 68 verified files.
 It does not upload the full channel tree to GitHub artifact storage.
 Each VM phase then makes 21 direct logical fetches for the fixed pair, two inventories,
 and the exact 18 proof-input files.
+Before this fetch, it verifies the provisioned `/usr/local/bin/cosign` version and SHA-256.
 The 18 proof-input files total 36,923,175 bytes.
 All 21 response bodies total 36,936,188 bytes.
 Each VM rejects redirects, partial files, symlinks, missing files, extra files,
