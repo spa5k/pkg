@@ -267,31 +267,12 @@ impl MacOsPlatformAssetManager {
         let (system, digest) = self
             .receipt_binding
             .ok_or_else(MacOsError::backend_failure)?;
-        let mut records = Vec::new();
-        for asset in macos_product_install_assets() {
-            let state = if asset.id() == "uninstall-manifest" {
-                RecordedAssetState::Created
-            } else {
-                *self
-                    .states
-                    .get(asset.id())
-                    .ok_or_else(MacOsError::backend_failure)?
-            };
-            if state != RecordedAssetState::Created
-                && !(asset.id() == "nix-root" && state == RecordedAssetState::PreExisting)
-            {
-                return Err(MacOsError::backend_failure());
-            }
-            let mut record =
-                RecordedAsset::new(asset.id(), state).map_err(|_| MacOsError::backend_failure())?;
-            if asset.kind() == crate::MacOsAssetKind::File && asset.id() != "uninstall-manifest" {
-                record = record
-                    .with_content_digest(self.ensure_filesystem()?.expected_file_digest(asset)?);
-            }
-            records.push(record);
-        }
-        let manifest = UninstallManifest::new(system, digest, records)
-            .map_err(|_| MacOsError::backend_failure())?;
+        // The receipt records the original installation, not the current run.
+        // A repeat install observes every asset as preexisting, so a run-local
+        // manifest would rewrite an exact, verified receipt. Compare against
+        // the canonical installation manifest instead; an exact prior receipt
+        // is verified and reused, not rewritten.
+        let manifest = self.expected_product_manifest(system, digest)?;
         let asset = uninstall_manifest_asset()?;
         if let Some(prior) = self
             .ensure_filesystem()?
@@ -576,6 +557,29 @@ mod tests {
             fs::create_dir(&path)?;
             fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn repeat_install_receipt_records_the_original_installation() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        prepare_receipt_parent(temporary.path())?;
+        let groups = ManagedGroupBindings::new(333, 350)?;
+        let release = Digest::from_bytes([0x31; 32]);
+        let mut installed = manager(temporary.path(), groups, release)?;
+        let original = installed.expected_product_manifest(System::Aarch64Darwin, release)?;
+        installed.bind_prior_asset_states(&original)?;
+        let receipt = temporary.path().join("opt/pkg/uninstall/manifest.json");
+        let bytes = crate::encode_uninstall_manifest(&original)?;
+        fs::write(&receipt, &bytes)?;
+        fs::set_permissions(&receipt, fs::Permissions::from_mode(0o600))?;
+
+        // A repeat install observes every asset as preexisting, but the exact
+        // receipt from the original installation is verified and reused.
+        let mut repeated = manager(temporary.path(), groups, release)?;
+        repeated.bind_prior_asset_states(&original)?;
+        assert!(!repeated.publish_uninstall_manifest()?);
+        assert_eq!(fs::read(&receipt)?, bytes);
         Ok(())
     }
 

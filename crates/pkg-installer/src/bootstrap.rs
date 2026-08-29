@@ -1200,7 +1200,12 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             let handoff =
                 DeterminateHandoff::production().map_err(|_| BundleProvisionError::Failed)?;
             match handoff.state().map_err(|_| BundleProvisionError::Failed)? {
-                DeterminateHandoffState::Accepted => return Ok(BootstrapOutcome::Existing),
+                DeterminateHandoffState::Accepted => {
+                    // Keep the authenticated bundle so a repeat install can
+                    // finish its receipt phase without dropping the channel.
+                    self.bundle = Some(bundle);
+                    return Ok(BootstrapOutcome::Existing);
+                }
                 DeterminateHandoffState::Started => return Err(BundleProvisionError::Failed),
                 DeterminateHandoffState::NotStarted => {}
             }
@@ -2340,6 +2345,9 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
                 Ok(receipt_created)
             }
             BootstrapOutcome::Existing => {
+                // Match the Linux Existing arm: the accepted channel state is
+                // already committed, so a repeat install only verifies and
+                // reuses the exact ownership receipt.
                 let changed = match self.inner.publish_ownership_receipt() {
                     Ok(changed) => changed,
                     Err(error) => {
@@ -2347,10 +2355,6 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
                         return Err(error);
                     }
                 };
-                if self.provisioner.commit_authenticated_channel().is_err() {
-                    self.outcome = Some(BootstrapOutcome::Existing);
-                    return Err(MacOsError::backend_failure());
-                }
                 self.outcome = Some(BootstrapOutcome::Existing);
                 complete_macos_receipt(&mut self.journal, mutation, presence, changed, replacing)?;
                 Ok(changed)
