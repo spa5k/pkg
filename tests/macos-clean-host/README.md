@@ -41,7 +41,7 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-6` annotated tag.
+`dn16-macos-proof-workflow-7` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
@@ -60,6 +60,14 @@ It uses HTTPS only.
 It rejects credentials, query text, fragments, traversal, unsafe paths, missing entries, and extra entries.
 It downloads every inventory-listed metadata and target file before a destructive job starts.
 It verifies every listed length and SHA-256.
+It uploads only a bounded receipt for the 68 verified files.
+It does not upload the full channel tree to GitHub artifact storage.
+Each VM phase then makes 21 direct logical fetches for the fixed pair, two inventories,
+and the exact 18 proof-input files.
+The 18 proof-input files total 36,923,175 bytes.
+All 21 response bodies total 36,936,188 bytes.
+Each VM rejects redirects, partial files, symlinks, missing files, extra files,
+wrong lengths, wrong digests, wrong releases, and wrong Sigstore identities.
 The successor sealed pair contains the original 50 files and 18 sealed proof inputs.
 The two channel manifests must match the authenticated proof-input manifests.
 The Apple Silicon CLI and Sigstore bundle must match the channel manifest.
@@ -117,7 +125,7 @@ Do not create slot 2 while slot 1 is active.
 The prepare job does these operations:
 
 1. It proves the fresh VM state and initial reboot.
-2. It revalidates the authenticated releases and all 50 channel files.
+2. It revalidates the compact authenticated pair, two inventories, and 18 proof-input files.
 3. It runs the compiled handoff and ordering tests.
 4. It installs release N with native Package Installer.
 5. It verifies the N CLI, ownership receipt, accepted Determinate handoff, and product services.

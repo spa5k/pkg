@@ -104,6 +104,25 @@ instance_marker_sha=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 "$instance_marker"
     | /usr/bin/awk '{print $1}')
 [ "$instance_marker_sha" = "$preflight_instance_marker_sha" ] \
     || fail "the instance marker changed after the early host gate"
+vm_acquisition="$evidence/vm-acquisition.txt"
+[ -f "$vm_acquisition" ] && [ ! -L "$vm_acquisition" ] \
+    && [ "$(/usr/bin/stat -f '%u:%Lp' "$vm_acquisition")" = \
+        "$(/usr/bin/id -u):600" ] \
+    && [ "$(/usr/bin/stat -f '%z' "$vm_acquisition")" -le 1024 ] \
+    && [ "$(/usr/bin/wc -l <"$vm_acquisition" | /usr/bin/tr -d ' ')" -eq 11 ] \
+    || fail "the bounded VM acquisition evidence is invalid"
+[ "$(/bin/cat "$vm_acquisition")" = "$(printf '%s\n' \
+    'schema=PKG-DN16-VM-ACQUISITION-V1' \
+    "run_id=$GITHUB_RUN_ID" \
+    "run_attempt=$GITHUB_RUN_ATTEMPT" \
+    "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+    "phase=$PKG_PROOF_PHASE" \
+    "runner_name=$RUNNER_NAME" \
+    "proof_pair_sha256=$PKG_PROOF_PAIR_SHA256" \
+    'logical_fetches=21' \
+    'proof_input_bytes=36923175' \
+    'response_bytes=36936188' \
+    'status=complete')" ] || fail "the VM acquisition evidence does not bind this job"
 
 disposable=/var/tmp/pkg-disposable-macos-proof
 /usr/bin/sudo -n /bin/test -f "$disposable" \
@@ -242,9 +261,9 @@ done
 fi
 
 harness=$(CDPATH= cd -- "$(/usr/bin/dirname "$0")" && /bin/pwd -P)
-from="$root/candidate/from"
-to="$root/candidate/to"
 channel="$root/channel"
+from="$channel/n/proof-inputs"
+to="$channel/n-plus-1/proof-inputs"
 work="$root/work"
 /bin/mkdir -p -m 0700 "$evidence" "$work"
 
@@ -255,9 +274,9 @@ to_pkg="$to/pkg-$to_version-preview.pkg"
 for path in "$from_pkg" "$to_pkg" "$from/pkg-aarch64-darwin" \
     "$to/pkg-aarch64-darwin" "$harness/pkg-installer-tests" \
     "$channel/proof-pair.json" "$channel/n.inventory.json" \
-    "$channel/n-plus-1.inventory.json" "$channel/n/release-manifest.json" \
-    "$channel/n/root.json" "$channel/n-plus-1/release-manifest.json" \
-    "$channel/n-plus-1/root.json"; do
+    "$channel/n-plus-1.inventory.json" "$from/SHA256SUMS" \
+    "$from/SHA256SUMS.sigstore.json" "$from/release-manifest.json" \
+    "$to/SHA256SUMS" "$to/SHA256SUMS.sigstore.json" "$to/release-manifest.json"; do
     [ -f "$path" ] && [ ! -L "$path" ] || fail "an authenticated input is absent or unsafe"
 done
 from_cli_sha=$(/usr/bin/shasum -a 256 "$from/pkg-aarch64-darwin" | /usr/bin/awk '{print $1}')
@@ -280,11 +299,6 @@ printf '%s\n' "$PKG_PROOF_PAIR_SHA256" | /usr/bin/grep -Eq '^[0-9a-f]{64}$' \
 [ "$(/usr/bin/shasum -a 256 "$channel/proof-pair.json" | /usr/bin/awk '{print $1}')" \
     = "$PKG_PROOF_PAIR_SHA256" ] || fail "the proof pair digest does not match"
 
-reviewed_commit=8ffd325a4be12a998f3a5684097b57841a11540e
-for side in from to; do
-    [ "$(/bin/cat "$evidence/$side-source-commit.txt")" = "$reviewed_commit" ] \
-        || fail "release $side does not contain the reviewed DN-16 lifecycle"
-done
 /usr/bin/python3 -I - "$from/release-manifest.json" "$PKG_PROOF_FROM_RELEASE" \
     "$to/release-manifest.json" "$PKG_PROOF_TO_RELEASE" \
     >"$evidence/input-compatibility.txt" <<'PY'
@@ -420,30 +434,27 @@ for record, name, sequence, release, sealed_path in zip(
         "proof-inputs/pkg-aarch64-darwin",
         "proof-inputs/pkg-aarch64-darwin.sigstore.json",
     }
-    require(set(files) >= fixed | proof_inputs
+    require(len(files) == 34 and set(files) >= fixed | proof_inputs
             and all(path in fixed or path in proof_inputs
                     or path.startswith("targets/") for path in files)
             and any(path.startswith("targets/") for path in files),
             "proof inventory has missing or extra entries")
     require(list(files) == sorted(files), "proof inventory is not canonical")
+    require({path for path in files if path.startswith("proof-inputs/")}
+            == proof_inputs, "compact proof inputs are missing or extra")
     actual = {
         path.relative_to(channel / name).as_posix()
         for path in (channel / name).rglob("*") if path.is_file()
     }
-    require(actual == set(files), "downloaded proof tree does not match its inventory")
-    expected_directories = {
-        parent.as_posix()
-        for path in files
-        for parent in pathlib.PurePosixPath(path).parents
-        if parent.as_posix() != "."
-    }
+    require(actual == proof_inputs, "compact proof tree has missing or extra files")
     actual_directories = {
         path.relative_to(channel / name).as_posix()
         for path in (channel / name).rglob("*") if path.is_dir()
     }
-    require(actual_directories == expected_directories,
-            "downloaded proof tree has missing or extra directories")
-    for path, item in files.items():
+    require(actual_directories == {"proof-inputs"},
+            "compact proof tree has missing or extra directories")
+    for path in proof_inputs:
+        item = files[path]
         candidate = channel / name / path
         require(candidate.is_file() and not candidate.is_symlink(), "unsafe proof file")
         raw = candidate.read_bytes()
@@ -453,17 +464,14 @@ for record, name, sequence, release, sealed_path in zip(
     require(files["root.json"]["sha256"] == record["trustedRootSha256"],
             "trusted root digest mismatch")
 
-    channel_manifest = json.loads((channel / name / "release-manifest.json").read_bytes())
     release_manifest = json.loads(sealed_path.read_bytes())
-    require(channel_manifest == release_manifest,
-            "channel manifest does not match authenticated proof-input manifest")
-    require(channel_manifest.get("releaseId") == release
-            and channel_manifest.get("channelSequence") == sequence
-            and channel_manifest.get("timestampVersion") == sequence
-            and channel_manifest.get("trustedRootSha256") == record["trustedRootSha256"],
+    require(release_manifest.get("releaseId") == release
+            and release_manifest.get("channelSequence") == sequence
+            and release_manifest.get("timestampVersion") == sequence
+            and release_manifest.get("trustedRootSha256") == record["trustedRootSha256"],
             "channel manifest identity mismatch")
     cli = [
-        artifact for artifact in channel_manifest["cliArtifacts"]
+        artifact for artifact in release_manifest["cliArtifacts"]
         if artifact["kind"] == "pkg" and artifact["system"] == "aarch64-darwin"
     ]
     require(len(cli) == 1, "Apple Silicon CLI is not unique")

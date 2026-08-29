@@ -38,7 +38,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-6", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-7", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
@@ -117,7 +117,11 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             "SHA256SUMS.sigstore.json",
             'cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json"',
             "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
-            "pkg-macos-authenticated-inputs",
+            "pkg-macos-hosted-acquisition-receipt",
+            "PKG-DN16-HOSTED-ACQUISITION-V1",
+            "if len(rows) != 68",
+            'f"{prefix}_verified_count={len(channel_rows)}"',
+            'values.append("status=complete")',
         ):
             self.assertIn(required, acquire)
         self.assertNotIn("--location", acquire)
@@ -130,6 +134,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertNotIn("/releases", WORKFLOW)
         self.assertNotIn("assert ", acquire)
         self.assertIn("python3 -I -", acquire)
+        self.assertNotIn("pkg-macos-authenticated-inputs", WORKFLOW)
 
     def test_harness_inventory_is_explicit_and_matches_the_verifier(self) -> None:
         payload = "./README.md ./pkg-installer-tests ./prove.sh"
@@ -156,7 +161,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
     def test_harness_modes_are_restored_only_after_hash_verification(self) -> None:
         phase = self.job("prepare-slot-1", "resume-slot-1")
         verifier = phase.split("      - name: Verify the harness inventory\n", 1)[1].split(
-            "\n      - name: Download authenticated proof inputs", 1
+            "\n      - name: Install the pinned Sigstore verifier", 1
         )[0]
         checksum = "shasum -a 256 --check SHA256SUMS"
         executable = "chmod 0755 ./prove.sh ./pkg-installer-tests"
@@ -168,6 +173,50 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertLess(verifier.index(checksum), verifier.index(controls))
         chmods = [line.strip() for line in phase.splitlines() if line.strip().startswith("chmod")]
         self.assertEqual(chmods, [executable, controls])
+
+    def test_vm_acquisition_is_compact_atomic_and_fully_authenticated(self) -> None:
+        phase = self.job("prepare-slot-1", "resume-slot-1")
+        compact = phase.split("      - name: Acquire compact authenticated proof inputs\n", 1)[
+            1
+        ].split("\n      - name: Run the selected proof phase", 1)[0]
+        for required in (
+            "--proto '=https'",
+            "--tlsv1.2",
+            "--retry 5",
+            "--retry-all-errors",
+            'temporary="$output.part"',
+            'test "$response" = "200 $url"',
+            'mv "$temporary" "$output"',
+            "1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063",
+            "f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9",
+            "require(len(selected_rows) == 18",
+            "proof_input_bytes = sum(row[2] for row in selected_rows)",
+            "proof_input_bytes == 36923175",
+            "1099 + 5957 + 5957 + proof_input_bytes == 36936188",
+            '== proof_inputs, "compact proof inputs are missing or extra"',
+            'cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json"',
+            '--certificate-identity "$identity" --certificate-oidc-issuer "$issuer"',
+            'for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin',
+            'manifest.get("releaseId") != sys.argv[2]',
+        ):
+            self.assertIn(required, compact)
+        self.assertNotIn("--location", compact)
+        self.assertNotIn("actions/download-artifact", compact)
+        self.assertNotIn("pkg-macos-authenticated-inputs", phase)
+        self.assertIn('from="$channel/n/proof-inputs"', PROOF)
+        self.assertIn('to="$channel/n-plus-1/proof-inputs"', PROOF)
+        self.assertIn("actual == proof_inputs", PROOF)
+        self.assertNotIn("actual == set(files)", PROOF)
+        for required in (
+            "schema=PKG-DN16-VM-ACQUISITION-V1",
+            "logical_fetches=21",
+            "proof_input_bytes=36923175",
+            "response_bytes=36936188",
+            '"proof_pair_sha256": os.environ["PROOF_PAIR_SHA256"]',
+            'raise SystemExit("VM acquisition evidence does not match its phase")',
+        ):
+            self.assertIn(required, WORKFLOW)
+        self.assertIn("the VM acquisition evidence does not bind this job", PROOF)
 
     def test_prepare_creates_state_under_n_before_the_offline_upgrade(self) -> None:
         install = PROOF.index('capture package-state-install "$pkg"')

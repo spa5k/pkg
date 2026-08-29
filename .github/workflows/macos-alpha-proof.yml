@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-6
+        description: Exact commit signed by dn16-macos-proof-workflow-7
         required: true
         type: string
       proof_channel_url:
@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-6
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-7
   PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
@@ -374,15 +374,62 @@ jobs:
           find "$root/candidate" -type f -print | LC_ALL=C sort > "$root/evidence/candidate-inventory.txt"
           find "$root/candidate" -type f -exec shasum -a 256 {} \; \
             | LC_ALL=C sort > "$root/evidence/candidate-digests.txt"
+          python3 -I - "$root/channel/proof-pair.json" "$root/channel-files.tsv" \
+            "$PROOF_CHANNEL_URL" "$PROOF_PAIR_SHA256" "$FROM_RELEASE" "$TO_RELEASE" \
+            > "$root/evidence/hosted-acquisition.txt" <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import sys
+          import urllib.parse
 
-      - name: Upload authenticated proof inputs
+          pair_path, rows_path, raw_url, pair_sha, from_release, to_release = sys.argv[1:]
+          pair = json.loads(pathlib.Path(pair_path).read_bytes())
+          rows = [line.split("\t") for line in pathlib.Path(rows_path).read_text().splitlines()]
+          if len(rows) != 68 or any(len(row) != 4 for row in rows):
+              raise SystemExit("hosted acquisition rows are incomplete")
+          url = urllib.parse.urlsplit(raw_url)
+          normalized_url = urllib.parse.urlunsplit(
+              (url.scheme.lower(), url.netloc.lower(), url.path, "", "")
+          )
+          values = [
+              "schema=PKG-DN16-HOSTED-ACQUISITION-V1",
+              f"run_id={os.environ['GITHUB_RUN_ID']}",
+              f"run_attempt={os.environ['GITHUB_RUN_ATTEMPT']}",
+              f"workflow_sha={os.environ['GITHUB_WORKFLOW_SHA']}",
+              f"channel_url={normalized_url}",
+              f"proof_pair_sha256={pair_sha}",
+              f"product_commit={pair['productCommit']}",
+              f"from_release={from_release}",
+              f"to_release={to_release}",
+          ]
+          for record in pair["channels"]:
+              name = record["name"]
+              prefix = name.replace("-", "_")
+              channel_rows = [row[1:] for row in rows if row[0] == name]
+              if len(channel_rows) != 34 or channel_rows != sorted(channel_rows):
+                  raise SystemExit("hosted acquisition rows are not canonical")
+              canonical = "".join("\t".join(row) + "\n" for row in channel_rows).encode()
+              values.extend([
+                  f"{prefix}_name={name}",
+                  f"{prefix}_sequence={record['channelSequence']}",
+                  f"{prefix}_inventory_length={record['inventoryLength']}",
+                  f"{prefix}_inventory_sha256={record['inventorySha256']}",
+                  f"{prefix}_trusted_root_sha256={record['trustedRootSha256']}",
+                  f"{prefix}_verified_count={len(channel_rows)}",
+                  f"{prefix}_total_bytes={sum(int(row[1]) for row in channel_rows)}",
+                  f"{prefix}_rows_sha256={hashlib.sha256(canonical).hexdigest()}",
+              ])
+          values.append("status=complete")
+          print(*values, sep="\n")
+          PY
+
+      - name: Upload bounded hosted acquisition receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pkg-macos-authenticated-inputs
-          path: |
-            ${{ runner.temp }}/pkg-macos-proof/channel
-            ${{ runner.temp }}/pkg-macos-proof/candidate
-            ${{ runner.temp }}/pkg-macos-proof/evidence
+          name: pkg-macos-hosted-acquisition-receipt
+          path: ${{ runner.temp }}/pkg-macos-proof/evidence/hosted-acquisition.txt
           if-no-files-found: error
           retention-days: 3
 
@@ -547,11 +594,257 @@ jobs:
           chmod 0755 ./prove.sh ./pkg-installer-tests
           chmod 0644 ./README.md ./INVENTORY ./SHA256SUMS ./EXPECTED ./CHECKSUM_PATHS
 
-      - name: Download authenticated proof inputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: pkg-macos-authenticated-inputs
-          path: ${{ runner.temp }}/pkg-macos-proof
+      - name: Install the pinned Sigstore verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Acquire compact authenticated proof inputs
+        shell: bash
+        env:
+          FROM_RELEASE: ${{ inputs.from_release }}
+          TO_RELEASE: ${{ inputs.to_release }}
+          PROOF_CHANNEL_URL: ${{ inputs.proof_channel_url }}
+          PROOF_PAIR_SHA256: ${{ env.PKG_PROOF_PAIR_SHA256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$RUNNER_TEMP/pkg-macos-proof"
+          channel="$root/channel"
+          test ! -e "$channel"
+          install -d -m 0700 "$channel" "$root/evidence"
+          python3 -I - "$PROOF_CHANNEL_URL" <<'PY'
+          import sys
+          import urllib.parse
+
+          raw = sys.argv[1]
+          url = urllib.parse.urlsplit(raw)
+          if (
+              url.scheme != "https"
+              or not url.hostname
+              or url.username is not None
+              or url.password is not None
+              or url.query
+              or url.fragment
+              or raw.endswith("/")
+              or any(part in {"", ".", ".."} for part in url.path.split("/")[1:])
+          ):
+              raise SystemExit("proof channel URL is invalid")
+          PY
+          fetch() {
+            url=$1
+            output=$2
+            length=$3
+            sha=$4
+            temporary="$output.part"
+            rm -f "$temporary"
+            if ! response=$(/usr/bin/curl --proto '=https' --tlsv1.2 --fail --silent \
+              --show-error --connect-timeout 15 --max-time 900 --max-filesize "$length" \
+              --retry 5 --retry-all-errors --retry-delay 2 --retry-max-time 3600 \
+              --output "$temporary" --write-out '%{http_code} %{url_effective}' "$url"); then
+              rm -f "$temporary"
+              return 1
+            fi
+            if ! test "$response" = "200 $url" \
+              || ! test -f "$temporary" || ! test ! -L "$temporary" \
+              || ! test "$(stat -f '%z' "$temporary")" -eq "$length" \
+              || ! test "$(shasum -a 256 "$temporary" | awk '{print $1}')" = "$sha"; then
+              rm -f "$temporary"
+              return 1
+            fi
+            mv "$temporary" "$output"
+          }
+          fetch "$PROOF_CHANNEL_URL/proof-pair.json" "$channel/proof-pair.json" 1099 \
+            "$PROOF_PAIR_SHA256"
+          fetch "$PROOF_CHANNEL_URL/n.inventory.json" "$channel/n.inventory.json" 5957 \
+            1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063
+          fetch "$PROOF_CHANNEL_URL/n-plus-1.inventory.json" \
+            "$channel/n-plus-1.inventory.json" 5957 \
+            f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9
+          python3 -I - "$channel" "$FROM_RELEASE" "$TO_RELEASE" \
+            "$PKG_REVIEWED_COMMIT" > "$root/compact-files.tsv" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import sys
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          root = pathlib.Path(sys.argv[1])
+          releases = sys.argv[2:4]
+          reviewed_commit = sys.argv[4]
+          pair = json.loads((root / "proof-pair.json").read_bytes())
+          require(set(pair) == {"schemaVersion", "channels", "productCommit"},
+                  "invalid proof pair")
+          require(pair["schemaVersion"] == 1 and pair["productCommit"] == reviewed_commit,
+                  "proof pair product commit mismatch")
+          require(isinstance(pair["channels"], list) and len(pair["channels"]) == 2,
+                  "invalid proof pair channels")
+          selected_rows = []
+          roots = set()
+          expected_inventory = {
+              "n": (5957,
+                    "1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063"),
+              "n-plus-1": (5957,
+                           "f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9"),
+          }
+          for record, name, sequence, release in zip(
+              pair["channels"], ("n", "n-plus-1"), (1, 2), releases
+          ):
+              keys = {
+                  "channelSequence", "inventory", "inventoryLength", "inventorySha256",
+                  "manifestSchemaVersion", "name", "releaseId", "requiredMetadataPaths",
+                  "requiredTargetPrefix", "timestampVersion", "trustedRootSha256",
+              }
+              required_metadata = [
+                  "metadata/1.root.json",
+                  f"metadata/{sequence}.targets.json",
+                  f"metadata/{sequence}.snapshot.json",
+                  "metadata/timestamp.json",
+              ]
+              require(isinstance(record, dict) and set(record) == keys,
+                      "invalid proof channel record")
+              require(record["name"] == name and record["releaseId"] == release,
+                      "proof channel release mismatch")
+              require(record["channelSequence"] == sequence
+                      and record["timestampVersion"] == sequence
+                      and record["manifestSchemaVersion"] == 2,
+                      "proof channel sequence mismatch")
+              require(record["inventory"] == f"{name}.inventory.json"
+                      and record["requiredMetadataPaths"] == required_metadata
+                      and record["requiredTargetPrefix"] == "targets/",
+                      "proof channel layout mismatch")
+              require((record["inventoryLength"], record["inventorySha256"])
+                      == expected_inventory[name], "proof inventory identity mismatch")
+              require(re.fullmatch(r"[0-9a-f]{64}", record["trustedRootSha256"])
+                      is not None, "invalid trusted root digest")
+              roots.add(record["trustedRootSha256"])
+              raw = (root / record["inventory"]).read_bytes()
+              require(len(raw) == record["inventoryLength"]
+                      and hashlib.sha256(raw).hexdigest() == record["inventorySha256"],
+                      "proof inventory digest mismatch")
+              inventory = json.loads(raw)
+              require(set(inventory) == {"schemaVersion", "files"}
+                      and inventory["schemaVersion"] == 1
+                      and isinstance(inventory["files"], list),
+                      "invalid proof inventory")
+              files = {}
+              for item in inventory["files"]:
+                  require(isinstance(item, dict)
+                          and set(item) == {"length", "path", "sha256"},
+                          "invalid proof inventory entry")
+                  path = item["path"]
+                  require(isinstance(path, str)
+                          and re.fullmatch(r"[A-Za-z0-9._/-]+", path) is not None
+                          and not path.startswith("/")
+                          and all(part not in {"", ".", ".."} for part in path.split("/"))
+                          and path not in files,
+                          "unsafe or duplicate proof path")
+                  require(isinstance(item["length"], int) and item["length"] >= 0
+                          and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None,
+                          "invalid proof file identity")
+                  files[path] = item
+              version = release[1:]
+              proof_inputs = {
+                  "proof-inputs/SHA256SUMS",
+                  "proof-inputs/SHA256SUMS.sigstore.json",
+                  "proof-inputs/release-manifest.json",
+                  "proof-inputs/COSIGN_IDENTITY.txt",
+                  "proof-inputs/COSIGN_ISSUER.txt",
+                  f"proof-inputs/pkg-{version}-preview.pkg",
+                  f"proof-inputs/pkg-{version}-preview.pkg.sigstore.json",
+                  "proof-inputs/pkg-aarch64-darwin",
+                  "proof-inputs/pkg-aarch64-darwin.sigstore.json",
+              }
+              fixed = {"root.json", "release-manifest.json", "signing-audit.ndjson",
+                       *required_metadata}
+              require(len(files) == 34 and set(files) >= fixed | proof_inputs
+                      and all(path in fixed or path in proof_inputs
+                              or path.startswith("targets/") for path in files)
+                      and list(files) == sorted(files),
+                      "proof inventory has missing, extra, or noncanonical entries")
+              require({path for path in files if path.startswith("proof-inputs/")}
+                      == proof_inputs, "compact proof inputs are missing or extra")
+              for path in sorted(proof_inputs):
+                  item = files[path]
+                  selected_rows.append((name, path, item["length"], item["sha256"]))
+          require(len(roots) == 1, "proof channels use different roots")
+          proof_input_bytes = sum(row[2] for row in selected_rows)
+          require(len(selected_rows) == 18 and proof_input_bytes == 36923175,
+                  "compact proof input count or size mismatch")
+          require(1099 + 5957 + 5957 + proof_input_bytes == 36936188,
+                  "compact response byte count mismatch")
+          for row in selected_rows:
+              print(*row, sep="\t")
+          PY
+          while IFS=$'\t' read -r name path length sha; do
+            output="$channel/$name/$path"
+            install -d -m 0700 "$(dirname "$output")"
+            fetch "$PROOF_CHANNEL_URL/$name/$path" "$output" "$length" "$sha"
+          done < "$root/compact-files.tsv"
+          identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
+          issuer=https://token.actions.githubusercontent.com
+          for selection in "from:n:$FROM_RELEASE:1" "to:n-plus-1:$TO_RELEASE:2"; do
+            side=${selection%%:*}
+            remainder=${selection#*:}
+            channel_name=${remainder%%:*}
+            remainder=${remainder#*:}
+            tag=${remainder%%:*}
+            sequence=${remainder##*:}
+            version=${tag#v}
+            dir="$channel/$channel_name/proof-inputs"
+            test "$(cat "$dir/COSIGN_IDENTITY.txt")" = "$identity"
+            test "$(cat "$dir/COSIGN_ISSUER.txt")" = "$issuer"
+            cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json" \
+              --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              "$dir/SHA256SUMS" >/dev/null
+            awk '$2 == "SHA256SUMS" || $2 == "SHA256SUMS.sigstore.json" { found=1 } \
+              END { exit found ? 1 : 0 }' "$dir/SHA256SUMS"
+            selected="$root/evidence/$side-selected-sha256.txt"
+            : > "$selected"
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin \
+              release-manifest.json; do
+              awk -v a="$asset" '$2 == a { n++; print } END { exit n != 1 }' \
+                "$dir/SHA256SUMS" >> "$selected"
+            done
+            (cd "$dir" && shasum -a 256 --check "$selected")
+            python3 -I - "$dir/release-manifest.json" "$tag" "$sequence" \
+              "$channel/proof-pair.json" "$channel_name" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
+          pair = json.loads(pathlib.Path(sys.argv[4]).read_bytes())
+          record = next(item for item in pair["channels"] if item["name"] == sys.argv[5])
+          if (
+              manifest.get("releaseId") != sys.argv[2]
+              or manifest.get("channelSequence") != int(sys.argv[3])
+              or manifest.get("timestampVersion") != int(sys.argv[3])
+              or manifest.get("trustedRootSha256") != record["trustedRootSha256"]
+          ):
+              raise SystemExit("release manifest does not match the sealed channel")
+          PY
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
+              cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
+                --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+                "$dir/$asset" >/dev/null
+            done
+          done
+          printf '%s\n' \
+            'schema=PKG-DN16-VM-ACQUISITION-V1' \
+            "run_id=$GITHUB_RUN_ID" \
+            "run_attempt=$GITHUB_RUN_ATTEMPT" \
+            "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+            "phase=$PKG_PROOF_PHASE" \
+            "runner_name=$RUNNER_NAME" \
+            "proof_pair_sha256=$PROOF_PAIR_SHA256" \
+            'logical_fetches=21' \
+            'proof_input_bytes=36923175' \
+            'response_bytes=36936188' \
+            'status=complete' \
+            > "$root/evidence/vm-acquisition.txt"
 
       - name: Run the selected proof phase
         shell: bash
@@ -622,6 +915,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Download bounded hosted acquisition receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pkg-macos-hosted-acquisition-receipt
+          path: ${{ runner.temp }}/pkg-macos-hosted-acquisition
+
       - name: Download all bounded evidence artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -637,19 +936,76 @@ jobs:
           RESUME_2_RESULT: ${{ needs.resume-slot-2.result }}
           FROM_RELEASE: ${{ inputs.from_release }}
           TO_RELEASE: ${{ inputs.to_release }}
+          PROOF_CHANNEL_URL: ${{ inputs.proof_channel_url }}
+          PROOF_PAIR_SHA256: ${{ env.PKG_PROOF_PAIR_SHA256 }}
         run: |
           set -euo pipefail
           test "$PREPARE_1_RESULT" = success
           test "$RESUME_1_RESULT" = success
           test "$PREPARE_2_RESULT" = success
           test "$RESUME_2_RESULT" = success
-          python3 -I - "$RUNNER_TEMP/pkg-macos-proof-results" <<'PY'
+          python3 -I - "$RUNNER_TEMP/pkg-macos-proof-results" \
+            "$RUNNER_TEMP/pkg-macos-hosted-acquisition/hosted-acquisition.txt" <<'PY'
           import os
           import pathlib
           import re
           import sys
+          import urllib.parse
 
           root = pathlib.Path(sys.argv[1])
+          receipt_path = pathlib.Path(sys.argv[2])
+          if (receipt_path.is_symlink() or not receipt_path.is_file()
+                  or receipt_path.stat().st_size > 4096):
+              raise SystemExit("hosted acquisition receipt is absent or unsafe")
+          def records(path):
+              values = {}
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  key, separator, value = line.partition("=")
+                  if separator != "=" or not key or key in values:
+                      raise SystemExit("phase evidence is malformed")
+                  values[key] = value
+              return values
+          raw_url = os.environ["PROOF_CHANNEL_URL"]
+          url = urllib.parse.urlsplit(raw_url)
+          normalized_url = urllib.parse.urlunsplit(
+              (url.scheme.lower(), url.netloc.lower(), url.path, "", "")
+          )
+          receipt = records(receipt_path)
+          if receipt != {
+              "schema": "PKG-DN16-HOSTED-ACQUISITION-V1",
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "workflow_sha": os.environ["GITHUB_WORKFLOW_SHA"],
+              "channel_url": normalized_url,
+              "proof_pair_sha256": os.environ["PROOF_PAIR_SHA256"],
+              "product_commit": "8ffd325a4be12a998f3a5684097b57841a11540e",
+              "from_release": os.environ["FROM_RELEASE"],
+              "to_release": os.environ["TO_RELEASE"],
+              "n_name": "n",
+              "n_sequence": "1",
+              "n_inventory_length": "5957",
+              "n_inventory_sha256":
+                  "1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063",
+              "n_trusted_root_sha256":
+                  "1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90",
+              "n_verified_count": "34",
+              "n_total_bytes": "328981460",
+              "n_rows_sha256":
+                  "0752cca28ed3d1502b2cf99ed1faee4159d1a72f6401129ea2cdd3bc55ec3172",
+              "n_plus_1_name": "n-plus-1",
+              "n_plus_1_sequence": "2",
+              "n_plus_1_inventory_length": "5957",
+              "n_plus_1_inventory_sha256":
+                  "f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9",
+              "n_plus_1_trusted_root_sha256":
+                  "1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90",
+              "n_plus_1_verified_count": "34",
+              "n_plus_1_total_bytes": "328981448",
+              "n_plus_1_rows_sha256":
+                  "2ec4759315dd56996db25b20946710416cce479f25a1b3cdd770aa9b40e06241",
+              "status": "complete",
+          }:
+              raise SystemExit("hosted acquisition receipt is invalid")
           expected_artifacts = {
               f"pkg-macos-lifecycle-evidence-{slot}-{phase}"
               for slot in (1, 2) for phase in ("prepare", "resume")
@@ -662,19 +1018,15 @@ jobs:
               for phase in ("prepare", "resume"):
                   evidence = root / f"pkg-macos-lifecycle-evidence-{slot}-{phase}"
                   preflight = evidence / "preflight.txt"
+                  acquisition = evidence / "vm-acquisition.txt"
                   result = evidence / "result.txt"
                   matrix = evidence / "results.tsv"
-                  for path, maximum in ((preflight, 1024), (result, 1024), (matrix, 65536)):
+                  for path, maximum in (
+                      (preflight, 1024), (acquisition, 1024), (result, 1024),
+                      (matrix, 65536),
+                  ):
                       if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
                           raise SystemExit("phase evidence is absent or unsafe")
-                  def records(path):
-                      values = {}
-                      for line in path.read_text(encoding="utf-8").splitlines():
-                          key, separator, value = line.partition("=")
-                          if separator != "=" or key in values:
-                              raise SystemExit("phase evidence is malformed")
-                          values[key] = value
-                      return values
                   identity = records(preflight)
                   runner = f"pkg-dn16-proof-runner-{slot}"
                   boot_pattern = (
@@ -707,6 +1059,20 @@ jobs:
                           raise SystemExit("the preflight reboot marker digest is invalid")
                   elif identity["reboot_marker_sha256"] != "none":
                       raise SystemExit("resume unexpectedly bound a reboot marker")
+                  if records(acquisition) != {
+                      "schema": "PKG-DN16-VM-ACQUISITION-V1",
+                      "run_id": os.environ["GITHUB_RUN_ID"],
+                      "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                      "lifecycle_run": str(slot),
+                      "phase": phase,
+                      "runner_name": runner,
+                      "proof_pair_sha256": os.environ["PROOF_PAIR_SHA256"],
+                      "logical_fetches": "21",
+                      "proof_input_bytes": "36923175",
+                      "response_bytes": "36936188",
+                      "status": "complete",
+                  }:
+                      raise SystemExit("VM acquisition evidence does not match its phase")
                   outcome = records(result)
                   if outcome != {
                       "lifecycle_run": str(slot),
