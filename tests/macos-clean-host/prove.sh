@@ -33,9 +33,9 @@ for tag in "$PKG_PROOF_FROM_RELEASE" "$PKG_PROOF_TO_RELEASE"; do
         || fail "a release tag is invalid"
 done
 [ "$PKG_PROOF_FROM_RELEASE" != "$PKG_PROOF_TO_RELEASE" ] || fail "the release tags are equal"
-[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.16 ] \
+[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.18 ] \
     || fail "the release N tag is not the reviewed final release"
-[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.17 ] \
+[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.19 ] \
     || fail "the release N+1 tag is not the reviewed final release"
 
 root=$PKG_PROOF_ROOT

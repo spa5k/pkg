@@ -60,45 +60,45 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             validate.index('[[ "$count" =~ ^[1-9][0-9]*$ ]]'),
             validate.index('gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/'),
         )
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-16", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-17", WORKFLOW)
         self.assertIn(
-            "PKG_REVIEWED_COMMIT: dd66653c6512d98633e3550e68f478687ee817b5",
+            "PKG_REVIEWED_COMMIT: 118f41dde97de3825a91a395f39f8094e42ffc86",
             WORKFLOW,
         )
         for final_value in (
-            "PKG_PROOF_PAIR_SHA256: 1b33f0707d3f6b393bebfbd228e30067cf0f5e96400162763a193b976d6bac9d",
+            "PKG_PROOF_PAIR_SHA256: 35088d4fa25cd827f641d28f63f6caa0d72fa031be6fc10ee842d0fe0c16962f",
             "PKG_PROOF_PAIR_LENGTH: 1101",
-            "PKG_PROOF_N_INVENTORY_SHA256: 53a207b121896816f7622a7894cabda163c22c89dbdc83ec89bcc75224c70e48",
+            "PKG_PROOF_N_INVENTORY_SHA256: 2def0fd1f2f64cca46c02c102514ebaa18c19d9f2becf9e9d20e0aa366f39381",
             "PKG_PROOF_N_INVENTORY_LENGTH: 5959",
-            "PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: 7d90f7587afd298c7ba43086704c5423e6dbcdfbe16d7a63e5f60d07bf1d7a41",
+            "PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: 8c0acc759f1361aca19efdbacb93ff48c8ac6b93826a6ad67d57f5a938b749bf",
             "PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH: 5959",
-            "PKG_PROOF_N_TOTAL_BYTES: 328981309",
-            "PKG_PROOF_N_ROWS_SHA256: f1e66ca5e0617c1fbc28385166dd5b0d71e588c2f23d477b6aa84dbfb778ea8f",
-            "PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328585720",
-            "PKG_PROOF_N_PLUS_1_ROWS_SHA256: e8fa87b8a92bd8180d543a22a4bf124b7bc535895b6ffbc22286cc1420905147",
-            "PKG_PROOF_INPUT_BYTES: 35956916",
-            "PKG_PROOF_RESPONSE_BYTES: 35969935",
+            "PKG_PROOF_N_TOTAL_BYTES: 328961162",
+            "PKG_PROOF_N_ROWS_SHA256: ec28d9b3ef2ec9675d2a8597be0e92c16758b87d5a324ff04e45d8200d4dcac3",
+            "PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328596932",
+            "PKG_PROOF_N_PLUS_1_ROWS_SHA256: db47151479caf4474fc30df7d22833ac46acd444d90c395f6dbbe2a76f748ffb",
+            "PKG_PROOF_INPUT_BYTES: 35941918",
+            "PKG_PROOF_RESPONSE_BYTES: 35954937",
         ):
             self.assertEqual(WORKFLOW.count(final_value), 1)
         self.assertNotIn("REPLACE_WITH_FINAL", WORKFLOW)
         for stale_value in (
+            "dn16-macos-proof-workflow-16",
             "dn16-macos-proof-workflow-15",
-            "dn16-macos-proof-workflow-14",
-            "76d6a455eef83802498b071c15da0704036ce634",
-            "c91758f7fd32982bff898ab9ff61b6be4d2281303d14e54075496af27366d36d",
-            "9141f227c2120259ffd1d5f99c9f7a685e419b6bcd2240e223b8f92e2342fdb6",
-            "aa1aad4eaa330f8774fb2db53b904542bfe76544b2cc2f24f0b9a11e7f7fba23",
-            "285d05343e77ec46ea2097a70e8f0234dffec8a6991249ea5ceb57724632274c",
-            "6f5a2146d9c10c9ca8e6db943dfefdfd7d6d450d9977f526bf0239f2fb913e98",
+            "dd66653c6512d98633e3550e68f478687ee817b5",
+            "1b33f0707d3f6b393bebfbd228e30067cf0f5e96400162763a193b976d6bac9d",
+            "53a207b121896816f7622a7894cabda163c22c89dbdc83ec89bcc75224c70e48",
+            "7d90f7587afd298c7ba43086704c5423e6dbcdfbe16d7a63e5f60d07bf1d7a41",
+            "f1e66ca5e0617c1fbc28385166dd5b0d71e588c2f23d477b6aa84dbfb778ea8f",
+            "e8fa87b8a92bd8180d543a22a4bf124b7bc535895b6ffbc22286cc1420905147",
         ):
             self.assertNotIn(stale_value, WORKFLOW)
-        self.assertIn('test "$FROM_RELEASE" = v0.1.0-alpha.16', WORKFLOW)
-        self.assertIn('test "$TO_RELEASE" = v0.1.0-alpha.17', WORKFLOW)
+        self.assertIn('test "$FROM_RELEASE" = v0.1.0-alpha.18', WORKFLOW)
+        self.assertIn('test "$TO_RELEASE" = v0.1.0-alpha.19', WORKFLOW)
         self.assertIn(
-            '[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.16 ]', PROOF
+            '[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.18 ]', PROOF
         )
         self.assertIn(
-            '[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.17 ]', PROOF
+            '[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.19 ]', PROOF
         )
 
     def test_persistent_handoff_lock_has_exact_residue_metadata(self) -> None:
