@@ -153,6 +153,22 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertEqual(producer.count("INVENTORY"), 1)
         self.assertEqual(producer.count("SHA256SUMS"), 1)
 
+    def test_harness_modes_are_restored_only_after_hash_verification(self) -> None:
+        phase = self.job("prepare-slot-1", "resume-slot-1")
+        verifier = phase.split("      - name: Verify the harness inventory\n", 1)[1].split(
+            "\n      - name: Download authenticated proof inputs", 1
+        )[0]
+        checksum = "shasum -a 256 --check SHA256SUMS"
+        executable = "chmod 0755 ./prove.sh ./pkg-installer-tests"
+        controls = (
+            "chmod 0644 ./README.md ./INVENTORY ./SHA256SUMS ./EXPECTED "
+            "./CHECKSUM_PATHS"
+        )
+        self.assertLess(verifier.index(checksum), verifier.index(executable))
+        self.assertLess(verifier.index(checksum), verifier.index(controls))
+        chmods = [line.strip() for line in phase.splitlines() if line.strip().startswith("chmod")]
+        self.assertEqual(chmods, [executable, controls])
+
     def test_prepare_creates_state_under_n_before_the_offline_upgrade(self) -> None:
         install = PROOF.index('capture package-state-install "$pkg"')
         stop = PROOF.index("persist_prepare_state", install)

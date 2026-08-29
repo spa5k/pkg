@@ -499,6 +499,8 @@ jobs:
           awk '{print $2}' SHA256SUMS | LC_ALL=C sort > CHECKSUM_PATHS
           cmp EXPECTED CHECKSUM_PATHS
           shasum -a 256 --check SHA256SUMS
+          chmod 0755 ./prove.sh ./pkg-installer-tests
+          chmod 0644 ./README.md ./INVENTORY ./SHA256SUMS ./EXPECTED ./CHECKSUM_PATHS
 
       - name: Download authenticated proof inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
