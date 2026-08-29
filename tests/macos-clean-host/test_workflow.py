@@ -38,7 +38,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-4", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-5", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
@@ -59,6 +59,17 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertNotIn("matrix:", WORKFLOW)
         positions = [WORKFLOW.index(f"\n  {job}:\n") for job, _, _ in expected]
         self.assertEqual(positions, sorted(positions))
+
+    def test_each_destructive_phase_allows_six_hours(self) -> None:
+        phases = (
+            ("prepare-slot-1", "resume-slot-1"),
+            ("resume-slot-1", "prepare-slot-2"),
+            ("prepare-slot-2", "resume-slot-2"),
+            ("resume-slot-2", "aggregate"),
+        )
+        for job, following in phases:
+            self.assertIn("timeout-minutes: 360", self.job(job, following))
+        self.assertEqual(WORKFLOW.count("timeout-minutes: 360"), len(phases))
 
     def test_each_phase_has_the_exact_runner_identity(self) -> None:
         for slot in (1, 2):

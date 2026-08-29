@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-4
+        description: Exact commit signed by dn16-macos-proof-workflow-5
         required: true
         type: string
       proof_channel_url:
@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-4
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-5
   PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
@@ -393,7 +393,7 @@ jobs:
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
     runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-1"]
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-1
       PKG_PROOF_LIFECYCLE_RUN: "1"
@@ -533,7 +533,7 @@ jobs:
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
     runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-1"]
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-1
       PKG_PROOF_LIFECYCLE_RUN: "1"
@@ -547,7 +547,7 @@ jobs:
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
     runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-2"]
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-2
       PKG_PROOF_LIFECYCLE_RUN: "2"
@@ -561,7 +561,7 @@ jobs:
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
     runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-2"]
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-2
       PKG_PROOF_LIFECYCLE_RUN: "2"
