@@ -655,7 +655,7 @@
     <div class="wrap">
       <p class="eyebrow">Verified architecture update · 29 August 2026</p>
       <h1>Code-ready is not proof-complete</h1>
-      <p class="lede">Linux passed its native lifecycle proof. The macOS production code and proof structure passed local review. Native macOS proof is still blocked by external runners, signed shipping inputs, staged channels, and reboot recovery.</p>
+      <p class="lede">Linux passed its native lifecycle proof. The macOS code, signed private inputs, and temporary proof channel are prepared. Native macOS proof still waits for fresh disposable runners and real reboot evidence.</p>
       <div class="status-row" aria-label="Report status">
         <span class="pill complete">Linux native proof passed twice</span>
         <span class="pill next">macOS code reviewed and backed up</span>
@@ -671,6 +671,7 @@
         <h2 id="current-report-title">The honest state of the Determinate cutover</h2>
         <p class="current-intro">This section is the current source of truth. It separates code, review, native proof, and external proof. The large earlier report remains below as design history and agent-review context.</p>
         <nav class="report-nav" aria-label="Current report sections">
+          <a href="#execution-window">Execution now</a>
           <a href="#current-status">Status</a>
           <a href="#current-ownership">Ownership</a>
           <a href="#current-trust">Trust</a>
@@ -683,6 +684,134 @@
           <a href="#current-cleanup">Disk cleanup</a>
         </nav>
       </header>
+
+      <section id="execution-window" aria-labelledby="execution-window-title">
+        <h3 id="execution-window-title">0. The native proof is prepared, but it has not started</h3>
+        <p>The DN-16 proof inputs are now signed and available in two private draft releases. The proof channel is live through a temporary tunnel. The first disposable Mac was prepared. Its GitHub runner registration was then removed. GitHub has zero registered runners now.</p>
+
+        <div class="plain-warning" role="note">
+          <strong>No release was published. Native macOS proof is not complete.</strong>
+          <p>A short-lived runner registration token was exposed. The safe response is to treat it as compromised. No proof run will start before the conservative expiry wait ends at <strong>01:47 UTC</strong>.</p>
+        </div>
+
+        <div class="current-summary-grid" aria-label="Current DN-16 execution status">
+          <article class="truth-card">
+            <strong>Integration: backed up</strong>
+            <p>Remote head <code>bec81aa</code> joins the reviewed proof protocol work.</p>
+          </article>
+          <article class="truth-card">
+            <strong>Inputs: signed and private</strong>
+            <p>Signer runs <code>33222741082</code> and <code>33222861905</code> succeeded. Both releases are drafts.</p>
+          </article>
+          <article class="truth-card ready">
+            <strong>Channel: remotely checked</strong>
+            <p>The temporary channel has 53 files and 621,050,177 bytes. Full remote verification passed.</p>
+          </article>
+          <article class="truth-card blocked">
+            <strong>Native run: waiting</strong>
+            <p>Slot 1 is prepared, but its registration was removed. There are zero current runners and no dispatch.</p>
+          </article>
+        </div>
+
+        <div class="status-lanes" role="img" aria-label="The reviewed protocol stack and signed private inputs are ready. The temporary proof channel is verified. The first runner registration was removed. The native proof waits for token expiry and has not been dispatched.">
+          <div class="status-lane">
+            <div class="lane-label"><strong>Protocol stack</strong><span>reviewed remote heads</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete"><code>5f6f02f</code><br>release inputs</div>
+              <div class="lane-step complete"><code>7b582a5</code><br>manifest rules</div>
+              <div class="lane-step complete"><code>73dd0b3</code><br>channel rules</div>
+              <div class="lane-step complete"><code>bec81aa</code><br>integration</div>
+            </div>
+          </div>
+          <div class="status-lane">
+            <div class="lane-label"><strong>Signed inputs</strong><span>private proof only</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Signed workflow tag</div>
+              <div class="lane-step complete">Two signer runs</div>
+              <div class="lane-step complete">Two private drafts</div>
+              <div class="lane-step complete">Remote channel checked</div>
+            </div>
+          </div>
+          <div class="status-lane">
+            <div class="lane-label"><strong>Runner lane</strong><span>native evidence absent</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Tart 2.36.0</div>
+              <div class="lane-step ready">Slot 1 prepared</div>
+              <div class="lane-step blocked">Registration removed</div>
+              <div class="lane-step blocked">Wait to 01:47 UTC</div>
+            </div>
+          </div>
+        </div>
+
+        <h4>The exact branch and signing chain</h4>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Exact DN-16 execution heads and signing facts">
+          <table class="decision-table">
+            <thead><tr><th>Item</th><th>Exact identity</th><th>What it proves</th><th>What it does not prove</th></tr></thead>
+            <tbody>
+              <tr><td>Release inputs</td><td><code>dn/16-proof-release-inputs</code><br><code>5f6f02f44f2c3647bba22afed6ae6c37eec127fb</code></td><td class="yes">Reviewed input protocol.</td><td class="no">No native lifecycle result.</td></tr>
+              <tr><td>Manifest protocol</td><td><code>dn/16-proof-manifest-protocol</code><br><code>7b582a58b080a533f0c6388cb2587bfca882df02</code></td><td class="yes">Reviewed manifest rules.</td><td class="no">No native lifecycle result.</td></tr>
+              <tr><td>Channel protocol</td><td><code>dn/16-proof-channel-protocol</code><br><code>73dd0b35095944911610de2537e3beef26f8ac8f</code></td><td class="yes">Reviewed immutable N to N+1 rules.</td><td class="no">No native lifecycle result.</td></tr>
+              <tr><td>Final integration</td><td><code>dn/16-proof-native-integration</code><br><code>bec81aa2fbbb80fb33a57e8b30c09359c0887ade</code></td><td class="yes">The reviewed parts are joined and backed up.</td><td class="no">No workflow dispatch.</td></tr>
+              <tr><td>Workflow identity</td><td><code>dn16-proof-workflow-1</code><br>signed tag object <code>4311b02</code><br>peeled commit <code>42c4244fba81a48d8aa5a5a28ca58948ec6fc2c7</code></td><td class="yes">The signer used one immutable, signed workflow revision.</td><td class="no">The tag is not a product release.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>The two private draft inputs</h4>
+        <p>The signer runs created private draft releases named <code>v0.1.0-alpha.8</code> and <code>v0.1.0-alpha.9</code>. Run <code>33222741082</code> signed the N input. Run <code>33222861905</code> signed the N+1 input. Both runs completed successfully. The workflow name contains the words “publish release,” but these two results are private drafts. Their public publication time is empty.</p>
+        <p>Both draft labels point to reviewed product commit <code>8ffd325a4be12a998f3a5684097b57841a11540e</code>. The native product binaries still report <code>0.1.0-alpha.7</code>. This is a known proof limitation. The alpha.8 and alpha.9 names are private sequence labels. They are not normal product versions, and they must not become public releases.</p>
+
+        <div class="diagram-frame">
+          <svg viewBox="0 0 1040 260" role="img" aria-labelledby="execution-svg-title execution-svg-desc">
+            <title id="execution-svg-title">Current DN-16 trust and execution flow</title>
+            <desc id="execution-svg-desc">A signed workflow tag created two private draft inputs. Both use one shared trusted root. A temporary verified channel serves them. The native proof is stopped before runner registration and dispatch.</desc>
+            <defs>
+              <marker id="execution-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9cd8c1"/></marker>
+            </defs>
+            <rect x="18" y="70" width="190" height="115" rx="14" fill="#173428" stroke="#72cfae" stroke-width="2"/>
+            <text x="113" y="108" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Signed workflow tag</text>
+            <text x="113" y="137" text-anchor="middle" fill="#bdd0c5" font-size="14">peels to 42c4244</text>
+            <text x="113" y="163" text-anchor="middle" fill="#bdd0c5" font-size="14">immutable signer</text>
+            <path d="M 208 128 L 288 128" stroke="#9cd8c1" stroke-width="4" marker-end="url(#execution-arrow)"/>
+            <rect x="298" y="38" width="220" height="82" rx="14" fill="#173428" stroke="#72cfae" stroke-width="2"/>
+            <text x="408" y="72" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Private N draft</text>
+            <text x="408" y="98" text-anchor="middle" fill="#bdd0c5" font-size="14">alpha.8 label · alpha.7 binary</text>
+            <rect x="298" y="142" width="220" height="82" rx="14" fill="#173428" stroke="#72cfae" stroke-width="2"/>
+            <text x="408" y="176" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Private N+1 draft</text>
+            <text x="408" y="202" text-anchor="middle" fill="#bdd0c5" font-size="14">alpha.9 label · alpha.7 binary</text>
+            <path d="M 518 79 L 613 112" stroke="#9cd8c1" stroke-width="4" marker-end="url(#execution-arrow)"/>
+            <path d="M 518 183 L 613 146" stroke="#9cd8c1" stroke-width="4" marker-end="url(#execution-arrow)"/>
+            <rect x="623" y="70" width="190" height="115" rx="14" fill="#173357" stroke="#8fb7ff" stroke-width="2"/>
+            <text x="718" y="108" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Verified channel</text>
+            <text x="718" y="137" text-anchor="middle" fill="#d9e7ff" font-size="14">53 files · 621,050,177 B</text>
+            <text x="718" y="163" text-anchor="middle" fill="#d9e7ff" font-size="14">one shared TUF root</text>
+            <path d="M 813 128 L 885 128" stroke="#dca86a" stroke-width="4" marker-end="url(#execution-arrow)"/>
+            <rect x="895" y="70" width="127" height="115" rx="14" fill="#4a3523" stroke="#dca86a" stroke-width="2"/>
+            <text x="958" y="108" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Stopped</text>
+            <text x="958" y="137" text-anchor="middle" fill="#f4dfc0" font-size="14">zero runners</text>
+            <text x="958" y="163" text-anchor="middle" fill="#f4dfc0" font-size="14">no dispatch</text>
+          </svg>
+          <p class="diagram-caption">The trust chain is ready through remote input verification. Native lifecycle evidence starts only after disposable runners register and the proof workflow runs.</p>
+        </div>
+
+        <h4>Exact trust and channel facts</h4>
+        <ul>
+          <li>The Cosign certificate identity is <code>https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1</code>.</li>
+          <li>The Cosign issuer is <code>https://token.actions.githubusercontent.com</code>.</li>
+          <li>Both inputs use TUF root SHA-256 <code>1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90</code>.</li>
+          <li>The active temporary Quick Tunnel serves exactly 53 files and 621,050,177 bytes. The complete remote file set passed verification.</li>
+          <li>Tart <code>2.36.0</code> prepared <code>pkg-dn16-proof-slot-1</code>. The VM is stopped. Its runner registration was removed.</li>
+          <li>GitHub currently reports zero repository runners. The macOS proof workflow has no run for this execution window.</li>
+        </ul>
+
+        <h4>What happens after the wait</h4>
+        <ol class="next-list">
+          <li><div><strong>Register two exact disposable runners.</strong><span>Use fresh credentials. Do not reuse the exposed token.</span></div></li>
+          <li><div><strong>Dispatch the immutable proof workflow.</strong><span>Use the reviewed integration head and the two authenticated private inputs.</span></div></li>
+          <li><div><strong>Collect two-phase native evidence.</strong><span>Prove install, N to N+1, reboot recovery, repair rules, and terminal uninstall.</span></div></li>
+          <li><div><strong>Publish nothing during proof.</strong><span>Keep both release inputs private. A successful run is evidence, not release approval.</span></div></li>
+        </ol>
+      </section>
 
       <section id="current-status" aria-labelledby="current-status-title">
         <h3 id="current-status-title">1. Current status in plain language</h3>
@@ -872,10 +1001,10 @@
             <p>A disposable Apple silicon VM must run launchd, install Base Nix, install pkg, reboot, recover, upgrade, repair, uninstall, and report residue.</p>
             <p><strong>Current result:</strong> not run for DN-16.</p>
           </article>
-          <article class="evidence-rung blocked">
+          <article class="evidence-rung ready">
             <h4>External publishing evidence</h4>
-            <p>Signed shipping inputs and a real immutable N/N+1 channel transition need external release and CDN state. Repository tests cannot create this fact.</p>
-            <p><strong>Current result:</strong> blocked.</p>
+            <p>Signed inputs and an immutable N/N+1 transition need state outside the repository. Repository tests cannot create this fact alone.</p>
+            <p><strong>Current result:</strong> private signed inputs and the temporary proof channel are verified. Permanent public CDN publishing remains undecided.</p>
           </article>
           <article class="evidence-rung blocked">
             <h4>Two-phase reboot evidence</h4>
@@ -924,7 +1053,7 @@
           <li class="blocked">
             <strong>External proof gate</strong>
             <code>not a branch</code>
-            <span>Runners, releases, staged channel, and reboot result.</span>
+            <span>Fresh runner registration and the native reboot result.</span>
           </li>
         </ol>
         <p>The proof branch is separate from production code. This keeps proof-only fault injection and destructive runner policy out of the production commit. The production branch stays unmerged until native Apple silicon evidence exists.</p>
@@ -975,18 +1104,18 @@
           </article>
         </div>
 
-        <p>The proof is intentionally fail-closed. It can validate compiled rules now. It records staged-channel upgrade and lifecycle reboot recovery as external blocked rows. It cannot report overall success while either row is blocked.</p>
+        <p>The proof is intentionally fail-closed. The staged channel inputs are now prepared. The proof still cannot report success until native runners complete the upgrade and lifecycle reboot recovery rows.</p>
       </section>
 
       <section id="current-blockers" aria-labelledby="current-blockers-title">
-        <h3 id="current-blockers-title">7. Four external blockers</h3>
+        <h3 id="current-blockers-title">7. Four proof gates: two prepared and two still open</h3>
         <ol class="blocker-list">
-          <li><strong>No registered disposable runners</strong>The two exact Apple silicon runner names and labels do not exist in GitHub yet. The proof cannot start safely.</li>
-          <li><strong>No two signed DN-16 shipping inputs</strong>There are no signed N and N+1 DN-16 package releases with signed <code>SHA256SUMS</code> and Cosign bundles. These inputs establish shipping identity.</li>
-          <li><strong>No immutable staged channel transition</strong>There is no real publisher and CDN route that can pin N, install it, then advance the same route to N+1. Package tags alone do not freeze live URLs.</li>
-          <li><strong>No two-phase lifecycle reboot recovery</strong>No native runner has completed phase one, rebooted, resumed phase two, and proved the full lifecycle on the same disposable instance.</li>
+          <li><strong>Open: no registered disposable runners</strong>The first Tart slot is prepared, but its registration was removed. GitHub has zero runners. Fresh credentials are required after the 01:47 UTC safety wait.</li>
+          <li><strong>Prepared: two signed private inputs</strong>The private alpha.8 and alpha.9 drafts have signed <code>SHA256SUMS</code> and Cosign bundles. They establish proof input identity. They are not public releases.</li>
+          <li><strong>Prepared for proof: immutable staged channel data</strong>The shared TUF root and the N and N+1 manifests are remotely verified through the temporary Quick Tunnel. A permanent real CDN route is still a separate shipping decision.</li>
+          <li><strong>Open: no two-phase lifecycle reboot recovery</strong>No native runner has completed phase one, rebooted, resumed phase two, and proved the full lifecycle on the same disposable instance.</li>
         </ol>
-        <p>These are not Rust defects. More repository code cannot make the external facts true. The next work needs explicit infrastructure and publishing authorization.</p>
+        <p>The remaining open gates are not Rust defects. More repository code cannot create native reboot evidence. The next safe action is fresh runner registration after the token expiry wait.</p>
       </section>
 
       <section id="current-decisions" aria-labelledby="current-decisions-title">
@@ -998,14 +1127,14 @@
             <div class="authorization"><strong>Authorization needed:</strong> permission to create, register, reboot, and destroy the two runner VMs.</div>
           </article>
           <article>
-            <h4>2. Choose the shipping input path</h4>
-            <p>Create two signed DN-16 tags or draft releases. Publish their package, CLI, manifest, <code>SHA256SUMS</code>, and Cosign bundles without making a production release.</p>
-            <div class="authorization"><strong>Authorization needed:</strong> permission to create tags or draft releases and upload signed artifacts.</div>
+            <h4>2. Private proof inputs are prepared</h4>
+            <p>Two authenticated draft releases now contain the package, CLI, manifest, <code>SHA256SUMS</code>, and Cosign bundles. They remain private.</p>
+            <div class="authorization"><strong>Result:</strong> the proof inputs exist. No product release was published.</div>
           </article>
           <article>
-            <h4>3. Choose the real channel path</h4>
-            <p>Use the actual CDN route and provider. Publish immutable state N. Install N. Then advance the same route to immutable state N+1 and run the upgrade.</p>
-            <div class="authorization"><strong>Authorization needed:</strong> provider choice, credentials, route ownership, and permission to publish and advance the staged channel.</div>
+            <h4>3. The temporary proof channel is prepared</h4>
+            <p>The Quick Tunnel exposes the remotely verified N and N+1 states for this proof window. A permanent CDN route and provider are still required before normal shipping.</p>
+            <div class="authorization"><strong>Later authorization:</strong> provider choice, route ownership, and normal publishing policy.</div>
           </article>
         </div>
 
@@ -1017,8 +1146,8 @@
         <h4>Shortest valid execution order</h4>
         <ol class="numbered-detail">
           <li><strong>Register two clean Tart runners.</strong>Confirm the exact names, labels, instance nonces, sudo behavior, and reboot record contract.</li>
-          <li><strong>Create authenticated N and N+1 shipping inputs.</strong>Both must resolve to reviewed DN-16 production head <code>8ffd325</code>. Their signed checksums must bind every proof input.</li>
-          <li><strong>Prepare immutable channel states.</strong>Use the existing compile-time URL and TUF model. Do not create a second channel protocol.</li>
+          <li><strong>Use the authenticated N and N+1 proof inputs.</strong>Both resolve to reviewed DN-16 production head <code>8ffd325</code>. Their signed checksums bind every proof input.</li>
+          <li><strong>Use the verified immutable channel states.</strong>Keep the existing compile-time URL and TUF model. Do not create a second channel protocol.</li>
           <li><strong>Dispatch the manual proof once.</strong>Use production mode false and the exact destructive confirmation. Do not run it on a developer Mac.</li>
           <li><strong>Review retained evidence.</strong>Inspect both lifecycle runs, reboot sessions, upgrade transition, uninstall ordering, failure rows, and vendor residue.</li>
           <li><strong>Merge only after proof.</strong>Keep production code and proof claims separate until both native runs pass.</li>
@@ -1079,7 +1208,7 @@
         <ul class="compact-facts">
           <li><strong>Accepted from review</strong><span>Thin executable boundary, no source fork, one owner per lifecycle, fail-closed recovery, proof before deletion.</span></li>
           <li><strong>Rejected from review</strong><span>Generic provider frameworks, a local certificate authority, a local proof server, private Nix, and proof claims based only on compiled tests.</span></li>
-          <li><strong>Still external</strong><span>Runner registration, signed shipping artifacts, real CDN publishing, immutable staged channel states, and native reboot recovery.</span></li>
+          <li><strong>Still external</strong><span>Fresh runner registration, native reboot recovery, and the later permanent CDN publishing decision.</span></li>
         </ul>
       </section>
     </article>
