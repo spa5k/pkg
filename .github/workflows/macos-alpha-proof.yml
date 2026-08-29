@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-14
+        description: Exact commit signed by dn16-macos-proof-workflow-15
         required: true
         type: string
       proof_channel_url:
@@ -39,21 +39,21 @@ concurrency:
 env:
   RUSTUP_TOOLCHAIN: "1.96.1"
   CARGO_TERM_COLOR: always
-  PKG_REVIEWED_COMMIT: 76d6a455eef83802498b071c15da0704036ce634
+  PKG_REVIEWED_COMMIT: dd66653c6512d98633e3550e68f478687ee817b5
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-14
-  PKG_PROOF_PAIR_SHA256: c91758f7fd32982bff898ab9ff61b6be4d2281303d14e54075496af27366d36d
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-15
+  PKG_PROOF_PAIR_SHA256: 1b33f0707d3f6b393bebfbd228e30067cf0f5e96400162763a193b976d6bac9d
   PKG_PROOF_PAIR_LENGTH: 1101
-  PKG_PROOF_N_INVENTORY_SHA256: 9141f227c2120259ffd1d5f99c9f7a685e419b6bcd2240e223b8f92e2342fdb6
+  PKG_PROOF_N_INVENTORY_SHA256: 53a207b121896816f7622a7894cabda163c22c89dbdc83ec89bcc75224c70e48
   PKG_PROOF_N_INVENTORY_LENGTH: 5959
-  PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: aa1aad4eaa330f8774fb2db53b904542bfe76544b2cc2f24f0b9a11e7f7fba23
+  PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: 7d90f7587afd298c7ba43086704c5423e6dbcdfbe16d7a63e5f60d07bf1d7a41
   PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH: 5959
-  PKG_PROOF_N_TOTAL_BYTES: 328981272
-  PKG_PROOF_N_ROWS_SHA256: 285d05343e77ec46ea2097a70e8f0234dffec8a6991249ea5ceb57724632274c
-  PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328972859
-  PKG_PROOF_N_PLUS_1_ROWS_SHA256: 6f5a2146d9c10c9ca8e6db943dfefdfd7d6d450d9977f526bf0239f2fb913e98
-  PKG_PROOF_INPUT_BYTES: 35610106
-  PKG_PROOF_RESPONSE_BYTES: 35623125
+  PKG_PROOF_N_TOTAL_BYTES: 328981309
+  PKG_PROOF_N_ROWS_SHA256: f1e66ca5e0617c1fbc28385166dd5b0d71e588c2f23d477b6aa84dbfb778ea8f
+  PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328585720
+  PKG_PROOF_N_PLUS_1_ROWS_SHA256: e8fa87b8a92bd8180d543a22a4bf124b7bc535895b6ffbc22286cc1420905147
+  PKG_PROOF_INPUT_BYTES: 35956916
+  PKG_PROOF_RESPONSE_BYTES: 35969935
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
 
@@ -192,8 +192,8 @@ jobs:
           umask 077
           [[ "$FROM_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
           [[ "$TO_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
-          test "$FROM_RELEASE" = v0.1.0-alpha.14
-          test "$TO_RELEASE" = v0.1.0-alpha.15
+          test "$FROM_RELEASE" = v0.1.0-alpha.16
+          test "$TO_RELEASE" = v0.1.0-alpha.17
           [[ "$PROOF_PAIR_SHA256" =~ ^[0-9a-f]{64}$ ]]
           from_sequence=${FROM_RELEASE##*.}
           to_sequence=${TO_RELEASE##*.}
@@ -1053,7 +1053,7 @@ jobs:
               "workflow_sha": os.environ["GITHUB_WORKFLOW_SHA"],
               "channel_url": normalized_url,
               "proof_pair_sha256": os.environ["PROOF_PAIR_SHA256"],
-              "product_commit": "76d6a455eef83802498b071c15da0704036ce634",
+              "product_commit": "dd66653c6512d98633e3550e68f478687ee817b5",
               "from_release": os.environ["FROM_RELEASE"],
               "to_release": os.environ["TO_RELEASE"],
               "n_name": "n",
