@@ -38,9 +38,10 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-2", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
-            "2f8ef35f460c0e36357a3922d073c14931446cc639e27df96d5cb46a5308e609",
+            "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
             WORKFLOW,
         )
 
@@ -96,10 +97,12 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             "--max-filesize",
             'test "$response" = "200 $url"',
             "proof-pair.json",
+            '[[ "$PROOF_PAIR_SHA256" =~ ^[0-9a-f]{64}$ ]]',
             "channel-files.tsv",
             'fetch "$PROOF_CHANNEL_URL/$name/$path"',
             "proof inventory has missing or extra entries",
-            "select(.isDraft == true)",
+            "proof-inputs/pkg-aarch64-darwin.sigstore.json",
+            'pair["productCommit"] == reviewed_commit',
             "SHA256SUMS.sigstore.json",
             'cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json"',
             "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
@@ -108,6 +111,12 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             self.assertIn(required, acquire)
         self.assertNotIn("--location", acquire)
         self.assertNotIn("or .isPrerelease", acquire)
+        self.assertNotIn("GH_TOKEN", acquire)
+        self.assertNotIn("gh release", acquire)
+        self.assertNotIn("gh api", acquire)
+        self.assertNotIn("/releases", acquire)
+        self.assertNotIn("gh release", WORKFLOW)
+        self.assertNotIn("/releases", WORKFLOW)
         self.assertNotIn("assert ", acquire)
         self.assertIn("python3 -I -", acquire)
 

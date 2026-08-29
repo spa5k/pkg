@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-1
+        description: Exact commit signed by dn16-macos-proof-workflow-2
         required: true
         type: string
       proof_channel_url:
@@ -41,8 +41,8 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-1
-  PKG_PROOF_PAIR_SHA256: 2f8ef35f460c0e36357a3922d073c14931446cc639e27df96d5cb46a5308e609
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-2
+  PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
 
@@ -155,7 +155,6 @@ jobs:
       - name: Download and authenticate signed release inputs
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           FROM_RELEASE: ${{ inputs.from_release }}
           TO_RELEASE: ${{ inputs.to_release }}
           PROOF_CHANNEL_URL: ${{ inputs.proof_channel_url }}
@@ -210,6 +209,7 @@ jobs:
             fetch "$PROOF_CHANNEL_URL/$path" "$root/channel/$path" 65536
           done
           python3 -I - "$root/channel" "$FROM_RELEASE" "$TO_RELEASE" \
+            "$PKG_REVIEWED_COMMIT" \
             >"$root/channel-files.tsv" <<'PY'
           import hashlib
           import json
@@ -223,9 +223,15 @@ jobs:
 
           root = pathlib.Path(sys.argv[1])
           releases = sys.argv[2:4]
+          reviewed_commit = sys.argv[4]
           pair = json.loads((root / "proof-pair.json").read_bytes())
-          require(set(pair) == {"schemaVersion", "channels"}, "invalid proof pair")
+          require(set(pair) == {"schemaVersion", "channels", "productCommit"},
+                  "invalid proof pair")
           require(pair["schemaVersion"] == 1, "invalid proof pair schema")
+          require(isinstance(pair["productCommit"], str)
+                  and re.fullmatch(r"[0-9a-f]{40}", pair["productCommit"]) is not None
+                  and pair["productCommit"] == reviewed_commit,
+                  "proof pair product commit mismatch")
           require(isinstance(pair["channels"], list) and len(pair["channels"]) == 2,
                   "invalid proof pair channels")
           roots = set()
@@ -283,9 +289,22 @@ jobs:
                           and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None,
                           "invalid proof file identity")
                   files[path] = item
+              version = release[1:]
+              proof_inputs = {
+                  "proof-inputs/SHA256SUMS",
+                  "proof-inputs/SHA256SUMS.sigstore.json",
+                  "proof-inputs/release-manifest.json",
+                  "proof-inputs/COSIGN_IDENTITY.txt",
+                  "proof-inputs/COSIGN_ISSUER.txt",
+                  f"proof-inputs/pkg-{version}-preview.pkg",
+                  f"proof-inputs/pkg-{version}-preview.pkg.sigstore.json",
+                  "proof-inputs/pkg-aarch64-darwin",
+                  "proof-inputs/pkg-aarch64-darwin.sigstore.json",
+              }
               fixed = {"root.json", "release-manifest.json", "signing-audit.ndjson", *required}
-              require(set(files) >= fixed
-                      and all(path in fixed or path.startswith("targets/") for path in files)
+              require(set(files) >= fixed | proof_inputs
+                      and all(path in fixed or path in proof_inputs
+                              or path.startswith("targets/") for path in files)
                       and any(path.startswith("targets/") for path in files),
                       "proof inventory has missing or extra entries")
               require(list(files) == sorted(files), "proof inventory is not canonical")
@@ -302,32 +321,26 @@ jobs:
             test "$(stat -f '%z' "$output")" -eq "$length"
             test "$(shasum -a 256 "$output" | awk '{print $1}')" = "$sha"
           done < "$root/channel-files.tsv"
-          from_source_commit=$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/$FROM_RELEASE" --jq .sha)
-          to_source_commit=$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/$TO_RELEASE" --jq .sha)
-          [[ "$from_source_commit" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$to_source_commit" =~ ^[0-9a-f]{40}$ ]]
-          test "$from_source_commit" = "$PKG_REVIEWED_COMMIT"
-          test "$to_source_commit" = "$PKG_REVIEWED_COMMIT"
-          printf '%s\n' "$from_source_commit" > "$root/evidence/from-source-commit.txt"
-          printf '%s\n' "$to_source_commit" > "$root/evidence/to-source-commit.txt"
           install -d -m 0700 "$root/candidate/from" "$root/candidate/to" "$root/evidence"
+          printf '%s\n' "$PKG_REVIEWED_COMMIT" > "$root/evidence/from-source-commit.txt"
+          printf '%s\n' "$PKG_REVIEWED_COMMIT" > "$root/evidence/to-source-commit.txt"
           identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
           issuer=https://token.actions.githubusercontent.com
-          for pair in "from:$FROM_RELEASE" "to:$TO_RELEASE"; do
-            side=${pair%%:*}
-            tag=${pair#*:}
+          for selection in "from:n:$FROM_RELEASE" "to:n-plus-1:$TO_RELEASE"; do
+            side=${selection%%:*}
+            remainder=${selection#*:}
+            channel_name=${remainder%%:*}
+            tag=${remainder#*:}
             version=${tag#v}
             dir="$root/candidate/$side"
-            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease \
-              --jq 'select(.isDraft == true) | true' | grep -Fx true >/dev/null
             for asset in SHA256SUMS SHA256SUMS.sigstore.json \
               release-manifest.json COSIGN_IDENTITY.txt COSIGN_ISSUER.txt \
               "pkg-$version-preview.pkg" "pkg-$version-preview.pkg.sigstore.json" \
               pkg-aarch64-darwin pkg-aarch64-darwin.sigstore.json; do
-              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$dir"
+              install -m 0600 "$root/channel/$channel_name/proof-inputs/$asset" "$dir/$asset"
             done
+            cmp "$root/channel/$channel_name/release-manifest.json" \
+              "$dir/release-manifest.json"
             cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json" \
               --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
               "$dir/SHA256SUMS" >/dev/null

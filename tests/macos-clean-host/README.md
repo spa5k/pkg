@@ -3,7 +3,7 @@
 This workflow is the destructive DN-16 lifecycle proof.
 The manual GitHub workflow is the only supported entry point.
 It uses one dispatch.
-It keeps both release candidates as private drafts.
+It does not publish either private draft release.
 
 ## Fixed execution order
 
@@ -41,17 +41,18 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-1` annotated tag.
+`dn16-macos-proof-workflow-2` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
 
-A hosted macOS job acquires the proof inputs once.
-It accepts only private draft releases.
+A hosted macOS job acquires the proof inputs once from the sealed channel.
+It does not use the GitHub release API or download from a draft release.
+Each channel inventory contains a `proof-inputs/` copy of the nine release files used by the proof.
 It authenticates each `SHA256SUMS` with its Sigstore bundle.
 It authenticates both preview packages and both Apple Silicon CLIs.
 Each authenticated `SHA256SUMS` binds the selected package, CLI, and release manifest.
-Both release tags must resolve to reviewed DN-16 commit
+The pinned pair binds both releases to reviewed DN-16 product commit
 `8ffd325a4be12a998f3a5684097b57841a11540e`.
 
 The channel download rejects redirects.
@@ -59,8 +60,8 @@ It uses HTTPS only.
 It rejects credentials, query text, fragments, traversal, unsafe paths, missing entries, and extra entries.
 It downloads every inventory-listed metadata and target file before a destructive job starts.
 It verifies every listed length and SHA-256.
-The current sealed pair has 50 inventory-listed files.
-The two channel manifests must match the authenticated draft manifests.
+The successor sealed pair contains the original 50 files and 18 sealed proof inputs.
+The two channel manifests must match the authenticated proof-input manifests.
 The Apple Silicon CLI and Sigstore bundle must match the channel manifest.
 The two channels must use the same trusted root.
 

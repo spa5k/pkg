@@ -303,8 +303,11 @@ require(all(not path.is_symlink() and (path.is_file() or path.is_dir())
             for path in channel.rglob("*")),
         "downloaded proof pair contains a symlink or special file")
 pair = json.loads((channel / "proof-pair.json").read_bytes())
-require(set(pair) == {"schemaVersion", "channels"}, "invalid proof pair")
+require(set(pair) == {"schemaVersion", "channels", "productCommit"},
+        "invalid proof pair")
 require(pair["schemaVersion"] == 1, "invalid proof pair schema")
+require(pair["productCommit"] == "8ffd325a4be12a998f3a5684097b57841a11540e",
+        "proof pair product commit mismatch")
 require(isinstance(pair["channels"], list) and len(pair["channels"]) == 2,
         "invalid proof pair channels")
 roots = set()
@@ -363,8 +366,21 @@ for record, name, sequence, release, sealed_path in zip(
         "root.json", "release-manifest.json", "signing-audit.ndjson",
         *record["requiredMetadataPaths"],
     }
-    require(set(files) >= fixed
-            and all(path in fixed or path.startswith("targets/") for path in files)
+    version = release[1:]
+    proof_inputs = {
+        "proof-inputs/SHA256SUMS",
+        "proof-inputs/SHA256SUMS.sigstore.json",
+        "proof-inputs/release-manifest.json",
+        "proof-inputs/COSIGN_IDENTITY.txt",
+        "proof-inputs/COSIGN_ISSUER.txt",
+        f"proof-inputs/pkg-{version}-preview.pkg",
+        f"proof-inputs/pkg-{version}-preview.pkg.sigstore.json",
+        "proof-inputs/pkg-aarch64-darwin",
+        "proof-inputs/pkg-aarch64-darwin.sigstore.json",
+    }
+    require(set(files) >= fixed | proof_inputs
+            and all(path in fixed or path in proof_inputs
+                    or path.startswith("targets/") for path in files)
             and any(path.startswith("targets/") for path in files),
             "proof inventory has missing or extra entries")
     require(list(files) == sorted(files), "proof inventory is not canonical")
@@ -398,7 +414,7 @@ for record, name, sequence, release, sealed_path in zip(
     channel_manifest = json.loads((channel / name / "release-manifest.json").read_bytes())
     release_manifest = json.loads(sealed_path.read_bytes())
     require(channel_manifest == release_manifest,
-            "channel manifest does not match signed draft manifest")
+            "channel manifest does not match authenticated proof-input manifest")
     require(channel_manifest.get("releaseId") == release
             and channel_manifest.get("channelSequence") == sequence
             and channel_manifest.get("timestampVersion") == sequence
