@@ -7,9 +7,8 @@ use pkg_nix::{
 use rustix::fs::{Dir, FileType, Mode, OFlags, fstat, open, openat};
 
 use crate::{
-    LinuxAssetKind, LinuxAssetPrincipal, LinuxFilesystemManager, LinuxInstallAsset,
-    LinuxReleasePayloads, MacOsAssetKind, MacOsAssetPrincipal, MacOsError, MacOsInstallAsset,
-    UninstallManifest,
+    LinuxFilesystemManager, LinuxInstallAsset, LinuxReleasePayloads, MacOsError, MacOsInstallAsset,
+    UninstallManifest, linux_filesystem::map_macos_filesystem_asset,
 };
 
 /// Reuses the production no-follow writer with the closed macOS asset set.
@@ -20,7 +19,9 @@ pub struct MacOsFilesystemManager {
 impl MacOsFilesystemManager {
     #[cfg(test)]
     pub(crate) const fn from_linux_for_test(inner: LinuxFilesystemManager) -> Self {
-        Self { inner }
+        Self {
+            inner: inner.for_macos(),
+        }
     }
 
     pub(crate) fn new(
@@ -31,7 +32,8 @@ impl MacOsFilesystemManager {
         let payloads = LinuxReleasePayloads::from_authenticated_bundle(payloads)
             .map_err(|_| MacOsError::backend_failure())?;
         let inner = LinuxFilesystemManager::new(groups, broker_uid, payloads)
-            .map_err(|_| MacOsError::backend_failure())?;
+            .map_err(|_| MacOsError::backend_failure())?
+            .for_macos();
         Ok(Self { inner })
     }
 
@@ -266,28 +268,5 @@ pub fn verify_inert_nix_mountpoint() -> Result<(), MacOsError> {
 }
 
 fn map(asset: MacOsInstallAsset) -> Result<LinuxInstallAsset, MacOsError> {
-    let kind = match asset.kind() {
-        MacOsAssetKind::Directory => LinuxAssetKind::Directory,
-        MacOsAssetKind::File => LinuxAssetKind::File,
-        MacOsAssetKind::User | MacOsAssetKind::Group => return Err(MacOsError::backend_failure()),
-    };
-    let owner = map_principal(asset.owner().ok_or_else(MacOsError::backend_failure)?)?;
-    let group = map_principal(asset.group().ok_or_else(MacOsError::backend_failure)?)?;
-    Ok(LinuxInstallAsset::platform_filesystem(
-        asset.id(),
-        kind,
-        asset.path_or_name(),
-        asset.mode().ok_or_else(MacOsError::backend_failure)?,
-        owner,
-        group,
-    ))
-}
-
-const fn map_principal(principal: MacOsAssetPrincipal) -> Result<LinuxAssetPrincipal, MacOsError> {
-    match principal {
-        MacOsAssetPrincipal::Root | MacOsAssetPrincipal::Wheel => Ok(LinuxAssetPrincipal::Root),
-        MacOsAssetPrincipal::Broker => Ok(LinuxAssetPrincipal::Broker),
-        MacOsAssetPrincipal::Build => Ok(LinuxAssetPrincipal::BuildUsers),
-        MacOsAssetPrincipal::Admin => Err(MacOsError::backend_failure()),
-    }
+    map_macos_filesystem_asset(asset).map_err(|_| MacOsError::backend_failure())
 }

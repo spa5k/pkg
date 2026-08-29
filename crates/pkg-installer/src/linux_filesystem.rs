@@ -25,8 +25,9 @@ use sha2::{Digest as _, Sha256};
 use crate::bootstrap::validate_linux_auth_datastore_file;
 use crate::linux_user_cleanup::remove_owned_tree;
 use crate::{
-    LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets, MacOsLaunchdAssets,
-    UninstallManifest, assets::is_linux_product_asset, encode_uninstall_manifest,
+    LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets, MacOsAssetKind,
+    MacOsAssetPrincipal, MacOsInstallAsset, MacOsLaunchdAssets, UninstallManifest,
+    assets::is_linux_product_asset, encode_uninstall_manifest, macos_product_install_assets,
 };
 
 const MAX_RELEASE_BINARY_BYTES: usize = 128 * 1024 * 1024;
@@ -214,6 +215,12 @@ struct AttemptOwnership {
     target_uncertain: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManagedAssetSet {
+    Linux,
+    MacOs,
+}
+
 impl AttemptOwnership {
     const fn pending() -> Self {
         Self {
@@ -229,6 +236,7 @@ impl AttemptOwnership {
 pub struct LinuxFilesystemManager {
     root: PathBuf,
     principals: PrincipalBindings,
+    managed_assets: ManagedAssetSet,
     payloads: LinuxReleasePayloads,
     authenticated_config: Option<Arc<[u8]>>,
     uninstall_manifest: Option<Arc<[u8]>>,
@@ -240,6 +248,7 @@ impl fmt::Debug for LinuxFilesystemManager {
         formatter
             .debug_struct("LinuxFilesystemManager")
             .field("root", &self.root)
+            .field("managed_assets", &self.managed_assets)
             .field("payloads", &self.payloads)
             .field("config_bound", &self.authenticated_config.is_some())
             .field(
@@ -274,6 +283,7 @@ impl LinuxReceiptReader {
                 broker_gid: groups.broker_gid(),
                 build_users_gid: groups.build_users_gid(),
             },
+            managed_assets: ManagedAssetSet::Linux,
             payloads,
             authenticated_config: None,
             uninstall_manifest: None,
@@ -326,6 +336,7 @@ impl LinuxFilesystemManager {
         Ok(Self {
             root: PathBuf::from("/"),
             principals: PrincipalBindings::production(groups, broker_uid)?,
+            managed_assets: ManagedAssetSet::Linux,
             payloads,
             authenticated_config: None,
             uninstall_manifest: None,
@@ -342,11 +353,17 @@ impl LinuxFilesystemManager {
         Self {
             root,
             principals,
+            managed_assets: ManagedAssetSet::Linux,
             payloads,
             authenticated_config: None,
             uninstall_manifest: None,
             attempt_owned: BTreeMap::new(),
         }
+    }
+
+    pub(crate) const fn for_macos(mut self) -> Self {
+        self.managed_assets = ManagedAssetSet::MacOs;
+        self
     }
 
     #[cfg(test)]
@@ -1728,17 +1745,27 @@ impl LinuxFilesystemManager {
     }
 
     fn verify_ancestor(&self, path: &Path, directory: &File) -> Result<(), LinuxFilesystemError> {
-        if let Some(asset) = crate::linux_install_assets().iter().copied().find(|asset| {
-            is_linux_product_asset(*asset)
-                && asset.kind() == LinuxAssetKind::Directory
-                && Path::new(asset.path_or_name()) == path
-        }) {
+        let managed = match self.managed_assets {
+            ManagedAssetSet::Linux => crate::linux_install_assets().iter().copied().find(|asset| {
+                is_linux_product_asset(*asset)
+                    && asset.kind() == LinuxAssetKind::Directory
+                    && Path::new(asset.path_or_name()) == path
+            }),
+            ManagedAssetSet::MacOs => macos_product_install_assets()
+                .find(|asset| {
+                    asset.kind() == MacOsAssetKind::Directory
+                        && Path::new(asset.path_or_name()) == path
+                })
+                .map(map_macos_filesystem_asset)
+                .transpose()?,
+        };
+        if let Some(asset) = managed {
             return self.verify_metadata(asset, directory);
         }
+        // A different group is safe when neither the group nor others can write the directory.
         let metadata = directory.metadata().map_err(|_| io_failure())?;
         if !metadata.is_dir()
             || metadata.uid() != self.principals.root_uid
-            || metadata.gid() != self.principals.root_gid
             || metadata.mode() & 0o022 != 0
         {
             return Err(LinuxFilesystemError::new(
@@ -1880,6 +1907,37 @@ fn rustix_mode(asset: LinuxInstallAsset) -> Result<Mode, LinuxFilesystemError> {
     #[cfg(target_os = "linux")]
     let mode = u32::from(mode);
     Ok(Mode::from_raw_mode(mode))
+}
+
+pub fn map_macos_filesystem_asset(
+    asset: MacOsInstallAsset,
+) -> Result<LinuxInstallAsset, LinuxFilesystemError> {
+    let kind = match asset.kind() {
+        MacOsAssetKind::Directory => LinuxAssetKind::Directory,
+        MacOsAssetKind::File => LinuxAssetKind::File,
+        MacOsAssetKind::User | MacOsAssetKind::Group => return Err(unsupported()),
+    };
+    let owner = map_macos_principal(asset.owner().ok_or_else(unsupported)?)?;
+    let group = map_macos_principal(asset.group().ok_or_else(unsupported)?)?;
+    Ok(LinuxInstallAsset::platform_filesystem(
+        asset.id(),
+        kind,
+        asset.path_or_name(),
+        asset.mode().ok_or_else(unsupported)?,
+        owner,
+        group,
+    ))
+}
+
+const fn map_macos_principal(
+    principal: MacOsAssetPrincipal,
+) -> Result<LinuxAssetPrincipal, LinuxFilesystemError> {
+    match principal {
+        MacOsAssetPrincipal::Root | MacOsAssetPrincipal::Wheel => Ok(LinuxAssetPrincipal::Root),
+        MacOsAssetPrincipal::Broker => Ok(LinuxAssetPrincipal::Broker),
+        MacOsAssetPrincipal::Build => Ok(LinuxAssetPrincipal::BuildUsers),
+        MacOsAssetPrincipal::Admin => Err(unsupported()),
+    }
 }
 
 const fn unsupported() -> LinuxFilesystemError {
@@ -2075,6 +2133,97 @@ mod tests {
                     .ensure_asset(Fixture::asset("product-root"))
             )?,
             LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_ancestor_group_is_safe_without_write_bits() -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
+        fixture.manager.principals.root_gid = fixture
+            .manager
+            .principals
+            .root_gid
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("gid overflow"))?;
+        let asset = Fixture::asset("product-root");
+
+        assert!(fixture.manager.verify_asset_absent(asset).is_ok());
+
+        for mode in [0o775, 0o757] {
+            fs::set_permissions(
+                fixture.temporary.path().join("opt"),
+                fs::Permissions::from_mode(mode),
+            )?;
+            assert_eq!(
+                failure_code(&fixture.manager.verify_asset_absent(asset))?,
+                LinuxFilesystemErrorCode::UnsafeFilesystemState
+            );
+        }
+
+        fs::set_permissions(
+            fixture.temporary.path().join("opt"),
+            fs::Permissions::from_mode(0o755),
+        )?;
+        fixture.manager.principals.root_uid = fixture
+            .manager
+            .principals
+            .root_uid
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("uid overflow"))?;
+        assert_eq!(
+            failure_code(&fixture.manager.verify_asset_absent(asset))?,
+            LinuxFilesystemErrorCode::UnsafeFilesystemState
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn macos_managed_ancestors_require_exact_metadata() -> Result<(), Box<dyn Error>> {
+        let mut fixture = Fixture::new()?;
+        fixture.manager.managed_assets = ManagedAssetSet::MacOs;
+        let directory = fixture.temporary.path().join("managed");
+        fs::create_dir(&directory)?;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o711))?;
+        let handle = fs::File::open(&directory)?;
+
+        assert!(
+            fixture
+                .manager
+                .verify_ancestor(Path::new("/Library/Application Support/pkg"), &handle)
+                .is_ok()
+        );
+        fixture.manager.principals.broker_gid = fixture
+            .manager
+            .principals
+            .broker_gid
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("gid overflow"))?;
+        assert_eq!(
+            failure_code(
+                &fixture
+                    .manager
+                    .verify_ancestor(Path::new("/Library/Application Support/pkg"), &handle)
+            )?,
+            LinuxFilesystemErrorCode::Conflict
+        );
+
+        fixture.manager.principals.broker_gid = nix::unistd::Gid::current().as_raw();
+        fixture.manager.principals.root_uid = fixture
+            .manager
+            .principals
+            .root_uid
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("uid overflow"))?;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        assert!(
+            fixture
+                .manager
+                .verify_ancestor(
+                    Path::new("/Library/Application Support/pkg/broker-home"),
+                    &handle,
+                )
+                .is_ok()
         );
         Ok(())
     }
