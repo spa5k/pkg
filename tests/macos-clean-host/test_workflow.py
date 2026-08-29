@@ -38,7 +38,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-3", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-4", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
@@ -119,6 +119,28 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertNotIn("/releases", WORKFLOW)
         self.assertNotIn("assert ", acquire)
         self.assertIn("python3 -I -", acquire)
+
+    def test_harness_inventory_is_explicit_and_matches_the_verifier(self) -> None:
+        payload = "./README.md ./pkg-installer-tests ./prove.sh"
+        harness = self.job("harness", "acquire-inputs")
+        phase = self.job("prepare-slot-1", "resume-slot-1")
+        producer = harness.split('(\n            cd "$out"\n', 1)[1].split(
+            "\n          )", 1
+        )[0]
+        self.assertIn(f"printf '%s\\n' {payload} \\", producer)
+        self.assertIn("| LC_ALL=C sort > INVENTORY", producer)
+        self.assertIn(f"printf '%s\\n' {payload} \\", phase)
+        self.assertIn("| LC_ALL=C sort > EXPECTED", phase)
+        self.assertIn(
+            f"shasum -a 256 {payload} > SHA256SUMS",
+            producer,
+        )
+        self.assertIn("awk '{print $2}' SHA256SUMS | LC_ALL=C sort > CHECKSUM_PATHS", phase)
+        self.assertIn("cmp EXPECTED CHECKSUM_PATHS", phase)
+        self.assertIn('"$harness/pkg-installer-tests" --exact', PROOF)
+        self.assertNotIn("find . -type f", harness)
+        self.assertEqual(producer.count("INVENTORY"), 1)
+        self.assertEqual(producer.count("SHA256SUMS"), 1)
 
     def test_prepare_creates_state_under_n_before_the_offline_upgrade(self) -> None:
         install = PROOF.index('capture package-state-install "$pkg"')

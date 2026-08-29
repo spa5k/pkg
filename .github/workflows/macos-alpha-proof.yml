@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-3
+        description: Exact commit signed by dn16-macos-proof-workflow-4
         required: true
         type: string
       proof_channel_url:
@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-3
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-4
   PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
@@ -129,8 +129,9 @@ jobs:
           install -m 0644 ../proof-source/tests/macos-clean-host/README.md "$out/README.md"
           (
             cd "$out"
-            find . -type f -print | LC_ALL=C sort > INVENTORY
-            shasum -a 256 pkg-installer-tests prove.sh README.md > SHA256SUMS
+            printf '%s\n' ./README.md ./pkg-installer-tests ./prove.sh \
+              | LC_ALL=C sort > INVENTORY
+            shasum -a 256 ./README.md ./pkg-installer-tests ./prove.sh > SHA256SUMS
           )
 
       - name: Upload proof-only harness
@@ -492,8 +493,11 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/pkg-macos-proof/harness"
-          printf '%s\n' ./README.md ./pkg-installer-tests ./prove.sh | LC_ALL=C sort > EXPECTED
+          printf '%s\n' ./README.md ./pkg-installer-tests ./prove.sh \
+            | LC_ALL=C sort > EXPECTED
           cmp EXPECTED INVENTORY
+          awk '{print $2}' SHA256SUMS | LC_ALL=C sort > CHECKSUM_PATHS
+          cmp EXPECTED CHECKSUM_PATHS
           shasum -a 256 --check SHA256SUMS
 
       - name: Download authenticated proof inputs
