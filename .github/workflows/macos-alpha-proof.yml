@@ -373,7 +373,7 @@ jobs:
           retention-days: 3
 
   prove:
-    name: Destructive native lifecycle proof
+    name: Prepare native lifecycle state
     needs: [validate-dispatch, harness, acquire-inputs]
     if: >-
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
@@ -549,6 +549,7 @@ jobs:
           command -v python3 >/dev/null
           printf '%s\n' \
             "lifecycle_run=${{ matrix.lifecycle_run }}" \
+            "phase=prepare" \
             "runner_name=$RUNNER_NAME" \
             "instance_nonce=$instance_nonce" \
             "status=preflight-passed" \
@@ -580,9 +581,12 @@ jobs:
         env:
           PKG_PROOF_FROM_RELEASE: ${{ inputs.from_release }}
           PKG_PROOF_TO_RELEASE: ${{ inputs.to_release }}
+          PKG_PROOF_CHANNEL_URL: ${{ inputs.proof_channel_url }}
+          PKG_PROOF_PAIR_SHA256: ${{ env.PKG_PROOF_PAIR_SHA256 }}
           PKG_PROOF_ROOT: ${{ runner.temp }}/pkg-macos-proof
           PKG_PROOF_REBOOT_MARKER: /var/tmp/pkg-disposable-macos-reboot-v2
           PKG_PROOF_LIFECYCLE_RUN: ${{ matrix.lifecycle_run }}
+          PKG_PROOF_PHASE: prepare
         run: ${{ runner.temp }}/pkg-macos-proof/harness/prove.sh
 
       - name: Upload bounded proof evidence
@@ -604,65 +608,82 @@ jobs:
           retention-days: 3
 
   aggregate:
-    name: Verify independent proof runners
+    name: Verify independent prepare evidence
     needs: prove
     if: ${{ always() && needs.prove.result != 'skipped' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Download both bounded evidence artifacts
+      - name: Download both bounded prepare artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           pattern: pkg-macos-lifecycle-evidence-*
           path: ${{ runner.temp }}/pkg-macos-proof-results
 
-      - name: Verify distinct runner and reimage identities
+      - name: Verify distinct passed prepare evidence
         shell: bash
         env:
           PROVE_RESULT: ${{ needs.prove.result }}
+          FROM_RELEASE: ${{ inputs.from_release }}
+          TO_RELEASE: ${{ inputs.to_release }}
         run: |
           set -euo pipefail
           test "$PROVE_RESULT" = success
-          python3 - "$RUNNER_TEMP/pkg-macos-proof-results" <<'PY'
+          python3 -I - "$RUNNER_TEMP/pkg-macos-proof-results" <<'PY'
+          import os
           import pathlib
           import re
           import sys
 
           root = pathlib.Path(sys.argv[1])
-          expected = {
-              1: "pkg-dn16-proof-runner-1",
-              2: "pkg-dn16-proof-runner-2",
-          }
+          expected = {1: "pkg-dn16-proof-runner-1", 2: "pkg-dn16-proof-runner-2"}
           observed = []
           if {path.name for path in root.iterdir()} != {
               "pkg-macos-lifecycle-evidence-1",
               "pkg-macos-lifecycle-evidence-2",
           }:
-              raise SystemExit("the exact two evidence artifacts are required")
-          for run, runner in expected.items():
-              path = root / f"pkg-macos-lifecycle-evidence-{run}" / "preflight.txt"
-              if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024:
-                  raise SystemExit("preflight evidence is absent or unsafe")
-              records = {}
-              for line in path.read_text(encoding="utf-8").splitlines():
-                  key, separator, value = line.partition("=")
-                  if separator != "=" or key in records:
-                      raise SystemExit("preflight evidence is malformed")
-                  records[key] = value
-              if records != {
-                  "lifecycle_run": str(run),
+              raise SystemExit("the exact two prepare artifacts are required")
+          for slot, runner in expected.items():
+              evidence = root / f"pkg-macos-lifecycle-evidence-{slot}"
+              def records(name, maximum):
+                  path = evidence / name
+                  if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
+                      raise SystemExit("prepare evidence is absent or unsafe")
+                  values = {}
+                  for line in path.read_text(encoding="utf-8").splitlines():
+                      key, separator, value = line.partition("=")
+                      if separator != "=" or key in values:
+                          raise SystemExit("prepare evidence is malformed")
+                      values[key] = value
+                  return values
+              identity = records("preflight.txt", 1024)
+              if identity != {
+                  "lifecycle_run": str(slot),
+                  "phase": "prepare",
                   "runner_name": runner,
-                  "instance_nonce": records.get("instance_nonce", ""),
+                  "instance_nonce": identity.get("instance_nonce", ""),
                   "status": "preflight-passed",
               }:
-                  raise SystemExit("preflight evidence does not match its slot")
-              nonce = records["instance_nonce"]
+                  raise SystemExit("prepare identity does not match its slot")
+              nonce = identity["instance_nonce"]
               if re.fullmatch(r"[0-9a-f]{64}", nonce) is None:
-                  raise SystemExit("the reimage nonce is invalid")
-              observed.append((runner, nonce))
-          if len({runner for runner, _ in observed}) != 2:
-              raise SystemExit("runner names are not distinct")
-          if len({nonce for _, nonce in observed}) != 2:
-              raise SystemExit("reimage nonces are not distinct")
-          print("independent proof runner evidence passed")
+                  raise SystemExit("the VM nonce is invalid")
+              if records("result.txt", 1024) != {
+                  "lifecycle_run": str(slot),
+                  "status": "passed",
+                  "phase": "prepare",
+                  "from": os.environ["FROM_RELEASE"],
+                  "to": os.environ["TO_RELEASE"],
+              }:
+                  raise SystemExit("prepare phase did not pass")
+              matrix = evidence / "results.tsv"
+              if matrix.is_symlink() or not matrix.is_file() or matrix.stat().st_size > 65536:
+                  raise SystemExit("prepare matrix is absent or unsafe")
+              if "runner\tcontinuation-recorded\tpass" not in matrix.read_text(
+                      encoding="utf-8").splitlines():
+                  raise SystemExit("prepare continuation evidence is absent")
+              observed.append(nonce)
+          if len(set(observed)) != 2:
+              raise SystemExit("the two prepares used the same VM nonce")
+          print("independent prepare evidence passed")
           PY
