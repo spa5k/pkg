@@ -34,14 +34,16 @@ Use this immutable Tart image:
 
 `ghcr.io/cirruslabs/macos-sequoia-base@sha256:3f4d14a5ffb9efd3bda2ae0184fd4bc2773d924ff8b7565f958761420ec41a0c`
 
-The VM needs at least 70 GiB of free space.
+The VM root filesystem needs at least 75,161,927,680 free bytes (70 GiB).
+Use a virtual disk of at least 100 GiB so the base image and runner files leave enough free space.
+Confirm this free-space value before you register the runner.
 The runner must provide passwordless `sudo`.
 Do not use a production machine.
 
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-9` annotated tag.
+`dn16-macos-proof-workflow-10` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.

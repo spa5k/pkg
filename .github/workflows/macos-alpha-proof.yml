@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-9
+        description: Exact commit signed by dn16-macos-proof-workflow-10
         required: true
         type: string
       proof_channel_url:
@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-9
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-10
   PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
@@ -462,6 +462,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          root_capacity=$(LC_ALL=C /bin/df -Pk /)
+          python3 -I - 75161927680 "$root_capacity" <<'PY'
+          import re
+          import sys
+
+          minimum = int(sys.argv[1])
+          lines = sys.argv[2].splitlines()
+          if len(lines) != 2 or lines[0].split() != [
+              "Filesystem", "1024-blocks", "Used", "Available", "Capacity",
+              "Mounted", "on",
+          ]:
+              raise SystemExit("invalid root capacity report")
+          fields = lines[1].split()
+          if (len(fields) != 6 or fields[5] != "/"
+                  or any(re.fullmatch(r"[0-9]+", value) is None
+                         for value in fields[1:4])
+                  or re.fullmatch(r"[0-9]+%", fields[4]) is None):
+              raise SystemExit("invalid root capacity row")
+          blocks_kib, used_kib, available_kib = map(int, fields[1:4])
+          if max(blocks_kib, used_kib, available_kib) > (2**63 - 1) // 1024:
+              raise SystemExit("root capacity overflows bytes")
+          if available_kib * 1024 < minimum:
+              raise SystemExit("root has less than 75161927680 bytes free")
+          PY
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$PKG_PROOF_CONFIRMATION" = DESTROY-PKG-DISPOSABLE-MACOS
           test "$PKG_PROOF_PRODUCTION" = false

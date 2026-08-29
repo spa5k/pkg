@@ -7,6 +7,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 
 
@@ -21,6 +22,11 @@ README = (ROOT / "tests/macos-clean-host/README.md").read_text()
 INSTALL_FAILURE_PARSER = PROOF.split(
     '        0 0 >"$summary" <<\'PY\'\n', 1
 )[1].split("\nPY\n", 1)[0]
+CAPACITY_PARSER = textwrap.dedent(
+    WORKFLOW.split(
+        '          python3 -I - 75161927680 "$root_capacity" <<\'PY\'\n', 1
+    )[1].split("\n          PY\n", 1)[0]
+)
 
 
 class MacOsProofWorkflowTests(unittest.TestCase):
@@ -46,12 +52,52 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-9", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-10", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
             WORKFLOW,
         )
+
+    def test_guest_capacity_gate_is_early_exact_and_fail_closed(self) -> None:
+        phase = self.job("prepare-slot-1", "resume-slot-1")
+        gate = phase.split(
+            "      - name: Refuse an unsafe host before input download or mutation\n", 1
+        )[1].split("\n      - name: Download proof-only harness", 1)[0]
+        self.assertIn("root_capacity=$(LC_ALL=C /bin/df -Pk /)", gate)
+        self.assertIn('python3 -I - 75161927680 "$root_capacity"', gate)
+        self.assertLess(gate.index("/bin/df -Pk /"), gate.index("preflight_time=$(date +%s)"))
+        self.assertIn("75,161,927,680 free bytes (70 GiB)", README)
+        self.assertIn("at least 100 GiB", README)
+
+        def parse(
+            available: str,
+            *,
+            blocks: str = "100000000",
+            used: str = "1",
+            capacity: str = "1%",
+            header: str = "Filesystem 1024-blocks Used Available Capacity Mounted on",
+        ) -> subprocess.CompletedProcess[str]:
+            report = (
+                f"{header}\n"
+                f"/dev/disk3s1s1 {blocks} {used} {available} {capacity} /\n"
+            )
+            return subprocess.run(
+                [sys.executable, "-I", "-", "75161927680", report],
+                input=CAPACITY_PARSER,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertNotEqual(parse("73400319").returncode, 0)
+        self.assertEqual(parse("73400320").returncode, 0)
+        self.assertEqual(parse("73400321").returncode, 0)
+        for malformed in ("", "-1", "not-a-number", str(2**63 // 1024)):
+            self.assertNotEqual(parse(malformed).returncode, 0)
+        self.assertNotEqual(parse("73400320", blocks="invalid").returncode, 0)
+        self.assertNotEqual(parse("73400320", capacity="invalid").returncode, 0)
+        self.assertNotEqual(parse("73400320", header="invalid").returncode, 0)
 
     def test_jobs_have_an_explicit_two_slot_two_phase_order(self) -> None:
         expected = (
