@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>pkg Architecture Report</title>
+  <title>pkg Architecture Report · Determinate Nix Cutover</title>
   <style>
     :root {
       --paper: #f4f1e8;
@@ -654,12 +654,12 @@
   <header class="hero">
     <div class="wrap">
       <p class="eyebrow">Verified architecture update · 29 August 2026</p>
-      <h1>Code-ready is not proof-complete</h1>
-      <p class="lede">Linux passed its native lifecycle proof. The macOS code, signed private inputs, and temporary proof channel are prepared. Native macOS proof still waits for fresh disposable runners and real reboot evidence.</p>
+      <h1>Use Determinate for Base Nix. Keep pkg focused.</h1>
+      <p class="lede">Linux lifecycle proof passed. The macOS proof ran and found a third real product defect. That defect now has a proven root cause and a signed minimal fix. The two-slot macOS proof must run again with new releases.</p>
       <div class="status-row" aria-label="Report status">
         <span class="pill complete">Linux native proof passed twice</span>
-        <span class="pill next">macOS code reviewed and backed up</span>
-        <span class="pill caution">macOS native proof blocked</span>
+        <span class="pill next">three macOS defects proved and fixed</span>
+        <span class="pill caution">macOS proof must run again</span>
       </div>
     </div>
   </header>
@@ -667,11 +667,448 @@
   <main class="wrap">
     <article class="current-report" id="current-report" aria-labelledby="current-report-title">
       <header>
-        <p class="current-kicker">Current verified report</p>
-        <h2 id="current-report-title">The honest state of the Determinate cutover</h2>
-        <p class="current-intro">This section is the current source of truth. It separates code, review, native proof, and external proof. The large earlier report remains below as design history and agent-review context.</p>
-        <nav class="report-nav" aria-label="Current report sections">
-          <a href="#execution-window">Execution now</a>
+        <p class="current-kicker">Current verified report · 29 August 2026</p>
+        <h2 id="current-report-title">What we should build, what we should reuse, and what remains</h2>
+        <p class="current-intro">The main decision is now clear. pkg installs Base Nix for the user by calling one pinned Determinate Nix Installer executable. pkg does not copy the Determinate source. pkg does not build a second native Nix installer. pkg stays responsible for product packages, generations, repair, and user experience.</p>
+        <nav class="report-nav" aria-label="Current verified report sections">
+          <a href="#final-progress">Progress</a>
+          <a href="#final-choice">Determinate choice</a>
+          <a href="#final-install">Install steps</a>
+          <a href="#final-dependencies">Dependencies</a>
+          <a href="#final-delete">Delete and simplify</a>
+          <a href="#final-linux">Linux proof</a>
+          <a href="#final-macos">macOS investigation</a>
+          <a href="#final-fix">Minimal fix</a>
+          <a href="#final-release">Release proof</a>
+          <a href="#final-security">Security</a>
+          <a href="#final-remaining">Remaining work</a>
+        </nav>
+      </header>
+
+      <section id="final-progress" aria-labelledby="final-progress-title">
+        <h3 id="final-progress-title">0. Progress in simple terms</h3>
+        <p>The architecture work is done. Linux proof is done. The first full macOS proof ran, found a third real product defect, and that defect is now fixed and signed. A new release pair and a new two-slot proof are still required. No public release was made.</p>
+
+        <div class="current-summary-grid" aria-label="Current implementation progress">
+          <article class="truth-card">
+            <strong>Architecture: complete</strong>
+            <p>Determinate owns Base Nix. pkg owns the product package lifecycle.</p>
+          </article>
+          <article class="truth-card">
+            <strong>Linux: complete</strong>
+            <p>The native lifecycle passed twice in GitHub run <code>33198985687</code>.</p>
+          </article>
+          <article class="truth-card ready">
+            <strong>macOS fixes: signed</strong>
+            <p>The lock fix is <code>85c1db2</code>. The ancestor fix is <code>337ba704</code>. The temp-directory fix is <code>76d6a455</code>. All are pushed and reviewed.</p>
+          </article>
+          <article class="truth-card blocked">
+            <strong>Final proof: must run again</strong>
+            <p>Workflow-13 found the temp-directory defect. New releases, a new sealed pair, and a new two-slot run are required.</p>
+          </article>
+        </div>
+
+        <div class="status-lanes" role="img" aria-label="Architecture and Linux proof are complete. Three macOS defects are proved and fixed. New releases, a new sealed pair, and a new two-slot native proof remain.">
+          <div class="status-lane">
+            <div class="lane-label"><strong>Product design</strong><span>one owner per lifecycle</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Domain model</div>
+              <div class="lane-step complete">Determinate boundary</div>
+              <div class="lane-step complete">Security review</div>
+              <div class="lane-step complete">Remote backup</div>
+            </div>
+          </div>
+          <div class="status-lane">
+            <div class="lane-label"><strong>Native evidence</strong><span>Linux done · three macOS defects fixed</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Linux ×2</div>
+              <div class="lane-step complete">Cause one</div>
+              <div class="lane-step complete">Cause two</div>
+              <div class="lane-step complete">Cause three</div>
+              <div class="lane-step ready">Two-slot proof</div>
+            </div>
+          </div>
+          <div class="status-lane">
+            <div class="lane-label"><strong>Closeout</strong><span>parked and safe</span></div>
+            <div class="lane-track">
+              <div class="lane-step complete">Evidence kept</div>
+              <div class="lane-step complete">Policy restored</div>
+              <div class="lane-step complete">VM deleted</div>
+              <div class="lane-step ready">Final report</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="plain-warning" role="note">
+          <strong>Do not confuse a fix with final proof.</strong>
+          <p>The real Mac proved three product defects so far. Each defect now has a signed minimal fix. The full install, reboot, upgrade, repair, and uninstall sequence still needs a passing two-slot workflow result.</p>
+        </div>
+      </section>
+
+      <section id="final-choice" aria-labelledby="final-choice-title">
+        <h3 id="final-choice-title">1. Use Determinate as an executable. Do not copy its code.</h3>
+        <p>Determinate Systems has already built and tested the hard native Base Nix work. This includes daemon setup, services, build accounts, platform files, repairs, and uninstall behavior. pkg should use that work through the released installer executable.</p>
+
+        <div class="boundary-grid">
+          <article class="owner-box">
+            <h4>Determinate owns Base Nix</h4>
+            <ul>
+              <li>Create and maintain machine-wide <code>/nix</code>.</li>
+              <li>Install the Nix daemon and native services.</li>
+              <li>Create the required build users and groups.</li>
+              <li>Own its vendor receipt and native integration files.</li>
+              <li>Perform supported Base Nix repair and terminal uninstall.</li>
+            </ul>
+          </article>
+          <article class="owner-box product">
+            <h4>pkg owns the product</h4>
+            <ul>
+              <li>Let the person install pkg first.</li>
+              <li>Authenticate and start the pinned Determinate executable when Base Nix is absent.</li>
+              <li>Manage package selection, generations, roots, garbage collection, and package repair.</li>
+              <li>Own pkg journals, receipts, services, commands, and user messages.</li>
+              <li>Clean pkg-owned package state before an explicit terminal Base Nix uninstall.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Ways to integrate Determinate Nix Installer">
+          <table class="decision-table">
+            <thead><tr><th>Choice</th><th>Decision</th><th>Reason</th></tr></thead>
+            <tbody>
+              <tr><td>Copy its Rust source into pkg</td><td class="no">Do not do this</td><td>We would own a fork. Upstream fixes would not arrive automatically. Security review and native testing would become our duty.</td></tr>
+              <tr><td>Use its Rust crates as an internal library</td><td class="no">Do not start here</td><td>This couples pkg to internal APIs and build details. We only need one stable process boundary.</td></tr>
+              <tr><td>Ask the user to install Nix first</td><td class="no">Reject</td><td>The product promise is that the person installs pkg. pkg then installs Base Nix when required.</td></tr>
+              <tr><td>Ship or fetch one pinned installer executable</td><td class="yes">Use this</td><td>It reuses the complete upstream product. The trust contract is small. The ownership boundary is clear.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>It is acceptable that an administrator can find and run the embedded or cached installer executable. A local administrator already controls the machine. Hiding the binary is packaging, not a security boundary. The important controls are exact version selection, digest verification, clean execution, journaling, and safe recovery.</p>
+      </section>
+
+      <section id="final-install" aria-labelledby="final-install-title">
+        <h3 id="final-install-title">2. Step-by-step install and lifecycle design</h3>
+        <p>The person installs pkg only. pkg handles the Base Nix dependency as part of its own first-run flow.</p>
+
+        <ol class="numbered-detail">
+          <li><strong>Inspect the machine.</strong>pkg checks the Determinate receipt, real Nix behavior, known services, and conflicting Nix evidence. It does not trust one marker alone.</li>
+          <li><strong>Classify the Base Nix state.</strong>A supported Determinate installation continues. A clean machine can install. Foreign or mixed Nix state stops with a clear message. pkg does not take over unknown state.</li>
+          <li><strong>Select one approved installer.</strong>The release manifest names an exact Determinate version, platform asset, size, and SHA-256 digest. There is no moving “latest” input.</li>
+          <li><strong>Authenticate before execution.</strong>pkg verifies the downloaded or bundled bytes. A digest or identity mismatch stops before privilege is requested.</li>
+          <li><strong>Use a clean process contract.</strong>pkg passes only approved arguments and a fixed environment. It does not inherit unsafe proxy, shell, or path values by accident.</li>
+          <li><strong>Write a small handoff record.</strong>The record says which approved installer pkg started. It helps crash recovery. It does not claim that Nix is healthy.</li>
+          <li><strong>Let Determinate perform native work.</strong>Determinate owns all Base Nix writes. pkg does not create <code>/nix</code>, launchd services, systemd services, or build accounts in parallel.</li>
+          <li><strong>Verify the result.</strong>After the process finishes or the machine reboots, pkg checks the vendor receipt and real machine behavior. It then marks the handoff complete.</li>
+          <li><strong>Continue with pkg package work.</strong>pkg now installs the requested packages. Package generations and product repair remain pkg duties.</li>
+          <li><strong>Keep uninstall explicit.</strong>Removing one package cannot remove Base Nix. A separate terminal command first cleans pkg-owned package state, then calls the supported Determinate uninstall, then checks residue.</li>
+        </ol>
+
+        <div class="diagram-frame">
+          <svg viewBox="0 0 1100 280" role="img" aria-labelledby="final-install-svg-title final-install-svg-desc">
+            <title id="final-install-svg-title">pkg first-run install flow</title>
+            <desc id="final-install-svg-desc">The person installs pkg. pkg classifies machine state, authenticates one pinned Determinate installer, delegates Base Nix work, verifies the result, and then manages product packages.</desc>
+            <defs><marker id="final-install-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9cd8c1"/></marker></defs>
+            <rect x="15" y="85" width="155" height="110" rx="14" fill="#173428" stroke="#72cfae"/>
+            <text x="92" y="125" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Install pkg</text>
+            <text x="92" y="155" text-anchor="middle" fill="#bdd0c5" font-size="14">one user action</text>
+            <path d="M170 140 L215 140" stroke="#9cd8c1" stroke-width="4" marker-end="url(#final-install-arrow)"/>
+            <rect x="225" y="55" width="190" height="170" rx="14" fill="#173357" stroke="#8fb7ff"/>
+            <text x="320" y="96" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">pkg checks</text>
+            <text x="320" y="126" text-anchor="middle" fill="#d9e7ff" font-size="14">machine state</text>
+            <text x="320" y="155" text-anchor="middle" fill="#d9e7ff" font-size="14">pinned bytes</text>
+            <text x="320" y="184" text-anchor="middle" fill="#d9e7ff" font-size="14">handoff journal</text>
+            <path d="M415 140 L470 140" stroke="#9cd8c1" stroke-width="4" marker-end="url(#final-install-arrow)"/>
+            <rect x="480" y="55" width="220" height="170" rx="14" fill="#173428" stroke="#72cfae"/>
+            <text x="590" y="96" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">Determinate owns</text>
+            <text x="590" y="126" text-anchor="middle" fill="#bdd0c5" font-size="14">/nix and daemon</text>
+            <text x="590" y="155" text-anchor="middle" fill="#bdd0c5" font-size="14">services and accounts</text>
+            <text x="590" y="184" text-anchor="middle" fill="#bdd0c5" font-size="14">native Base Nix state</text>
+            <path d="M700 140 L755 140" stroke="#9cd8c1" stroke-width="4" marker-end="url(#final-install-arrow)"/>
+            <rect x="765" y="55" width="150" height="170" rx="14" fill="#173357" stroke="#8fb7ff"/>
+            <text x="840" y="96" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">pkg verifies</text>
+            <text x="840" y="126" text-anchor="middle" fill="#d9e7ff" font-size="14">receipt</text>
+            <text x="840" y="155" text-anchor="middle" fill="#d9e7ff" font-size="14">real behavior</text>
+            <text x="840" y="184" text-anchor="middle" fill="#d9e7ff" font-size="14">recovery state</text>
+            <path d="M915 140 L960 140" stroke="#9cd8c1" stroke-width="4" marker-end="url(#final-install-arrow)"/>
+            <rect x="970" y="85" width="115" height="110" rx="14" fill="#173428" stroke="#72cfae"/>
+            <text x="1027" y="125" text-anchor="middle" fill="#fff" font-size="17" font-weight="700">Packages</text>
+            <text x="1027" y="155" text-anchor="middle" fill="#bdd0c5" font-size="14">pkg owns</text>
+          </svg>
+          <p class="diagram-caption">There is one Base Nix writer. pkg authenticates, delegates, verifies, and then continues with product work.</p>
+        </div>
+      </section>
+
+      <section id="final-dependencies" aria-labelledby="final-dependencies-title">
+        <h3 id="final-dependencies-title">3. Reuse dependencies and native tools</h3>
+        <p>The shortest safe implementation uses the code and tools that already exist. It adds no general provider framework.</p>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Dependency decisions">
+          <table class="decision-table">
+            <thead><tr><th>Need</th><th>Use</th><th>Do not build</th><th>Reason</th></tr></thead>
+            <tbody>
+              <tr><td>Base Nix install and uninstall</td><td class="yes">Pinned Determinate executable</td><td>Custom native installer</td><td>Upstream already owns the difficult cross-platform lifecycle.</td></tr>
+              <tr><td>Release file identity</td><td class="yes">Existing <code>SHA256SUMS</code> and Cosign flow</td><td>New trust database</td><td>The signed checksum file already binds the package, CLI, manifest, and exact digests.</td></tr>
+              <tr><td>Product update channel</td><td class="yes">Existing compile-time URL and TUF client</td><td>Proof-only protocol</td><td>The proof must test the shipping trust path.</td></tr>
+              <tr><td>macOS virtual machine</td><td class="yes">Tart on Apple silicon</td><td>Custom VM controller</td><td>Tart supplies native launchd and real reboot behavior.</td></tr>
+              <tr><td>Linux isolation</td><td class="yes">Docker where a container is sufficient</td><td>Another VM framework</td><td>Linux build and static checks do not need Apple hardware.</td></tr>
+              <tr><td>Handoff storage</td><td class="yes">Existing journal and filesystem seams</td><td>Database or service</td><td>The state is small and local. Existing atomic file rules are enough.</td></tr>
+              <tr><td>Process execution</td><td class="yes">Existing Rust process and digest code</td><td>Plugin system</td><td>There is one vendor implementation and one fixed contract.</td></tr>
+              <tr><td>HTML report</td><td class="yes">Native HTML, CSS, and SVG</td><td>Frontend framework</td><td>This is one static artifact. A build chain adds no value.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="final-delete" aria-labelledby="final-delete-title">
+        <h3 id="final-delete-title">4. What to delete and what to keep</h3>
+        <p>Delete code only when the replacement proof covers the same behavior. Do not remove product duties only because Determinate is present.</p>
+        <div class="choice-grid">
+          <article class="truth-card">
+            <strong>Delete after proof</strong>
+            <ul>
+              <li>pkg-owned Base Nix provisioning.</li>
+              <li>Custom daemon, service, build-account, and native integration setup.</li>
+              <li>Custom Base Nix repair and uninstall leaves with zero callers.</li>
+              <li>Legacy APFS and private-Nix proof paths.</li>
+              <li>Proof-only local certificate authority and HTTP server.</li>
+            </ul>
+          </article>
+          <article class="truth-card ready">
+            <strong>Keep</strong>
+            <ul>
+              <li>Broker and Root Helper duties used by product package work.</li>
+              <li>Manifest, Lock, generations, roots, garbage collection, and activation.</li>
+              <li>Package Repair and product asset repair.</li>
+              <li>Product journals, receipts, services, and user messages.</li>
+              <li>Strict trust-boundary validation and crash recovery.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Simplification rules">
+          <table class="decision-table">
+            <thead><tr><th>Area</th><th>Small decision</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>Vendor abstraction</td><td class="no">No generic provider interface</td><td>There is one supported vendor. A generic layer adds names and tests without reducing risk.</td></tr>
+              <tr><td>Installer source</td><td class="no">No fork</td><td>A fork duplicates upstream maintenance and delays security fixes.</td></tr>
+              <tr><td>Base state</td><td class="yes">One vendor receipt plus one pkg handoff</td><td>The receipt is machine authority. The handoff only records pkg orchestration.</td></tr>
+              <tr><td>Update command</td><td class="yes">Keep package update separate</td><td>“Update my editor” must not silently update or remove Base Nix.</td></tr>
+              <tr><td>Uninstall</td><td class="yes">Use one explicit terminal path</td><td>A normal package removal must never reach Base Nix uninstall.</td></tr>
+              <tr><td>Legacy production code</td><td class="maybe">Remove zero-caller leaves after final proof</td><td>This is the smallest safe deletion point. Earlier deletion would remove the comparison and rollback evidence.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="final-linux" aria-labelledby="final-linux-title">
+        <h3 id="final-linux-title">5. Linux proof is complete</h3>
+        <p>The Linux lifecycle branch is <code>dn/15-linux-lifecycle-cutover</code>. Its exact remote head is <code>9bd17b716503d7be3bcf5bd310ceddd9aecede50</code>.</p>
+        <div class="current-summary-grid">
+          <article class="truth-card"><strong>Native result</strong><p>GitHub run <code>33198985687</code> passed twice.</p></article>
+          <article class="truth-card"><strong>Lifecycle covered</strong><p>Clean install, product work, repair rules, and terminal uninstall.</p></article>
+          <article class="truth-card"><strong>Ownership covered</strong><p>Determinate owns Base Nix. pkg keeps product package state.</p></article>
+          <article class="truth-card ready"><strong>Publication</strong><p>Nothing was published. The proof result is not a release decision.</p></article>
+        </div>
+        <p>This means we should not add more Linux installer machinery. The correct next work is the final macOS proof and then deletion of replaced legacy leaves.</p>
+      </section>
+
+      <section id="final-macos" aria-labelledby="final-macos-title">
+        <h3 id="final-macos-title">6. macOS failures found the real product defects</h3>
+        <p>The early macOS runs did useful work. They did not fail inside Determinate at first. Each failure removed one error until the product defects were isolated. The latest run reached the vendor installer and found the second defect.</p>
+
+        <div class="table-wrap" role="region" tabindex="0" aria-label="macOS investigation history">
+          <table class="decision-table">
+            <thead><tr><th>Evidence</th><th>What failed</th><th>What we learned</th></tr></thead>
+            <tbody>
+              <tr><td>Workflow tags 1 to 7</td><td>Clean-machine and harness assumptions</td><td>The workflow needed exact tools, capacity, identity, and safe two-phase reboot checks.</td></tr>
+              <tr><td>Tag 8 · run <code>33244936677</code></td><td>Package used the original compile-time channel URL while the proof selected a successor URL</td><td>A proof cannot change the shipping route after compilation. The real embedded route must serve the staged pair.</td></tr>
+              <tr><td>Tag 9 · run <code>33249305769</code></td><td><code>installer_status=1</code>, handoff absent, journal absent</td><td>The failure happened before Determinate and before product mutation. Better logs were required.</td></tr>
+              <tr><td>Tag 10 · run <code>33250611972</code></td><td>The same early failure on a VM that passed the new disk capacity gate</td><td>Disk capacity was not the product cause. The preflight itself was failing.</td></tr>
+              <tr><td>Private stage diagnostic</td><td>Stopped at <code>CLEAN_HOST_START</code></td><td>The failing operation was inside clean-host preflight. The lock parent was group-writable.</td></tr>
+              <tr><td>Fixed stage diagnostic</td><td>Passed clean host, journal creation, and install preflight; reached the first asset boundary</td><td>The one-path lock fix removed the real blocker without weakening security.</td></tr>
+              <tr><td>Tag 11 · run <code>33256299782</code></td><td>Hosted input gate stopped the run before any VM work</td><td>The channel and proof-input release manifests were not byte-identical. The source publisher needed an exact-manifest fix at <code>02c30f30</code>.</td></tr>
+              <tr><td>Tag 12 · run <code>33258481980</code></td><td>Hosted gates passed. Slot 1 stopped before Handoff at <code>/Library/Application Support</code></td><td>The shared ancestor check required GID 0. Real macOS uses <code>root:admin</code> with mode <code>0755</code>. Fix <code>337ba704</code> accepts safe root-owned ancestors and keeps every write bit forbidden.</td></tr>
+              <tr><td>Tag 13 · run <code>33264502945</code></td><td>Hosted gates passed. Slot 1 stopped inside the fresh Alpha.12 install. The vendor installer exited 1 in <code>setup_default_profile</code></td><td>The product gave the vendor a <code>0700</code> root-only <code>TMPDIR</code>. The vendor's Nix build users could not stat it. Fix <code>76d6a455</code> moves the macOS vendor temp directory to a traversable, root-owned path.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Defect one: the operation lock parent</h4>
+        <p>The old macOS operation lock was <code>/private/var/run/pkg-install-handoff.lock</code>. On real macOS, <code>/private/var/run</code> is owned by <code>root:daemon</code> and has mode <code>0775</code>. Group members can write there.</p>
+        <p>The shared parent-chain security check correctly rejects any group-writable or world-writable ancestor. <code>DeterminateHandoff::state()</code> takes the operation lock before it reads the handoff. The clean-host preflight therefore failed at the lock. Determinate never started. The lock moved to <code>/private/var/db</code> and the strict parent rule stayed.</p>
+
+        <div class="diagram-frame">
+          <svg viewBox="0 0 1040 260" role="img" aria-labelledby="macos-cause-svg-title macos-cause-svg-desc">
+            <title id="macos-cause-svg-title">Old and fixed macOS lock paths</title>
+            <desc id="macos-cause-svg-desc">The old lock was below a group-writable parent and failed the strict security check. The new lock is below root-owned mode 0755 private var db and passes the same check.</desc>
+            <defs><marker id="cause-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9cd8c1"/></marker></defs>
+            <rect x="25" y="35" width="430" height="190" rx="16" fill="#4a2b2b" stroke="#ef9a9a" stroke-width="2"/>
+            <text x="240" y="75" text-anchor="middle" fill="#fff" font-size="21" font-weight="700">Old path: rejected</text>
+            <text x="240" y="112" text-anchor="middle" fill="#ffd8d8" font-size="15">/private/var/run</text>
+            <text x="240" y="141" text-anchor="middle" fill="#ffd8d8" font-size="15">root:daemon · 0775 · group-writable</text>
+            <text x="240" y="180" text-anchor="middle" fill="#fff" font-size="15">strict parent validation stops</text>
+            <path d="M455 130 L585 130" stroke="#9cd8c1" stroke-width="5" marker-end="url(#cause-arrow)"/>
+            <rect x="595" y="35" width="420" height="190" rx="16" fill="#173428" stroke="#72cfae" stroke-width="2"/>
+            <text x="805" y="75" text-anchor="middle" fill="#fff" font-size="21" font-weight="700">New path: accepted</text>
+            <text x="805" y="112" text-anchor="middle" fill="#bdd0c5" font-size="15">/private/var/db</text>
+            <text x="805" y="141" text-anchor="middle" fill="#bdd0c5" font-size="15">root:wheel · 0755 · not group-writable</text>
+            <text x="805" y="180" text-anchor="middle" fill="#fff" font-size="15">same strict validation passes</text>
+          </svg>
+          <p class="diagram-caption">The security rule stayed strict. Only the macOS lock location changed.</p>
+        </div>
+
+        <h4>Defect two: the ancestor group rule</h4>
+        <p>Workflow-12 run <code>33258481980</code> passed every hosted gate and then stopped before Handoff at <code>/Library/Application Support</code>. The shared ancestor checker required GID 0. Real macOS keeps that directory as <code>root:admin</code> with mode <code>0755</code>. Fix <code>337ba704</code> accepts exact safe root-owned ancestors, keeps UID root, keeps the directory type, keeps no-follow traversal, and still rejects every group or other write bit.</p>
+
+        <h4>Defect three: the vendor temp directory</h4>
+        <p>Workflow-13 run <code>33264502945</code> passed every hosted gate. The slot 1 install then reached the vendor installer for the first time. The Determinate installer exited 1 inside <code>setup_default_profile</code>. The product hides vendor output by design, so a private diagnostic on the failed host reproduced the failure and captured the vendor error.</p>
+        <p>The product ran the vendor with <code>TMPDIR=/private/var/db/pkg-install/tmp</code>. The product created and required that directory, and every parent, to be exactly mode <code>0700</code> and root-owned. The vendor's <code>setup_default_profile</code> step runs <code>nix build</code> as the unprivileged <code>_nixbld</code> users. Those users must stat <code>TMPDIR</code> while they set up a build environment. A <code>0700</code> root-only directory chain denies that stat, so the build fails with <code>Permission denied</code> and the vendor installer exits 1.</p>
+        <p>The control experiment proved the direction: the same production invocation with a root-owned, traversable temp directory completed the vendor install with exit 0. Linux never hit this because the Linux build sandbox does not stat the inherited <code>TMPDIR</code> as a build user.</p>
+
+        <div class="diagram-frame">
+          <svg viewBox="0 0 1040 260" role="img" aria-labelledby="macos-tmp-svg-title macos-tmp-svg-desc">
+            <title id="macos-tmp-svg-title">Old and fixed macOS vendor temp paths</title>
+            <desc id="macos-tmp-svg-desc">The old temp directory was 0700 root-only and the vendor build users could not stat it. The new temp directory is root-owned mode 0755 with no group or other write bits, so the build users can stat it and no other user can write into it.</desc>
+            <defs><marker id="tmp-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9cd8c1"/></marker></defs>
+            <rect x="25" y="35" width="430" height="190" rx="16" fill="#4a2b2b" stroke="#ef9a9a" stroke-width="2"/>
+            <text x="240" y="75" text-anchor="middle" fill="#fff" font-size="21" font-weight="700">Old path: rejected</text>
+            <text x="240" y="112" text-anchor="middle" fill="#ffd8d8" font-size="15">/private/var/db/pkg-install/tmp</text>
+            <text x="240" y="141" text-anchor="middle" fill="#ffd8d8" font-size="15">0700 root-only · parents 0700</text>
+            <text x="240" y="180" text-anchor="middle" fill="#fff" font-size="15">vendor build users cannot stat TMPDIR</text>
+            <path d="M455 130 L585 130" stroke="#9cd8c1" stroke-width="5" marker-end="url(#tmp-arrow)"/>
+            <rect x="595" y="35" width="420" height="190" rx="16" fill="#173428" stroke="#72cfae" stroke-width="2"/>
+            <text x="805" y="75" text-anchor="middle" fill="#fff" font-size="21" font-weight="700">New path: accepted</text>
+            <text x="805" y="112" text-anchor="middle" fill="#bdd0c5" font-size="15">/private/var/db/pkg-install-tmp</text>
+            <text x="805" y="141" text-anchor="middle" fill="#bdd0c5" font-size="15">0755 root:wheel · no group or other write</text>
+            <text x="805" y="180" text-anchor="middle" fill="#fff" font-size="15">vendor install completed with exit 0</text>
+          </svg>
+          <p class="diagram-caption">No unprivileged write is allowed in either path. The new path only adds traversal for the vendor's build users.</p>
+        </div>
+      </section>
+
+      <section id="final-fix" aria-labelledby="final-fix-title">
+        <h3 id="final-fix-title">7. The minimal macOS fixes</h3>
+        <p>Each fix branch is signed, pushed, and reviewed. Each fix changes the smallest possible surface and keeps every security rule that the failure did not disprove.</p>
+
+        <div class="table-wrap" role="region" tabindex="0" aria-label="macOS fix lineage">
+          <table class="decision-table">
+            <thead><tr><th>Fix</th><th>Branch and commit</th><th>Change</th><th>Kept strict</th></tr></thead>
+            <tbody>
+              <tr><td>Operation lock</td><td><code>fix/dn16-macos-handoff-lock</code></td><td>Move the lock to <code>/private/var/db/pkg-install-handoff.lock</code>.</td><td>The parent-chain check still rejects every group or other write bit.</td></tr>
+              <tr><td>Root ancestors</td><td><code>fix/dn16-safe-root-ancestor</code> · <code>337ba704</code></td><td>Accept exact root-owned macOS ancestors such as <code>root:admin</code> <code>0755</code> at <code>/Library/Application Support</code>.</td><td>UID root, directory type, no-follow traversal, and no group or other write bits stay required.</td></tr>
+              <tr><td>Source manifests</td><td><code>fix/dn16-exact-sealed-manifest</code> · <code>02c30f30</code></td><td>The source publisher emits byte-identical top and proof manifests.</td><td>Every sealed byte is still authenticated before use.</td></tr>
+              <tr><td>Vendor temp directory</td><td><code>fix/dn16-macos-vendor-tmpdir</code> · <code>76d6a455</code></td><td>Move the macOS vendor <code>TMPDIR</code> to <code>/private/var/db/pkg-install-tmp</code>, root-owned mode <code>0755</code>, with every group and other write bit forbidden at creation and at every validation.</td><td>The install-state directory and every other private directory keep the exact <code>0700</code> rule. Linux paths and modes are unchanged.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="current-summary-grid">
+          <article class="truth-card"><strong>Full installer and vendor tests</strong><p><code>726/726</code> passed for the temp-directory fix.</p></article>
+          <article class="truth-card"><strong>Clippy and format</strong><p>No new warnings. Format clean.</p></article>
+          <article class="truth-card"><strong>Control experiment</strong><p>The exact production invocation installed the vendor successfully with the new directory.</p></article>
+          <article class="truth-card ready"><strong>Independent review</strong><p>Standards, specification, and security reviews passed for every fix.</p></article>
+        </div>
+      </section>
+
+      <section id="final-release" aria-labelledby="final-release-title">
+        <h3 id="final-release-title">8. Release and proof architecture</h3>
+        <p>The workflow-13 proof used two private draft labels. <code>v0.1.0-alpha.12</code> is N. <code>v0.1.0-alpha.13</code> is N+1. Both peel to product commit <code>337ba704bc2d01d006b671be7fbdd25583ddfc89</code>. They stayed private. The next iteration must build new drafts from the temp-directory fix commit.</p>
+
+        <ol class="numbered-detail">
+          <li><strong>Build exact platform inputs.</strong>Create macOS arm64 packages and Linux x86-64 assets from the fixed commit. Verify architecture, codesign, embedded route, and manifest identity.</li>
+          <li><strong>Sign immutable release inputs.</strong>Use the signed workflow tag <code>dn16-proof-workflow-1</code>. Cosign signs <code>SHA256SUMS</code>. The checksum file binds every input.</li>
+          <li><strong>Build two TUF states.</strong>N has sequence 1. N+1 has sequence 2. Both use trusted root SHA-256 <code>1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90</code>.</li>
+          <li><strong>Bind one immutable pair.</strong>The pair digest binds both channel states and the fixed product commit. The runner rejects any different byte.</li>
+          <li><strong>Serve the real embedded route.</strong>The packages contain the original compile-time URL. The proof atomically advances that same route from N to N+1.</li>
+          <li><strong>Run slot 1 in two phases.</strong>Prepare on a clean Apple silicon VM. Reboot the same VM. Resume with a fresh boot session and exact V2 marker.</li>
+          <li><strong>Destroy slot 1.</strong>Retain evidence first. Then delete the VM and free generated build data.</li>
+          <li><strong>Create and run slot 2.</strong>Use a new VM from the same pinned image. Repeat the full two-phase lifecycle independently.</li>
+          <li><strong>Review before cleanup.</strong>Check install, N-to-N+1, repair, uninstall, residue, signatures, boot sessions, and exact runner identity.</li>
+        </ol>
+
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Workflow-13 proof identities">
+          <table class="decision-table">
+            <thead><tr><th>Item</th><th>Identity</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td>Workflow-13 branch commit</td><td><code>f95567b267d9e45070f329bb2759bb6f95436909</code></td><td class="yes">Signed and pushed</td></tr>
+              <tr><td>Workflow-13 tag</td><td><code>dn16-macos-proof-workflow-13</code> (tag object <code>60a3c992</code>)</td><td class="yes">Annotated, signed, GitHub-verified</td></tr>
+              <tr><td>Sealed pair SHA-256</td><td><code>1f7a3714e739d0ea9370c3a10c4925e8d02851cb2abd57a7cb39121b6c4191d2</code></td><td class="yes">Served at the original embedded URL with a verified rollback tree</td></tr>
+              <tr><td>N draft</td><td><code>v0.1.0-alpha.12</code> · release <code>379031048</code> · 19 assets</td><td class="maybe">Private proof input</td></tr>
+              <tr><td>N+1 draft</td><td><code>v0.1.0-alpha.13</code> · release <code>379031091</code> · 19 assets</td><td class="maybe">Private proof input</td></tr>
+              <tr><td>Proof run</td><td><code>33264502945</code></td><td class="no">Hosted gates passed. Slot 1 prepare failed at the vendor temp directory. Slot 2 was never created.</td></tr>
+              <tr><td>Slot 1 evidence</td><td>Artifact <code>9718338040</code> plus preserved logs and diagnostics</td><td class="yes">Retained with SHA-256 sums</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="final-security" aria-labelledby="final-security-title">
+        <h3 id="final-security-title">9. Security boundaries that must stay</h3>
+        <div class="evidence-grid">
+          <article class="evidence-rung"><h4>Authenticate before privilege</h4><p>Verify exact bytes, digest, release identity, and manifest before the installer can make machine-wide changes.</p></article>
+          <article class="evidence-rung"><h4>One native writer</h4><p>Determinate writes Base Nix state. pkg never writes the same state in parallel.</p></article>
+          <article class="evidence-rung ready"><h4>Fail closed on unknown state</h4><p>Foreign Nix, mixed receipts, unsafe ancestors, wrong ownership, wrong mode, or stale proof identity stop the operation.</p></article>
+          <article class="evidence-rung ready"><h4>Do not hide local-admin limits</h4><p>A local administrator can change the executable or machine after verification. pkg protects the release and execution boundary. It cannot defeat the machine owner.</p></article>
+        </div>
+        <ul>
+          <li>Do not weaken parent directory validation to make macOS pass.</li>
+          <li>Do not trust a pkg handoff marker as proof that Base Nix is healthy.</li>
+          <li>Do not use a local certificate authority or local proof server as release proof.</li>
+          <li>Do not expose short-lived runner credentials in logs, files, or reports.</li>
+          <li>Do not publish any private alpha proof inputs.</li>
+          <li>Do not allow a package removal command to call terminal Base Nix uninstall.</li>
+          <li>Do not keep temporary GitHub environment tag policies after proof.</li>
+        </ul>
+      </section>
+
+      <section id="final-remaining" aria-labelledby="final-remaining-title">
+        <h3 id="final-remaining-title">10. What remains before DN-16 is complete</h3>
+        <ol class="blocker-list">
+          <li><strong>Build new private releases from the temp-directory fix</strong>Build <code>alpha.14</code> and <code>alpha.15</code> drafts from signed commit <code>76d6a455</code>. Run the immutable signer workflow. Verify all release files and signatures. Keep both releases private.</li>
+          <li><strong>Seal and promote a new N/N+1 pair</strong>Record the exact pair SHA-256. Atomically serve it at the compile-time route. Keep the verified rollback tree that now holds the Alpha.12 pair.</li>
+          <li><strong>Prepare workflow-14</strong>Pin the new pair, the new product commit, and the new releases. Review, sign, tag, and add one exact tag policy.</li>
+          <li><strong>Complete two independent native slots</strong>Each clean Apple silicon VM must prepare, reboot, resume, upgrade, repair, uninstall, and pass residue checks.</li>
+          <li><strong>Review retained evidence</strong>Confirm exact commits, signatures, channel bytes, runner identity, boot changes, results, and artifacts.</li>
+          <li><strong>Restore external state again</strong>Disable the proof workflow. Remove temporary environment tag policies. Confirm zero runners. Delete both VMs. Keep drafts, evidence, and rollback.</li>
+        </ol>
+
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Workflow-13 closeout record">
+          <table class="decision-table">
+            <thead><tr><th>Closeout item</th><th>Final value</th></tr></thead>
+            <tbody>
+              <tr><td>Slot 1 VM</td><td>Prepare failed at the vendor temp directory. Evidence exported. VM deleted.</td></tr>
+              <tr><td>Slot 2 VM</td><td>Never created. No second dispatch was made.</td></tr>
+              <tr><td>Workflow and GitHub policy restoration</td><td>Workflow disabled. All five temporary tag policies removed. Required reviewer and settings preserved. Zero runners.</td></tr>
+              <tr><td>Channel and rollback</td><td>The Alpha.12/13 pair is live at the original embedded URL. The previous pair is parked as rollback. Tunnel and server state preserved.</td></tr>
+              <tr><td>Evidence</td><td>Run logs, the phase artifact, VM diagnostics, failure records, and review records retained under <code>/private/tmp/pkg-dn16-wf13-failure-evidence/</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="plain-warning" role="note">
+          <strong>Completion rule</strong>
+          <p>Call macOS complete only when both native slots pass and the evidence review passes. Call the whole task complete only after temporary runners, VMs, tunnels, and GitHub policies are removed or restored.</p>
+        </div>
+      </section>
+
+      <section id="final-review" aria-labelledby="final-review-title">
+        <h3 id="final-review-title">11. Research and agent review summary</h3>
+        <p>GLM, DeepSeek, Qwen, and independent review agents examined the design and proof work. Their useful advice agrees with the repository evidence.</p>
+        <ul class="compact-facts">
+          <li><strong>Accepted</strong><span>Use the released Determinate executable. Keep one Base Nix owner. Keep the integration contract small. Prove before deletion.</span></li>
+          <li><strong>Rejected</strong><span>Copying upstream Rust, a generic provider framework, a private Nix runtime, a local certificate authority, and a proof-only server.</span></li>
+          <li><strong>Repository evidence wins</strong><span>Agent advice helped find questions. Native runs, signed artifacts, exact digests, and real machine state decide whether the work passes.</span></li>
+        </ul>
+      </section>
+    </article>
+
+    <article class="historical-snapshot" id="former-execution-report" aria-labelledby="former-execution-report-title">
+      <header>
+        <p class="current-kicker">Superseded execution log</p>
+        <h2 id="former-execution-report-title">Earlier state before the macOS root cause was proved</h2>
+        <p class="current-intro">This section preserves the earlier branch, signing, channel, and runner history. It is not the current status. Use the verified report above for current decisions and progress.</p>
+        <nav class="report-nav" aria-label="Earlier execution report sections">
+          <a href="#execution-window">Execution snapshot</a>
           <a href="#current-status">Status</a>
           <a href="#current-ownership">Ownership</a>
           <a href="#current-trust">Trust</a>
