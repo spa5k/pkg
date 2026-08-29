@@ -60,7 +60,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             validate.index('[[ "$count" =~ ^[1-9][0-9]*$ ]]'),
             validate.index('gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/'),
         )
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-15", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-16", WORKFLOW)
         self.assertIn(
             "PKG_REVIEWED_COMMIT: dd66653c6512d98633e3550e68f478687ee817b5",
             WORKFLOW,
@@ -82,6 +82,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             self.assertEqual(WORKFLOW.count(final_value), 1)
         self.assertNotIn("REPLACE_WITH_FINAL", WORKFLOW)
         for stale_value in (
+            "dn16-macos-proof-workflow-15",
             "dn16-macos-proof-workflow-14",
             "76d6a455eef83802498b071c15da0704036ce634",
             "c91758f7fd32982bff898ab9ff61b6be4d2281303d14e54075496af27366d36d",
