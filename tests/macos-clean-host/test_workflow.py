@@ -50,14 +50,62 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA"',
             'test "$target_sha" = "$EXPECTED_SHA"',
             'test "$verified" = true',
+            'for digest in "$PKG_PROOF_PAIR_SHA256"',
+            'for count in "$PKG_PROOF_PAIR_LENGTH"',
+            '[[ "$digest" =~ ^[0-9a-f]{64}$ ]]',
+            '[[ "$count" =~ ^[1-9][0-9]*$ ]]',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-10", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-11", WORKFLOW)
         self.assertIn(
-            "PKG_PROOF_PAIR_SHA256: "
-            "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
+            "PKG_REVIEWED_COMMIT: 85c1db2c5edabb86ea8dd5f6d467f21fca8a31da",
             WORKFLOW,
         )
+        self.assertIn(
+            "PKG_PROOF_PAIR_SHA256: "
+            "efd7d22df7ede610e5ec55d666c6d4bb4b8de319c5c25b4b8f3b2a708d75564b",
+            WORKFLOW,
+        )
+        for final_value in (
+            "PKG_PROOF_PAIR_LENGTH: 1101",
+            "PKG_PROOF_N_INVENTORY_SHA256: 4dfdcc441813343a8e648a22694e190051b9ae13a8144e824845f7ffe17086c3",
+            "PKG_PROOF_N_INVENTORY_LENGTH: 5959",
+            "PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: d618a58ea96c78f89d479119277c8cd1661ebe2660c656ea4cc1acecc91a8d94",
+            "PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH: 5959",
+            "PKG_PROOF_N_TOTAL_BYTES: 328955613",
+            "PKG_PROOF_N_ROWS_SHA256: 88a5a0312f0e9801af792a73316f089ca9ec11e190c76f59f571b0d9ba82b194",
+            "PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328955260",
+            "PKG_PROOF_N_PLUS_1_ROWS_SHA256: c173339b36c5fb0bb3f14ce35d8ba8d8ac0cfb2e094f050835a52fc62459cdd7",
+            "PKG_PROOF_INPUT_BYTES: 35573476",
+            "PKG_PROOF_RESPONSE_BYTES: 35586495",
+        ):
+            self.assertEqual(WORKFLOW.count(final_value), 1)
+        self.assertNotIn("REPLACE_WITH_FINAL", WORKFLOW)
+        for stale_value in (
+            "dn16-macos-proof-workflow-10",
+            "8ffd325a4be12a998f3a5684097b57841a11540e",
+            "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
+            "1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063",
+            "f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9",
+            "0752cca28ed3d1502b2cf99ed1faee4159d1a72f6401129ea2cdd3bc55ec3172",
+            "2ec4759315dd56996db25b20946710416cce479f25a1b3cdd770aa9b40e06241",
+        ):
+            self.assertNotIn(stale_value, WORKFLOW)
+        self.assertIn('test "$FROM_RELEASE" = v0.1.0-alpha.10', WORKFLOW)
+        self.assertIn('test "$TO_RELEASE" = v0.1.0-alpha.11', WORKFLOW)
+        self.assertIn(
+            '[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.10 ]', PROOF
+        )
+        self.assertIn(
+            '[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.11 ]', PROOF
+        )
+
+    def test_persistent_handoff_lock_has_exact_residue_metadata(self) -> None:
+        self.assertIn("/private/var/db/pkg-install-handoff.lock", PROOF)
+        self.assertIn("/usr/bin/sudo -n /usr/bin/stat -f", PROOF)
+        self.assertIn("Regular File:root:wheel:600:0:1", PROOF)
+        self.assertIn("the persistent handoff lock metadata changed", PROOF)
+        self.assertNotIn("/private/var/run/pkg-install-handoff.lock", PROOF)
 
     def test_guest_capacity_gate_is_early_exact_and_fail_closed(self) -> None:
         phase = self.job("prepare-slot-1", "resume-slot-1")
@@ -468,12 +516,12 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'temporary="$output.part"',
             'test "$response" = "200 $url"',
             'mv "$temporary" "$output"',
-            "1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063",
-            "f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9",
+            '"$PKG_PROOF_N_INVENTORY_LENGTH" "$PKG_PROOF_N_INVENTORY_SHA256"',
+            '"$PKG_PROOF_N_PLUS_1_INVENTORY_SHA256"',
             "require(len(selected_rows) == 18",
             "proof_input_bytes = sum(row[2] for row in selected_rows)",
-            "proof_input_bytes == 36923175",
-            "1099 + 5957 + 5957 + proof_input_bytes == 36936188",
+            'proof_input_bytes == int(os.environ["PKG_PROOF_INPUT_BYTES"])',
+            'int(os.environ["PKG_PROOF_RESPONSE_BYTES"])',
             '== proof_inputs, "compact proof inputs are missing or extra"',
             'cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json"',
             '--certificate-identity "$identity" --certificate-oidc-issuer "$issuer"',
@@ -491,8 +539,8 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         for required in (
             "schema=PKG-DN16-VM-ACQUISITION-V1",
             "logical_fetches=21",
-            "proof_input_bytes=36923175",
-            "response_bytes=36936188",
+            "proof_input_bytes=$PKG_PROOF_INPUT_BYTES",
+            "response_bytes=$PKG_PROOF_RESPONSE_BYTES",
             '"proof_pair_sha256": os.environ["PROOF_PAIR_SHA256"]',
             'raise SystemExit("VM acquisition evidence does not match its phase")',
         ):

@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-10
+        description: Exact commit signed by dn16-macos-proof-workflow-11
         required: true
         type: string
       proof_channel_url:
@@ -39,10 +39,21 @@ concurrency:
 env:
   RUSTUP_TOOLCHAIN: "1.96.1"
   CARGO_TERM_COLOR: always
-  PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
+  PKG_REVIEWED_COMMIT: 85c1db2c5edabb86ea8dd5f6d467f21fca8a31da
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-10
-  PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-11
+  PKG_PROOF_PAIR_SHA256: efd7d22df7ede610e5ec55d666c6d4bb4b8de319c5c25b4b8f3b2a708d75564b
+  PKG_PROOF_PAIR_LENGTH: 1101
+  PKG_PROOF_N_INVENTORY_SHA256: 4dfdcc441813343a8e648a22694e190051b9ae13a8144e824845f7ffe17086c3
+  PKG_PROOF_N_INVENTORY_LENGTH: 5959
+  PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: d618a58ea96c78f89d479119277c8cd1661ebe2660c656ea4cc1acecc91a8d94
+  PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH: 5959
+  PKG_PROOF_N_TOTAL_BYTES: 328955613
+  PKG_PROOF_N_ROWS_SHA256: 88a5a0312f0e9801af792a73316f089ca9ec11e190c76f59f571b0d9ba82b194
+  PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328955260
+  PKG_PROOF_N_PLUS_1_ROWS_SHA256: c173339b36c5fb0bb3f14ce35d8ba8d8ac0cfb2e094f050835a52fc62459cdd7
+  PKG_PROOF_INPUT_BYTES: 35573476
+  PKG_PROOF_RESPONSE_BYTES: 35586495
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
 
@@ -66,6 +77,22 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          for digest in "$PKG_PROOF_PAIR_SHA256" \
+              "$PKG_PROOF_N_INVENTORY_SHA256" \
+              "$PKG_PROOF_N_PLUS_1_INVENTORY_SHA256" \
+              "$PKG_PROOF_N_ROWS_SHA256" \
+              "$PKG_PROOF_N_PLUS_1_ROWS_SHA256"; do
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          done
+          for count in "$PKG_PROOF_PAIR_LENGTH" \
+              "$PKG_PROOF_N_INVENTORY_LENGTH" \
+              "$PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH" \
+              "$PKG_PROOF_N_TOTAL_BYTES" \
+              "$PKG_PROOF_N_PLUS_1_TOTAL_BYTES" \
+              "$PKG_PROOF_INPUT_BYTES" \
+              "$PKG_PROOF_RESPONSE_BYTES"; do
+            [[ "$count" =~ ^[1-9][0-9]*$ ]]
+          done
           test "$GITHUB_REPOSITORY" = spa5k/pkg
           test "$GITHUB_REF" = "refs/tags/$PKG_PROOF_WORKFLOW_TAG"
           test "$GITHUB_SHA" = "$EXPECTED_SHA"
@@ -165,6 +192,8 @@ jobs:
           umask 077
           [[ "$FROM_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
           [[ "$TO_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
+          test "$FROM_RELEASE" = v0.1.0-alpha.10
+          test "$TO_RELEASE" = v0.1.0-alpha.11
           [[ "$PROOF_PAIR_SHA256" =~ ^[0-9a-f]{64}$ ]]
           from_sequence=${FROM_RELEASE##*.}
           to_sequence=${TO_RELEASE##*.}
@@ -689,17 +718,20 @@ jobs:
             fi
             mv "$temporary" "$output"
           }
-          fetch "$PROOF_CHANNEL_URL/proof-pair.json" "$channel/proof-pair.json" 1099 \
+          fetch "$PROOF_CHANNEL_URL/proof-pair.json" "$channel/proof-pair.json" \
+            "$PKG_PROOF_PAIR_LENGTH" \
             "$PROOF_PAIR_SHA256"
-          fetch "$PROOF_CHANNEL_URL/n.inventory.json" "$channel/n.inventory.json" 5957 \
-            1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063
+          fetch "$PROOF_CHANNEL_URL/n.inventory.json" "$channel/n.inventory.json" \
+            "$PKG_PROOF_N_INVENTORY_LENGTH" "$PKG_PROOF_N_INVENTORY_SHA256"
           fetch "$PROOF_CHANNEL_URL/n-plus-1.inventory.json" \
-            "$channel/n-plus-1.inventory.json" 5957 \
-            f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9
+            "$channel/n-plus-1.inventory.json" \
+            "$PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH" \
+            "$PKG_PROOF_N_PLUS_1_INVENTORY_SHA256"
           python3 -I - "$channel" "$FROM_RELEASE" "$TO_RELEASE" \
             "$PKG_REVIEWED_COMMIT" > "$root/compact-files.tsv" <<'PY'
           import hashlib
           import json
+          import os
           import pathlib
           import re
           import sys
@@ -721,10 +753,12 @@ jobs:
           selected_rows = []
           roots = set()
           expected_inventory = {
-              "n": (5957,
-                    "1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063"),
-              "n-plus-1": (5957,
-                           "f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9"),
+              "n": (int(os.environ["PKG_PROOF_N_INVENTORY_LENGTH"]),
+                    os.environ["PKG_PROOF_N_INVENTORY_SHA256"]),
+              "n-plus-1": (
+                  int(os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH"]),
+                  os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_SHA256"],
+              ),
           }
           for record, name, sequence, release in zip(
               pair["channels"], ("n", "n-plus-1"), (1, 2), releases
@@ -808,9 +842,13 @@ jobs:
                   selected_rows.append((name, path, item["length"], item["sha256"]))
           require(len(roots) == 1, "proof channels use different roots")
           proof_input_bytes = sum(row[2] for row in selected_rows)
-          require(len(selected_rows) == 18 and proof_input_bytes == 36923175,
+          require(len(selected_rows) == 18
+                  and proof_input_bytes == int(os.environ["PKG_PROOF_INPUT_BYTES"]),
                   "compact proof input count or size mismatch")
-          require(1099 + 5957 + 5957 + proof_input_bytes == 36936188,
+          require(int(os.environ["PKG_PROOF_PAIR_LENGTH"])
+                  + int(os.environ["PKG_PROOF_N_INVENTORY_LENGTH"])
+                  + int(os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH"])
+                  + proof_input_bytes == int(os.environ["PKG_PROOF_RESPONSE_BYTES"]),
                   "compact response byte count mismatch")
           for row in selected_rows:
               print(*row, sep="\t")
@@ -878,8 +916,8 @@ jobs:
             "runner_name=$RUNNER_NAME" \
             "proof_pair_sha256=$PROOF_PAIR_SHA256" \
             'logical_fetches=21' \
-            'proof_input_bytes=36923175' \
-            'response_bytes=36936188' \
+            "proof_input_bytes=$PKG_PROOF_INPUT_BYTES" \
+            "response_bytes=$PKG_PROOF_RESPONSE_BYTES" \
             'status=complete' \
             > "$root/evidence/vm-acquisition.txt"
 
@@ -1015,31 +1053,29 @@ jobs:
               "workflow_sha": os.environ["GITHUB_WORKFLOW_SHA"],
               "channel_url": normalized_url,
               "proof_pair_sha256": os.environ["PROOF_PAIR_SHA256"],
-              "product_commit": "8ffd325a4be12a998f3a5684097b57841a11540e",
+              "product_commit": "85c1db2c5edabb86ea8dd5f6d467f21fca8a31da",
               "from_release": os.environ["FROM_RELEASE"],
               "to_release": os.environ["TO_RELEASE"],
               "n_name": "n",
               "n_sequence": "1",
-              "n_inventory_length": "5957",
-              "n_inventory_sha256":
-                  "1596fd0f27bb2003efb5d1a73d01ef591a37901e15873aa9291ae664cd932063",
+              "n_inventory_length": os.environ["PKG_PROOF_N_INVENTORY_LENGTH"],
+              "n_inventory_sha256": os.environ["PKG_PROOF_N_INVENTORY_SHA256"],
               "n_trusted_root_sha256":
                   "1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90",
               "n_verified_count": "34",
-              "n_total_bytes": "328981460",
-              "n_rows_sha256":
-                  "0752cca28ed3d1502b2cf99ed1faee4159d1a72f6401129ea2cdd3bc55ec3172",
+              "n_total_bytes": os.environ["PKG_PROOF_N_TOTAL_BYTES"],
+              "n_rows_sha256": os.environ["PKG_PROOF_N_ROWS_SHA256"],
               "n_plus_1_name": "n-plus-1",
               "n_plus_1_sequence": "2",
-              "n_plus_1_inventory_length": "5957",
+              "n_plus_1_inventory_length":
+                  os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH"],
               "n_plus_1_inventory_sha256":
-                  "f511debfcd327fa0e18c912c3afba28c347783762201cea1b5c59c53a72474a9",
+                  os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_SHA256"],
               "n_plus_1_trusted_root_sha256":
                   "1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90",
               "n_plus_1_verified_count": "34",
-              "n_plus_1_total_bytes": "328981448",
-              "n_plus_1_rows_sha256":
-                  "2ec4759315dd56996db25b20946710416cce479f25a1b3cdd770aa9b40e06241",
+              "n_plus_1_total_bytes": os.environ["PKG_PROOF_N_PLUS_1_TOTAL_BYTES"],
+              "n_plus_1_rows_sha256": os.environ["PKG_PROOF_N_PLUS_1_ROWS_SHA256"],
               "status": "complete",
           }:
               raise SystemExit("hosted acquisition receipt is invalid")
@@ -1105,8 +1141,8 @@ jobs:
                       "runner_name": runner,
                       "proof_pair_sha256": os.environ["PROOF_PAIR_SHA256"],
                       "logical_fetches": "21",
-                      "proof_input_bytes": "36923175",
-                      "response_bytes": "36936188",
+                      "proof_input_bytes": os.environ["PKG_PROOF_INPUT_BYTES"],
+                      "response_bytes": os.environ["PKG_PROOF_RESPONSE_BYTES"],
                       "status": "complete",
                   }:
                       raise SystemExit("VM acquisition evidence does not match its phase")

@@ -43,7 +43,7 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-10` annotated tag.
+`dn16-macos-proof-workflow-11` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
@@ -55,7 +55,7 @@ It authenticates each `SHA256SUMS` with its Sigstore bundle.
 It authenticates both preview packages and both Apple Silicon CLIs.
 Each authenticated `SHA256SUMS` binds the selected package, CLI, and release manifest.
 The pinned pair binds both releases to reviewed DN-16 product commit
-`8ffd325a4be12a998f3a5684097b57841a11540e`.
+`85c1db2c5edabb86ea8dd5f6d467f21fca8a31da`.
 
 The channel download rejects redirects.
 It uses HTTPS only.
@@ -67,8 +67,8 @@ It does not upload the full channel tree to GitHub artifact storage.
 Each VM phase then makes 21 direct logical fetches for the fixed pair, two inventories,
 and the exact 18 proof-input files.
 Before this fetch, it verifies the provisioned `/usr/local/bin/cosign` version and SHA-256.
-The 18 proof-input files total 36,923,175 bytes.
-All 21 response bodies total 36,936,188 bytes.
+The workflow pins the final exact byte total for the 18 proof-input files.
+It also pins the final exact byte total for all 21 response bodies.
 Each VM rejects redirects, partial files, symlinks, missing files, extra files,
 wrong lengths, wrong digests, wrong releases, and wrong Sigstore identities.
 The successor sealed pair contains the original 50 files and 18 sealed proof inputs.
@@ -212,6 +212,12 @@ The resume job does these operations:
 15. It verifies final product and Base Nix absence.
 16. It removes the proof continuation files.
 17. It uploads bounded resume evidence.
+
+The proof permits the persistent, zero-byte coordination lock at
+`/private/var/db/pkg-install-handoff.lock`. It requires a regular non-symlink
+file with owner `root`, group `wheel`, mode `0600`, size zero, and one link.
+The lock is not lifecycle state. The safe DB parent avoids native
+`/private/var/run`, which is group-writable on macOS.
 
 After resume finishes, wait for its artifact upload.
 Wait for the ephemeral runner to deregister.

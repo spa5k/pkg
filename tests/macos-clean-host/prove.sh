@@ -13,6 +13,8 @@ require_env() {
 
 for name in PKG_PROOF_FROM_RELEASE PKG_PROOF_TO_RELEASE PKG_PROOF_ROOT \
     PKG_PROOF_CHANNEL_URL PKG_PROOF_PAIR_SHA256 PKG_PROOF_REBOOT_MARKER \
+    PKG_PROOF_INPUT_BYTES PKG_PROOF_RESPONSE_BYTES \
+    PKG_REVIEWED_COMMIT \
     PKG_PROOF_LIFECYCLE_RUN PKG_PROOF_PHASE GITHUB_RUN_ID GITHUB_RUN_ATTEMPT \
     GITHUB_WORKFLOW_SHA RUNNER_NAME; do
     require_env "$name"
@@ -31,6 +33,10 @@ for tag in "$PKG_PROOF_FROM_RELEASE" "$PKG_PROOF_TO_RELEASE"; do
         || fail "a release tag is invalid"
 done
 [ "$PKG_PROOF_FROM_RELEASE" != "$PKG_PROOF_TO_RELEASE" ] || fail "the release tags are equal"
+[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.10 ] \
+    || fail "the release N tag is not the reviewed final release"
+[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.11 ] \
+    || fail "the release N+1 tag is not the reviewed final release"
 
 root=$PKG_PROOF_ROOT
 case "$root" in "${RUNNER_TEMP:-/no-runner-temp}"/*) ;; *) fail "the proof root is unsafe" ;; esac
@@ -120,8 +126,8 @@ vm_acquisition="$evidence/vm-acquisition.txt"
     "runner_name=$RUNNER_NAME" \
     "proof_pair_sha256=$PKG_PROOF_PAIR_SHA256" \
     'logical_fetches=21' \
-    'proof_input_bytes=36923175' \
-    'response_bytes=36936188' \
+    "proof_input_bytes=$PKG_PROOF_INPUT_BYTES" \
+    "response_bytes=$PKG_PROOF_RESPONSE_BYTES" \
     'status=complete')" ] || fail "the VM acquisition evidence does not bind this job"
 
 disposable=/var/tmp/pkg-disposable-macos-proof
@@ -188,6 +194,7 @@ launchd_labels="$root/preflight-launchd-labels.txt"
     || fail "a Nix daemon is already loaded"
 for path in /nix /etc/nix /opt/pkg /private/var/db/pkg-install \
     /private/var/db/pkg-install-journal /private/var/db/pkg-install-auth \
+    /private/var/db/pkg-install-handoff.lock \
     /Library/LaunchDaemons/org.pkg.root-helper.plist \
     /Library/LaunchDaemons/org.pkg.nix-broker.plist \
     /Library/LaunchDaemons/org.nixos.nix-daemon.plist \
@@ -338,6 +345,7 @@ printf '%s\n' \
     >"$evidence/proof-channel.txt"
 /usr/bin/python3 -I - "$channel" "$from/release-manifest.json" \
     "$to/release-manifest.json" "$PKG_PROOF_FROM_RELEASE" "$PKG_PROOF_TO_RELEASE" \
+    "$PKG_REVIEWED_COMMIT" \
     >>"$evidence/proof-channel.txt" <<'PY'
 import hashlib
 import json
@@ -352,6 +360,7 @@ def require(condition, message):
 channel = pathlib.Path(sys.argv[1])
 release_manifests = [pathlib.Path(path) for path in sys.argv[2:4]]
 releases = sys.argv[4:6]
+reviewed_commit = sys.argv[6]
 require({path.name for path in channel.iterdir()} == {
     "proof-pair.json", "n.inventory.json", "n-plus-1.inventory.json", "n", "n-plus-1",
 }, "downloaded proof pair has extra top-level entries")
@@ -362,7 +371,7 @@ pair = json.loads((channel / "proof-pair.json").read_bytes())
 require(set(pair) == {"schemaVersion", "channels", "productCommit"},
         "invalid proof pair")
 require(pair["schemaVersion"] == 1, "invalid proof pair schema")
-require(pair["productCommit"] == "8ffd325a4be12a998f3a5684097b57841a11540e",
+require(pair["productCommit"] == reviewed_commit,
         "proof pair product commit mismatch")
 require(isinstance(pair["channels"], list) and len(pair["channels"]) == 2,
         "invalid proof pair channels")
@@ -1292,6 +1301,11 @@ for path in /nix /opt/pkg /usr/local/bin/pkg '/Library/Application Support/pkg' 
     /Library/LaunchDaemons/org.pkg.nix-broker.plist; do
     [ ! -e "$path" ] && [ ! -L "$path" ] || fail "$path remains"
 done
+handoff_lock=/private/var/db/pkg-install-handoff.lock
+[ ! -L "$handoff_lock" ] || fail "the handoff lock is a symlink"
+[ "$(/usr/bin/sudo -n /usr/bin/stat -f '%HT:%Su:%Sg:%Lp:%z:%l' "$handoff_lock")" \
+    = 'Regular File:root:wheel:600:0:1' ] \
+    || fail "the persistent handoff lock metadata changed"
 for record in /Users/pkg-nix-broker /Groups/pkg-nix-broker; do
     ! /usr/bin/dscl . -read "$record" >/dev/null 2>&1 || fail "$record remains"
 done
