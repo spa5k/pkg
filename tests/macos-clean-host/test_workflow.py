@@ -38,7 +38,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             'test "$verified" = true',
         ):
             self.assertIn(required, validate)
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-2", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-3", WORKFLOW)
         self.assertIn(
             "PKG_PROOF_PAIR_SHA256: "
             "0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785",
@@ -172,12 +172,91 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn('set(records) != expected', PROOF)
         self.assertIn('[ "$old_boot" != "$current_boot" ]', PROOF)
 
+    def test_all_protected_marker_and_continuation_reads_use_sudo_n(self) -> None:
+        phase = self.job("prepare-slot-1", "resume-slot-1")
+        for required in (
+            '/usr/bin/sudo -n /usr/bin/true',
+            '/usr/bin/sudo -n /bin/test -f "$disposable"',
+            '/usr/bin/sudo -n /bin/test ! -L "$disposable"',
+            '/usr/bin/sudo -n /usr/bin/stat -f \'%Su:%Sg:%Lp\' "$disposable"',
+            '/usr/bin/sudo -n /bin/cat "$disposable"',
+            '/usr/bin/sudo -n /bin/test -f "$instance_marker"',
+            '/usr/bin/sudo -n /usr/bin/stat -f \'%z\' "$instance_marker"',
+            '/usr/bin/sudo -n /bin/cat "$instance_marker"',
+            '/usr/bin/sudo -n /bin/test -f "$continuation"',
+            '/usr/bin/sudo -n /usr/bin/stat -f \'%z\' "$continuation"',
+        ):
+            self.assertIn(required, phase)
+        for required in (
+            '/usr/bin/sudo -n /usr/bin/true',
+            '/usr/bin/sudo -n /bin/cat "$instance_marker"',
+            '/usr/bin/sudo -n /bin/cat "$disposable"',
+            '/usr/bin/sudo -n /bin/cat "$PKG_PROOF_REBOOT_MARKER"',
+            '/usr/bin/sudo -n /usr/bin/tail -c 1 "$PKG_PROOF_REBOOT_MARKER"',
+            '/usr/bin/sudo -n /bin/cat "$continuation"',
+            '/usr/bin/sudo -n /bin/mkdir -p "$continuation_state"',
+            '/usr/bin/sudo -n /bin/chown root:wheel "$continuation_state"',
+            '/usr/bin/sudo -n /bin/chmod 0700 "$continuation_state"',
+            '/usr/bin/sudo -n /usr/bin/install -o root -g wheel -m 0600',
+            '/usr/bin/sudo -n /bin/test -f "$path"',
+            '/usr/bin/sudo -n /bin/test ! -L "$path"',
+            '/usr/bin/sudo -n /usr/bin/stat -f \'%Su:%Sg:%Lp\' "$path"',
+            '/usr/bin/sudo -n /usr/bin/shasum -a 256 "$path"',
+            '/usr/bin/sudo -n /usr/bin/cmp "$continuation_state/$name.before"',
+            '/usr/bin/sudo -n /bin/rm',
+            '/usr/bin/sudo -n /bin/rmdir "$continuation_state"',
+        ):
+            self.assertIn(required, PROOF)
+        self.assertLess(PROOF.index("/usr/bin/sudo -n /usr/bin/true"),
+                        PROOF.index("instance_marker="))
+        for forbidden in (
+            '$(cat "$disposable")',
+            '$(cat "$instance_marker")',
+            '$(/bin/cat "$disposable")',
+            '$(/bin/cat "$instance_marker")',
+            '$(/bin/cat "$PKG_PROOF_REBOOT_MARKER")',
+            '<"$PKG_PROOF_REBOOT_MARKER"',
+        ):
+            self.assertNotIn(forbidden, WORKFLOW + PROOF)
+        continuation_proof = PROOF.split("verify_continuation() {", 1)[1].split(
+            "snapshot_uninstall_boundary()", 1
+        )[0]
+        for forbidden in (
+            '[ -f "$path" ]',
+            '[ ! -L "$path" ]',
+            '$(/usr/bin/stat -f \'%Su:%Sg:%Lp\' "$path")',
+        ):
+            self.assertNotIn(forbidden, continuation_proof)
+        for forbidden in (
+            '/usr/bin/sudo /bin/mkdir -p "$continuation_state"',
+            '/usr/bin/sudo /bin/chown root:wheel "$continuation_state"',
+            '/usr/bin/sudo /bin/chmod 0700 "$continuation_state"',
+            '/usr/bin/sudo /usr/bin/install -o root -g wheel -m 0600',
+            '/usr/bin/sudo /bin/test -f "$continuation"',
+            '/usr/bin/sudo /bin/test ! -L "$continuation"',
+            '/usr/bin/sudo /bin/cat "$continuation"',
+            '/usr/bin/sudo /usr/bin/cmp "$continuation_state/$name.before"',
+            '/usr/bin/sudo /usr/bin/shasum -a 256 \\\n'
+            '                "$continuation_state/$name.before"',
+            '/usr/bin/sudo /bin/rm \\\n',
+            '/usr/bin/sudo /bin/rmdir "$continuation_state"',
+        ):
+            self.assertNotIn(forbidden, PROOF)
+        for forbidden in (
+            '/usr/bin/sudo /bin/test -f "$path"',
+            '/usr/bin/sudo /bin/test ! -L "$path"',
+            '/usr/bin/sudo /usr/bin/shasum -a 256 "$path"',
+        ):
+            self.assertNotIn(forbidden, continuation_proof)
+
     def test_handoff_base_nix_package_and_service_state_are_byte_compared(self) -> None:
         for name in ("handoff", "base-nix", "package-state", "services"):
             self.assertIn(f'"$work/{name}.before"', PROOF)
             self.assertIn(f'"$work/{name}.after"', PROOF)
             self.assertIn(f'"$continuation_state/{name}.before"', PROOF)
-        self.assertIn('/usr/bin/sudo /usr/bin/cmp "$continuation_state/$name.before"', PROOF)
+        self.assertIn(
+            '/usr/bin/sudo -n /usr/bin/cmp "$continuation_state/$name.before"', PROOF
+        )
         self.assertIn("/nix/var/nix/db/db.sqlite", PROOF)
         self.assertIn("org.pkg.root-helper=offline", PROOF)
         self.assertIn("org.pkg.nix-broker=offline", PROOF)

@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-2
+        description: Exact commit signed by dn16-macos-proof-workflow-3
         required: true
         type: string
       proof_channel_url:
@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-2
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-3
   PKG_PROOF_PAIR_SHA256: 0880b6d78cf671672e55496978d0f5ab1d9feb9f5ca2f8389608f7168b637785
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
@@ -423,27 +423,30 @@ jobs:
           test "$(uname -m)" = arm64
           test "$(sysctl -n kern.hv_vmm_present)" = 1
           case "$(sysctl -n hw.model)" in VirtualMac*) ;; *) exit 1 ;; esac
-          sudo -n true
+          /usr/bin/sudo -n /usr/bin/true
           disposable=/var/tmp/pkg-disposable-macos-proof
-          test -f "$disposable"
-          test ! -L "$disposable"
-          test "$(stat -f '%Su:%Sg:%Lp' "$disposable")" = root:wheel:600
-          test "$(stat -f '%z' "$disposable")" -le 128
-          test "$(cat "$disposable")" = \
+          /usr/bin/sudo -n /bin/test -f "$disposable"
+          /usr/bin/sudo -n /bin/test ! -L "$disposable"
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$disposable")" = \
+            root:wheel:600
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$disposable")" -le 128
+          test "$(/usr/bin/sudo -n /bin/cat "$disposable")" = \
             "PKG-DN16-DISPOSABLE-V1:${GITHUB_RUN_ID}:$PKG_PROOF_LIFECYCLE_RUN"
-          marker_age=$(( $(date +%s) - $(stat -f '%m' "$disposable") ))
+          marker_age=$(( $(date +%s) - $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$disposable") ))
           test "$marker_age" -ge 0
           test "$marker_age" -le 300
           instance_marker=/var/tmp/pkg-disposable-macos-instance
-          test -f "$instance_marker"
-          test ! -L "$instance_marker"
-          test "$(stat -f '%Su:%Sg:%Lp' "$instance_marker")" = root:wheel:600
-          test "$(stat -f '%z' "$instance_marker")" -le 128
-          instance_record=$(cat "$instance_marker")
+          /usr/bin/sudo -n /bin/test -f "$instance_marker"
+          /usr/bin/sudo -n /bin/test ! -L "$instance_marker"
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$instance_marker")" = \
+            root:wheel:600
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$instance_marker")" -le 128
+          instance_record=$(/usr/bin/sudo -n /bin/cat "$instance_marker")
           [[ "$instance_record" =~ ^PKG-DN16-INSTANCE-V1:([0-9a-f]{64})$ ]]
           instance_nonce=${BASH_REMATCH[1]}
           if test "$PKG_PROOF_PHASE" = prepare; then
-            instance_age=$(( $(date +%s) - $(stat -f '%m' "$instance_marker") ))
+            instance_age=$(( $(date +%s) - \
+              $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$instance_marker") ))
             test "$instance_age" -ge 0
             test "$instance_age" -le 300
             for path in /nix /etc/nix /opt/pkg /private/var/db/pkg-install \
@@ -463,10 +466,11 @@ jobs:
             done
           else
             continuation=/private/var/db/pkg-dn16-proof-continuation-v1
-            test -f "$continuation"
-            test ! -L "$continuation"
-            test "$(stat -f '%Su:%Sg:%Lp' "$continuation")" = root:wheel:600
-            test "$(stat -f '%z' "$continuation")" -le 4096
+            /usr/bin/sudo -n /bin/test -f "$continuation"
+            /usr/bin/sudo -n /bin/test ! -L "$continuation"
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$continuation")" = \
+              root:wheel:600
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$continuation")" -le 4096
           fi
           umask 077
           printf '%s\n' \

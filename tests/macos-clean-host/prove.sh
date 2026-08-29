@@ -36,18 +36,22 @@ root=$PKG_PROOF_ROOT
 case "$root" in "${RUNNER_TEMP:-/no-runner-temp}"/*) ;; *) fail "the proof root is unsafe" ;; esac
 evidence="$root/evidence"
 preflight="$evidence/preflight.txt"
+/usr/bin/sudo -n /usr/bin/true || fail "passwordless administrative authority is unavailable"
 instance_marker=/var/tmp/pkg-disposable-macos-instance
-[ -f "$instance_marker" ] && [ ! -L "$instance_marker" ] \
-    && [ "$(/usr/bin/stat -f '%z' "$instance_marker")" -le 128 ] \
-    && [ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$instance_marker")" = root:wheel:600 ] \
+/usr/bin/sudo -n /bin/test -f "$instance_marker" \
+    && /usr/bin/sudo -n /bin/test ! -L "$instance_marker" \
+    && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$instance_marker")" -le 128 ] \
+    && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$instance_marker")" = \
+        root:wheel:600 ] \
     || fail "the instance marker is unsafe"
-instance_record=$(/bin/cat "$instance_marker")
+instance_record=$(/usr/bin/sudo -n /bin/cat "$instance_marker")
 printf '%s\n' "$instance_record" \
     | /usr/bin/grep -Eq '^PKG-DN16-INSTANCE-V1:[0-9a-f]{64}$' \
     || fail "the instance marker is invalid"
 instance_nonce=${instance_record#PKG-DN16-INSTANCE-V1:}
 if [ "$PKG_PROOF_PHASE" = prepare ]; then
-    instance_age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f '%m' "$instance_marker") ))
+    instance_age=$(( $(/bin/date +%s) - \
+        $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$instance_marker") ))
     [ "$instance_age" -ge 0 ] && [ "$instance_age" -le 300 ] \
         || fail "the instance marker is stale"
 fi
@@ -70,29 +74,33 @@ preflight_nonce=$(/usr/bin/sed -n 's/^instance_nonce=//p' "$preflight")
     || fail "the preflight identity is invalid"
 
 disposable=/var/tmp/pkg-disposable-macos-proof
-[ -f "$disposable" ] && [ ! -L "$disposable" ] \
-    && [ "$(/usr/bin/stat -f '%z' "$disposable")" -le 128 ] \
+/usr/bin/sudo -n /bin/test -f "$disposable" \
+    && /usr/bin/sudo -n /bin/test ! -L "$disposable" \
+    && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$disposable")" -le 128 ] \
     || fail "the disposable marker is unsafe"
-[ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$disposable")" = root:wheel:600 ] \
+[ "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$disposable")" = root:wheel:600 ] \
     || fail "the disposable marker is unsafe"
-[ "$(/bin/cat "$disposable")" = \
+[ "$(/usr/bin/sudo -n /bin/cat "$disposable")" = \
     "PKG-DN16-DISPOSABLE-V1:${GITHUB_RUN_ID}:$PKG_PROOF_LIFECYCLE_RUN" ] \
     || fail "the disposable marker does not bind this run"
-/usr/bin/sudo -n /usr/bin/true || fail "passwordless administrative authority is unavailable"
 
 # The provisioner binds the initial fresh-VM reboot to the prepare job.
 if [ "$PKG_PROOF_PHASE" = prepare ]; then
-[ -f "$PKG_PROOF_REBOOT_MARKER" ] && [ ! -L "$PKG_PROOF_REBOOT_MARKER" ] \
-    && [ "$(/usr/bin/stat -f '%z' "$PKG_PROOF_REBOOT_MARKER")" -le 256 ] \
-    && [ "$(/usr/bin/wc -l <"$PKG_PROOF_REBOOT_MARKER" | /usr/bin/tr -d ' ')" -eq 1 ] \
-    && [ "$(/usr/bin/tail -c 1 "$PKG_PROOF_REBOOT_MARKER" | /usr/bin/od -An -tuC \
+/usr/bin/sudo -n /bin/test -f "$PKG_PROOF_REBOOT_MARKER" \
+    && /usr/bin/sudo -n /bin/test ! -L "$PKG_PROOF_REBOOT_MARKER" \
+    && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$PKG_PROOF_REBOOT_MARKER")" -le 256 ] \
+    && [ "$(/usr/bin/sudo -n /bin/cat "$PKG_PROOF_REBOOT_MARKER" \
+        | /usr/bin/wc -l | /usr/bin/tr -d ' ')" -eq 1 ] \
+    && [ "$(/usr/bin/sudo -n /usr/bin/tail -c 1 "$PKG_PROOF_REBOOT_MARKER" \
+        | /usr/bin/od -An -tuC \
         | /usr/bin/tr -d ' ')" = 10 ] \
     || fail "the fresh-runner reboot marker is unsafe or absent"
-[ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$PKG_PROOF_REBOOT_MARKER")" = root:wheel:600 ] \
+[ "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' \
+    "$PKG_PROOF_REBOOT_MARKER")" = root:wheel:600 ] \
     || fail "the fresh-runner reboot marker is unsafe or absent"
 IFS=: read -r reboot_kind reboot_run reboot_slot reboot_runner reboot_nonce old_boot \
     reboot_time reboot_extra <<EOF
-$(/bin/cat "$PKG_PROOF_REBOOT_MARKER")
+$(/usr/bin/sudo -n /bin/cat "$PKG_PROOF_REBOOT_MARKER")
 EOF
 [ "$reboot_kind" = PKG-DN16-REBOOT-V2 ] \
     && [ "$reboot_run" = "$GITHUB_RUN_ID" ] \
@@ -110,7 +118,8 @@ case "$reboot_time" in ''|*[!0-9]*) fail "the reboot timestamp is invalid" ;; es
 current_boot=$(/usr/sbin/sysctl -n kern.bootsessionuuid)
 [ "$old_boot" != "$current_boot" ] || fail "the external runner did not reboot"
 reboot_age=$(( $(/bin/date +%s) - reboot_time ))
-marker_age=$(( $(/bin/date +%s) - $(/usr/bin/stat -f '%m' "$PKG_PROOF_REBOOT_MARKER") ))
+marker_age=$(( $(/bin/date +%s) - \
+    $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$PKG_PROOF_REBOOT_MARKER") ))
 [ "$reboot_age" -ge 0 ] && [ "$reboot_age" -le 300 ] \
     && [ "$marker_age" -ge 0 ] && [ "$marker_age" -le 300 ] \
     || fail "the fresh-runner reboot marker is stale"
@@ -708,11 +717,11 @@ persist_prepare_state() {
     /usr/bin/sudo /bin/cp \
         /private/var/db/pkg-install/determinate-handoff-v1.json "$work/handoff.before"
     /usr/bin/sudo /bin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$work/handoff.before"
-    /usr/bin/sudo /bin/mkdir -p "$continuation_state"
-    /usr/bin/sudo /bin/chown root:wheel "$continuation_state"
-    /usr/bin/sudo /bin/chmod 0700 "$continuation_state"
+    /usr/bin/sudo -n /bin/mkdir -p "$continuation_state"
+    /usr/bin/sudo -n /bin/chown root:wheel "$continuation_state"
+    /usr/bin/sudo -n /bin/chmod 0700 "$continuation_state"
     for name in handoff base-nix package-state services; do
-        /usr/bin/sudo /usr/bin/install -o root -g wheel -m 0600 \
+        /usr/bin/sudo -n /usr/bin/install -o root -g wheel -m 0600 \
             "$work/$name.before" "$continuation_state/$name.before"
     done
 }
@@ -725,7 +734,8 @@ compare_prepare_state() {
         /private/var/db/pkg-install/determinate-handoff-v1.json "$work/handoff.after"
     /usr/bin/sudo /bin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$work/handoff.after"
     for name in handoff base-nix package-state services; do
-        /usr/bin/sudo /usr/bin/cmp "$continuation_state/$name.before" "$work/$name.after" \
+        /usr/bin/sudo -n /usr/bin/cmp "$continuation_state/$name.before" \
+            "$work/$name.after" \
             || fail "$name changed across the offline N+1 transition"
     done
 }
@@ -752,24 +762,28 @@ write_continuation() {
             "to_cli_sha256=$to_cli_sha" \
             "ownership_manifest_digest=$ownership"
         for name in handoff base-nix package-state services; do
-            digest=$(/usr/bin/sudo /usr/bin/shasum -a 256 \
+            digest=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 \
                 "$continuation_state/$name.before" | /usr/bin/awk '{print $1}')
             printf '%s\n' "${name}_snapshot_sha256=$digest"
         done
         printf '%s\n' 'status=awaiting-reboot'
     } >"$record"
-    /usr/bin/sudo /usr/bin/install -o root -g wheel -m 0600 "$record" "$continuation"
+    /usr/bin/sudo -n /usr/bin/install -o root -g wheel -m 0600 "$record" "$continuation"
 }
 
 verify_continuation() {
-    [ -f "$continuation" ] && [ ! -L "$continuation" ] \
-        && [ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$continuation")" = root:wheel:600 ] \
-        && [ "$(/usr/bin/stat -f '%z' "$continuation")" -le 4096 ] \
+    /usr/bin/sudo -n /bin/test -f "$continuation" \
+        && /usr/bin/sudo -n /bin/test ! -L "$continuation" \
+        && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$continuation")" = \
+            root:wheel:600 ] \
+        && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$continuation")" -le 4096 ] \
         || fail "the continuation record is absent or unsafe"
-    [ -d "$continuation_state" ] && [ ! -L "$continuation_state" ] \
-        && [ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$continuation_state")" = root:wheel:700 ] \
+    /usr/bin/sudo -n /bin/test -d "$continuation_state" \
+        && /usr/bin/sudo -n /bin/test ! -L "$continuation_state" \
+        && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' \
+            "$continuation_state")" = root:wheel:700 ] \
         || fail "the continuation state directory is absent or unsafe"
-    /usr/bin/sudo /bin/cat "$continuation" >"$work/continuation.actual"
+    /usr/bin/sudo -n /bin/cat "$continuation" >"$work/continuation.actual"
     /usr/bin/python3 -I - "$work/continuation.actual" <<'PY'
 import pathlib
 import re
@@ -822,11 +836,14 @@ PY
         || fail "the VM did not reboot after prepare"
     for name in handoff base-nix package-state services; do
         path="$continuation_state/$name.before"
-        [ -f "$path" ] && [ ! -L "$path" ] \
-            && [ "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$path")" = root:wheel:600 ] \
+        /usr/bin/sudo -n /bin/test -f "$path" \
+            && /usr/bin/sudo -n /bin/test ! -L "$path" \
+            && [ "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$path")" = \
+                root:wheel:600 ] \
             || fail "a continuation snapshot is absent or unsafe"
         expected=$(continuation_value "${name}_snapshot_sha256")
-        actual=$(/usr/bin/sudo /usr/bin/shasum -a 256 "$path" | /usr/bin/awk '{print $1}')
+        actual=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 "$path" \
+            | /usr/bin/awk '{print $1}')
         [ "$actual" = "$expected" ] || fail "a continuation snapshot digest changed"
     done
     printf '%s\n' \
@@ -1072,11 +1089,11 @@ pass native vendor-residue
 
 /usr/bin/cmp "$evidence/expected-results.tsv" "$evidence/results.tsv" \
     || fail "the proof result matrix is incomplete"
-/usr/bin/sudo /bin/rm \
+/usr/bin/sudo -n /bin/rm \
     "$continuation_state/handoff.before" \
     "$continuation_state/base-nix.before" \
     "$continuation_state/package-state.before" \
     "$continuation_state/services.before" \
     "$continuation"
-/usr/bin/sudo /bin/rmdir "$continuation_state"
+/usr/bin/sudo -n /bin/rmdir "$continuation_state"
 /usr/bin/sed -i '' 's/^status=incomplete$/status=passed/' "$evidence/result.txt"
