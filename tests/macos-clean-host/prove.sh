@@ -840,9 +840,15 @@ PY
 }
 
 assert_jobs_running() {
+    # launchd starts both services while the installer is still finishing, so
+    # the broker can exit once before its KeepAlive relaunch reaches the
+    # running state. Wait for the bounded KeepAlive window instead of racing it.
+    deadline=$(( $(date +%s) + 90 ))
     for label in org.pkg.root-helper org.pkg.nix-broker; do
-        /bin/launchctl print "system/$label" | /usr/bin/grep -F 'state = running' >/dev/null \
-            || fail "$label is not running"
+        until /bin/launchctl print "system/$label" | /usr/bin/grep -F 'state = running' >/dev/null; do
+            [ "$(date +%s)" -lt "$deadline" ] || fail "$label is not running"
+            sleep 2
+        done
     done
 }
 
