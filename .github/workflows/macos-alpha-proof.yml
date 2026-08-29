@@ -20,6 +20,14 @@ on:
         description: Signed release tag for lifecycle N+1
         required: true
         type: string
+      expected_sha:
+        description: Exact commit signed by dn16-macos-proof-workflow-1
+        required: true
+        type: string
+      proof_channel_url:
+        description: HTTPS base URL for the sealed N/N+1 proof pair
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -33,12 +41,52 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 8ffd325a4be12a998f3a5684097b57841a11540e
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-1
+  PKG_PROOF_PAIR_SHA256: 2f8ef35f460c0e36357a3922d073c14931446cc639e27df96d5cb46a5308e609
   PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
   PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
 
 jobs:
+  validate-dispatch:
+    name: Validate immutable proof dispatch
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions:
+      contents: read
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate immutable proof dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = spa5k/pkg
+          test "$GITHUB_REF" = "refs/tags/$PKG_PROOF_WORKFLOW_TAG"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA"
+          IFS=$'\t' read -r ref_type tag_object <<EOF
+          $(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_PROOF_WORKFLOW_TAG" \
+            --jq '[.object.type, .object.sha] | @tsv')
+          EOF
+          test "$ref_type" = tag
+          [[ "$tag_object" =~ ^[0-9a-f]{40}$ ]]
+          IFS=$'\t' read -r target_type target_sha verified <<EOF
+          $(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" \
+            --jq '[.object.type, .object.sha, .verification.verified] | @tsv')
+          EOF
+          test "$target_type" = commit
+          test "$target_sha" = "$EXPECTED_SHA"
+          test "$verified" = true
+
   harness:
     name: Build proof-only fault harness
+    needs: validate-dispatch
     if: >-
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
@@ -93,9 +141,240 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  acquire-inputs:
+    name: Acquire immutable authenticated proof inputs
+    needs: validate-dispatch
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Install the pinned Sigstore verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Download and authenticate signed release inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM_RELEASE: ${{ inputs.from_release }}
+          TO_RELEASE: ${{ inputs.to_release }}
+          PROOF_CHANNEL_URL: ${{ inputs.proof_channel_url }}
+          PROOF_PAIR_SHA256: ${{ env.PKG_PROOF_PAIR_SHA256 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$FROM_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
+          [[ "$TO_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
+          [[ "$PROOF_PAIR_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          from_sequence=${FROM_RELEASE##*.}
+          to_sequence=${TO_RELEASE##*.}
+          test "$from_sequence" -lt "$to_sequence"
+          root="$RUNNER_TEMP/pkg-macos-proof"
+          install -d -m 0700 "$root/evidence"
+          python3 -I - "$PROOF_CHANNEL_URL" <<'PY'
+          import sys
+          import urllib.parse
+
+          raw = sys.argv[1]
+          url = urllib.parse.urlsplit(raw)
+          if (
+              url.scheme != "https"
+              or not url.hostname
+              or url.username is not None
+              or url.password is not None
+              or url.query
+              or url.fragment
+              or raw.endswith("/")
+              or any(part in {"", ".", ".."} for part in url.path.split("/")[1:])
+          ):
+              raise SystemExit("proof channel URL is invalid")
+          PY
+          install -d -m 0700 "$root/channel"
+          fetch() {
+            url=$1
+            output=$2
+            maximum=$3
+            response=$(/usr/bin/curl --proto '=https' --tlsv1.2 --fail --silent \
+              --show-error --connect-timeout 15 --max-time 300 --max-filesize "$maximum" \
+              --output "$output" \
+              --write-out '%{http_code} %{url_effective}' "$url")
+            test "$response" = "200 $url"
+            test -f "$output"
+            test ! -L "$output"
+            test "$(stat -f '%z' "$output")" -le "$maximum"
+          }
+          fetch "$PROOF_CHANNEL_URL/proof-pair.json" "$root/channel/proof-pair.json" 65536
+          test "$(shasum -a 256 "$root/channel/proof-pair.json" | awk '{print $1}')" = \
+            "$PROOF_PAIR_SHA256"
+          for path in n.inventory.json n-plus-1.inventory.json; do
+            fetch "$PROOF_CHANNEL_URL/$path" "$root/channel/$path" 65536
+          done
+          python3 -I - "$root/channel" "$FROM_RELEASE" "$TO_RELEASE" \
+            >"$root/channel-files.tsv" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import sys
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          root = pathlib.Path(sys.argv[1])
+          releases = sys.argv[2:4]
+          pair = json.loads((root / "proof-pair.json").read_bytes())
+          require(set(pair) == {"schemaVersion", "channels"}, "invalid proof pair")
+          require(pair["schemaVersion"] == 1, "invalid proof pair schema")
+          require(isinstance(pair["channels"], list) and len(pair["channels"]) == 2,
+                  "invalid proof pair channels")
+          roots = set()
+          for record, name, sequence, release in zip(
+              pair["channels"], ("n", "n-plus-1"), (1, 2), releases
+          ):
+              keys = {
+                  "channelSequence", "inventory", "inventoryLength", "inventorySha256",
+                  "manifestSchemaVersion", "name", "releaseId", "requiredMetadataPaths",
+                  "requiredTargetPrefix", "timestampVersion", "trustedRootSha256",
+              }
+              required = [
+                  "metadata/1.root.json",
+                  f"metadata/{sequence}.targets.json",
+                  f"metadata/{sequence}.snapshot.json",
+                  "metadata/timestamp.json",
+              ]
+              require(isinstance(record, dict) and set(record) == keys,
+                      "invalid proof channel record")
+              require(record["name"] == name and record["releaseId"] == release,
+                      "proof channel release mismatch")
+              require(record["channelSequence"] == sequence
+                      and record["timestampVersion"] == sequence
+                      and record["manifestSchemaVersion"] == 2,
+                      "proof channel sequence mismatch")
+              require(record["inventory"] == f"{name}.inventory.json"
+                      and record["requiredMetadataPaths"] == required
+                      and record["requiredTargetPrefix"] == "targets/",
+                      "proof channel layout mismatch")
+              require(re.fullmatch(r"[0-9a-f]{64}", record["trustedRootSha256"]) is not None,
+                      "invalid trusted root digest")
+              roots.add(record["trustedRootSha256"])
+              raw = (root / record["inventory"]).read_bytes()
+              require(len(raw) == record["inventoryLength"]
+                      and hashlib.sha256(raw).hexdigest() == record["inventorySha256"],
+                      "proof inventory digest mismatch")
+              inventory = json.loads(raw)
+              require(set(inventory) == {"schemaVersion", "files"}
+                      and inventory["schemaVersion"] == 1
+                      and isinstance(inventory["files"], list),
+                      "invalid proof inventory")
+              files = {}
+              for item in inventory["files"]:
+                  require(isinstance(item, dict)
+                          and set(item) == {"length", "path", "sha256"},
+                          "invalid proof inventory entry")
+                  path = item["path"]
+                  require(isinstance(path, str)
+                          and re.fullmatch(r"[A-Za-z0-9._/-]+", path) is not None
+                          and not path.startswith("/")
+                          and all(part not in {"", ".", ".."} for part in path.split("/"))
+                          and path not in files,
+                          "unsafe or duplicate proof path")
+                  require(isinstance(item["length"], int) and item["length"] >= 0
+                          and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None,
+                          "invalid proof file identity")
+                  files[path] = item
+              fixed = {"root.json", "release-manifest.json", "signing-audit.ndjson", *required}
+              require(set(files) >= fixed
+                      and all(path in fixed or path.startswith("targets/") for path in files)
+                      and any(path.startswith("targets/") for path in files),
+                      "proof inventory has missing or extra entries")
+              require(list(files) == sorted(files), "proof inventory is not canonical")
+              for path, item in files.items():
+                  print(name, path, item["length"], item["sha256"], sep="\t")
+          require(len(roots) == 1, "proof channels use different roots")
+          PY
+          while IFS=$'\t' read -r name path length sha; do
+            output="$root/channel/$name/$path"
+            install -d -m 0700 "$(dirname "$output")"
+            maximum=$length
+            test "$maximum" -gt 0 || maximum=1
+            fetch "$PROOF_CHANNEL_URL/$name/$path" "$output" "$maximum"
+            test "$(stat -f '%z' "$output")" -eq "$length"
+            test "$(shasum -a 256 "$output" | awk '{print $1}')" = "$sha"
+          done < "$root/channel-files.tsv"
+          from_source_commit=$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/$FROM_RELEASE" --jq .sha)
+          to_source_commit=$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/$TO_RELEASE" --jq .sha)
+          [[ "$from_source_commit" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$to_source_commit" =~ ^[0-9a-f]{40}$ ]]
+          test "$from_source_commit" = "$PKG_REVIEWED_COMMIT"
+          test "$to_source_commit" = "$PKG_REVIEWED_COMMIT"
+          printf '%s\n' "$from_source_commit" > "$root/evidence/from-source-commit.txt"
+          printf '%s\n' "$to_source_commit" > "$root/evidence/to-source-commit.txt"
+          install -d -m 0700 "$root/candidate/from" "$root/candidate/to" "$root/evidence"
+          identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
+          issuer=https://token.actions.githubusercontent.com
+          for pair in "from:$FROM_RELEASE" "to:$TO_RELEASE"; do
+            side=${pair%%:*}
+            tag=${pair#*:}
+            version=${tag#v}
+            dir="$root/candidate/$side"
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease \
+              --jq 'select(.isDraft == true) | true' | grep -Fx true >/dev/null
+            for asset in SHA256SUMS SHA256SUMS.sigstore.json \
+              release-manifest.json COSIGN_IDENTITY.txt COSIGN_ISSUER.txt \
+              "pkg-$version-preview.pkg" "pkg-$version-preview.pkg.sigstore.json" \
+              pkg-aarch64-darwin pkg-aarch64-darwin.sigstore.json; do
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$dir"
+            done
+            cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json" \
+              --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              "$dir/SHA256SUMS" >/dev/null
+            awk '$2 == "SHA256SUMS" || $2 == "SHA256SUMS.sigstore.json" { found=1 } \
+              END { exit found ? 1 : 0 }' "$dir/SHA256SUMS"
+            test "$(cat "$dir/COSIGN_IDENTITY.txt")" = "$identity"
+            test "$(cat "$dir/COSIGN_ISSUER.txt")" = "$issuer"
+            selected="$root/evidence/$side-selected-sha256.txt"
+            : > "$selected"
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin release-manifest.json; do
+              awk -v a="$asset" '$2 == a { n++; print } END { exit n != 1 }' \
+                "$dir/SHA256SUMS" >> "$selected"
+            done
+            (cd "$dir" && shasum -a 256 --check "$selected")
+            python3 -I - "$dir/release-manifest.json" "$tag" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
+          if manifest.get("releaseId") != sys.argv[2]:
+              raise SystemExit("release manifest does not match selected tag")
+          PY
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
+              cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
+                --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+                "$dir/$asset" >/dev/null
+            done
+          done
+          find "$root/candidate" -type f -print | LC_ALL=C sort > "$root/evidence/candidate-inventory.txt"
+          find "$root/candidate" -type f -exec shasum -a 256 {} \; \
+            | LC_ALL=C sort > "$root/evidence/candidate-digests.txt"
+
+      - name: Upload authenticated proof inputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pkg-macos-authenticated-inputs
+          path: |
+            ${{ runner.temp }}/pkg-macos-proof/channel
+            ${{ runner.temp }}/pkg-macos-proof/candidate
+            ${{ runner.temp }}/pkg-macos-proof/evidence
+          if-no-files-found: error
+          retention-days: 3
+
   prove:
     name: Destructive native lifecycle proof
-    needs: harness
+    needs: [validate-dispatch, harness, acquire-inputs]
     if: >-
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
@@ -290,78 +569,11 @@ jobs:
           cmp EXPECTED INVENTORY
           shasum -a 256 --check SHA256SUMS
 
-      - name: Download and authenticate signed release inputs
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FROM_RELEASE: ${{ inputs.from_release }}
-          TO_RELEASE: ${{ inputs.to_release }}
-        run: |
-          set -euo pipefail
-          [[ "$FROM_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
-          [[ "$TO_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
-          from_sequence=${FROM_RELEASE##*.}
-          to_sequence=${TO_RELEASE##*.}
-          test "$from_sequence" -lt "$to_sequence"
-          root="$RUNNER_TEMP/pkg-macos-proof"
-          from_source_commit=$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/$FROM_RELEASE" --jq .sha)
-          to_source_commit=$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/$TO_RELEASE" --jq .sha)
-          [[ "$from_source_commit" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$to_source_commit" =~ ^[0-9a-f]{40}$ ]]
-          test "$from_source_commit" = "$PKG_REVIEWED_COMMIT"
-          test "$to_source_commit" = "$PKG_REVIEWED_COMMIT"
-          printf '%s\n' "$from_source_commit" > "$root/evidence/from-source-commit.txt"
-          printf '%s\n' "$to_source_commit" > "$root/evidence/to-source-commit.txt"
-          install -d -m 0700 "$root/candidate/from" "$root/candidate/to" "$root/evidence"
-          identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
-          issuer=https://token.actions.githubusercontent.com
-          for pair in "from:$FROM_RELEASE" "to:$TO_RELEASE"; do
-            side=${pair%%:*}
-            tag=${pair#*:}
-            version=${tag#v}
-            dir="$root/candidate/$side"
-            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease \
-              --jq 'select(.isDraft == true or .isPrerelease == true) | true' | grep -Fx true >/dev/null
-            for asset in SHA256SUMS SHA256SUMS.sigstore.json \
-              release-manifest.json COSIGN_IDENTITY.txt COSIGN_ISSUER.txt \
-              "pkg-$version-preview.pkg" "pkg-$version-preview.pkg.sigstore.json" \
-              pkg-aarch64-darwin pkg-aarch64-darwin.sigstore.json; do
-              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$dir"
-            done
-            cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json" \
-              --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
-              "$dir/SHA256SUMS" >/dev/null
-            awk '$2 == "SHA256SUMS" || $2 == "SHA256SUMS.sigstore.json" { found=1 } \
-              END { exit found ? 1 : 0 }' "$dir/SHA256SUMS"
-            test "$(cat "$dir/COSIGN_IDENTITY.txt")" = "$identity"
-            test "$(cat "$dir/COSIGN_ISSUER.txt")" = "$issuer"
-            selected="$root/evidence/$side-selected-sha256.txt"
-            : > "$selected"
-            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin release-manifest.json; do
-              awk -v a="$asset" '$2 == a { n++; print } END { exit n != 1 }' \
-                "$dir/SHA256SUMS" >> "$selected"
-            done
-            (cd "$dir" && shasum -a 256 --check "$selected")
-            python3 - "$dir/release-manifest.json" "$tag" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
-          if manifest.get("releaseId") != sys.argv[2]:
-              raise SystemExit("release manifest does not match selected tag")
-          PY
-            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
-              cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
-                --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
-                "$dir/$asset" >/dev/null
-            done
-          done
-          find "$root/candidate" -type f -print | LC_ALL=C sort > "$root/evidence/candidate-inventory.txt"
-          find "$root/candidate" -type f -exec shasum -a 256 {} \; \
-            | LC_ALL=C sort > "$root/evidence/candidate-digests.txt"
+      - name: Download authenticated proof inputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pkg-macos-authenticated-inputs
+          path: ${{ runner.temp }}/pkg-macos-proof
 
       - name: Run the destructive proof
         shell: bash
