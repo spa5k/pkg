@@ -2175,18 +2175,26 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     }
     fn accept_base_nix_handoff(&mut self) -> Result<(), MacOsError> {
         match self.outcome.as_ref() {
-            Some(BootstrapOutcome::DeterminatePending { handoff, .. }) => handoff
-                .accept_after_installed_state_proof()
-                .map_err(|_| MacOsError::backend_failure()),
+            Some(BootstrapOutcome::DeterminatePending { handoff, .. }) => {
+                handoff
+                    .accept_after_installed_state_proof()
+                    .map_err(|_| MacOsError::backend_failure())?;
+            }
             #[cfg(test)]
-            Some(BootstrapOutcome::DeterminateTestPending(handoff)) => handoff
-                .accept_after_installed_state_proof()
-                .map_err(|_| MacOsError::backend_failure()),
-            Some(BootstrapOutcome::Existing) => Ok(()),
+            Some(BootstrapOutcome::DeterminateTestPending(handoff)) => {
+                handoff
+                    .accept_after_installed_state_proof()
+                    .map_err(|_| MacOsError::backend_failure())?;
+            }
+            Some(BootstrapOutcome::Existing) => {}
             #[cfg(test)]
-            Some(BootstrapOutcome::Stub(_)) => Ok(()),
-            Some(_) | None => Err(MacOsError::backend_failure()),
+            Some(BootstrapOutcome::Stub(_)) => {}
+            Some(_) | None => return Err(MacOsError::backend_failure()),
         }
+        // The inner backend owns the preexisting-asset policy. A handoff
+        // accepted during this run must let the vendor-created /nix pass the
+        // post-acceptance nix-root classification.
+        self.inner.accept_base_nix_handoff()
     }
     fn verify_installed_code(&mut self) -> Result<(), MacOsError> {
         self.inner.verify_installed_code()

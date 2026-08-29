@@ -500,6 +500,12 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn accept_base_nix_handoff(&mut self) -> Result<(), MacOsError> {
+        // A fresh install that just accepted the vendor Base Nix handoff now
+        // manages an existing vendor-created /nix. Without this flag the
+        // post-acceptance nix-root classification rejects the vendor-created
+        // directory as a preexisting asset, because this run did not provision
+        // a store volume itself.
+        self.existing_managed_install = true;
         Ok(())
     }
 
@@ -858,6 +864,29 @@ mod tests {
         backend.existing_managed_install = true;
         assert_eq!(
             backend.classify_preview_presence(MacOsAssetPresence::ExactPresent),
+            Ok(MacOsAssetPresence::ExactPresent)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_handoff_allows_the_vendor_created_nix_root()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::MacOsInstallBackend;
+
+        let groups = ManagedGroupBindings::new(333, 350)?;
+        let mut backend = ProductionMacOsInstallBackend::new(System::Aarch64Darwin, groups)?;
+        let nix_root = macos_product_install_assets()
+            .find(|asset| asset.id() == "nix-root")
+            .ok_or("missing nix-root asset")?;
+        assert!(
+            backend
+                .classify_asset_presence(nix_root, MacOsAssetPresence::ExactPresent)
+                .is_err()
+        );
+        backend.accept_base_nix_handoff()?;
+        assert_eq!(
+            backend.classify_asset_presence(nix_root, MacOsAssetPresence::ExactPresent),
             Ok(MacOsAssetPresence::ExactPresent)
         );
         Ok(())
