@@ -452,7 +452,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
             } else {
                 self.assets.replace_owned_file(
                     asset,
-                    self.prior_digest(asset)?,
+                    self.repair_replacement_digest(asset)?,
                     self.mode == MacOsInstallMode::OfflineRepair,
                 )?
             }
@@ -477,7 +477,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         {
             self.assets.install_static_asset(asset, contents)
         } else {
-            let prior = self.prior_digest(asset)?;
+            let prior = self.repair_replacement_digest(asset)?;
             self.assets.replace_static_owned_file(
                 asset,
                 contents,
@@ -700,6 +700,20 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
 }
 
 impl ProductionMacOsInstallBackend {
+    /// Linux `ReplacementAuthority::RepairExisting` parity: an explicit repair
+    /// replaces a metadata-safe damaged file without requiring its current
+    /// bytes to match any recorded digest. The caller still proves product
+    /// ownership through the exact ownership receipt before this is reached.
+    fn repair_replacement_digest(
+        &self,
+        asset: MacOsInstallAsset,
+    ) -> Result<Option<Digest>, MacOsError> {
+        if self.mode == MacOsInstallMode::OfflineRepair {
+            return Ok(None);
+        }
+        self.prior_digest(asset)
+    }
+
     fn prior_digest(&self, asset: MacOsInstallAsset) -> Result<Option<Digest>, MacOsError> {
         let digest = self
             .prior_manifest
