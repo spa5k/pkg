@@ -1242,7 +1242,7 @@ pkg=/usr/local/bin/pkg
 # can still be in its first restart when the activated-services check passes.
 # Wait for the managed engine to answer before the first package transaction.
 deadline=$(( $(date +%s) + 90 ))
-until "$pkg" --json list >/dev/null 2>&1; do
+until "$pkg" --json update >/dev/null 2>&1; do
     [ "$(date +%s)" -lt "$deadline" ] || fail "the managed package service did not become ready"
     sleep 2
 done
