@@ -452,7 +452,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
             } else {
                 self.assets.replace_owned_file(
                     asset,
-                    self.prior_digest(asset)?,
+                    self.repair_replacement_digest(asset)?,
                     self.mode == MacOsInstallMode::OfflineRepair,
                 )?
             }
@@ -477,7 +477,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         {
             self.assets.install_static_asset(asset, contents)
         } else {
-            let prior = self.prior_digest(asset)?;
+            let prior = self.repair_replacement_digest(asset)?;
             self.assets.replace_static_owned_file(
                 asset,
                 contents,
@@ -500,6 +500,12 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn accept_base_nix_handoff(&mut self) -> Result<(), MacOsError> {
+        // A fresh install that just accepted the vendor Base Nix handoff now
+        // manages an existing vendor-created /nix. Without this flag the
+        // post-acceptance nix-root classification rejects the vendor-created
+        // directory as a preexisting asset, because this run did not provision
+        // a store volume itself.
+        self.existing_managed_install = true;
         Ok(())
     }
 
@@ -694,6 +700,20 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
 }
 
 impl ProductionMacOsInstallBackend {
+    /// Linux `ReplacementAuthority::RepairExisting` parity: an explicit repair
+    /// replaces a metadata-safe damaged file without requiring its current
+    /// bytes to match any recorded digest. The caller still proves product
+    /// ownership through the exact ownership receipt before this is reached.
+    fn repair_replacement_digest(
+        &self,
+        asset: MacOsInstallAsset,
+    ) -> Result<Option<Digest>, MacOsError> {
+        if self.mode == MacOsInstallMode::OfflineRepair {
+            return Ok(None);
+        }
+        self.prior_digest(asset)
+    }
+
     fn prior_digest(&self, asset: MacOsInstallAsset) -> Result<Option<Digest>, MacOsError> {
         let digest = self
             .prior_manifest
@@ -858,6 +878,29 @@ mod tests {
         backend.existing_managed_install = true;
         assert_eq!(
             backend.classify_preview_presence(MacOsAssetPresence::ExactPresent),
+            Ok(MacOsAssetPresence::ExactPresent)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_handoff_allows_the_vendor_created_nix_root()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::MacOsInstallBackend;
+
+        let groups = ManagedGroupBindings::new(333, 350)?;
+        let mut backend = ProductionMacOsInstallBackend::new(System::Aarch64Darwin, groups)?;
+        let nix_root = macos_product_install_assets()
+            .find(|asset| asset.id() == "nix-root")
+            .ok_or("missing nix-root asset")?;
+        assert!(
+            backend
+                .classify_asset_presence(nix_root, MacOsAssetPresence::ExactPresent)
+                .is_err()
+        );
+        backend.accept_base_nix_handoff()?;
+        assert_eq!(
+            backend.classify_asset_presence(nix_root, MacOsAssetPresence::ExactPresent),
             Ok(MacOsAssetPresence::ExactPresent)
         );
         Ok(())

@@ -88,6 +88,7 @@ pub struct RealNixAdapter {
     executor: Arc<dyn CommandExecutor>,
     expected_nix_brand: &'static str,
     expected_nix_version: &'static str,
+    eager_source_metadata: bool,
     operation_deadline: Option<Instant>,
 }
 
@@ -396,6 +397,7 @@ impl RealNixAdapter {
             )?),
             expected_nix_brand: "Nix",
             expected_nix_version: PINNED_NIX_VERSION,
+            eager_source_metadata: false,
             operation_deadline: None,
         })
     }
@@ -410,6 +412,7 @@ impl RealNixAdapter {
             executor: Arc::new(standard_determinate_process_executor(private_home)?),
             expected_nix_brand: STANDARD_DETERMINATE_NIX_BRAND,
             expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
+            eager_source_metadata: true,
             operation_deadline: None,
         })
     }
@@ -427,6 +430,7 @@ impl RealNixAdapter {
             )?),
             expected_nix_brand: "Nix",
             expected_nix_version: PINNED_NIX_VERSION,
+            eager_source_metadata: false,
             operation_deadline: None,
         })
     }
@@ -446,6 +450,7 @@ impl RealNixAdapter {
         Ok(Self {
             executor: Arc::clone(&self.executor),
             expected_nix_brand: self.expected_nix_brand,
+            eager_source_metadata: self.eager_source_metadata,
             expected_nix_version: self.expected_nix_version,
             operation_deadline: Some(operation_deadline),
         })
@@ -703,6 +708,7 @@ impl RealNixAdapter {
             executor: Arc::new(executor),
             expected_nix_brand: "Nix",
             expected_nix_version: PINNED_NIX_VERSION,
+            eager_source_metadata: false,
             operation_deadline: None,
         }
     }
@@ -713,6 +719,7 @@ impl RealNixAdapter {
             executor: Arc::new(executor),
             expected_nix_brand: STANDARD_DETERMINATE_NIX_BRAND,
             expected_nix_version: STANDARD_DETERMINATE_NIX_VERSION,
+            eager_source_metadata: true,
             operation_deadline: None,
         }
     }
@@ -1178,6 +1185,12 @@ impl BuildCacheProbe for RealNixAdapter {
 impl NixpkgsMetadataRunner for RealNixAdapter {
     fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError> {
         let mut args = base_args();
+        if self.eager_source_metadata {
+            // Determinate Nix defaults to lazy trees, which omit the
+            // materialized source store path from flake metadata. The pinned
+            // source identity requires that exact path.
+            args.extend(os_args(["--option", "lazy-trees", "false"]));
+        }
         args.extend(os_args(["flake", "metadata", "--no-use-registries"]));
         args.push(
             format!(
@@ -3153,6 +3166,43 @@ mod tests {
             wrong_standard_nix_store.version(),
             Err(NixAdapterError::UnsupportedUpstreamFormat { .. })
         ));
+    }
+
+    #[test]
+    fn determinate_metadata_disables_lazy_trees_and_managed_metadata_does_not()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let pin = NixpkgsPin::new(
+            "0123456789abcdef0123456789abcdef01234567",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )?;
+        let expected = br#"{"locked":{},"path":"private"}"#;
+        let has_lazy_trees = |call: &[OsString]| {
+            call.windows(3).any(|window| {
+                window
+                    == [
+                        OsString::from("--option"),
+                        OsString::from("lazy-trees"),
+                        OsString::from("false"),
+                    ]
+            })
+        };
+
+        let managed_executor = Scripted::new(vec![success(expected.as_slice())]);
+        let managed_calls = Arc::clone(&managed_executor.calls);
+        let managed = RealNixAdapter::scripted(managed_executor);
+        let _ = managed.run_metadata(&pin)?;
+        let managed_calls = managed_calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(managed_calls.len(), 1);
+        assert!(!has_lazy_trees(&managed_calls[0]));
+
+        let determinate_executor = Scripted::new(vec![success(expected.as_slice())]);
+        let determinate_calls = Arc::clone(&determinate_executor.calls);
+        let determinate = RealNixAdapter::scripted_standard_determinate(determinate_executor);
+        let _ = determinate.run_metadata(&pin)?;
+        let determinate_calls = determinate_calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(determinate_calls.len(), 1);
+        assert!(has_lazy_trees(&determinate_calls[0]));
+        Ok(())
     }
 
     #[test]

@@ -46,7 +46,7 @@ const LINUX_SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
 const LINUX_DETERMINATE_STATE: &str = "/var/lib/pkg-install";
 const LINUX_DETERMINATE_TMP: &str = "/var/lib/pkg-install/tmp";
 const MACOS_DETERMINATE_STATE: &str = "/private/var/db/pkg-install";
-const MACOS_DETERMINATE_TMP: &str = "/private/var/db/pkg-install/tmp";
+const MACOS_DETERMINATE_TMP: &str = "/private/var/db/pkg-install-tmp";
 const MACOS_AUTH_DATASTORE: &str = "/private/var/db/pkg-install-auth";
 const MACOS_CHANNEL_DATASTORE: &str = "/Library/Application Support/pkg/broker-home/channel";
 const MACOS_SCRATCH_PARENT: &str = "/Library/Application Support/pkg/helper-home/tmp";
@@ -413,6 +413,42 @@ fn prepare_private_directory_at(
         || metadata.uid() != expected_user
         || metadata.gid() != expected_group
         || metadata.permissions().mode() & 0o7777 != 0o700
+    {
+        return Err(InstallError::backend_failure());
+    }
+    Ok(())
+}
+
+/// Prepares the vendor temp directory used as `TMPDIR` for the Determinate
+/// installer on macOS. Unlike the private install-state directory, the vendor
+/// temp directory must let the vendor's unprivileged Nix build users traverse
+/// and stat it while they set up build environments, so only group and other
+/// write bits are forbidden. The directory stays root-owned, is never a
+/// symlink, and no unprivileged user can write into it.
+fn prepare_vendor_tmp_directory_at(
+    path: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o755);
+            builder
+                .create(path)
+                .map_err(|_| InstallError::backend_failure())?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .map_err(|_| InstallError::backend_failure())?;
+        }
+        Err(_) => return Err(InstallError::backend_failure()),
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|_| InstallError::backend_failure())?;
+    if !metadata.file_type().is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != expected_user
+        || metadata.gid() != expected_group
+        || metadata.permissions().mode() & 0o022 != 0
     {
         return Err(InstallError::backend_failure());
     }
@@ -1152,13 +1188,24 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             } else {
                 (LINUX_DETERMINATE_STATE, LINUX_DETERMINATE_TMP)
             };
-            prepare_private_directory_at(Path::new(state), 0, 0)
-                .and_then(|()| prepare_private_directory_at(Path::new(temporary), 0, 0))
-                .map_err(|_| BundleProvisionError::Failed)?;
+            if request.system == System::Aarch64Darwin {
+                prepare_private_directory_at(Path::new(state), 0, 0)
+                    .and_then(|()| prepare_vendor_tmp_directory_at(Path::new(temporary), 0, 0))
+                    .map_err(|_| BundleProvisionError::Failed)?;
+            } else {
+                prepare_private_directory_at(Path::new(state), 0, 0)
+                    .and_then(|()| prepare_private_directory_at(Path::new(temporary), 0, 0))
+                    .map_err(|_| BundleProvisionError::Failed)?;
+            }
             let handoff =
                 DeterminateHandoff::production().map_err(|_| BundleProvisionError::Failed)?;
             match handoff.state().map_err(|_| BundleProvisionError::Failed)? {
-                DeterminateHandoffState::Accepted => return Ok(BootstrapOutcome::Existing),
+                DeterminateHandoffState::Accepted => {
+                    // Keep the authenticated bundle so a repeat install can
+                    // finish its receipt phase without dropping the channel.
+                    self.bundle = Some(bundle);
+                    return Ok(BootstrapOutcome::Existing);
+                }
                 DeterminateHandoffState::Started => return Err(BundleProvisionError::Failed),
                 DeterminateHandoffState::NotStarted => {}
             }
@@ -2133,18 +2180,26 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     }
     fn accept_base_nix_handoff(&mut self) -> Result<(), MacOsError> {
         match self.outcome.as_ref() {
-            Some(BootstrapOutcome::DeterminatePending { handoff, .. }) => handoff
-                .accept_after_installed_state_proof()
-                .map_err(|_| MacOsError::backend_failure()),
+            Some(BootstrapOutcome::DeterminatePending { handoff, .. }) => {
+                handoff
+                    .accept_after_installed_state_proof()
+                    .map_err(|_| MacOsError::backend_failure())?;
+            }
             #[cfg(test)]
-            Some(BootstrapOutcome::DeterminateTestPending(handoff)) => handoff
-                .accept_after_installed_state_proof()
-                .map_err(|_| MacOsError::backend_failure()),
-            Some(BootstrapOutcome::Existing) => Ok(()),
+            Some(BootstrapOutcome::DeterminateTestPending(handoff)) => {
+                handoff
+                    .accept_after_installed_state_proof()
+                    .map_err(|_| MacOsError::backend_failure())?;
+            }
+            Some(BootstrapOutcome::Existing) => {}
             #[cfg(test)]
-            Some(BootstrapOutcome::Stub(_)) => Ok(()),
-            Some(_) | None => Err(MacOsError::backend_failure()),
+            Some(BootstrapOutcome::Stub(_)) => {}
+            Some(_) | None => return Err(MacOsError::backend_failure()),
         }
+        // The inner backend owns the preexisting-asset policy. A handoff
+        // accepted during this run must let the vendor-created /nix pass the
+        // post-acceptance nix-root classification.
+        self.inner.accept_base_nix_handoff()
     }
     fn verify_installed_code(&mut self) -> Result<(), MacOsError> {
         self.inner.verify_installed_code()
@@ -2290,6 +2345,9 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
                 Ok(receipt_created)
             }
             BootstrapOutcome::Existing => {
+                // Match the Linux Existing arm: the accepted channel state is
+                // already committed, so a repeat install only verifies and
+                // reuses the exact ownership receipt.
                 let changed = match self.inner.publish_ownership_receipt() {
                     Ok(changed) => changed,
                     Err(error) => {
@@ -2297,10 +2355,6 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
                         return Err(error);
                     }
                 };
-                if self.provisioner.commit_authenticated_channel().is_err() {
-                    self.outcome = Some(BootstrapOutcome::Existing);
-                    return Err(MacOsError::backend_failure());
-                }
                 self.outcome = Some(BootstrapOutcome::Existing);
                 complete_macos_receipt(&mut self.journal, mutation, presence, changed, replacing)?;
                 Ok(changed)
@@ -2619,6 +2673,29 @@ mod tests {
         let linked = root.path().join("linked");
         symlink(root.path().join("missing"), &linked)?;
         assert!(prepare_linux_auth_datastore_at(&linked, uid, gid).is_err());
+
+        // The macOS vendor temp directory is created traversable because the
+        // vendor's unprivileged Nix build users must stat `TMPDIR`, while every
+        // unprivileged write bit stays forbidden.
+        let vendor_tmp = root.path().join("vendor-tmp");
+        prepare_vendor_tmp_directory_at(&vendor_tmp, uid, gid)?;
+        assert_eq!(
+            fs::metadata(&vendor_tmp)?.permissions().mode() & 0o7777,
+            0o755
+        );
+        prepare_vendor_tmp_directory_at(&vendor_tmp, uid, gid)?;
+        fs::set_permissions(&vendor_tmp, fs::Permissions::from_mode(0o700))?;
+        assert!(prepare_vendor_tmp_directory_at(&vendor_tmp, uid, gid).is_ok());
+        fs::set_permissions(&vendor_tmp, fs::Permissions::from_mode(0o770))?;
+        assert!(prepare_vendor_tmp_directory_at(&vendor_tmp, uid, gid).is_err());
+        fs::set_permissions(&vendor_tmp, fs::Permissions::from_mode(0o757))?;
+        assert!(prepare_vendor_tmp_directory_at(&vendor_tmp, uid, gid).is_err());
+        let vendor_linked = root.path().join("vendor-linked");
+        symlink(root.path().join("missing"), &vendor_linked)?;
+        assert!(prepare_vendor_tmp_directory_at(&vendor_linked, uid, gid).is_err());
+        let vendor_file = root.path().join("vendor-file");
+        fs::write(&vendor_file, b"not a directory")?;
+        assert!(prepare_vendor_tmp_directory_at(&vendor_file, uid, gid).is_err());
 
         let pool = root.path().join("pool");
         prepare_private_directory_at(&pool, uid, gid)?;
