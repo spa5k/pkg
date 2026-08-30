@@ -43,7 +43,7 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-17` annotated tag.
+`dn16-macos-proof-workflow-18` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
@@ -55,7 +55,7 @@ It authenticates each `SHA256SUMS` with its Sigstore bundle.
 It authenticates both preview packages and both Apple Silicon CLIs.
 Each authenticated `SHA256SUMS` binds the selected package, CLI, and release manifest.
 The pinned pair binds both releases to reviewed DN-16 product commit
-`118f41dde97de3825a91a395f39f8094e42ffc86`.
+`4de8b127d46785fbb86a1aab957a5b2e27737a8e`.
 
 The channel download rejects redirects.
 It uses HTTPS only.
