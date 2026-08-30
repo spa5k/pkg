@@ -1246,7 +1246,9 @@ until "$pkg" --json update >/dev/null 2>&1; do
     [ "$(date +%s)" -lt "$deadline" ] || fail "the managed package service did not become ready"
     sleep 2
 done
-capture package-install "$pkg" --yes --json install hello ripgrep
+# hello and ripgrep are installed by the prepare phase by design, so the
+# resume lifecycle starts from the authenticated channel refresh. The README
+# resume contract is update, upgrade, rollback, repair, and garbage collection.
 capture package-update "$pkg" --json update
 capture package-upgrade "$pkg" --yes --json upgrade ripgrep --no-build
 capture package-rollback "$pkg" --json rollback
