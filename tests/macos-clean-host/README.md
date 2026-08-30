@@ -43,7 +43,7 @@ Do not use a production machine.
 ## Immutable dispatch and input trust
 
 The dispatch must run from the verified signed
-`dn16-macos-proof-workflow-24` annotated tag.
+`dn16-macos-proof-workflow-25` annotated tag.
 The supplied commit SHA must equal the tag target, checkout SHA, and workflow SHA.
 The protected `release` environment gates this check.
 The workflow pins the exact SHA-256 of `proof-pair.json`.
