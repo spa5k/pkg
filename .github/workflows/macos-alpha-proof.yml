@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Exact commit signed by dn16-macos-proof-workflow-23
+        description: Exact commit signed by dn16-macos-proof-workflow-24
         required: true
         type: string
       proof_channel_url:
@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: cbd3494443b94283430d8a48e9fec65699d0210a
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-23
+  PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-24
   PKG_PROOF_PAIR_SHA256: baae3f8b3027f61903b65ce1c47bd9ec756efce4b8b015d56a7c37fd4212fc63
   PKG_PROOF_PAIR_LENGTH: 1101
   PKG_PROOF_N_INVENTORY_SHA256: 13360c117e3b8943e4c7cbb7e09084f64a626de6181ea7433ac76292f35f4c8a
