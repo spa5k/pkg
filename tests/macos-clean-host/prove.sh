@@ -959,9 +959,9 @@ persist_prepare_state() {
     snapshot_base_nix "$work/base-nix.before"
     /usr/bin/sudo /bin/cp \
         /private/var/db/pkg-install/determinate-handoff-v1.json "$work/handoff.before"
-    /usr/bin/sudo /bin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$work/handoff.before"
+    /usr/bin/sudo /usr/sbin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$work/handoff.before"
     /usr/bin/sudo -n /bin/mkdir -p "$continuation_state"
-    /usr/bin/sudo -n /bin/chown root:wheel "$continuation_state"
+    /usr/bin/sudo -n /usr/sbin/chown root:wheel "$continuation_state"
     /usr/bin/sudo -n /bin/chmod 0700 "$continuation_state"
     for name in handoff base-nix package-state services; do
         /usr/bin/sudo -n /usr/bin/install -o root -g wheel -m 0600 \
@@ -975,7 +975,7 @@ compare_prepare_state() {
     snapshot_base_nix "$work/base-nix.after"
     /usr/bin/sudo /bin/cp \
         /private/var/db/pkg-install/determinate-handoff-v1.json "$work/handoff.after"
-    /usr/bin/sudo /bin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$work/handoff.after"
+    /usr/bin/sudo /usr/sbin/chown "$(/usr/bin/id -u):$(/usr/bin/id -g)" "$work/handoff.after"
     for name in handoff base-nix package-state services; do
         /usr/bin/sudo -n /usr/bin/cmp "$continuation_state/$name.before" \
             "$work/$name.after" \
