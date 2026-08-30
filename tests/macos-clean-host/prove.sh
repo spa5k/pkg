@@ -1238,6 +1238,14 @@ fi
 
 echo "+ package lifecycle"
 pkg=/usr/local/bin/pkg
+# The product relies on launchd KeepAlive for service restart, so the broker
+# can still be in its first restart when the activated-services check passes.
+# Wait for the managed engine to answer before the first package transaction.
+deadline=$(( $(date +%s) + 90 ))
+until "$pkg" --json list >/dev/null 2>&1; do
+    [ "$(date +%s)" -lt "$deadline" ] || fail "the managed package service did not become ready"
+    sleep 2
+done
 capture package-install "$pkg" --yes --json install hello ripgrep
 capture package-update "$pkg" --json update
 capture package-upgrade "$pkg" --yes --json upgrade ripgrep --no-build
