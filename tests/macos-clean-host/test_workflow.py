@@ -60,30 +60,30 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             validate.index('[[ "$count" =~ ^[1-9][0-9]*$ ]]'),
             validate.index('gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/'),
         )
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-22", WORKFLOW)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn16-macos-proof-workflow-23", WORKFLOW)
         self.assertIn(
             "PKG_REVIEWED_COMMIT: cbd3494443b94283430d8a48e9fec65699d0210a",
             WORKFLOW,
         )
         for final_value in (
-            "PKG_PROOF_PAIR_SHA256: 8a4894972ced5e36c200343569718995ad281d4d9dc9b547e5b388d68e376cca",
+            "PKG_PROOF_PAIR_SHA256: baae3f8b3027f61903b65ce1c47bd9ec756efce4b8b015d56a7c37fd4212fc63",
             "PKG_PROOF_PAIR_LENGTH: 1101",
-            "PKG_PROOF_N_INVENTORY_SHA256: c2d58d5a2e0c9ebf3a493fc403c2b760ff6cc447c2735cb667d1f7c286791cd8",
+            "PKG_PROOF_N_INVENTORY_SHA256: 13360c117e3b8943e4c7cbb7e09084f64a626de6181ea7433ac76292f35f4c8a",
             "PKG_PROOF_N_INVENTORY_LENGTH: 5959",
-            "PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: ac58f43af9043e531b2381e9ae08023ba142c256d1128ce4acbb1e4ee6fc26a3",
+            "PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: 8dee649df25cd380263bd928ffe8326fa5c49387ddce27825d93e2da7f072228",
             "PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH: 5959",
-            "PKG_PROOF_N_TOTAL_BYTES: 328998734",
-            "PKG_PROOF_N_ROWS_SHA256: 571e307b204fe98e61b55f0e851110ad21aaff4813d9e679fb887bfa5b7c4506",
-            "PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328998755",
-            "PKG_PROOF_N_PLUS_1_ROWS_SHA256: 4ac65ed7073c3537f8415fb644ecb698a1592d8e17744502c9d45d64ab739490",
-            "PKG_PROOF_INPUT_BYTES: 35608473",
-            "PKG_PROOF_RESPONSE_BYTES: 35621492",
+            "PKG_PROOF_N_TOTAL_BYTES: 328999767",
+            "PKG_PROOF_N_ROWS_SHA256: 10922436b4c0bdc79e6b826a1c24792e7e3d4f4bd8b70e1579d7e75a613f6b35",
+            "PKG_PROOF_N_PLUS_1_TOTAL_BYTES: 328999404",
+            "PKG_PROOF_N_PLUS_1_ROWS_SHA256: 02083fed582b877e5a5c0c450de34379309f7ff97697b5629025745096b366e0",
+            "PKG_PROOF_INPUT_BYTES: 35610074",
+            "PKG_PROOF_RESPONSE_BYTES: 35623093",
         ):
             self.assertEqual(WORKFLOW.count(final_value), 1)
         self.assertNotIn("REPLACE_WITH_FINAL", WORKFLOW)
         for stale_value in (
+            "dn16-macos-proof-workflow-22",
             "dn16-macos-proof-workflow-21",
-            "dn16-macos-proof-workflow-20",
             "dn16-macos-proof-workflow-17",
             "4de8b127d46785fbb86a1aab957a5b2e27737a8e",
             "fcc8b01a4c1a76290a400fbae8c798c8b9298c7722aa1454670f5dc7d4c68f42",
@@ -93,13 +93,13 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             "58ed6fd61a6fcb962ee15fcf67e75a29637dfd7babfa617fa8d3c9b65fefc359",
         ):
             self.assertNotIn(stale_value, WORKFLOW)
-        self.assertIn('test "$FROM_RELEASE" = v0.1.0-alpha.22', WORKFLOW)
-        self.assertIn('test "$TO_RELEASE" = v0.1.0-alpha.23', WORKFLOW)
+        self.assertIn('test "$FROM_RELEASE" = v0.1.0-alpha.24', WORKFLOW)
+        self.assertIn('test "$TO_RELEASE" = v0.1.0-alpha.25', WORKFLOW)
         self.assertIn(
-            '[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.22 ]', PROOF
+            '[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.24 ]', PROOF
         )
         self.assertIn(
-            '[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.23 ]', PROOF
+            '[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.25 ]', PROOF
         )
 
     def test_persistent_handoff_lock_has_exact_residue_metadata(self) -> None:
