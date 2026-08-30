@@ -624,7 +624,7 @@ class MacOsProofWorkflowTests(unittest.TestCase):
             '/usr/bin/sudo -n /usr/bin/tail -c 1 "$PKG_PROOF_REBOOT_MARKER"',
             '/usr/bin/sudo -n /bin/cat "$continuation"',
             '/usr/bin/sudo -n /bin/mkdir -p "$continuation_state"',
-            '/usr/bin/sudo -n /bin/chown root:wheel "$continuation_state"',
+            '/usr/bin/sudo -n /usr/sbin/chown root:wheel "$continuation_state"',
             '/usr/bin/sudo -n /bin/chmod 0700 "$continuation_state"',
             '/usr/bin/sudo -n /usr/bin/install -o root -g wheel -m 0600',
             '/usr/bin/sudo -n /bin/test -f "$path"',
