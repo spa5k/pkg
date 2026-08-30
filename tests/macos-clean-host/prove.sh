@@ -1310,7 +1310,16 @@ for label in org.pkg.root-helper org.pkg.nix-broker org.nixos.nix-daemon \
     systems.determinate.nix-daemon; do
     ! /bin/launchctl print "system/$label" >/dev/null 2>&1 || fail "$label remains active"
 done
-for path in /nix /opt/pkg /usr/local/bin/pkg '/Library/Application Support/pkg' \
+# The macOS root volume is sealed, so the boot-time synthetic /nix node
+# cannot be removed at runtime. The vendor uninstall revoked its creation:
+# the node is not a mount, holds no entry, and synthetic.conf no longer
+# names it. Every runtime-removable path must be fully absent.
+! /sbin/mount | /usr/bin/grep -q " on /nix " || fail "/nix remains mounted"
+[ "$(/usr/bin/sudo -n /bin/ls -A /nix | /usr/bin/wc -l | /usr/bin/tr -d ' ')" = 0 ] \
+    || fail "/nix still holds entries"
+! /usr/bin/sudo -n /usr/bin/grep -q nix /etc/synthetic.conf \
+    || fail "synthetic.conf still creates /nix"
+for path in /opt/pkg /usr/local/bin/pkg '/Library/Application Support/pkg' \
     "$HOME/Library/Application Support/pkg" \
     /private/var/db/pkg-install-auth /private/var/db/pkg-install-journal \
     /Library/LaunchDaemons/org.pkg.root-helper.plist \
