@@ -223,6 +223,17 @@ fn read_regular_file(source: &Path) -> Result<Vec<u8>, AnyError> {
     Ok(fs::read(source)?)
 }
 
+fn preserve_exact_sealed_manifest(output: &Path, sealed: &[u8]) -> Result<(), AnyError> {
+    let manifest = output.join("release-manifest.json");
+    let canonical: serde_json::Value = serde_json::from_slice(&read_regular_file(&manifest)?)?;
+    let sealed_value: serde_json::Value = serde_json::from_slice(sealed)?;
+    if canonical != sealed_value {
+        return Err("signed channel manifest does not match the sealed manifest".into());
+    }
+    fs::write(manifest, sealed)?;
+    Ok(())
+}
+
 fn copy_file(root: &Path, relative: &str, source: &Path) -> Result<FileRecord, AnyError> {
     write_file(root, relative, &read_regular_file(source)?)
 }
@@ -1030,6 +1041,9 @@ async fn main() -> Result<(), AnyError> {
         &output,
     )
     .await?;
+    if matches!(input_mode, ProofInputMode::Dn16Sealed) {
+        preserve_exact_sealed_manifest(&output, &manifest_bytes)?;
+    }
     if let Some(prepared) = prepared_manifest_bytes {
         fs::write(output.join("release-manifest.json"), prepared)?;
     }
@@ -1161,6 +1175,43 @@ mod tests {
                 && record.get("sigstoreBundleSha256").is_none()
                 && record.get("sigstoreBundleLength").is_none()
         }));
+    }
+
+    #[test]
+    fn dn16_channel_preserves_exact_sealed_manifest_bytes() {
+        let output = tempfile::tempdir().expect("output directory");
+        let canonical = br#"{"releaseId":"proof-n","schemaVersion":2}"#;
+        let sealed = b"{\n  \"schemaVersion\": 2,\n  \"releaseId\": \"proof-n\"\n}\n";
+        fs::write(output.path().join("release-manifest.json"), canonical)
+            .expect("write canonical manifest");
+
+        preserve_exact_sealed_manifest(output.path(), sealed).expect("preserve sealed manifest");
+
+        assert_eq!(
+            fs::read(output.path().join("release-manifest.json")).expect("read sealed manifest"),
+            sealed
+        );
+    }
+
+    #[test]
+    fn dn16_channel_refuses_a_different_sealed_manifest() {
+        let output = tempfile::tempdir().expect("output directory");
+        let canonical = br#"{"releaseId":"proof-n","schemaVersion":2}"#;
+        let sealed = b"{\n  \"schemaVersion\": 2,\n  \"releaseId\": \"other\"\n}\n";
+        let manifest = output.path().join("release-manifest.json");
+        fs::write(&manifest, canonical).expect("write canonical manifest");
+
+        let error = preserve_exact_sealed_manifest(output.path(), sealed)
+            .expect_err("different manifest must be refused");
+
+        assert_eq!(
+            error.to_string(),
+            "signed channel manifest does not match the sealed manifest"
+        );
+        assert_eq!(
+            fs::read(manifest).expect("read canonical manifest"),
+            canonical
+        );
     }
 
     #[test]
