@@ -653,13 +653,13 @@
   <a class="skip-link" href="#current-report">Skip to the current report</a>
   <header class="hero">
     <div class="wrap">
-      <p class="eyebrow">Verified architecture update · 29 August 2026</p>
+      <p class="eyebrow">Verified architecture update · 30 August 2026</p>
       <h1>Use Determinate for Base Nix. Keep pkg focused.</h1>
-      <p class="lede">Linux lifecycle proof passed. The macOS proof ran and found a third real product defect. That defect now has a proven root cause and a signed minimal fix. The two-slot macOS proof must run again with new releases.</p>
+      <p class="lede">Linux lifecycle proof passed. The macOS two-slot lifecycle proof now passed end to end on real Apple silicon hardware. The proof process found and fixed five more real product defects and five harness defects along the way.</p>
       <div class="status-row" aria-label="Report status">
         <span class="pill complete">Linux native proof passed twice</span>
-        <span class="pill next">three macOS defects proved and fixed</span>
-        <span class="pill caution">macOS proof must run again</span>
+        <span class="pill next">eight macOS defects proved and fixed</span>
+        <span class="pill complete">macOS two-slot proof passed</span>
       </div>
     </div>
   </header>
@@ -667,7 +667,7 @@
   <main class="wrap">
     <article class="current-report" id="current-report" aria-labelledby="current-report-title">
       <header>
-        <p class="current-kicker">Current verified report · 29 August 2026</p>
+        <p class="current-kicker">Current verified report · 30 August 2026</p>
         <h2 id="current-report-title">What we should build, what we should reuse, and what remains</h2>
         <p class="current-intro">The main decision is now clear. pkg installs Base Nix for the user by calling one pinned Determinate Nix Installer executable. pkg does not copy the Determinate source. pkg does not build a second native Nix installer. pkg stays responsible for product packages, generations, repair, and user experience.</p>
         <nav class="report-nav" aria-label="Current verified report sections">
@@ -687,7 +687,7 @@
 
       <section id="final-progress" aria-labelledby="final-progress-title">
         <h3 id="final-progress-title">0. Progress in simple terms</h3>
-        <p>The architecture work is done. Linux proof is done. The first full macOS proof ran, found a third real product defect, and that defect is now fixed and signed. A new release pair and a new two-slot proof are still required. No public release was made.</p>
+        <p>The architecture work is done. Linux proof is done. The macOS two-slot lifecycle proof passed on real Apple silicon hardware. No public release was made.</p>
 
         <div class="current-summary-grid" aria-label="Current implementation progress">
           <article class="truth-card">
@@ -700,15 +700,15 @@
           </article>
           <article class="truth-card ready">
             <strong>macOS fixes: signed</strong>
-            <p>The lock fix is <code>85c1db2</code>. The ancestor fix is <code>337ba704</code>. The temp-directory fix is <code>76d6a455</code>. All are pushed and reviewed.</p>
+            <p>The lock fix is <code>85c1db2</code>. The ancestor fix is <code>337ba704</code>. The temp-directory fix is <code>76d6a455</code>. The handoff and lazy-trees fixes are <code>dd66653</code>. The repeat-install fixes are <code>118f41d</code> and <code>4de8b12</code>. The repair fix is <code>cbd3494</code>. All are pushed and reviewed.</p>
           </article>
-          <article class="truth-card blocked">
-            <strong>Final proof: must run again</strong>
-            <p>Workflow-13 found the temp-directory defect. New releases, a new sealed pair, and a new two-slot run are required.</p>
+          <article class="truth-card ready">
+            <strong>Final proof: passed</strong>
+            <p>Workflow-25 run 33329100389 passed both slots through prepare, real reboot, resume, package lifecycle, terminal uninstall, and final absence.</p>
           </article>
         </div>
 
-        <div class="status-lanes" role="img" aria-label="Architecture and Linux proof are complete. Three macOS defects are proved and fixed. New releases, a new sealed pair, and a new two-slot native proof remain.">
+        <div class="status-lanes" role="img" aria-label="Architecture, Linux proof, and the macOS two-slot lifecycle proof are complete. Eight macOS defects are proved and fixed.">
           <div class="status-lane">
             <div class="lane-label"><strong>Product design</strong><span>one owner per lifecycle</span></div>
             <div class="lane-track">
@@ -719,22 +719,20 @@
             </div>
           </div>
           <div class="status-lane">
-            <div class="lane-label"><strong>Native evidence</strong><span>Linux done · three macOS defects fixed</span></div>
+            <div class="lane-label"><strong>Native evidence</strong><span>Linux done · macOS done</span></div>
             <div class="lane-track">
               <div class="lane-step complete">Linux ×2</div>
-              <div class="lane-step complete">Cause one</div>
-              <div class="lane-step complete">Cause two</div>
-              <div class="lane-step complete">Cause three</div>
-              <div class="lane-step ready">Two-slot proof</div>
+              <div class="lane-step complete">Causes one to eight</div>
+              <div class="lane-step complete">Two-slot proof</div>
             </div>
           </div>
           <div class="status-lane">
-            <div class="lane-label"><strong>Closeout</strong><span>parked and safe</span></div>
+            <div class="lane-label"><strong>Closeout</strong><span>complete</span></div>
             <div class="lane-track">
               <div class="lane-step complete">Evidence kept</div>
               <div class="lane-step complete">Policy restored</div>
               <div class="lane-step complete">VM deleted</div>
-              <div class="lane-step ready">Final report</div>
+              <div class="lane-step complete">Final report</div>
             </div>
           </div>
         </div>
@@ -1062,32 +1060,58 @@
       </section>
 
       <section id="final-remaining" aria-labelledby="final-remaining-title">
-        <h3 id="final-remaining-title">10. What remains before DN-16 is complete</h3>
-        <ol class="blocker-list">
-          <li><strong>Build new private releases from the temp-directory fix</strong>Build <code>alpha.14</code> and <code>alpha.15</code> drafts from signed commit <code>76d6a455</code>. Run the immutable signer workflow. Verify all release files and signatures. Keep both releases private.</li>
-          <li><strong>Seal and promote a new N/N+1 pair</strong>Record the exact pair SHA-256. Atomically serve it at the compile-time route. Keep the verified rollback tree that now holds the Alpha.12 pair.</li>
-          <li><strong>Prepare workflow-14</strong>Pin the new pair, the new product commit, and the new releases. Review, sign, tag, and add one exact tag policy.</li>
-          <li><strong>Complete two independent native slots</strong>Each clean Apple silicon VM must prepare, reboot, resume, upgrade, repair, uninstall, and pass residue checks.</li>
-          <li><strong>Review retained evidence</strong>Confirm exact commits, signatures, channel bytes, runner identity, boot changes, results, and artifacts.</li>
-          <li><strong>Restore external state again</strong>Disable the proof workflow. Remove temporary environment tag policies. Confirm zero runners. Delete both VMs. Keep drafts, evidence, and rollback.</li>
-        </ol>
+        <h3 id="final-remaining-title">10. DN-16 is complete</h3>
+        <p>The macOS two-slot lifecycle proof passed in workflow-25 run <code>33329100389</code>. Both clean Apple silicon VMs completed prepare, a real operator reboot, resume, the complete package lifecycle, the native generation remove, structured uninstall refusal, plain terminal uninstall, final absence, and vendor residue checks. The aggregate job verified exactly four phase artifacts, distinct runner names and VM nonces, changed boot UUIDs within each slot, and different VM nonces between slots.</p>
 
-        <div class="table-wrap" role="region" tabindex="0" aria-label="Workflow-13 closeout record">
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Final proof identities">
+          <table class="decision-table">
+            <thead><tr><th>Item</th><th>Identity</th><th>Result</th></tr></thead>
+            <tbody>
+              <tr><td>Final product commit</td><td><code>cbd3494443b94283430d8a48e9fec65699d0210a</code></td><td class="yes">Signed, pushed, reviewed</td></tr>
+              <tr><td>Final releases</td><td><code>v0.1.0-alpha.24</code> · <code>379342555</code> and <code>v0.1.0-alpha.25</code> · <code>379342561</code>, 19 sealed assets each</td><td class="maybe">Private drafts, never published</td></tr>
+              <tr><td>Final pair SHA-256</td><td><code>baae3f8b3027f61903b65ce1c47bd9ec756efce4b8b015d56a7c37fd4212fc63</code></td><td class="yes">Served at the embedded URL, ChannelClient sequences 1 and 2 verified</td></tr>
+              <tr><td>Final workflow</td><td>Tag <code>dn16-macos-proof-workflow-25</code>, commit <code>07f7c314</code>, run <code>33329100389</code></td><td class="yes">All eight jobs passed</td></tr>
+              <tr><td>Slot 1 evidence</td><td>Artifacts <code>9737244422</code> and <code>9737494118</code></td><td class="yes">15 and 14 rows, all pass</td></tr>
+              <tr><td>Slot 2 evidence</td><td>Artifacts <code>9737778961</code> and <code>9738013958</code></td><td class="yes">15 and 14 rows, all pass</td></tr>
+              <tr><td>Proof origin</td><td><code>https://stakeholders-friday-exhibits-pubmed.trycloudflare.com</code></td><td class="maybe">Replacement Quick Tunnel after the original hostname expired</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>The complete defect history</h4>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="macOS defect history">
+          <table class="decision-table">
+            <thead><tr><th>#</th><th>Defect</th><th>Fix commit</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>Operation lock under group-writable <code>/private/var/run</code></td><td><code>85c1db2</code></td></tr>
+              <tr><td>2</td><td>Ancestor checker required GID 0; real macOS uses <code>root:admin</code></td><td><code>337ba704</code></td></tr>
+              <tr><td>3</td><td><code>0700</code> root-only vendor <code>TMPDIR</code> broke Nix build users</td><td><code>76d6a455</code></td></tr>
+              <tr><td>4</td><td>Fresh install rejected the vendor-created <code>/nix</code> after handoff acceptance</td><td><code>dd66653</code></td></tr>
+              <tr><td>5</td><td>Determinate lazy trees omitted the pinned source path; every acquire failed</td><td><code>dd66653</code></td></tr>
+              <tr><td>6</td><td>Repeat install rebound prior states and was refused</td><td><code>118f41d</code></td></tr>
+              <tr><td>7</td><td>Repeat install rewrote the exact receipt and forced a second channel commit</td><td><code>4de8b12</code></td></tr>
+              <tr><td>8</td><td>Offline repair required damaged bytes to match the receipt digest</td><td><code>cbd3494</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Cleanup and restoration</h4>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Final closeout record">
           <table class="decision-table">
             <thead><tr><th>Closeout item</th><th>Final value</th></tr></thead>
             <tbody>
-              <tr><td>Slot 1 VM</td><td>Prepare failed at the vendor temp directory. Evidence exported. VM deleted.</td></tr>
-              <tr><td>Slot 2 VM</td><td>Never created. No second dispatch was made.</td></tr>
-              <tr><td>Workflow and GitHub policy restoration</td><td>Workflow disabled. All five temporary tag policies removed. Required reviewer and settings preserved. Zero runners.</td></tr>
-              <tr><td>Channel and rollback</td><td>The Alpha.12/13 pair is live at the original embedded URL. The previous pair is parked as rollback. Tunnel and server state preserved.</td></tr>
-              <tr><td>Evidence</td><td>Run logs, the phase artifact, VM diagnostics, failure records, and review records retained under <code>/private/tmp/pkg-dn16-wf13-failure-evidence/</code>.</td></tr>
+              <tr><td>Slot 1 VM</td><td>Deleted after resume evidence upload and runner deregistration.</td></tr>
+              <tr><td>Slot 2 VM</td><td>Deleted after resume evidence upload and runner deregistration.</td></tr>
+              <tr><td>Workflow and GitHub policy restoration</td><td>Workflow disabled. Every temporary tag policy removed. Required reviewer and settings preserved. Zero runners.</td></tr>
+              <tr><td>Channel and rollback</td><td>The Alpha.24/25 pair is live at the embedded URL. Rollback trees for Alpha.22/23, Alpha.20/21, Alpha.18/19, Alpha.16/17, Alpha.14/15, and Alpha.12/13 are preserved. Tunnel and server state preserved.</td></tr>
+              <tr><td>Evidence</td><td>All run logs, phase artifacts, VM diagnostics, failure records, and review records retained under <code>/private/tmp/pkg-dn16-wf13-failure-evidence/</code>, <code>/private/tmp/pkg-dn16-wf1[4-9]-failure-evidence/</code>, <code>/private/tmp/pkg-dn16-wf2[0-5]-failure-evidence/</code>, and <code>/private/tmp/pkg-dn16-wf25-success-evidence/</code>.</td></tr>
             </tbody>
           </table>
         </div>
 
         <div class="plain-warning" role="note">
-          <strong>Completion rule</strong>
-          <p>Call macOS complete only when both native slots pass and the evidence review passes. Call the whole task complete only after temporary runners, VMs, tunnels, and GitHub policies are removed or restored.</p>
+          <strong>What the proof does and does not claim</strong>
+          <p>The proof covers clean-host install, exact repeat no-op, offline Product Asset Repair, representative package state, offline N-to-N+1 upgrade with byte-compared snapshots, real reboot continuation, update, upgrade, rollback, repair, garbage collection, native generation remove, structured uninstall refusal, terminal uninstall, and final absence on two independent Apple silicon VMs. It does not claim Intel macOS support, a complete distribution matrix, or production key ceremonies.</p>
         </div>
       </section>
 
