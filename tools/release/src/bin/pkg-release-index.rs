@@ -25,7 +25,10 @@ struct Input {
 
 fn main() {
     if let Err(message) = run(env::args_os()) {
-        #[expect(clippy::print_stderr, reason = "the release tool's only product output")]
+        #[expect(
+            clippy::print_stderr,
+            reason = "the release tool's only product output"
+        )]
         eprintln!("{message}");
         std::process::exit(1);
     }
@@ -45,7 +48,10 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), &'static str
     let compressed = compress_index(index.bytes())
         .map_err(|_| "pkg release index refused: index compression failed")?;
     write_exclusive(&input.output, &compressed)?;
-    #[expect(clippy::print_stdout, reason = "the release tool's only product output")]
+    #[expect(
+        clippy::print_stdout,
+        reason = "the release tool's only product output"
+    )]
     println!("index sha256 {}", hex::encode(Sha256::digest(&compressed)));
     Ok(())
 }

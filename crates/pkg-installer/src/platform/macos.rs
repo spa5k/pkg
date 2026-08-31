@@ -1571,21 +1571,6 @@ fn macos_asset_by_id(id: &str) -> Result<MacOsInstallAsset, MacOsError> {
         .ok_or_else(MacOsError::backend_failure)
 }
 
-pub(crate) fn store_volume_prerequisite(id: &str) -> bool {
-    id.starts_with("build-user-")
-        || matches!(
-            id,
-            "broker-group"
-                | "broker-user"
-                | "build-group"
-                | "product-root"
-                | "product-bin"
-                | "service-root"
-                | "managed-nix-state"
-                | "helper-binary"
-        )
-}
-
 fn preflight_macos(
     system: System,
     backend: &mut dyn MacOsInstallBackend,

@@ -1104,6 +1104,7 @@ impl LinuxFilesystemManager {
         Self::remove_if_owned(&parent, &name, identity)
     }
 
+    #[cfg(test)]
     pub(crate) fn verify_empty_directory(
         &self,
         asset: LinuxInstallAsset,

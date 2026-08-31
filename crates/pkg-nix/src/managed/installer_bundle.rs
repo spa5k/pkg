@@ -1,4 +1,8 @@
 //! Private installer-repository authentication and runtime snapshots.
+#![expect(
+    dead_code,
+    reason = "DN-19 deletes these unreachable managed-Nix bundle internals (plans/determinate-nix-stacked-prs.md)"
+)]
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};

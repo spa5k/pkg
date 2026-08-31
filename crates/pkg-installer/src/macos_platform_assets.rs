@@ -437,33 +437,9 @@ impl MacOsPlatformAssetManager {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    pub(crate) fn classify_store_mountpoint(
-        &mut self,
-        asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError> {
-        if asset.id() != "nix-root" {
-            return Err(MacOsError::backend_failure());
-        }
-        self.ensure_filesystem_with_broker_uid(self.groups.broker_gid())?
-            .verify_asset(asset)
-            .map(|()| MacOsAssetPresence::ExactPresent)
-    }
-
     pub(crate) fn bind_filesystem_after_broker_removal(&mut self) -> Result<(), MacOsError> {
         self.ensure_filesystem_with_broker_uid(self.groups.broker_gid())?;
         Ok(())
-    }
-
-    pub(crate) fn verify_empty_store_mountpoint(
-        &mut self,
-        asset: MacOsInstallAsset,
-    ) -> Result<(), MacOsError> {
-        if asset.id() != "nix-root" {
-            return Err(MacOsError::backend_failure());
-        }
-        self.ensure_filesystem_with_broker_uid(self.groups.broker_gid())?
-            .verify_empty_directory(asset)
     }
 
     fn ensure_filesystem(&mut self) -> Result<&mut MacOsFilesystemManager, MacOsError> {

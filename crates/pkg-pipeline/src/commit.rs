@@ -2105,7 +2105,6 @@ mod tests {
             fail_after_removal: false,
         };
 
-        type RetainedSnapshots = (Vec<GenerationSnapshot>, Option<GenerationId>);
         assert_eq!(
             pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance).unwrap(),
             vec!["gen-0001".to_owned()]

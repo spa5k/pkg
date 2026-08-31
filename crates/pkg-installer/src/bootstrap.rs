@@ -1006,6 +1006,10 @@ trait BundleProvisioner {
         Ok(false)
     }
 
+    #[expect(
+        dead_code,
+        reason = "trait default method; no fake overrides the channel-commit hook"
+    )]
     fn commit_authenticated_channel(&mut self) -> Result<(), BundleProvisionError> {
         Ok(())
     }

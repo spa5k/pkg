@@ -1,4 +1,8 @@
 //! Fetch, verify, stage, and receipt-last commit a product-managed Nix runtime.
+#![expect(
+    dead_code,
+    reason = "DN-19 deletes these unreachable managed-Nix provisioning internals (plans/determinate-nix-stacked-prs.md)"
+)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
