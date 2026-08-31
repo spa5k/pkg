@@ -184,6 +184,8 @@ mod macos {
         find_item(keychain)?.map_or(Ok(()), |item| {
             // The safe crate's `delete` discards the OSStatus, so use the
             // same reference with the raw API and verify the result.
+            // SAFETY: `item` is an owned SecKeychainItem reference produced by
+            // `find_item` and is valid for the duration of this call.
             let status = unsafe { SecKeychainItemDelete(item.as_concrete_TypeRef()) };
             status_result(status)
         })
@@ -193,6 +195,9 @@ mod macos {
         let mut item = ptr::null_mut();
         // A later SecKeychainItemSetAccess call requires an interactive prompt.
         // Create the item with its closed ACL in the same Security.framework call.
+        // SAFETY: the service and account pointers reference the live, fixed
+        // ASCII constants; the lengths are exact u32 conversions; `item` is
+        // null-initialized and written only through `&raw mut`.
         let status = unsafe {
             SecKeychainFindGenericPassword(
                 keychain.as_CFTypeRef(),
@@ -212,6 +217,8 @@ mod macos {
         if item.is_null() {
             return Err(keychain_failure());
         }
+        // SAFETY: `item` is non-null here, and Find returns a +1 reference
+        // owned by this scope under the CoreFoundation Create Rule.
         Ok(Some(unsafe {
             SecKeychainItem::wrap_under_create_rule(item)
         }))
@@ -224,6 +231,9 @@ mod macos {
 
     impl AsRef<[u8]> for ZeroizingKeychainPassword {
         fn as_ref(&self) -> &[u8] {
+            // SAFETY: `data` and `len` come from one successful
+            // SecKeychainFindGenericPassword call; the struct owns the
+            // allocation, and no mutable alias exists while `self` is borrowed.
             unsafe { slice::from_raw_parts(self.data.cast(), self.len) }
         }
     }
@@ -231,7 +241,12 @@ mod macos {
     impl Drop for ZeroizingKeychainPassword {
         fn drop(&mut self) {
             if !self.data.is_null() {
+                // SAFETY: `data` and `len` describe the keychain-owned buffer
+                // returned by the matching Find call; drop runs once and is the
+                // only writer.
                 unsafe { slice::from_raw_parts_mut(self.data.cast::<u8>(), self.len) }.zeroize();
+                // SAFETY: `data` is the same keychain-owned buffer; FreeContent
+                // is its matching release function.
                 let _ = unsafe { SecKeychainItemFreeContent(ptr::null_mut(), self.data) };
             }
         }
@@ -242,6 +257,9 @@ mod macos {
     ) -> Result<ZeroizingKeychainPassword, SystemKeychainError> {
         let mut length = 0_u32;
         let mut data = ptr::null_mut();
+        // SAFETY: the service and account pointers reference the live, fixed
+        // ASCII constants; `length` and `data` are null-initialized and written
+        // only through `&raw mut`.
         let status = unsafe {
             SecKeychainFindGenericPassword(
                 keychain.as_CFTypeRef(),
@@ -274,6 +292,9 @@ mod macos {
         let secret = secret.expose_for_stdin();
         let secret_length = u32::try_from(secret.len()).map_err(|_| keychain_failure())?;
         let mut trusted_application: CFTypeRef = ptr::null();
+        // SAFETY: ROOT_HELPER is a fixed, NUL-terminated byte path;
+        // `trusted_application` is null-initialized and written only through
+        // `&raw mut`.
         let status = unsafe {
             SecTrustedApplicationCreateFromPath(
                 ROOT_HELPER.as_ptr().cast::<c_char>(),
@@ -284,10 +305,15 @@ mod macos {
         if trusted_application.is_null() {
             return Err(keychain_failure());
         }
+        // SAFETY: `trusted_application` is non-null here, and the Create call
+        // returns a +1 reference under the CoreFoundation Create Rule.
         let trusted = unsafe { CFType::wrap_under_create_rule(trusted_application.cast()) };
         let trusted_list = CFArray::from_CFTypes(&[trusted]);
         let description = CFString::new(DESCRIPTION);
         let mut access = ptr::null_mut();
+        // SAFETY: `description` and `trusted_list` are live CF references that
+        // outlive the call; `access` is null-initialized and written only
+        // through `&raw mut`.
         let status = unsafe {
             SecAccessCreate(
                 description.as_concrete_TypeRef(),
@@ -317,6 +343,10 @@ mod macos {
             attr: attributes.as_mut_ptr(),
         };
         let mut item = ptr::null_mut();
+        // SAFETY: the attribute list references the two live fixed string
+        // constants; the secret buffer and keychain reference are live for the
+        // call; `access` is an owned +1 reference that the call borrows;
+        // `item` is null-initialized and written only through `&raw mut`.
         let status = unsafe {
             SecKeychainItemCreateFromContent(
                 GENERIC_PASSWORD_ITEM_CLASS,
@@ -328,12 +358,16 @@ mod macos {
                 &raw mut item,
             )
         };
+        // SAFETY: this balances the +1 reference from SecAccessCreate; the
+        // item-create call above already retained what it needs.
         unsafe { CFRelease(access.cast()) };
         status_result(status)?;
         if item.is_null() {
             let _ = delete_item_if_present(keychain);
             return Err(keychain_failure());
         }
+        // SAFETY: `item` is non-null here, and ItemCreateFromContent returns
+        // a +1 reference under the CoreFoundation Create Rule.
         let item = unsafe { SecKeychainItem::wrap_under_create_rule(item) };
         if !matches!(find_item(keychain), Ok(Some(_))) {
             item.delete();
