@@ -700,7 +700,7 @@ fn generation_companion_id(name: &str) -> Option<GenerationId> {
 /// Numeric `gen-NNNN` ordering: true only when `candidate` is a newer
 /// generation id than `active`. Length-then-lexicographic comparison of the
 /// zero-stripped numbers prevents text order such as `gen-0009` > `gen-0010`.
-pub(crate) fn strictly_newer(candidate: &str, active: &str) -> bool {
+pub fn strictly_newer(candidate: &str, active: &str) -> bool {
     let Some(candidate) = candidate.strip_prefix("gen-") else {
         return false;
     };
@@ -1432,7 +1432,7 @@ fn discard_generation_paths(root: &Path, generation: &Generation) -> Result<(), 
 /// errors. Unlike install preparation, the state-edit and rollback staging
 /// trees are only ever written by this process, so no permission repair is
 /// needed before deletion.
-pub(crate) fn discard_staging(staging: &Path) {
+pub fn discard_staging(staging: &Path) {
     let Ok(metadata) = fs::symlink_metadata(staging) else {
         return;
     };

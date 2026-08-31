@@ -160,7 +160,7 @@ pub fn prepare_state_edit(
         .map_err(StateEditPrepareError::Commit)
 }
 
-pub(crate) fn build_candidate(
+pub fn build_candidate(
     source: &GenerationSnapshot,
     next: LifecycleState,
     metadata: &StateEditMetadata<'_>,

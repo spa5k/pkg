@@ -2,7 +2,7 @@
 
 use crate::synthetic_conf::{MacOsSyntheticConfPlan, plan_macos_synthetic_entry};
 
-pub(crate) fn full_sync(file: &std::fs::File) -> Result<(), std::io::Error> {
+pub fn full_sync(file: &std::fs::File) -> Result<(), std::io::Error> {
     file.sync_all()
 }
 use exacl::getfacl;

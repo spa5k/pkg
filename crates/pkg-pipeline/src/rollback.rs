@@ -61,7 +61,7 @@ pub fn prepare_rollback(
     )
 }
 
-pub(crate) fn prepare_rollback_with<E>(
+pub fn prepare_rollback_with<E>(
     layout: StateLayout,
     lease: StateLease,
     rollback: &RollbackPlan,

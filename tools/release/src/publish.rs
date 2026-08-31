@@ -21,7 +21,7 @@ use crate::{
     TimestampAuthority, TimestampAuthorization,
 };
 
-pub(crate) const RELEASE_OBJECT_COUNT: usize = 30;
+pub const RELEASE_OBJECT_COUNT: usize = 30;
 
 /// One immutable byte object in a release publication.
 #[derive(Debug, Clone)]
@@ -611,7 +611,7 @@ async fn publish_objects_without_commit(
     Ok(())
 }
 
-pub(crate) fn seal_objects(
+pub fn seal_objects(
     release: &crate::ValidatedRelease,
     output: &Path,
     root_version: u64,

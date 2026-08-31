@@ -17,7 +17,7 @@ pub enum BuildMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireSystemEntry {
+pub struct WireSystemEntry {
     pub url: String,
     pub sha256: String,
     #[serde(rename = "assetManifestTarget")]
@@ -28,14 +28,14 @@ pub(crate) struct WireSystemEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireIndexEntry {
+pub struct WireIndexEntry {
     pub target: String,
     pub sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireNixRuntime {
+pub struct WireNixRuntime {
     pub version: String,
     #[serde(rename = "perSystem")]
     pub per_system: BTreeMap<String, WireSystemEntry>,
@@ -43,7 +43,7 @@ pub(crate) struct WireNixRuntime {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireNixpkgs {
+pub struct WireNixpkgs {
     pub owner: String,
     pub repo: String,
     pub rev: String,
@@ -53,7 +53,7 @@ pub(crate) struct WireNixpkgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireIndex {
+pub struct WireIndex {
     pub source: String,
     #[serde(rename = "perSystem")]
     pub per_system: BTreeMap<String, WireIndexEntry>,
@@ -61,7 +61,7 @@ pub(crate) struct WireIndex {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireSubstituters {
+pub struct WireSubstituters {
     pub urls: Vec<String>,
     #[serde(rename = "trustedPublicKeys")]
     pub trusted_public_keys: Vec<String>,
@@ -69,13 +69,13 @@ pub(crate) struct WireSubstituters {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireNativeBuildEntry {
+pub struct WireNativeBuildEntry {
     pub mode: BuildMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireBuildPolicy {
+pub struct WireBuildPolicy {
     #[serde(rename = "nativeLocalBuilds")]
     pub native_local_builds: BTreeMap<String, WireNativeBuildEntry>,
 }
@@ -83,7 +83,7 @@ pub(crate) struct WireBuildPolicy {
 /// Strict wire representation of the authenticated `descriptor.json` target.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WireDescriptor {
+pub struct WireDescriptor {
     #[serde(rename = "schemaVersion")]
     pub schema_version: u64,
     pub channel: String,

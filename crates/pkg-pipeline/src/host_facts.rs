@@ -333,7 +333,7 @@ pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsE
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
+pub const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::Aarch64Darwin)
 }
 

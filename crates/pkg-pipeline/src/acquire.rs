@@ -52,7 +52,7 @@ impl AcquiredInstall {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CacheAuthorityIdentity {
+pub struct CacheAuthorityIdentity {
     channel_sequence: ChannelSequence,
     policy_version: PolicyVersion,
     descriptor_sha256: [u8; 32],

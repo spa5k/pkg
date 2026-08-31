@@ -9,11 +9,11 @@ use crate::{
     PackageVersion, Realization, StorePath, System,
 };
 
-pub(crate) const REV1: &str = "0123456789abcdef0123456789abcdef01234567";
-pub(crate) const REV2: &str = "89abcdef0123456789abcdef0123456789abcdef";
+pub const REV1: &str = "0123456789abcdef0123456789abcdef01234567";
+pub const REV2: &str = "89abcdef0123456789abcdef0123456789abcdef";
 const NAR: &str = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
-pub(crate) fn store(hash: char, name: &str) -> String {
+pub fn store(hash: char, name: &str) -> String {
     format!("/nix/store/{}-{name}", hash.to_string().repeat(32))
 }
 
@@ -58,7 +58,7 @@ fn lock_entry(name: &str, hash: char, revision: &str, version: &str) -> Value {
     })
 }
 
-pub(crate) fn state() -> LifecycleState {
+pub fn state() -> LifecycleState {
     let manifest = json!({
         "schemaVersion": 1,
         "channelSeq": 2,
@@ -88,7 +88,7 @@ pub(crate) fn state() -> LifecycleState {
     .unwrap()
 }
 
-pub(crate) fn replacement(name: &str, hash: char, revision: &str, version: &str) -> LockEntry {
+pub fn replacement(name: &str, hash: char, revision: &str, version: &str) -> LockEntry {
     let output = StorePath::new(&store(hash, name)).unwrap();
     let output_name = OutputName::new("out").unwrap();
     let realization = Realization::new(
@@ -114,7 +114,7 @@ pub(crate) fn replacement(name: &str, hash: char, revision: &str, version: &str)
     .unwrap()
 }
 
-pub(crate) fn snapshot(
+pub fn snapshot(
     id: &str,
     parent: Option<&str>,
     state: LifecycleState,

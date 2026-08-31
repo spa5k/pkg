@@ -238,7 +238,7 @@ fn sort_bound_sources(
 }
 
 #[cfg(test)]
-pub(crate) fn stage_from_sources(
+pub fn stage_from_sources(
     staging: &Path,
     sources: &[(StorePath, PathBuf)],
     collision_policy: CollisionPolicy,
