@@ -436,27 +436,11 @@ impl NixAdapter for RootHelperClient {
             if response_id != REQUEST_ID {
                 return Err(NixAdapterError::OperationFailed);
             }
-            match response {
-                BrokerHelperResponse::RootNix(response) => match *response {
-                    RootNixResponse::BuildProgress(estimate) => {
-                        if estimate.millionths() <= last_progress {
-                            return Err(NixAdapterError::OperationFailed);
-                        }
-                        last_progress = estimate.millionths();
-                        progress(estimate)?;
-                    }
-                    RootNixResponse::Build(report) => return Ok(report),
-                    RootNixResponse::Failed {
-                        operation: RootNixOperation::Build,
-                        failure: RootNixFailure::Adapter(code),
-                    } => return Err(NixAdapterError::remote(code)),
-                    RootNixResponse::Failed {
-                        operation: RootNixOperation::Build,
-                        ..
-                    } => return Err(NixAdapterError::Unavailable),
-                    _ => return Err(NixAdapterError::OperationFailed),
-                },
-                _ => return Err(NixAdapterError::OperationFailed),
+            let BrokerHelperResponse::RootNix(response) = response else {
+                return Err(NixAdapterError::OperationFailed);
+            };
+            if let Some(report) = handle_build_response(response, &mut last_progress, progress)? {
+                return Ok(report);
             }
         }
     }
@@ -1289,5 +1273,36 @@ mod tests {
             format!("{client:?}"),
             "RootHelperClient(<fixed-private-endpoint>)"
         );
+    }
+}
+
+/// Handles one build-stream response frame.
+///
+/// Returns `Ok(Some(report))` when the build finished, `Ok(None)` when
+/// progress was forwarded and the stream continues.
+fn handle_build_response(
+    response: Box<RootNixResponse>,
+    last_progress: &mut u32,
+    progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+) -> Result<Option<BuildReport>, NixAdapterError> {
+    match *response {
+        RootNixResponse::BuildProgress(estimate) => {
+            if estimate.millionths() <= *last_progress {
+                return Err(NixAdapterError::OperationFailed);
+            }
+            *last_progress = estimate.millionths();
+            progress(estimate)?;
+            Ok(None)
+        }
+        RootNixResponse::Build(report) => Ok(Some(report)),
+        RootNixResponse::Failed {
+            operation: RootNixOperation::Build,
+            failure: RootNixFailure::Adapter(code),
+        } => Err(NixAdapterError::remote(code)),
+        RootNixResponse::Failed {
+            operation: RootNixOperation::Build,
+            ..
+        } => Err(NixAdapterError::Unavailable),
+        _ => Err(NixAdapterError::OperationFailed),
     }
 }

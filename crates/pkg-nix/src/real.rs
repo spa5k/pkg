@@ -1003,43 +1003,12 @@ impl BuildCacheProbe for RealNixAdapter {
             };
             let mut remote_hits = Vec::new();
             for (index, path) in missing {
-                let exact_remote;
-                let batch_entry = match &remote {
-                    Some(remote) => batch_path_info_optional(remote, path)
-                        .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?,
-                    None => None,
-                };
-                let entry = match batch_entry {
-                    Some(entry) => Some(entry),
-                    None => match self.raw_remote_path_info_with_retry(path) {
-                        Ok(exact) => {
-                            exact_remote = exact;
-                            root_path_info_optional(&exact_remote, path).map_err(|_| {
-                                BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)
-                            })?
-                        }
-                        Err(NixAdapterError::OperationFailed) => {
-                            observations[index] = Some(CachePathObservation::miss(path.clone()));
-                            continue;
-                        }
-                        Err(_) => {
-                            return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                        }
-                    },
-                };
-                let Some(entry) = entry else {
+                let Some((download_bytes, nar_size)) = self.remote_cache_sizes(&remote, path)?
+                else {
                     observations[index] = Some(CachePathObservation::miss(path.clone()));
                     continue;
                 };
-                let signatures = signatures(&entry.signatures)
-                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                let download_bytes = entry
-                    .download_size
-                    .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                if !has_approved_cache_signature(&signatures) {
-                    return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                }
-                remote_hits.push((index, path, download_bytes, entry.nar_size));
+                remote_hits.push((index, path, download_bytes, nar_size));
             }
             let trusted_paths = remote_hits
                 .iter()
@@ -1183,6 +1152,50 @@ impl BuildCacheProbe for RealNixAdapter {
         }
         Ok(closures)
     }
+}
+
+impl RealNixAdapter {
+    /// Resolves one missing path against the batch probe, then the exact
+    /// remote probe, and returns the validated `(download, nar)` sizes.
+    /// `Ok(None)` means the path is absent (a miss).
+    fn remote_cache_sizes(
+        &self,
+        remote: &Option<RawPathInfoEnvelope>,
+        path: &StorePath,
+    ) -> Result<Option<(u64, u64)>, BuildCacheError> {
+        let batch_entry = match remote {
+            Some(remote) => batch_path_info_optional(remote, path)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?,
+            None => None,
+        };
+        let Some(entry) = batch_entry else {
+            let exact_remote = match self.raw_remote_path_info_with_retry(path) {
+                Ok(exact) => exact,
+                Err(NixAdapterError::OperationFailed) => return Ok(None),
+                Err(_) => return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)),
+            };
+            let Some(entry) = root_path_info_optional(&exact_remote, path)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
+            else {
+                return Ok(None);
+            };
+            return raw_path_sizes(entry).map(Some);
+        };
+        raw_path_sizes(entry).map(Some)
+    }
+}
+
+/// Extracts and validates the `(download, nar)` sizes of one raw path info.
+fn raw_path_sizes(entry: &RawPathInfo) -> Result<(u64, u64), BuildCacheError> {
+    let signatures = signatures(&entry.signatures)
+        .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+    let download_bytes = entry
+        .download_size
+        .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+    if !has_approved_cache_signature(&signatures) {
+        return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+    }
+    Ok((download_bytes, entry.nar_size))
 }
 
 impl NixpkgsMetadataRunner for RealNixAdapter {
@@ -1682,31 +1695,9 @@ impl ProcessExecutor {
         cancelled: &dyn Fn() -> bool,
         stderr_chunk: &mut StderrChunk<'_>,
     ) -> Result<CommandOutcome, NixAdapterError> {
-        let binary = match spec.program {
-            NixProgram::Modern => &self.nix_binary,
-            NixProgram::LegacyStore => &self.nix_store_binary,
-        };
-        let mut command = Command::new(binary);
-        command
-            .args(&spec.args)
-            .env_clear()
-            .env("HOME", &self.private_home)
-            .env("TMPDIR", self.private_home.join("tmp"))
-            .env("NIX_USER_CONF_FILES", "")
-            .env("PATH", MANAGED_PATH)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(daemon_socket) = &self.daemon_socket {
-            command
-                .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
-                .env("NIX_DAEMON_SOCKET_PATH", daemon_socket)
-                .env("NIX_REMOTE", "daemon")
-                .env("NIX_STATE_DIR", MANAGED_NIX_STATE);
-        }
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = command.spawn().map_err(|_| NixAdapterError::Unavailable)?;
+        let mut child = build_command(self, spec)
+            .spawn()
+            .map_err(|_| NixAdapterError::Unavailable)?;
         let stdout = child
             .stdout
             .take()
@@ -1724,13 +1715,7 @@ impl ProcessExecutor {
         let mut timed_out = false;
         let mut callback_error = None;
         let status = loop {
-            for chunk in stderr_rx.try_iter().take(MAX_STDERR_CHUNKS_PER_TICK) {
-                if callback_error.is_none()
-                    && let Err(error) = stderr_chunk(&chunk)
-                {
-                    callback_error = Some(error);
-                }
-            }
+            drain_stderr_chunks(&stderr_rx, &mut callback_error, stderr_chunk);
             if callback_error.is_none() && cancelled() {
                 callback_error = Some(NixAdapterError::Unavailable);
             }
@@ -1746,13 +1731,7 @@ impl ProcessExecutor {
                 && stdout_reader.is_finished()
                 && stderr_reader.is_finished()
             {
-                for chunk in stderr_rx.try_iter() {
-                    if callback_error.is_none()
-                        && let Err(error) = stderr_chunk(&chunk)
-                    {
-                        callback_error = Some(error);
-                    }
-                }
+                drain_stderr_chunks(&stderr_rx, &mut callback_error, stderr_chunk);
                 break status;
             }
             if !timed_out && started.elapsed() >= spec.timeout {
@@ -4220,5 +4199,50 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert!(calls[0].iter().any(|argument| argument == "--recursive"));
         Ok(())
+    }
+}
+
+/// Builds the fully configured command for one execution request.
+fn build_command(executor: &ProcessExecutor, spec: &CommandSpec) -> std::process::Command {
+    let binary = match spec.program {
+        NixProgram::Modern => &executor.nix_binary,
+        NixProgram::LegacyStore => &executor.nix_store_binary,
+    };
+    let mut command = Command::new(binary);
+    command
+        .args(&spec.args)
+        .env_clear()
+        .env("HOME", &executor.private_home)
+        .env("TMPDIR", executor.private_home.join("tmp"))
+        .env("NIX_USER_CONF_FILES", "")
+        .env("PATH", MANAGED_PATH)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(daemon_socket) = &executor.daemon_socket {
+        command
+            .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
+            .env("NIX_DAEMON_SOCKET_PATH", daemon_socket)
+            .env("NIX_REMOTE", "daemon")
+            .env("NIX_STATE_DIR", MANAGED_NIX_STATE);
+    }
+    #[cfg(unix)]
+    command.process_group(0);
+    command
+}
+
+/// Forwards one batch of pending stderr chunks to the callback and records
+/// the first callback failure.
+fn drain_stderr_chunks(
+    stderr_rx: &mpsc::Receiver<Vec<u8>>,
+    callback_error: &mut Option<NixAdapterError>,
+    stderr_chunk: &mut StderrChunk<'_>,
+) {
+    for chunk in stderr_rx.try_iter().take(MAX_STDERR_CHUNKS_PER_TICK) {
+        if callback_error.is_none()
+            && let Err(error) = stderr_chunk(&chunk)
+        {
+            *callback_error = Some(error);
+        }
     }
 }

@@ -131,38 +131,15 @@ pub fn compare_nix_versions(a: &str, b: &str) -> Ordering {
 
     while i < a.len() || j < b.len() {
         // Skip separators in both.
-        while i < a.len() && (a[i] == b'.' || a[i] == b'-') {
-            i += 1;
-        }
-        while j < b.len() && (b[j] == b'.' || b[j] == b'-') {
-            j += 1;
-        }
+        i = skip_version_separators(a, i);
+        j = skip_version_separators(b, j);
 
         // Extract the next component: a maximal digit run, else a maximal run
         // of non-(digit/separator) bytes.
-        let a_start = i;
-        if i < a.len() && a[i].is_ascii_digit() {
-            while i < a.len() && a[i].is_ascii_digit() {
-                i += 1;
-            }
-        } else {
-            while i < a.len() && !a[i].is_ascii_digit() && a[i] != b'.' && a[i] != b'-' {
-                i += 1;
-            }
-        }
-        let a_comp = &a[a_start..i];
-
-        let b_start = j;
-        if j < b.len() && b[j].is_ascii_digit() {
-            while j < b.len() && b[j].is_ascii_digit() {
-                j += 1;
-            }
-        } else {
-            while j < b.len() && !b[j].is_ascii_digit() && b[j] != b'.' && b[j] != b'-' {
-                j += 1;
-            }
-        }
-        let b_comp = &b[b_start..j];
+        let (a_comp, a_next) = next_version_component(a, i);
+        let (b_comp, b_next) = next_version_component(b, j);
+        i = a_next;
+        j = b_next;
 
         // Equal components (byte-for-byte) contribute nothing.
         if a_comp == b_comp {
@@ -192,6 +169,39 @@ pub fn compare_nix_versions(a: &str, b: &str) -> Ordering {
         return a_comp.cmp(b_comp);
     }
     Ordering::Equal
+}
+
+/// Skips version separator bytes (`.` and `-`) from `index` onward.
+fn skip_version_separators(bytes: &[u8], mut index: usize) -> usize {
+    while index < bytes.len() && (bytes[index] == b'.' || bytes[index] == b'-') {
+        index += 1;
+    }
+    index
+}
+
+/// Returns the next version component and the index just past it.
+///
+/// A component is a maximal digit run, or a maximal run of bytes that are
+/// neither digits nor separators. An exhausted input yields the empty slice.
+fn next_version_component(bytes: &[u8], start: usize) -> (&[u8], usize) {
+    if start >= bytes.len() {
+        return (&[], start);
+    }
+    let mut end = start;
+    if bytes[start].is_ascii_digit() {
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+    } else {
+        while end < bytes.len()
+            && !bytes[end].is_ascii_digit()
+            && bytes[end] != b'.'
+            && bytes[end] != b'-'
+        {
+            end += 1;
+        }
+    }
+    (&bytes[start..end], end)
 }
 
 /// Parses a component slice as a signed 32-bit integer, mirroring upstream
