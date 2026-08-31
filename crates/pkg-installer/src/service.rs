@@ -16,9 +16,11 @@ use exacl::getfacl;
 #[cfg(target_os = "linux")]
 use listenfd::ListenFd;
 #[cfg(target_os = "macos")]
-use nix::sys::stat::{Mode, umask};
+use nix::fcntl::{OFlag, open, openat, renameat};
+use nix::sys::stat::{FchmodatFlags, Mode, fchmodat, mkdirat};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nix::unistd::{Gid, Uid, User};
+use nix::unistd::{UnlinkatFlags, unlinkat};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use pkg_channel::{ChannelClient, TrustedRoot};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -38,7 +40,16 @@ use std::{
     os::unix::fs::{FileTypeExt, MetadataExt},
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::{io, os::unix::net::UnixListener, path::Path, sync::Arc, thread};
+use std::{
+    io,
+    os::unix::net::UnixListener,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    thread,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::runtime::{Builder, Handle};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -534,28 +545,8 @@ struct DirectoryExpectation<'a> {
     mode: u32,
 }
 
-#[cfg(target_os = "macos")]
-#[derive(Debug)]
-struct ScopedUmask(Mode);
-
-#[cfg(target_os = "macos")]
-impl ScopedUmask {
-    fn for_exact_mode(mode: u32) -> Result<Self, ServiceError> {
-        if mode & !0o777 != 0 {
-            return Err(ServiceError::new(ServiceErrorCode::InvalidServiceSocket));
-        }
-        let mask = u16::try_from(0o777 & !mode)
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
-        Ok(Self(umask(Mode::from_bits_truncate(mask))))
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for ScopedUmask {
-    fn drop(&mut self) {
-        umask(self.0);
-    }
-}
+/// Distinguishes concurrent staging directories within one process.
+static STAGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
 fn macos_socket_parents(
@@ -625,13 +616,62 @@ fn bind_macos_listener(
         }
     }
     // A Unix-domain socket descriptor does not identify its filesystem node on
-    // macOS, so `fchmod` cannot secure that node. Set its exact creation mode
-    // with a scoped umask instead, avoiding a pathname-based chmod race.
-    let listener = {
-        let _umask = ScopedUmask::for_exact_mode(mode)?;
-        UnixListener::bind(path)
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?
-    };
+    // macOS, so `fchmod` cannot secure that node. `umask` is process-global:
+    // any parallel thread creating paths during a scoped window would inherit
+    // the restricted mask (the parallel test suite proved this race). Bind
+    // the socket inside a private staging directory instead, fix its exact
+    // mode there, then rename it into place atomically. The final path never
+    // carries a permissive mode.
+    let endpoint_parent = path
+        .parent()
+        .ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let socket_name = path
+        .file_name()
+        .ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let parent_fd = open(
+        endpoint_parent,
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    // Keep the name short: macOS limits a Unix socket path to 104 bytes, and
+    // the endpoint parent plus socket name already consumes most of it.
+    let staging_name = format!(".pkg-s{:x}", STAGE_SEQ.fetch_add(1, Ordering::Relaxed));
+    // A crashed earlier run may have left the stage directory behind.
+    let _ = unlinkat(&parent_fd, staging_name.as_str(), UnlinkatFlags::RemoveDir);
+    mkdirat(
+        &parent_fd,
+        staging_name.as_str(),
+        Mode::from_bits_truncate(0o700),
+    )
+    .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let staging_fd = openat(
+        &parent_fd,
+        staging_name.as_str(),
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let staging_path = endpoint_parent.join(&staging_name).join(socket_name);
+    let result = (|| {
+        let listener = UnixListener::bind(&staging_path)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        fchmodat(
+            &staging_fd,
+            socket_name,
+            Mode::from_bits_truncate(mode as u16),
+            FchmodatFlags::NoFollowSymlink,
+        )
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        if !socket_metadata_matches(&staging_path, mode, owner_uid, group_gid) {
+            return Err(ServiceError::new(ServiceErrorCode::InvalidServiceSocket));
+        }
+        renameat(&staging_fd, socket_name, &parent_fd, socket_name)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        Ok(listener)
+    })();
+    let _ = unlinkat(&parent_fd, staging_name.as_str(), UnlinkatFlags::RemoveDir);
+    let listener = result?;
     if !socket_metadata_matches(path, mode, owner_uid, group_gid) {
         let _ = fs::remove_file(path);
         return Err(ServiceError::new(ServiceErrorCode::InvalidServiceSocket));
