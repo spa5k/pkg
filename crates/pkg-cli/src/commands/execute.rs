@@ -433,7 +433,7 @@ struct PublicOperationJournal {
 }
 
 impl PublicOperationJournal {
-    fn new(log: PublicOperationLog) -> Self {
+    const fn new(log: PublicOperationLog) -> Self {
         Self {
             log,
             operation_id: None,

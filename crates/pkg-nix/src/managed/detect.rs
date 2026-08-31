@@ -845,7 +845,7 @@ impl Scanner<'_> {
         self.root.join(relative)
     }
 
-    fn is_linux(&self) -> bool {
+    const fn is_linux(&self) -> bool {
         matches!(self.system, System::X8664Linux | System::Aarch64Linux)
     }
 }

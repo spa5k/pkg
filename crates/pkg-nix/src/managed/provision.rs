@@ -222,7 +222,7 @@ impl AuthenticatedManagedNixConfig {
 
     /// Returns the exact authenticated bytes for atomic installation.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         self.contents.as_bytes()
     }
 }

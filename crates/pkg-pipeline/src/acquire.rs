@@ -59,7 +59,7 @@ pub struct CacheAuthorityIdentity {
 }
 
 impl CacheAuthorityIdentity {
-    fn from_channel(channel: &VerifiedChannel) -> Self {
+    const fn from_channel(channel: &VerifiedChannel) -> Self {
         Self {
             channel_sequence: channel.sequence(),
             policy_version: channel.policy_version(),

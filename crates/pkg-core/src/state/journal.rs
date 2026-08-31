@@ -78,7 +78,7 @@ impl JournalPayload {
 
     /// Returns operation-specific fields in deterministic key order.
     #[must_use]
-    pub fn fields(&self) -> &BTreeMap<String, Value> {
+    pub const fn fields(&self) -> &BTreeMap<String, Value> {
         &self.fields
     }
 }

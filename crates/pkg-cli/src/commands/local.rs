@@ -2459,7 +2459,7 @@ fn channel_refresh_error(error: BrokerClientError) -> CommandError {
     CommandError::new(exit_code, message, hint)
 }
 
-fn channel_refresh_error_fields(
+const fn channel_refresh_error_fields(
     code: BrokerClientErrorCode,
 ) -> (ExitCode, &'static str, &'static str) {
     match code {

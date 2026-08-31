@@ -113,7 +113,7 @@ enum Expectation {
 
 impl Expectation {
     /// Returns the [`MethodKind`] of this expectation.
-    fn kind(&self) -> MethodKind {
+    const fn kind(&self) -> MethodKind {
         match self {
             Expectation::Version { .. } => MethodKind::Version,
             Expectation::EvaluateDerivation { .. } => MethodKind::EvaluateDerivation,
@@ -156,7 +156,7 @@ pub struct FakeNix {
 impl FakeNix {
     /// Creates an empty `FakeNix` (no expectations).
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             transcript: Mutex::new(VecDeque::new()),
         }

@@ -59,7 +59,7 @@ impl BuildProgressEstimate {
     /// # Errors
     ///
     /// Refuses zero and terminal-or-larger values.
-    pub fn new(millionths: u32) -> Result<Self, NixAdapterError> {
+    pub const fn new(millionths: u32) -> Result<Self, NixAdapterError> {
         if millionths == 0 || millionths >= Self::SCALE {
             return Err(NixAdapterError::OperationFailed);
         }

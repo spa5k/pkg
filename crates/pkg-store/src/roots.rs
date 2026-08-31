@@ -125,7 +125,7 @@ pub fn publish_root_set(
     Ok(report)
 }
 
-fn map_maintenance(_: MaintenanceError) -> RootError {
+const fn map_maintenance(_: MaintenanceError) -> RootError {
     RootError::PublicationRefused
 }
 

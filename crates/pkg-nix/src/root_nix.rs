@@ -84,7 +84,7 @@ impl RootNixOperation {
     }
 
     /// Returns the fixed client budget, one minute beyond the server budget.
-    pub fn client_budget(self) -> Option<Duration> {
+    pub const fn client_budget(self) -> Option<Duration> {
         self.server_budget().checked_add(CLIENT_GRACE)
     }
 

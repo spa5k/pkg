@@ -269,6 +269,6 @@ fn invalid_candidate<E>(_: E) -> StateEditPrepareError {
     StateEditPrepareError::Commit(CommitError::InvalidCandidate)
 }
 
-fn invalid_candidate_unit() -> StateEditPrepareError {
+const fn invalid_candidate_unit() -> StateEditPrepareError {
     StateEditPrepareError::Commit(CommitError::InvalidCandidate)
 }

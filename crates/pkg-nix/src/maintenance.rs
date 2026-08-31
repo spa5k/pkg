@@ -657,7 +657,11 @@ impl RootSetTransitionReport {
 }
 
 impl RootSetReport {
-    pub(crate) fn new(reference: RootRef, entry_count: usize, mapping_digest: Digest) -> Self {
+    pub(crate) const fn new(
+        reference: RootRef,
+        entry_count: usize,
+        mapping_digest: Digest,
+    ) -> Self {
         Self {
             reference,
             entry_count,
@@ -829,7 +833,7 @@ pub struct RepairPathOutcome {
 }
 
 impl RepairPathOutcome {
-    pub(crate) fn new(path: StorePath, kind: RepairOutcomeKind) -> Self {
+    pub(crate) const fn new(path: StorePath, kind: RepairOutcomeKind) -> Self {
         Self { path, kind }
     }
 
@@ -880,7 +884,7 @@ impl VerifiedRepairExecutor for ReferenceRepairExecutor {
 }
 
 impl RepairStorePathsReport {
-    pub(crate) fn new(mode: RepairMode, outcomes: Vec<RepairPathOutcome>) -> Self {
+    pub(crate) const fn new(mode: RepairMode, outcomes: Vec<RepairPathOutcome>) -> Self {
         Self { mode, outcomes }
     }
 
@@ -1066,7 +1070,7 @@ impl AuthenticatedHelper {
         }
     }
 
-    fn check_epoch(&self, state: &HelperState) -> Result<(), MaintenanceError> {
+    const fn check_epoch(&self, state: &HelperState) -> Result<(), MaintenanceError> {
         if state.epoch == self.epoch && state.broker_epoch == self.broker_epoch {
             Ok(())
         } else {
@@ -1132,7 +1136,7 @@ impl CallerMaintenance {
         Ok(capability)
     }
 
-    fn check_caller(&self, uid: u32) -> Result<(), MaintenanceError> {
+    const fn check_caller(&self, uid: u32) -> Result<(), MaintenanceError> {
         if uid == self.caller_uid {
             Ok(())
         } else {

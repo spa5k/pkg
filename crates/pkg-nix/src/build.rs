@@ -1896,7 +1896,7 @@ fn canonical_version_preference(value: &VersionPreference) -> CanonicalVersionPr
     }
 }
 
-fn product_platform(system: System) -> (&'static str, &'static str) {
+const fn product_platform(system: System) -> (&'static str, &'static str) {
     match system {
         System::X8664Linux => ("linux", "x86_64"),
         System::Aarch64Linux => ("linux", "arm64"),

@@ -1967,7 +1967,7 @@ impl AuthenticatedCaller {
         release_admission(&mut state, &self.broker.build_gate, handle);
     }
 
-    fn check_epoch(&self, state: &BrokerState) -> Result<(), BrokerError> {
+    const fn check_epoch(&self, state: &BrokerState) -> Result<(), BrokerError> {
         if state.epoch == self.epoch {
             Ok(())
         } else {
@@ -2081,7 +2081,7 @@ fn purge_expired(
     }
 }
 
-fn map_build_engine_error(code: BuildEngineErrorCode) -> BrokerError {
+const fn map_build_engine_error(code: BuildEngineErrorCode) -> BrokerError {
     let code = match code {
         BuildEngineErrorCode::Cancelled => BrokerErrorCode::AdmissionCancelled,
         BuildEngineErrorCode::ApprovalInvalidated => BrokerErrorCode::BuildApprovalInvalidated,
@@ -2102,7 +2102,7 @@ fn map_build_engine_error(code: BuildEngineErrorCode) -> BrokerError {
     BrokerError::new(code)
 }
 
-fn build_operation_id(record: &OperationRecord) -> Option<&OperationId> {
+const fn build_operation_id(record: &OperationRecord) -> Option<&OperationId> {
     record.build_operation_id.as_ref()
 }
 

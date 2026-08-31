@@ -565,7 +565,7 @@ struct ChannelAuthorityIdentity {
 }
 
 impl ChannelAuthorityIdentity {
-    fn from_channel(channel: &VerifiedChannel) -> Self {
+    const fn from_channel(channel: &VerifiedChannel) -> Self {
         Self {
             sequence: channel.sequence(),
             policy_version: channel.policy_version(),

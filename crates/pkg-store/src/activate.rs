@@ -146,7 +146,7 @@ impl ActivationPlan {
 
     /// Number of leaf links in the forest.
     #[must_use]
-    pub fn entry_count(&self) -> usize {
+    pub const fn entry_count(&self) -> usize {
         self.entries.len()
     }
 

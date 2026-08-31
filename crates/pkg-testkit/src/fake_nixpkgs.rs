@@ -19,7 +19,7 @@ pub struct FakeNixpkgsRunner {
 impl FakeNixpkgsRunner {
     /// Creates an empty transcript.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             transcript: Mutex::new(VecDeque::new()),
         }

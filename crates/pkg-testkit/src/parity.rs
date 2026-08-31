@@ -185,13 +185,13 @@ pub struct ParityTranscript {
 impl ParityTranscript {
     /// Returns the number of captured adapter calls.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.calls.len()
     }
 
     /// Returns `true` when the capture contains no calls.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.calls.is_empty()
     }
 

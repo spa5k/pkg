@@ -24,7 +24,7 @@ pub struct InstalledCatalogPackage {
 impl InstalledCatalogPackage {
     /// Retains the product fields from one already-verified active generation.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         package: AttributePath,
         name: String,
         version: PackageVersion,

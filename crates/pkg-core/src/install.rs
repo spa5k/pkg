@@ -47,7 +47,7 @@ impl InstallPackage {
 
     /// Stable selector id being added.
     #[must_use]
-    pub fn id(&self) -> &SelectorId {
+    pub const fn id(&self) -> &SelectorId {
         self.selector.id()
     }
     /// Resolved desired selector.

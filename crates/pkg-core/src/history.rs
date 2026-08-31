@@ -34,12 +34,12 @@ pub struct PackageChange {
 impl PackageChange {
     /// Returns the stable selector id.
     #[must_use]
-    pub fn id(&self) -> &SelectorId {
+    pub const fn id(&self) -> &SelectorId {
         &self.id
     }
     /// Returns the original product-facing selector.
     #[must_use]
-    pub fn selector(&self) -> &SelectorInput {
+    pub const fn selector(&self) -> &SelectorInput {
         &self.selector
     }
     /// Returns the change class.
@@ -49,12 +49,12 @@ impl PackageChange {
     }
     /// Returns the prior display version, when present.
     #[must_use]
-    pub fn before_version(&self) -> Option<&PackageVersion> {
+    pub const fn before_version(&self) -> Option<&PackageVersion> {
         self.before_version.as_ref()
     }
     /// Returns the next display version, when present.
     #[must_use]
-    pub fn after_version(&self) -> Option<&PackageVersion> {
+    pub const fn after_version(&self) -> Option<&PackageVersion> {
         self.after_version.as_ref()
     }
     /// Returns prior selected output names.

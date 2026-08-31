@@ -497,7 +497,7 @@ fn subjects_digest(
     canonical_digest(&identity).map_err(|_| invalid_evidence())
 }
 
-fn invalid_evidence() -> BuildCacheError {
+const fn invalid_evidence() -> BuildCacheError {
     BuildCacheError::new(BuildCacheErrorCode::InvalidEvidence)
 }
 

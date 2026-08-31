@@ -112,7 +112,7 @@ fn invalid(what: &'static str) -> NixAdapterError {
 }
 
 /// Rejects input whose byte length exceeds the codec cap, **before** parsing.
-fn check_size(codec: &JsonCodec, bytes: &[u8]) -> Result<(), NixAdapterError> {
+const fn check_size(codec: &JsonCodec, bytes: &[u8]) -> Result<(), NixAdapterError> {
     if bytes.len() > codec.limit() {
         return Err(NixAdapterError::OversizedInput {
             limit_bytes: codec.limit(),
@@ -152,7 +152,7 @@ fn parse_dto<D: DeserializeOwned>(codec: &JsonCodec, bytes: &[u8]) -> Result<D, 
 }
 
 /// Rejects an unsupported observed schema version.
-fn check_schema(observed: u32) -> Result<(), NixAdapterError> {
+const fn check_schema(observed: u32) -> Result<(), NixAdapterError> {
     if observed == SCHEMA_VERSION_CURRENT {
         Ok(())
     } else {
@@ -247,7 +247,7 @@ struct BoundedStringSeq(Vec<String>);
 
 impl BoundedStringSeq {
     /// Wraps an already-validated vector (used by encode).
-    fn from_vec(items: Vec<String>) -> Self {
+    const fn from_vec(items: Vec<String>) -> Self {
         Self(items)
     }
 
@@ -328,7 +328,7 @@ struct BoundedSeq<T>(Vec<T>);
 
 impl<T> BoundedSeq<T> {
     /// Wraps an already-validated vector (used by encode).
-    fn from_vec(items: Vec<T>) -> Self {
+    const fn from_vec(items: Vec<T>) -> Self {
         Self(items)
     }
 
@@ -392,7 +392,7 @@ struct BoundedUniqueStringMap(BTreeMap<String, String>);
 
 impl BoundedUniqueStringMap {
     /// Wraps an already-validated map (used by encode).
-    fn from_map(entries: BTreeMap<String, String>) -> Self {
+    const fn from_map(entries: BTreeMap<String, String>) -> Self {
         Self(entries)
     }
 
@@ -612,7 +612,7 @@ impl SchemaVersion {
     ///
     /// Returns [`NixAdapterError::UnsupportedSchemaVersion`] for any value
     /// other than [`SchemaVersion::CURRENT_VALUE`].
-    pub fn new(value: u32) -> Result<Self, NixAdapterError> {
+    pub const fn new(value: u32) -> Result<Self, NixAdapterError> {
         if value == Self::CURRENT_VALUE {
             Ok(Self(value))
         } else {
@@ -784,7 +784,7 @@ pub struct AcceptedFormats {
 impl AcceptedFormats {
     /// Constructs the accepted-format set.
     #[must_use]
-    pub fn new(path_info: FormatVersion) -> Self {
+    pub const fn new(path_info: FormatVersion) -> Self {
         Self { path_info }
     }
 
@@ -807,7 +807,7 @@ pub struct VersionInfo {
 impl VersionInfo {
     /// Constructs a `version()` report.
     #[must_use]
-    pub fn new(nix_version: NixVersion, accepted_formats: AcceptedFormats) -> Self {
+    pub const fn new(nix_version: NixVersion, accepted_formats: AcceptedFormats) -> Self {
         Self {
             nix_version,
             accepted_formats,
@@ -816,13 +816,13 @@ impl VersionInfo {
 
     /// Returns the managed-Nix version.
     #[must_use]
-    pub fn nix_version(&self) -> &NixVersion {
+    pub const fn nix_version(&self) -> &NixVersion {
         &self.nix_version
     }
 
     /// Returns the accepted upstream per-command format versions.
     #[must_use]
-    pub fn accepted_formats(&self) -> &AcceptedFormats {
+    pub const fn accepted_formats(&self) -> &AcceptedFormats {
         &self.accepted_formats
     }
 }
@@ -1023,7 +1023,7 @@ impl EvaluateDerivationRequest {
 
     /// Returns the resolved Nixpkgs attribute path.
     #[must_use]
-    pub fn attribute(&self) -> &AttributePath {
+    pub const fn attribute(&self) -> &AttributePath {
         &self.attribute
     }
 
@@ -1035,19 +1035,19 @@ impl EvaluateDerivationRequest {
 
     /// Returns the pinned Nixpkgs revision.
     #[must_use]
-    pub fn nixpkgs_revision(&self) -> &NixpkgsRevision {
+    pub const fn nixpkgs_revision(&self) -> &NixpkgsRevision {
         &self.nixpkgs_revision
     }
 
     /// Returns the NAR-hash pin of the Nixpkgs source.
     #[must_use]
-    pub fn nixpkgs_nar_hash(&self) -> &NarHash {
+    pub const fn nixpkgs_nar_hash(&self) -> &NarHash {
         &self.nixpkgs_nar_hash
     }
 
     /// Returns the output selection.
     #[must_use]
-    pub fn outputs(&self) -> &OutputSelection {
+    pub const fn outputs(&self) -> &OutputSelection {
         &self.outputs
     }
 }
@@ -1234,7 +1234,7 @@ impl EvaluatedDerivation {
 
     /// Returns the evaluated derivation path.
     #[must_use]
-    pub fn derivation(&self) -> &DerivationPath {
+    pub const fn derivation(&self) -> &DerivationPath {
         &self.derivation
     }
     /// Returns Nix's bounded display name.
@@ -1249,7 +1249,7 @@ impl EvaluatedDerivation {
     }
     /// Returns expected per-output paths, sorted by output name.
     #[must_use]
-    pub fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
+    pub const fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
         &self.outputs
     }
     /// Returns the digest of the canonical upstream derivation document.
@@ -1359,7 +1359,7 @@ impl DerivationPlanReport {
     }
     /// Returns the root derivation.
     #[must_use]
-    pub fn root(&self) -> &DerivationPath {
+    pub const fn root(&self) -> &DerivationPath {
         &self.root
     }
     /// Returns the canonical outputs selected for installation.
@@ -1384,7 +1384,7 @@ impl DerivationPlanReport {
     }
     /// Returns the authoritative evaluated version.
     #[must_use]
-    pub fn version(&self) -> &PackageVersion {
+    pub const fn version(&self) -> &PackageVersion {
         &self.version
     }
 }
@@ -1614,13 +1614,13 @@ impl PathInfoReport {
 
     /// Returns the store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.store_path
     }
 
     /// Returns the NAR hash (sha256 SRI) of the store path.
     #[must_use]
-    pub fn nar_hash(&self) -> &NarHash {
+    pub const fn nar_hash(&self) -> &NarHash {
         &self.nar_hash
     }
 
@@ -1638,7 +1638,7 @@ impl PathInfoReport {
 
     /// Returns the optional deriver.
     #[must_use]
-    pub fn deriver(&self) -> Option<&DerivationPath> {
+    pub const fn deriver(&self) -> Option<&DerivationPath> {
         self.deriver.as_ref()
     }
 
@@ -1839,7 +1839,7 @@ pub struct SubstituteReport {
 impl SubstituteReport {
     /// Constructs a successful substitution report with authenticated cache metadata.
     #[must_use]
-    pub fn fetched(store_path: StorePath, receipt: SubstituteReceipt) -> Self {
+    pub const fn fetched(store_path: StorePath, receipt: SubstituteReceipt) -> Self {
         Self {
             store_path,
             outcome: SubstituteOutcome::Fetched,
@@ -1869,7 +1869,7 @@ impl SubstituteReport {
 
     /// Returns the store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.store_path
     }
 
@@ -2063,7 +2063,7 @@ impl BuildApprovalReceipt {
 
     /// Returns the operation id.
     #[must_use]
-    pub fn operation_id(&self) -> &OperationId {
+    pub const fn operation_id(&self) -> &OperationId {
         &self.operation_id
     }
 
@@ -2281,7 +2281,7 @@ impl BuildRequest {
 
     /// Returns the opaque build-approval receipt.
     #[must_use]
-    pub fn receipt(&self) -> &BuildApprovalReceipt {
+    pub const fn receipt(&self) -> &BuildApprovalReceipt {
         &self.receipt
     }
 }
@@ -2650,7 +2650,7 @@ pub struct PathVerifyResult {
 impl PathVerifyResult {
     /// Constructs a per-path verify result from validated types (infallible).
     #[must_use]
-    pub fn new(path: StorePath, nar_integrity: NarIntegrity, trust: TrustStatus) -> Self {
+    pub const fn new(path: StorePath, nar_integrity: NarIntegrity, trust: TrustStatus) -> Self {
         Self {
             path,
             nar_integrity,
@@ -2660,7 +2660,7 @@ impl PathVerifyResult {
 
     /// Returns the path.
     #[must_use]
-    pub fn path(&self) -> &StorePath {
+    pub const fn path(&self) -> &StorePath {
         &self.path
     }
 

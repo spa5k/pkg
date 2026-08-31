@@ -266,7 +266,7 @@ fn with_unknown_field(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Returns the [`MalformedKind`] if `err` is a `MalformedPayload`, else `None`.
-fn malformed_kind(err: &NixAdapterError) -> Option<MalformedKind> {
+const fn malformed_kind(err: &NixAdapterError) -> Option<MalformedKind> {
     match err {
         NixAdapterError::MalformedPayload { kind } => Some(*kind),
         _ => None,

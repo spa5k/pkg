@@ -75,7 +75,7 @@ pub struct ManagedGroupBindings {
 
 impl ManagedGroupBindings {
     /// Validates host-local gids for the two non-root managed groups.
-    pub fn new(broker_gid: u32, build_users_gid: u32) -> Result<Self, OwnershipError> {
+    pub const fn new(broker_gid: u32, build_users_gid: u32) -> Result<Self, OwnershipError> {
         if broker_gid == 0 || build_users_gid == 0 || broker_gid == build_users_gid {
             return Err(OwnershipError::new(OwnershipErrorCode::ExpectationInvalid));
         }

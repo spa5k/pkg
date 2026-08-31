@@ -165,7 +165,7 @@ impl VerifiedRuntimeBundle {
         }
     }
 
-    pub(super) fn determinate_installer_identity(&self) -> Option<(u64, Digest)> {
+    pub(super) const fn determinate_installer_identity(&self) -> Option<(u64, Digest)> {
         match &self.base_nix {
             VerifiedBaseNix::Determinate { length, sha256, .. } => Some((*length, *sha256)),
             VerifiedBaseNix::Managed { .. } => None,

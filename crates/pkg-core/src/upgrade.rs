@@ -54,11 +54,11 @@ impl UpgradeOutcome {
 
     /// Constructs an authenticated removed-upstream outcome.
     #[must_use]
-    pub fn removed_upstream(id: SelectorId) -> Self {
+    pub const fn removed_upstream(id: SelectorId) -> Self {
         Self::RemovedUpstream { id }
     }
 
-    fn id(&self) -> &SelectorId {
+    const fn id(&self) -> &SelectorId {
         match self {
             Self::Resolved { id, .. } | Self::RemovedUpstream { id } => id,
         }

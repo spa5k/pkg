@@ -120,7 +120,7 @@ impl SubstituteError {
         }
     }
 
-    fn adapter(error: &NixAdapterError) -> Self {
+    const fn adapter(error: &NixAdapterError) -> Self {
         let code = match error.code() {
             NixAdapterErrorCode::TrustFailure => SubstituteErrorCode::TrustFailure,
             NixAdapterErrorCode::IntegrityFailure => SubstituteErrorCode::IntegrityFailure,

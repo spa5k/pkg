@@ -256,7 +256,7 @@ impl DerivationPath {
 
     /// Returns the underlying store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.0
     }
 
@@ -430,13 +430,13 @@ pub struct RealizationIdentity(StorePath);
 impl RealizationIdentity {
     /// Constructs an identity from a store path.
     #[must_use]
-    pub fn new(store_path: StorePath) -> Self {
+    pub const fn new(store_path: StorePath) -> Self {
         Self(store_path)
     }
 
     /// Returns the store path that is this identity.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.0
     }
 

@@ -251,7 +251,7 @@ pub struct VersionBound {
 impl VersionBound {
     /// Constructs an inclusive bound `[version]`.
     #[must_use]
-    pub fn inclusive(version: PackageVersion) -> Self {
+    pub const fn inclusive(version: PackageVersion) -> Self {
         Self {
             version,
             inclusive: true,
@@ -260,7 +260,7 @@ impl VersionBound {
 
     /// Constructs an exclusive bound `(version)`.
     #[must_use]
-    pub fn exclusive(version: PackageVersion) -> Self {
+    pub const fn exclusive(version: PackageVersion) -> Self {
         Self {
             version,
             inclusive: false,
@@ -269,13 +269,13 @@ impl VersionBound {
 
     /// Returns the bound's version.
     #[must_use]
-    pub fn version(&self) -> &PackageVersion {
+    pub const fn version(&self) -> &PackageVersion {
         &self.version
     }
 
     /// Returns `true` if this bound is inclusive.
     #[must_use]
-    pub fn is_inclusive(&self) -> bool {
+    pub const fn is_inclusive(&self) -> bool {
         self.inclusive
     }
 }
@@ -318,13 +318,13 @@ impl VersionRange {
 
     /// Returns the lower bound, if any.
     #[must_use]
-    pub fn lower(&self) -> Option<&VersionBound> {
+    pub const fn lower(&self) -> Option<&VersionBound> {
         self.lower.as_ref()
     }
 
     /// Returns the upper bound, if any.
     #[must_use]
-    pub fn upper(&self) -> Option<&VersionBound> {
+    pub const fn upper(&self) -> Option<&VersionBound> {
         self.upper.as_ref()
     }
 

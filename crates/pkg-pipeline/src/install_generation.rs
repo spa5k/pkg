@@ -217,7 +217,7 @@ fn build_candidate(
         .map_err(InstallGenerationError::Commit)
 }
 
-fn invalid_candidate() -> InstallGenerationError {
+const fn invalid_candidate() -> InstallGenerationError {
     InstallGenerationError::Commit(CommitError::InvalidCandidate)
 }
 

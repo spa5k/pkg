@@ -252,7 +252,7 @@ pub(crate) fn lookup(
     Ok(response(document, stale, lookup))
 }
 
-fn response(document: &IndexDocument, stale: bool, lookup: InfoLookup) -> InfoResponse {
+const fn response(document: &IndexDocument, stale: bool, lookup: InfoLookup) -> InfoResponse {
     InfoResponse {
         schema_version: QUERY_SCHEMA_VERSION,
         channel_seq: document.channel_seq(),
