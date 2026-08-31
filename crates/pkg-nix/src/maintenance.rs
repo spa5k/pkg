@@ -277,6 +277,10 @@ impl RootSetTransitionRequest {
 
     /// Derives the destination without accepting any target outside `source`.
     pub fn derive_from(&self, source: &RootSet) -> Result<RootSet, MaintenanceError> {
+        #[expect(
+            clippy::suspicious_operation_groupings,
+            reason = "source_generation is one field name, not a chained comparison"
+        )]
         if source.owner_uid != self.owner_uid || source.generation != self.source_generation {
             return Err(MaintenanceError::new(
                 MaintenanceErrorCode::ValidationFailure,

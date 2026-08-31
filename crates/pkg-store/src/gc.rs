@@ -113,6 +113,10 @@ pub fn plan_gc(
         return Err(GcError::InvalidArchive);
     }
     let active_id = active.generation().id();
+    #[expect(
+        clippy::similar_names,
+        reason = "active_id and active_uid are one fixed snapshot identity pair"
+    )]
     let active_uid = active.generation().uid();
     let active_system = active.state().locked().system();
     let mut ids = BTreeSet::new();

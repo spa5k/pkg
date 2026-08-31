@@ -64,7 +64,10 @@ impl Error for LinuxInstallJournalError {}
 #[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
 pub enum LinuxInstallMutation {
     /// One compiled account, directory, or file asset.
-    Asset { id: String },
+    Asset {
+        /// The exact compiled asset id.
+        id: String,
+    },
     /// The authenticated managed runtime transaction.
     ManagedRuntime,
     /// The fixed systemd activation transaction.

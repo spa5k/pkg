@@ -1567,6 +1567,10 @@ fn validate_private_directory(path: &Path, owner_uid: u32) -> Result<(), Provisi
 ///
 /// The caller must first authenticate the directory against the same expected
 /// owner. Every accepted entry is a private, single-link regular file.
+#[expect(
+    clippy::similar_names,
+    reason = "owner_uid and owner_gid are one fixed ownership pair"
+)]
 fn reconcile_determinate_installer_staging_at(
     directory: &Path,
     owner_uid: u32,

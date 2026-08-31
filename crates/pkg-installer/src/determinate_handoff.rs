@@ -48,22 +48,35 @@ const INSTALLER_LENGTH: u64 = 74_918_096;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const INSTALLER_SHA256: &str = "9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c";
 
+/// The persisted Base Nix Handoff state for one machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeterminateHandoffState {
+    /// No vendor lifecycle work has started.
     NotStarted,
+    /// The vendor process started; its outcome is unknown.
     Started,
+    /// The vendor process exited 0 and installed state validated.
     Accepted,
 }
 
+/// Stable failures from the Determinate Base Nix Handoff adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeterminateHandoffError {
+    /// The platform has no pinned Determinate installer.
     UnsupportedSystem,
+    /// The persisted state cannot be read as a valid handoff.
     InvalidState,
+    /// The vendor receipt does not match the authenticated expectation.
     InvalidReceipt,
+    /// The pinned installer bytes failed authentication.
     InvalidInstaller,
+    /// The receipt identity differs from the started operation.
     IdentityMismatch,
+    /// The requested state transition is not allowed.
     InvalidTransition,
+    /// The handoff could not be persisted.
     PersistenceFailed,
+    /// A failed clear could not be restored.
     ClearAndRestoreFailed,
 }
 

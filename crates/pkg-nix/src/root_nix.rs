@@ -84,6 +84,7 @@ impl RootNixOperation {
     }
 
     /// Returns the fixed client budget, one minute beyond the server budget.
+    #[must_use]
     pub const fn client_budget(self) -> Option<Duration> {
         self.server_budget().checked_add(CLIENT_GRACE)
     }
@@ -122,6 +123,7 @@ pub struct RootRepairPlanRequest {
 
 impl RootRepairPlanRequest {
     /// Constructs one bounded canonical request.
+    #[must_use]
     pub fn new(
         mut damaged: Vec<StorePath>,
         policy_version: PolicyVersion,
@@ -192,6 +194,7 @@ pub struct RootRepairPlanProof {
 
 impl RootRepairPlanProof {
     /// Promotes one validated local-rebuild repair preview.
+    #[must_use]
     pub fn new(preview: BuildPreview) -> Option<Self> {
         if !preview.is_repair_approval() {
             return None;

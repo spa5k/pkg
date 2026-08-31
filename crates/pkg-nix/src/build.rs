@@ -194,6 +194,10 @@ struct SandboxReadiness {
 
 impl BuildReadiness {
     /// Constructs explicit readiness; platform invariants are checked by the plan.
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "each flag mirrors one independent, documented readiness classification"
+    )]
     #[must_use]
     pub fn new(
         sandbox_enabled: bool,
@@ -626,6 +630,11 @@ impl RepairBuildPlan {
     }
 
     /// Produces the ordinary sanitized build-preview shape for repair approval.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the closed resource-notice table omits a supported
+    /// platform, which is an invariant violation.
     pub fn preview(&self) -> Result<BuildPreview, BuildEngineError> {
         let digest = self.digest()?;
         let (os, arch) = product_platform(self.system_identity);
@@ -984,6 +993,11 @@ impl BuildPlan {
     }
 
     /// Produces a sanitized preview with volatile, non-digest-bound estimates.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the closed resource-notice table omits a supported
+    /// platform, which is an invariant violation.
     pub fn preview_with_estimates(
         &self,
         estimates: BuildPreviewEstimates,

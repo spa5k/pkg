@@ -90,7 +90,9 @@ mod macos {
     /// Stable failures from the closed System Keychain adapter.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum SystemKeychainErrorCode {
+        /// The keychain state is not the expected closed state.
         InvalidState,
+        /// A Security.framework call failed.
         OperationFailed,
     }
 

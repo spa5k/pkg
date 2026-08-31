@@ -1,6 +1,8 @@
-//! The validated `pkg`-owned request/report contract types that cross the
-//! [`NixAdapter`](crate::NixAdapter) boundary, plus the public size-capped JSON
-//! codec that is the single decode boundary for serialized reports.
+//! The validated `pkg`-owned request/report contract types.
+//!
+//! These types cross the [`NixAdapter`](crate::NixAdapter) boundary. The
+//! module also holds the public size-capped JSON codec, the single decode
+//! boundary for serialized reports.
 //!
 //! # What lives here
 //!
@@ -965,9 +967,11 @@ fn is_standard_base64(s: &[u8]) -> bool {
 // evaluate_derivation
 // ===========================================================================
 
-/// A request to evaluate a selector into a derivation plan without realizing it
-/// (`plans/09` §4.1). Built by the later resolver from a selector plus the
-/// accepted channel descriptor; carries **no** trust/flag knobs.
+/// A request to evaluate a selector into a derivation plan without realizing
+/// it (`plans/09` §4.1).
+///
+/// Built by the later resolver from a selector plus the accepted channel
+/// descriptor; carries **no** trust/flag knobs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluateDerivationRequest {
     attribute: AttributePath,
@@ -1825,6 +1829,10 @@ impl SubstituteReceipt {
     }
 }
 
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "the debug view redacts signature material and the full receipt body"
+)]
 impl fmt::Debug for SubstituteReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubstituteReceipt")
@@ -1835,9 +1843,11 @@ impl fmt::Debug for SubstituteReceipt {
 }
 
 /// The report returned by `substitute()`: a cache-only outcome for one store
-/// path (`plans/09` §4.1). A fetched outcome must carry the cache metadata Nix
-/// authenticated while substituting; misses carry no receipt. Trust or
-/// signature failures are [`NixAdapterError`], never an outcome.
+/// path (`plans/09` §4.1).
+///
+/// A fetched outcome must carry the cache metadata Nix authenticated while
+/// substituting; misses carry no receipt. Trust or signature failures are
+/// [`NixAdapterError`], never an outcome.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SubstituteReport {
     store_path: StorePath,
@@ -2818,9 +2828,11 @@ pub enum GcStatus {
     RefusedUnderLease,
 }
 
-/// The report returned by `gc()` (`plans/09` §4.1). `gc()` takes **no** roots
-/// argument; it consults the on-disk GC-roots tree. In addition to the closed
-/// status and the collected paths, it carries a **checked** `freed_bytes`
+/// The report returned by `gc()` (`plans/09` §4.1).
+///
+/// `gc()` takes **no** roots argument; it consults the on-disk GC-roots tree.
+/// In addition to the closed status and the collected paths, it carries a
+/// **checked** `freed_bytes`
 /// total — the bytes the backend reports freed, which must be consistent with
 /// the status ([`GcStatus::RefusedUnderLease`] requires zero).
 #[derive(Debug, Clone, PartialEq, Eq)]

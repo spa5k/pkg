@@ -1,3 +1,5 @@
+//! Builds the signed channel index for one pinned nixpkgs revision.
+
 use std::env;
 use std::ffi::OsString;
 use std::io::Write;
