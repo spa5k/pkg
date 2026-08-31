@@ -102,11 +102,11 @@ struct ProofAuthority;
 struct ProofAuthorization;
 
 impl ReleaseAuthorization for ProofAuthorization {
-    fn lease_id(&self) -> &str {
+    fn lease_id(&self) -> &'static str {
         "linux-proof-lease"
     }
 
-    fn signing_actor(&self) -> &str {
+    fn signing_actor(&self) -> &'static str {
         "linux-proof"
     }
 

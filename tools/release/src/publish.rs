@@ -1305,11 +1305,11 @@ mod tests {
     }
 
     impl TimestampAuthorization for RetryAuthorization {
-        fn lease_id(&self) -> &str {
+        fn lease_id(&self) -> &'static str {
             "retry-lease"
         }
 
-        fn signing_actor(&self) -> &str {
+        fn signing_actor(&self) -> &'static str {
             "timestamp-service"
         }
 

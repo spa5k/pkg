@@ -359,10 +359,10 @@ impl NixAdapterError {
     /// text can ever enter the error.
     #[must_use]
     pub fn unexpected_call(expected: MethodKind, actual: MethodKind) -> Self {
-        let summary = if expected != actual {
-            "method mismatch"
-        } else {
+        let summary = if expected == actual {
             "request mismatch"
+        } else {
+            "method mismatch"
         };
         Self::UnexpectedCall {
             expected,

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::schema::parse_unique_json;
-use super::{Digest, IntegrityError, canonical_digest};
+use super::{Digest, canonical_digest};
 
 /// Fixed previous-hash sentinel carried by the first journal row.
 pub const GENESIS_PREVIOUS_HASH: &str = "sha256-Genesis";
@@ -47,7 +47,7 @@ impl FromStr for PreviousRowHash {
 }
 
 /// Operation-specific fields carried by a journal row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalPayload {
     fields: BTreeMap<String, Value>,
 }
@@ -84,7 +84,7 @@ impl JournalPayload {
 }
 
 /// One validated journal row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalRow {
     seq: u64,
     previous: PreviousRowHash,
@@ -143,7 +143,7 @@ impl JournalRow {
 }
 
 /// Result of scanning the journal from its head.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalRecovery {
     accepted: Vec<JournalRow>,
     quarantined_suffix: Vec<u8>,
@@ -411,7 +411,7 @@ mod tests {
         )
         .unwrap();
         let with_later_content = [
-            bytes.clone(),
+            bytes,
             third.to_ndjson_line().unwrap(),
             fourth.to_ndjson_line().unwrap(),
         ]

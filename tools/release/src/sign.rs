@@ -347,11 +347,11 @@ mod tests {
     struct TestTimestampAuthorization;
 
     impl ReleaseAuthorization for TestAuthorization {
-        fn lease_id(&self) -> &str {
+        fn lease_id(&self) -> &'static str {
             "release-lease-1"
         }
 
-        fn signing_actor(&self) -> &str {
+        fn signing_actor(&self) -> &'static str {
             "release-service"
         }
 
@@ -403,11 +403,11 @@ mod tests {
     }
 
     impl TimestampAuthorization for TestTimestampAuthorization {
-        fn lease_id(&self) -> &str {
+        fn lease_id(&self) -> &'static str {
             "timestamp-lease-2"
         }
 
-        fn signing_actor(&self) -> &str {
+        fn signing_actor(&self) -> &'static str {
             "timestamp-service"
         }
 

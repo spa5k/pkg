@@ -327,7 +327,7 @@ mod tests {
     fn rejects_empty_outputs() {
         let out = StorePath::new(STORE_OUT).unwrap();
         let err = Realization::new(
-            out.clone(),
+            out,
             DerivationPath::from_str(DRV).unwrap(),
             BTreeMap::new(),
             vec![OutputName::new("out").unwrap()],
@@ -413,7 +413,7 @@ mod tests {
         let out = StorePath::new(STORE_OUT).unwrap();
         let other = StorePath::new(STORE_MAN).unwrap();
         let mut outputs = BTreeMap::new();
-        outputs.insert(OutputName::new("man").unwrap(), other.clone());
+        outputs.insert(OutputName::new("man").unwrap(), other);
         // primary store_path = out, but outputs only contain `man`'s path.
         let err = Realization::new(
             out,
@@ -490,7 +490,7 @@ mod tests {
         .unwrap();
 
         let b = Realization::new(
-            out.clone(),
+            out,
             DerivationPath::from_str(DRV2).unwrap(),
             outputs_b,
             vec![

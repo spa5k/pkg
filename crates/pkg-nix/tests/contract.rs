@@ -967,7 +967,7 @@ fn decode_rejects_trailing_bytes() {
     let valid = substitute_fixture(SubstituteOutcome::Fetched)
         .encode()
         .unwrap();
-    let mut trailing = valid.clone();
+    let mut trailing = valid;
     // Trailing non-whitespace must be rejected (trailing whitespace is allowed).
     trailing.extend_from_slice(b"x");
     let err = decode_err!(c, SubstituteReport, &trailing);

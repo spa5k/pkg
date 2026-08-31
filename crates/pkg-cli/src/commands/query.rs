@@ -581,7 +581,7 @@ mod tests {
         let report = CatalogSearchReport::new(
             ChannelSequence::from_u64(42).unwrap(),
             "2026-08-19T00:00:00Z",
-            vec![summary.clone()],
+            vec![summary],
         )
         .unwrap();
         let result = search_catalog_report(&report).unwrap();

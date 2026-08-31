@@ -5472,7 +5472,7 @@ mod tests {
                 .code(),
             FrameErrorCode::UnsupportedVersion
         );
-        let mut bad_length = encoded.clone();
+        let mut bad_length = encoded;
         bad_length.push(b' ');
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&bad_length)

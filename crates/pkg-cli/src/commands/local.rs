@@ -1317,7 +1317,7 @@ impl LocalStateOperations {
             }
             let mut report = broker
                 .repair_generation(
-                    opened.clone(),
+                    opened,
                     RepairGenerationRequest::new(generation.clone(), verify_only),
                 )
                 .map_err(repair_broker_error)?;
@@ -1349,7 +1349,7 @@ impl LocalStateOperations {
                 handle = Some(opened.clone());
                 report = broker
                     .repair_generation(
-                        opened.clone(),
+                        opened,
                         RepairGenerationRequest::with_approval(
                             generation.clone(),
                             pkg_nix::BuildApprovalRequest::new(digest, source),
@@ -2990,7 +2990,7 @@ mod tests {
         );
         assert_eq!(
             maintenance
-                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_two.clone()))
+                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_two))
                 .unwrap(),
             generation_two_report
         );
@@ -3365,7 +3365,7 @@ mod tests {
         let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
         let (probed_tx, probed_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
-        let server_layout = layout.clone();
+        let server_layout = layout;
         let server = thread::spawn(move || {
             let broker = InProcessBroker::new().unwrap();
             let caller = broker
@@ -3973,7 +3973,7 @@ mod tests {
         drop(StateLease::try_exclusive(&layout, &identity).unwrap());
 
         let cli = Cli::try_parse(["pkg", "history"]).unwrap();
-        let location = StateLocation::alternate(state.clone(), home.path().to_path_buf());
+        let location = StateLocation::alternate(state, home.path().to_path_buf());
         let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
         let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
         assert_eq!(result.fields()["entries"], Value::Array(vec![]));
@@ -4074,7 +4074,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Refresh)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -4152,7 +4152,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Resolve)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -4222,7 +4222,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Resolve)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -4338,7 +4338,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Resolve)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -5093,7 +5093,7 @@ mod tests {
                 // cancel transport fails and the fallback opens a second fresh
                 // connection.
                 let (_, request) = read_request(server);
-                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                assert_eq!(request, CliBrokerRequest::Cancel(handle));
             }));
         }
         {
@@ -5153,7 +5153,7 @@ mod tests {
             let handle = handle.clone();
             fresh_clients.push_back(scripted_server(&mut workers, move |server| {
                 let (_, request) = read_request(server);
-                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                assert_eq!(request, CliBrokerRequest::Poll(handle));
                 // Drop without responding: the poll transport fails.
             }));
         }
@@ -5216,7 +5216,7 @@ mod tests {
                     &CliBrokerResponse::Status(OperationStatus::Running),
                 );
                 let (_, request) = read_request(server);
-                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                assert_eq!(request, CliBrokerRequest::Cancel(handle));
                 // Drop without responding so the fresh cancellation also fails.
             }));
         }

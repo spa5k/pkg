@@ -702,7 +702,7 @@ mod tests {
         let old = snapshot("gen-0001", None, "2026-06-01T00:00:00Z");
         let recent = snapshot("gen-0002", Some("gen-0001"), "2026-08-09T00:00:00Z");
         let active = snapshot("gen-0003", Some("gen-0002"), "2026-08-10T00:00:00Z");
-        let archive = vec![old.clone(), active.clone(), recent.clone()];
+        let archive = vec![old, active.clone(), recent];
         let now = parse_utc_seconds("2026-08-10T00:00:00Z").unwrap();
         let plan = plan_gc(&active, &archive, GcPolicy::new(1, 30).unwrap(), now).unwrap();
         assert_eq!(

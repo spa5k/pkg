@@ -901,7 +901,7 @@ fn capture_dynamic_store_state(
                 let path = child.path();
                 match child.file_name().to_str() {
                     Some("per-user" | "auto") => {
-                        entries.push(capture_empty_directory(&path, owner_uid, state.device)?)
+                        entries.push(capture_empty_directory(&path, owner_uid, state.device)?);
                     }
                     Some("pkg") => capture_product_gcroots(
                         &path,

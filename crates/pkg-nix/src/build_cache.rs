@@ -585,7 +585,7 @@ mod tests {
             BuildCacheErrorCode::ProbeFailed
         );
         let evidence = classify_build_cache(
-            &[target(subjects.clone(), vec![path("root")])],
+            &[target(subjects, vec![path("root")])],
             &Probe(vec![CachePathObservation::hit(path("root"), 1, 2)]),
         )
         .unwrap();

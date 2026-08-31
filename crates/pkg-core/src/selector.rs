@@ -636,7 +636,7 @@ mod tests {
         assert_eq!(sel.attribute().unwrap().as_str(), "ripgrep");
 
         // resolved -> pin succeeds.
-        let pinned = sel.clone().pinned_to(id.clone()).unwrap();
+        let pinned = sel.pinned_to(id).unwrap();
         assert!(pinned.pin_state().is_pinned());
 
         // pinned -> with_attribute fails, and the attribute is left unchanged.

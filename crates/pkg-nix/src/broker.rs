@@ -2799,7 +2799,7 @@ mod tests {
         let plan = build_plan(1);
         let digest = plan.digest().unwrap();
         let journal = Journal::default();
-        let preview = caller.prepare_build(&handle, plan.clone()).unwrap();
+        let preview = caller.prepare_build(&handle, plan).unwrap();
         assert_eq!(preview.build_plan_digest().len(), 71);
 
         assert_eq!(
@@ -2972,7 +2972,7 @@ mod tests {
         let wrong_schema =
             encoded_evidence.replacen("\"schemaVersion\":1", "\"schemaVersion\":2", 1);
         assert!(InstallEvidence::from_json_bytes(wrong_schema.as_bytes()).is_err());
-        let extended = encoded_evidence.replacen("{", "{\"futureField\":true,", 1);
+        let extended = encoded_evidence.replacen('{', "{\"futureField\":true,", 1);
         assert!(InstallEvidence::from_json_bytes(extended.as_bytes()).is_err());
         assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
         assert_eq!(broker.build_engine.approval_count(), 0);
