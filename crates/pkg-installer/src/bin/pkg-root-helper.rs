@@ -1,5 +1,7 @@
 use std::process::ExitCode;
 
+#[expect(clippy::print_stdout, reason = "the helper never prints to stdout")]
+#[expect(clippy::print_stderr, reason = "the helper only failure output")]
 fn main() -> ExitCode {
     if run() {
         ExitCode::SUCCESS

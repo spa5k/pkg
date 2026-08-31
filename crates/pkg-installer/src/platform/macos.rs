@@ -1371,7 +1371,10 @@ enum InstallMutation {
 ///
 /// Returns a stable error for unsupported/unmanaged hosts, signature or
 /// readiness failure, unhealthy services, receipt failure, or incomplete rollback.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one macOS install walks a closed vendor lifecycle sequence with per-phase rollback"
+)]
 pub fn install_macos(
     system: System,
     backend: &mut dyn MacOsInstallBackend,

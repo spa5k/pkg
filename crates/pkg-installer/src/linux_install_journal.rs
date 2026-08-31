@@ -525,7 +525,7 @@ const fn invalid_transition() -> LinuxInstallJournalError {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
 

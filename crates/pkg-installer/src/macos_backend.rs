@@ -52,7 +52,10 @@ fn select_install_mode(
     }
 }
 
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each boolean mirrors one documented macOS preflight classification"
+)]
 pub struct ProductionMacOsInstallBackend {
     system: System,
     assets: MacOsPlatformAssetManager,

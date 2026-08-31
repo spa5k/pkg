@@ -516,7 +516,10 @@ fn verify_fixed_path_absent(path: &Path) -> Result<(), UninstallError> {
 
 // Keep the proven PR2 rollback path compiled until the native Linux cutover
 // proof passes. It has no reachable constructor, selector, fallback, or export.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "legacy Base Nix remains until the DN-19 deletion proof; it has no reachable constructor"
+)]
 mod legacy_base_nix {
     use std::env;
     use std::path::{Path, PathBuf};

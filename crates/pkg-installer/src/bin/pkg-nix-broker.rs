@@ -1,5 +1,7 @@
 //! Production entry point for the unprivileged package broker.
 
+#[expect(clippy::print_stdout, reason = "the broker never prints to stdout")]
+#[expect(clippy::print_stderr, reason = "the broker only failure output")]
 fn main() {
     if !run() {
         #[expect(clippy::print_stderr, reason = "the broker's only failure output")]

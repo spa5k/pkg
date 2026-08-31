@@ -100,7 +100,10 @@ impl Realization {
     /// - `outputs_to_install` is empty or contains duplicates,
     /// - a name in `outputs_to_install` is absent from `outputs`,
     /// - the primary `store_path` is not among the `outputs` values.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a Realization is one closed wire record; every field is validated independently"
+    )]
     pub fn new(
         store_path: StorePath,
         deriver: DerivationPath,

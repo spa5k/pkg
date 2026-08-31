@@ -737,7 +737,10 @@ struct BuildPlanDigestSubject<'a> {
 
 impl BuildPlan {
     /// Constructs the deterministic operation-wide approval subject.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one engine constructor binds the full authenticated plan context; no coherent subset exists"
+    )]
     pub fn new(
         nix_runtime_version: &NixVersion,
         descriptor_hash: Digest,
@@ -1143,7 +1146,10 @@ impl InstallEvidence {
     ///
     /// Refuses inconsistent source identity, targets, substitute metadata, or
     /// adapter results.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cache evidence needs the full authenticated source identity in one closed record"
+    )]
     pub fn from_cache_substitutes(
         descriptor_hash: Digest,
         channel_sequence: ChannelSequence,
@@ -1260,7 +1266,10 @@ impl InstallEvidence {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "executed-plan evidence needs the full authenticated identity in one closed record"
+    )]
     fn from_output_metadata(
         descriptor_hash: Digest,
         channel_sequence: ChannelSequence,
@@ -1332,7 +1341,10 @@ impl InstallEvidence {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "plan admission needs the full closed build plan in one bound"
+    )]
     fn new(
         descriptor_hash: Digest,
         channel_sequence: ChannelSequence,

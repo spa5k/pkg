@@ -626,7 +626,10 @@ fn dispatch_request_with_refresh(
     )
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the broker dispatch is one closed match over the wire grammar; each arm delegates immediately"
+)]
 fn dispatch_request_with_progress(
     caller: &AuthenticatedCaller,
     request: CliBrokerRequest,

@@ -8,7 +8,10 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "macOS Security.framework FFI needs scoped unsafe; every block carries a SAFETY comment"
+)]
 mod macos {
     use core_foundation::{
         array::CFArray,

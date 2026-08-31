@@ -2129,7 +2129,10 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     ) -> Result<MacOsBuildReadiness, MacOsError> {
         self.inner.observe_build_readiness(system)
     }
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one receipt publication walks a closed journal mutation sequence"
+    )]
     fn publish_ownership_receipt(&mut self) -> Result<bool, MacOsError> {
         let mutation = MacOsInstallMutation::OwnershipReceipt;
         let presence = self.inner.classify_ownership_receipt()?;

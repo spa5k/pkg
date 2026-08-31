@@ -1192,7 +1192,10 @@ impl EvaluatedDerivation {
     ///
     /// Returns [`NixAdapterError::ValidationFailure`] for an invalid display
     /// name, empty outputs, or an over-budget output map.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a DerivationInfo is one closed wire record; every field is validated independently"
+    )]
     pub fn new(
         derivation: DerivationPath,
         name: String,
@@ -1293,7 +1296,10 @@ pub struct DerivationPlanReport {
 
 impl DerivationPlanReport {
     /// Constructs a canonical, internally consistent evaluate-only plan.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one evaluated plan record maps to one closed domain value"
+    )]
     pub fn new(
         json_version: u32,
         root: DerivationPath,
@@ -1561,7 +1567,10 @@ impl PathInfoReport {
     ///
     /// Returns [`NixAdapterError::ValidationFailure`] on duplicates, an
     /// over-large collection, a self-reference, or an inverted size pair.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one PathInfo wire record maps to one closed domain value"
+    )]
     pub fn new(
         store_path: StorePath,
         nar_hash: NarHash,

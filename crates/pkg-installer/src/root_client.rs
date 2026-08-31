@@ -321,7 +321,10 @@ impl RootHelperClient {
     /// # Errors
     ///
     /// Returns a closed adapter error for transport, framing, helper, or validation failure.
-    #[allow(dead_code)] // Inactive typed proxy contract kept for the DN09 contract test.
+    #[allow(
+        dead_code,
+        reason = "inactive typed proxy contract kept for the DN09 contract test"
+    )]
     pub(crate) fn closure_for_roots(
         &self,
         roots: &[StorePath],
@@ -337,7 +340,10 @@ impl RootHelperClient {
     /// # Errors
     ///
     /// Returns a closed adapter error for transport, framing, helper, or validation failure.
-    #[allow(dead_code)] // Inactive typed proxy contract kept for the DN09 contract test.
+    #[allow(
+        dead_code,
+        reason = "inactive typed proxy contract kept for the DN09 contract test"
+    )]
     pub(crate) fn repair_plan_proof(
         &self,
         request: &RootRepairPlanRequest,
@@ -668,7 +674,7 @@ fn remaining(deadline: Instant) -> Result<Duration, HelperTransportError> {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
     use crate::{BrokerHelperDispatch, serve_helper_connection};
