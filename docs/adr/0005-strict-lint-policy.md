@@ -1,5 +1,5 @@
 ---
-Status: Proposed
+Status: Accepted
 ---
 
 # Strict lint policy: make the repository hostile to mediocre code
@@ -91,29 +91,27 @@ commit `854f288` with toolchain `1.96.1` on Apple Silicon macOS.
 
 The blanket `pedantic = "deny"` policy already exists in `pkg-installer` and
 `pkg-macos-security` and stays. Blanket workspace-wide pedantic is rejected:
-`missing_errors_doc` alone has 704 hits and would drown the branch.
+`missing_errors_doc` alone has hundreds of hits and would drown the branch.
 
-Curated denies:
+**Denied workspace-wide** (clean in every target on every platform):
 
-| Lint | Why | Measured |
-|---|---|---|
-| `needless_pass_by_value` | Cheap-to-pass types by value. Auto-fixable. | 35 |
-| `redundant_closure_for_method_calls` | Auto-fixable. | 61 |
-| `match_same_arms` | Collapsed arms reveal real structure. | 44 |
-| `doc_markdown` | Backticks in docs. | 30 |
-| `duration_suboptimal_units` | Readability of time units. | 20 |
-| `unnecessary_wraps` | API smell: `Result` that never errors misleads callers. | 12 |
-| `large_stack_arrays` | Stack overflow risk. | 12 |
-| `cast_possible_wrap`, `cast_possible_truncation`, `cast_precision_loss` | Silent numeric corruption. | 21 |
-| `single_match_else` | Simpler control flow. | 10 |
-| `unnecessary_literal_bound` | Auto-fixable. | 8 |
-| `items_after_statements` | Locals before items. | 7 |
-| `struct_excessive_bools` | Boolean fields hide state machines. | 6 |
-| `missing_fields_in_debug` | Complete debug output. | 6 |
-| `must_use_candidate` | APIs whose result must not be dropped. | 6 |
-| `similar_names` | Confusable identifiers. | 5 |
-| `manual_let_else`, `if_not_else`, `single_char_pattern`, `semicolon_if_nothing_returned`, `used_underscore_binding`, `no_effect_underscore_binding`, `zero_sized_map_values`, `float_cmp`, `unnecessary_literal_bound`, `fn_params_excessive_bools`, `trivially_copy_pass_by_ref`, `missing_panics_doc` | Small, high-signal polish lints. Auto-fixable where noted. | 2–5 each |
-| `missing_errors_doc` | ratchet only. 704 hits; the debt may not grow. | 704 |
+`needless_pass_by_value`, `redundant_closure_for_method_calls`,
+`needless_lifetimes`, `manual_let_else`, `single_char_pattern`,
+`semicolon_if_nothing_returned`, `unnecessary_literal_bound`, `if_not_else`,
+`used_underscore_binding`, `no_effect_underscore_binding`,
+`zero_sized_map_values`, `trivially_copy_pass_by_ref`,
+`allow_attributes_without_reason`, `missing_fields_in_debug`,
+`must_use_candidate`, `fn_params_excessive_bools`, `missing_panics_doc`,
+`float_cmp`, `similar_names` (with pair-naming expects where the pair is a
+fixed convention).
+
+**Ratcheted** (baseline-locked, enforced on touched files by the strict
+mode): `match_same_arms` (24 production), `doc_markdown` (13),
+`duration_suboptimal_units` (10), `unnecessary_wraps` (7),
+`large_stack_arrays` (6), `cast_possible_wrap` (6), `single_match_else` (11),
+`cast_possible_truncation` (3), `struct_excessive_bools` (5 remaining),
+`missing_errors_doc` (435), `option_if_let_else`, `or_fun_call`,
+`redundant_clone`, `significant_drop_tightening` (53), `use_self` (116).
 
 ### 5. Complexity budgets
 
@@ -122,12 +120,22 @@ levels reflect measured production debt (lib + bins, not tests).
 
 | Threshold | Value | Level | Measured production debt | Test debt |
 |---|---|---|---|---|
-| `cognitive-complexity-threshold` | 10 | deny in production | 10 — fixed on this branch | 81 — ratchet |
-| `type-complexity-threshold` | 150 | deny in production | 20 — fixed on this branch | 51 — ratchet |
+| `cognitive-complexity-threshold` | 10 | deny in production (gate) | 10 — fixed on this branch | 81 — ratchet |
+| `type-complexity-threshold` | 150 | deny in production (gate) | 24 — fixed on this branch | 51 — ratchet |
 | `too-many-lines-threshold` | 50 | ratchet + touched-files | 132 | 380 |
 | `too-many-arguments-threshold` | 5 | ratchet + touched-files | 73 | 153 |
-| `excessive-nesting-threshold` | 3 | deny in production | measured during application | — |
-| `struct-field-count-threshold` | — | not set; enum/struct budgets stay review policy for now | — | — |
+
+The strict budgets live in `tools/quality/clippy-strict.toml`, which the
+G-QUALITY gate swaps in for the measurement. They are deliberately absent
+from the shared `clippy.toml`: once configured there, each budget fires at
+deny level inside the pedantic-deny crates and breaks every historical
+violation at once.
+
+`excessive_nesting` is rejected. Once its threshold is configured the lint
+joins `clippy::all` and counts `mod`/`impl` blocks as nesting, so threshold 3
+flags any `if` inside an impl method. It stays out until a function-local
+depth metric exists. `unused_crate_dependencies` is deferred: it fires on
+dev-dependencies per target and needs per-crate target plumbing first.
 
 Tests get a separate, looser treatment: the same thresholds, but violations
 are ratcheted instead of denied. Long integration tests are legitimate.
@@ -151,8 +159,10 @@ against `tools/quality/baseline.json`. CI fails on growth.
 - Add a `g-lint-macos` job on `macos-14` (Apple Silicon): format, clippy
   (all targets), and `cargo test --workspace`. This closes the exact hole
   that produced the 7 macOS clippy errors and the stale test.
-- Add a `g-quality` job that runs the strict gate, the touched-files rule,
-  and the slop ratchet.
+- Add a `g-quality` job that runs the strict gate: the strict complexity
+  budgets, the global ratchet, and the per-file ratchet. The full
+  touched-files rule (`FULL_TOUCHED=1`, `just lint-strict`) becomes the CI
+  default once the touched-file debt is paid down.
 
 ### 8. Local workflows — `Justfile`
 

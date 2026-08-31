@@ -146,3 +146,77 @@ jobs:
       # `--all-targets` does not compile doctests; gate them explicitly.
       - name: cargo test --doc
         run: cargo test --workspace --doc --all-features --locked
+
+  # G-LINT-MACOS — the platform hole that hid the DN-17/DN-18 residue. Linux
+  # CI never compiles macOS-gated code, so macOS-only clippy errors and the
+  # stale uninstall contract test stayed green for weeks. This job runs the
+  # exact G-LINT gate and the unit tests on Apple Silicon.
+  g-lint-macos:
+    name: G-LINT-MACOS (Apple Silicon fmt / clippy / test)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Install and verify pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${RUSTUP_TOOLCHAIN}"
+          channel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \
+                     | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [ "$channel" != "$expected" ]; then
+            echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2
+            exit 1
+          fi
+          rustup toolchain install "$channel" --profile minimal --component rustfmt --component clippy
+          rustc --version
+          cargo --version
+
+      - name: cargo fmt --all --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy (-D warnings)
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-targets --all-features --locked
+
+  # G-QUALITY — the strict budgets and debt ratchet from ADR 0005. The
+  # workspace denies in Cargo.toml are the floor; this job measures the strict
+  # complexity budgets against the checked-in per-file baseline and fails on
+  # any new debt anywhere.
+  g-quality:
+    name: G-QUALITY (strict budgets + debt ratchet)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          # The touched-files comparison needs the base ref's history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install and verify pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${RUSTUP_TOOLCHAIN}"
+          channel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \
+                     | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [ "$channel" != "$expected" ]; then
+            echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2
+            exit 1
+          fi
+          rustup toolchain install "$channel" --profile minimal --component clippy
+          rustc --version
+          cargo --version
+
+      - name: Quality gate (strict budgets + ratchet)
+        env:
+          BASE_REF: "origin/${{ github.base_ref }}"
+        run: tools/quality/quality-gate.sh check
