@@ -357,7 +357,10 @@ mod tests {
             let live = Cli::try_parse_from(["pkg", flag, "uninstall", "--yes"]).unwrap();
             assert_eq!(
                 validate_live_uninstall_output(&live).is_err(),
-                cfg!(target_os = "linux")
+                cfg!(any(
+                    target_os = "linux",
+                    all(target_os = "macos", target_arch = "aarch64")
+                ))
             );
 
             let dry_run = Cli::try_parse_from(["pkg", flag, "--dry-run", "uninstall"]).unwrap();
