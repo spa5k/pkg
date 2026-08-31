@@ -1022,7 +1022,7 @@ fn extract_exact_archive(
             &mut entry,
             &installed_relative,
             &destination,
-            &artifact,
+            artifact,
             &mut runtime_executable,
             &mut runtime_aliases,
         )?;

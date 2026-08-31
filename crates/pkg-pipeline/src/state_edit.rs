@@ -146,14 +146,14 @@ pub fn prepare_state_edit(
         return Err(StateEditPrepareError::GenerationExists);
     }
 
-    let inputs = activation_inputs(&next);
+    let inputs = activation_inputs(next);
     let collision_policy = metadata
         .collision_policy
         .unwrap_or(source.generation().activation().collision_policy());
     let plan = stage_activation(&staging, &inputs, collision_policy)
         .inspect_err(|_| discard_staging(&staging))
         .map_err(|_| StateEditPrepareError::Stage)?;
-    let candidate = build_candidate(source, &next, &metadata, collision_policy, &plan)
+    let candidate = build_candidate(source, next, &metadata, collision_policy, &plan)
         .inspect_err(|_| discard_staging(&staging))?;
     PreparedGeneration::prepare(layout, candidate, plan, lease)
         .inspect_err(|_| discard_staging(&staging))

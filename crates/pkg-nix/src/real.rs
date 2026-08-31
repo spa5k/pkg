@@ -2301,8 +2301,8 @@ fn normalize_path_info(
     raw: &RawPathInfoEnvelope,
     requested: &StorePath,
 ) -> Result<PathInfoReport, NixAdapterError> {
-    validate_path_info_envelope(&raw)?;
-    let root = root_path_info(&raw, requested)?;
+    validate_path_info_envelope(raw)?;
+    let root = root_path_info(raw, requested)?;
     let closure_size = raw.info.values().flatten().try_fold(0_u64, |total, item| {
         total
             .checked_add(item.nar_size)
