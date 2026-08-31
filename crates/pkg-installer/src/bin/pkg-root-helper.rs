@@ -1,12 +1,11 @@
 use std::process::ExitCode;
 
-#[expect(clippy::print_stdout, reason = "the helper never prints to stdout")]
-#[expect(clippy::print_stderr, reason = "the helper only failure output")]
+#[allow(clippy::print_stdout, reason = "the helper never prints to stdout")]
+#[allow(clippy::print_stderr, reason = "the helper only failure output")]
 fn main() -> ExitCode {
     if run() {
         ExitCode::SUCCESS
     } else {
-        #[expect(clippy::print_stderr, reason = "the helper's only failure output")]
         eprintln!("managed package service failed");
         ExitCode::FAILURE
     }

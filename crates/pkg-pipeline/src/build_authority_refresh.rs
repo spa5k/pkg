@@ -149,7 +149,7 @@ fn into_channel(outcome: RefreshOutcome) -> pkg_channel::VerifiedChannel {
     }
 }
 
-fn map_channel_error(error: &ChannelError) -> BuildAuthorityRefreshError {
+const fn map_channel_error(error: &ChannelError) -> BuildAuthorityRefreshError {
     let code = match error {
         ChannelError::TransportUnavailable => BuildAuthorityRefreshErrorCode::Network,
         ChannelError::DatastoreBusy => BuildAuthorityRefreshErrorCode::Busy,

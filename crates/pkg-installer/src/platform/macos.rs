@@ -1371,7 +1371,7 @@ enum InstallMutation {
 ///
 /// Returns a stable error for unsupported/unmanaged hosts, signature or
 /// readiness failure, unhealthy services, receipt failure, or incomplete rollback.
-#[expect(
+#[allow(
     clippy::too_many_lines,
     reason = "one macOS install walks a closed vendor lifecycle sequence with per-phase rollback"
 )]
@@ -1611,7 +1611,10 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one closed asset-manifest assertion table"
+    )]
     fn asset_manifest_is_closed_unique_and_has_exact_build_users() -> Result<(), Box<dyn Error>> {
         let mut ids = HashSet::new();
         let mut paths = HashSet::new();

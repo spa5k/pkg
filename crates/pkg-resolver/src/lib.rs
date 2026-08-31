@@ -162,7 +162,7 @@ pub fn resolve_package(
     )
 }
 
-#[expect(
+#[allow(
     clippy::too_many_arguments,
     reason = "the resolution boundary needs the full authenticated source context; no coherent subset exists"
 )]

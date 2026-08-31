@@ -2129,7 +2129,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     ) -> Result<MacOsBuildReadiness, MacOsError> {
         self.inner.observe_build_readiness(system)
     }
-    #[expect(
+    #[allow(
         clippy::too_many_lines,
         reason = "one receipt publication walks a closed journal mutation sequence"
     )]
@@ -4540,7 +4540,10 @@ mod tests {
         Ok(())
     }
 
-    #[allow(clippy::struct_excessive_bools)]
+    #[allow(
+        clippy::struct_excessive_bools,
+        reason = "test double mirrors the production classification flags"
+    )]
     #[derive(Default)]
     struct MacBackend {
         raw_provision_calls: usize,

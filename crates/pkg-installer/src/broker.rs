@@ -626,7 +626,7 @@ fn dispatch_request_with_refresh(
     )
 }
 
-#[expect(
+#[allow(
     clippy::too_many_lines,
     reason = "the broker dispatch is one closed match over the wire grammar; each arm delegates immediately"
 )]
@@ -1444,7 +1444,7 @@ fn remaining(deadline: Instant) -> Result<Duration, BrokerTransportError> {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
     use pkg_channel::BuildMode;

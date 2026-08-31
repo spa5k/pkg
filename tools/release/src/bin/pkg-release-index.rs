@@ -25,8 +25,8 @@ struct Input {
     system: System,
 }
 
-#[expect(clippy::print_stdout, reason = "the release tool only product output")]
-#[expect(clippy::print_stderr, reason = "the release tool only failure output")]
+#[allow(clippy::print_stdout, reason = "the release tool only product output")]
+#[allow(clippy::print_stderr, reason = "the release tool only failure output")]
 fn main() {
     if let Err(message) = run(env::args_os()) {
         eprintln!("{message}");

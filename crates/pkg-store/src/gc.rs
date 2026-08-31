@@ -113,7 +113,7 @@ pub fn plan_gc(
         return Err(GcError::InvalidArchive);
     }
     let active_id = active.generation().id();
-    #[expect(
+    #[allow(
         clippy::similar_names,
         reason = "active_id and active_uid are one fixed snapshot identity pair"
     )]

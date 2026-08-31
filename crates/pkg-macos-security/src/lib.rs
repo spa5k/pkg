@@ -66,10 +66,7 @@ mod macos {
                 .copy_bytes(&mut random)
                 .map_err(|_| keychain_failure())?;
             let mut bytes = [0_u8; HEX_BYTES];
-            for (index, byte) in random.iter().copied().enumerate() {
-                bytes[index * 2] = hex(byte >> 4);
-                bytes[index * 2 + 1] = hex(byte & 0x0f);
-            }
+            encode_hex(&random, &mut bytes);
             random.zeroize();
             Ok(Self { bytes })
         }
@@ -131,9 +128,7 @@ mod macos {
         /// when creation, ACL assignment, verification, or cleanup fails.
         pub fn create(secret: &StoreVolumeSecret) -> Result<(), SystemKeychainError> {
             let keychain = open_system_keychain()?;
-            if find_item(&keychain)?.is_some() {
-                return Err(invalid_state());
-            }
+            require_absent(&keychain)?;
             create_with_root_helper_access(&keychain, secret)
         }
 
@@ -157,13 +152,7 @@ mod macos {
             let keychain = open_system_keychain()?;
             let password = read_raw_password(&keychain)?;
             let value = password.as_ref();
-            if value.len() != HEX_BYTES
-                || !value
-                    .iter()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-            {
-                return Err(invalid_state());
-            }
+            validate_secret_shape(value)?;
             let mut bytes = [0_u8; HEX_BYTES];
             bytes.copy_from_slice(value);
             Ok(StoreVolumeSecret { bytes })
@@ -245,15 +234,16 @@ mod macos {
 
     impl Drop for ZeroizingKeychainPassword {
         fn drop(&mut self) {
-            if !self.data.is_null() {
-                // SAFETY: `data` and `len` describe the keychain-owned buffer
-                // returned by the matching Find call; drop runs once and is the
-                // only writer.
-                unsafe { slice::from_raw_parts_mut(self.data.cast::<u8>(), self.len) }.zeroize();
-                // SAFETY: `data` is the same keychain-owned buffer; FreeContent
-                // is its matching release function.
-                let _ = unsafe { SecKeychainItemFreeContent(ptr::null_mut(), self.data) };
+            if self.data.is_null() {
+                return;
             }
+            // SAFETY: `data` and `len` describe the keychain-owned buffer
+            // returned by the matching Find call; drop runs once and is the
+            // only writer.
+            unsafe { slice::from_raw_parts_mut(self.data.cast::<u8>(), self.len) }.zeroize();
+            // SAFETY: `data` is the same keychain-owned buffer; FreeContent
+            // is its matching release function.
+            let _ = unsafe { SecKeychainItemFreeContent(ptr::null_mut(), self.data) };
         }
     }
 
@@ -288,6 +278,10 @@ mod macos {
         Ok(password)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one straight-line Security.framework creation sequence; every step is an atomic check"
+    )]
     fn create_with_root_helper_access(
         keychain: &SecKeychain,
         secret: &StoreVolumeSecret,
@@ -430,6 +424,33 @@ mod macos {
         ) -> i32;
     }
 
+    /// Hex-encodes the random bytes into the fixed output buffer.
+    fn encode_hex(random: &[u8; RANDOM_BYTES], bytes: &mut [u8; HEX_BYTES]) {
+        for (index, byte) in random.iter().copied().enumerate() {
+            bytes[index * 2] = hex(byte >> 4);
+            bytes[index * 2 + 1] = hex(byte & 0x0f);
+        }
+    }
+
+    /// Refuses creation when the exact fixed item already exists.
+    fn require_absent(keychain: &SecKeychain) -> Result<(), SystemKeychainError> {
+        if find_item(keychain)?.is_some() {
+            return Err(invalid_state());
+        }
+        Ok(())
+    }
+
+    /// Accepts only the exact hexadecimal secret shape.
+    fn validate_secret_shape(value: &[u8]) -> Result<(), SystemKeychainError> {
+        if value.len() != HEX_BYTES
+            || !value
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        {
+            return Err(invalid_state());
+        }
+        Ok(())
+    }
     #[cfg(test)]
     mod tests {
         use super::*;

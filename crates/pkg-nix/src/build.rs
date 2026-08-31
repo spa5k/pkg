@@ -746,7 +746,7 @@ struct BuildPlanDigestSubject<'a> {
 
 impl BuildPlan {
     /// Constructs the deterministic operation-wide approval subject.
-    #[expect(
+    #[allow(
         clippy::too_many_arguments,
         reason = "one engine constructor binds the full authenticated plan context; no coherent subset exists"
     )]
@@ -1160,7 +1160,7 @@ impl InstallEvidence {
     ///
     /// Refuses inconsistent source identity, targets, substitute metadata, or
     /// adapter results.
-    #[expect(
+    #[allow(
         clippy::too_many_arguments,
         reason = "cache evidence needs the full authenticated source identity in one closed record"
     )]
@@ -1280,7 +1280,7 @@ impl InstallEvidence {
         )
     }
 
-    #[expect(
+    #[allow(
         clippy::too_many_arguments,
         reason = "executed-plan evidence needs the full authenticated identity in one closed record"
     )]
@@ -1355,7 +1355,7 @@ impl InstallEvidence {
         )
     }
 
-    #[expect(
+    #[allow(
         clippy::too_many_arguments,
         reason = "plan admission needs the full closed build plan in one bound"
     )]

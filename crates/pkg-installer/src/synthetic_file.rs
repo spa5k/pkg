@@ -409,7 +409,7 @@ fn ensure_backup(
     }
 }
 
-#[expect(
+#[allow(
     clippy::too_many_arguments,
     clippy::too_many_lines,
     reason = "synthetic.conf restore needs every captured identity fact to refuse drift"

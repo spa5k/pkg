@@ -276,19 +276,19 @@ fn deduped_planned_paths(preflight: &PreflightInstall) -> Vec<pkg_core::StorePat
     planned_paths
 }
 
+/// One resolved owner table: path-to-selector plus per-selector byte totals.
+type OwnerTotals = (
+    BTreeMap<String, String>,
+    BTreeMap<String, (pkg_core::SelectorInput, u64)>,
+);
+
 /// Maps each planned root path to its selector and sums trusted bytes per
 /// selector, refusing unknown selectors or missing byte totals.
 fn owner_totals(
     preflight: &PreflightInstall,
     selectors: &BTreeMap<String, pkg_core::SelectorInput>,
     download_bytes: &BTreeMap<String, u64>,
-) -> Result<
-    (
-        BTreeMap<String, String>,
-        BTreeMap<String, (pkg_core::SelectorInput, u64)>,
-    ),
-    AcquireError,
-> {
+) -> Result<OwnerTotals, AcquireError> {
     let mut root_owners = BTreeMap::new();
     let mut selector_totals = BTreeMap::<String, (pkg_core::SelectorInput, u64)>::new();
     for planned in preflight.outputs() {

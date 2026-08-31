@@ -1,7 +1,7 @@
 //! Production entry point for the unprivileged package broker.
 
-#[expect(clippy::print_stdout, reason = "the broker never prints to stdout")]
-#[expect(clippy::print_stderr, reason = "the broker only failure output")]
+#[allow(clippy::print_stdout, reason = "the broker never prints to stdout")]
+#[allow(clippy::print_stderr, reason = "the broker only failure output")]
 fn main() {
     if !run() {
         eprintln!("managed package service failed");

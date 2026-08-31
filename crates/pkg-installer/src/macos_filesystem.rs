@@ -4,7 +4,6 @@ use pkg_core::state::Digest;
 use pkg_nix::{
     AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig, ManagedGroupBindings,
 };
-use rustix::fs::{Dir, FileType, Mode, OFlags, fstat, open, openat};
 
 use crate::{
     LinuxFilesystemManager, LinuxInstallAsset, LinuxReleasePayloads, MacOsError, MacOsInstallAsset,

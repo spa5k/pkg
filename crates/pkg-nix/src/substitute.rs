@@ -529,7 +529,7 @@ mod tests {
             crate::NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567").unwrap(),
             nar(NAR),
             System::X8664Linux,
-            &vec![target()],
+            &[target()],
             vec![substitute],
             &evidence_adapter,
         )
@@ -574,7 +574,7 @@ mod tests {
                 crate::NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567",).unwrap(),
                 nar(NAR),
                 System::X8664Linux,
-                &vec![target()],
+                &[target()],
                 vec![substitute],
                 &evidence_adapter,
             )

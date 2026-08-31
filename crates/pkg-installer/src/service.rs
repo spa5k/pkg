@@ -656,10 +656,12 @@ fn bind_macos_listener(
     let result = (|| {
         let listener = UnixListener::bind(&staging_path)
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        let socket_mode = u16::try_from(mode)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
         fchmodat(
             &staging_fd,
             socket_name,
-            Mode::from_bits_truncate(mode as u16),
+            Mode::from_bits_truncate(socket_mode),
             FchmodatFlags::NoFollowSymlink,
         )
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;

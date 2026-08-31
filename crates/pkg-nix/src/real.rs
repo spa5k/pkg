@@ -2549,6 +2549,51 @@ fn is_private(metadata: &fs::Metadata) -> bool {
     metadata.permissions().mode() & 0o077 == 0
 }
 
+/// Builds the fully configured command for one execution request.
+fn build_command(executor: &ProcessExecutor, spec: &CommandSpec) -> std::process::Command {
+    let binary = match spec.program {
+        NixProgram::Modern => &executor.nix_binary,
+        NixProgram::LegacyStore => &executor.nix_store_binary,
+    };
+    let mut command = Command::new(binary);
+    command
+        .args(&spec.args)
+        .env_clear()
+        .env("HOME", &executor.private_home)
+        .env("TMPDIR", executor.private_home.join("tmp"))
+        .env("NIX_USER_CONF_FILES", "")
+        .env("PATH", MANAGED_PATH)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(daemon_socket) = &executor.daemon_socket {
+        command
+            .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
+            .env("NIX_DAEMON_SOCKET_PATH", daemon_socket)
+            .env("NIX_REMOTE", "daemon")
+            .env("NIX_STATE_DIR", MANAGED_NIX_STATE);
+    }
+    #[cfg(unix)]
+    command.process_group(0);
+    command
+}
+
+/// Forwards one batch of pending stderr chunks to the callback and records
+/// the first callback failure.
+fn drain_stderr_chunks(
+    stderr_rx: &mpsc::Receiver<Vec<u8>>,
+    callback_error: &mut Option<NixAdapterError>,
+    stderr_chunk: &mut StderrChunk<'_>,
+) {
+    for chunk in stderr_rx.try_iter().take(MAX_STDERR_CHUNKS_PER_TICK) {
+        if callback_error.is_none()
+            && let Err(error) = stderr_chunk(&chunk)
+        {
+            *callback_error = Some(error);
+        }
+    }
+}
+
 #[cfg(not(unix))]
 const fn is_private(_metadata: &fs::Metadata) -> bool {
     true
@@ -4199,50 +4244,5 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert!(calls[0].iter().any(|argument| argument == "--recursive"));
         Ok(())
-    }
-}
-
-/// Builds the fully configured command for one execution request.
-fn build_command(executor: &ProcessExecutor, spec: &CommandSpec) -> std::process::Command {
-    let binary = match spec.program {
-        NixProgram::Modern => &executor.nix_binary,
-        NixProgram::LegacyStore => &executor.nix_store_binary,
-    };
-    let mut command = Command::new(binary);
-    command
-        .args(&spec.args)
-        .env_clear()
-        .env("HOME", &executor.private_home)
-        .env("TMPDIR", executor.private_home.join("tmp"))
-        .env("NIX_USER_CONF_FILES", "")
-        .env("PATH", MANAGED_PATH)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(daemon_socket) = &executor.daemon_socket {
-        command
-            .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
-            .env("NIX_DAEMON_SOCKET_PATH", daemon_socket)
-            .env("NIX_REMOTE", "daemon")
-            .env("NIX_STATE_DIR", MANAGED_NIX_STATE);
-    }
-    #[cfg(unix)]
-    command.process_group(0);
-    command
-}
-
-/// Forwards one batch of pending stderr chunks to the callback and records
-/// the first callback failure.
-fn drain_stderr_chunks(
-    stderr_rx: &mpsc::Receiver<Vec<u8>>,
-    callback_error: &mut Option<NixAdapterError>,
-    stderr_chunk: &mut StderrChunk<'_>,
-) {
-    for chunk in stderr_rx.try_iter().take(MAX_STDERR_CHUNKS_PER_TICK) {
-        if callback_error.is_none()
-            && let Err(error) = stderr_chunk(&chunk)
-        {
-            *callback_error = Some(error);
-        }
     }
 }

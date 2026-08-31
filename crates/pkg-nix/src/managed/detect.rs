@@ -960,61 +960,6 @@ fn run_bounded_command(program: &Path, arguments: &[&str]) -> CommandOutput {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::os::unix::fs::{PermissionsExt as _, symlink};
-
-    use pkg_core::System;
-    use tempfile::TempDir;
-
-    use super::{
-        DetectionDisposition, account_output_has_build_group, account_output_has_build_user,
-        detect_unmanaged_nix,
-    };
-
-    #[test]
-    fn account_database_parsers_match_only_nix_build_identities() {
-        assert!(account_output_has_build_user(
-            b"_nixbld1\nordinary\n",
-            false
-        ));
-        assert!(account_output_has_build_user(
-            b"nixbld12:x:30012:30000::/var/empty:/usr/bin/nologin\n",
-            true
-        ));
-        assert!(account_output_has_build_group(b"nixbld:*:350:\n", true));
-        assert!(account_output_has_build_group(b"_nixbld\n", false));
-        assert!(!account_output_has_build_user(
-            b"nixbld\nphoenixbld1\n",
-            false
-        ));
-        assert!(!account_output_has_build_group(b"nixbld-helper\n", false));
-    }
-
-    #[test]
-    fn macos_scans_a_protected_sibling_home_alias_once() -> Result<(), Box<dyn std::error::Error>> {
-        let root = TempDir::new()?;
-        let users = root.path().join("Users");
-        let admin = users.join("admin");
-        fs::create_dir_all(&admin)?;
-        symlink("admin", users.join("runner"))?;
-
-        let clean = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
-        assert_eq!(clean.disposition(), DetectionDisposition::Clean);
-
-        fs::set_permissions(&users, fs::Permissions::from_mode(0o777))?;
-        let writable = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
-        assert_eq!(writable.disposition(), DetectionDisposition::Refuse);
-        fs::set_permissions(&users, fs::Permissions::from_mode(0o755))?;
-
-        symlink("/nix/var/nix/profiles/default", admin.join(".nix-profile"))?;
-        let managed = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
-        assert_eq!(managed.disposition(), DetectionDisposition::Refuse);
-        Ok(())
-    }
-}
-
 /// Configuration for one system account database query.
 struct DatabaseCheck {
     tool: &'static str,
@@ -1101,3 +1046,58 @@ const DSCL_GROUPS_CHECK: DatabaseCheck = DatabaseCheck {
     matches_build: account_output_has_build_group,
     colon_separated: false,
 };
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    use pkg_core::System;
+    use tempfile::TempDir;
+
+    use super::{
+        DetectionDisposition, account_output_has_build_group, account_output_has_build_user,
+        detect_unmanaged_nix,
+    };
+
+    #[test]
+    fn account_database_parsers_match_only_nix_build_identities() {
+        assert!(account_output_has_build_user(
+            b"_nixbld1\nordinary\n",
+            false
+        ));
+        assert!(account_output_has_build_user(
+            b"nixbld12:x:30012:30000::/var/empty:/usr/bin/nologin\n",
+            true
+        ));
+        assert!(account_output_has_build_group(b"nixbld:*:350:\n", true));
+        assert!(account_output_has_build_group(b"_nixbld\n", false));
+        assert!(!account_output_has_build_user(
+            b"nixbld\nphoenixbld1\n",
+            false
+        ));
+        assert!(!account_output_has_build_group(b"nixbld-helper\n", false));
+    }
+
+    #[test]
+    fn macos_scans_a_protected_sibling_home_alias_once() -> Result<(), Box<dyn std::error::Error>> {
+        let root = TempDir::new()?;
+        let users = root.path().join("Users");
+        let admin = users.join("admin");
+        fs::create_dir_all(&admin)?;
+        symlink("admin", users.join("runner"))?;
+
+        let clean = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert_eq!(clean.disposition(), DetectionDisposition::Clean);
+
+        fs::set_permissions(&users, fs::Permissions::from_mode(0o777))?;
+        let writable = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert_eq!(writable.disposition(), DetectionDisposition::Refuse);
+        fs::set_permissions(&users, fs::Permissions::from_mode(0o755))?;
+
+        symlink("/nix/var/nix/profiles/default", admin.join(".nix-profile"))?;
+        let managed = detect_unmanaged_nix(root.path(), System::Aarch64Darwin, &[], &[]);
+        assert_eq!(managed.disposition(), DetectionDisposition::Refuse);
+        Ok(())
+    }
+}

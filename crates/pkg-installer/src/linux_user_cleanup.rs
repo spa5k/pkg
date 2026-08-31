@@ -85,8 +85,7 @@ fn open_parent_chain(
 /// Confirms the target entry exists under `parent` without following links.
 fn ensure_target_present(parent: &OwnedFd, name: &OsStr) -> Result<(), LinuxUserCleanupError> {
     match statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(_) => Ok(()),
-        Err(Errno::NOENT) => Ok(()),
+        Ok(_) | Err(Errno::NOENT) => Ok(()),
         Err(_) => Err(operation_failed()),
     }
 }
