@@ -517,6 +517,7 @@ release.
 - **Rollback or stop rule:** stop deletion when a symbol still serves package or product ownership.
 - **Review focus:** proof-before-delete and no whole-file assumptions.
 - **Child-unblock condition:** Linux package and uninstall matrices still pass after deletion.
+- **Status:** first deletion landed. The unreachable fallback to the old managed-Nix provisioning path is removed from the installer bootstrap. The old provisioning internals inside `pkg-nix/src/managed/provision.rs` and `runtime_archive.rs` remain as unreachable code pending a focused module rewrite. Every supported system (x86_64 Linux, aarch64 Linux, aarch64 Darwin) now fails closed instead of falling back to the old managed-Nix lifecycle.
 
 ### DN-18 work package — Delete proved macOS Base Nix implementation
 

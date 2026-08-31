@@ -32,10 +32,8 @@ use pkg_channel::TrustedRoot;
 use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
-    InstallerProvisionRequest, InstallerRepository, ManagedDaemon, ProvisionErrorCode,
-    ProvisionedBootstrap, ProvisionedBootstrapTransaction,
-    load_authenticated_installer_bundle_blocking,
-    provision_authenticated_installer_bundle_transaction, reauthenticate_installer_bundle_blocking,
+    InstallerProvisionRequest, InstallerRepository, ManagedDaemon,
+    load_authenticated_installer_bundle_blocking, reauthenticate_installer_bundle_blocking,
     recover_interrupted_provision_workspace, verify_provision_workspace_absent,
 };
 use sha2::{Digest as _, Sha256};
@@ -55,7 +53,6 @@ const MACOS_SCRATCH_PARENT: &str = "/Library/Application Support/pkg/helper-home
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinuxBundleInstallReport {
     platform: LinuxInstallReport,
-    bootstrap: Option<ProvisionedBootstrap>,
 }
 
 impl LinuxBundleInstallReport {
@@ -64,25 +61,12 @@ impl LinuxBundleInstallReport {
     pub const fn platform(&self) -> LinuxInstallReport {
         self.platform
     }
-
-    /// Returns the authenticated runtime and host-index result.
-    #[must_use]
-    pub const fn bootstrap(&self) -> Option<&ProvisionedBootstrap> {
-        self.bootstrap.as_ref()
-    }
-
-    /// Consumes the report into its platform and bundle parts.
-    #[must_use]
-    pub fn into_parts(self) -> (LinuxInstallReport, Option<ProvisionedBootstrap>) {
-        (self.platform, self.bootstrap)
-    }
 }
 
 /// Successful macOS installation and its authenticated runtime/index result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacOsBundleInstallReport {
     platform: MacOsInstallReport,
-    bootstrap: Option<ProvisionedBootstrap>,
 }
 
 impl MacOsBundleInstallReport {
@@ -90,18 +74,6 @@ impl MacOsBundleInstallReport {
     #[must_use]
     pub const fn platform(&self) -> MacOsInstallReport {
         self.platform
-    }
-
-    /// Returns the authenticated runtime and host-index result.
-    #[must_use]
-    pub const fn bootstrap(&self) -> Option<&ProvisionedBootstrap> {
-        self.bootstrap.as_ref()
-    }
-
-    /// Consumes the report into its platform and bundle parts.
-    #[must_use]
-    pub fn into_parts(self) -> (MacOsInstallReport, Option<ProvisionedBootstrap>) {
-        (self.platform, self.bootstrap)
     }
 }
 
@@ -158,13 +130,11 @@ fn continue_linux_bundle_install<'a, P: BundleProvisioner>(
     if matches!(&recovery, LinuxBundleRecovery::Committed) {
         return Ok(LinuxBundleInstallReport {
             platform: LinuxInstallReport::recovered_existing(),
-            bootstrap: None,
         });
     }
     if matches!(&recovery, LinuxBundleRecovery::None) && backend.classify_active_install()? {
         return Ok(LinuxBundleInstallReport {
             platform: LinuxInstallReport::recovered_existing(),
-            bootstrap: None,
         });
     }
     backend.preflight_clean_host(request.system)?;
@@ -207,11 +177,8 @@ fn continue_linux_bundle_install<'a, P: BundleProvisioner>(
     storage
         .remove()
         .map_err(|_| InstallError::backend_failure())?;
-    let bootstrap = outcome.into_linux_bootstrap()?;
-    Ok(LinuxBundleInstallReport {
-        platform,
-        bootstrap,
-    })
+    outcome.into_linux_bootstrap()?;
+    Ok(LinuxBundleInstallReport { platform })
 }
 
 /// Authenticates the fixed production release and uninstalls its Linux assets.
@@ -844,11 +811,8 @@ pub fn install_macos_from_bundle<'a>(
     storage
         .remove()
         .map_err(|_| MacOsError::backend_failure())?;
-    let bootstrap = outcome.into_macos_bootstrap()?;
-    Ok(MacOsBundleInstallReport {
-        platform,
-        bootstrap,
-    })
+    outcome.into_macos_bootstrap()?;
+    Ok(MacOsBundleInstallReport { platform })
 }
 
 fn load_macos_bundle_for_recovery(
@@ -951,14 +915,12 @@ fn macos_recovery_context_digest(
     Digest::from_bytes(hasher.finalize().into())
 }
 
-enum BootstrapOutcome<'a> {
-    Pending(Box<ProvisionedBootstrapTransaction<'a>>),
+enum BootstrapOutcome {
     DeterminatePending {
         bundle: Box<AuthenticatedInstallerBundle>,
         handoff: Box<DeterminateHandoff>,
     },
     DeterminateComplete,
-    Complete(ProvisionedBootstrap),
     Existing,
     #[cfg(test)]
     Stub(std::rc::Rc<std::cell::Cell<bool>>),
@@ -966,7 +928,7 @@ enum BootstrapOutcome<'a> {
     DeterminateTestPending(Box<DeterminateHandoff>),
 }
 
-impl BootstrapOutcome<'_> {
+impl BootstrapOutcome {
     fn has_accepted_base_nix(&self) -> bool {
         match self {
             Self::DeterminatePending { handoff, .. } => {
@@ -977,19 +939,15 @@ impl BootstrapOutcome<'_> {
             Self::DeterminateTestPending(handoff) => {
                 handoff.state() == Ok(DeterminateHandoffState::Accepted)
             }
-            Self::Pending(_) | Self::Complete(_) => false,
             #[cfg(test)]
             Self::Stub(_) => false,
         }
     }
 
-    fn into_linux_bootstrap(self) -> Result<Option<ProvisionedBootstrap>, InstallError> {
+    fn into_linux_bootstrap(self) -> Result<(), InstallError> {
         match self {
-            Self::Complete(bootstrap) => Ok(Some(bootstrap)),
-            Self::Existing | Self::DeterminateComplete => Ok(None),
-            Self::Pending(_) | Self::DeterminatePending { .. } => {
-                Err(InstallError::backend_failure())
-            }
+            Self::Existing | Self::DeterminateComplete => Ok(()),
+            Self::DeterminatePending { .. } => Err(InstallError::backend_failure()),
             #[cfg(test)]
             Self::Stub(_) => Err(InstallError::backend_failure()),
             #[cfg(test)]
@@ -997,13 +955,10 @@ impl BootstrapOutcome<'_> {
         }
     }
 
-    fn into_macos_bootstrap(self) -> Result<Option<ProvisionedBootstrap>, MacOsError> {
+    fn into_macos_bootstrap(self) -> Result<(), MacOsError> {
         match self {
-            Self::Complete(bootstrap) => Ok(Some(bootstrap)),
-            Self::Existing | Self::DeterminateComplete => Ok(None),
-            Self::Pending(_) | Self::DeterminatePending { .. } => {
-                Err(MacOsError::backend_failure())
-            }
+            Self::Existing | Self::DeterminateComplete => Ok(()),
+            Self::DeterminatePending { .. } => Err(MacOsError::backend_failure()),
             #[cfg(test)]
             Self::Stub(_) => Err(MacOsError::backend_failure()),
             #[cfg(test)]
@@ -1013,14 +968,11 @@ impl BootstrapOutcome<'_> {
 
     fn rollback_linux(self) -> Result<(), InstallError> {
         match self {
-            Self::Pending(transaction) => transaction
-                .rollback()
-                .map_err(|_| InstallError::backend_failure()),
             // Accepted Base Nix is already past the vendor rollback boundary.
             // Roll back only product state and retain the Fresh journal for continuation.
             Self::DeterminatePending { .. } => Ok(()),
             Self::Existing => Ok(()),
-            Self::Complete(_) | Self::DeterminateComplete => Err(InstallError::backend_failure()),
+            Self::DeterminateComplete => Err(InstallError::backend_failure()),
             #[cfg(test)]
             Self::Stub(rolled_back) => {
                 rolled_back.set(true);
@@ -1033,11 +985,8 @@ impl BootstrapOutcome<'_> {
 
     fn rollback_macos(self) -> Result<(), MacOsError> {
         match self {
-            Self::Pending(transaction) => transaction
-                .rollback()
-                .map_err(|_| MacOsError::backend_failure()),
             Self::Existing | Self::DeterminatePending { .. } => Ok(()),
-            Self::Complete(_) | Self::DeterminateComplete => Err(MacOsError::backend_failure()),
+            Self::DeterminateComplete => Err(MacOsError::backend_failure()),
             #[cfg(test)]
             Self::Stub(rolled_back) => {
                 rolled_back.set(true);
@@ -1085,7 +1034,7 @@ trait BundleProvisioner {
         &mut self,
         request: &InstallerProvisionRequest<'_>,
         daemon: &'a dyn ManagedDaemon,
-    ) -> Result<BootstrapOutcome<'a>, BundleProvisionError>;
+    ) -> Result<BootstrapOutcome, BundleProvisionError>;
 }
 
 #[derive(Clone, Copy)]
@@ -1177,7 +1126,7 @@ impl BundleProvisioner for AuthenticatedProvisioner {
         &mut self,
         request: &InstallerProvisionRequest<'_>,
         daemon: &'a dyn ManagedDaemon,
-    ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
+    ) -> Result<BootstrapOutcome, BundleProvisionError> {
         let mut bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
         if matches!(
             request.system,
@@ -1226,16 +1175,10 @@ impl BundleProvisioner for AuthenticatedProvisioner {
                 handoff: Box::new(handoff),
             });
         }
-        provision_authenticated_installer_bundle_transaction(bundle, request, daemon)
-            .map(Box::new)
-            .map(BootstrapOutcome::Pending)
-            .map_err(|error| {
-                if error.code() == ProvisionErrorCode::RollbackFailed {
-                    BundleProvisionError::RollbackIncomplete
-                } else {
-                    BundleProvisionError::Failed
-                }
-            })
+        // Only the three supported systems reach the Determinate path above.
+        // Every other system is unsupported and must fail closed.
+        let _ = (bundle, daemon);
+        Err(BundleProvisionError::Failed)
     }
 }
 
@@ -1244,7 +1187,7 @@ struct LinuxBundleBackend<'a, 'j, P> {
     request: &'a InstallerProvisionRequest<'a>,
     daemon: &'a dyn ManagedDaemon,
     provisioner: &'a mut P,
-    outcome: Option<BootstrapOutcome<'a>>,
+    outcome: Option<BootstrapOutcome>,
     journal: Option<LinuxJournalTransaction<'j>>,
 }
 
@@ -1496,11 +1439,6 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         }
     }
     fn activate_services(&mut self) -> Result<bool, InstallError> {
-        if let Some(BootstrapOutcome::Pending(transaction)) = self.outcome.as_mut() {
-            transaction
-                .commit_channel()
-                .map_err(|_| InstallError::backend_failure())?;
-        }
         if let Some(BootstrapOutcome::DeterminatePending { bundle, .. }) = self.outcome.as_mut() {
             bundle
                 .commit_authenticated_channel()
@@ -1570,30 +1508,6 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
             .take()
             .ok_or_else(InstallError::backend_failure)?;
         match outcome {
-            BootstrapOutcome::Pending(mut transaction) => {
-                if transaction.commit_channel().is_err() {
-                    self.outcome = Some(BootstrapOutcome::Pending(transaction));
-                    return Err(InstallError::backend_failure());
-                }
-                let receipt_created = match self.inner.publish_ownership_receipt() {
-                    Ok(created) => created,
-                    Err(error) => {
-                        self.outcome = Some(BootstrapOutcome::Pending(transaction));
-                        return Err(error);
-                    }
-                };
-                if let Err(error) =
-                    complete_linux_mutation(&mut self.journal, mutation, presence, receipt_created)
-                {
-                    self.outcome = Some(BootstrapOutcome::Pending(transaction));
-                    return Err(error);
-                }
-                let bootstrap = transaction
-                    .finalize()
-                    .map_err(|_| InstallError::backend_failure())?;
-                self.outcome = Some(BootstrapOutcome::Complete(bootstrap));
-                Ok(receipt_created)
-            }
             BootstrapOutcome::DeterminatePending { bundle, handoff } => {
                 let changed = match publish_determinate_receipt(
                     self.inner,
@@ -1630,7 +1544,6 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 });
                 result
             }
-            BootstrapOutcome::Complete(_) => Err(InstallError::backend_failure()),
             BootstrapOutcome::DeterminateComplete => Err(InstallError::backend_failure()),
             BootstrapOutcome::Existing => {
                 let result = self.inner.publish_ownership_receipt();
@@ -1722,7 +1635,7 @@ fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>(
     provisioner: &'a mut P,
     storage: &dyn LinuxJournalPersistence,
     journal: LinuxInstallJournal,
-) -> Result<(LinuxInstallReport, BootstrapOutcome<'a>), InstallError> {
+) -> Result<(LinuxInstallReport, BootstrapOutcome), InstallError> {
     if !matches!(system, System::X8664Linux | System::Aarch64Linux) {
         return Err(InstallError::backend_failure());
     }
@@ -1798,7 +1711,7 @@ fn install_linux_with_provisioner<'a, P: BundleProvisioner>(
     daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn LinuxInstallBackend,
     provisioner: &'a mut P,
-) -> Result<(LinuxInstallReport, BootstrapOutcome<'a>), InstallError> {
+) -> Result<(LinuxInstallReport, BootstrapOutcome), InstallError> {
     let mut adapter = LinuxBundleBackend {
         inner: backend,
         request,
@@ -1820,7 +1733,7 @@ struct MacOsBundleBackend<'a, 'j, P> {
     request: &'a InstallerProvisionRequest<'a>,
     daemon: &'a dyn ManagedDaemon,
     provisioner: &'a mut P,
-    outcome: Option<BootstrapOutcome<'a>>,
+    outcome: Option<BootstrapOutcome>,
     journal: Option<MacOsJournalTransaction<'j>>,
     store_created: bool,
 }
@@ -2009,9 +1922,6 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     ) -> Result<MacOsAssetPresence, MacOsError> {
         self.inner.classify_asset(asset)
     }
-    fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        self.inner.classify_store_volume()
-    }
     fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
         self.inner.classify_managed_runtime()
     }
@@ -2024,10 +1934,6 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     fn recover_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         self.inner.preflight_product_mutation()?;
         self.inner.recover_asset(asset)
-    }
-    fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
-        self.inner.preflight_product_mutation()?;
-        self.inner.recover_store_volume()
     }
     fn recover_services(&mut self) -> Result<(), MacOsError> {
         self.inner.preflight_product_mutation()?;
@@ -2043,18 +1949,6 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     }
     fn verify_release_bundle(&mut self) -> Result<(), MacOsError> {
         self.inner.verify_release_bundle()
-    }
-    fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
-        let mutation = MacOsInstallMutation::StoreVolume;
-        let presence = self.inner.classify_store_volume()?;
-        begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
-        let changed = self.inner.provision_store_volume()?;
-        complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
-        self.store_created = changed;
-        Ok(changed)
-    }
-    fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
-        self.inner.rollback_store_volume()
     }
     fn ensure_asset(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
         let mutation = macos_asset_mutation(asset);
@@ -2205,11 +2099,6 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
         self.inner.verify_installed_code()
     }
     fn activate_services(&mut self) -> Result<bool, MacOsError> {
-        if let Some(BootstrapOutcome::Pending(transaction)) = self.outcome.as_mut() {
-            transaction
-                .commit_channel()
-                .map_err(|_| MacOsError::backend_failure())?;
-        }
         let mutation = MacOsInstallMutation::Services;
         let presence = self.inner.classify_services()?;
         begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
@@ -2254,34 +2143,6 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
             .take()
             .ok_or_else(MacOsError::backend_failure)?;
         match outcome {
-            BootstrapOutcome::Pending(mut transaction) => {
-                if transaction.commit_channel().is_err() {
-                    self.outcome = Some(BootstrapOutcome::Pending(transaction));
-                    return Err(MacOsError::backend_failure());
-                }
-                let receipt_created = match self.inner.publish_ownership_receipt() {
-                    Ok(created) => created,
-                    Err(error) => {
-                        self.outcome = Some(BootstrapOutcome::Pending(transaction));
-                        return Err(error);
-                    }
-                };
-                if let Err(error) = complete_macos_receipt(
-                    &mut self.journal,
-                    mutation,
-                    presence,
-                    receipt_created,
-                    replacing,
-                ) {
-                    self.outcome = Some(BootstrapOutcome::Pending(transaction));
-                    return Err(error);
-                }
-                let bootstrap = transaction
-                    .finalize()
-                    .map_err(|_| MacOsError::backend_failure())?;
-                self.outcome = Some(BootstrapOutcome::Complete(bootstrap));
-                Ok(receipt_created)
-            }
             BootstrapOutcome::DeterminatePending {
                 mut bundle,
                 handoff,
@@ -2319,9 +2180,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
                 complete_macos_receipt(&mut self.journal, mutation, presence, changed, replacing)?;
                 Ok(changed)
             }
-            BootstrapOutcome::Complete(_) | BootstrapOutcome::DeterminateComplete => {
-                Err(MacOsError::backend_failure())
-            }
+            BootstrapOutcome::DeterminateComplete => Err(MacOsError::backend_failure()),
             #[cfg(test)]
             BootstrapOutcome::DeterminateTestPending(handoff) => {
                 let receipt_created = match self.inner.publish_ownership_receipt() {
@@ -2412,6 +2271,19 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
         self.inner.preflight_product_mutation()?;
         self.inner.roll_forward_replaced_ownership_receipt()
     }
+
+    fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+        self.inner.classify_store_volume()
+    }
+    fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
+        self.inner.provision_store_volume()
+    }
+    fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
+        self.inner.rollback_store_volume()
+    }
+    fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
+        self.inner.recover_store_volume()
+    }
 }
 
 fn complete_macos_receipt(
@@ -2479,7 +2351,7 @@ fn install_macos_with_provisioner<'a, P: BundleProvisioner>(
     daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn MacOsInstallBackend,
     provisioner: &'a mut P,
-) -> Result<(MacOsInstallReport, BootstrapOutcome<'a>), MacOsError> {
+) -> Result<(MacOsInstallReport, BootstrapOutcome), MacOsError> {
     let mut adapter = MacOsBundleBackend {
         inner: backend,
         request,
@@ -2505,7 +2377,7 @@ fn install_macos_with_provisioner_journaled<'a, P: BundleProvisioner>(
     provisioner: &'a mut P,
     storage: &dyn MacOsJournalPersistence,
     journal: MacOsInstallJournal,
-) -> Result<(MacOsInstallReport, BootstrapOutcome<'a>), MacOsError> {
+) -> Result<(MacOsInstallReport, BootstrapOutcome), MacOsError> {
     let mut adapter = MacOsBundleBackend {
         inner: backend,
         request,
@@ -2788,7 +2660,7 @@ mod tests {
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
             _daemon: &'a dyn ManagedDaemon,
-        ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
+        ) -> Result<BootstrapOutcome, BundleProvisionError> {
             self.calls = self.calls.saturating_add(1);
             Ok(BootstrapOutcome::Stub(self.rolled_back.clone()))
         }
@@ -2818,7 +2690,7 @@ mod tests {
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
             _daemon: &'a dyn ManagedDaemon,
-        ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
+        ) -> Result<BootstrapOutcome, BundleProvisionError> {
             if !self.reauthenticated {
                 return Err(BundleProvisionError::Failed);
             }
@@ -2836,7 +2708,7 @@ mod tests {
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
             _daemon: &'a dyn ManagedDaemon,
-        ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
+        ) -> Result<BootstrapOutcome, BundleProvisionError> {
             Err(BundleProvisionError::RollbackIncomplete)
         }
     }
@@ -2926,7 +2798,7 @@ mod tests {
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
             _daemon: &'a dyn ManagedDaemon,
-        ) -> Result<BootstrapOutcome<'a>, BundleProvisionError> {
+        ) -> Result<BootstrapOutcome, BundleProvisionError> {
             let handoff = self.handoff.take().ok_or(BundleProvisionError::Failed)?;
             let outcome = run_with_new_determinate_handoff(&handoff, || {
                 vendor_exit_zero(&handoff, &self.receipt, &self.marker)
@@ -3777,7 +3649,6 @@ mod tests {
             &location,
         )?;
 
-        assert!(report.bootstrap().is_none());
         assert_eq!(report.platform().created_artifacts(), 0);
         assert_eq!(
             report.platform().existing_artifacts(),
@@ -3881,7 +3752,6 @@ mod tests {
             &journal_location,
         )?;
 
-        assert!(report.bootstrap().is_none());
         assert_eq!(backend.active_install_checks, active_install_checks);
         assert_eq!(second_provisioner.calls, 0);
         assert_eq!(backend.raw_provision_calls, 0);
@@ -4716,13 +4586,6 @@ mod tests {
         ) -> Result<MacOsAssetPresence, MacOsError> {
             Ok(MacOsAssetPresence::ExactPresent)
         }
-        fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-            Ok(if self.create_store {
-                MacOsAssetPresence::Absent
-            } else {
-                MacOsAssetPresence::ExactPresent
-            })
-        }
         fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
             Ok(if self.runtime_present {
                 MacOsAssetPresence::ExactPresent
@@ -4739,9 +4602,6 @@ mod tests {
         fn recover_asset(&mut self, _asset: MacOsInstallAsset) -> Result<(), MacOsError> {
             Ok(())
         }
-        fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
-            Ok(())
-        }
         fn recover_services(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }
@@ -4749,12 +4609,6 @@ mod tests {
             Ok(())
         }
         fn verify_release_bundle(&mut self) -> Result<(), MacOsError> {
-            Ok(())
-        }
-        fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
-            Ok(self.create_store)
-        }
-        fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
             Ok(())
         }
         fn ensure_asset(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
@@ -4823,6 +4677,23 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+            Ok(if self.create_store {
+                MacOsAssetPresence::Absent
+            } else {
+                MacOsAssetPresence::ExactPresent
+            })
+        }
+        fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
+            Ok(self.create_store)
+        }
+        fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
+            Ok(())
+        }
+        fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
+            Ok(())
         }
     }
 

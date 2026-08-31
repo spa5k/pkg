@@ -35,14 +35,8 @@ mod repair_journal_file;
 mod root_client;
 mod service;
 #[cfg(target_os = "macos")]
-mod store_apfs;
-mod store_journal;
 #[cfg(target_os = "macos")]
-mod store_journal_file;
-mod store_mount;
-mod store_provision;
 #[cfg(target_os = "macos")]
-mod store_provision_macos;
 mod synthetic_conf;
 #[cfg(target_os = "macos")]
 mod synthetic_file;
@@ -120,26 +114,8 @@ pub use service::{
     ServiceError, ServiceErrorCode, run_linux_broker_from_activation,
     run_linux_root_helper_from_activation, run_macos_broker, run_macos_root_helper,
 };
-pub use store_journal::{
-    MacOsStoreJournalError, MacOsStoreJournalErrorCode, MacOsStoreJournalPhase,
-    MacOsStoreProvisionJournal, MacOsStoreRollbackAction,
-};
 #[cfg(target_os = "macos")]
-pub use store_journal_file::{MacOsStoreJournalFileError, MacOsStoreJournalStorage};
-pub use store_mount::{
-    MacOsStoreMountError, MacOsStoreMountErrorCode, MacOsStoreMountOutcome,
-    MacOsStoreRecordOutcome, publish_macos_store_volume_record, run_macos_store_mount,
-};
-pub use store_provision::{
-    MacOsStoreProvisionBackend, MacOsStoreProvisionError, MacOsStoreProvisionErrorCode,
-    MacOsStoreProvisionOutcome, provision_macos_store_volume,
-};
 #[cfg(target_os = "macos")]
-pub use store_provision_macos::{
-    classify_macos_store_volume_production, provision_macos_store_volume_production,
-    remove_macos_store_volume_production, verify_macos_store_removal_state_production,
-    verify_macos_store_volume_absent_production,
-};
 pub use synthetic_conf::{
     MacOsSyntheticConfError, MacOsSyntheticConfErrorCode, MacOsSyntheticConfPlan,
     plan_macos_synthetic_entry,

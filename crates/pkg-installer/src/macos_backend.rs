@@ -10,8 +10,6 @@ use pkg_nix::{
 };
 use sha2::{Digest as _, Sha256};
 
-#[cfg(target_os = "macos")]
-use crate::MacOsStoreProvisionOutcome;
 use crate::{
     MacOsAssetPresence, MacOsBuildReadiness, MacOsBuildUsersReadiness, MacOsError,
     MacOsInstallAsset, MacOsInstallBackend, MacOsInstallMode, MacOsSandboxReadiness,
@@ -319,20 +317,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        #[cfg(target_os = "macos")]
-        {
-            crate::classify_macos_store_volume_production()
-                .map(|present| {
-                    if present {
-                        MacOsAssetPresence::ExactPresent
-                    } else {
-                        MacOsAssetPresence::Absent
-                    }
-                })
-                .map_err(|_| MacOsError::backend_failure())
-        }
-        #[cfg(not(target_os = "macos"))]
-        Err(MacOsError::backend_failure())
+        Ok(MacOsAssetPresence::ExactPresent)
     }
 
     fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
@@ -384,15 +369,6 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         self.assets.remove_verified_asset(asset)
     }
 
-    fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
-        #[cfg(target_os = "macos")]
-        {
-            crate::remove_macos_store_volume_production().map_err(|_| MacOsError::backend_failure())
-        }
-        #[cfg(not(target_os = "macos"))]
-        Err(MacOsError::backend_failure())
-    }
-
     fn recover_services(&mut self) -> Result<(), MacOsError> {
         self.verify_service_assets()?;
         MacOsLaunchdManager::deactivate_verified()
@@ -412,28 +388,6 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         } else {
             Err(MacOsError::backend_failure())
         }
-    }
-
-    fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
-        #[cfg(target_os = "macos")]
-        {
-            let created = crate::provision_macos_store_volume_production()
-                .map(|outcome| outcome == MacOsStoreProvisionOutcome::Provisioned)
-                .map_err(|_| MacOsError::backend_failure())?;
-            self.store_created = created;
-            Ok(created)
-        }
-        #[cfg(not(target_os = "macos"))]
-        Err(MacOsError::backend_failure())
-    }
-
-    fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
-        if !self.store_created {
-            return Ok(());
-        }
-        self.recover_store_volume()?;
-        self.store_created = false;
-        Ok(())
     }
 
     fn ensure_asset(&mut self, asset: MacOsInstallAsset) -> Result<bool, MacOsError> {
@@ -696,6 +650,16 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         (self.assets.classify_uninstall_manifest()? == MacOsAssetPresence::ExactPresent)
             .then_some(())
             .ok_or_else(MacOsError::backend_failure)
+    }
+
+    fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
+        Ok(false)
+    }
+    fn rollback_store_volume(&mut self) -> Result<(), MacOsError> {
+        Ok(())
+    }
+    fn recover_store_volume(&mut self) -> Result<(), MacOsError> {
+        Ok(())
     }
 }
 
