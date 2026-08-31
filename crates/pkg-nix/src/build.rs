@@ -1149,7 +1149,7 @@ impl InstallEvidence {
         revision: NixpkgsRevision,
         source_nar_hash: NarHash,
         system: System,
-        targets: Vec<BuildPlanTarget>,
+        targets: &[BuildPlanTarget],
         substitutes: Vec<crate::VerifiedSubstitute>,
         adapter: &dyn NixAdapter,
     ) -> Result<Self, BuildEngineError> {
@@ -1185,8 +1185,8 @@ impl InstallEvidence {
             revision,
             source_nar_hash,
             system,
-            &targets,
-            metadata,
+            targets,
+            &metadata,
         )
     }
 
@@ -1254,7 +1254,7 @@ impl InstallEvidence {
                 .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
             plan.system_identity,
             &plan.install_targets,
-            metadata,
+            &metadata,
         )
     }
 
@@ -1267,7 +1267,7 @@ impl InstallEvidence {
         source_nar_hash: NarHash,
         system: System,
         plan_targets: &[BuildPlanTarget],
-        metadata: BTreeMap<String, (PathInfoReport, BuildOutputProvenance)>,
+        metadata: &BTreeMap<String, (PathInfoReport, BuildOutputProvenance)>,
     ) -> Result<Self, BuildEngineError> {
         let mut targets = Vec::with_capacity(plan_targets.len());
         let mut used_paths = BTreeSet::new();
@@ -2685,6 +2685,12 @@ impl LocalBuildEngine {
         Ok((report, evidence))
     }
 
+    /// The runtime's `&mut` progress reference moves into the adapter call
+    /// below; the value is genuinely consumed.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "BuildExecutionRuntime owns a &mut reference that moves into the adapter"
+    )]
     fn execute_revalidated(
         &self,
         receipt: BuildApprovalReceipt,

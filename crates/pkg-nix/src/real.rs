@@ -1270,7 +1270,7 @@ impl NixAdapter for RealNixAdapter {
     }
 
     fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
-        normalize_path_info(self.raw_path_info(path, true, false)?, path)
+        normalize_path_info(&self.raw_path_info(path, true, false)?, path)
     }
 
     fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
@@ -1659,7 +1659,7 @@ struct ProcessExecutor {
 
 impl CommandExecutor for ProcessExecutor {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError> {
-        self.execute_process(spec, &|| false, &mut |_| Ok(()))
+        self.execute_process(&spec, &|| false, &mut |_| Ok(()))
     }
 
     fn execute_with_stderr(
@@ -1668,14 +1668,14 @@ impl CommandExecutor for ProcessExecutor {
         cancelled: &dyn Fn() -> bool,
         stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
     ) -> Result<CommandOutcome, NixAdapterError> {
-        self.execute_process(spec, cancelled, stderr_chunk)
+        self.execute_process(&spec, cancelled, stderr_chunk)
     }
 }
 
 impl ProcessExecutor {
     fn execute_process(
         &self,
-        spec: CommandSpec,
+        spec: &CommandSpec,
         cancelled: &dyn Fn() -> bool,
         stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
     ) -> Result<CommandOutcome, NixAdapterError> {
@@ -2316,7 +2316,7 @@ struct RawContentAddress {
 }
 
 fn normalize_path_info(
-    raw: RawPathInfoEnvelope,
+    raw: &RawPathInfoEnvelope,
     requested: &StorePath,
 ) -> Result<PathInfoReport, NixAdapterError> {
     validate_path_info_envelope(&raw)?;

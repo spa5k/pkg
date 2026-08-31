@@ -21,7 +21,7 @@ fn drv(hash: char, name: &str) -> String {
     format!("/nix/store/{}-{name}.drv", hash.to_string().repeat(32))
 }
 
-fn manifest_entry(id: &str, name: &str, source_rev: &str, pinned_to: Option<String>) -> Value {
+fn manifest_entry(id: &str, name: &str, source_rev: &str, pinned_to: Option<&str>) -> Value {
     json!({
         "id": id,
         "selector": name,
@@ -66,7 +66,7 @@ pub fn state() -> LifecycleState {
         "entries": [
             manifest_entry("sel_a", "alpha", "channel:current", None),
             manifest_entry("sel_b", "beta", &format!("rev:{REV1}"), None),
-            manifest_entry("sel_c", "charlie", "channel:current", Some(store('2', "charlie")))
+            manifest_entry("sel_c", "charlie", "channel:current", Some(store('2', "charlie").as_str()))
         ],
         "pins": ["sel_c"]
     });

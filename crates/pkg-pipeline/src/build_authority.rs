@@ -332,7 +332,7 @@ impl AuthenticatedBuildAuthority {
     /// cancellation through one redacted category.
     pub fn acquire_install(
         &self,
-        selectors: Vec<PackageSelector>,
+        selectors: &[PackageSelector],
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
     ) -> Result<CacheInstallOutcome, BuildAuthorityError> {
@@ -342,7 +342,7 @@ impl AuthenticatedBuildAuthority {
     /// Acquires one cache-first install and streams sanitized trusted bytes.
     pub fn acquire_install_with_progress(
         &self,
-        selectors: Vec<PackageSelector>,
+        selectors: &[PackageSelector],
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
         progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
@@ -361,7 +361,7 @@ impl AuthenticatedBuildAuthority {
                 let system =
                     production_native_system().map_err(|_| acquisition_refused("resolve"))?;
                 let resolved = resolve_install(
-                    &selectors,
+                    selectors,
                     &source,
                     system,
                     index.as_ref().map(VerifiedIndex::document),

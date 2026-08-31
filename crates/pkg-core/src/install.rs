@@ -156,13 +156,13 @@ pub fn install_packages(
                 .manifest()
                 .entries()
                 .iter()
-                .map(super::state::schema::ManifestEntry::id)
+                .map(ManifestEntry::id)
                 .collect::<BTreeSet<_>>();
             let existing_selectors = state
                 .manifest()
                 .entries()
                 .iter()
-                .map(super::state::schema::ManifestEntry::selector)
+                .map(ManifestEntry::selector)
                 .collect::<BTreeSet<_>>();
             if packages.iter().any(|package| {
                 existing_ids.contains(package.id())

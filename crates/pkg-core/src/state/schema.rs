@@ -54,10 +54,6 @@ impl fmt::Display for StateSchemaError {
 
 impl std::error::Error for StateSchemaError {}
 
-fn json_error(error: serde_json::Error) -> StateSchemaError {
-    StateSchemaError::InvalidJson(error.to_string())
-}
-
 fn field_error(field: &'static str, error: impl fmt::Display) -> StateSchemaError {
     StateSchemaError::InvalidField {
         field,
@@ -81,14 +77,17 @@ pub(super) fn parse_unique_json(bytes: &[u8]) -> Result<Value, StateSchemaError>
     }
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = UniqueValue::deserialize(&mut deserializer)
-        .map_err(json_error)?
+        .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))?
         .0;
-    deserializer.end().map_err(json_error)?;
+    deserializer
+        .end()
+        .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))?;
     Ok(value)
 }
 
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StateSchemaError> {
-    serde_json::from_value(parse_unique_json(bytes)?).map_err(json_error)
+    serde_json::from_value(parse_unique_json(bytes)?)
+        .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
 }
 
 struct UniqueValue(Value);
@@ -175,7 +174,8 @@ impl Manifest {
 
     /// Encodes the manifest with canonical field names and deterministic map order.
     pub fn to_json(&self) -> Result<Vec<u8>, StateSchemaError> {
-        serde_json::to_vec(&ManifestWire::from(self)).map_err(json_error)
+        serde_json::to_vec(&ManifestWire::from(self))
+            .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
     }
 
     /// Returns the signed channel sequence this desired state used.
@@ -355,7 +355,8 @@ impl LockedState {
 
     /// Encodes the lock file with stable selector-key ordering.
     pub fn to_json(&self) -> Result<Vec<u8>, StateSchemaError> {
-        serde_json::to_vec(&LockedStateWire::from(self)).map_err(json_error)
+        serde_json::to_vec(&LockedStateWire::from(self))
+            .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
     }
 
     /// Returns the owning OS user id.
@@ -469,7 +470,8 @@ impl Generation {
 
     /// Encodes this generation record deterministically.
     pub fn to_json(&self) -> Result<Vec<u8>, StateSchemaError> {
-        serde_json::to_vec(&GenerationWire::from(self)).map_err(json_error)
+        serde_json::to_vec(&GenerationWire::from(self))
+            .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
     }
 
     /// Returns the monotonic generation id.

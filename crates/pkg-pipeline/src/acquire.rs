@@ -368,7 +368,7 @@ pub fn assemble_cache_install_evidence(
         resolved.revision().clone(),
         resolved.nar_hash().clone(),
         resolved.system(),
-        targets,
+        &targets,
         substitutes,
         adapter,
     )

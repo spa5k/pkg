@@ -131,7 +131,7 @@ const fn check_size(codec: &JsonCodec, bytes: &[u8]) -> Result<(), NixAdapterErr
 /// documented signal. The crate's serde_json pin is exact, so this text is
 /// fixed for the lock; a future pin bump is covered by the excessive-nesting
 /// contract test.
-fn map_json_err(e: serde_json::Error) -> NixAdapterError {
+fn map_json_err(e: &serde_json::Error) -> NixAdapterError {
     if e.to_string().contains("recursion limit exceeded") {
         NixAdapterError::MalformedPayload {
             kind: MalformedKind::ExcessiveNesting,
@@ -148,7 +148,7 @@ fn map_json_err(e: serde_json::Error) -> NixAdapterError {
 /// unknown fields (via `#[serde(deny_unknown_fields)]` on each DTO).
 fn parse_dto<D: DeserializeOwned>(codec: &JsonCodec, bytes: &[u8]) -> Result<D, NixAdapterError> {
     check_size(codec, bytes)?;
-    serde_json::from_slice::<D>(bytes).map_err(map_json_err)
+    serde_json::from_slice::<D>(bytes).map_err(|e| map_json_err(&e))
 }
 
 /// Rejects an unsupported observed schema version.

@@ -2282,14 +2282,14 @@ fn decode_cache_observations(payload: &[u8]) -> Result<Vec<CachePathObservation>
     let wires: Vec<CacheObservationOwnedWire> = decode_json(payload)?;
     let values = wires
         .into_iter()
-        .map(promote_cache_observation)
+        .map(|wire| promote_cache_observation(&wire))
         .collect::<Result<Vec<_>, _>>()?;
     validate_path_names(values.iter().map(|value| value.path().as_str()))?;
     Ok(values)
 }
 
 fn promote_cache_observation(
-    wire: CacheObservationOwnedWire,
+    wire: &CacheObservationOwnedWire,
 ) -> Result<CachePathObservation, FrameError> {
     let path =
         StorePath::new(&wire.path).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
@@ -2341,7 +2341,7 @@ fn decode_cache_closures(payload: &[u8]) -> Result<Vec<CacheDownloadClosure>, Fr
             let paths = wire
                 .paths
                 .into_iter()
-                .map(promote_cache_observation)
+                .map(|wire| promote_cache_observation(&wire))
                 .collect::<Result<Vec<_>, _>>()?;
             CacheDownloadClosure::new(root, paths)
                 .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))

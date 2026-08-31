@@ -713,7 +713,7 @@ impl AuthenticatedCaller {
         self.prepare_build_inner(
             handle,
             plan,
-            crate::BuildPreviewEstimates::unavailable(),
+            &crate::BuildPreviewEstimates::unavailable(),
             None,
         )
     }
@@ -732,7 +732,7 @@ impl AuthenticatedCaller {
         self.prepare_build_inner(
             handle,
             plan,
-            crate::BuildPreviewEstimates::unavailable(),
+            &crate::BuildPreviewEstimates::unavailable(),
             Some(replanner),
         )
     }
@@ -746,7 +746,7 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         plan: BuildPlan,
-        estimates: crate::BuildPreviewEstimates,
+        estimates: &crate::BuildPreviewEstimates,
         replanner: Arc<dyn TrustedBuildReplanner>,
     ) -> Result<BuildPreview, BrokerError> {
         self.prepare_build_inner(handle, plan, estimates, Some(replanner))
@@ -756,7 +756,7 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         plan: BuildPlan,
-        estimates: crate::BuildPreviewEstimates,
+        estimates: &crate::BuildPreviewEstimates,
         replanner: Option<Arc<dyn TrustedBuildReplanner>>,
     ) -> Result<BuildPreview, BrokerError> {
         let digest = plan
@@ -911,6 +911,10 @@ impl AuthenticatedCaller {
         )
     }
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "BuildExecutionIo owns &mut references that move into the executor"
+    )]
     pub(crate) fn execute_build_with_progress(
         &self,
         handle: &OperationHandle,
@@ -3551,7 +3555,7 @@ mod tests {
             .prepare_build_with_replanner_and_estimates(
                 &handle,
                 plan,
-                crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
+                &crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
                 replanner.clone(),
             )
             .unwrap();
@@ -3630,7 +3634,7 @@ mod tests {
             .prepare_build_with_replanner_and_estimates(
                 &handle,
                 plan.clone(),
-                crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
+                &crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
                 Arc::new(RetainedReplanner::new(plan, true)),
             )
             .unwrap();

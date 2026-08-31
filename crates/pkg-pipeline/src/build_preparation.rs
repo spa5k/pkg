@@ -82,7 +82,7 @@ impl AuthenticatedBuildPreparation {
             .prepare_build_with_replanner_and_estimates(
                 handle,
                 self.initial_plan,
-                self.estimates,
+                &self.estimates,
                 self.replanner,
             )
             .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::BrokerRefused))

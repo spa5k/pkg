@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::state::ManifestEntry;
 use crate::{GenerationSnapshot, OutputName, PackageVersion, SelectorId, SelectorInput};
 
 /// One sanitized package-level history change.
@@ -290,8 +291,8 @@ impl History {
                 after_outputs: after_lock
                     .map(|entry| entry.realization().outputs_to_install().to_vec())
                     .unwrap_or_default(),
-                before_pinned: before_manifest.map(super::state::schema::ManifestEntry::is_pinned),
-                after_pinned: after_manifest.map(super::state::schema::ManifestEntry::is_pinned),
+                before_pinned: before_manifest.map(ManifestEntry::is_pinned),
+                after_pinned: after_manifest.map(ManifestEntry::is_pinned),
             });
         }
         let counts = ChangeCounts {

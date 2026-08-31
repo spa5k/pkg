@@ -104,7 +104,7 @@ pub fn prepare_state_edit(
     layout: StateLayout,
     lease: StateLease,
     source: &GenerationSnapshot,
-    next: LifecycleState,
+    next: &LifecycleState,
     metadata: StateEditMetadata<'_>,
 ) -> Result<PreparedGeneration, StateEditPrepareError> {
     let generation = GenerationId::new(metadata.generation_id)
@@ -153,7 +153,7 @@ pub fn prepare_state_edit(
     let plan = stage_activation(&staging, &inputs, collision_policy)
         .inspect_err(|_| discard_staging(&staging))
         .map_err(|_| StateEditPrepareError::Stage)?;
-    let candidate = build_candidate(source, next, &metadata, collision_policy, &plan)
+    let candidate = build_candidate(source, &next, &metadata, collision_policy, &plan)
         .inspect_err(|_| discard_staging(&staging))?;
     PreparedGeneration::prepare(layout, candidate, plan, lease)
         .inspect_err(|_| discard_staging(&staging))
@@ -162,7 +162,7 @@ pub fn prepare_state_edit(
 
 pub fn build_candidate(
     source: &GenerationSnapshot,
-    next: LifecycleState,
+    next: &LifecycleState,
     metadata: &StateEditMetadata<'_>,
     collision_policy: CollisionPolicy,
     plan: &pkg_store::ActivationPlan,

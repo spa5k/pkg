@@ -141,7 +141,7 @@ pub fn prepare_install_generation(
     let plan = stage_activation(&staging, &inputs, collision_policy)
         .inspect_err(|_| discard_staging(&staging))
         .map_err(|_| InstallGenerationError::Stage)?;
-    let candidate = build_candidate(current, next, collision_policy, metadata, &plan)
+    let candidate = build_candidate(current, &next, collision_policy, metadata, &plan)
         .inspect_err(|_| discard_staging(&staging))?;
     PreparedGeneration::prepare(layout, candidate, plan, lease)
         .inspect_err(|_| discard_staging(&staging))
@@ -150,7 +150,7 @@ pub fn prepare_install_generation(
 
 fn build_candidate(
     current: Option<&GenerationSnapshot>,
-    next: LifecycleState,
+    next: &LifecycleState,
     collision_policy: CollisionPolicy,
     metadata: InstallGenerationMetadata<'_>,
     plan: &pkg_store::ActivationPlan,
@@ -304,7 +304,7 @@ mod tests {
                 .unwrap();
         let candidate = build_candidate(
             None,
-            next,
+            &next,
             pkg_core::state::CollisionPolicy::Abort,
             InstallGenerationMetadata::new(
                 "gen-0001",

@@ -262,7 +262,8 @@ fn decode_row(line: &[u8], previous: Option<&JournalRow>) -> Result<JournalRow, 
         return Err(JournalError::InvalidRow("row must be an object".into()));
     };
     body_object.remove("rowHash");
-    let calculated = canonical_digest(&body).map_err(integrity_to_journal)?;
+    let calculated =
+        canonical_digest(&body).map_err(|error| JournalError::InvalidRow(error.to_string()))?;
     if recorded != calculated {
         return Err(JournalError::InvalidRow("rowHash mismatch".into()));
     }
@@ -305,10 +306,8 @@ fn hash_body(
     for (key, value) in &payload.fields {
         object.insert(key.clone(), value.clone());
     }
-    canonical_digest(&Value::Object(object)).map_err(integrity_to_journal)
-}
-fn integrity_to_journal(error: IntegrityError) -> JournalError {
-    JournalError::InvalidRow(error.to_string())
+    canonical_digest(&Value::Object(object))
+        .map_err(|error| JournalError::InvalidRow(error.to_string()))
 }
 
 #[derive(Debug, Serialize, Deserialize)]

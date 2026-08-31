@@ -486,7 +486,7 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         handle: &OperationHandle,
         progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
     ) -> Result<CacheInstallOutcome, CacheInstallErrorCode> {
-        self.acquire_install_with_progress(selectors, caller, handle, progress)
+        self.acquire_install_with_progress(&selectors, caller, handle, progress)
             .map_err(|error| match error.code() {
                 BuildAuthorityErrorCode::AcquisitionCancelled => CacheInstallErrorCode::Cancelled,
                 BuildAuthorityErrorCode::AcquisitionIntentRefused => {

@@ -2769,7 +2769,7 @@ mod tests {
             fixture.layout.clone(),
             edit_lease,
             &source,
-            next,
+            &next,
             crate::StateEditMetadata::new(
                 "gen-0002",
                 "2026-08-11T00:00:00Z",
@@ -2853,7 +2853,7 @@ mod tests {
         );
         let candidate = crate::state_edit::build_candidate(
             &source,
-            next,
+            &next,
             &metadata,
             pkg_core::state::CollisionPolicy::Abort,
             &plan,
@@ -2968,7 +2968,7 @@ mod tests {
         .with_build_approval("yes");
         let candidate = crate::state_edit::build_candidate(
             &source,
-            next,
+            &next,
             &metadata,
             pkg_core::state::CollisionPolicy::KeepLast,
             &plan,
@@ -3013,7 +3013,7 @@ mod tests {
             fixture.layout.clone(),
             edit_lease,
             &source,
-            empty,
+            &empty,
             crate::StateEditMetadata::new(
                 "gen-0002",
                 "2026-08-11T00:00:00Z",
