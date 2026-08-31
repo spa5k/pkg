@@ -438,7 +438,7 @@ pub fn activate_transitioned_generation(
                     .request()
                     .entries()
                     .iter()
-                    .map(|entry| entry.name()))
+                    .map(pkg_nix::RootSetEntry::name))
                 || report.mapping_digest() != prepared_roots.request().mapping_digest()
             {
                 return Err(CurrentError::RootPublication);

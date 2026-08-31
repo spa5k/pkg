@@ -199,7 +199,7 @@ pub fn compare_nix_versions(a: &str, b: &str) -> Ordering {
 /// fits in `i32` (leading zeros allowed). Returns `None` on overflow or for
 /// non-numeric/empty input.
 fn parse_i32(bytes: &[u8]) -> Option<i32> {
-    if bytes.is_empty() || !bytes.iter().all(|b| b.is_ascii_digit()) {
+    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
         return None;
     }
     // Safe: digit runs are valid ASCII (hence valid UTF-8).

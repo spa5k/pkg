@@ -2061,13 +2061,13 @@ mod tests {
         assert_eq!(
             client
                 .begin(BrokerOperationKind::Resolve)
-                .map_err(|error| error.code()),
+                .map_err(super::BrokerClientError::code),
             Err(BrokerClientErrorCode::UnexpectedResponse)
         );
         assert_eq!(
             client
                 .begin(BrokerOperationKind::Resolve)
-                .map_err(|error| error.code()),
+                .map_err(super::BrokerClientError::code),
             Err(BrokerClientErrorCode::ConnectionFailed)
         );
         release_tx.send(())?;

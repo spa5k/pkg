@@ -710,7 +710,7 @@ fn load_authenticated_installer_payloads(
         product_cli.as_slice(),
     ]
     .into_iter()
-    .any(|payload| payload.is_empty())
+    .any(<[u8]>::is_empty)
     {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,

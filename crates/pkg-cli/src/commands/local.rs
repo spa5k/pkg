@@ -1516,7 +1516,7 @@ fn require_gc_confirmation(
     let generations = plan
         .candidates()
         .iter()
-        .map(|candidate| candidate.generation_id())
+        .map(pkg_store::PruneCandidate::generation_id)
         .collect::<Vec<_>>()
         .join(", ");
     confirm_destructive(
@@ -2002,7 +2002,7 @@ fn install_output_paths(evidence: &InstallEvidence) -> Vec<pkg_core::identity::S
     evidence
         .targets()
         .iter()
-        .flat_map(|target| target.acquired())
+        .flat_map(pkg_nix::InstallTargetEvidence::acquired)
         .map(|output| output.path_info().store_path().clone())
         .collect()
 }
@@ -2176,7 +2176,7 @@ fn gc_preview_result(plan: &pkg_store::GcPlan) -> Result<CommandResult, CommandE
     let generations = plan
         .candidates()
         .iter()
-        .map(|candidate| candidate.generation_id())
+        .map(pkg_store::PruneCandidate::generation_id)
         .collect::<Vec<_>>();
     let records = generations
         .iter()

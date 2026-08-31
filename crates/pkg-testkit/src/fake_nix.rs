@@ -174,7 +174,7 @@ impl FakeNix {
     fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<Expectation>> {
         self.transcript
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Pops and returns the **head** expectation, or returns the redacted

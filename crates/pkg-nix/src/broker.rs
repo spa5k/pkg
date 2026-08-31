@@ -341,7 +341,7 @@ impl FairBuildGate {
             state = self
                 .changed
                 .wait_timeout(state, ADMISSION_WAIT_POLL)
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
         }
     }
@@ -379,7 +379,7 @@ impl FairBuildGate {
     fn lock(&self) -> std::sync::MutexGuard<'_, BuildGateState> {
         self.state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -534,7 +534,7 @@ impl InProcessBroker {
     fn lock(&self) -> std::sync::MutexGuard<'_, BrokerState> {
         self.state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -1755,7 +1755,7 @@ impl AuthenticatedCaller {
         let output_paths = evidence
             .targets()
             .iter()
-            .flat_map(|target| target.acquired())
+            .flat_map(super::build::InstallTargetEvidence::acquired)
             .map(|output| output.path_info().store_path().as_str().to_owned())
             .collect::<BTreeSet<_>>();
         let cache_only = evidence.targets().iter().all(|target| {
@@ -2271,7 +2271,7 @@ mod tests {
         fn record(&self, record: &ApprovalJournalRecord) -> Result<(), ApprovalJournalError> {
             self.rows
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(record.clone());
             Ok(())
         }
@@ -2386,7 +2386,7 @@ mod tests {
             if let Some(release) = self
                 .release
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
             {
                 release.recv().map_err(|_| NixAdapterError::Unavailable)?;
@@ -2863,7 +2863,7 @@ mod tests {
         let rows = journal
             .rows
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].build_plan_digest(), digest);
         assert_eq!(rows[0].source(), ApprovalSource::AssumeYes);

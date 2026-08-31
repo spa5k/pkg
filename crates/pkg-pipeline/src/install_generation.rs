@@ -170,7 +170,7 @@ fn build_candidate(
                 "nixpkgsRev": realization.nixpkgs_revision().as_str(),
                 "storePath": realization.store_path().as_str(),
                 "deriver": realization.deriver().as_str(),
-                "outputsToInstall": realization.outputs_to_install().iter().map(|name| name.as_str()).collect::<Vec<_>>(),
+                "outputsToInstall": realization.outputs_to_install().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
                 "narHash": realization.nar_hash().as_str(),
                 "closureNarSize": realization.closure_nar_size(),
                 "provenance": lock.provenance(),

@@ -116,7 +116,10 @@ fn classify_report(
     closure: Vec<StorePath>,
     report: &VerifyReport,
 ) -> Result<DamageSet, VerifyPhaseError> {
-    let expected = closure.iter().map(|path| path.as_str()).collect::<Vec<_>>();
+    let expected = closure
+        .iter()
+        .map(pkg_core::StorePath::as_str)
+        .collect::<Vec<_>>();
     let mut results = BTreeMap::new();
     for result in report.results() {
         if results.insert(result.path().as_str(), result).is_some() {

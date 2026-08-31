@@ -100,7 +100,7 @@ impl<A> CapturingNix<A> {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.calls.len() == MAX_ENTRIES {
             state.overflowed = true;
         } else if !state.overflowed {
@@ -113,7 +113,7 @@ impl<A> CapturingNix<A> {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.overflowed {
             return Err(ParityError::TooManyEntries);
         }

@@ -778,7 +778,7 @@ impl BuildPlan {
 
         let missing_derivation_names = missing_derivations
             .iter()
-            .map(|path| path.as_str())
+            .map(pkg_core::DerivationPath::as_str)
             .collect::<BTreeSet<_>>();
         let mut closure = BTreeMap::new();
         let mut canonical_targets = Vec::with_capacity(targets.len());
@@ -2341,7 +2341,7 @@ impl BuildAdmission {
             state = self
                 .changed
                 .wait_timeout(state, ADMISSION_WAIT_POLL)
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
         }
     }
@@ -2371,7 +2371,7 @@ impl Drop for BuildPermit<'_> {
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Cooperative cancellation checked while waiting for admission.
@@ -2837,7 +2837,10 @@ pub fn render_managed_build_nix_conf(
     render_managed_build_nix_conf_from_parts(
         system,
         cache.url(),
-        cache.trusted_public_keys().iter().map(|key| key.as_str()),
+        cache
+            .trusted_public_keys()
+            .iter()
+            .map(pkg_channel::CachePublicKey::as_str),
     )
 }
 

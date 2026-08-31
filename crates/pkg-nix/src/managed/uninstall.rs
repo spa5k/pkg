@@ -704,7 +704,7 @@ fn store_contains_only_authenticated_objects(
     let mut allowed = authenticated
         .iter()
         .filter(|entry| entry.path.parent() == Some(store))
-        .filter_map(|entry| entry.path.file_name().map(|name| name.to_os_string()))
+        .filter_map(|entry| entry.path.file_name().map(std::ffi::OsStr::to_os_string))
         .collect::<BTreeSet<_>>();
     for path in product_closure {
         let path = Path::new(path.as_str());

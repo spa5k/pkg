@@ -56,12 +56,12 @@ impl GenerationSnapshot {
             .manifest()
             .entries()
             .iter()
-            .map(|entry| entry.id())
+            .map(super::state::schema::ManifestEntry::id)
             .collect::<BTreeSet<_>>();
         let output_ids = generation
             .outputs()
             .iter()
-            .map(|output| output.id())
+            .map(super::state::schema::GenerationOutput::id)
             .collect::<BTreeSet<_>>();
         if expected_ids != output_ids || generation.outputs().len() != expected_ids.len() {
             return Err(GenerationSnapshotError::OutputSetMismatch);

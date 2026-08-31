@@ -283,11 +283,11 @@ fn copy_sigstore_bundle(
         || digest
             .get("digest")
             .and_then(serde_json::Value::as_str)
-            .is_none_or(|value| value.is_empty())
+            .is_none_or(str::is_empty)
         || signature
             .get("signature")
             .and_then(serde_json::Value::as_str)
-            .is_none_or(|value| value.is_empty())
+            .is_none_or(str::is_empty)
     {
         return Err("invalid Sigstore bundle envelope".into());
     }

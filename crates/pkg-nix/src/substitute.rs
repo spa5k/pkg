@@ -390,7 +390,7 @@ mod tests {
             kind: MethodKind,
         ) -> Result<T, NixAdapterError> {
             slot.lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
                 .unwrap_or_else(|| Err(NixAdapterError::unexpected_extra_call(kind)))
         }
@@ -398,14 +398,14 @@ mod tests {
         fn record(&self, kind: MethodKind) {
             self.calls
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(kind);
         }
 
         fn calls(&self) -> Vec<MethodKind> {
             self.calls
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
         }
     }

@@ -483,7 +483,7 @@ mod tests {
             }
             self.response
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
                 .unwrap_or_else(|| Err(NixpkgsSourceError::runner_failure()))
         }
