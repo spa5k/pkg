@@ -1030,10 +1030,10 @@ trait BundleProvisioner {
         Ok(())
     }
 
-    fn provision<'a>(
+    fn provision(
         &mut self,
         request: &InstallerProvisionRequest<'_>,
-        daemon: &'a dyn ManagedDaemon,
+        daemon: &dyn ManagedDaemon,
     ) -> Result<BootstrapOutcome, BundleProvisionError>;
 }
 
@@ -1122,10 +1122,10 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             .map_err(|_| BundleProvisionError::Failed)
     }
 
-    fn provision<'a>(
+    fn provision(
         &mut self,
         request: &InstallerProvisionRequest<'_>,
-        daemon: &'a dyn ManagedDaemon,
+        daemon: &dyn ManagedDaemon,
     ) -> Result<BootstrapOutcome, BundleProvisionError> {
         let mut bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
         if matches!(
@@ -2656,10 +2656,10 @@ mod tests {
     }
 
     impl BundleProvisioner for StubProvisioner {
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             self.calls = self.calls.saturating_add(1);
             Ok(BootstrapOutcome::Stub(self.rolled_back.clone()))
@@ -2686,10 +2686,10 @@ mod tests {
             Ok(())
         }
 
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             if !self.reauthenticated {
                 return Err(BundleProvisionError::Failed);
@@ -2704,10 +2704,10 @@ mod tests {
     struct RollbackFailedProvisioner;
 
     impl BundleProvisioner for RollbackFailedProvisioner {
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             Err(BundleProvisionError::RollbackIncomplete)
         }
@@ -2794,10 +2794,10 @@ mod tests {
     }
 
     impl BundleProvisioner for RealDeterminateProvisioner {
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             let handoff = self.handoff.take().ok_or(BundleProvisionError::Failed)?;
             let outcome = run_with_new_determinate_handoff(&handoff, || {
@@ -3743,7 +3743,7 @@ mod tests {
             reauthenticated: false,
             reuse_existing: true,
         };
-        let report = continue_linux_bundle_install(
+        let _report = continue_linux_bundle_install(
             &request,
             &StubDaemon,
             &mut backend,
