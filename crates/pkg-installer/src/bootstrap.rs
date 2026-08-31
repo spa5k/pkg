@@ -28,6 +28,9 @@ use crate::{
     uninstall::preflight_uninstall,
 };
 use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
+
+/// The macOS install journal storage and its opened journal.
+type MacOsJournalPair = (MacOsInstallJournalStorage, MacOsInstallJournal);
 use pkg_channel::TrustedRoot;
 use pkg_core::{System, state::Digest};
 use pkg_nix::{
@@ -857,7 +860,7 @@ fn recover_macos_bundle_install(
     recovery_context_digest: Digest,
     request: &InstallerProvisionRequest<'_>,
     backend: &mut dyn MacOsInstallBackend,
-) -> Result<Option<(MacOsInstallJournalStorage, MacOsInstallJournal)>, MacOsError> {
+) -> Result<Option<MacOsJournalPair>, MacOsError> {
     let Some(storage) =
         MacOsInstallJournalStorage::open_existing(system, digest, recovery_context_digest)
             .map_err(|_| MacOsError::backend_failure())?
@@ -871,7 +874,7 @@ fn recover_macos_bundle_install_from_storage(
     storage: MacOsInstallJournalStorage,
     request: &InstallerProvisionRequest<'_>,
     backend: &mut dyn MacOsInstallBackend,
-) -> Result<Option<(MacOsInstallJournalStorage, MacOsInstallJournal)>, MacOsError> {
+) -> Result<Option<MacOsJournalPair>, MacOsError> {
     let Some(mut journal) = storage.load().map_err(|_| MacOsError::backend_failure())? else {
         storage
             .remove()

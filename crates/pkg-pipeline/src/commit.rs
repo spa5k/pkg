@@ -13,6 +13,9 @@ use pkg_nix::{
     GenerationId, MaintenanceAdapter, RemoveRootSetRequest, RootSetIntent, RootSetReport,
     RootSetTransitionIntent, RootSetTransitionReport,
 };
+
+/// Retained generation snapshots and the active generation id.
+type RetainedSnapshots = (Vec<GenerationSnapshot>, Option<GenerationId>);
 use pkg_store::{
     ActivationEvent, ActivationPlan, LeaseMode, PreparedRootSet, RootCandidate, StateJournal,
     StateJournalError, StateLayout, StateLease, activate_generation, activate_published_generation,
@@ -184,7 +187,7 @@ pub fn load_retained_history(
 fn load_retained_snapshots(
     layout: &StateLayout,
     lease: &StateLease,
-) -> Result<(Vec<GenerationSnapshot>, Option<GenerationId>), CommitError> {
+) -> Result<RetainedSnapshots, CommitError> {
     require_read_lease(layout, lease)?;
     let active = layout
         .current_generation()
@@ -2101,6 +2104,8 @@ mod tests {
             fail_removal: false,
             fail_after_removal: false,
         };
+
+        type RetainedSnapshots = (Vec<GenerationSnapshot>, Option<GenerationId>);
         assert_eq!(
             pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance).unwrap(),
             vec!["gen-0001".to_owned()]

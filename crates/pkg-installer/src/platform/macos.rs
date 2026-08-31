@@ -10,6 +10,10 @@ use crate::{
     BrokerHelperDispatch, LinuxHelperSession,
     platform::linux::{LinuxRootSetStore, provision_product_root_if_absent},
 };
+
+/// Progress callback for one macOS install journal update.
+type MacOsPersistProgress<'a> =
+    dyn FnMut(&crate::MacOsInstallJournal) -> Result<(), MacOsError> + 'a;
 #[cfg(target_os = "macos")]
 use nix::unistd::getpeereid;
 use pkg_core::{System, state::Digest};
@@ -1485,7 +1489,7 @@ pub fn recover_macos_install(
     journal: &mut crate::MacOsInstallJournal,
     backend: &mut dyn MacOsInstallBackend,
     recover_runtime: &mut dyn FnMut() -> Result<(), MacOsError>,
-    persist_progress: &mut dyn FnMut(&crate::MacOsInstallJournal) -> Result<(), MacOsError>,
+    persist_progress: &mut MacOsPersistProgress<'_>,
 ) -> Result<(), MacOsError> {
     while let Some((mutation, disposition, prior_digest)) =
         journal

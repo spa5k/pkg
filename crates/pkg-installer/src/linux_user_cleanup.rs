@@ -5,6 +5,9 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
+
+/// One opened user state parent and its component name.
+type StateParent = (OwnedFd, &'static str);
 #[cfg(test)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -504,7 +507,7 @@ fn user_state_exists(
 fn open_state_parent(
     home: &OwnedFd,
     uid: u32,
-) -> Result<Option<(OwnedFd, &'static str)>, LinuxUserCleanupError> {
+) -> Result<Option<StateParent>, LinuxUserCleanupError> {
     let (name, parents) = USER_STATE_COMPONENTS
         .split_last()
         .ok_or_else(unsafe_state)?;

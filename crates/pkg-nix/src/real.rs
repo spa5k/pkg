@@ -10,6 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read};
+
+/// Callback that receives one stderr chunk during process execution.
+type StderrChunk<'a> = dyn FnMut(&[u8]) -> Result<(), NixAdapterError> + 'a;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -1521,7 +1524,7 @@ trait CommandExecutor: Send + Sync {
         &self,
         spec: CommandSpec,
         cancelled: &dyn Fn() -> bool,
-        stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+        stderr_chunk: &mut StderrChunk<'_>,
     ) -> Result<CommandOutcome, NixAdapterError> {
         if cancelled() {
             return Err(NixAdapterError::Unavailable);
@@ -1620,7 +1623,7 @@ fn execute_checked_with_stderr(
     args: Vec<OsString>,
     timeout: Duration,
     cancelled: &dyn Fn() -> bool,
-    stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+    stderr_chunk: &mut StderrChunk<'_>,
 ) -> Result<CommandOutcome, NixAdapterError> {
     let outcome = executor.execute_with_stderr(
         CommandSpec {
@@ -1666,7 +1669,7 @@ impl CommandExecutor for ProcessExecutor {
         &self,
         spec: CommandSpec,
         cancelled: &dyn Fn() -> bool,
-        stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+        stderr_chunk: &mut StderrChunk<'_>,
     ) -> Result<CommandOutcome, NixAdapterError> {
         self.execute_process(&spec, cancelled, stderr_chunk)
     }
@@ -1677,7 +1680,7 @@ impl ProcessExecutor {
         &self,
         spec: &CommandSpec,
         cancelled: &dyn Fn() -> bool,
-        stderr_chunk: &mut dyn FnMut(&[u8]) -> Result<(), NixAdapterError>,
+        stderr_chunk: &mut StderrChunk<'_>,
     ) -> Result<CommandOutcome, NixAdapterError> {
         let binary = match spec.program {
             NixProgram::Modern => &self.nix_binary,

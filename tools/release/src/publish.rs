@@ -21,6 +21,9 @@ use crate::{
     TimestampAuthority, TimestampAuthorization,
 };
 
+/// One loaded publication transaction and its parts.
+type LoadedTransactionRecord = (TransactionRecord, String, Vec<PublicationObject>, PathBuf);
+
 pub const RELEASE_OBJECT_COUNT: usize = 30;
 
 /// One immutable byte object in a release publication.
@@ -842,7 +845,7 @@ fn persist_record(
 fn load_record(
     directory: &Path,
     expected_kind: TransactionKind,
-) -> Result<(TransactionRecord, String, Vec<PublicationObject>, PathBuf), PublicationError> {
+) -> Result<LoadedTransactionRecord, PublicationError> {
     let metadata = fs::symlink_metadata(directory).map_err(|_| PublicationError::InvalidObject)?;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
@@ -1415,6 +1418,7 @@ mod tests {
             attempts: Arc::clone(&attempts),
             bound,
         };
+
         let manifest_path = transaction_path.join("transaction.json");
         let original_manifest = std::fs::read(&manifest_path).unwrap();
         let mut tampered: serde_json::Value = serde_json::from_slice(&original_manifest).unwrap();

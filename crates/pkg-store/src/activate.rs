@@ -9,6 +9,12 @@ use pkg_core::state::{CollisionPolicy, Digest};
 use pkg_core::{OutputName, SelectorId, StorePath};
 use sha2::{Digest as _, Sha256};
 
+/// One loser's optional selector and output identity.
+type LoserChoice = (Option<SelectorId>, Option<OutputName>);
+
+/// One staged activation source with its optional selector and output identity.
+type LoserSource = (StorePath, PathBuf, Option<SelectorId>, Option<OutputName>);
+
 /// One verified store output to expose in the activation forest.
 #[derive(Debug, Clone)]
 pub struct ActivationInput {
@@ -82,7 +88,7 @@ pub struct Collision {
     winner_selector: Option<SelectorId>,
     winner_output: Option<OutputName>,
     losers: Vec<StorePath>,
-    loser_choices: Vec<(Option<SelectorId>, Option<OutputName>)>,
+    loser_choices: Vec<LoserChoice>,
 }
 
 impl Collision {
@@ -219,9 +225,7 @@ pub fn stage_activation(
     stage_ordered_sources(staging, &sources, collision_policy)
 }
 
-fn sort_bound_sources(
-    sources: &mut [(StorePath, PathBuf, Option<SelectorId>, Option<OutputName>)],
-) {
+fn sort_bound_sources(sources: &mut [LoserSource]) {
     sources.sort_by(|left, right| {
         left.2
             .as_ref()
@@ -253,7 +257,7 @@ pub fn stage_from_sources(
 
 fn stage_ordered_sources(
     staging: &Path,
-    ordered: &[(StorePath, PathBuf, Option<SelectorId>, Option<OutputName>)],
+    ordered: &[LoserSource],
     collision_policy: CollisionPolicy,
 ) -> Result<ActivationPlan, ActivationError> {
     if fs::symlink_metadata(staging).is_ok() {

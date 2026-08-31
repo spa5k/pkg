@@ -8,6 +8,9 @@ use serde::Serialize;
 
 use crate::{CacheClassification, DerivationPath, StorePath};
 
+/// One cached derivation's owners: its store path and derivation paths.
+type DerivationOwnerMap = BTreeMap<String, (StorePath, Vec<DerivationPath>)>;
+
 const MAX_CACHE_PATHS: usize = 16_384;
 
 /// One derivation and all of its evaluate-only expected output paths.
@@ -462,7 +465,7 @@ fn cache_classification(
 
 fn normalized_subjects(
     subjects: &[BuildCacheSubject],
-) -> Result<BTreeMap<String, (StorePath, Vec<DerivationPath>)>, BuildCacheError> {
+) -> Result<DerivationOwnerMap, BuildCacheError> {
     if subjects.is_empty() || subjects.len() > MAX_CACHE_PATHS {
         return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidSubject));
     }
@@ -484,9 +487,7 @@ fn normalized_subjects(
     Ok(owners)
 }
 
-fn subjects_digest(
-    owners: &BTreeMap<String, (StorePath, Vec<DerivationPath>)>,
-) -> Result<Digest, BuildCacheError> {
+fn subjects_digest(owners: &DerivationOwnerMap) -> Result<Digest, BuildCacheError> {
     let identity = owners
         .values()
         .map(|(path, derivations)| SubjectIdentity {

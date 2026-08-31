@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 
 use crate::{LeaseMode, StateJournal, StateLayout, StateLease};
 
+/// One journal prune row: the operation id and whether the prune finished.
+type PruneRow = (String, bool);
+
 const MAX_GENERATIONS: usize = 10_000;
 const MAX_KEEP_GENERATIONS: usize = 1_000;
 const MAX_AGE_DAYS: u64 = 36_525;
@@ -447,7 +450,7 @@ fn prune_state(
     journal: &StateJournal,
     lease: &StateLease,
     generation_id: &str,
-) -> Result<Option<(String, bool)>, GcError> {
+) -> Result<Option<PruneRow>, GcError> {
     let mut state = None;
     for row in journal.rows(lease).map_err(|_| GcError::Journal)? {
         let fields = row.payload().fields();

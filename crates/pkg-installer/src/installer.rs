@@ -1,5 +1,8 @@
 //! Idempotent Linux installation orchestration over a closed privileged API.
 
+/// Progress callback for one Linux install journal update.
+type LinuxPersistProgress<'a> = dyn FnMut(&LinuxInstallJournal) -> Result<(), InstallError> + 'a;
+
 use crate::{
     LinuxAssetPresence,
     assets::{
@@ -608,7 +611,7 @@ pub fn recover_linux_install(
     journal: &mut LinuxInstallJournal,
     backend: &mut dyn LinuxInstallBackend,
     recover_runtime: &mut dyn FnMut() -> Result<(), InstallError>,
-    persist_progress: &mut dyn FnMut(&LinuxInstallJournal) -> Result<(), InstallError>,
+    persist_progress: &mut LinuxPersistProgress<'_>,
 ) -> Result<(), InstallError> {
     let mode = journal.mode();
     let system = journal

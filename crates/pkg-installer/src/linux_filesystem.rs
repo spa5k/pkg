@@ -30,6 +30,9 @@ use crate::{
     assets::is_linux_product_asset, encode_uninstall_manifest, macos_product_install_assets,
 };
 
+/// One opened asset: its file descriptor and its file name.
+type OpenedAsset = (File, OsString);
+
 const MAX_RELEASE_BINARY_BYTES: usize = 128 * 1024 * 1024;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_UNINSTALL_MANIFEST_BYTES: u64 = 64 * 1024;
@@ -1699,17 +1702,14 @@ impl LinuxFilesystemManager {
         Ok(())
     }
 
-    fn open_parent(
-        &self,
-        asset: LinuxInstallAsset,
-    ) -> Result<(File, OsString), LinuxFilesystemError> {
+    fn open_parent(&self, asset: LinuxInstallAsset) -> Result<OpenedAsset, LinuxFilesystemError> {
         self.open_parent_optional(asset)?.ok_or_else(io_failure)
     }
 
     fn open_parent_optional(
         &self,
         asset: LinuxInstallAsset,
-    ) -> Result<Option<(File, OsString)>, LinuxFilesystemError> {
+    ) -> Result<Option<OpenedAsset>, LinuxFilesystemError> {
         if !Self::handles(asset) {
             return Err(unsupported());
         }

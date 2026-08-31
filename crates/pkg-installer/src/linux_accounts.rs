@@ -22,6 +22,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// One capture result: the exit status and the captured stdout bytes.
+type CaptureStatus = (Option<i32>, Vec<u8>);
+
 #[cfg(unix)]
 use std::os::unix::{
     fs::{MetadataExt, OpenOptionsExt},
@@ -1410,7 +1413,7 @@ fn run_capture_allow_absent(
 pub fn run_capture_status(
     program: &str,
     arguments: &[&str],
-) -> Result<(Option<i32>, Vec<u8>), LinuxAccountError> {
+) -> Result<CaptureStatus, LinuxAccountError> {
     require_program(program)?;
     let mut child = base_command(program)
         .args(arguments)

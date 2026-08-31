@@ -6,6 +6,9 @@ use nix::{
     errno::Errno,
     poll::{PollFd, PollFlags, PollTimeout, poll},
 };
+
+/// Callback that authorizes one removal of a root set.
+type RemoveRootSetAuthorizer = fn(&RemoveRootSetRequest) -> Result<(), MaintenanceError>;
 use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, BuildCacheProbe, BuildRequest,
     CallerMaintenance, Digest, HELPER_FRAME_PAYLOAD_LIMIT, MaintenanceAdapter,
@@ -157,7 +160,7 @@ pub struct LinuxHelperSession {
     roots: LinuxRootSetStore,
     root_transactions: Mutex<()>,
     capability_owners: Mutex<BTreeMap<MaintenanceCapability, u32>>,
-    authorize_removal: fn(&RemoveRootSetRequest) -> Result<(), MaintenanceError>,
+    authorize_removal: RemoveRootSetAuthorizer,
     nix: RootNixState,
     nix_operations: Arc<ConnectionLimiter>,
     nix_builds: Arc<ConnectionLimiter>,

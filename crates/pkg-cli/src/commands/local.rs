@@ -12,6 +12,9 @@ use crate::cli::{
     CollisionPolicy, GcArgs, HistoryArgs, InfoArgs, InstallArgs, ListArgs, PackageArgs, RemoveArgs,
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
+
+/// One acquired install: its handle, public id, evidence, and phase name.
+type AcquiredInstallEvidence = (OperationHandle, String, InstallEvidence, &'static str);
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
 use crate::commands::query::{
     InstalledCatalogPackage, info_catalog_reports, outdated_catalog_reports, search_catalog_report,
@@ -1591,7 +1594,7 @@ fn acquire_install_evidence(
     policy: OperationPolicy,
     allow_build: bool,
     progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
-) -> Result<(OperationHandle, String, InstallEvidence, &'static str), CommandError> {
+) -> Result<AcquiredInstallEvidence, CommandError> {
     let acquire_handle = broker
         .begin(BrokerOperationKind::Acquire)
         .map_err(broker_error)?;
