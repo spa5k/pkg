@@ -1,12 +1,14 @@
-# Strict budgets applied only during the G-QUALITY gate.
+# clippy configuration for the `pkg` workspace.
 #
-# These thresholds must not live in the shared clippy.toml: once configured,
-# they fire at deny level inside the pedantic-deny crates and break every
-# historical violation at once. The gate swaps this file in for the
-# measurement and restores the real config afterwards (ADR 0005).
+# The MSRV is pinned here, kept consistent with [workspace.package]
+# rust-version = "1.96" and the exact repo toolchain (rust-toolchain.toml
+# channel "1.96.1").
+#
+# The strict complexity budgets from ADR 0005 (50 lines, 5 arguments, 10
+# cognitive, 150 type complexity) are NOT configured here: once configured,
+# these thresholds fire at deny level inside the crates that already deny
+# clippy::pedantic, breaking every historical violation at once. The budgets
+# are applied by the G-QUALITY gate instead — tools/quality/quality-gate.sh
+# swaps in a strict config for the check and restores this one afterwards.
 
 msrv = "1.96"
-too-many-lines-threshold = 50
-too-many-arguments-threshold = 5
-cognitive-complexity-threshold = 10
-type-complexity-threshold = 150

@@ -75,18 +75,29 @@ usage() {
 
 measure() {
     # Swap the strict config in, run one clippy pass over production targets,
-    # and restore. Output: one JSON object per diagnostic on stdout.
-    if [[ -f clippy.toml ]]; then mv clippy.toml clippy.toml.quality-bak; fi
-    trap 'if [[ -f clippy.toml.quality-bak ]]; then mv clippy.toml.quality-bak clippy.toml; fi' EXIT
+    # and restore immediately, in this same shell. No traps: a trap-based
+    # restore silently fails when measure() runs inside a command
+    # substitution and left the strict config behind once already.
+    local had_config=0
+    if [[ -f clippy.toml ]]; then
+        had_config=1
+        mv clippy.toml clippy.toml.quality-bak
+    fi
     cp "$STRICT_CONFIG" clippy.toml
 
     local flags=()
     for lint in "${RATCHET_LINTS[@]}"; do
         flags+=(-A "$lint" -W "$lint")
     done
-    cargo clippy --locked --workspace --lib --bins --all-features \
-        --message-format json -- "${flags[@]}" 2>/dev/null \
-        | python3 "$ROOT/tools/quality/report.py" "$ROOT"
+    local output
+    output="$(cargo clippy --locked --workspace --lib --bins --all-features \
+        --message-format json -- "${flags[@]}" 2>/dev/null)"
+
+    rm -f clippy.toml
+    if [[ $had_config -eq 1 ]]; then
+        mv clippy.toml.quality-bak clippy.toml
+    fi
+    printf '%s\n' "$output" | python3 "$ROOT/tools/quality/report.py" "$ROOT"
 }
 
 rebase() {
