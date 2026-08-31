@@ -79,12 +79,12 @@ commit `854f288` with toolchain `1.96.1` on Apple Silicon macOS.
 
 | Lint | Level | Why | Measured (lib+bins) |
 |---|---|---|---|
-| `unwrap_used` | deny | If failure is possible, model the failure. Test modules carry `#![expect(...)]` with reason. | 2 |
-| `expect_used` | deny | `expect` is the sanctioned invariant mechanism: if you intentionally panic, name the invariant. Every production `expect` carries an invariant message. Tests may expect. | 10 |
+| `unwrap_used` | deny | If failure is possible, model the failure. Test modules carry `#![expect(...)]` with reason. The 2 production hits became invariant-named `expect`s. | 2 → 0 |
+| `expect_used` | warn + ratchet | `expect` is the sanctioned invariant mechanism: if you intentionally panic, name the invariant. All 10 existing production expects were audited and each names its invariant. New expects may not grow the count. | 10 |
 | `panic` | deny | Production code returns errors; it does not panic. Tests may panic. | 0 |
 | `todo`, `unimplemented` | deny | No shipped placeholder. | 0 |
 | `dbg_macro` | deny | No debugging output in production. | 0 |
-| `print_stdout`, `print_stderr` | deny | Product output goes through the output abstractions. The 2 hits are audited and either fixed or expected with reason. | 2 |
+| `print_stdout`, `print_stderr` | expect-only | Product output goes through the output abstractions. The 6 bin entry-point prints carry `#[expect(..., reason)]`; any new print site needs the same reason. | 6 |
 | `allow_attributes_without_reason` | deny | Suppressions are expensive: every `allow` must carry `reason =`. This makes the "no bare suppression" rule a compiler check, not a review promise. | 22 |
 
 ### 4. Pedantic — curated

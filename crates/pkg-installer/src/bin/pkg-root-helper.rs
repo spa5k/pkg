@@ -4,6 +4,7 @@ fn main() -> ExitCode {
     if run() {
         ExitCode::SUCCESS
     } else {
+        #[expect(clippy::print_stderr, reason = "the helper's only failure output")]
         eprintln!("managed package service failed");
         ExitCode::FAILURE
     }

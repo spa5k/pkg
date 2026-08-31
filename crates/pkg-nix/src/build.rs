@@ -689,7 +689,7 @@ impl RepairBuildPlan {
                     isolation: "sandbox".to_owned(),
                     per_build_resource_cap: false,
                     notice: resource_notice(os, BuildPurpose::Repair)
-                        .unwrap()
+                        .expect("resource notice exists for the repair purpose")
                         .to_owned(),
                 },
             },
@@ -1032,7 +1032,9 @@ impl BuildPlan {
                 resource_boundary: PreviewResourceBoundary {
                     isolation: "sandbox".to_owned(),
                     per_build_resource_cap: false,
-                    notice: resource_notice(os, BuildPurpose::Build).unwrap().to_owned(),
+                    notice: resource_notice(os, BuildPurpose::Build)
+                        .expect("resource notice exists for the build purpose")
+                        .to_owned(),
                 },
             },
             approval_required: !self.builds.is_empty(),

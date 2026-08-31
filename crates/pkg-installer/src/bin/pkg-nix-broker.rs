@@ -2,6 +2,7 @@
 
 fn main() {
     if !run() {
+        #[expect(clippy::print_stderr, reason = "the broker's only failure output")]
         eprintln!("managed package service failed");
         std::process::exit(1);
     }

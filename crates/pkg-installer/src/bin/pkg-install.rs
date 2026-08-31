@@ -24,10 +24,12 @@ const MACOS_SCRATCH_PARENT: &str = "/Library/Application Support/pkg/helper-home
 fn main() -> ExitCode {
     match run() {
         Ok(success) => {
+            #[expect(clippy::print_stdout, reason = "the installer's only product output")]
             println!("{}", success.message());
             ExitCode::SUCCESS
         }
         Err(error) => {
+            #[expect(clippy::print_stderr, reason = "the installer's only failure output")]
             eprintln!("{error}");
             ExitCode::FAILURE
         }
