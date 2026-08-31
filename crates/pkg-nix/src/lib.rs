@@ -126,11 +126,8 @@ pub use managed::ownership::{
 pub use managed::provision::{
     AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
     InstallerProvisionRequest, InstallerRepository, ProvisionError, ProvisionErrorCode,
-    ProvisionRequest, ProvisionSpec, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
-    ProvisionedRuntime, authenticate_installer_bundle, authenticate_installer_bundle_blocking,
-    load_authenticated_installer_bundle_blocking, provision_authenticated_installer_bundle,
-    provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
-    provision_managed_nix_from_bundle_blocking, reauthenticate_installer_bundle,
+    ProvisionSpec, authenticate_installer_bundle, authenticate_installer_bundle_blocking,
+    load_authenticated_installer_bundle_blocking, reauthenticate_installer_bundle,
     reauthenticate_installer_bundle_blocking, recover_interrupted_provision_workspace,
     verify_authenticated_managed_install, verify_authenticated_managed_install_from_receipt,
     verify_provision_workspace_absent,
@@ -138,6 +135,7 @@ pub use managed::provision::{
 pub use managed::runtime_archive::{
     RuntimeManifestError, RuntimeManifestErrorCode, build_upstream_runtime_asset_manifest,
 };
+
 pub use managed::uninstall::{
     ExclusiveManagedRuntimeRemoval, ManagedRuntimeRemoval, ManagedRuntimeRemovalError,
     ManagedRuntimeRemovalErrorCode, ManagedRuntimeRemovalOutcome, prepare_managed_runtime_removal,

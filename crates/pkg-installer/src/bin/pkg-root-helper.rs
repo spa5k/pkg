@@ -20,10 +20,6 @@ fn run() -> bool {
         let arguments = std::env::args_os().collect::<Vec<_>>();
         match requested_macos_mode(&arguments) {
             Some(MacOsMode::Serve) => pkg_installer::run_macos_root_helper().is_ok(),
-            Some(MacOsMode::MountStore) => pkg_installer::run_macos_store_mount().is_ok(),
-            Some(MacOsMode::ProvisionStore) => {
-                pkg_installer::provision_macos_store_volume_production().is_ok()
-            }
             None => false,
         }
     }
@@ -38,8 +34,6 @@ fn run() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MacOsMode {
     Serve,
-    MountStore,
-    ProvisionStore,
 }
 
 #[cfg(target_os = "macos")]
@@ -49,8 +43,6 @@ fn requested_macos_mode(arguments: &[std::ffi::OsString]) -> Option<MacOsMode> {
     }
     match arguments[1].to_str() {
         Some("--serve-macos") => Some(MacOsMode::Serve),
-        Some("--mount-store-volume") => Some(MacOsMode::MountStore),
-        Some("--provision-store-volume") => Some(MacOsMode::ProvisionStore),
         Some(_) | None => None,
     }
 }
@@ -64,14 +56,6 @@ mod tests {
         assert_eq!(
             requested_macos_mode(&["pkg-root-helper".into(), "--serve-macos".into()]),
             Some(MacOsMode::Serve)
-        );
-        assert_eq!(
-            requested_macos_mode(&["pkg-root-helper".into(), "--mount-store-volume".into(),]),
-            Some(MacOsMode::MountStore)
-        );
-        assert_eq!(
-            requested_macos_mode(&["pkg-root-helper".into(), "--provision-store-volume".into(),]),
-            Some(MacOsMode::ProvisionStore)
         );
         assert_eq!(
             requested_macos_mode(&[
