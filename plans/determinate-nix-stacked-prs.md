@@ -2,7 +2,7 @@
 
 Status: active implementation plan for an alpha product.
 
-Current status: **Delivery PR 1 and PR 2 are complete. DN-15 Linux proof passed. DN-16 production code is reviewed and backed up, but it is not merged or proved.**
+Current status: **COMPLETE. PR 4 (DN-16) is merged to `main` at `1a3905d`. The two-slot Apple Silicon macOS lifecycle proof passed (run `33329100389`, both slots green). Post-cutover cleanup DN-17, DN-18, and DN-19 is merged in the same delivery. The migration is code-complete; the remaining work is the production trust ceremony (real TUF keys, stable HTTPS channel, Developer ID signing and notarization).**
 
 The current migration delivery has exactly four delivery PRs. PR 1 and PR 2 group several work packages. PR 3 has the single delivery label DN-15. PR 4 has the single delivery label DN-16. DN-17 through DN-32 remain work-package IDs inside PR 4. They do not create more delivery PRs.
 
@@ -11,7 +11,7 @@ The current migration delivery has exactly four delivery PRs. PR 1 and PR 2 grou
 | 1 | DN-00 through DN-07: plan, alpha fixes, evidence, contract, and authenticated vendor foundation | Complete |
 | 2 | DN-08 through DN-14: inactive integration foundation and decision evidence | Complete |
 | 3 | DN-15: Linux completion | Native proof passed at `9bd17b`; not published |
-| 4 | DN-16: Apple Silicon macOS completion; DN-17 through DN-32 are later cleanup, proof, and optional simplification checkpoints inside this PR | Production code reviewed at `8ffd325a`; not merged; native proof blocked |
+| 4 | DN-16: Apple Silicon macOS completion; DN-17 through DN-32 are later cleanup, proof, and optional simplification checkpoints inside this PR | **Complete.** macOS proof passed on two Apple Silicon slots (run `33329100389`, product commit `cbd3494`, sealed pair `baae3f8b`). DN-17 old-Nix deletion, DN-18 deep cleanup (2,533 lines), and DN-19 structural simplification merged. Delivery merged to `main` at `1a3905d` |
 
 PR 2 does not deliver a platform cutover. It records safe inactive code,
 evidence limits, and the accepted ownership policy. PR 3 activates that work on
