@@ -393,7 +393,7 @@ vendor-action-last	determinate_handoff::tests::terminal_uninstall_consumes_hando
 vendor-action-last	uninstall::tests::linux_vendor_uninstall_is_the_terminal_action
 vendor-action-last	uninstall::tests::service_stop_is_a_cleanup_barrier
 vendor-action-last	uninstall::tests::cleanup_failures_do_not_skip_residue_verification
-vendor-action-last	uninstall::tests::linux_product_cleanup_failure_never_dispatches_terminal_vendor
+vendor-action-last	uninstall::tests::product_cleanup_failure_never_dispatches_terminal_vendor
 vendor-action-last	uninstall::tests::residue_failure_has_priority_and_success_is_total
 install-process-controls	determinate::tests::operations_use_exact_argv_and_cleared_environment
 install-process-controls	determinate::tests::terminal_uninstall_uses_exact_fixed_argv_and_environment
