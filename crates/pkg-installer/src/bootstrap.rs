@@ -35,9 +35,9 @@ use pkg_channel::TrustedRoot;
 use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
-    InstallerProvisionRequest, InstallerRepository, ManagedDaemon,
-    load_authenticated_installer_bundle_blocking, reauthenticate_installer_bundle_blocking,
-    recover_interrupted_provision_workspace, verify_provision_workspace_absent,
+    InstallerProvisionRequest, InstallerRepository, load_authenticated_installer_bundle_blocking,
+    reauthenticate_installer_bundle_blocking, recover_interrupted_provision_workspace,
+    verify_provision_workspace_absent,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -90,7 +90,6 @@ pub fn install_linux_from_bundle<'a>(
     system: System,
     trusted_root: TrustedRoot,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn LinuxInstallBackend,
 ) -> Result<LinuxBundleInstallReport, InstallError> {
     if request.system != system {
@@ -105,7 +104,6 @@ pub fn install_linux_from_bundle<'a>(
     let mut provisioner = AuthenticatedProvisioner::with_reauthentication(trusted_root, bundle);
     continue_linux_bundle_install(
         request,
-        daemon,
         backend,
         &mut provisioner,
         release_digest,
@@ -115,7 +113,6 @@ pub fn install_linux_from_bundle<'a>(
 
 fn continue_linux_bundle_install<'a, P: BundleProvisioner>(
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn LinuxInstallBackend,
     provisioner: &'a mut P,
     release_digest: Digest,
@@ -170,7 +167,6 @@ fn continue_linux_bundle_install<'a, P: BundleProvisioner>(
     let installation = install_linux_with_provisioner_journaled(
         request.system,
         request,
-        daemon,
         backend,
         provisioner,
         &storage,
@@ -746,7 +742,6 @@ pub fn install_macos_from_bundle<'a>(
     system: System,
     trusted_root: TrustedRoot,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn MacOsInstallBackend,
 ) -> Result<MacOsBundleInstallReport, MacOsError> {
     if request.system != system || system != System::Aarch64Darwin {
@@ -794,7 +789,6 @@ pub fn install_macos_from_bundle<'a>(
     let installation = install_macos_with_provisioner_journaled(
         system,
         request,
-        daemon,
         backend,
         &mut provisioner,
         &storage,
@@ -1040,7 +1034,6 @@ trait BundleProvisioner {
     fn provision(
         &mut self,
         request: &InstallerProvisionRequest<'_>,
-        daemon: &dyn ManagedDaemon,
     ) -> Result<BootstrapOutcome, BundleProvisionError>;
 }
 
@@ -1132,7 +1125,6 @@ impl BundleProvisioner for AuthenticatedProvisioner {
     fn provision(
         &mut self,
         request: &InstallerProvisionRequest<'_>,
-        daemon: &dyn ManagedDaemon,
     ) -> Result<BootstrapOutcome, BundleProvisionError> {
         let mut bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
         if matches!(
@@ -1184,7 +1176,7 @@ impl BundleProvisioner for AuthenticatedProvisioner {
         }
         // Only the three supported systems reach the Determinate path above.
         // Every other system is unsupported and must fail closed.
-        let _ = (bundle, daemon);
+        let _ = bundle;
         Err(BundleProvisionError::Failed)
     }
 }
@@ -1192,7 +1184,6 @@ impl BundleProvisioner for AuthenticatedProvisioner {
 struct LinuxBundleBackend<'a, 'j, P> {
     inner: &'a mut dyn LinuxInstallBackend,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     provisioner: &'a mut P,
     outcome: Option<BootstrapOutcome>,
     journal: Option<LinuxJournalTransaction<'j>>,
@@ -1392,7 +1383,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         begin_linux_mutation(&mut self.journal, mutation.clone(), presence)?;
         self.outcome = Some(
             self.provisioner
-                .provision(self.request, self.daemon)
+                .provision(self.request)
                 .map_err(linux_provision_error)?,
         );
         let changed = presence == LinuxAssetPresence::Absent;
@@ -1637,7 +1628,6 @@ fn complete_linux_mutation(
 fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>(
     system: System,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn LinuxInstallBackend,
     provisioner: &'a mut P,
     storage: &dyn LinuxJournalPersistence,
@@ -1656,7 +1646,6 @@ fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>(
     let mut adapter = LinuxBundleBackend {
         inner: backend,
         request,
-        daemon,
         provisioner,
         outcome: None,
         journal: Some(LinuxJournalTransaction { storage, journal }),
@@ -1715,14 +1704,12 @@ fn finalize_committed_linux_install(
 fn install_linux_with_provisioner<'a, P: BundleProvisioner>(
     system: System,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn LinuxInstallBackend,
     provisioner: &'a mut P,
 ) -> Result<(LinuxInstallReport, BootstrapOutcome), InstallError> {
     let mut adapter = LinuxBundleBackend {
         inner: backend,
         request,
-        daemon,
         provisioner,
         outcome: None,
         journal: None,
@@ -1738,7 +1725,6 @@ fn install_linux_with_provisioner<'a, P: BundleProvisioner>(
 struct MacOsBundleBackend<'a, 'j, P> {
     inner: &'a mut dyn MacOsInstallBackend,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     provisioner: &'a mut P,
     outcome: Option<BootstrapOutcome>,
     journal: Option<MacOsJournalTransaction<'j>>,
@@ -2053,7 +2039,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
         begin_macos_mutation(&mut self.journal, mutation.clone(), presence)?;
         self.outcome = Some(
             self.provisioner
-                .provision(self.request, self.daemon)
+                .provision(self.request)
                 .map_err(macos_provision_error)?,
         );
         let changed = presence == MacOsAssetPresence::Absent;
@@ -2358,14 +2344,12 @@ const fn macos_provision_error(error: BundleProvisionError) -> MacOsError {
 fn install_macos_with_provisioner<'a, P: BundleProvisioner>(
     system: System,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn MacOsInstallBackend,
     provisioner: &'a mut P,
 ) -> Result<(MacOsInstallReport, BootstrapOutcome), MacOsError> {
     let mut adapter = MacOsBundleBackend {
         inner: backend,
         request,
-        daemon,
         provisioner,
         outcome: None,
         journal: None,
@@ -2382,7 +2366,6 @@ fn install_macos_with_provisioner<'a, P: BundleProvisioner>(
 fn install_macos_with_provisioner_journaled<'a, P: BundleProvisioner>(
     system: System,
     request: &'a InstallerProvisionRequest<'a>,
-    daemon: &'a dyn ManagedDaemon,
     backend: &'a mut dyn MacOsInstallBackend,
     provisioner: &'a mut P,
     storage: &dyn MacOsJournalPersistence,
@@ -2391,7 +2374,6 @@ fn install_macos_with_provisioner_journaled<'a, P: BundleProvisioner>(
     let mut adapter = MacOsBundleBackend {
         inner: backend,
         request,
-        daemon,
         provisioner,
         outcome: None,
         journal: Some(MacOsJournalTransaction { storage, journal }),
@@ -2443,7 +2425,7 @@ fn install_macos_with_provisioner_journaled<'a, P: BundleProvisioner>(
 mod tests {
     use super::*;
     use pkg_core::state::Digest;
-    use pkg_nix::{DaemonError, ManagedGroupBindings, NixVersion};
+    use pkg_nix::ManagedGroupBindings;
     use pkg_testkit::{ChaosCheckpoint, ChaosCommand, FsyncMode, publish_checkpoint};
     use std::{
         cell::RefCell,
@@ -2626,40 +2608,6 @@ mod tests {
         }
     }
 
-    struct StubDaemon;
-
-    impl ManagedDaemon for StubDaemon {
-        fn register_runtime(
-            &self,
-            _root: &Path,
-            _system: System,
-            _version: &NixVersion,
-            _registration: &Path,
-        ) -> Result<(), DaemonError> {
-            Ok(())
-        }
-        fn commit_runtime_registration(&self) -> Result<(), DaemonError> {
-            Ok(())
-        }
-        fn rollback_runtime_registration(&self) -> Result<(), DaemonError> {
-            Ok(())
-        }
-        fn start(
-            &self,
-            _root: &Path,
-            _system: System,
-            _version: &NixVersion,
-        ) -> Result<(), DaemonError> {
-            Ok(())
-        }
-        fn ping_store(&self) -> Result<(), DaemonError> {
-            Ok(())
-        }
-        fn stop(&self) -> Result<(), DaemonError> {
-            Ok(())
-        }
-    }
-
     struct StubProvisioner {
         calls: usize,
         rolled_back: std::rc::Rc<std::cell::Cell<bool>>,
@@ -2669,7 +2617,6 @@ mod tests {
         fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             self.calls = self.calls.saturating_add(1);
             Ok(BootstrapOutcome::Stub(self.rolled_back.clone()))
@@ -2699,7 +2646,6 @@ mod tests {
         fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             if !self.reauthenticated {
                 return Err(BundleProvisionError::Failed);
@@ -2717,7 +2663,6 @@ mod tests {
         fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             Err(BundleProvisionError::RollbackIncomplete)
         }
@@ -2807,7 +2752,6 @@ mod tests {
         fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             let handoff = self.handoff.take().ok_or(BundleProvisionError::Failed)?;
             let outcome = run_with_new_determinate_handoff(&handoff, || {
@@ -3471,7 +3415,6 @@ mod tests {
         let result = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -3511,7 +3454,6 @@ mod tests {
         let result = install_linux_with_provisioner(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
         )
@@ -3652,7 +3594,6 @@ mod tests {
 
         let report = continue_linux_bundle_install(
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             release,
@@ -3715,7 +3656,6 @@ mod tests {
         assert_eq!(
             continue_linux_bundle_install(
                 &request,
-                &StubDaemon,
                 &mut backend,
                 &mut first_provisioner,
                 release_digest,
@@ -3755,7 +3695,6 @@ mod tests {
         };
         let _report = continue_linux_bundle_install(
             &request,
-            &StubDaemon,
             &mut backend,
             &mut second_provisioner,
             release_digest,
@@ -3840,7 +3779,6 @@ mod tests {
         let (report, outcome) = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -3896,7 +3834,6 @@ mod tests {
         let error = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -3957,7 +3894,6 @@ mod tests {
         let result = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4007,7 +3943,6 @@ mod tests {
         let result = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut RollbackFailedProvisioner,
             &persistence,
@@ -4062,7 +3997,6 @@ mod tests {
         let (report, outcome) = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4119,7 +4053,6 @@ mod tests {
         let (_, outcome) = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4194,7 +4127,6 @@ mod tests {
             install_linux_with_provisioner_journaled(
                 request.system,
                 &request,
-                &StubDaemon,
                 &mut backend,
                 &mut provisioner,
                 &persistence,
@@ -4248,7 +4180,6 @@ mod tests {
         install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4317,7 +4248,6 @@ mod tests {
             let result = install_linux_with_provisioner_journaled(
                 request.system,
                 &request,
-                &StubDaemon,
                 &mut backend,
                 &mut provisioner,
                 &persistence,
@@ -4409,7 +4339,6 @@ mod tests {
         let result = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4471,7 +4400,6 @@ mod tests {
         let result = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4524,7 +4452,6 @@ mod tests {
         let result = install_linux_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4730,7 +4657,6 @@ mod tests {
         let (report, outcome) = install_linux_with_provisioner(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
         )?;
@@ -4764,7 +4690,6 @@ mod tests {
         let (report, outcome) = install_linux_with_provisioner(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
         )?;
@@ -4801,7 +4726,6 @@ mod tests {
         let result = install_linux_with_provisioner(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
         )
@@ -4840,7 +4764,6 @@ mod tests {
         let result = install_macos_with_provisioner(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
         )
@@ -4884,7 +4807,6 @@ mod tests {
         let (report, outcome) = install_macos_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4940,7 +4862,6 @@ mod tests {
         let result = install_macos_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut backend,
             &mut provisioner,
             &persistence,
@@ -4994,7 +4915,6 @@ mod tests {
         let first = install_macos_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut first_backend,
             &mut first_provisioner,
             &persistence,
@@ -5028,7 +4948,6 @@ mod tests {
         let (_, outcome) = install_macos_with_provisioner_journaled(
             request.system,
             &request,
-            &StubDaemon,
             &mut second_backend,
             &mut second_provisioner,
             &persistence,

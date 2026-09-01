@@ -420,24 +420,6 @@ impl RealNixAdapter {
         })
     }
 
-    pub(crate) fn new_with_daemon_socket(
-        nix_binary: &Path,
-        private_home: &Path,
-        daemon_socket: &Path,
-    ) -> Result<Self, NixAdapterError> {
-        Ok(Self {
-            executor: Arc::new(validated_process_executor(
-                nix_binary,
-                private_home,
-                Some(daemon_socket),
-            )?),
-            expected_nix_brand: "Nix",
-            expected_nix_version: PINNED_NIX_VERSION,
-            eager_source_metadata: false,
-            operation_deadline: None,
-        })
-    }
-
     /// Returns a clone constrained by one absolute root-helper operation budget.
     pub fn for_root_operation(
         &self,

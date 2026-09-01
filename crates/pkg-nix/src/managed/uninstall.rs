@@ -194,7 +194,7 @@ fn prepare_with_owner_uid(
 /// The returned [`ManagedRuntimeRemoval`] is drained by the existing GC-lock,
 /// liveness, and store-removal API; this entry never deletes `/nix/store`
 /// directly. Callers clean fixed Nix registration state with
-/// `ManagedDaemon::rollback_runtime_registration` between this prepare and
+/// daemon registration rollback between this prepare and
 /// `remove`; the armed `PR_SET_PDEATHSIG` is the barrier against a surviving
 /// daemon, so no daemon is started or stopped here.
 ///
