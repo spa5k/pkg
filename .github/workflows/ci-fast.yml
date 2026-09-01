@@ -191,7 +191,13 @@ jobs:
   # any new debt anywhere.
   g-quality:
     name: G-QUALITY (strict budgets + debt ratchet)
-    runs-on: ubuntu-latest
+    # Matrix on purpose: the ratchet is vacuous for macOS-gated code on a
+    # Linux runner, and the macOS debt is exactly what motivated the policy.
+    # Each leg measures its own platform's debt against the shared baseline.
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -218,5 +224,7 @@ jobs:
 
       - name: Quality gate (strict budgets + ratchet)
         env:
-          BASE_REF: "origin/${{ github.base_ref }}"
+          # base_ref is empty on push/dispatch; the gate falls back to a
+          # reachable ref and fails loudly when none resolves.
+          GITHUB_BASE_REF: "${{ github.base_ref }}"
         run: tools/quality/quality-gate.sh check

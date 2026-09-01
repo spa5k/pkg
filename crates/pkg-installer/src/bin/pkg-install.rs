@@ -1,3 +1,5 @@
+//! Production installer entry point.
+
 use std::{ffi::OsString, fmt, path::Path, process::ExitCode};
 
 use nix::unistd::Uid;

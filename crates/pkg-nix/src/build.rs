@@ -3215,8 +3215,16 @@ mod tests {
     #[test]
     fn host_resource_probe_uses_safe_fixed_inputs_and_strict_load_parsing() {
         assert!(available_bytes(Path::new("/")).unwrap() > 0);
-        assert_eq!(parse_load_average("1.25 0.50 0.25 1/2 3").unwrap(), 1.25);
-        assert_eq!(parse_load_average("{ 2.5 1.0 0.5 }").unwrap(), 2.5);
+        assert_eq!(
+            parse_load_average("1.25 0.50 0.25 1/2 3")
+                .unwrap()
+                .to_bits(),
+            1.25_f64.to_bits()
+        );
+        assert_eq!(
+            parse_load_average("{ 2.5 1.0 0.5 }").unwrap().to_bits(),
+            2.5_f64.to_bits()
+        );
         for invalid in ["", "{ }", "nan 1 1", "inf 1 1", "-1 1 1", "nope"] {
             assert_eq!(
                 parse_load_average(invalid).unwrap_err().code(),

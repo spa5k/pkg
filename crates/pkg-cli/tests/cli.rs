@@ -1,3 +1,5 @@
+//! End-to-end CLI contract tests over the public command surface.
+
 use std::process::Command;
 
 fn pkg() -> Command {

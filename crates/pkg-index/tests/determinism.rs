@@ -1,3 +1,5 @@
+//! Deterministic index build tests: byte-exact outputs for fixed inputs.
+
 use pkg_core::{ChannelSequence, NixpkgsRevision, System};
 use pkg_index::{BuildMetadata, IndexCandidate, build_index, build_index_from_json};
 

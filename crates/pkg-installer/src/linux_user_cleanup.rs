@@ -45,7 +45,10 @@ pub fn remove_owned_tree(
     let Some(parent) = open_parent_chain(root, parent_path, root_owner_uid)? else {
         return Ok(());
     };
-    ensure_target_present(&parent, name)?;
+    if !target_is_present(&parent, name)? {
+        // Already absent: removal is idempotent.
+        return Ok(());
+    }
     let expected_mount = mount_boundary_fd(&parent)?;
     let mut count = 0;
     remove_entry(&parent, name, tree_owner_uid, expected_mount, &mut count)?;
@@ -82,10 +85,13 @@ fn open_parent_chain(
     Ok(Some(parent))
 }
 
-/// Confirms the target entry exists under `parent` without following links.
-fn ensure_target_present(parent: &OwnedFd, name: &OsStr) -> Result<(), LinuxUserCleanupError> {
+/// Reports whether the target entry exists under `parent`, without following
+/// links. An absent target is a successful `Ok(false)`, preserving the
+/// idempotent-removal contract of [`remove_owned_tree`].
+fn target_is_present(parent: &OwnedFd, name: &OsStr) -> Result<bool, LinuxUserCleanupError> {
     match statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(_) | Err(Errno::NOENT) => Ok(()),
+        Ok(_) => Ok(true),
+        Err(Errno::NOENT) => Ok(false),
         Err(_) => Err(operation_failed()),
     }
 }
@@ -1253,6 +1259,28 @@ mod tests {
 
         assert!(cleaner.remove_user_roots().is_err());
         assert_eq!(fs::read(target.path().join("must-remain"))?, b"foreign");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod owned_tree_contract {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn absent_target_is_idempotent_success() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let root = temp.path().join("root");
+        fs::create_dir_all(&root)?;
+        let uid = fs::metadata(&root)?.uid();
+
+        // The parent chain exists but the target never did.
+        remove_owned_tree(&root, Path::new("/opt/pkg/nix"), uid, uid)?;
+
+        // A second removal of the same absent target stays a no-op.
+        remove_owned_tree(&root, Path::new("/opt/pkg/nix"), uid, uid)?;
         Ok(())
     }
 }

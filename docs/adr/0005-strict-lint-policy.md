@@ -35,15 +35,25 @@ commit `854f288` with toolchain `1.96.1` on Apple Silicon macOS.
 1. **Deny.** The lint fails the local build and CI. Denied lints must be clean
    before merge. New suppressions use `#[expect(lint, reason = "...")]` so the
    suppression dies when the lint stops firing.
-2. **Ratchet.** The lint is a warning. A checked-in baseline
-   (`tools/quality/baseline.json`) records the current count. CI fails when
-   any count grows. Debt may only shrink.
-3. **Touched files.** Every file changed in a pull request must be clean at
-   the strict level (`clippy --lib --bins --all-features -- -D warnings` plus
-   the strict thresholds below). Existing debt in untouched files stays
-   tolerated. Touched files must improve.
+2. **Ratchet.** A checked-in per-file baseline
+   (`tools/quality/baseline.json`) records the current count for every lint
+   in every production file. CI fails when any lint total grows, or when any
+   file grows beyond its baseline for any lint. Debt may only shrink.
+3. **Touched files** (`FULL_TOUCHED=1`, `just lint-strict`). Every file
+   changed against `BASE_REF` must be debt-free at the strict budgets. This
+   is the pay-down mode, applied per change, and becomes the CI default once
+   the touched-file debt is paid. Existing debt in untouched files stays
+   tolerated; touched files must improve.
+
+The two strict crates (`pkg-installer`, `pkg-macos-security`) carry their own
+deny tables because cargo makes `lints.workspace = true` all-or-nothing: a
+member may inherit the workspace lints or declare its own, never both. Their
+tables superset the workspace denies and add the rust lints manually.
 
 ### 1. Compiler lints — workspace `[lints.rust]`
+
+Every member crate opts in with `[lints] workspace = true`; the two strict
+crates declare the same rust lints locally (see the note above).
 
 | Lint | Level | Why |
 |---|---|---|
@@ -52,7 +62,7 @@ commit `854f288` with toolchain `1.96.1` on Apple Silicon macOS.
 | `unused_must_use` | deny | Ignored `Result`s and guards are the classic silent-failure shape. |
 | `unused_imports`, `unused_variables`, `unused_assignments` | deny | Compiler-detected leftovers. |
 | `dead_code` | deny | The 86 dead-code warnings include real DN-17/DN-18 deletion residue. The planned DN-19 deletion modules (`pkg-nix/src/managed/*`) get scoped `#[expect(dead_code, reason = "DN-19 ...")]`. |
-| `unused_crate_dependencies` | deny | Dependency hygiene. Platform-gated dependencies get per-crate `expect` with reason. |
+| `unused_crate_dependencies` | deferred | Fires on dev-dependencies per target; needs per-crate target plumbing first. See the threshold section. |
 | `unsafe_code` | per-crate | Keep existing `forbid`/`deny` in the crates that have it. Do not forbid workspace-wide: `pkg-macos-security` needs scoped unsafe for FFI. |
 
 ### 2. Clippy core — workspace `[lints.clippy]`
@@ -75,13 +85,13 @@ commit `854f288` with toolchain `1.96.1` on Apple Silicon macOS.
 | `use_self` | ratchet | Style preference with 233 hits. Blanket fix is noise. | 233 |
 | `significant_drop_tightening` | ratchet | Behavior-adjacent. Needs review per site, not mechanical application. | 133 |
 
-### 3. Panic policy — workspace `[lints.clippy]`
+### 3. Panic policy — strict crates plus the gate
 
 | Lint | Level | Why | Measured (lib+bins) |
 |---|---|---|---|
-| `unwrap_used` | deny | If failure is possible, model the failure. Test modules carry `#![expect(...)]` with reason. The 2 production hits became invariant-named `expect`s. | 2 → 0 |
+| `unwrap_used` | deny (strict crates); ratchet elsewhere | If failure is possible, model the failure. Test modules carry scoped allows with reasons. The 2 production hits became invariant-named `expect`s. Production denies are enforced by the gate's `--lib --bins` pass. | 2 → 0 |
 | `expect_used` | warn + ratchet | `expect` is the sanctioned invariant mechanism: if you intentionally panic, name the invariant. All 10 existing production expects were audited and each names its invariant. New expects may not grow the count. | 10 |
-| `panic` | deny | Production code returns errors; it does not panic. Tests may panic. | 0 |
+| `panic` | deny (strict crates); ratchet elsewhere | Production code returns errors; it does not panic. Tests may panic. | 0 |
 | `todo`, `unimplemented` | deny | No shipped placeholder. | 0 |
 | `dbg_macro` | deny | No debugging output in production. | 0 |
 | `print_stdout`, `print_stderr` | expect-only | Product output goes through the output abstractions. The 6 bin entry-point prints carry `#[expect(..., reason)]`; any new print site needs the same reason. | 6 |
@@ -141,10 +151,13 @@ Tests get a separate, looser treatment: the same thresholds, but violations
 are ratcheted instead of denied. Long integration tests are legitimate.
 New test code must still be clean via the touched-files rule.
 
-### 6. Slop ratchet — `tools/quality`
+### 6. Slop pattern ratchet — not implemented
 
-A dependency-free script counts repository-level patterns and compares them
-against `tools/quality/baseline.json`. CI fails on growth.
+The clone/`Box<dyn Error>`/`Arc<Mutex<`/unsafe-hygiene counter described
+below is **not implemented**; `baseline.json` holds clippy lint counts only.
+The clone lints (`redundant_clone`) and unsafe hygiene are enforced through
+the deny set and the SAFETY-comment review rule instead. A pattern counter
+remains future work.
 
 | Pattern | Why |
 |---|---|
@@ -204,7 +217,7 @@ against `tools/quality/baseline.json`. CI fails on growth.
   dies when the lint stops firing.
 - New code must be clean. Existing debt cannot grow. Debt shrinks only
   through deliberate, reviewable work.
-- The slop baseline records today's counts. It is a floor, not a ceiling.
+- The ratchet baseline records today's per-file counts. It is a floor, not a ceiling.
 - This branch fixes the deny-set debt (the 7 macOS errors, 86 dead-code
   sites, panic-policy hits, 10 cognitive, 20 type-complexity, the curated
   auto-fixable batch, 13 `SAFETY` comments, 22 allow-reasons, and the

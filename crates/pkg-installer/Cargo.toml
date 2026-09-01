@@ -33,6 +33,13 @@ tempfile = "=3.27.0"
 
 [lints.rust]
 unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "deny"
+unused_must_use = "deny"
+unused_imports = "deny"
+unused_variables = "deny"
+unused_assignments = "deny"
+dead_code = "deny"
 
 [lints.clippy]
 all = "deny"

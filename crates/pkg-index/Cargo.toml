@@ -25,3 +25,7 @@ criterion = "=0.8.2"
 [[bench]]
 name = "v1"
 harness = false
+
+# Opt into the workspace-wide lint policy (ADR 0005).
+[lints]
+workspace = true

@@ -18,3 +18,7 @@ serde_json = "=1.0.151"
 
 [dev-dependencies]
 tempfile = "=3.27.0"
+
+# Opt into the workspace-wide lint policy (ADR 0005).
+[lints]
+workspace = true

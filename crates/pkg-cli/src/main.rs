@@ -1,3 +1,5 @@
+//! Production CLI entry point: command parsing, dispatch, and exit codes.
+
 use std::process::ExitCode as ProcessExitCode;
 
 use clap::Parser;

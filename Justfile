@@ -18,6 +18,8 @@ quality:
     tools/quality/quality-gate.sh check
 
 # Strictest gate: every file changed against BASE_REF must be debt-free.
+# BASE_REF defaults to origin/main; export it for stacked branches, e.g.
+# `BASE_REF=origin/dn/16-determinate-cutover just lint-strict`.
 lint-strict:
     FULL_TOUCHED=1 tools/quality/quality-gate.sh check
 

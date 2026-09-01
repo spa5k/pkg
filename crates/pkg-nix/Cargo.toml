@@ -57,3 +57,7 @@ lzma-rust2 = { version = "=0.18.1", default-features = false, features = ["std",
 [dev-dependencies]
 lzma-rust2 = { version = "=0.18.1", default-features = false, features = ["std", "xz", "encoder"] }
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
+
+# Opt into the workspace-wide lint policy (ADR 0005).
+[lints]
+workspace = true

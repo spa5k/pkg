@@ -1,3 +1,5 @@
+//! Production entry point for the privileged root helper.
+
 use std::process::ExitCode;
 
 #[allow(clippy::print_stdout, reason = "the helper never prints to stdout")]

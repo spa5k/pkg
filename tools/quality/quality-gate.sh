@@ -8,18 +8,27 @@
 # config for the measurement, restores the real one afterwards, and compares
 # the measured debt against the checked-in baseline:
 #
-#   tools/quality/quality-gate.sh check   fail on any growth or touched-file debt
+#   tools/quality/quality-gate.sh check   fail on any debt growth (global and per file)
 #   tools/quality/quality-gate.sh rebase  record the current debt as the baseline
 #
-# The touched-files rule: every Rust file changed against BASE_REF (default
-# origin/main) must carry zero diagnostics from the strict set. Existing debt
-# in untouched files is tolerated; touched files must improve.
+# `check` enforces two ratchets: no lint total may grow, and no file may grow
+# beyond its per-lint baseline. With FULL_TOUCHED=1 (just lint-strict) it
+# additionally requires every file changed against BASE_REF to be debt-free.
+# Existing debt is tolerated exactly where it already lives; new debt is not.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
 BASE_REF="${BASE_REF:-origin/main}"
+if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+    BASE_REF="origin/${GITHUB_BASE_REF}"
+fi
+# Never fail open: a missing BASE_REF must be loud, not an empty diff.
+if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null 2>&1; then
+    echo "::error::BASE_REF '$BASE_REF' does not resolve; export BASE_REF to a reachable ref" >&2
+    exit 1
+fi
 STRICT_CONFIG="$ROOT/tools/quality/clippy-strict.toml"
 BASELINE="$ROOT/tools/quality/baseline.json"
 
@@ -89,13 +98,22 @@ measure() {
     for lint in "${RATCHET_LINTS[@]}"; do
         flags+=(-A "$lint" -W "$lint")
     done
-    local output
+    # Never leave the strict config behind: restore even when clippy itself
+    # fails (compile error, deny, missing toolchain). `set -e` would abort
+    # the script before the restore otherwise.
+    local output status
     output="$(cargo clippy --locked --workspace --lib --bins --all-features \
-        --message-format json -- "${flags[@]}" 2>/dev/null)"
+        --message-format json -- "${flags[@]}" 2>&1)"
+    status=$?
 
     rm -f clippy.toml
     if [[ $had_config -eq 1 ]]; then
         mv clippy.toml.quality-bak clippy.toml
+    fi
+    if [[ $status -ne 0 ]]; then
+        echo "clippy failed (exit $status):" >&2
+        printf '%s\n' "$output" | tail -20 >&2
+        exit "$status"
     fi
     printf '%s\n' "$output" | python3 "$ROOT/tools/quality/report.py" "$ROOT"
 }
@@ -124,7 +142,7 @@ check() {
     local measurements
     measurements="$(measure)"
     local changed
-    changed="$(git diff --name-only "$BASE_REF"...HEAD -- '*.rs' 2>/dev/null || true)"
+    changed="$(git diff --name-only "$BASE_REF"...HEAD -- '*.rs')"
 
     CHANGED_FILES="$changed" python3 "$ROOT/tools/quality/compare.py" "$BASELINE" <<<"$measurements"
     echo "G-QUALITY: PASS"

@@ -17,9 +17,11 @@ use exacl::getfacl;
 use listenfd::ListenFd;
 #[cfg(target_os = "macos")]
 use nix::fcntl::{OFlag, open, openat, renameat};
+#[cfg(target_os = "macos")]
 use nix::sys::stat::{FchmodatFlags, Mode, fchmodat, mkdirat};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nix::unistd::{Gid, Uid, User};
+#[cfg(target_os = "macos")]
 use nix::unistd::{UnlinkatFlags, unlinkat};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use pkg_channel::{ChannelClient, TrustedRoot};
@@ -635,9 +637,16 @@ fn bind_macos_listener(
     )
     .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
     // Keep the name short: macOS limits a Unix socket path to 104 bytes, and
-    // the endpoint parent plus socket name already consumes most of it.
-    let staging_name = format!(".pkg-s{:x}", STAGE_SEQ.fetch_add(1, Ordering::Relaxed));
-    // A crashed earlier run may have left the stage directory behind.
+    // the endpoint parent plus socket name already consumes most of it. The
+    // pid scopes the name so two overlapping processes (e.g. a launchd
+    // restart while the old broker still runs) can never collide; the seq
+    // separates repeated binds within one process.
+    let staging_name = format!(
+        ".pkg-s{:x}-{:x}",
+        std::process::id(),
+        STAGE_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    // A crashed earlier run may have left this pid's stage directory behind.
     let _ = unlinkat(&parent_fd, staging_name.as_str(), UnlinkatFlags::RemoveDir);
     mkdirat(
         &parent_fd,
@@ -672,6 +681,12 @@ fn bind_macos_listener(
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
         Ok(listener)
     })();
+    // On success the staging dir is empty. On failure the bound socket may
+    // still sit inside it; remove it so the dir cleanup below succeeds and
+    // the next run has no residue to trip over.
+    if result.is_err() {
+        let _ = unlinkat(&staging_fd, socket_name, UnlinkatFlags::NoRemoveDir);
+    }
     let _ = unlinkat(&parent_fd, staging_name.as_str(), UnlinkatFlags::RemoveDir);
     let listener = result?;
     if !socket_metadata_matches(path, mode, owner_uid, group_gid) {
