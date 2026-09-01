@@ -572,7 +572,7 @@ const fn persistence_failed() -> LinuxInstallJournalFileError {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
 

@@ -190,7 +190,10 @@ fn status_for(report: &DoctorReport, id: &str) -> CheckStatus {
         .checks()
         .iter()
         .find(|check| check.id() == id)
-        .map_or(CheckStatus::Deferred, |check| check.status())
+        .map_or(
+            CheckStatus::Deferred,
+            super::commands::doctor::DoctorCheck::status,
+        )
 }
 
 fn collect_log_file(path: &Path, operations: &mut Vec<SupportOperation>) {

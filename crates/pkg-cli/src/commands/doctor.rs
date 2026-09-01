@@ -133,7 +133,10 @@ pub(crate) enum InstalledNixState {
     Unknown,
 }
 
-#[allow(dead_code)] // Inactive until the privileged DN10 evidence producer exists.
+#[allow(
+    dead_code,
+    reason = "inactive until the privileged DN10 evidence producer exists"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstalledNixEvidence {
     Absent,
@@ -144,7 +147,10 @@ enum InstalledNixEvidence {
     Unknown,
 }
 
-#[allow(dead_code)] // Inactive until the privileged DN10 evidence producer exists.
+#[allow(
+    dead_code,
+    reason = "inactive until the privileged DN10 evidence producer exists"
+)]
 const fn classify_installed_nix(
     handoff: Result<DeterminateHandoffState, DeterminateHandoffError>,
     evidence: InstalledNixEvidence,

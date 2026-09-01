@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 
 use crate::{LeaseMode, StateJournal, StateLayout, StateLease};
 
+/// One journal prune row: the operation id and whether the prune finished.
+type PruneRow = (String, bool);
+
 const MAX_GENERATIONS: usize = 10_000;
 const MAX_KEEP_GENERATIONS: usize = 1_000;
 const MAX_AGE_DAYS: u64 = 36_525;
@@ -110,6 +113,10 @@ pub fn plan_gc(
         return Err(GcError::InvalidArchive);
     }
     let active_id = active.generation().id();
+    #[allow(
+        clippy::similar_names,
+        reason = "active_id and active_uid are one fixed snapshot identity pair"
+    )]
     let active_uid = active.generation().uid();
     let active_system = active.state().locked().system();
     let mut ids = BTreeSet::new();
@@ -447,7 +454,7 @@ fn prune_state(
     journal: &StateJournal,
     lease: &StateLease,
     generation_id: &str,
-) -> Result<Option<(String, bool)>, GcError> {
+) -> Result<Option<PruneRow>, GcError> {
     let mut state = None;
     for row in journal.rows(lease).map_err(|_| GcError::Journal)? {
         let fields = row.payload().fields();
@@ -702,7 +709,7 @@ mod tests {
         let old = snapshot("gen-0001", None, "2026-06-01T00:00:00Z");
         let recent = snapshot("gen-0002", Some("gen-0001"), "2026-08-09T00:00:00Z");
         let active = snapshot("gen-0003", Some("gen-0002"), "2026-08-10T00:00:00Z");
-        let archive = vec![old.clone(), active.clone(), recent.clone()];
+        let archive = vec![old, active.clone(), recent];
         let now = parse_utc_seconds("2026-08-10T00:00:00Z").unwrap();
         let plan = plan_gc(&active, &archive, GcPolicy::new(1, 30).unwrap(), now).unwrap();
         assert_eq!(

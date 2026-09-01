@@ -5,6 +5,9 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
+
+/// One opened user state parent and its component name.
+type StateParent = (OwnedFd, &'static str);
 #[cfg(test)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -39,6 +42,27 @@ pub fn remove_owned_tree(
     let relative = target.strip_prefix("/").map_err(|_| unsafe_state())?;
     let parent_path = relative.parent().ok_or_else(unsafe_state)?;
     let name = relative.file_name().ok_or_else(unsafe_state)?;
+    let Some(parent) = open_parent_chain(root, parent_path, root_owner_uid)? else {
+        return Ok(());
+    };
+    if !target_is_present(&parent, name)? {
+        // Already absent: removal is idempotent.
+        return Ok(());
+    }
+    let expected_mount = mount_boundary_fd(&parent)?;
+    let mut count = 0;
+    remove_entry(&parent, name, tree_owner_uid, expected_mount, &mut count)?;
+    fsync(&parent).map_err(|_| operation_failed())
+}
+
+/// Walks `parent_path` under `root`, validating every directory against the
+/// root owner. `Ok(None)` means a component is missing, so the tree is
+/// already absent.
+fn open_parent_chain(
+    root: &Path,
+    parent_path: &Path,
+    root_owner_uid: u32,
+) -> Result<Option<OwnedFd>, LinuxUserCleanupError> {
     let mut parent = open(root, directory_flags(), Mode::empty()).map_err(|_| unsafe_state())?;
     validate_directory(
         &fstat(&parent).map_err(|_| operation_failed())?,
@@ -50,7 +74,7 @@ pub fn remove_owned_tree(
         };
         parent = match openat(&parent, component, directory_flags(), Mode::empty()) {
             Ok(child) => child,
-            Err(Errno::NOENT) => return Ok(()),
+            Err(Errno::NOENT) => return Ok(None),
             Err(_) => return Err(unsafe_state()),
         };
         validate_directory(
@@ -58,15 +82,18 @@ pub fn remove_owned_tree(
             root_owner_uid,
         )?;
     }
-    let expected_mount = mount_boundary_fd(&parent)?;
-    match statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(_) => {}
-        Err(Errno::NOENT) => return Ok(()),
-        Err(_) => return Err(operation_failed()),
+    Ok(Some(parent))
+}
+
+/// Reports whether the target entry exists under `parent`, without following
+/// links. An absent target is a successful `Ok(false)`, preserving the
+/// idempotent-removal contract of [`remove_owned_tree`].
+fn target_is_present(parent: &OwnedFd, name: &OsStr) -> Result<bool, LinuxUserCleanupError> {
+    match statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(_) => Ok(true),
+        Err(Errno::NOENT) => Ok(false),
+        Err(_) => Err(operation_failed()),
     }
-    let mut count = 0;
-    remove_entry(&parent, name, tree_owner_uid, expected_mount, &mut count)?;
-    fsync(&parent).map_err(|_| operation_failed())
 }
 
 /// Stable failures for Linux per-user uninstall cleanup.
@@ -415,35 +442,48 @@ fn remove_user_state(
     match statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW) {
         Err(Errno::NOENT) => return Ok(()),
         Ok(before) => {
-            let observed_mount = mount_boundary_at(&parent, OsStr::new(name))?;
-            validate_entry(&before, uid, observed_mount, parent_boundary)?;
-            if FileType::from_raw_mode(before.st_mode) != FileType::Directory {
-                return Err(unsafe_state());
-            }
-            let state = openat(&parent, name, directory_flags(), Mode::empty())
-                .map_err(|_| unsafe_state())?;
-            let opened = fstat(&state).map_err(|_| operation_failed())?;
-            if !same_identity(&before, &opened) || mount_boundary_fd(&state)? != parent_boundary {
-                return Err(identity_changed());
-            }
-            verify_state_ownership_marker(&state, uid, parent_boundary)?;
-            if *count >= MAX_ENTRIES {
-                return Err(unsafe_state());
-            }
-            *count += 1;
-            remove_opened_directory(
-                &parent,
-                OsStr::new(name),
-                &state,
-                &before,
-                uid,
-                parent_boundary,
-                count,
-            )?;
+            remove_present_state(&parent, name, &before, uid, parent_boundary, count)?;
         }
         Err(_) => return Err(operation_failed()),
     }
     fsync(&parent).map_err(|_| operation_failed())
+}
+
+/// Validates and removes one present per-user state directory, refusing
+/// non-directories, identity changes, and entry-limit overruns.
+fn remove_present_state(
+    parent: &OwnedFd,
+    name: &str,
+    before: &Stat,
+    uid: u32,
+    parent_boundary: u64,
+    count: &mut usize,
+) -> Result<(), LinuxUserCleanupError> {
+    let observed_mount = mount_boundary_at(parent, OsStr::new(name))?;
+    validate_entry(before, uid, observed_mount, parent_boundary)?;
+    if FileType::from_raw_mode(before.st_mode) != FileType::Directory {
+        return Err(unsafe_state());
+    }
+    let state =
+        openat(parent, name, directory_flags(), Mode::empty()).map_err(|_| unsafe_state())?;
+    let opened = fstat(&state).map_err(|_| operation_failed())?;
+    if !same_identity(before, &opened) || mount_boundary_fd(&state)? != parent_boundary {
+        return Err(identity_changed());
+    }
+    verify_state_ownership_marker(&state, uid, parent_boundary)?;
+    if *count >= MAX_ENTRIES {
+        return Err(unsafe_state());
+    }
+    *count += 1;
+    remove_opened_directory(
+        parent,
+        OsStr::new(name),
+        &state,
+        before,
+        uid,
+        parent_boundary,
+        count,
+    )
 }
 
 fn verify_state_ownership_marker(
@@ -504,7 +544,7 @@ fn user_state_exists(
 fn open_state_parent(
     home: &OwnedFd,
     uid: u32,
-) -> Result<Option<(OwnedFd, &'static str)>, LinuxUserCleanupError> {
+) -> Result<Option<StateParent>, LinuxUserCleanupError> {
     let (name, parents) = USER_STATE_COMPONENTS
         .split_last()
         .ok_or_else(unsafe_state)?;
@@ -1219,6 +1259,28 @@ mod tests {
 
         assert!(cleaner.remove_user_roots().is_err());
         assert_eq!(fs::read(target.path().join("must-remain"))?, b"foreign");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod owned_tree_contract {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn absent_target_is_idempotent_success() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let root = temp.path().join("root");
+        fs::create_dir_all(&root)?;
+        let uid = fs::metadata(&root)?.uid();
+
+        // The parent chain exists but the target never did.
+        remove_owned_tree(&root, Path::new("/opt/pkg/nix"), uid, uid)?;
+
+        // A second removal of the same absent target stays a no-op.
+        remove_owned_tree(&root, Path::new("/opt/pkg/nix"), uid, uid)?;
         Ok(())
     }
 }

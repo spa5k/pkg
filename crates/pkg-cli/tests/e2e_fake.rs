@@ -1,3 +1,5 @@
+//! End-to-end CLI tests against the fake Nix and broker harness.
+
 use std::sync::Arc;
 
 use pkg_cli::cli::{

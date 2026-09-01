@@ -709,7 +709,10 @@ const fn native_system(system: System) -> bool {
     return matches!(system, System::X8664Darwin);
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     return matches!(system, System::Aarch64Darwin);
-    #[allow(unreachable_code)]
+    #[expect(
+        unreachable_code,
+        reason = "the cfg-gated return above makes this fallback reachable only on non-Darwin builds"
+    )]
     false
 }
 

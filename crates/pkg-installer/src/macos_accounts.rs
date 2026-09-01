@@ -363,41 +363,6 @@ impl MacOsAccountManager {
     }
 }
 
-pub fn verify_macos_accounts_absent() -> Result<(), MacOsError> {
-    let users = list_ids("/Users", "UniqueID")?;
-    let groups = list_ids("/Groups", "PrimaryGroupID")?;
-    validate_directory(&users)?;
-    validate_directory(&groups)?;
-    if crate::macos_install_assets()
-        .iter()
-        .any(|asset| match asset.kind() {
-            MacOsAssetKind::User => users.contains_key(asset.path_or_name()),
-            MacOsAssetKind::Group => groups.contains_key(asset.path_or_name()),
-            MacOsAssetKind::Directory | MacOsAssetKind::File => false,
-        })
-    {
-        Err(MacOsError::backend_failure())
-    } else {
-        Ok(())
-    }
-}
-
-pub fn verify_macos_accounts_after_broker_removal(
-    groups: ManagedGroupBindings,
-) -> Result<(), MacOsError> {
-    let mut manager = MacOsAccountManager::new(groups)?;
-    for asset in crate::macos_install_assets() {
-        match asset.kind() {
-            MacOsAssetKind::User => manager.verify_asset_absent(*asset)?,
-            MacOsAssetKind::Group => {
-                manager.classify_for_removal(*asset)?;
-            }
-            MacOsAssetKind::Directory | MacOsAssetKind::File => {}
-        }
-    }
-    Ok(())
-}
-
 pub fn broker_account_presence(
     groups: ManagedGroupBindings,
 ) -> Result<MacOsAssetPresence, MacOsError> {

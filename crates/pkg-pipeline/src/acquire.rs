@@ -52,14 +52,14 @@ impl AcquiredInstall {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CacheAuthorityIdentity {
+pub struct CacheAuthorityIdentity {
     channel_sequence: ChannelSequence,
     policy_version: PolicyVersion,
     descriptor_sha256: [u8; 32],
 }
 
 impl CacheAuthorityIdentity {
-    fn from_channel(channel: &VerifiedChannel) -> Self {
+    const fn from_channel(channel: &VerifiedChannel) -> Self {
         Self {
             channel_sequence: channel.sequence(),
             policy_version: channel.policy_version(),
@@ -169,48 +169,10 @@ pub fn acquire_cache_only_with_progress(
         return Err(AcquireError::Refused);
     }
 
-    let mut selectors = BTreeMap::new();
-    for target in resolved.targets() {
-        if selectors
-            .insert(
-                target.selector().id().as_str().to_owned(),
-                target.selector().selector().clone(),
-            )
-            .is_some()
-        {
-            return Err(AcquireError::Refused);
-        }
-    }
-    let mut seen_paths = BTreeSet::new();
-    let mut planned_paths = Vec::new();
-    for planned in preflight.outputs() {
-        if seen_paths.insert(planned.store_path().as_str().to_owned()) {
-            planned_paths.push(planned.store_path().clone());
-        }
-    }
+    let selectors = selector_map(resolved)?;
+    let planned_paths = deduped_planned_paths(preflight);
     let download_bytes = trusted_download_bytes(&planned_paths, probe)?;
-
-    let mut root_owners = BTreeMap::new();
-    let mut selector_totals = BTreeMap::<String, (pkg_core::SelectorInput, u64)>::new();
-    for planned in preflight.outputs() {
-        let path = planned.store_path().as_str().to_owned();
-        if root_owners.contains_key(&path) {
-            continue;
-        }
-        let selector = selectors
-            .get(planned.selector_id().as_str())
-            .ok_or(AcquireError::Refused)?
-            .clone();
-        let bytes = download_bytes
-            .get(&path)
-            .copied()
-            .ok_or(AcquireError::Refused)?;
-        root_owners.insert(path, selector.as_str().to_owned());
-        let entry = selector_totals
-            .entry(selector.as_str().to_owned())
-            .or_insert((selector, 0));
-        entry.1 = entry.1.checked_add(bytes).ok_or(AcquireError::Refused)?;
-    }
+    let (root_owners, selector_totals) = owner_totals(preflight, &selectors, &download_bytes)?;
 
     let mut fetched = BTreeMap::<String, VerifiedSubstitute>::new();
     let mut selector_completed = BTreeMap::<String, u64>::new();
@@ -281,6 +243,74 @@ pub fn acquire_cache_only_with_progress(
         return Err(AcquireError::ProgressRefused);
     }
     Ok(AcquiredInstall { outputs, authority })
+}
+
+/// Builds the one-to-one selector map, refusing duplicate selector ids.
+fn selector_map(
+    resolved: &ResolvedInstall,
+) -> Result<BTreeMap<String, pkg_core::SelectorInput>, AcquireError> {
+    let mut selectors = BTreeMap::new();
+    for target in resolved.targets() {
+        if selectors
+            .insert(
+                target.selector().id().as_str().to_owned(),
+                target.selector().selector().clone(),
+            )
+            .is_some()
+        {
+            return Err(AcquireError::Refused);
+        }
+    }
+    Ok(selectors)
+}
+
+/// Deduplicates the planned output store paths in first-seen order.
+fn deduped_planned_paths(preflight: &PreflightInstall) -> Vec<pkg_core::StorePath> {
+    let mut seen_paths = BTreeSet::new();
+    let mut planned_paths = Vec::new();
+    for planned in preflight.outputs() {
+        if seen_paths.insert(planned.store_path().as_str().to_owned()) {
+            planned_paths.push(planned.store_path().clone());
+        }
+    }
+    planned_paths
+}
+
+/// One resolved owner table: path-to-selector plus per-selector byte totals.
+type OwnerTotals = (
+    BTreeMap<String, String>,
+    BTreeMap<String, (pkg_core::SelectorInput, u64)>,
+);
+
+/// Maps each planned root path to its selector and sums trusted bytes per
+/// selector, refusing unknown selectors or missing byte totals.
+fn owner_totals(
+    preflight: &PreflightInstall,
+    selectors: &BTreeMap<String, pkg_core::SelectorInput>,
+    download_bytes: &BTreeMap<String, u64>,
+) -> Result<OwnerTotals, AcquireError> {
+    let mut root_owners = BTreeMap::new();
+    let mut selector_totals = BTreeMap::<String, (pkg_core::SelectorInput, u64)>::new();
+    for planned in preflight.outputs() {
+        let path = planned.store_path().as_str().to_owned();
+        if root_owners.contains_key(&path) {
+            continue;
+        }
+        let selector = selectors
+            .get(planned.selector_id().as_str())
+            .ok_or(AcquireError::Refused)?
+            .clone();
+        let bytes = download_bytes
+            .get(&path)
+            .copied()
+            .ok_or(AcquireError::Refused)?;
+        root_owners.insert(path, selector.as_str().to_owned());
+        let entry = selector_totals
+            .entry(selector.as_str().to_owned())
+            .or_insert((selector, 0));
+        entry.1 = entry.1.checked_add(bytes).ok_or(AcquireError::Refused)?;
+    }
+    Ok((root_owners, selector_totals))
 }
 
 fn trusted_download_bytes(
@@ -368,7 +398,7 @@ pub fn assemble_cache_install_evidence(
         resolved.revision().clone(),
         resolved.nar_hash().clone(),
         resolved.system(),
-        targets,
+        &targets,
         substitutes,
         adapter,
     )

@@ -10,6 +10,10 @@ use crate::{
     BrokerHelperDispatch, LinuxHelperSession,
     platform::linux::{LinuxRootSetStore, provision_product_root_if_absent},
 };
+
+/// Progress callback for one macOS install journal update.
+type MacOsPersistProgress<'a> =
+    dyn FnMut(&crate::MacOsInstallJournal) -> Result<(), MacOsError> + 'a;
 #[cfg(target_os = "macos")]
 use nix::unistd::getpeereid;
 use pkg_core::{System, state::Digest};
@@ -1367,7 +1371,10 @@ enum InstallMutation {
 ///
 /// Returns a stable error for unsupported/unmanaged hosts, signature or
 /// readiness failure, unhealthy services, receipt failure, or incomplete rollback.
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one macOS install walks a closed vendor lifecycle sequence with per-phase rollback"
+)]
 pub fn install_macos(
     system: System,
     backend: &mut dyn MacOsInstallBackend,
@@ -1485,7 +1492,7 @@ pub fn recover_macos_install(
     journal: &mut crate::MacOsInstallJournal,
     backend: &mut dyn MacOsInstallBackend,
     recover_runtime: &mut dyn FnMut() -> Result<(), MacOsError>,
-    persist_progress: &mut dyn FnMut(&crate::MacOsInstallJournal) -> Result<(), MacOsError>,
+    persist_progress: &mut MacOsPersistProgress<'_>,
 ) -> Result<(), MacOsError> {
     while let Some((mutation, disposition, prior_digest)) =
         journal
@@ -1567,21 +1574,6 @@ fn macos_asset_by_id(id: &str) -> Result<MacOsInstallAsset, MacOsError> {
         .ok_or_else(MacOsError::backend_failure)
 }
 
-pub(crate) fn store_volume_prerequisite(id: &str) -> bool {
-    id.starts_with("build-user-")
-        || matches!(
-            id,
-            "broker-group"
-                | "broker-user"
-                | "build-group"
-                | "product-root"
-                | "product-bin"
-                | "service-root"
-                | "managed-nix-state"
-                | "helper-binary"
-        )
-}
-
 fn preflight_macos(
     system: System,
     backend: &mut dyn MacOsInstallBackend,
@@ -1619,7 +1611,10 @@ mod tests {
     use std::collections::{BTreeSet, HashSet};
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one closed asset-manifest assertion table"
+    )]
     fn asset_manifest_is_closed_unique_and_has_exact_build_users() -> Result<(), Box<dyn Error>> {
         let mut ids = HashSet::new();
         let mut paths = HashSet::new();

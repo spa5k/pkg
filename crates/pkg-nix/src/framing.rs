@@ -2205,7 +2205,7 @@ fn decode_root_nix_non_success(
     Ok(RootNixResponse::Failed { operation, failure })
 }
 
-fn readiness_wire(readiness: &BuildReadiness) -> RootNixReadinessWire {
+const fn readiness_wire(readiness: &BuildReadiness) -> RootNixReadinessWire {
     RootNixReadinessWire {
         sandbox_enabled: readiness.sandbox_enabled(),
         sandbox_fallback: readiness.sandbox_fallback(),
@@ -2282,14 +2282,14 @@ fn decode_cache_observations(payload: &[u8]) -> Result<Vec<CachePathObservation>
     let wires: Vec<CacheObservationOwnedWire> = decode_json(payload)?;
     let values = wires
         .into_iter()
-        .map(promote_cache_observation)
+        .map(|wire| promote_cache_observation(&wire))
         .collect::<Result<Vec<_>, _>>()?;
     validate_path_names(values.iter().map(|value| value.path().as_str()))?;
     Ok(values)
 }
 
 fn promote_cache_observation(
-    wire: CacheObservationOwnedWire,
+    wire: &CacheObservationOwnedWire,
 ) -> Result<CachePathObservation, FrameError> {
     let path =
         StorePath::new(&wire.path).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
@@ -2341,7 +2341,7 @@ fn decode_cache_closures(payload: &[u8]) -> Result<Vec<CacheDownloadClosure>, Fr
             let paths = wire
                 .paths
                 .into_iter()
-                .map(promote_cache_observation)
+                .map(|wire| promote_cache_observation(&wire))
                 .collect::<Result<Vec<_>, _>>()?;
             CacheDownloadClosure::new(root, paths)
                 .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))
@@ -2407,7 +2407,7 @@ fn take_u32(bytes: &mut &[u8]) -> Result<u32, FrameError> {
     })?))
 }
 
-fn require_empty(payload: &[u8]) -> Result<(), FrameError> {
+const fn require_empty(payload: &[u8]) -> Result<(), FrameError> {
     if payload.is_empty() {
         Ok(())
     } else {
@@ -2432,7 +2432,7 @@ const fn adapter_error_code(code: NixAdapterErrorCode) -> u8 {
     }
 }
 
-fn parse_adapter_error_byte(code: u8) -> Result<NixAdapterErrorCode, FrameError> {
+const fn parse_adapter_error_byte(code: u8) -> Result<NixAdapterErrorCode, FrameError> {
     match code {
         1 => Ok(NixAdapterErrorCode::UnexpectedCall),
         2 => Ok(NixAdapterErrorCode::OversizedInput),
@@ -2459,7 +2459,7 @@ const fn cache_error_code(code: BuildCacheErrorCode) -> u8 {
     }
 }
 
-fn parse_cache_error_code(code: u8) -> Result<BuildCacheErrorCode, FrameError> {
+const fn parse_cache_error_code(code: u8) -> Result<BuildCacheErrorCode, FrameError> {
     match code {
         1 => Ok(BuildCacheErrorCode::InvalidSubject),
         2 => Ok(BuildCacheErrorCode::ProbeFailed),
@@ -2480,7 +2480,7 @@ const fn nixpkgs_error_code(code: NixpkgsSourceErrorCode) -> u8 {
     }
 }
 
-fn parse_nixpkgs_error_code(code: u8) -> Result<NixpkgsSourceErrorCode, FrameError> {
+const fn parse_nixpkgs_error_code(code: u8) -> Result<NixpkgsSourceErrorCode, FrameError> {
     match code {
         1 => Ok(NixpkgsSourceErrorCode::InvalidVerifiedPin),
         2 => Ok(NixpkgsSourceErrorCode::RunnerFailure),
@@ -2947,7 +2947,7 @@ fn decode_handle_body(bytes: &[u8]) -> Result<(OperationHandle, Box<RawValue>), 
     Ok((parse_handle(&wire.handle)?, wire.request))
 }
 
-fn operation_name(kind: BrokerOperationKind) -> &'static str {
+const fn operation_name(kind: BrokerOperationKind) -> &'static str {
     match kind {
         BrokerOperationKind::Doctor => "doctor",
         BrokerOperationKind::Refresh => "refresh",
@@ -2974,7 +2974,7 @@ fn parse_operation(value: &str) -> Result<BrokerOperationKind, FrameError> {
     }
 }
 
-fn status_name(status: OperationStatus) -> &'static str {
+const fn status_name(status: OperationStatus) -> &'static str {
     match status {
         OperationStatus::Running => "running",
         OperationStatus::Completed => "completed",
@@ -5472,7 +5472,7 @@ mod tests {
                 .code(),
             FrameErrorCode::UnsupportedVersion
         );
-        let mut bad_length = encoded.clone();
+        let mut bad_length = encoded;
         bad_length.push(b' ');
         assert_eq!(
             ProductFrameCodec::decode_cli_request(&bad_length)

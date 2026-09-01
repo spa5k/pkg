@@ -3,7 +3,7 @@ use pkg_core::state::CollisionPolicy;
 use pkg_store::{ActivationInput, ActivationPlan};
 use serde_json::{Value, json};
 
-pub(crate) fn activation_inputs(state: &LifecycleState) -> Vec<ActivationInput> {
+pub fn activation_inputs(state: &LifecycleState) -> Vec<ActivationInput> {
     state
         .manifest()
         .entries()
@@ -21,7 +21,7 @@ pub(crate) fn activation_inputs(state: &LifecycleState) -> Vec<ActivationInput> 
         .collect()
 }
 
-pub(crate) const fn collision_policy_name(policy: CollisionPolicy) -> &'static str {
+pub const fn collision_policy_name(policy: CollisionPolicy) -> &'static str {
     match policy {
         CollisionPolicy::Abort => "abort",
         CollisionPolicy::KeepFirst => "keep-first",
@@ -29,7 +29,7 @@ pub(crate) const fn collision_policy_name(policy: CollisionPolicy) -> &'static s
     }
 }
 
-pub(crate) fn collision_resolutions(plan: &ActivationPlan) -> Option<Vec<Value>> {
+pub fn collision_resolutions(plan: &ActivationPlan) -> Option<Vec<Value>> {
     plan.collisions()
         .iter()
         .map(|collision| {

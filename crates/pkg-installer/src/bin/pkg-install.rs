@@ -1,3 +1,5 @@
+//! Production installer entry point.
+
 use std::{ffi::OsString, fmt, path::Path, process::ExitCode};
 
 use nix::unistd::Uid;
@@ -21,6 +23,8 @@ const LINUX_SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
 const MACOS_CHANNEL_DATASTORE: &str = "/Library/Application Support/pkg/broker-home/channel";
 const MACOS_SCRATCH_PARENT: &str = "/Library/Application Support/pkg/helper-home/tmp";
 
+#[expect(clippy::print_stdout, reason = "the installer only product output")]
+#[expect(clippy::print_stderr, reason = "the installer only failure output")]
 fn main() -> ExitCode {
     match run() {
         Ok(success) => {

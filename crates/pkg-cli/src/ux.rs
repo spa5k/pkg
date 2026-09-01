@@ -60,6 +60,10 @@ impl Terminal {
     }
 
     /// Construct explicit capabilities for deterministic tests and injected frontends.
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "each flag mirrors one independent terminal capability"
+    )]
     #[must_use]
     pub const fn new(stdin: bool, stdout: bool, stderr: bool, color: bool) -> Self {
         Self {

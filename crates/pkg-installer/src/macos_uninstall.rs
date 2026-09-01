@@ -26,7 +26,10 @@ const PRODUCT_PRIVATE_STATE: [&str; 2] = [
 ];
 
 /// Product cleanup followed by terminal vendor uninstall.
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each boolean mirrors one documented macOS uninstall classification"
+)]
 pub struct ProductionMacOsUninstallBackend {
     system: System,
     release_digest: Digest,

@@ -52,7 +52,12 @@ fn select_install_mode(
     }
 }
 
-#[allow(clippy::struct_excessive_bools)]
+/// The production macOS install backend: asset, service, and journal state
+/// for one attempt, with every preflight classification as a named flag.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each boolean mirrors one documented macOS preflight classification"
+)]
 pub struct ProductionMacOsInstallBackend {
     system: System,
     assets: MacOsPlatformAssetManager,
@@ -106,6 +111,7 @@ impl ProductionMacOsInstallBackend {
         Ok(backend)
     }
 
+    /// The classified install mode for this attempt.
     #[must_use]
     pub const fn install_mode(&self) -> MacOsInstallMode {
         self.mode

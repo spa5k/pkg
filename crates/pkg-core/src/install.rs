@@ -47,7 +47,7 @@ impl InstallPackage {
 
     /// Stable selector id being added.
     #[must_use]
-    pub fn id(&self) -> &SelectorId {
+    pub const fn id(&self) -> &SelectorId {
         self.selector.id()
     }
     /// Resolved desired selector.
@@ -156,13 +156,13 @@ pub fn install_packages(
                 .manifest()
                 .entries()
                 .iter()
-                .map(|entry| entry.id())
+                .map(ManifestEntry::id)
                 .collect::<BTreeSet<_>>();
             let existing_selectors = state
                 .manifest()
                 .entries()
                 .iter()
-                .map(|entry| entry.selector())
+                .map(ManifestEntry::selector)
                 .collect::<BTreeSet<_>>();
             if packages.iter().any(|package| {
                 existing_ids.contains(package.id())

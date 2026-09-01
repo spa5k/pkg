@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use crate::lifecycle::LifecycleState;
-use crate::state::Generation;
+use crate::state::{Generation, GenerationOutput, ManifestEntry};
 use crate::{ChannelSequence, StorePath};
 
 /// One immutable generation record proven to match its manifest/lock snapshots.
@@ -56,12 +56,12 @@ impl GenerationSnapshot {
             .manifest()
             .entries()
             .iter()
-            .map(|entry| entry.id())
+            .map(ManifestEntry::id)
             .collect::<BTreeSet<_>>();
         let output_ids = generation
             .outputs()
             .iter()
-            .map(|output| output.id())
+            .map(GenerationOutput::id)
             .collect::<BTreeSet<_>>();
         if expected_ids != output_ids || generation.outputs().len() != expected_ids.len() {
             return Err(GenerationSnapshotError::OutputSetMismatch);

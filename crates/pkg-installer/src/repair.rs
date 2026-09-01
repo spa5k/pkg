@@ -423,7 +423,10 @@ pub fn recover_repair(
 /// Returns a closed error for verify, admission, journal, capability, helper,
 /// or final-integrity failure. Any opened broker operation is cancelled on
 /// failure, releasing its build/GC permits.
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one generation repair walks a closed recoverable state machine; splitting it would spread the invariant checks"
+)]
 pub fn repair_generation(
     request: &RepairRequest,
     adapter: &dyn NixAdapter,

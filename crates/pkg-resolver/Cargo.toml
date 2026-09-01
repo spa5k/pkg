@@ -15,3 +15,7 @@ pkg-nix = { path = "../pkg-nix" }
 pkg-channel = { path = "../pkg-channel" }
 pkg-testkit = { path = "../pkg-testkit" }
 serde_json = "=1.0.151"
+
+# Opt into the workspace-wide lint policy (ADR 0005).
+[lints]
+workspace = true

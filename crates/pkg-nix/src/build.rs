@@ -194,6 +194,10 @@ struct SandboxReadiness {
 
 impl BuildReadiness {
     /// Constructs explicit readiness; platform invariants are checked by the plan.
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "each flag mirrors one independent, documented readiness classification"
+    )]
     #[must_use]
     pub fn new(
         sandbox_enabled: bool,
@@ -626,6 +630,11 @@ impl RepairBuildPlan {
     }
 
     /// Produces the ordinary sanitized build-preview shape for repair approval.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the closed resource-notice table omits a supported
+    /// platform, which is an invariant violation.
     pub fn preview(&self) -> Result<BuildPreview, BuildEngineError> {
         let digest = self.digest()?;
         let (os, arch) = product_platform(self.system_identity);
@@ -689,7 +698,7 @@ impl RepairBuildPlan {
                     isolation: "sandbox".to_owned(),
                     per_build_resource_cap: false,
                     notice: resource_notice(os, BuildPurpose::Repair)
-                        .unwrap()
+                        .expect("resource notice exists for the repair purpose")
                         .to_owned(),
                 },
             },
@@ -737,7 +746,10 @@ struct BuildPlanDigestSubject<'a> {
 
 impl BuildPlan {
     /// Constructs the deterministic operation-wide approval subject.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one engine constructor binds the full authenticated plan context; no coherent subset exists"
+    )]
     pub fn new(
         nix_runtime_version: &NixVersion,
         descriptor_hash: Digest,
@@ -778,7 +790,7 @@ impl BuildPlan {
 
         let missing_derivation_names = missing_derivations
             .iter()
-            .map(|path| path.as_str())
+            .map(pkg_core::DerivationPath::as_str)
             .collect::<BTreeSet<_>>();
         let mut closure = BTreeMap::new();
         let mut canonical_targets = Vec::with_capacity(targets.len());
@@ -981,6 +993,11 @@ impl BuildPlan {
     }
 
     /// Produces a sanitized preview with volatile, non-digest-bound estimates.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the closed resource-notice table omits a supported
+    /// platform, which is an invariant violation.
     pub fn preview_with_estimates(
         &self,
         estimates: BuildPreviewEstimates,
@@ -1032,7 +1049,9 @@ impl BuildPlan {
                 resource_boundary: PreviewResourceBoundary {
                     isolation: "sandbox".to_owned(),
                     per_build_resource_cap: false,
-                    notice: resource_notice(os, BuildPurpose::Build).unwrap().to_owned(),
+                    notice: resource_notice(os, BuildPurpose::Build)
+                        .expect("resource notice exists for the build purpose")
+                        .to_owned(),
                 },
             },
             approval_required: !self.builds.is_empty(),
@@ -1141,7 +1160,10 @@ impl InstallEvidence {
     ///
     /// Refuses inconsistent source identity, targets, substitute metadata, or
     /// adapter results.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "cache evidence needs the full authenticated source identity in one closed record"
+    )]
     pub fn from_cache_substitutes(
         descriptor_hash: Digest,
         channel_sequence: ChannelSequence,
@@ -1149,7 +1171,7 @@ impl InstallEvidence {
         revision: NixpkgsRevision,
         source_nar_hash: NarHash,
         system: System,
-        targets: Vec<BuildPlanTarget>,
+        targets: &[BuildPlanTarget],
         substitutes: Vec<crate::VerifiedSubstitute>,
         adapter: &dyn NixAdapter,
     ) -> Result<Self, BuildEngineError> {
@@ -1185,8 +1207,8 @@ impl InstallEvidence {
             revision,
             source_nar_hash,
             system,
-            &targets,
-            metadata,
+            targets,
+            &metadata,
         )
     }
 
@@ -1254,11 +1276,14 @@ impl InstallEvidence {
                 .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?,
             plan.system_identity,
             &plan.install_targets,
-            metadata,
+            &metadata,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "executed-plan evidence needs the full authenticated identity in one closed record"
+    )]
     fn from_output_metadata(
         descriptor_hash: Digest,
         channel_sequence: ChannelSequence,
@@ -1267,7 +1292,7 @@ impl InstallEvidence {
         source_nar_hash: NarHash,
         system: System,
         plan_targets: &[BuildPlanTarget],
-        metadata: BTreeMap<String, (PathInfoReport, BuildOutputProvenance)>,
+        metadata: &BTreeMap<String, (PathInfoReport, BuildOutputProvenance)>,
     ) -> Result<Self, BuildEngineError> {
         let mut targets = Vec::with_capacity(plan_targets.len());
         let mut used_paths = BTreeSet::new();
@@ -1330,7 +1355,10 @@ impl InstallEvidence {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "plan admission needs the full closed build plan in one bound"
+    )]
     fn new(
         descriptor_hash: Digest,
         channel_sequence: ChannelSequence,
@@ -1896,7 +1924,7 @@ fn canonical_version_preference(value: &VersionPreference) -> CanonicalVersionPr
     }
 }
 
-fn product_platform(system: System) -> (&'static str, &'static str) {
+const fn product_platform(system: System) -> (&'static str, &'static str) {
     match system {
         System::X8664Linux => ("linux", "x86_64"),
         System::Aarch64Linux => ("linux", "arm64"),
@@ -2341,7 +2369,7 @@ impl BuildAdmission {
             state = self
                 .changed
                 .wait_timeout(state, ADMISSION_WAIT_POLL)
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
         }
     }
@@ -2371,7 +2399,7 @@ impl Drop for BuildPermit<'_> {
 fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Cooperative cancellation checked while waiting for admission.
@@ -2685,6 +2713,12 @@ impl LocalBuildEngine {
         Ok((report, evidence))
     }
 
+    /// The runtime's `&mut` progress reference moves into the adapter call
+    /// below; the value is genuinely consumed.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "BuildExecutionRuntime owns a &mut reference that moves into the adapter"
+    )]
     fn execute_revalidated(
         &self,
         receipt: BuildApprovalReceipt,
@@ -2837,7 +2871,10 @@ pub fn render_managed_build_nix_conf(
     render_managed_build_nix_conf_from_parts(
         system,
         cache.url(),
-        cache.trusted_public_keys().iter().map(|key| key.as_str()),
+        cache
+            .trusted_public_keys()
+            .iter()
+            .map(pkg_channel::CachePublicKey::as_str),
     )
 }
 
@@ -3178,8 +3215,16 @@ mod tests {
     #[test]
     fn host_resource_probe_uses_safe_fixed_inputs_and_strict_load_parsing() {
         assert!(available_bytes(Path::new("/")).unwrap() > 0);
-        assert_eq!(parse_load_average("1.25 0.50 0.25 1/2 3").unwrap(), 1.25);
-        assert_eq!(parse_load_average("{ 2.5 1.0 0.5 }").unwrap(), 2.5);
+        assert_eq!(
+            parse_load_average("1.25 0.50 0.25 1/2 3")
+                .unwrap()
+                .to_bits(),
+            1.25_f64.to_bits()
+        );
+        assert_eq!(
+            parse_load_average("{ 2.5 1.0 0.5 }").unwrap().to_bits(),
+            2.5_f64.to_bits()
+        );
         for invalid in ["", "{ }", "nan 1 1", "inf 1 1", "-1 1 1", "nope"] {
             assert_eq!(
                 parse_load_average(invalid).unwrap_err().code(),

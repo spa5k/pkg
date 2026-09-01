@@ -1,3 +1,5 @@
+//! Builds the signed channel index for one pinned nixpkgs revision.
+
 use std::env;
 use std::ffi::OsString;
 use std::io::Write;
@@ -23,6 +25,8 @@ struct Input {
     system: System,
 }
 
+#[allow(clippy::print_stdout, reason = "the release tool only product output")]
+#[allow(clippy::print_stderr, reason = "the release tool only failure output")]
 fn main() {
     if let Err(message) = run(env::args_os()) {
         eprintln!("{message}");

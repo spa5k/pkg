@@ -563,7 +563,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one closed security-contract assertion table"
+    )]
     fn socket_and_service_security_contract_is_exact() {
         assert!(LinuxSystemdAssets::HELPER_SOCKET.contains("SocketMode=0660"));
         assert!(LinuxSystemdAssets::HELPER_SOCKET.contains("/run/pkg-helper/"));

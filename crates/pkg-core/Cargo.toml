@@ -33,3 +33,7 @@ sha2 = { version = "=0.10.9", default-features = false, features = ["std"] }
 # workspace toolchain; the dependency's lower declared MSRV does not lower the
 # workspace floor.
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+
+# Opt into the workspace-wide lint policy (ADR 0005).
+[lints]
+workspace = true

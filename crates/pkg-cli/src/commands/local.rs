@@ -12,6 +12,9 @@ use crate::cli::{
     CollisionPolicy, GcArgs, HistoryArgs, InfoArgs, InstallArgs, ListArgs, PackageArgs, RemoveArgs,
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
+
+/// One acquired install: its handle, public id, evidence, and phase name.
+type AcquiredInstallEvidence = (OperationHandle, String, InstallEvidence, &'static str);
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
 use crate::commands::query::{
     InstalledCatalogPackage, info_catalog_reports, outdated_catalog_reports, search_catalog_report,
@@ -280,7 +283,7 @@ impl CoreOperations for LocalStateOperations {
         run_catalog_outdated(
             &mut broker,
             active.state().manifest().channel_seq(),
-            installed,
+            &installed,
         )
     }
 
@@ -451,7 +454,7 @@ fn run_catalog_info(
 fn run_catalog_outdated(
     broker: &mut BrokerLifecycleClient,
     installed_sequence: pkg_core::ChannelSequence,
-    installed: Vec<InstalledCatalogPackage>,
+    installed: &[InstalledCatalogPackage],
 ) -> Result<CommandResult, CommandError> {
     if installed.is_empty() {
         return outdated_catalog_reports(installed_sequence, &[], &[]);
@@ -468,7 +471,7 @@ fn run_catalog_outdated(
             .info_catalog(handle.clone(), requests)
             .map_err(catalog_broker_error)?;
         broker.complete(handle.clone()).map_err(broker_error)?;
-        outdated_catalog_reports(installed_sequence, &installed, &reports)
+        outdated_catalog_reports(installed_sequence, installed, &reports)
     })();
     if result.is_err() {
         let _ = broker.cancel(handle);
@@ -555,7 +558,7 @@ impl LocalStateOperations {
             let currency = run_catalog_outdated(
                 &mut broker,
                 source.state().manifest().channel_seq(),
-                installed,
+                &installed,
             )?;
             let outdated = outdated_attributes(&currency)?;
             if outdated.is_empty() {
@@ -636,7 +639,7 @@ impl LocalStateOperations {
                 layout.clone(),
                 lease,
                 &source,
-                next,
+                &next,
                 StateEditMetadata::new(
                     &generation_id,
                     &created_at,
@@ -733,7 +736,7 @@ impl LocalStateOperations {
                     build_approval,
                 ),
             )
-            .map_err(map_install_generation_error)?;
+            .map_err(|error| map_install_generation_error(&error))?;
             emit_phase(progress, &public_operation_id, "stage", "completed")?;
             emit_phase(progress, &public_operation_id, "activate", "started")?;
             let added_paths = install_output_paths(&evidence);
@@ -1148,7 +1151,7 @@ impl LocalStateOperations {
                 layout.clone(),
                 lease,
                 &source,
-                next,
+                &next,
                 StateEditMetadata::new(&generation_id, &created_at, &operation_id, kind),
             )
             .map_err(|_| mutation_failed())?;
@@ -1317,7 +1320,7 @@ impl LocalStateOperations {
             }
             let mut report = broker
                 .repair_generation(
-                    opened.clone(),
+                    opened,
                     RepairGenerationRequest::new(generation.clone(), verify_only),
                 )
                 .map_err(repair_broker_error)?;
@@ -1349,7 +1352,7 @@ impl LocalStateOperations {
                 handle = Some(opened.clone());
                 report = broker
                     .repair_generation(
-                        opened.clone(),
+                        opened,
                         RepairGenerationRequest::with_approval(
                             generation.clone(),
                             pkg_nix::BuildApprovalRequest::new(digest, source),
@@ -1516,7 +1519,7 @@ fn require_gc_confirmation(
     let generations = plan
         .candidates()
         .iter()
-        .map(|candidate| candidate.generation_id())
+        .map(pkg_store::PruneCandidate::generation_id)
         .collect::<Vec<_>>()
         .join(", ");
     confirm_destructive(
@@ -1591,7 +1594,7 @@ fn acquire_install_evidence(
     policy: OperationPolicy,
     allow_build: bool,
     progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
-) -> Result<(OperationHandle, String, InstallEvidence, &'static str), CommandError> {
+) -> Result<AcquiredInstallEvidence, CommandError> {
     let acquire_handle = broker
         .begin(BrokerOperationKind::Acquire)
         .map_err(broker_error)?;
@@ -1828,7 +1831,7 @@ fn preview_install(
         .prepare_build(handle.clone(), selectors)
         .map_err(install_broker_error)
         .and_then(|preview| {
-            let value = public_build_preview(preview)?;
+            let value = public_build_preview(&preview)?;
             CommandResult::new(
                 "Install preview is ready. No package was downloaded or activated.",
                 Map::from_iter([("dryRun".into(), json!(true)), ("preflight".into(), value)]),
@@ -1852,7 +1855,7 @@ fn preview_upgrade(
         .prepare_build(handle.clone(), selectors)
         .map_err(install_broker_error)
         .and_then(|preview| {
-            let value = public_build_preview(preview)?;
+            let value = public_build_preview(&preview)?;
             CommandResult::new(
                 "Upgrade preview is ready. No package was downloaded or activated.",
                 Map::from_iter([
@@ -1868,7 +1871,7 @@ fn preview_upgrade(
     result
 }
 
-fn public_build_preview(preview: BuildPreview) -> Result<Value, CommandError> {
+fn public_build_preview(preview: &BuildPreview) -> Result<Value, CommandError> {
     let mut value = preview
         .to_json_value()
         .map_err(|_| install_commit_failed())?;
@@ -2002,7 +2005,7 @@ fn install_output_paths(evidence: &InstallEvidence) -> Vec<pkg_core::identity::S
     evidence
         .targets()
         .iter()
-        .flat_map(|target| target.acquired())
+        .flat_map(pkg_nix::InstallTargetEvidence::acquired)
         .map(|output| output.path_info().store_path().clone())
         .collect()
 }
@@ -2075,7 +2078,7 @@ fn install_broker_error(error: BrokerClientError) -> CommandError {
     )
 }
 
-fn map_install_generation_error(error: InstallGenerationError) -> CommandError {
+fn map_install_generation_error(error: &InstallGenerationError) -> CommandError {
     match error {
         InstallGenerationError::CurrentChanged => CommandError::new(
             ExitCode::StateLocked,
@@ -2176,7 +2179,7 @@ fn gc_preview_result(plan: &pkg_store::GcPlan) -> Result<CommandResult, CommandE
     let generations = plan
         .candidates()
         .iter()
-        .map(|candidate| candidate.generation_id())
+        .map(pkg_store::PruneCandidate::generation_id)
         .collect::<Vec<_>>();
     let records = generations
         .iter()
@@ -2459,7 +2462,7 @@ fn channel_refresh_error(error: BrokerClientError) -> CommandError {
     CommandError::new(exit_code, message, hint)
 }
 
-fn channel_refresh_error_fields(
+const fn channel_refresh_error_fields(
     code: BrokerClientErrorCode,
 ) -> (ExitCode, &'static str, &'static str) {
     match code {
@@ -2655,8 +2658,8 @@ mod tests {
         ProductFrameCodec::decode_cli_request(&frame).unwrap()
     }
 
-    fn write_response(stream: &mut UnixStream, request_id: u64, response: CliBrokerResponse) {
-        let frame = ProductFrameCodec::encode_cli_response(request_id, &response).unwrap();
+    fn write_response(stream: &mut UnixStream, request_id: u64, response: &CliBrokerResponse) {
+        let frame = ProductFrameCodec::encode_cli_response(request_id, response).unwrap();
         stream.write_all(&frame).unwrap();
     }
 
@@ -2811,7 +2814,7 @@ mod tests {
             write_response(
                 &mut server_stream,
                 request_id,
-                CliBrokerResponse::Started(gc.clone()),
+                &CliBrokerResponse::Started(gc.clone()),
             );
 
             let (request_id, request) = read_request(&mut server_stream);
@@ -2821,13 +2824,17 @@ mod tests {
             write_response(
                 &mut server_stream,
                 request_id,
-                CliBrokerResponse::GcAdmissionAcquired,
+                &CliBrokerResponse::GcAdmissionAcquired,
             );
 
             let (request_id, request) = read_request(&mut server_stream);
             assert_eq!(request, CliBrokerRequest::Complete(gc.clone()));
             gc_caller.complete(&gc).unwrap();
-            write_response(&mut server_stream, request_id, CliBrokerResponse::Completed);
+            write_response(
+                &mut server_stream,
+                request_id,
+                &CliBrokerResponse::Completed,
+            );
         });
 
         let recovery_layout = layout.clone();
@@ -2986,7 +2993,7 @@ mod tests {
         );
         assert_eq!(
             maintenance
-                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_two.clone()))
+                .attest_root_set(&RootSetAttestationRequest::new(uid, generation_two))
                 .unwrap(),
             generation_two_report
         );
@@ -3009,7 +3016,7 @@ mod tests {
             write_response(
                 &mut repair_server_stream,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut repair_server_stream);
@@ -3028,7 +3035,7 @@ mod tests {
             write_response(
                 &mut repair_server_stream,
                 request_id,
-                CliBrokerResponse::RepairGeneration(report),
+                &CliBrokerResponse::RepairGeneration(report),
             );
             repair_returned_rx.recv().unwrap();
             handle
@@ -3072,7 +3079,7 @@ mod tests {
             layout.clone(),
             mutation_lease,
             &mutation_source,
-            next,
+            &next,
             StateEditMetadata::new(
                 "gen-0003",
                 "2026-08-11T00:00:00Z",
@@ -3150,7 +3157,7 @@ mod tests {
             write_response(
                 &mut prune_server_stream,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut prune_server_stream);
@@ -3161,7 +3168,7 @@ mod tests {
             write_response(
                 &mut prune_server_stream,
                 request_id,
-                CliBrokerResponse::GcAdmissionAcquired,
+                &CliBrokerResponse::GcAdmissionAcquired,
             );
 
             let (request_id, request) = read_request(&mut prune_server_stream);
@@ -3182,7 +3189,7 @@ mod tests {
             write_response(
                 &mut prune_server_stream,
                 request_id,
-                CliBrokerResponse::GenerationRootsRemoved,
+                &CliBrokerResponse::GenerationRootsRemoved,
             );
 
             let (request_id, request) = read_request(&mut prune_server_stream);
@@ -3191,7 +3198,7 @@ mod tests {
             write_response(
                 &mut prune_server_stream,
                 request_id,
-                CliBrokerResponse::Completed,
+                &CliBrokerResponse::Completed,
             );
             prune_returned_rx.recv().unwrap();
             handle
@@ -3361,7 +3368,7 @@ mod tests {
         let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
         let (probed_tx, probed_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
-        let server_layout = layout.clone();
+        let server_layout = layout;
         let server = thread::spawn(move || {
             let broker = InProcessBroker::new().unwrap();
             let caller = broker
@@ -3376,7 +3383,7 @@ mod tests {
             write_response(
                 &mut server_stream,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut server_stream);
@@ -3400,7 +3407,7 @@ mod tests {
             write_response(
                 &mut server_stream,
                 request_id,
-                CliBrokerResponse::RepairGeneration(report),
+                &CliBrokerResponse::RepairGeneration(report),
             );
             done_rx.recv().unwrap();
         });
@@ -3474,7 +3481,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
             let (request_id, request) = read_request(&mut server);
             let CliBrokerRequest::PrepareBuild(actual, selectors) = request else {
@@ -3485,11 +3492,11 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::BuildPrepared(preview),
+                &CliBrokerResponse::BuildPrepared(preview),
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Cancel(handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+            write_response(&mut server, request_id, &CliBrokerResponse::Cancelled);
         });
 
         let result = preview_install(
@@ -3522,7 +3529,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut server);
@@ -3535,7 +3542,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::InstallDownloadProgress(
+                &CliBrokerResponse::InstallDownloadProgress(
                     pkg_nix::InstallDownloadProgress::new(
                         SelectorInput::new("hello").unwrap(),
                         0,
@@ -3547,7 +3554,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::InstallDownloadProgress(
+                &CliBrokerResponse::InstallDownloadProgress(
                     pkg_nix::InstallDownloadProgress::new(
                         SelectorInput::new("hello").unwrap(),
                         42,
@@ -3556,7 +3563,7 @@ mod tests {
                     .unwrap(),
                 ),
             );
-            write_response(&mut server, request_id, CliBrokerResponse::InstallAcquired);
+            write_response(&mut server, request_id, &CliBrokerResponse::InstallAcquired);
 
             let (request_id, request) = read_request(&mut server);
             let CliBrokerRequest::GetInstallEvidence(actual) = request else {
@@ -3566,7 +3573,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::InstallEvidence(server_evidence),
+                &CliBrokerResponse::InstallEvidence(server_evidence),
             );
             let mut eof = [0_u8; 1];
             assert_eq!(server.read(&mut eof).unwrap(), 0);
@@ -3629,19 +3636,19 @@ mod tests {
                 write_response(
                     &mut server,
                     request_id,
-                    CliBrokerResponse::Started(acquire.clone()),
+                    &CliBrokerResponse::Started(acquire.clone()),
                 );
                 let (request_id, request) = read_request(&mut server);
                 assert!(matches!(request, CliBrokerRequest::AcquireInstall(_, _)));
                 write_response(
                     &mut server,
                     request_id,
-                    CliBrokerResponse::InstallBuildRequired,
+                    &CliBrokerResponse::InstallBuildRequired,
                 );
                 let (request_id, request) = read_request(&mut server);
                 assert_eq!(request, CliBrokerRequest::Complete(acquire.clone()));
                 caller.complete(&acquire).unwrap();
-                write_response(&mut server, request_id, CliBrokerResponse::Completed);
+                write_response(&mut server, request_id, &CliBrokerResponse::Completed);
 
                 let (request_id, request) = read_request(&mut server);
                 assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Build));
@@ -3649,19 +3656,19 @@ mod tests {
                 write_response(
                     &mut server,
                     request_id,
-                    CliBrokerResponse::Started(build.clone()),
+                    &CliBrokerResponse::Started(build.clone()),
                 );
                 let (request_id, request) = read_request(&mut server);
                 assert!(matches!(request, CliBrokerRequest::PrepareBuild(_, _)));
                 write_response(
                     &mut server,
                     request_id,
-                    CliBrokerResponse::BuildPreparationRefused(code),
+                    &CliBrokerResponse::BuildPreparationRefused(code),
                 );
                 let (request_id, request) = read_request(&mut server);
                 assert_eq!(request, CliBrokerRequest::Cancel(build.clone()));
                 caller.cancel(&build).unwrap();
-                write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+                write_response(&mut server, request_id, &CliBrokerResponse::Cancelled);
                 assert_eq!(caller.poll(&build).unwrap(), OperationStatus::Cancelled);
             });
 
@@ -3709,7 +3716,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(acquire_handle.clone()),
+                &CliBrokerResponse::Started(acquire_handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut server);
@@ -3721,7 +3728,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::InstallDownloadProgress(
+                &CliBrokerResponse::InstallDownloadProgress(
                     pkg_nix::InstallDownloadProgress::new(
                         SelectorInput::new("hello").unwrap(),
                         0,
@@ -3733,7 +3740,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::InstallBuildRequired,
+                &CliBrokerResponse::InstallBuildRequired,
             );
 
             let (request_id, request) = read_request(&mut server);
@@ -3741,7 +3748,7 @@ mod tests {
                 panic!("expected cache operation completion");
             };
             assert_eq!(actual, acquire_handle);
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            write_response(&mut server, request_id, &CliBrokerResponse::Completed);
 
             let (request_id, request) = read_request(&mut server);
             let CliBrokerRequest::Begin(BrokerOperationKind::Build) = request else {
@@ -3751,7 +3758,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(build_handle.clone()),
+                &CliBrokerResponse::Started(build_handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut server);
@@ -3763,7 +3770,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::BuildPrepared(preview),
+                &CliBrokerResponse::BuildPrepared(preview),
             );
 
             let (request_id, request) = read_request(&mut server);
@@ -3773,7 +3780,7 @@ mod tests {
             assert_eq!(actual, build_handle);
             assert_eq!(approval.build_plan_digest(), digest);
             assert_eq!(approval.source(), ApprovalSource::AssumeYes);
-            write_response(&mut server, request_id, CliBrokerResponse::BuildApproved);
+            write_response(&mut server, request_id, &CliBrokerResponse::BuildApproved);
 
             let (request_id, request) = read_request(&mut server);
             let CliBrokerRequest::ExecuteBuild(actual, actual_digest) = request else {
@@ -3792,7 +3799,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::BuildExecuted(report),
+                &CliBrokerResponse::BuildExecuted(report),
             );
 
             let (request_id, request) = read_request(&mut server);
@@ -3803,7 +3810,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::InstallEvidence(server_evidence),
+                &CliBrokerResponse::InstallEvidence(server_evidence),
             );
             let mut eof = [0_u8; 1];
             assert_eq!(server.read(&mut eof).unwrap(), 0);
@@ -3871,7 +3878,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
             let (request_id, request) = read_request(&mut server);
             let CliBrokerRequest::AcquireInstall(actual, _) = request else {
@@ -3881,11 +3888,11 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::InstallBuildRequired,
+                &CliBrokerResponse::InstallBuildRequired,
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Complete(handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            write_response(&mut server, request_id, &CliBrokerResponse::Completed);
             let mut eof = [0_u8; 1];
             assert_eq!(server.read(&mut eof).unwrap(), 0);
         });
@@ -3925,7 +3932,7 @@ mod tests {
 
     #[test]
     fn repeated_install_is_not_reported_as_state_corruption() {
-        let error = map_install_generation_error(InstallGenerationError::InvalidEvidence(
+        let error = map_install_generation_error(&InstallGenerationError::InvalidEvidence(
             InstallStateError::AlreadyInstalled,
         ));
 
@@ -3969,7 +3976,7 @@ mod tests {
         drop(StateLease::try_exclusive(&layout, &identity).unwrap());
 
         let cli = Cli::try_parse(["pkg", "history"]).unwrap();
-        let location = StateLocation::alternate(state.clone(), home.path().to_path_buf());
+        let location = StateLocation::alternate(state, home.path().to_path_buf());
         let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
         let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
         assert_eq!(result.fields()["entries"], Value::Array(vec![]));
@@ -4070,7 +4077,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Refresh)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -4081,7 +4088,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
+                &CliBrokerResponse::Started(server_handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut server);
@@ -4092,7 +4099,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::ChannelRefreshed(ChannelRefreshReport::new(
+                &CliBrokerResponse::ChannelRefreshed(ChannelRefreshReport::new(
                     true,
                     ChannelSequence::from_u64(43).unwrap(),
                 )),
@@ -4100,7 +4107,7 @@ mod tests {
 
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Complete(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            write_response(&mut server, request_id, &CliBrokerResponse::Completed);
             release_rx.recv().unwrap();
         });
         let mut broker = BrokerLifecycleClient::from_stream(client);
@@ -4148,7 +4155,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Resolve)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -4159,7 +4166,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
+                &CliBrokerResponse::Started(server_handle.clone()),
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(
@@ -4182,7 +4189,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::CatalogSearch(
+                &CliBrokerResponse::CatalogSearch(
                     CatalogSearchReport::new(
                         ChannelSequence::from_u64(42).unwrap(),
                         "2026-08-19T00:00:00Z",
@@ -4193,7 +4200,7 @@ mod tests {
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Complete(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            write_response(&mut server, request_id, &CliBrokerResponse::Completed);
             release_rx.recv().unwrap();
         });
         let mut broker = BrokerLifecycleClient::from_stream(client);
@@ -4218,7 +4225,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Resolve)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -4229,7 +4236,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
+                &CliBrokerResponse::Started(server_handle.clone()),
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(
@@ -4256,7 +4263,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::CatalogInfo(vec![
+                &CliBrokerResponse::CatalogInfo(vec![
                     CatalogInfoReport::new(
                         ChannelSequence::from_u64(42).unwrap(),
                         CatalogInfoLookup::Ambiguous(candidates),
@@ -4266,7 +4273,7 @@ mod tests {
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Cancel(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+            write_response(&mut server, request_id, &CliBrokerResponse::Cancelled);
             release_rx.recv().unwrap();
         });
         let selector = PackageSelector::new(
@@ -4334,7 +4341,7 @@ mod tests {
             .unwrap()
             .begin(BrokerOperationKind::Resolve)
             .unwrap();
-        let server_handle = handle.clone();
+        let server_handle = handle;
         let (release_tx, release_rx) = mpsc::sync_channel(0);
         let worker = thread::spawn(move || {
             let (request_id, request) = read_request(&mut server);
@@ -4345,7 +4352,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
+                &CliBrokerResponse::Started(server_handle.clone()),
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(
@@ -4377,7 +4384,7 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::CatalogInfo(vec![
+                &CliBrokerResponse::CatalogInfo(vec![
                     CatalogInfoReport::new(
                         ChannelSequence::from_u64(43).unwrap(),
                         CatalogInfoLookup::Found(Box::new(info)),
@@ -4387,7 +4394,7 @@ mod tests {
             );
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Complete(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
+            write_response(&mut server, request_id, &CliBrokerResponse::Completed);
             release_rx.recv().unwrap();
         });
         let installed = vec![InstalledCatalogPackage::new(
@@ -4402,7 +4409,7 @@ mod tests {
         let result = run_catalog_outdated(
             &mut broker,
             ChannelSequence::from_u64(42).unwrap(),
-            installed,
+            &installed,
         );
         release_tx.send(()).unwrap();
         worker.join().unwrap();
@@ -4419,7 +4426,7 @@ mod tests {
         let result = run_catalog_outdated(
             &mut broker,
             ChannelSequence::from_u64(42).unwrap(),
-            Vec::new(),
+            &Vec::new(),
         )
         .unwrap();
         assert_eq!(result.fields()["channelSequence"], 42);
@@ -4634,7 +4641,7 @@ mod tests {
             write_response(
                 &mut activate_server,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut activate_server);
@@ -4659,7 +4666,7 @@ mod tests {
             write_response(
                 &mut activate_server,
                 request_id,
-                CliBrokerResponse::GenerationRootAttestationRefused(
+                &CliBrokerResponse::GenerationRootAttestationRefused(
                     GenerationRootAttestationErrorCode::AttestationFailed,
                 ),
             );
@@ -4689,7 +4696,7 @@ mod tests {
             write_response(
                 &mut recovery_server,
                 request_id,
-                CliBrokerResponse::Status(status),
+                &CliBrokerResponse::Status(status),
             );
 
             let (request_id, request) = read_request(&mut recovery_server);
@@ -4698,7 +4705,7 @@ mod tests {
             write_response(
                 &mut recovery_server,
                 request_id,
-                CliBrokerResponse::Started(gc.clone()),
+                &CliBrokerResponse::Started(gc.clone()),
             );
 
             let (request_id, request) = read_request(&mut recovery_server);
@@ -4707,7 +4714,7 @@ mod tests {
             write_response(
                 &mut recovery_server,
                 request_id,
-                CliBrokerResponse::GcAdmissionAcquired,
+                &CliBrokerResponse::GcAdmissionAcquired,
             );
 
             let (request_id, request) = read_request(&mut recovery_server);
@@ -4731,7 +4738,7 @@ mod tests {
             write_response(
                 &mut recovery_server,
                 request_id,
-                CliBrokerResponse::GenerationRootsRemoved,
+                &CliBrokerResponse::GenerationRootsRemoved,
             );
 
             let (request_id, request) = read_request(&mut recovery_server);
@@ -4740,7 +4747,7 @@ mod tests {
             write_response(
                 &mut recovery_server,
                 request_id,
-                CliBrokerResponse::Completed,
+                &CliBrokerResponse::Completed,
             );
             let mut eof = [0_u8; 1];
             let _ = recovery_server.read(&mut eof);
@@ -4808,14 +4815,14 @@ mod tests {
             write_response(
                 &mut server,
                 request_id,
-                CliBrokerResponse::Started(handle.clone()),
+                &CliBrokerResponse::Started(handle.clone()),
             );
 
             let (request_id, request) = read_request(&mut server);
             assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
             assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
             caller.cancel(&handle).unwrap();
-            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
+            write_response(&mut server, request_id, &CliBrokerResponse::Cancelled);
             let mut eof = [0_u8; 1];
             let _ = server.read(&mut eof);
             handle
@@ -4881,12 +4888,12 @@ mod tests {
                 write_response(
                     server,
                     request_id,
-                    CliBrokerResponse::Status(caller.poll(&handle).unwrap()),
+                    &CliBrokerResponse::Status(caller.poll(&handle).unwrap()),
                 );
                 let (request_id, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
                 caller.cancel(&handle).unwrap();
-                write_response(server, request_id, CliBrokerResponse::Cancelled);
+                write_response(server, request_id, &CliBrokerResponse::Cancelled);
                 let mut eof = [0_u8; 1];
                 let _ = server.read(&mut eof);
             }));
@@ -4978,7 +4985,7 @@ mod tests {
                 let (request_id, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
                 let status = caller.poll(&handle).unwrap();
-                write_response(server, request_id, CliBrokerResponse::Status(status));
+                write_response(server, request_id, &CliBrokerResponse::Status(status));
                 let mut eof = [0_u8; 1];
                 let _ = server.read(&mut eof);
             }));
@@ -5028,7 +5035,7 @@ mod tests {
                 assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
                 let status = caller.poll(&handle).unwrap();
                 assert_eq!(status, OperationStatus::Cancelled);
-                write_response(server, request_id, CliBrokerResponse::Status(status));
+                write_response(server, request_id, &CliBrokerResponse::Status(status));
                 let mut eof = [0_u8; 1];
                 let _ = server.read(&mut eof);
             }));
@@ -5084,12 +5091,12 @@ mod tests {
                 assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
                 let status = caller.poll(&handle).unwrap();
                 assert_eq!(status, OperationStatus::Running);
-                write_response(server, request_id, CliBrokerResponse::Status(status));
+                write_response(server, request_id, &CliBrokerResponse::Status(status));
                 // Read the Cancel request, then drop without responding so the
                 // cancel transport fails and the fallback opens a second fresh
                 // connection.
                 let (_, request) = read_request(server);
-                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                assert_eq!(request, CliBrokerRequest::Cancel(handle));
             }));
         }
         {
@@ -5100,11 +5107,11 @@ mod tests {
                 assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
                 let status = caller.poll(&handle).unwrap();
                 assert_eq!(status, OperationStatus::Running);
-                write_response(server, request_id, CliBrokerResponse::Status(status));
+                write_response(server, request_id, &CliBrokerResponse::Status(status));
                 let (request_id, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
                 caller.cancel(&handle).unwrap();
-                write_response(server, request_id, CliBrokerResponse::Cancelled);
+                write_response(server, request_id, &CliBrokerResponse::Cancelled);
                 let mut eof = [0_u8; 1];
                 let _ = server.read(&mut eof);
             }));
@@ -5149,7 +5156,7 @@ mod tests {
             let handle = handle.clone();
             fresh_clients.push_back(scripted_server(&mut workers, move |server| {
                 let (_, request) = read_request(server);
-                assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
+                assert_eq!(request, CliBrokerRequest::Poll(handle));
                 // Drop without responding: the poll transport fails.
             }));
         }
@@ -5161,11 +5168,11 @@ mod tests {
                 assert_eq!(request, CliBrokerRequest::Poll(handle.clone()));
                 let status = caller.poll(&handle).unwrap();
                 assert_eq!(status, OperationStatus::Running);
-                write_response(server, request_id, CliBrokerResponse::Status(status));
+                write_response(server, request_id, &CliBrokerResponse::Status(status));
                 let (request_id, request) = read_request(server);
                 assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
                 caller.cancel(&handle).unwrap();
-                write_response(server, request_id, CliBrokerResponse::Cancelled);
+                write_response(server, request_id, &CliBrokerResponse::Cancelled);
                 let mut eof = [0_u8; 1];
                 let _ = server.read(&mut eof);
             }));
@@ -5209,10 +5216,10 @@ mod tests {
                 write_response(
                     server,
                     request_id,
-                    CliBrokerResponse::Status(OperationStatus::Running),
+                    &CliBrokerResponse::Status(OperationStatus::Running),
                 );
                 let (_, request) = read_request(server);
-                assert_eq!(request, CliBrokerRequest::Cancel(handle.clone()));
+                assert_eq!(request, CliBrokerRequest::Cancel(handle));
                 // Drop without responding so the fresh cancellation also fails.
             }));
         }
@@ -5224,7 +5231,7 @@ mod tests {
                 write_response(
                     server,
                     request_id,
-                    CliBrokerResponse::Status(OperationStatus::Running),
+                    &CliBrokerResponse::Status(OperationStatus::Running),
                 );
             }));
         }

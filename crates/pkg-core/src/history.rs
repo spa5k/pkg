@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use crate::state::ManifestEntry;
 use crate::{GenerationSnapshot, OutputName, PackageVersion, SelectorId, SelectorInput};
 
 /// One sanitized package-level history change.
@@ -34,12 +35,12 @@ pub struct PackageChange {
 impl PackageChange {
     /// Returns the stable selector id.
     #[must_use]
-    pub fn id(&self) -> &SelectorId {
+    pub const fn id(&self) -> &SelectorId {
         &self.id
     }
     /// Returns the original product-facing selector.
     #[must_use]
-    pub fn selector(&self) -> &SelectorInput {
+    pub const fn selector(&self) -> &SelectorInput {
         &self.selector
     }
     /// Returns the change class.
@@ -49,12 +50,12 @@ impl PackageChange {
     }
     /// Returns the prior display version, when present.
     #[must_use]
-    pub fn before_version(&self) -> Option<&PackageVersion> {
+    pub const fn before_version(&self) -> Option<&PackageVersion> {
         self.before_version.as_ref()
     }
     /// Returns the next display version, when present.
     #[must_use]
-    pub fn after_version(&self) -> Option<&PackageVersion> {
+    pub const fn after_version(&self) -> Option<&PackageVersion> {
         self.after_version.as_ref()
     }
     /// Returns prior selected output names.
@@ -290,8 +291,8 @@ impl History {
                 after_outputs: after_lock
                     .map(|entry| entry.realization().outputs_to_install().to_vec())
                     .unwrap_or_default(),
-                before_pinned: before_manifest.map(|entry| entry.is_pinned()),
-                after_pinned: after_manifest.map(|entry| entry.is_pinned()),
+                before_pinned: before_manifest.map(ManifestEntry::is_pinned),
+                after_pinned: after_manifest.map(ManifestEntry::is_pinned),
             });
         }
         let counts = ChangeCounts {

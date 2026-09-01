@@ -100,7 +100,10 @@ impl Realization {
     /// - `outputs_to_install` is empty or contains duplicates,
     /// - a name in `outputs_to_install` is absent from `outputs`,
     /// - the primary `store_path` is not among the `outputs` values.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a Realization is one closed wire record; every field is validated independently"
+    )]
     pub fn new(
         store_path: StorePath,
         deriver: DerivationPath,
@@ -161,19 +164,19 @@ impl Realization {
 
     /// Returns the primary store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.store_path
     }
 
     /// Returns the derivation that produced this realization.
     #[must_use]
-    pub fn deriver(&self) -> &DerivationPath {
+    pub const fn deriver(&self) -> &DerivationPath {
         &self.deriver
     }
 
     /// Returns the per-output store paths.
     #[must_use]
-    pub fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
+    pub const fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
         &self.outputs
     }
 
@@ -185,13 +188,13 @@ impl Realization {
 
     /// Returns the target system.
     #[must_use]
-    pub fn system(&self) -> System {
+    pub const fn system(&self) -> System {
         self.system
     }
 
     /// Returns the pinned Nixpkgs revision this was realized from.
     #[must_use]
-    pub fn nixpkgs_revision(&self) -> &NixpkgsRevision {
+    pub const fn nixpkgs_revision(&self) -> &NixpkgsRevision {
         &self.nixpkgs_revision
     }
 
@@ -201,7 +204,7 @@ impl Realization {
     /// hashes of secondary outputs (other entries in [`Realization::outputs`])
     /// are **not** represented by this PR-2 schema.
     #[must_use]
-    pub fn nar_hash(&self) -> &NarHash {
+    pub const fn nar_hash(&self) -> &NarHash {
         &self.nar_hash
     }
 
@@ -219,7 +222,7 @@ impl Realization {
 
     /// Returns the display version (metadata only; never an identity).
     #[must_use]
-    pub fn version(&self) -> &PackageVersion {
+    pub const fn version(&self) -> &PackageVersion {
         &self.version
     }
 }
@@ -327,7 +330,7 @@ mod tests {
     fn rejects_empty_outputs() {
         let out = StorePath::new(STORE_OUT).unwrap();
         let err = Realization::new(
-            out.clone(),
+            out,
             DerivationPath::from_str(DRV).unwrap(),
             BTreeMap::new(),
             vec![OutputName::new("out").unwrap()],
@@ -413,7 +416,7 @@ mod tests {
         let out = StorePath::new(STORE_OUT).unwrap();
         let other = StorePath::new(STORE_MAN).unwrap();
         let mut outputs = BTreeMap::new();
-        outputs.insert(OutputName::new("man").unwrap(), other.clone());
+        outputs.insert(OutputName::new("man").unwrap(), other);
         // primary store_path = out, but outputs only contain `man`'s path.
         let err = Realization::new(
             out,
@@ -490,7 +493,7 @@ mod tests {
         .unwrap();
 
         let b = Realization::new(
-            out.clone(),
+            out,
             DerivationPath::from_str(DRV2).unwrap(),
             outputs_b,
             vec![

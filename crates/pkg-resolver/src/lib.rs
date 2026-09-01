@@ -162,7 +162,10 @@ pub fn resolve_package(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the resolution boundary needs the full authenticated source context; no coherent subset exists"
+)]
 fn resolve_with_source(
     selector: &PackageSelector,
     channel_sequence: ChannelSequence,

@@ -54,10 +54,6 @@ impl fmt::Display for StateSchemaError {
 
 impl std::error::Error for StateSchemaError {}
 
-fn json_error(error: serde_json::Error) -> StateSchemaError {
-    StateSchemaError::InvalidJson(error.to_string())
-}
-
 fn field_error(field: &'static str, error: impl fmt::Display) -> StateSchemaError {
     StateSchemaError::InvalidField {
         field,
@@ -65,7 +61,7 @@ fn field_error(field: &'static str, error: impl fmt::Display) -> StateSchemaErro
     }
 }
 
-fn require_v1(version: u64) -> Result<(), StateSchemaError> {
+const fn require_v1(version: u64) -> Result<(), StateSchemaError> {
     if version == STATE_SCHEMA_VERSION {
         Ok(())
     } else {
@@ -81,14 +77,17 @@ pub(super) fn parse_unique_json(bytes: &[u8]) -> Result<Value, StateSchemaError>
     }
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let value = UniqueValue::deserialize(&mut deserializer)
-        .map_err(json_error)?
+        .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))?
         .0;
-    deserializer.end().map_err(json_error)?;
+    deserializer
+        .end()
+        .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))?;
     Ok(value)
 }
 
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StateSchemaError> {
-    serde_json::from_value(parse_unique_json(bytes)?).map_err(json_error)
+    serde_json::from_value(parse_unique_json(bytes)?)
+        .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
 }
 
 struct UniqueValue(Value);
@@ -175,7 +174,8 @@ impl Manifest {
 
     /// Encodes the manifest with canonical field names and deterministic map order.
     pub fn to_json(&self) -> Result<Vec<u8>, StateSchemaError> {
-        serde_json::to_vec(&ManifestWire::from(self)).map_err(json_error)
+        serde_json::to_vec(&ManifestWire::from(self))
+            .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
     }
 
     /// Returns the signed channel sequence this desired state used.
@@ -243,32 +243,32 @@ pub struct ManifestEntry {
 impl ManifestEntry {
     /// Returns the stable selector id.
     #[must_use]
-    pub fn id(&self) -> &SelectorId {
+    pub const fn id(&self) -> &SelectorId {
         &self.id
     }
     /// Returns the original user-facing selector input.
     #[must_use]
-    pub fn selector(&self) -> &SelectorInput {
+    pub const fn selector(&self) -> &SelectorInput {
         &self.selector
     }
     /// Returns the canonical resolved Nixpkgs attribute.
     #[must_use]
-    pub fn attribute(&self) -> &AttributePath {
+    pub const fn attribute(&self) -> &AttributePath {
         &self.attribute
     }
     /// Returns the requested version constraint.
     #[must_use]
-    pub fn version_preference(&self) -> &VersionPreference {
+    pub const fn version_preference(&self) -> &VersionPreference {
         &self.version_preference
     }
     /// Returns the selected outputs, or the package defaults.
     #[must_use]
-    pub fn outputs(&self) -> &OutputSelection {
+    pub const fn outputs(&self) -> &OutputSelection {
         &self.outputs
     }
     /// Returns the exact source-selection intent for this entry.
     #[must_use]
-    pub fn source_revision(&self) -> &SourceRevision {
+    pub const fn source_revision(&self) -> &SourceRevision {
         &self.source_revision
     }
     /// Returns whether this selector is pinned.
@@ -278,7 +278,7 @@ impl ManifestEntry {
     }
     /// Returns the exact pinned store path, when pinned to a realization.
     #[must_use]
-    pub fn pinned_to(&self) -> Option<&StorePath> {
+    pub const fn pinned_to(&self) -> Option<&StorePath> {
         self.pinned_to.as_ref()
     }
 
@@ -355,7 +355,8 @@ impl LockedState {
 
     /// Encodes the lock file with stable selector-key ordering.
     pub fn to_json(&self) -> Result<Vec<u8>, StateSchemaError> {
-        serde_json::to_vec(&LockedStateWire::from(self)).map_err(json_error)
+        serde_json::to_vec(&LockedStateWire::from(self))
+            .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
     }
 
     /// Returns the owning OS user id.
@@ -375,11 +376,11 @@ impl LockedState {
     }
     /// Returns lock entries keyed by stable selector id.
     #[must_use]
-    pub fn entries(&self) -> &BTreeMap<SelectorId, LockEntry> {
+    pub const fn entries(&self) -> &BTreeMap<SelectorId, LockEntry> {
         &self.entries
     }
 
-    pub(crate) fn from_lifecycle_parts(
+    pub(crate) const fn from_lifecycle_parts(
         channel_seq: ChannelSequence,
         system: System,
         uid: u32,
@@ -428,12 +429,12 @@ impl LockEntry {
 
     /// Returns the canonical attribute that produced this realization.
     #[must_use]
-    pub fn attribute(&self) -> &AttributePath {
+    pub const fn attribute(&self) -> &AttributePath {
         &self.attribute
     }
     /// Returns the validated realization.
     #[must_use]
-    pub fn realization(&self) -> &Realization {
+    pub const fn realization(&self) -> &Realization {
         &self.realization
     }
     /// Returns the sanitized acquisition provenance.
@@ -469,7 +470,8 @@ impl Generation {
 
     /// Encodes this generation record deterministically.
     pub fn to_json(&self) -> Result<Vec<u8>, StateSchemaError> {
-        serde_json::to_vec(&GenerationWire::from(self)).map_err(json_error)
+        serde_json::to_vec(&GenerationWire::from(self))
+            .map_err(|error| StateSchemaError::InvalidJson(error.to_string()))
     }
 
     /// Returns the monotonic generation id.
@@ -519,7 +521,7 @@ impl Generation {
     }
     /// Returns the activation record.
     #[must_use]
-    pub fn activation(&self) -> &Activation {
+    pub const fn activation(&self) -> &Activation {
         &self.activation
     }
     /// Returns exact selector realizations documented by this generation.
@@ -627,27 +629,27 @@ pub struct GenerationOutput {
 impl GenerationOutput {
     /// Returns the stable selector id.
     #[must_use]
-    pub fn id(&self) -> &SelectorId {
+    pub const fn id(&self) -> &SelectorId {
         &self.id
     }
     /// Returns the canonical attribute resolved for this selector.
     #[must_use]
-    pub fn attribute(&self) -> &AttributePath {
+    pub const fn attribute(&self) -> &AttributePath {
         &self.attribute
     }
     /// Returns the exact pinned Nixpkgs revision.
     #[must_use]
-    pub fn nixpkgs_revision(&self) -> &NixpkgsRevision {
+    pub const fn nixpkgs_revision(&self) -> &NixpkgsRevision {
         &self.nixpkgs_revision
     }
     /// Returns the primary realized store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.store_path
     }
     /// Returns the exact derivation path.
     #[must_use]
-    pub fn deriver(&self) -> &DerivationPath {
+    pub const fn deriver(&self) -> &DerivationPath {
         &self.deriver
     }
     /// Returns selected output names in deterministic order.
@@ -657,7 +659,7 @@ impl GenerationOutput {
     }
     /// Returns the verified NAR hash.
     #[must_use]
-    pub fn nar_hash(&self) -> &NarHash {
+    pub const fn nar_hash(&self) -> &NarHash {
         &self.nar_hash
     }
     /// Returns the verified closure NAR byte count.

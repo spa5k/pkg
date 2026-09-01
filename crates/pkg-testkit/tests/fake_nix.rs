@@ -627,7 +627,7 @@ fn assert_exhausted_reports_remaining_count_only() {
     // Display and Debug carry ONLY the count — never any matcher, canned
     // result, store path, or report value.
     let display = err.to_string();
-    assert!(display.contains("3"));
+    assert!(display.contains('3'));
     assert!(!display.contains("hello-1.0"));
     assert!(!display.contains("2.33.5"));
     assert!(!display.contains(STORE_HASH));

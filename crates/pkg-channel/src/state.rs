@@ -14,11 +14,11 @@ use crate::{AcceptedChannel, ChannelError};
 const STATE_FILE: &str = "accepted-channel.json";
 const TEMP_FILE: &str = ".accepted-channel.json.tmp";
 const INITIALIZING_FILE: &str = "accepted-channel.initializing";
-pub(crate) const LOCK_FILE: &str = "pkg-channel.lock";
+pub const LOCK_FILE: &str = "pkg-channel.lock";
 const MAX_STATE_BYTES: u64 = 1024;
 
 #[derive(Debug, Clone)]
-pub(crate) struct AcceptedChannelStore {
+pub struct AcceptedChannelStore {
     directory: PathBuf,
 }
 

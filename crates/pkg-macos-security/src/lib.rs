@@ -8,7 +8,10 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code)]
+#[expect(
+    unsafe_code,
+    reason = "macOS Security.framework FFI needs scoped unsafe; every block carries a SAFETY comment"
+)]
 mod macos {
     use core_foundation::{
         array::CFArray,
@@ -63,10 +66,7 @@ mod macos {
                 .copy_bytes(&mut random)
                 .map_err(|_| keychain_failure())?;
             let mut bytes = [0_u8; HEX_BYTES];
-            for (index, byte) in random.iter().copied().enumerate() {
-                bytes[index * 2] = hex(byte >> 4);
-                bytes[index * 2 + 1] = hex(byte & 0x0f);
-            }
+            encode_hex(&random, &mut bytes);
             random.zeroize();
             Ok(Self { bytes })
         }
@@ -87,7 +87,9 @@ mod macos {
     /// Stable failures from the closed System Keychain adapter.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum SystemKeychainErrorCode {
+        /// The keychain state is not the expected closed state.
         InvalidState,
+        /// A Security.framework call failed.
         OperationFailed,
     }
 
@@ -126,9 +128,7 @@ mod macos {
         /// when creation, ACL assignment, verification, or cleanup fails.
         pub fn create(secret: &StoreVolumeSecret) -> Result<(), SystemKeychainError> {
             let keychain = open_system_keychain()?;
-            if find_item(&keychain)?.is_some() {
-                return Err(invalid_state());
-            }
+            require_absent(&keychain)?;
             create_with_root_helper_access(&keychain, secret)
         }
 
@@ -152,13 +152,7 @@ mod macos {
             let keychain = open_system_keychain()?;
             let password = read_raw_password(&keychain)?;
             let value = password.as_ref();
-            if value.len() != HEX_BYTES
-                || !value
-                    .iter()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
-            {
-                return Err(invalid_state());
-            }
+            validate_secret_shape(value)?;
             let mut bytes = [0_u8; HEX_BYTES];
             bytes.copy_from_slice(value);
             Ok(StoreVolumeSecret { bytes })
@@ -184,6 +178,8 @@ mod macos {
         find_item(keychain)?.map_or(Ok(()), |item| {
             // The safe crate's `delete` discards the OSStatus, so use the
             // same reference with the raw API and verify the result.
+            // SAFETY: `item` is an owned SecKeychainItem reference produced by
+            // `find_item` and is valid for the duration of this call.
             let status = unsafe { SecKeychainItemDelete(item.as_concrete_TypeRef()) };
             status_result(status)
         })
@@ -193,6 +189,9 @@ mod macos {
         let mut item = ptr::null_mut();
         // A later SecKeychainItemSetAccess call requires an interactive prompt.
         // Create the item with its closed ACL in the same Security.framework call.
+        // SAFETY: the service and account pointers reference the live, fixed
+        // ASCII constants; the lengths are exact u32 conversions; `item` is
+        // null-initialized and written only through `&raw mut`.
         let status = unsafe {
             SecKeychainFindGenericPassword(
                 keychain.as_CFTypeRef(),
@@ -212,6 +211,8 @@ mod macos {
         if item.is_null() {
             return Err(keychain_failure());
         }
+        // SAFETY: `item` is non-null here, and Find returns a +1 reference
+        // owned by this scope under the CoreFoundation Create Rule.
         Ok(Some(unsafe {
             SecKeychainItem::wrap_under_create_rule(item)
         }))
@@ -224,16 +225,25 @@ mod macos {
 
     impl AsRef<[u8]> for ZeroizingKeychainPassword {
         fn as_ref(&self) -> &[u8] {
+            // SAFETY: `data` and `len` come from one successful
+            // SecKeychainFindGenericPassword call; the struct owns the
+            // allocation, and no mutable alias exists while `self` is borrowed.
             unsafe { slice::from_raw_parts(self.data.cast(), self.len) }
         }
     }
 
     impl Drop for ZeroizingKeychainPassword {
         fn drop(&mut self) {
-            if !self.data.is_null() {
-                unsafe { slice::from_raw_parts_mut(self.data.cast::<u8>(), self.len) }.zeroize();
-                let _ = unsafe { SecKeychainItemFreeContent(ptr::null_mut(), self.data) };
+            if self.data.is_null() {
+                return;
             }
+            // SAFETY: `data` and `len` describe the keychain-owned buffer
+            // returned by the matching Find call; drop runs once and is the
+            // only writer.
+            unsafe { slice::from_raw_parts_mut(self.data.cast::<u8>(), self.len) }.zeroize();
+            // SAFETY: `data` is the same keychain-owned buffer; FreeContent
+            // is its matching release function.
+            let _ = unsafe { SecKeychainItemFreeContent(ptr::null_mut(), self.data) };
         }
     }
 
@@ -242,6 +252,9 @@ mod macos {
     ) -> Result<ZeroizingKeychainPassword, SystemKeychainError> {
         let mut length = 0_u32;
         let mut data = ptr::null_mut();
+        // SAFETY: the service and account pointers reference the live, fixed
+        // ASCII constants; `length` and `data` are null-initialized and written
+        // only through `&raw mut`.
         let status = unsafe {
             SecKeychainFindGenericPassword(
                 keychain.as_CFTypeRef(),
@@ -265,6 +278,10 @@ mod macos {
         Ok(password)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one straight-line Security.framework creation sequence; every step is an atomic check"
+    )]
     fn create_with_root_helper_access(
         keychain: &SecKeychain,
         secret: &StoreVolumeSecret,
@@ -274,6 +291,9 @@ mod macos {
         let secret = secret.expose_for_stdin();
         let secret_length = u32::try_from(secret.len()).map_err(|_| keychain_failure())?;
         let mut trusted_application: CFTypeRef = ptr::null();
+        // SAFETY: ROOT_HELPER is a fixed, NUL-terminated byte path;
+        // `trusted_application` is null-initialized and written only through
+        // `&raw mut`.
         let status = unsafe {
             SecTrustedApplicationCreateFromPath(
                 ROOT_HELPER.as_ptr().cast::<c_char>(),
@@ -284,10 +304,15 @@ mod macos {
         if trusted_application.is_null() {
             return Err(keychain_failure());
         }
+        // SAFETY: `trusted_application` is non-null here, and the Create call
+        // returns a +1 reference under the CoreFoundation Create Rule.
         let trusted = unsafe { CFType::wrap_under_create_rule(trusted_application.cast()) };
         let trusted_list = CFArray::from_CFTypes(&[trusted]);
         let description = CFString::new(DESCRIPTION);
         let mut access = ptr::null_mut();
+        // SAFETY: `description` and `trusted_list` are live CF references that
+        // outlive the call; `access` is null-initialized and written only
+        // through `&raw mut`.
         let status = unsafe {
             SecAccessCreate(
                 description.as_concrete_TypeRef(),
@@ -317,6 +342,10 @@ mod macos {
             attr: attributes.as_mut_ptr(),
         };
         let mut item = ptr::null_mut();
+        // SAFETY: the attribute list references the two live fixed string
+        // constants; the secret buffer and keychain reference are live for the
+        // call; `access` is an owned +1 reference that the call borrows;
+        // `item` is null-initialized and written only through `&raw mut`.
         let status = unsafe {
             SecKeychainItemCreateFromContent(
                 GENERIC_PASSWORD_ITEM_CLASS,
@@ -328,12 +357,16 @@ mod macos {
                 &raw mut item,
             )
         };
+        // SAFETY: this balances the +1 reference from SecAccessCreate; the
+        // item-create call above already retained what it needs.
         unsafe { CFRelease(access.cast()) };
         status_result(status)?;
         if item.is_null() {
             let _ = delete_item_if_present(keychain);
             return Err(keychain_failure());
         }
+        // SAFETY: `item` is non-null here, and ItemCreateFromContent returns
+        // a +1 reference under the CoreFoundation Create Rule.
         let item = unsafe { SecKeychainItem::wrap_under_create_rule(item) };
         if !matches!(find_item(keychain), Ok(Some(_))) {
             item.delete();
@@ -391,6 +424,33 @@ mod macos {
         ) -> i32;
     }
 
+    /// Hex-encodes the random bytes into the fixed output buffer.
+    fn encode_hex(random: &[u8; RANDOM_BYTES], bytes: &mut [u8; HEX_BYTES]) {
+        for (index, byte) in random.iter().copied().enumerate() {
+            bytes[index * 2] = hex(byte >> 4);
+            bytes[index * 2 + 1] = hex(byte & 0x0f);
+        }
+    }
+
+    /// Refuses creation when the exact fixed item already exists.
+    fn require_absent(keychain: &SecKeychain) -> Result<(), SystemKeychainError> {
+        if find_item(keychain)?.is_some() {
+            return Err(invalid_state());
+        }
+        Ok(())
+    }
+
+    /// Accepts only the exact hexadecimal secret shape.
+    fn validate_secret_shape(value: &[u8]) -> Result<(), SystemKeychainError> {
+        if value.len() != HEX_BYTES
+            || !value
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        {
+            return Err(invalid_state());
+        }
+        Ok(())
+    }
     #[cfg(test)]
     mod tests {
         use super::*;

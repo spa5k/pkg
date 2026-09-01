@@ -98,7 +98,7 @@ pub fn list_state(
                         realization
                             .outputs_to_install()
                             .iter()
-                            .map(|output| output.as_str())
+                            .map(pkg_core::OutputName::as_str)
                             .collect::<Vec<_>>()
                     ),
                 );
@@ -210,10 +210,10 @@ pub fn read_history(history: &History, args: &HistoryArgs) -> Result<CommandResu
         let changes = diff.changes().iter().map(|change| json!({
             "selector": change.selector().as_str(),
             "kind": match change.kind() { ChangeKind::Added => "added", ChangeKind::Removed => "removed", ChangeKind::Changed => "changed" },
-            "beforeVersion": change.before_version().map(|version| version.as_str()),
-            "afterVersion": change.after_version().map(|version| version.as_str()),
-            "beforeOutputs": change.before_outputs().iter().map(|output| output.as_str()).collect::<Vec<_>>(),
-            "afterOutputs": change.after_outputs().iter().map(|output| output.as_str()).collect::<Vec<_>>(),
+            "beforeVersion": change.before_version().map(pkg_core::PackageVersion::as_str),
+            "afterVersion": change.after_version().map(pkg_core::PackageVersion::as_str),
+            "beforeOutputs": change.before_outputs().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
+            "afterOutputs": change.after_outputs().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
             "beforePinned": change.before_pinned(),
             "afterPinned": change.after_pinned()
         })).collect::<Vec<_>>();

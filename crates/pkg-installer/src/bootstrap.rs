@@ -28,6 +28,9 @@ use crate::{
     uninstall::preflight_uninstall,
 };
 use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
+
+/// The macOS install journal storage and its opened journal.
+type MacOsJournalPair = (MacOsInstallJournalStorage, MacOsInstallJournal);
 use pkg_channel::TrustedRoot;
 use pkg_core::{System, state::Digest};
 use pkg_nix::{
@@ -857,7 +860,7 @@ fn recover_macos_bundle_install(
     recovery_context_digest: Digest,
     request: &InstallerProvisionRequest<'_>,
     backend: &mut dyn MacOsInstallBackend,
-) -> Result<Option<(MacOsInstallJournalStorage, MacOsInstallJournal)>, MacOsError> {
+) -> Result<Option<MacOsJournalPair>, MacOsError> {
     let Some(storage) =
         MacOsInstallJournalStorage::open_existing(system, digest, recovery_context_digest)
             .map_err(|_| MacOsError::backend_failure())?
@@ -871,7 +874,7 @@ fn recover_macos_bundle_install_from_storage(
     storage: MacOsInstallJournalStorage,
     request: &InstallerProvisionRequest<'_>,
     backend: &mut dyn MacOsInstallBackend,
-) -> Result<Option<(MacOsInstallJournalStorage, MacOsInstallJournal)>, MacOsError> {
+) -> Result<Option<MacOsJournalPair>, MacOsError> {
     let Some(mut journal) = storage.load().map_err(|_| MacOsError::backend_failure())? else {
         storage
             .remove()
@@ -1003,6 +1006,10 @@ trait BundleProvisioner {
         Ok(false)
     }
 
+    #[expect(
+        dead_code,
+        reason = "trait default method; no fake overrides the channel-commit hook"
+    )]
     fn commit_authenticated_channel(&mut self) -> Result<(), BundleProvisionError> {
         Ok(())
     }
@@ -1030,10 +1037,10 @@ trait BundleProvisioner {
         Ok(())
     }
 
-    fn provision<'a>(
+    fn provision(
         &mut self,
         request: &InstallerProvisionRequest<'_>,
-        daemon: &'a dyn ManagedDaemon,
+        daemon: &dyn ManagedDaemon,
     ) -> Result<BootstrapOutcome, BundleProvisionError>;
 }
 
@@ -1122,10 +1129,10 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             .map_err(|_| BundleProvisionError::Failed)
     }
 
-    fn provision<'a>(
+    fn provision(
         &mut self,
         request: &InstallerProvisionRequest<'_>,
-        daemon: &'a dyn ManagedDaemon,
+        daemon: &dyn ManagedDaemon,
     ) -> Result<BootstrapOutcome, BundleProvisionError> {
         let mut bundle = self.bundle.take().ok_or(BundleProvisionError::Failed)?;
         if matches!(
@@ -2122,7 +2129,10 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     ) -> Result<MacOsBuildReadiness, MacOsError> {
         self.inner.observe_build_readiness(system)
     }
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one receipt publication walks a closed journal mutation sequence"
+    )]
     fn publish_ownership_receipt(&mut self) -> Result<bool, MacOsError> {
         let mutation = MacOsInstallMutation::OwnershipReceipt;
         let presence = self.inner.classify_ownership_receipt()?;
@@ -2656,10 +2666,10 @@ mod tests {
     }
 
     impl BundleProvisioner for StubProvisioner {
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             self.calls = self.calls.saturating_add(1);
             Ok(BootstrapOutcome::Stub(self.rolled_back.clone()))
@@ -2686,10 +2696,10 @@ mod tests {
             Ok(())
         }
 
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             if !self.reauthenticated {
                 return Err(BundleProvisionError::Failed);
@@ -2704,10 +2714,10 @@ mod tests {
     struct RollbackFailedProvisioner;
 
     impl BundleProvisioner for RollbackFailedProvisioner {
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             Err(BundleProvisionError::RollbackIncomplete)
         }
@@ -2794,10 +2804,10 @@ mod tests {
     }
 
     impl BundleProvisioner for RealDeterminateProvisioner {
-        fn provision<'a>(
+        fn provision(
             &mut self,
             _request: &InstallerProvisionRequest<'_>,
-            _daemon: &'a dyn ManagedDaemon,
+            _daemon: &dyn ManagedDaemon,
         ) -> Result<BootstrapOutcome, BundleProvisionError> {
             let handoff = self.handoff.take().ok_or(BundleProvisionError::Failed)?;
             let outcome = run_with_new_determinate_handoff(&handoff, || {
@@ -3743,7 +3753,7 @@ mod tests {
             reauthenticated: false,
             reuse_existing: true,
         };
-        let report = continue_linux_bundle_install(
+        let _report = continue_linux_bundle_install(
             &request,
             &StubDaemon,
             &mut backend,
@@ -4530,7 +4540,10 @@ mod tests {
         Ok(())
     }
 
-    #[allow(clippy::struct_excessive_bools)]
+    #[allow(
+        clippy::struct_excessive_bools,
+        reason = "test double mirrors the production classification flags"
+    )]
     #[derive(Default)]
     struct MacBackend {
         raw_provision_calls: usize,

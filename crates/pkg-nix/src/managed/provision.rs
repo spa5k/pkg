@@ -1,4 +1,8 @@
 //! Fetch, verify, stage, and receipt-last commit a product-managed Nix runtime.
+#![expect(
+    dead_code,
+    reason = "DN-19 deletes these unreachable managed-Nix provisioning internals (plans/determinate-nix-stacked-prs.md)"
+)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -222,7 +226,7 @@ impl AuthenticatedManagedNixConfig {
 
     /// Returns the exact authenticated bytes for atomic installation.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         self.contents.as_bytes()
     }
 }
@@ -710,7 +714,7 @@ fn load_authenticated_installer_payloads(
         product_cli.as_slice(),
     ]
     .into_iter()
-    .any(|payload| payload.is_empty())
+    .any(<[u8]>::is_empty)
     {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
@@ -1002,86 +1006,26 @@ fn extract_exact_archive(
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
         let store_relative = match member {
             UpstreamArchiveMember::Registration => {
-                if registration_path.exists()
-                    || !entry.header().entry_type().is_file()
-                    || entry.size() == 0
-                    || entry.size() > MAX_REGISTRATION_BYTES
-                {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-                let mut output = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .mode(0o600)
-                    .open(&registration_path)
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-                std::io::copy(&mut entry, &mut output)
-                    .and_then(|_| output.sync_all())
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+                extract_registration(&mut entry, &registration_path)?;
                 continue;
             }
             UpstreamArchiveMember::Installer => {
-                if !entry.header().entry_type().is_file() {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-                std::io::copy(&mut entry, &mut std::io::sink())
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+                drain_installer(&mut entry)?;
                 continue;
             }
             UpstreamArchiveMember::Store(relative) => relative,
         };
         let installed_relative = Path::new("nix/store").join(store_relative);
-        let absolute = format!("/{}", installed_relative.to_string_lossy());
-        let artifact = expected
-            .get(&absolute)
-            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        if !seen.insert(absolute) {
-            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-        }
-        let destination = staging.join(&installed_relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        }
-        match artifact.kind() {
-            ManagedArtifactKind::File if entry.header().entry_type().is_file() => {
-                extract_file(&mut entry, &destination, artifact)?;
-                if is_runtime_bin(&installed_relative, "nix") {
-                    if runtime_executable.replace(destination.clone()).is_some() {
-                        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                    }
-                } else if is_runtime_bin(&installed_relative, "nix-store")
-                    || is_runtime_bin(&installed_relative, "nix-daemon")
-                {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-            }
-            ManagedArtifactKind::Directory if entry.header().entry_type().is_dir() => {
-                fs::create_dir_all(&destination)
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-            }
-            ManagedArtifactKind::Symlink if entry.header().entry_type() == EntryType::Symlink => {
-                let target = entry
-                    .link_name()
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?
-                    .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-                if target.as_ref() != Path::new(artifact.target().unwrap_or_default()) {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-                for name in ["nix-store", "nix-daemon"] {
-                    if is_runtime_bin(&installed_relative, name)
-                        && runtime_aliases
-                            .insert(name, (destination.clone(), target.as_ref().to_path_buf()))
-                            .is_some()
-                    {
-                        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                    }
-                }
-                symlink(target.as_ref(), &destination)
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-            }
-            _ => return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive)),
-        }
+        let (artifact, destination) =
+            resolve_member_destination(&expected, &installed_relative, staging, &mut seen)?;
+        install_store_member(
+            &mut entry,
+            &installed_relative,
+            &destination,
+            artifact,
+            &mut runtime_executable,
+            &mut runtime_aliases,
+        )?;
     }
     let mut bounded = archive.into_inner();
     let mut tail = [0_u8; 8192];
@@ -1623,6 +1567,10 @@ fn validate_private_directory(path: &Path, owner_uid: u32) -> Result<(), Provisi
 ///
 /// The caller must first authenticate the directory against the same expected
 /// owner. Every accepted entry is a private, single-link regular file.
+#[expect(
+    clippy::similar_names,
+    reason = "owner_uid and owner_gid are one fixed ownership pair"
+)]
 fn reconcile_determinate_installer_staging_at(
     directory: &Path,
     owner_uid: u32,
@@ -1818,6 +1766,120 @@ fn ensure_safe_parent(
         }
     }
     Ok(())
+}
+
+/// Extracts the bounded registration payload into `registration_path`.
+fn extract_registration<R: std::io::Read>(
+    entry: &mut tar::Entry<'_, R>,
+    registration_path: &Path,
+) -> Result<(), ProvisionError> {
+    if registration_path.exists()
+        || !entry.header().entry_type().is_file()
+        || entry.size() == 0
+        || entry.size() > MAX_REGISTRATION_BYTES
+    {
+        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+    }
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(registration_path)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    std::io::copy(entry, &mut output)
+        .and_then(|_| output.sync_all())
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))
+}
+
+/// Discards the upstream installer member after its file-kind check.
+fn drain_installer<R: std::io::Read>(entry: &mut tar::Entry<'_, R>) -> Result<(), ProvisionError> {
+    if !entry.header().entry_type().is_file() {
+        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+    }
+    std::io::copy(entry, &mut std::io::sink())
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    Ok(())
+}
+
+/// Installs one classified store member, recording the runtime executable and
+/// its two alias symlinks.
+fn install_store_member<R: std::io::Read>(
+    entry: &mut tar::Entry<'_, R>,
+    installed_relative: &Path,
+    destination: &Path,
+    artifact: &ManagedArtifact,
+    runtime_executable: &mut Option<PathBuf>,
+    runtime_aliases: &mut BTreeMap<&str, (PathBuf, PathBuf)>,
+) -> Result<(), ProvisionError> {
+    match artifact.kind() {
+        ManagedArtifactKind::File if entry.header().entry_type().is_file() => {
+            extract_file(entry, destination, artifact)?;
+            if is_runtime_bin(installed_relative, "nix") {
+                if runtime_executable
+                    .replace(destination.to_path_buf())
+                    .is_some()
+                {
+                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                }
+            } else if is_runtime_bin(installed_relative, "nix-store")
+                || is_runtime_bin(installed_relative, "nix-daemon")
+            {
+                return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+            }
+        }
+        ManagedArtifactKind::Directory if entry.header().entry_type().is_dir() => {
+            fs::create_dir_all(destination)
+                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        }
+        ManagedArtifactKind::Symlink if entry.header().entry_type() == EntryType::Symlink => {
+            let target = entry
+                .link_name()
+                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?
+                .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+            if target.as_ref() != Path::new(artifact.target().unwrap_or_default()) {
+                return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+            }
+            for name in ["nix-store", "nix-daemon"] {
+                if is_runtime_bin(installed_relative, name)
+                    && runtime_aliases
+                        .insert(
+                            name,
+                            (destination.to_path_buf(), target.as_ref().to_path_buf()),
+                        )
+                        .is_some()
+                {
+                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+                }
+            }
+            symlink(target.as_ref(), destination)
+                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+        }
+        _ => return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive)),
+    }
+    Ok(())
+}
+
+/// Looks up one store member in the expectation, refuses duplicates, and
+/// creates its destination parent directory.
+fn resolve_member_destination<'a>(
+    expected: &BTreeMap<String, &'a ManagedArtifact>,
+    installed_relative: &Path,
+    staging: &Path,
+    seen: &mut BTreeSet<String>,
+) -> Result<(&'a ManagedArtifact, PathBuf), ProvisionError> {
+    let absolute = format!("/{}", installed_relative.to_string_lossy());
+    let artifact = expected
+        .get(&absolute)
+        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    if !seen.insert(absolute) {
+        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
+    }
+    let destination = staging.join(installed_relative);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
+    }
+    Ok((artifact, destination))
 }
 
 #[cfg(test)]

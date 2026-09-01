@@ -13,9 +13,9 @@ use crate::descriptor::{
     NixpkgsPin, WireDescriptor,
 };
 
-pub(crate) const DESCRIPTOR_TARGET: &str = "descriptor.json";
-pub(crate) const MAX_DESCRIPTOR_BYTES: usize = 256 * 1024;
-pub(crate) const CACHE_URL: &str = "https://cache.nixos.org";
+pub const DESCRIPTOR_TARGET: &str = "descriptor.json";
+pub const MAX_DESCRIPTOR_BYTES: usize = 256 * 1024;
+pub const CACHE_URL: &str = "https://cache.nixos.org";
 
 /// Persisted identity of the descriptor accepted by a previous refresh.
 #[derive(Debug, Clone, PartialEq, Eq)]

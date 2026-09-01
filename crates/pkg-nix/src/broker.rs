@@ -341,7 +341,7 @@ impl FairBuildGate {
             state = self
                 .changed
                 .wait_timeout(state, ADMISSION_WAIT_POLL)
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .0;
         }
     }
@@ -379,7 +379,7 @@ impl FairBuildGate {
     fn lock(&self) -> std::sync::MutexGuard<'_, BuildGateState> {
         self.state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -534,7 +534,7 @@ impl InProcessBroker {
     fn lock(&self) -> std::sync::MutexGuard<'_, BrokerState> {
         self.state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -713,7 +713,7 @@ impl AuthenticatedCaller {
         self.prepare_build_inner(
             handle,
             plan,
-            crate::BuildPreviewEstimates::unavailable(),
+            &crate::BuildPreviewEstimates::unavailable(),
             None,
         )
     }
@@ -732,7 +732,7 @@ impl AuthenticatedCaller {
         self.prepare_build_inner(
             handle,
             plan,
-            crate::BuildPreviewEstimates::unavailable(),
+            &crate::BuildPreviewEstimates::unavailable(),
             Some(replanner),
         )
     }
@@ -746,7 +746,7 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         plan: BuildPlan,
-        estimates: crate::BuildPreviewEstimates,
+        estimates: &crate::BuildPreviewEstimates,
         replanner: Arc<dyn TrustedBuildReplanner>,
     ) -> Result<BuildPreview, BrokerError> {
         self.prepare_build_inner(handle, plan, estimates, Some(replanner))
@@ -756,7 +756,7 @@ impl AuthenticatedCaller {
         &self,
         handle: &OperationHandle,
         plan: BuildPlan,
-        estimates: crate::BuildPreviewEstimates,
+        estimates: &crate::BuildPreviewEstimates,
         replanner: Option<Arc<dyn TrustedBuildReplanner>>,
     ) -> Result<BuildPreview, BrokerError> {
         let digest = plan
@@ -911,6 +911,10 @@ impl AuthenticatedCaller {
         )
     }
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "BuildExecutionIo owns &mut references that move into the executor"
+    )]
     pub(crate) fn execute_build_with_progress(
         &self,
         handle: &OperationHandle,
@@ -1755,7 +1759,7 @@ impl AuthenticatedCaller {
         let output_paths = evidence
             .targets()
             .iter()
-            .flat_map(|target| target.acquired())
+            .flat_map(super::build::InstallTargetEvidence::acquired)
             .map(|output| output.path_info().store_path().as_str().to_owned())
             .collect::<BTreeSet<_>>();
         let cache_only = evidence.targets().iter().all(|target| {
@@ -1967,7 +1971,7 @@ impl AuthenticatedCaller {
         release_admission(&mut state, &self.broker.build_gate, handle);
     }
 
-    fn check_epoch(&self, state: &BrokerState) -> Result<(), BrokerError> {
+    const fn check_epoch(&self, state: &BrokerState) -> Result<(), BrokerError> {
         if state.epoch == self.epoch {
             Ok(())
         } else {
@@ -2081,7 +2085,7 @@ fn purge_expired(
     }
 }
 
-fn map_build_engine_error(code: BuildEngineErrorCode) -> BrokerError {
+const fn map_build_engine_error(code: BuildEngineErrorCode) -> BrokerError {
     let code = match code {
         BuildEngineErrorCode::Cancelled => BrokerErrorCode::AdmissionCancelled,
         BuildEngineErrorCode::ApprovalInvalidated => BrokerErrorCode::BuildApprovalInvalidated,
@@ -2102,7 +2106,7 @@ fn map_build_engine_error(code: BuildEngineErrorCode) -> BrokerError {
     BrokerError::new(code)
 }
 
-fn build_operation_id(record: &OperationRecord) -> Option<&OperationId> {
+const fn build_operation_id(record: &OperationRecord) -> Option<&OperationId> {
     record.build_operation_id.as_ref()
 }
 
@@ -2271,7 +2275,7 @@ mod tests {
         fn record(&self, record: &ApprovalJournalRecord) -> Result<(), ApprovalJournalError> {
             self.rows
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(record.clone());
             Ok(())
         }
@@ -2386,7 +2390,7 @@ mod tests {
             if let Some(release) = self
                 .release
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
             {
                 release.recv().map_err(|_| NixAdapterError::Unavailable)?;
@@ -2795,7 +2799,7 @@ mod tests {
         let plan = build_plan(1);
         let digest = plan.digest().unwrap();
         let journal = Journal::default();
-        let preview = caller.prepare_build(&handle, plan.clone()).unwrap();
+        let preview = caller.prepare_build(&handle, plan).unwrap();
         assert_eq!(preview.build_plan_digest().len(), 71);
 
         assert_eq!(
@@ -2863,7 +2867,7 @@ mod tests {
         let rows = journal
             .rows
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].build_plan_digest(), digest);
         assert_eq!(rows[0].source(), ApprovalSource::AssumeYes);
@@ -2968,7 +2972,7 @@ mod tests {
         let wrong_schema =
             encoded_evidence.replacen("\"schemaVersion\":1", "\"schemaVersion\":2", 1);
         assert!(InstallEvidence::from_json_bytes(wrong_schema.as_bytes()).is_err());
-        let extended = encoded_evidence.replacen("{", "{\"futureField\":true,", 1);
+        let extended = encoded_evidence.replacen('{', "{\"futureField\":true,", 1);
         assert!(InstallEvidence::from_json_bytes(extended.as_bytes()).is_err());
         assert_eq!(adapter.calls.load(Ordering::SeqCst), 1);
         assert_eq!(broker.build_engine.approval_count(), 0);
@@ -3551,7 +3555,7 @@ mod tests {
             .prepare_build_with_replanner_and_estimates(
                 &handle,
                 plan,
-                crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
+                &crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
                 replanner.clone(),
             )
             .unwrap();
@@ -3630,7 +3634,7 @@ mod tests {
             .prepare_build_with_replanner_and_estimates(
                 &handle,
                 plan.clone(),
-                crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
+                &crate::BuildPreviewEstimates::new(None, Some(100), None).unwrap(),
                 Arc::new(RetainedReplanner::new(plan, true)),
             )
             .unwrap();

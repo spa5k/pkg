@@ -996,7 +996,7 @@ impl BrokerLifecycleClient {
         Ok(response)
     }
 
-    fn fail(&mut self, code: BrokerClientErrorCode) -> BrokerClientError {
+    const fn fail(&mut self, code: BrokerClientErrorCode) -> BrokerClientError {
         self.healthy = false;
         BrokerClientError::new(code)
     }
@@ -1095,7 +1095,7 @@ impl BrokerNixAdapter {
     }
 
     #[cfg(test)]
-    fn at(endpoint: PathBuf) -> Self {
+    const fn at(endpoint: PathBuf) -> Self {
         Self {
             endpoint: Some(endpoint),
         }
@@ -1162,7 +1162,7 @@ impl NixAdapter for BrokerNixAdapter {
     }
 }
 
-fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
+const fn map_broker_error(error: BrokerClientError) -> NixAdapterError {
     if let Some(code) = error.adapter_code() {
         return NixAdapterError::remote(code);
     }
@@ -2061,13 +2061,13 @@ mod tests {
         assert_eq!(
             client
                 .begin(BrokerOperationKind::Resolve)
-                .map_err(|error| error.code()),
+                .map_err(super::BrokerClientError::code),
             Err(BrokerClientErrorCode::UnexpectedResponse)
         );
         assert_eq!(
             client
                 .begin(BrokerOperationKind::Resolve)
-                .map_err(|error| error.code()),
+                .map_err(super::BrokerClientError::code),
             Err(BrokerClientErrorCode::ConnectionFailed)
         );
         release_tx.send(())?;

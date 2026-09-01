@@ -11,6 +11,9 @@ use crate::commands::execute::CommandResult;
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
 
+/// One dotted release version: major and optional minor and patch.
+type DottedRelease = (u64, Option<u64>, Option<u64>);
+
 /// One installed package identity used only for a read-only catalog comparison.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledCatalogPackage {
@@ -24,7 +27,7 @@ pub struct InstalledCatalogPackage {
 impl InstalledCatalogPackage {
     /// Retains the product fields from one already-verified active generation.
     #[must_use]
-    pub fn new(
+    pub const fn new(
         package: AttributePath,
         name: String,
         version: PackageVersion,
@@ -391,7 +394,7 @@ fn version_change_kind(current: &str, available: &str) -> &'static str {
     }
 }
 
-fn dotted_release(value: &str) -> Option<(u64, Option<u64>, Option<u64>)> {
+fn dotted_release(value: &str) -> Option<DottedRelease> {
     let value = value.strip_prefix('v').unwrap_or(value);
     let mut parts = value.splitn(4, '.');
     let major = numeric_prefix(parts.next()?)?;
@@ -581,7 +584,7 @@ mod tests {
         let report = CatalogSearchReport::new(
             ChannelSequence::from_u64(42).unwrap(),
             "2026-08-19T00:00:00Z",
-            vec![summary.clone()],
+            vec![summary],
         )
         .unwrap();
         let result = search_catalog_report(&report).unwrap();

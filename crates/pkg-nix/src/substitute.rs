@@ -120,7 +120,7 @@ impl SubstituteError {
         }
     }
 
-    fn adapter(error: &NixAdapterError) -> Self {
+    const fn adapter(error: &NixAdapterError) -> Self {
         let code = match error.code() {
             NixAdapterErrorCode::TrustFailure => SubstituteErrorCode::TrustFailure,
             NixAdapterErrorCode::IntegrityFailure => SubstituteErrorCode::IntegrityFailure,
@@ -390,7 +390,7 @@ mod tests {
             kind: MethodKind,
         ) -> Result<T, NixAdapterError> {
             slot.lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
                 .unwrap_or_else(|| Err(NixAdapterError::unexpected_extra_call(kind)))
         }
@@ -398,14 +398,14 @@ mod tests {
         fn record(&self, kind: MethodKind) {
             self.calls
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(kind);
         }
 
         fn calls(&self) -> Vec<MethodKind> {
             self.calls
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
         }
     }
@@ -529,7 +529,7 @@ mod tests {
             crate::NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567").unwrap(),
             nar(NAR),
             System::X8664Linux,
-            vec![target()],
+            &[target()],
             vec![substitute],
             &evidence_adapter,
         )
@@ -574,7 +574,7 @@ mod tests {
                 crate::NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567",).unwrap(),
                 nar(NAR),
                 System::X8664Linux,
-                vec![target()],
+                &[target()],
                 vec![substitute],
                 &evidence_adapter,
             )

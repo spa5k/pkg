@@ -184,7 +184,7 @@ fn validate_file(file: &File, owner_uid: u32) -> Result<(), ApprovalJournalError
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};

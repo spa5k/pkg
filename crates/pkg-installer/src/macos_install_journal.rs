@@ -51,7 +51,10 @@ impl Error for MacOsInstallJournalError {}
 #[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
 pub enum MacOsInstallMutation {
     /// One compiled account, directory, or file asset.
-    Asset { id: String },
+    Asset {
+        /// The exact compiled asset id.
+        id: String,
+    },
     /// The encrypted APFS store transaction.
     StoreVolume,
     /// The authenticated managed runtime transaction.
@@ -80,8 +83,11 @@ pub enum MacOsInstallMutationState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MacOsInstallMode {
+    /// A clean host with no prior product state.
     FreshInstall,
+    /// An ordinary N-to-N+1 product upgrade; services stay offline.
     OfflineUpgrade,
+    /// A same-release restore of product assets; services stay offline.
     OfflineRepair,
 }
 
@@ -169,6 +175,7 @@ impl MacOsInstallJournal {
         })
     }
 
+    /// The classified install mode of this snapshot.
     #[must_use]
     pub const fn mode(&self) -> MacOsInstallMode {
         self.mode

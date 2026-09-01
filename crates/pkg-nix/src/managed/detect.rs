@@ -508,86 +508,27 @@ impl Scanner<'_> {
             return;
         }
         if self.is_linux() {
-            match run_bounded_command(Path::new("/usr/bin/getent"), &["passwd"]) {
-                CommandOutput::Missing => self.record(
-                    "GETENT_MISSING",
-                    FindingKind::Ambiguous,
-                    "the Linux account database tool is unavailable",
-                ),
-                CommandOutput::Contents(bytes) if account_output_has_build_user(&bytes, true) => {
-                    self.record(
-                        "GETENT_NIXBLD_USER",
-                        FindingKind::Unmanaged,
-                        "the system account database reports one or more Nix build users",
-                    );
-                }
-                CommandOutput::Contents(_) => {}
-                CommandOutput::Failed => self.record(
-                    "GETENT_PASSWD_QUERY_FAILED",
-                    FindingKind::Ambiguous,
-                    "the system account database could not be checked for Nix build users",
-                ),
-            }
-            match run_bounded_command(Path::new("/usr/bin/getent"), &["group"]) {
-                CommandOutput::Missing => self.record(
-                    "GETENT_MISSING",
-                    FindingKind::Ambiguous,
-                    "the Linux account database tool is unavailable",
-                ),
-                CommandOutput::Contents(bytes) if account_output_has_build_group(&bytes, true) => {
-                    self.record(
-                        "GETENT_NIXBLD_GROUP",
-                        FindingKind::Unmanaged,
-                        "the system account database reports a Nix build-users group",
-                    );
-                }
-                CommandOutput::Contents(_) => {}
-                CommandOutput::Failed => self.record(
-                    "GETENT_GROUP_QUERY_FAILED",
-                    FindingKind::Ambiguous,
-                    "the system account database could not be checked for a Nix build group",
-                ),
-            }
+            self.check_database(&GETENT_PASSWD_CHECK);
+            self.check_database(&GETENT_GROUP_CHECK);
         } else {
-            match run_bounded_command(Path::new("/usr/bin/dscl"), &[".", "-list", "/Users"]) {
-                CommandOutput::Missing => self.record(
-                    "DSCL_MISSING",
-                    FindingKind::Ambiguous,
-                    "the macOS account database tool is unavailable",
-                ),
-                CommandOutput::Contents(bytes) if account_output_has_build_user(&bytes, false) => {
-                    self.record(
-                        "DSCL_NIXBLD_USER",
-                        FindingKind::Unmanaged,
-                        "OpenDirectory reports one or more Nix build users",
-                    );
-                }
-                CommandOutput::Contents(_) => {}
-                CommandOutput::Failed => self.record(
-                    "DSCL_QUERY_FAILED",
-                    FindingKind::Ambiguous,
-                    "OpenDirectory could not be checked for Nix build users",
-                ),
+            self.check_database(&DSCL_USERS_CHECK);
+            self.check_database(&DSCL_GROUPS_CHECK);
+        }
+    }
+
+    fn check_database(&mut self, check: &DatabaseCheck) {
+        match run_bounded_command(Path::new(check.tool), check.arguments) {
+            CommandOutput::Missing => {
+                self.record(check.missing.0, FindingKind::Ambiguous, check.missing.1);
             }
-            match run_bounded_command(Path::new("/usr/bin/dscl"), &[".", "-list", "/Groups"]) {
-                CommandOutput::Missing => self.record(
-                    "DSCL_MISSING",
-                    FindingKind::Ambiguous,
-                    "the macOS account database tool is unavailable",
-                ),
-                CommandOutput::Contents(bytes) if account_output_has_build_group(&bytes, false) => {
-                    self.record(
-                        "DSCL_NIXBLD_GROUP",
-                        FindingKind::Unmanaged,
-                        "OpenDirectory reports a Nix build-users group",
-                    );
-                }
-                CommandOutput::Contents(_) => {}
-                CommandOutput::Failed => self.record(
-                    "DSCL_GROUPS_QUERY_FAILED",
-                    FindingKind::Ambiguous,
-                    "OpenDirectory could not be checked for a Nix build group",
-                ),
+            CommandOutput::Contents(bytes)
+                if (check.matches_build)(&bytes, check.colon_separated) =>
+            {
+                self.record(check.present.0, FindingKind::Unmanaged, check.present.1);
+            }
+            CommandOutput::Contents(_) => {}
+            CommandOutput::Failed => {
+                self.record(check.failed.0, FindingKind::Ambiguous, check.failed.1);
             }
         }
     }
@@ -845,7 +786,7 @@ impl Scanner<'_> {
         self.root.join(relative)
     }
 
-    fn is_linux(&self) -> bool {
+    const fn is_linux(&self) -> bool {
         matches!(self.system, System::X8664Linux | System::Aarch64Linux)
     }
 }
@@ -1018,6 +959,93 @@ fn run_bounded_command(program: &Path, arguments: &[&str]) -> CommandOutput {
         CommandOutput::Contents(bytes)
     }
 }
+
+/// Configuration for one system account database query.
+struct DatabaseCheck {
+    tool: &'static str,
+    arguments: &'static [&'static str],
+    missing: (&'static str, &'static str),
+    present: (&'static str, &'static str),
+    failed: (&'static str, &'static str),
+    matches_build: fn(&[u8], bool) -> bool,
+    colon_separated: bool,
+}
+
+const GETENT_PASSWD_CHECK: DatabaseCheck = DatabaseCheck {
+    tool: "/usr/bin/getent",
+    arguments: &["passwd"],
+    missing: (
+        "GETENT_MISSING",
+        "the Linux account database tool is unavailable",
+    ),
+    present: (
+        "GETENT_NIXBLD_USER",
+        "the system account database reports one or more Nix build users",
+    ),
+    failed: (
+        "GETENT_PASSWD_QUERY_FAILED",
+        "the system account database could not be checked for Nix build users",
+    ),
+    matches_build: account_output_has_build_user,
+    colon_separated: true,
+};
+
+const GETENT_GROUP_CHECK: DatabaseCheck = DatabaseCheck {
+    tool: "/usr/bin/getent",
+    arguments: &["group"],
+    missing: (
+        "GETENT_MISSING",
+        "the Linux account database tool is unavailable",
+    ),
+    present: (
+        "GETENT_NIXBLD_GROUP",
+        "the system account database reports a Nix build-users group",
+    ),
+    failed: (
+        "GETENT_GROUP_QUERY_FAILED",
+        "the system account database could not be checked for a Nix build group",
+    ),
+    matches_build: account_output_has_build_group,
+    colon_separated: true,
+};
+
+const DSCL_USERS_CHECK: DatabaseCheck = DatabaseCheck {
+    tool: "/usr/bin/dscl",
+    arguments: &[".", "-list", "/Users"],
+    missing: (
+        "DSCL_MISSING",
+        "the macOS account database tool is unavailable",
+    ),
+    present: (
+        "DSCL_NIXBLD_USER",
+        "OpenDirectory reports one or more Nix build users",
+    ),
+    failed: (
+        "DSCL_QUERY_FAILED",
+        "OpenDirectory could not be checked for Nix build users",
+    ),
+    matches_build: account_output_has_build_user,
+    colon_separated: false,
+};
+
+const DSCL_GROUPS_CHECK: DatabaseCheck = DatabaseCheck {
+    tool: "/usr/bin/dscl",
+    arguments: &[".", "-list", "/Groups"],
+    missing: (
+        "DSCL_MISSING",
+        "the macOS account database tool is unavailable",
+    ),
+    present: (
+        "DSCL_NIXBLD_GROUP",
+        "OpenDirectory reports a Nix build-users group",
+    ),
+    failed: (
+        "DSCL_GROUPS_QUERY_FAILED",
+        "OpenDirectory could not be checked for a Nix build group",
+    ),
+    matches_build: account_output_has_build_group,
+    colon_separated: false,
+};
 
 #[cfg(test)]
 mod tests {

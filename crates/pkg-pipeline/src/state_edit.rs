@@ -104,7 +104,7 @@ pub fn prepare_state_edit(
     layout: StateLayout,
     lease: StateLease,
     source: &GenerationSnapshot,
-    next: LifecycleState,
+    next: &LifecycleState,
     metadata: StateEditMetadata<'_>,
 ) -> Result<PreparedGeneration, StateEditPrepareError> {
     let generation = GenerationId::new(metadata.generation_id)
@@ -146,7 +146,7 @@ pub fn prepare_state_edit(
         return Err(StateEditPrepareError::GenerationExists);
     }
 
-    let inputs = activation_inputs(&next);
+    let inputs = activation_inputs(next);
     let collision_policy = metadata
         .collision_policy
         .unwrap_or(source.generation().activation().collision_policy());
@@ -160,9 +160,9 @@ pub fn prepare_state_edit(
         .map_err(StateEditPrepareError::Commit)
 }
 
-pub(crate) fn build_candidate(
+pub fn build_candidate(
     source: &GenerationSnapshot,
-    next: LifecycleState,
+    next: &LifecycleState,
     metadata: &StateEditMetadata<'_>,
     collision_policy: CollisionPolicy,
     plan: &pkg_store::ActivationPlan,
@@ -216,7 +216,7 @@ pub(crate) fn build_candidate(
                 "nixpkgsRev": realization.nixpkgs_revision().as_str(),
                 "storePath": realization.store_path().as_str(),
                 "deriver": realization.deriver().as_str(),
-                "outputsToInstall": realization.outputs_to_install().iter().map(|name| name.as_str()).collect::<Vec<_>>(),
+                "outputsToInstall": realization.outputs_to_install().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
                 "narHash": realization.nar_hash().as_str(),
                 "closureNarSize": realization.closure_nar_size(),
                 "provenance": lock.provenance(),
@@ -269,6 +269,6 @@ fn invalid_candidate<E>(_: E) -> StateEditPrepareError {
     StateEditPrepareError::Commit(CommitError::InvalidCandidate)
 }
 
-fn invalid_candidate_unit() -> StateEditPrepareError {
+const fn invalid_candidate_unit() -> StateEditPrepareError {
     StateEditPrepareError::Commit(CommitError::InvalidCandidate)
 }

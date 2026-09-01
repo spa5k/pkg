@@ -113,6 +113,10 @@ impl From<ValidationError> for SignError {
 /// `root_path` is signed offline input. Root private keys are not an argument;
 /// `online_keys` should be KMS/HSM-backed `KeySource` implementations for only
 /// the targets, snapshot, and timestamp roles. `output` must not already exist.
+#[expect(
+    clippy::future_not_send,
+    reason = "release signing runs single-threaded; key sources are not shared across threads"
+)]
 pub async fn sign_channel(
     release: ValidatedRelease,
     root_path: &Path,
@@ -221,6 +225,10 @@ fn absolute_output_path(output: &Path) -> Result<PathBuf, SignError> {
         .join(name))
 }
 
+#[expect(
+    clippy::future_not_send,
+    reason = "release verification runs single-threaded; repository handles stay on one thread"
+)]
 async fn verify_repository(
     root: &[u8],
     release: &ValidatedRelease,
@@ -347,11 +355,11 @@ mod tests {
     struct TestTimestampAuthorization;
 
     impl ReleaseAuthorization for TestAuthorization {
-        fn lease_id(&self) -> &str {
+        fn lease_id(&self) -> &'static str {
             "release-lease-1"
         }
 
-        fn signing_actor(&self) -> &str {
+        fn signing_actor(&self) -> &'static str {
             "release-service"
         }
 
@@ -403,11 +411,11 @@ mod tests {
     }
 
     impl TimestampAuthorization for TestTimestampAuthorization {
-        fn lease_id(&self) -> &str {
+        fn lease_id(&self) -> &'static str {
             "timestamp-lease-2"
         }
 
-        fn signing_actor(&self) -> &str {
+        fn signing_actor(&self) -> &'static str {
             "timestamp-service"
         }
 

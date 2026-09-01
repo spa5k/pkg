@@ -141,7 +141,7 @@ pub fn prepare_install_generation(
     let plan = stage_activation(&staging, &inputs, collision_policy)
         .inspect_err(|_| discard_staging(&staging))
         .map_err(|_| InstallGenerationError::Stage)?;
-    let candidate = build_candidate(current, next, collision_policy, metadata, &plan)
+    let candidate = build_candidate(current, &next, collision_policy, metadata, &plan)
         .inspect_err(|_| discard_staging(&staging))?;
     PreparedGeneration::prepare(layout, candidate, plan, lease)
         .inspect_err(|_| discard_staging(&staging))
@@ -150,7 +150,7 @@ pub fn prepare_install_generation(
 
 fn build_candidate(
     current: Option<&GenerationSnapshot>,
-    next: LifecycleState,
+    next: &LifecycleState,
     collision_policy: CollisionPolicy,
     metadata: InstallGenerationMetadata<'_>,
     plan: &pkg_store::ActivationPlan,
@@ -170,7 +170,7 @@ fn build_candidate(
                 "nixpkgsRev": realization.nixpkgs_revision().as_str(),
                 "storePath": realization.store_path().as_str(),
                 "deriver": realization.deriver().as_str(),
-                "outputsToInstall": realization.outputs_to_install().iter().map(|name| name.as_str()).collect::<Vec<_>>(),
+                "outputsToInstall": realization.outputs_to_install().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
                 "narHash": realization.nar_hash().as_str(),
                 "closureNarSize": realization.closure_nar_size(),
                 "provenance": lock.provenance(),
@@ -217,7 +217,7 @@ fn build_candidate(
         .map_err(InstallGenerationError::Commit)
 }
 
-fn invalid_candidate() -> InstallGenerationError {
+const fn invalid_candidate() -> InstallGenerationError {
     InstallGenerationError::Commit(CommitError::InvalidCandidate)
 }
 
@@ -304,7 +304,7 @@ mod tests {
                 .unwrap();
         let candidate = build_candidate(
             None,
-            next,
+            &next,
             pkg_core::state::CollisionPolicy::Abort,
             InstallGenerationMetadata::new(
                 "gen-0001",

@@ -77,6 +77,10 @@ pub struct NixpkgsFetchSpec {
     pin: NixpkgsPin,
 }
 
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "the debug view redacts the authenticated pin material"
+)]
 impl fmt::Debug for NixpkgsFetchSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -263,6 +267,10 @@ pub struct VerifiedNixpkgsSource {
     source: PinnedNixpkgsSource,
 }
 
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "the debug view redacts the private verified source identity"
+)]
 impl fmt::Debug for VerifiedNixpkgsSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -483,7 +491,7 @@ mod tests {
             }
             self.response
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take()
                 .unwrap_or_else(|| Err(NixpkgsSourceError::runner_failure()))
         }

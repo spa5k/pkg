@@ -173,14 +173,14 @@ impl ChannelClient {
         metadata_url: Url,
         targets_url: Url,
         datastore: impl Into<PathBuf>,
-        legacy: AcceptedChannel,
+        legacy: &AcceptedChannel,
     ) -> Result<Self, ChannelError> {
         Self::new_inner(
             trusted_root,
             metadata_url,
             targets_url,
             datastore.into(),
-            Some(&legacy),
+            Some(legacy),
         )
     }
 
@@ -771,8 +771,7 @@ mod tests {
             [0x41; 32],
         );
         let migrated =
-            ChannelClient::migrate_legacy(root, metadata, targets, temp.path(), legacy.clone())
-                .unwrap();
+            ChannelClient::migrate_legacy(root, metadata, targets, temp.path(), &legacy).unwrap();
         assert_eq!(migrated.accepted.load().unwrap(), Some(legacy));
         #[cfg(unix)]
         assert_eq!(

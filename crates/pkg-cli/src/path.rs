@@ -54,7 +54,7 @@ enum StateLocationKind {
 impl StateLocation {
     /// Builds an alternate location. Filesystem validation remains mandatory.
     #[must_use]
-    pub fn alternate(state_root: PathBuf, home: PathBuf) -> Self {
+    pub const fn alternate(state_root: PathBuf, home: PathBuf) -> Self {
         Self {
             state_root,
             home,

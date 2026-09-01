@@ -1,6 +1,8 @@
-//! The validated `pkg`-owned request/report contract types that cross the
-//! [`NixAdapter`](crate::NixAdapter) boundary, plus the public size-capped JSON
-//! codec that is the single decode boundary for serialized reports.
+//! The validated `pkg`-owned request/report contract types.
+//!
+//! These types cross the [`NixAdapter`](crate::NixAdapter) boundary. The
+//! module also holds the public size-capped JSON codec, the single decode
+//! boundary for serialized reports.
 //!
 //! # What lives here
 //!
@@ -112,7 +114,7 @@ fn invalid(what: &'static str) -> NixAdapterError {
 }
 
 /// Rejects input whose byte length exceeds the codec cap, **before** parsing.
-fn check_size(codec: &JsonCodec, bytes: &[u8]) -> Result<(), NixAdapterError> {
+const fn check_size(codec: &JsonCodec, bytes: &[u8]) -> Result<(), NixAdapterError> {
     if bytes.len() > codec.limit() {
         return Err(NixAdapterError::OversizedInput {
             limit_bytes: codec.limit(),
@@ -131,7 +133,7 @@ fn check_size(codec: &JsonCodec, bytes: &[u8]) -> Result<(), NixAdapterError> {
 /// documented signal. The crate's serde_json pin is exact, so this text is
 /// fixed for the lock; a future pin bump is covered by the excessive-nesting
 /// contract test.
-fn map_json_err(e: serde_json::Error) -> NixAdapterError {
+fn map_json_err(e: &serde_json::Error) -> NixAdapterError {
     if e.to_string().contains("recursion limit exceeded") {
         NixAdapterError::MalformedPayload {
             kind: MalformedKind::ExcessiveNesting,
@@ -148,11 +150,11 @@ fn map_json_err(e: serde_json::Error) -> NixAdapterError {
 /// unknown fields (via `#[serde(deny_unknown_fields)]` on each DTO).
 fn parse_dto<D: DeserializeOwned>(codec: &JsonCodec, bytes: &[u8]) -> Result<D, NixAdapterError> {
     check_size(codec, bytes)?;
-    serde_json::from_slice::<D>(bytes).map_err(map_json_err)
+    serde_json::from_slice::<D>(bytes).map_err(|e| map_json_err(&e))
 }
 
 /// Rejects an unsupported observed schema version.
-fn check_schema(observed: u32) -> Result<(), NixAdapterError> {
+const fn check_schema(observed: u32) -> Result<(), NixAdapterError> {
     if observed == SCHEMA_VERSION_CURRENT {
         Ok(())
     } else {
@@ -247,7 +249,7 @@ struct BoundedStringSeq(Vec<String>);
 
 impl BoundedStringSeq {
     /// Wraps an already-validated vector (used by encode).
-    fn from_vec(items: Vec<String>) -> Self {
+    const fn from_vec(items: Vec<String>) -> Self {
         Self(items)
     }
 
@@ -328,7 +330,7 @@ struct BoundedSeq<T>(Vec<T>);
 
 impl<T> BoundedSeq<T> {
     /// Wraps an already-validated vector (used by encode).
-    fn from_vec(items: Vec<T>) -> Self {
+    const fn from_vec(items: Vec<T>) -> Self {
         Self(items)
     }
 
@@ -392,7 +394,7 @@ struct BoundedUniqueStringMap(BTreeMap<String, String>);
 
 impl BoundedUniqueStringMap {
     /// Wraps an already-validated map (used by encode).
-    fn from_map(entries: BTreeMap<String, String>) -> Self {
+    const fn from_map(entries: BTreeMap<String, String>) -> Self {
         Self(entries)
     }
 
@@ -612,7 +614,7 @@ impl SchemaVersion {
     ///
     /// Returns [`NixAdapterError::UnsupportedSchemaVersion`] for any value
     /// other than [`SchemaVersion::CURRENT_VALUE`].
-    pub fn new(value: u32) -> Result<Self, NixAdapterError> {
+    pub const fn new(value: u32) -> Result<Self, NixAdapterError> {
         if value == Self::CURRENT_VALUE {
             Ok(Self(value))
         } else {
@@ -784,7 +786,7 @@ pub struct AcceptedFormats {
 impl AcceptedFormats {
     /// Constructs the accepted-format set.
     #[must_use]
-    pub fn new(path_info: FormatVersion) -> Self {
+    pub const fn new(path_info: FormatVersion) -> Self {
         Self { path_info }
     }
 
@@ -807,7 +809,7 @@ pub struct VersionInfo {
 impl VersionInfo {
     /// Constructs a `version()` report.
     #[must_use]
-    pub fn new(nix_version: NixVersion, accepted_formats: AcceptedFormats) -> Self {
+    pub const fn new(nix_version: NixVersion, accepted_formats: AcceptedFormats) -> Self {
         Self {
             nix_version,
             accepted_formats,
@@ -816,13 +818,13 @@ impl VersionInfo {
 
     /// Returns the managed-Nix version.
     #[must_use]
-    pub fn nix_version(&self) -> &NixVersion {
+    pub const fn nix_version(&self) -> &NixVersion {
         &self.nix_version
     }
 
     /// Returns the accepted upstream per-command format versions.
     #[must_use]
-    pub fn accepted_formats(&self) -> &AcceptedFormats {
+    pub const fn accepted_formats(&self) -> &AcceptedFormats {
         &self.accepted_formats
     }
 }
@@ -965,9 +967,11 @@ fn is_standard_base64(s: &[u8]) -> bool {
 // evaluate_derivation
 // ===========================================================================
 
-/// A request to evaluate a selector into a derivation plan without realizing it
-/// (`plans/09` §4.1). Built by the later resolver from a selector plus the
-/// accepted channel descriptor; carries **no** trust/flag knobs.
+/// A request to evaluate a selector into a derivation plan without realizing
+/// it (`plans/09` §4.1).
+///
+/// Built by the later resolver from a selector plus the accepted channel
+/// descriptor; carries **no** trust/flag knobs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluateDerivationRequest {
     attribute: AttributePath,
@@ -1023,7 +1027,7 @@ impl EvaluateDerivationRequest {
 
     /// Returns the resolved Nixpkgs attribute path.
     #[must_use]
-    pub fn attribute(&self) -> &AttributePath {
+    pub const fn attribute(&self) -> &AttributePath {
         &self.attribute
     }
 
@@ -1035,19 +1039,19 @@ impl EvaluateDerivationRequest {
 
     /// Returns the pinned Nixpkgs revision.
     #[must_use]
-    pub fn nixpkgs_revision(&self) -> &NixpkgsRevision {
+    pub const fn nixpkgs_revision(&self) -> &NixpkgsRevision {
         &self.nixpkgs_revision
     }
 
     /// Returns the NAR-hash pin of the Nixpkgs source.
     #[must_use]
-    pub fn nixpkgs_nar_hash(&self) -> &NarHash {
+    pub const fn nixpkgs_nar_hash(&self) -> &NarHash {
         &self.nixpkgs_nar_hash
     }
 
     /// Returns the output selection.
     #[must_use]
-    pub fn outputs(&self) -> &OutputSelection {
+    pub const fn outputs(&self) -> &OutputSelection {
         &self.outputs
     }
 }
@@ -1192,7 +1196,10 @@ impl EvaluatedDerivation {
     ///
     /// Returns [`NixAdapterError::ValidationFailure`] for an invalid display
     /// name, empty outputs, or an over-budget output map.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a DerivationInfo is one closed wire record; every field is validated independently"
+    )]
     pub fn new(
         derivation: DerivationPath,
         name: String,
@@ -1234,7 +1241,7 @@ impl EvaluatedDerivation {
 
     /// Returns the evaluated derivation path.
     #[must_use]
-    pub fn derivation(&self) -> &DerivationPath {
+    pub const fn derivation(&self) -> &DerivationPath {
         &self.derivation
     }
     /// Returns Nix's bounded display name.
@@ -1249,7 +1256,7 @@ impl EvaluatedDerivation {
     }
     /// Returns expected per-output paths, sorted by output name.
     #[must_use]
-    pub fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
+    pub const fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
         &self.outputs
     }
     /// Returns the digest of the canonical upstream derivation document.
@@ -1293,7 +1300,10 @@ pub struct DerivationPlanReport {
 
 impl DerivationPlanReport {
     /// Constructs a canonical, internally consistent evaluate-only plan.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one evaluated plan record maps to one closed domain value"
+    )]
     pub fn new(
         json_version: u32,
         root: DerivationPath,
@@ -1359,7 +1369,7 @@ impl DerivationPlanReport {
     }
     /// Returns the root derivation.
     #[must_use]
-    pub fn root(&self) -> &DerivationPath {
+    pub const fn root(&self) -> &DerivationPath {
         &self.root
     }
     /// Returns the canonical outputs selected for installation.
@@ -1384,7 +1394,7 @@ impl DerivationPlanReport {
     }
     /// Returns the authoritative evaluated version.
     #[must_use]
-    pub fn version(&self) -> &PackageVersion {
+    pub const fn version(&self) -> &PackageVersion {
         &self.version
     }
 }
@@ -1561,7 +1571,10 @@ impl PathInfoReport {
     ///
     /// Returns [`NixAdapterError::ValidationFailure`] on duplicates, an
     /// over-large collection, a self-reference, or an inverted size pair.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one PathInfo wire record maps to one closed domain value"
+    )]
     pub fn new(
         store_path: StorePath,
         nar_hash: NarHash,
@@ -1614,13 +1627,13 @@ impl PathInfoReport {
 
     /// Returns the store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.store_path
     }
 
     /// Returns the NAR hash (sha256 SRI) of the store path.
     #[must_use]
-    pub fn nar_hash(&self) -> &NarHash {
+    pub const fn nar_hash(&self) -> &NarHash {
         &self.nar_hash
     }
 
@@ -1638,7 +1651,7 @@ impl PathInfoReport {
 
     /// Returns the optional deriver.
     #[must_use]
-    pub fn deriver(&self) -> Option<&DerivationPath> {
+    pub const fn deriver(&self) -> Option<&DerivationPath> {
         self.deriver.as_ref()
     }
 
@@ -1816,6 +1829,10 @@ impl SubstituteReceipt {
     }
 }
 
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "the debug view redacts signature material and the full receipt body"
+)]
 impl fmt::Debug for SubstituteReceipt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubstituteReceipt")
@@ -1826,9 +1843,11 @@ impl fmt::Debug for SubstituteReceipt {
 }
 
 /// The report returned by `substitute()`: a cache-only outcome for one store
-/// path (`plans/09` §4.1). A fetched outcome must carry the cache metadata Nix
-/// authenticated while substituting; misses carry no receipt. Trust or
-/// signature failures are [`NixAdapterError`], never an outcome.
+/// path (`plans/09` §4.1).
+///
+/// A fetched outcome must carry the cache metadata Nix authenticated while
+/// substituting; misses carry no receipt. Trust or signature failures are
+/// [`NixAdapterError`], never an outcome.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SubstituteReport {
     store_path: StorePath,
@@ -1839,7 +1858,7 @@ pub struct SubstituteReport {
 impl SubstituteReport {
     /// Constructs a successful substitution report with authenticated cache metadata.
     #[must_use]
-    pub fn fetched(store_path: StorePath, receipt: SubstituteReceipt) -> Self {
+    pub const fn fetched(store_path: StorePath, receipt: SubstituteReceipt) -> Self {
         Self {
             store_path,
             outcome: SubstituteOutcome::Fetched,
@@ -1869,7 +1888,7 @@ impl SubstituteReport {
 
     /// Returns the store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.store_path
     }
 
@@ -2063,7 +2082,7 @@ impl BuildApprovalReceipt {
 
     /// Returns the operation id.
     #[must_use]
-    pub fn operation_id(&self) -> &OperationId {
+    pub const fn operation_id(&self) -> &OperationId {
         &self.operation_id
     }
 
@@ -2281,7 +2300,7 @@ impl BuildRequest {
 
     /// Returns the opaque build-approval receipt.
     #[must_use]
-    pub fn receipt(&self) -> &BuildApprovalReceipt {
+    pub const fn receipt(&self) -> &BuildApprovalReceipt {
         &self.receipt
     }
 }
@@ -2650,7 +2669,7 @@ pub struct PathVerifyResult {
 impl PathVerifyResult {
     /// Constructs a per-path verify result from validated types (infallible).
     #[must_use]
-    pub fn new(path: StorePath, nar_integrity: NarIntegrity, trust: TrustStatus) -> Self {
+    pub const fn new(path: StorePath, nar_integrity: NarIntegrity, trust: TrustStatus) -> Self {
         Self {
             path,
             nar_integrity,
@@ -2660,7 +2679,7 @@ impl PathVerifyResult {
 
     /// Returns the path.
     #[must_use]
-    pub fn path(&self) -> &StorePath {
+    pub const fn path(&self) -> &StorePath {
         &self.path
     }
 
@@ -2809,9 +2828,11 @@ pub enum GcStatus {
     RefusedUnderLease,
 }
 
-/// The report returned by `gc()` (`plans/09` §4.1). `gc()` takes **no** roots
-/// argument; it consults the on-disk GC-roots tree. In addition to the closed
-/// status and the collected paths, it carries a **checked** `freed_bytes`
+/// The report returned by `gc()` (`plans/09` §4.1).
+///
+/// `gc()` takes **no** roots argument; it consults the on-disk GC-roots tree.
+/// In addition to the closed status and the collected paths, it carries a
+/// **checked** `freed_bytes`
 /// total — the bytes the backend reports freed, which must be consistent with
 /// the status ([`GcStatus::RefusedUnderLease`] requires zero).
 #[derive(Debug, Clone, PartialEq, Eq)]

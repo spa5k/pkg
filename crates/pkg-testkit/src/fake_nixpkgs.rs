@@ -19,7 +19,7 @@ pub struct FakeNixpkgsRunner {
 impl FakeNixpkgsRunner {
     /// Creates an empty transcript.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             transcript: Mutex::new(VecDeque::new()),
         }
@@ -48,7 +48,7 @@ impl FakeNixpkgsRunner {
     fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<Expectation>> {
         self.transcript
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 

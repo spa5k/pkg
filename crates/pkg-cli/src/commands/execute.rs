@@ -60,7 +60,7 @@ impl CommandRequest {
 }
 
 /// Sanitized successful command result.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandResult {
     summary: String,
     fields: Map<String, Value>,
@@ -433,7 +433,7 @@ struct PublicOperationJournal {
 }
 
 impl PublicOperationJournal {
-    fn new(log: PublicOperationLog) -> Self {
+    const fn new(log: PublicOperationLog) -> Self {
         Self {
             log,
             operation_id: None,

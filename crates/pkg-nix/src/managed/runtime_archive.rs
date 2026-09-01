@@ -13,8 +13,8 @@ use tar::{Archive, EntryType};
 use super::ownership::{ManagedArtifact, ManagedGroup, encode_ownership_asset_manifest};
 use crate::{Digest, NixVersion, System};
 
-pub(crate) const MAX_ARCHIVE_ENTRIES: usize = 4096;
-pub(crate) const MAX_REGISTRATION_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_ARCHIVE_ENTRIES: usize = 4096;
+pub const MAX_REGISTRATION_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const UPSTREAM_INSTALLER_FILES: [&str; 6] = [
     "install",
@@ -66,7 +66,7 @@ impl fmt::Display for RuntimeManifestError {
 
 impl std::error::Error for RuntimeManifestError {}
 
-pub(crate) enum UpstreamArchiveMember {
+pub enum UpstreamArchiveMember {
     Registration,
     Installer,
     Store(PathBuf),
@@ -78,7 +78,7 @@ struct RuntimeExecutable {
     digest: Digest,
 }
 
-pub(crate) fn classify_upstream_archive_member(
+pub fn classify_upstream_archive_member(
     path: &Path,
     system: System,
     version: &NixVersion,
@@ -350,7 +350,7 @@ fn add_runtime_facade(
     Ok(())
 }
 
-pub(crate) fn is_runtime_bin(path: &Path, name: &str) -> bool {
+pub fn is_runtime_bin(path: &Path, name: &str) -> bool {
     path.file_name().is_some_and(|value| value == name)
         && path.parent().is_some_and(|parent| parent.ends_with("bin"))
 }

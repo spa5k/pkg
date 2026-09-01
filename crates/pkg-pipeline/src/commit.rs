@@ -13,6 +13,9 @@ use pkg_nix::{
     GenerationId, MaintenanceAdapter, RemoveRootSetRequest, RootSetIntent, RootSetReport,
     RootSetTransitionIntent, RootSetTransitionReport,
 };
+
+/// Retained generation snapshots and the active generation id.
+type RetainedSnapshots = (Vec<GenerationSnapshot>, Option<GenerationId>);
 use pkg_store::{
     ActivationEvent, ActivationPlan, LeaseMode, PreparedRootSet, RootCandidate, StateJournal,
     StateJournalError, StateLayout, StateLease, activate_generation, activate_published_generation,
@@ -184,7 +187,7 @@ pub fn load_retained_history(
 fn load_retained_snapshots(
     layout: &StateLayout,
     lease: &StateLease,
-) -> Result<(Vec<GenerationSnapshot>, Option<GenerationId>), CommitError> {
+) -> Result<RetainedSnapshots, CommitError> {
     require_read_lease(layout, lease)?;
     let active = layout
         .current_generation()
@@ -700,7 +703,7 @@ fn generation_companion_id(name: &str) -> Option<GenerationId> {
 /// Numeric `gen-NNNN` ordering: true only when `candidate` is a newer
 /// generation id than `active`. Length-then-lexicographic comparison of the
 /// zero-stripped numbers prevents text order such as `gen-0009` > `gen-0010`.
-pub(crate) fn strictly_newer(candidate: &str, active: &str) -> bool {
+pub fn strictly_newer(candidate: &str, active: &str) -> bool {
     let Some(candidate) = candidate.strip_prefix("gen-") else {
         return false;
     };
@@ -1432,7 +1435,7 @@ fn discard_generation_paths(root: &Path, generation: &Generation) -> Result<(), 
 /// errors. Unlike install preparation, the state-edit and rollback staging
 /// trees are only ever written by this process, so no permission repair is
 /// needed before deletion.
-pub(crate) fn discard_staging(staging: &Path) {
+pub fn discard_staging(staging: &Path) {
     let Ok(metadata) = fs::symlink_metadata(staging) else {
         return;
     };
@@ -2101,6 +2104,7 @@ mod tests {
             fail_removal: false,
             fail_after_removal: false,
         };
+
         assert_eq!(
             pkg_store::recover_prunes(&fixture.layout, &prepared.lease, &maintenance).unwrap(),
             vec!["gen-0001".to_owned()]
@@ -2769,7 +2773,7 @@ mod tests {
             fixture.layout.clone(),
             edit_lease,
             &source,
-            next,
+            &next,
             crate::StateEditMetadata::new(
                 "gen-0002",
                 "2026-08-11T00:00:00Z",
@@ -2853,7 +2857,7 @@ mod tests {
         );
         let candidate = crate::state_edit::build_candidate(
             &source,
-            next,
+            &next,
             &metadata,
             pkg_core::state::CollisionPolicy::Abort,
             &plan,
@@ -2968,7 +2972,7 @@ mod tests {
         .with_build_approval("yes");
         let candidate = crate::state_edit::build_candidate(
             &source,
-            next,
+            &next,
             &metadata,
             pkg_core::state::CollisionPolicy::KeepLast,
             &plan,
@@ -3013,7 +3017,7 @@ mod tests {
             fixture.layout.clone(),
             edit_lease,
             &source,
-            empty,
+            &empty,
             crate::StateEditMetadata::new(
                 "gen-0002",
                 "2026-08-11T00:00:00Z",

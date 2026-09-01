@@ -1,0 +1,12 @@
+# Strict budgets applied only during the G-QUALITY gate.
+#
+# These thresholds must not live in the shared clippy.toml: once configured,
+# they fire at deny level inside the pedantic-deny crates and break every
+# historical violation at once. The gate swaps this file in for the
+# measurement and restores the real config afterwards (ADR 0005).
+
+msrv = "1.96"
+too-many-lines-threshold = 50
+too-many-arguments-threshold = 5
+cognitive-complexity-threshold = 10
+type-complexity-threshold = 150

@@ -320,7 +320,10 @@ fn run_with_process(
 }
 
 #[cfg(test)]
-#[allow(clippy::redundant_pub_crate)]
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "test double keeps the production visibility contract"
+)]
 pub(super) fn run_test_install_with_process(
     executable: &Path,
     installer: &DeterminateInstaller,

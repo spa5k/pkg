@@ -1,3 +1,5 @@
+//! Catalog query contract tests against fixed index fixtures.
+
 use pkg_core::{ChannelSequence, NixpkgsRevision, System};
 use pkg_index::{
     BuildMetadata, CatalogListOptions, IndexCandidate, IndexQuery, InfoLookup, SearchOptions,

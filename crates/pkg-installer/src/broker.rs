@@ -486,7 +486,7 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         handle: &OperationHandle,
         progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
     ) -> Result<CacheInstallOutcome, CacheInstallErrorCode> {
-        self.acquire_install_with_progress(selectors, caller, handle, progress)
+        self.acquire_install_with_progress(&selectors, caller, handle, progress)
             .map_err(|error| match error.code() {
                 BuildAuthorityErrorCode::AcquisitionCancelled => CacheInstallErrorCode::Cancelled,
                 BuildAuthorityErrorCode::AcquisitionIntentRefused => {
@@ -626,7 +626,10 @@ fn dispatch_request_with_refresh(
     )
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the broker dispatch is one closed match over the wire grammar; each arm delegates immediately"
+)]
 fn dispatch_request_with_progress(
     caller: &AuthenticatedCaller,
     request: CliBrokerRequest,
@@ -1441,7 +1444,7 @@ fn remaining(deadline: Instant) -> Result<Duration, BrokerTransportError> {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
     use pkg_channel::BuildMode;
