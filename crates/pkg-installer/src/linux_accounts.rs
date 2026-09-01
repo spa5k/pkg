@@ -895,11 +895,7 @@ fn verify_existing(
 }
 
 fn supplementary_memberships_are_empty(groups: &[GroupRecord], user_name: &str) -> bool {
-    groups
-        .iter()
-        .filter(|group| group.members.contains(user_name))
-        .next()
-        .is_none()
+    !groups.iter().any(|group| group.members.contains(user_name))
 }
 
 fn validate_user_directory(users: &[UserRecord]) -> Result<(), LinuxAccountError> {
@@ -2109,11 +2105,10 @@ mod tests {
 
     #[test]
 
-    fn parse_groups_requires_exact_group_shadow_parity() -> Result<(), LinuxAccountError> {
+    fn parse_groups_requires_exact_group_shadow_parity() {
         // A foreign group with any mismatch still fails closed.
         assert!(parse_groups(b"devs:x:1001:alice\n", b"devs:!::\n").is_err());
         // Gshadow ahead of the group file still fails closed.
         assert!(parse_groups(b"devs:x:1001:alice\n", b"devs:!::alice,bob\n").is_err());
-        Ok(())
     }
 }
