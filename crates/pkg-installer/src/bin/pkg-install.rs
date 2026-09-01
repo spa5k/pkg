@@ -10,9 +10,7 @@ use pkg_installer::{
     ProductionLinuxInstallBackend, ProductionMacOsInstallBackend, install_linux_from_bundle,
     install_macos_from_bundle, plan_linux_group_bindings,
 };
-use pkg_nix::{
-    InstallerProvisionRequest, InstallerRepository, ManagedGroupBindings, ProductionManagedDaemon,
-};
+use pkg_nix::{InstallerProvisionRequest, InstallerRepository, ManagedGroupBindings};
 use url::Url;
 
 const RELEASE_TUF_ROOT_JSON: Option<&str> = option_env!("PKG_RELEASE_TUF_ROOT_JSON");
@@ -73,7 +71,6 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
         system,
         groups,
     };
-    let daemon = ProductionManagedDaemon::production();
     if matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
         let mut backend = match invocation {
             Invocation::InstallOrUpgrade => ProductionMacOsInstallBackend::new(system, groups),
@@ -82,7 +79,7 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
             }
         }
         .map_err(|_| PublicInstallError::InstallFailed)?;
-        install_macos_from_bundle(system, trusted_root, &request, &daemon, &mut backend)
+        install_macos_from_bundle(system, trusted_root, &request, &mut backend)
             .map_err(|_| PublicInstallError::InstallFailed)?;
         Ok(match backend.install_mode() {
             pkg_installer::MacOsInstallMode::FreshInstall => InstallSuccess::Installed,
@@ -97,7 +94,7 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
             }
         }
         .map_err(|_| PublicInstallError::InstallFailed)?;
-        install_linux_from_bundle(system, trusted_root, &request, &daemon, &mut backend)
+        install_linux_from_bundle(system, trusted_root, &request, &mut backend)
             .map_err(public_install_error)?;
         Ok(match invocation {
             Invocation::RepairProductAssets => InstallSuccess::Repaired,
