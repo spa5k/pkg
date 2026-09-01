@@ -71,17 +71,17 @@ crates declare the same rust lints locally (see the note above).
 |---|---|---|---|
 | `all` | deny | Correctness, suspicious, style, complexity, perf. Currently CI-only (`-D warnings`); make it local so the editor and CI agree. | — |
 | `redundant_pub_crate` | deny | Visibility discipline. Already caught real macOS-only debt. Auto-fixable. | 69 |
-| `missing_const_for_fn` | deny | Const-eval hygiene. Auto-fixable. | 231 |
 | `needless_lifetimes` | deny | The exact lint that broke the macOS build. Auto-fixable. | 8 |
-| `option_if_let_else` | deny | Simpler control flow. Auto-fixable. | 14 |
-| `or_fun_call` | deny | Eager allocation on fallible paths. Auto-fixable. | 7 |
-| `useless_let_if_seq` | deny | Auto-fixable. | 4 |
 | `derive_partial_eq_without_eq` | deny | `Eq`/`Hash` consistency. Auto-fixable. | 2 |
-| `needless_collect` | deny | Auto-fixable. | 1 |
-| `redundant_clone` | deny | Clone budget: a clone is a performance decision, not a borrow-checker escape hatch. Auto-fixable. | 13 |
 | `future_not_send` | deny | Multi-threaded runtime safety. | 4 |
 | `too_long_first_doc_paragraph` | deny | Docs are part of the API. | 10 |
 | `suspicious_operation_groupings` | deny | Operator precedence traps. | 2 |
+| `missing_const_for_fn` | ratchet | Const-eval hygiene; test-target residue remains. Auto-fixable. | 231 |
+| `option_if_let_else` | ratchet | Simpler control flow; test-target residue remains. | 14 |
+| `or_fun_call` | ratchet | Eager allocation on fallible paths. | 7 |
+| `useless_let_if_seq` | ratchet | Auto-fixable. | 4 |
+| `needless_collect` | ratchet | Auto-fixable. | 1 |
+| `redundant_clone` | ratchet | Clone budget: a clone is a performance decision, not a borrow-checker escape hatch. | 13 |
 | `use_self` | ratchet | Style preference with 233 hits. Blanket fix is noise. | 233 |
 | `significant_drop_tightening` | ratchet | Behavior-adjacent. Needs review per site, not mechanical application. | 133 |
 
@@ -92,8 +92,8 @@ crates declare the same rust lints locally (see the note above).
 | `unwrap_used` | deny (strict crates); ratchet elsewhere | If failure is possible, model the failure. Test modules carry scoped allows with reasons. The 2 production hits became invariant-named `expect`s. Production denies are enforced by the gate's `--lib --bins` pass. | 2 → 0 |
 | `expect_used` | warn + ratchet | `expect` is the sanctioned invariant mechanism: if you intentionally panic, name the invariant. All 10 existing production expects were audited and each names its invariant. New expects may not grow the count. | 10 |
 | `panic` | deny (strict crates); ratchet elsewhere | Production code returns errors; it does not panic. Tests may panic. | 0 |
-| `todo`, `unimplemented` | deny | No shipped placeholder. | 0 |
-| `dbg_macro` | deny | No debugging output in production. | 0 |
+| `todo`, `unimplemented` | warn + ratchet | No shipped placeholder. Production count is zero; the gate forbids growth. | 0 |
+| `dbg_macro` | warn + ratchet | No debugging output in production. Production count is zero; the gate forbids growth. | 0 |
 | `print_stdout`, `print_stderr` | expect-only | Product output goes through the output abstractions. The 6 bin entry-point prints carry `#[expect(..., reason)]`; any new print site needs the same reason. | 6 |
 | `allow_attributes_without_reason` | deny | Suppressions are expensive: every `allow` must carry `reason =`. This makes the "no bare suppression" rule a compiler check, not a review promise. | 22 |
 
@@ -106,14 +106,9 @@ The blanket `pedantic = "deny"` policy already exists in `pkg-installer` and
 **Denied workspace-wide** (clean in every target on every platform):
 
 `needless_pass_by_value`, `redundant_closure_for_method_calls`,
-`needless_lifetimes`, `manual_let_else`, `single_char_pattern`,
-`semicolon_if_nothing_returned`, `unnecessary_literal_bound`, `if_not_else`,
-`used_underscore_binding`, `no_effect_underscore_binding`,
-`zero_sized_map_values`, `trivially_copy_pass_by_ref`,
-`allow_attributes_without_reason`, `missing_fields_in_debug`,
-`must_use_candidate`, `fn_params_excessive_bools`, `missing_panics_doc`,
-`float_cmp`, `similar_names` (with pair-naming expects where the pair is a
-fixed convention).
+`needless_lifetimes`, `allow_attributes_without_reason`,
+`missing_fields_in_debug`, `must_use_candidate`,
+`fn_params_excessive_bools`, `missing_panics_doc`, `float_cmp`.
 
 **Ratcheted** (baseline-locked, enforced on touched files by the strict
 mode): `match_same_arms` (24 production), `doc_markdown` (13),
@@ -121,12 +116,17 @@ mode): `match_same_arms` (24 production), `doc_markdown` (13),
 `large_stack_arrays` (6), `cast_possible_wrap` (6), `single_match_else` (11),
 `cast_possible_truncation` (3), `struct_excessive_bools` (5 remaining),
 `missing_errors_doc` (435), `option_if_let_else`, `or_fun_call`,
-`redundant_clone`, `significant_drop_tightening` (53), `use_self` (116).
+`redundant_clone`, `significant_drop_tightening` (53), `use_self` (116),
+`manual_let_else`, `single_char_pattern`, `semicolon_if_nothing_returned`,
+`unnecessary_literal_bound`, `if_not_else`, `used_underscore_binding`,
+`no_effect_underscore_binding`, `zero_sized_map_values`,
+`trivially_copy_pass_by_ref`, `similar_names` (pair-naming expects where the
+pair is a fixed convention).
 
 ### 5. Complexity budgets
 
-Configured in `clippy.toml`. The strict thresholds are the policy. The deny
-levels reflect measured production debt (lib + bins, not tests).
+Applied by the G-QUALITY gate through `tools/quality/clippy-strict.toml`.
+The deny levels reflect measured production debt (lib + bins, not tests).
 
 | Threshold | Value | Level | Measured production debt | Test debt |
 |---|---|---|---|---|

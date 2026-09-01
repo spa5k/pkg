@@ -102,9 +102,9 @@ measure() {
     # fails (compile error, deny, missing toolchain). `set -e` would abort
     # the script before the restore otherwise.
     local output status
+    status=0
     output="$(cargo clippy --locked --workspace --lib --bins --all-features \
-        --message-format json -- "${flags[@]}" 2>&1)"
-    status=$?
+        --message-format json -- "${flags[@]}" 2>&1)" || status=$?
 
     rm -f clippy.toml
     if [[ $had_config -eq 1 ]]; then
