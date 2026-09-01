@@ -51,11 +51,8 @@ const DETERMINATE_BUILD_USER_COUNT: u32 = 32;
 const FIRST_PRODUCT_ID: u32 = DETERMINATE_BUILD_USER_ID_BASE + DETERMINATE_BUILD_USER_COUNT + 1;
 const LAST_MANAGED_GID: u32 = 39_999;
 const BROKER_NAME: &str = "pkg-nix-broker";
-const BUILD_GROUP_NAME: &str = "nixbld";
 const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
-const BUILD_HOME: &str = "/var/empty";
 const DEFAULT_NOLOGIN_SHELL: &str = "/usr/sbin/nologin";
-const BUILD_USER_COUNT: u8 = 16;
 
 /// Stable Linux account failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,20 +273,16 @@ impl LinuxAccountManager {
         for asset in crate::linux_install_assets()
             .iter()
             .copied()
-            .filter(|asset| Self::handles(*asset))
+            .filter(|asset| matches!(asset.id(), "broker-group" | "broker-user"))
             .filter(|asset| Some(asset.id()) != missing_id)
         {
             match AccountSpec::for_asset(asset, groups)
-                .unwrap_or_else(|| unreachable!("closed account asset has a specification"))
+                .unwrap_or_else(|| unreachable!("broker asset has a specification"))
             {
-                AccountSpec::Group { name, gid, .. } => group_records.push(GroupRecord {
+                AccountSpec::Group { name, gid } => group_records.push(GroupRecord {
                     name: name.to_owned(),
                     gid,
-                    members: if name == BUILD_GROUP_NAME {
-                        managed_build_users()
-                    } else {
-                        BTreeSet::new()
-                    },
+                    members: BTreeSet::new(),
                     password_locked: true,
                     administrators: BTreeSet::new(),
                 }),
@@ -298,7 +291,6 @@ impl LinuxAccountManager {
                     gid,
                     home,
                     shell,
-                    ..
                 } => user_records.push(UserRecord {
                     name: name.to_owned(),
                     uid: 31_000_u32.saturating_add(
@@ -400,16 +392,8 @@ impl LinuxAccountManager {
                 LinuxAccountErrorCode::VerificationFailure,
             ));
         }
-        if spec.is_last_build_user() {
-            verify_complete_build_group(&groups, &users, self.groups.build_users_gid())?;
-        }
         let uid = match spec {
-            AccountSpec::User {
-                name,
-                gid,
-                build_number,
-                ..
-            } => {
+            AccountSpec::User { name, gid, .. } => {
                 let uid = users
                     .iter()
                     .find(|user| user.name == name)
@@ -417,7 +401,7 @@ impl LinuxAccountManager {
                         LinuxAccountError::new(LinuxAccountErrorCode::VerificationFailure)
                     })?
                     .uid;
-                if build_number.is_none() && uid != gid {
+                if uid != gid {
                     return Err(LinuxAccountError::new(
                         LinuxAccountErrorCode::VerificationFailure,
                     ));
@@ -451,7 +435,6 @@ impl LinuxAccountManager {
             gid: self.groups.broker_gid(),
             home: BROKER_HOME,
             shell: DEFAULT_NOLOGIN_SHELL,
-            build_number: None,
         };
         let groups = self.system.groups()?;
         let users = self.system.users()?;
@@ -655,21 +638,13 @@ enum AccountSpec {
     Group {
         name: &'static str,
         gid: u32,
-        permitted_members: BuildMembers,
     },
     User {
         name: &'static str,
         gid: u32,
         home: &'static str,
         shell: &'static str,
-        build_number: Option<u8>,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BuildMembers {
-    None,
-    ManagedSubset,
 }
 
 impl AccountSpec {
@@ -678,29 +653,13 @@ impl AccountSpec {
             ("broker-group", LinuxAssetKind::Group, BROKER_NAME) => Some(Self::Group {
                 name: BROKER_NAME,
                 gid: groups.broker_gid(),
-                permitted_members: BuildMembers::None,
             }),
             ("broker-user", LinuxAssetKind::User, BROKER_NAME) => Some(Self::User {
                 name: BROKER_NAME,
                 gid: groups.broker_gid(),
                 home: BROKER_HOME,
                 shell: DEFAULT_NOLOGIN_SHELL,
-                build_number: None,
             }),
-            ("build-group", LinuxAssetKind::Group, BUILD_GROUP_NAME) => Some(Self::Group {
-                name: BUILD_GROUP_NAME,
-                gid: groups.build_users_gid(),
-                permitted_members: BuildMembers::ManagedSubset,
-            }),
-            (id, LinuxAssetKind::User, name) => {
-                build_user_number(id, name).map(|number| Self::User {
-                    name,
-                    gid: groups.build_users_gid(),
-                    home: BUILD_HOME,
-                    shell: DEFAULT_NOLOGIN_SHELL,
-                    build_number: Some(number),
-                })
-            }
             _ => None,
         }
     }
@@ -708,35 +667,14 @@ impl AccountSpec {
     #[cfg(test)]
     fn directives(self) -> Vec<u8> {
         match self {
-            Self::Group { name, gid, .. } => format!("g {name} {gid}\n").into_bytes(),
+            Self::Group { name, gid } => format!("g {name} {gid}\n").into_bytes(),
             Self::User {
                 name,
                 gid,
                 home,
                 shell,
-                build_number,
-            } => {
-                let description = build_number.map_or_else(
-                    || "pkg Nix broker".to_owned(),
-                    |number| format!("pkg Nix build user {number}"),
-                );
-                let membership = build_number
-                    .map(|_| format!("m {name} {BUILD_GROUP_NAME}\n"))
-                    .unwrap_or_default();
-                format!("u {name} -:{gid} \"{description}\" {home} {shell}\n{membership}")
-                    .into_bytes()
-            }
+            } => format!("u {name} -:{gid} \"pkg Nix broker\" {home} {shell}\n").into_bytes(),
         }
-    }
-
-    const fn is_last_build_user(self) -> bool {
-        matches!(
-            self,
-            Self::User {
-                build_number: Some(BUILD_USER_COUNT),
-                ..
-            }
-        )
     }
 }
 
@@ -747,7 +685,7 @@ fn create_command(
     nologin: &'static str,
 ) -> (&'static str, Vec<String>) {
     match spec {
-        AccountSpec::Group { name, gid, .. } => (
+        AccountSpec::Group { name, gid } => (
             groupadd,
             vec!["--gid".to_owned(), gid.to_string(), name.to_owned()],
         ),
@@ -756,12 +694,7 @@ fn create_command(
             gid,
             home,
             shell: _,
-            build_number,
         } => {
-            let description = build_number.map_or_else(
-                || "pkg Nix broker".to_owned(),
-                |number| format!("pkg Nix build user {number}"),
-            );
             let mut arguments = vec![
                 "--system".to_owned(),
                 "--gid".to_owned(),
@@ -771,29 +704,15 @@ fn create_command(
                 "--shell".to_owned(),
                 nologin.to_owned(),
                 "--comment".to_owned(),
-                description,
+                "pkg Nix broker".to_owned(),
                 "--no-create-home".to_owned(),
+                "--uid".to_owned(),
+                gid.to_string(),
             ];
-            if build_number.is_some() {
-                arguments.extend(["--groups".to_owned(), BUILD_GROUP_NAME.to_owned()]);
-            } else {
-                arguments.extend(["--uid".to_owned(), gid.to_string()]);
-            }
             arguments.push(name.to_owned());
             (useradd, arguments)
         }
     }
-}
-
-fn build_user_number(id: &str, name: &str) -> Option<u8> {
-    (1..=BUILD_USER_COUNT)
-        .find(|number| id == format!("build-user-{number:02}") && name == format!("nixbld{number}"))
-}
-
-fn managed_build_users() -> BTreeSet<String> {
-    (1..=BUILD_USER_COUNT)
-        .map(|number| format!("nixbld{number}"))
-        .collect()
 }
 
 fn plan_group_bindings(
@@ -809,7 +728,6 @@ fn plan_group_bindings(
         .collect::<BTreeSet<_>>();
     occupied.extend(users.iter().map(|user| user.primary_gid));
     occupied.extend(users.iter().map(|user| user.uid));
-    validate_determinate_accounts(&groups, &users, &occupied)?;
     let existing_broker_gid = existing_group_gid(&groups, BROKER_NAME)?;
     let broker_user = users.iter().find(|user| user.name == BROKER_NAME);
     if existing_broker_gid.is_none() && broker_user.is_some() {
@@ -828,7 +746,6 @@ fn plan_group_bindings(
                 &AccountSpec::Group {
                     name: BROKER_NAME,
                     gid,
-                    permitted_members: BuildMembers::None,
                 },
                 &groups,
                 &users,
@@ -844,7 +761,6 @@ fn plan_group_bindings(
                         gid,
                         home: BROKER_HOME,
                         shell: DEFAULT_NOLOGIN_SHELL,
-                        build_number: None,
                     },
                     &groups,
                     &users,
@@ -862,104 +778,9 @@ fn plan_group_bindings(
         .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::Conflict))
 }
 
-fn validate_determinate_accounts(
-    groups: &[GroupRecord],
-    users: &[UserRecord],
-    occupied: &BTreeSet<u32>,
-) -> Result<(), LinuxAccountError> {
-    let build_group = groups.iter().find(|group| group.name == BUILD_GROUP_NAME);
-    match build_group {
-        Some(group) if group.gid == DETERMINATE_BUILD_GID => {}
-        Some(_) => return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict)),
-        None if occupied.contains(&DETERMINATE_BUILD_GID) => {
-            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-        }
-        None => {}
-    }
-    let mut present_build_users = BTreeSet::new();
-    for number in 1..=DETERMINATE_BUILD_USER_COUNT {
-        let name = determinate_build_user_name(number);
-        let uid = DETERMINATE_BUILD_USER_ID_BASE + number;
-        let mut claims = users
-            .iter()
-            .filter(|user| user.name == name || user.uid == uid);
-        let existing = claims.next();
-        if claims.next().is_some()
-            || existing.is_some_and(|user| {
-                user.name != name
-                    || user.uid != uid
-                    || user.primary_gid != DETERMINATE_BUILD_GID
-                    || user.home != BUILD_HOME
-                    || !NOLOGIN_PATHS.contains(&user.shell.as_str())
-                    || !user.locked
-            })
-        {
-            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-        }
-        if existing.is_some() {
-            present_build_users.insert(name);
-        }
-    }
-    let expected_build_users = determinate_build_users();
-    match build_group {
-        Some(group)
-            if !group.password_locked
-                || !group.administrators.is_empty()
-                || present_build_users != expected_build_users
-                || group.members != expected_build_users =>
-        {
-            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-        }
-        None if !present_build_users.is_empty() => {
-            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-        }
-        _ => {}
-    }
-    let complete_build_users = build_group.is_some();
-    for name in &expected_build_users {
-        let memberships_exact = if complete_build_users {
-            supplementary_memberships_are_exact(groups, name, true)
-        } else {
-            groups.iter().all(|group| !group.members.contains(name))
-        };
-        if !memberships_exact
-            || groups
-                .iter()
-                .any(|group| group.administrators.contains(name))
-        {
-            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-        }
-    }
-    let primary_build_users = users
-        .iter()
-        .filter(|user| user.primary_gid == DETERMINATE_BUILD_GID)
-        .map(|user| user.name.clone())
-        .collect::<BTreeSet<_>>();
-    if primary_build_users
-        != if complete_build_users {
-            expected_build_users
-        } else {
-            BTreeSet::new()
-        }
-    {
-        return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-    }
-    Ok(())
-}
-
 const fn determinate_id_reserved(id: u32) -> bool {
     id >= DETERMINATE_BUILD_GID
         && id <= DETERMINATE_BUILD_USER_ID_BASE + DETERMINATE_BUILD_USER_COUNT
-}
-
-fn determinate_build_user_name(number: u32) -> String {
-    format!("nixbld{number}")
-}
-
-fn determinate_build_users() -> BTreeSet<String> {
-    (1..=DETERMINATE_BUILD_USER_COUNT)
-        .map(determinate_build_user_name)
-        .collect()
 }
 
 fn first_free_product_id(occupied: &BTreeSet<u32>) -> Option<u32> {
@@ -987,15 +808,13 @@ fn validate_group_directory(groups: &[GroupRecord]) -> Result<(), LinuxAccountEr
             return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
         }
     }
-    for managed_name in [BROKER_NAME, BUILD_GROUP_NAME] {
-        if let Some(group) = groups.iter().find(|group| group.name == managed_name) {
-            let aliases = groups
-                .iter()
-                .filter(|candidate| candidate.gid == group.gid)
-                .count();
-            if group.gid == 0 || aliases != 1 {
-                return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-            }
+    if let Some(group) = groups.iter().find(|group| group.name == BROKER_NAME) {
+        let aliases = groups
+            .iter()
+            .filter(|candidate| candidate.gid == group.gid)
+            .count();
+        if group.gid == 0 || aliases != 1 {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
         }
     }
     Ok(())
@@ -1009,11 +828,7 @@ fn verify_existing(
     validate_group_directory(groups)?;
     validate_user_directory(users)?;
     match *spec {
-        AccountSpec::Group {
-            name,
-            gid,
-            permitted_members,
-        } => {
+        AccountSpec::Group { name, gid } => {
             if groups
                 .iter()
                 .any(|group| group.gid == gid && group.name != name)
@@ -1027,10 +842,13 @@ fn verify_existing(
                 return Ok(false);
             };
             if group.gid != gid
-                || !members_permitted(&group.members, permitted_members)
-                || !primary_members_permitted(users, gid, permitted_members)
+                || !group.members.is_empty()
                 || !group.password_locked
                 || !group.administrators.is_empty()
+                || !users
+                    .iter()
+                    .filter(|user| user.primary_gid == gid)
+                    .all(|user| user.name == BROKER_NAME)
             {
                 return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
             }
@@ -1041,21 +859,15 @@ fn verify_existing(
             gid,
             home,
             shell,
-            build_number,
         } => {
             let Some(group) = groups.iter().find(|group| group.gid == gid) else {
                 return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
             };
-            let expected_group = if build_number.is_some() {
-                BUILD_GROUP_NAME
-            } else {
-                BROKER_NAME
-            };
-            if group.name != expected_group {
+            if group.name != BROKER_NAME {
                 return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
             }
             let Some(user) = users.iter().find(|user| user.name == name) else {
-                if build_number.is_none() && users.iter().any(|user| user.uid == gid) {
+                if users.iter().any(|user| user.uid == gid) {
                     return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
                 }
                 return Ok(false);
@@ -1070,8 +882,7 @@ fn verify_existing(
                 || user.home != home
                 || user.shell != shell && !NOLOGIN_PATHS.contains(&user.shell.as_str())
                 || !user.locked
-                || build_number.is_some() && !group.members.contains(name)
-                || !supplementary_memberships_are_exact(groups, name, build_number.is_some())
+                || !supplementary_memberships_are_empty(groups, name)
                 || groups
                     .iter()
                     .any(|candidate| candidate.administrators.contains(name))
@@ -1083,40 +894,12 @@ fn verify_existing(
     }
 }
 
-fn supplementary_memberships_are_exact(
-    groups: &[GroupRecord],
-    user_name: &str,
-    is_build_user: bool,
-) -> bool {
-    let actual = groups
+fn supplementary_memberships_are_empty(groups: &[GroupRecord], user_name: &str) -> bool {
+    groups
         .iter()
         .filter(|group| group.members.contains(user_name))
-        .map(|group| group.name.as_str())
-        .collect::<BTreeSet<_>>();
-    if is_build_user {
-        actual == BTreeSet::from([BUILD_GROUP_NAME])
-    } else {
-        actual.is_empty()
-    }
-}
-
-fn members_permitted(members: &BTreeSet<String>, policy: BuildMembers) -> bool {
-    match policy {
-        BuildMembers::None => members.is_empty(),
-        BuildMembers::ManagedSubset => members.is_subset(&managed_build_users()),
-    }
-}
-
-fn primary_members_permitted(users: &[UserRecord], gid: u32, policy: BuildMembers) -> bool {
-    let primary = users
-        .iter()
-        .filter(|user| user.primary_gid == gid)
-        .map(|user| user.name.clone())
-        .collect::<BTreeSet<_>>();
-    match policy {
-        BuildMembers::None => primary.is_subset(&BTreeSet::from([BROKER_NAME.to_owned()])),
-        BuildMembers::ManagedSubset => primary.is_subset(&managed_build_users()),
-    }
+        .next()
+        .is_none()
 }
 
 fn validate_user_directory(users: &[UserRecord]) -> Result<(), LinuxAccountError> {
@@ -1126,29 +909,6 @@ fn validate_user_directory(users: &[UserRecord]) -> Result<(), LinuxAccountError
         .any(|user| user.name.is_empty() || !names.insert(user.name.as_str()))
     {
         return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-    }
-    Ok(())
-}
-
-fn verify_complete_build_group(
-    groups: &[GroupRecord],
-    users: &[UserRecord],
-    gid: u32,
-) -> Result<(), LinuxAccountError> {
-    let expected = managed_build_users();
-    let group = groups
-        .iter()
-        .find(|group| group.name == BUILD_GROUP_NAME && group.gid == gid)
-        .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::VerificationFailure))?;
-    let primary = users
-        .iter()
-        .filter(|user| user.primary_gid == gid)
-        .map(|user| user.name.clone())
-        .collect::<BTreeSet<_>>();
-    if group.members != expected || primary != expected {
-        return Err(LinuxAccountError::new(
-            LinuxAccountErrorCode::VerificationFailure,
-        ));
     }
     Ok(())
 }
@@ -1204,78 +964,7 @@ impl AccountSystem for ProductionAccountSystem {
 }
 
 fn inspected_user_names() -> Vec<String> {
-    let mut names = vec![BROKER_NAME.to_owned()];
-    names.extend((1..=DETERMINATE_BUILD_USER_COUNT).map(determinate_build_user_name));
-    names
-}
-
-fn parse_groups(bytes: &[u8], gshadow_bytes: &[u8]) -> Result<Vec<GroupRecord>, LinuxAccountError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?;
-    let gshadow = parse_gshadow(gshadow_bytes)?;
-    let mut groups = Vec::new();
-    for line in text.lines() {
-        let fields = line.split(':').collect::<Vec<_>>();
-        if fields.len() != 4 || fields[0].is_empty() {
-            return Err(LinuxAccountError::new(
-                LinuxAccountErrorCode::CommandFailure,
-            ));
-        }
-        let members = fields[3]
-            .split(',')
-            .filter(|member| !member.is_empty())
-            .map(ToOwned::to_owned)
-            .collect::<BTreeSet<_>>();
-        let shadow = gshadow.get(fields[0]);
-        if shadow.is_some_and(|shadow| shadow.members != members)
-            && !gshadow_lags_build_group(fields[0], &members, shadow)
-        {
-            return Err(LinuxAccountError::new(
-                LinuxAccountErrorCode::CommandFailure,
-            ));
-        }
-        groups.push(GroupRecord {
-            name: fields[0].to_owned(),
-            gid: fields[2]
-                .parse()
-                .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?,
-            members,
-            password_locked: shadow.is_some_and(|shadow| shadow.password_locked),
-            administrators: shadow
-                .map(|shadow| shadow.administrators.clone())
-                .unwrap_or_default(),
-        });
-    }
-    if groups.is_empty() {
-        return Err(LinuxAccountError::new(
-            LinuxAccountErrorCode::CommandFailure,
-        ));
-    }
-    Ok(groups)
-}
-
-/// Accepts the exact account-database crash signature of interrupted build-user
-/// creation: `useradd` appends the supplementary member to `/etc/group` before
-/// `/etc/gshadow`, so a power loss in that window leaves gshadow lagging by
-/// managed build users only. The group-side list stays authoritative because
-/// every managed contract check still compares exact member sets, and any other
-/// mismatch (foreign groups, gshadow ahead, non-managed differences) keeps
-/// failing closed.
-fn gshadow_lags_build_group(
-    name: &str,
-    members: &BTreeSet<String>,
-    shadow: Option<&ShadowGroupRecord>,
-) -> bool {
-    let Some(shadow) = shadow else {
-        return false;
-    };
-    if name != BUILD_GROUP_NAME || !shadow.members.is_subset(members) {
-        return false;
-    }
-    let managed = managed_build_users();
-    members
-        .difference(&shadow.members)
-        .all(|member| managed.contains(member))
+    vec![BROKER_NAME.to_owned()]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1329,6 +1018,49 @@ fn parse_comma_set(value: &str) -> Result<BTreeSet<String>, LinuxAccountError> {
         }
     }
     Ok(values)
+}
+
+fn parse_groups(bytes: &[u8], gshadow_bytes: &[u8]) -> Result<Vec<GroupRecord>, LinuxAccountError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?;
+    let gshadow = parse_gshadow(gshadow_bytes)?;
+    let mut groups = Vec::new();
+    for line in text.lines() {
+        let fields = line.split(':').collect::<Vec<_>>();
+        if fields.len() != 4 || fields[0].is_empty() {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::CommandFailure,
+            ));
+        }
+        let members = fields[3]
+            .split(',')
+            .filter(|member| !member.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<BTreeSet<_>>();
+        let shadow = gshadow.get(fields[0]);
+        if shadow.is_some_and(|shadow| shadow.members != members) {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::CommandFailure,
+            ));
+        }
+        groups.push(GroupRecord {
+            name: fields[0].to_owned(),
+            gid: fields[2]
+                .parse()
+                .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?,
+            members,
+            password_locked: shadow.is_some_and(|shadow| shadow.password_locked),
+            administrators: shadow
+                .map(|shadow| shadow.administrators.clone())
+                .unwrap_or_default(),
+        });
+    }
+    if groups.is_empty() {
+        return Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ));
+    }
+    Ok(groups)
 }
 
 fn parse_users(
@@ -1674,27 +1406,6 @@ mod tests {
         }
     }
 
-    fn exact_determinate_accounts() -> (GroupRecord, Vec<UserRecord>) {
-        let users = (1..=DETERMINATE_BUILD_USER_COUNT)
-            .map(|number| {
-                user(
-                    &determinate_build_user_name(number),
-                    DETERMINATE_BUILD_USER_ID_BASE + number,
-                    DETERMINATE_BUILD_GID,
-                    BUILD_HOME,
-                )
-            })
-            .collect::<Vec<_>>();
-        let members = users
-            .iter()
-            .map(|user| user.name.as_str())
-            .collect::<Vec<_>>();
-        (
-            group(BUILD_GROUP_NAME, DETERMINATE_BUILD_GID, &members),
-            users,
-        )
-    }
-
     fn exact_broker_accounts() -> (GroupRecord, UserRecord) {
         (
             group(BROKER_NAME, 31_000, &[]),
@@ -1733,19 +1444,8 @@ mod tests {
                         .ok_or_else(command_error)?
                         .parse()
                         .map_err(|_| command_error())?;
-                    let home = if *name == BROKER_NAME {
-                        BROKER_HOME
-                    } else {
-                        BUILD_HOME
-                    };
-                    let uid = if *name == BROKER_NAME {
-                        state.broker_uid_after_create.unwrap_or(gid)
-                    } else {
-                        31_000_u32.saturating_add(
-                            u32::try_from(state.users.len()).map_err(|_| command_error())?,
-                        )
-                    };
-                    state.users.push(user(name, uid, gid, home));
+                    let uid = state.broker_uid_after_create.unwrap_or(gid);
+                    state.users.push(user(name, uid, gid, BROKER_HOME));
                 }
                 ["m", name, group_name] => {
                     state
@@ -1776,251 +1476,6 @@ mod tests {
     }
 
     #[test]
-    fn group_planning_refuses_foreign_determinate_gid_occupants() {
-        for state in [
-            FakeState {
-                groups: vec![group("foreign", DETERMINATE_BUILD_GID, &[])],
-                ..FakeState::default()
-            },
-            FakeState {
-                users: vec![user("foreign", 42_000, DETERMINATE_BUILD_GID, "/var/empty")],
-                ..FakeState::default()
-            },
-        ] {
-            assert_eq!(
-                plan_group_bindings(&mut FakeSystem(Arc::new(Mutex::new(state))))
-                    .map_err(LinuxAccountError::code),
-                Err(LinuxAccountErrorCode::Conflict)
-            );
-        }
-    }
-
-    #[test]
-    fn group_planning_refuses_wrong_existing_nixbld_gid() {
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BUILD_GROUP_NAME, 30_001, &[])],
-            ..FakeState::default()
-        }));
-        assert_eq!(
-            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-    }
-
-    #[test]
-    fn group_planning_refuses_foreign_determinate_build_user_ids() {
-        for number in 1..=DETERMINATE_BUILD_USER_COUNT {
-            let (build_group, mut users) = exact_determinate_accounts();
-            users.push(user(
-                "foreign",
-                DETERMINATE_BUILD_USER_ID_BASE + number,
-                42_000,
-                BUILD_HOME,
-            ));
-            let state = Arc::new(Mutex::new(FakeState {
-                groups: vec![build_group],
-                users,
-                ..FakeState::default()
-            }));
-            assert_eq!(
-                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-                Err(LinuxAccountErrorCode::Conflict)
-            );
-        }
-    }
-
-    #[test]
-    fn group_planning_refuses_wrong_existing_determinate_build_user_binding() {
-        for (uid, gid) in [
-            (DETERMINATE_BUILD_USER_ID_BASE, DETERMINATE_BUILD_GID),
-            (
-                DETERMINATE_BUILD_USER_ID_BASE + 1,
-                DETERMINATE_BUILD_GID + 1,
-            ),
-        ] {
-            let (build_group, mut users) = exact_determinate_accounts();
-            users[0].uid = uid;
-            users[0].primary_gid = gid;
-            let state = Arc::new(Mutex::new(FakeState {
-                groups: vec![build_group],
-                users,
-                ..FakeState::default()
-            }));
-            assert_eq!(
-                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-                Err(LinuxAccountErrorCode::Conflict)
-            );
-        }
-    }
-
-    #[test]
-    fn group_planning_refuses_inexact_existing_determinate_user_state() {
-        let (_, exact_users) = exact_determinate_accounts();
-        let exact = exact_users[16].clone();
-        for invalid in [
-            UserRecord {
-                home: "/home/nixbld17".to_owned(),
-                ..exact.clone()
-            },
-            UserRecord {
-                shell: "/bin/sh".to_owned(),
-                ..exact.clone()
-            },
-            UserRecord {
-                locked: false,
-                ..exact
-            },
-        ] {
-            let (build_group, mut users) = exact_determinate_accounts();
-            users[16] = invalid;
-            let state = Arc::new(Mutex::new(FakeState {
-                groups: vec![build_group],
-                users,
-                ..FakeState::default()
-            }));
-            assert_eq!(
-                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-                Err(LinuxAccountErrorCode::Conflict)
-            );
-        }
-    }
-
-    #[test]
-    fn group_planning_refuses_inexact_existing_determinate_group_state() {
-        let (exact, users) = exact_determinate_accounts();
-        for invalid in [
-            GroupRecord {
-                password_locked: false,
-                ..exact.clone()
-            },
-            GroupRecord {
-                administrators: BTreeSet::from(["root".to_owned()]),
-                ..exact.clone()
-            },
-            GroupRecord {
-                members: BTreeSet::from(["foreign".to_owned()]),
-                ..exact
-            },
-        ] {
-            let state = Arc::new(Mutex::new(FakeState {
-                groups: vec![invalid],
-                users: users.clone(),
-                ..FakeState::default()
-            }));
-            assert_eq!(
-                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-                Err(LinuxAccountErrorCode::Conflict)
-            );
-        }
-
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BUILD_GROUP_NAME, DETERMINATE_BUILD_GID, &[])],
-            users: vec![user(
-                "nixbld17",
-                DETERMINATE_BUILD_USER_ID_BASE + 17,
-                DETERMINATE_BUILD_GID,
-                BUILD_HOME,
-            )],
-            ..FakeState::default()
-        }));
-        assert_eq!(
-            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-    }
-
-    #[test]
-    fn group_planning_refuses_dangling_vendor_names_in_foreign_groups() {
-        let member = group("foreign", 42_000, &["nixbld17"]);
-        let mut administrator = group("foreign", 42_000, &[]);
-        administrator.administrators.insert("nixbld17".to_owned());
-        for foreign in [member, administrator] {
-            let state = Arc::new(Mutex::new(FakeState {
-                groups: vec![foreign],
-                ..FakeState::default()
-            }));
-            assert_eq!(
-                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-                Err(LinuxAccountErrorCode::Conflict)
-            );
-        }
-    }
-
-    #[test]
-    fn group_planning_refuses_complete_vendor_users_in_foreign_groups() {
-        let member = group("docker", 42_000, &["nixbld17"]);
-        let mut administrator = group("sudo", 42_001, &[]);
-        administrator.administrators.insert("nixbld18".to_owned());
-        for foreign in [member, administrator] {
-            let (build_group, users) = exact_determinate_accounts();
-            let state = Arc::new(Mutex::new(FakeState {
-                groups: vec![build_group, foreign],
-                users,
-                ..FakeState::default()
-            }));
-            assert_eq!(
-                plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-                Err(LinuxAccountErrorCode::Conflict)
-            );
-        }
-    }
-
-    #[test]
-    fn group_planning_refuses_foreign_primary_members_of_determinate_group() {
-        let (build_group, mut users) = exact_determinate_accounts();
-        users.push(user("foreign", 42_000, DETERMINATE_BUILD_GID, BUILD_HOME));
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![build_group],
-            users,
-            ..FakeState::default()
-        }));
-        assert_eq!(
-            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-    }
-
-    #[test]
-    fn group_planning_refuses_partial_users_17_through_32() {
-        let mut users = (17..=DETERMINATE_BUILD_USER_COUNT)
-            .map(|number| {
-                user(
-                    &determinate_build_user_name(number),
-                    DETERMINATE_BUILD_USER_ID_BASE + number,
-                    DETERMINATE_BUILD_GID,
-                    BUILD_HOME,
-                )
-            })
-            .collect::<Vec<_>>();
-        for user in &mut users {
-            user.shell = "/sbin/nologin".to_owned();
-        }
-        let members = users
-            .iter()
-            .map(|user| user.name.as_str())
-            .collect::<Vec<_>>();
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BUILD_GROUP_NAME, DETERMINATE_BUILD_GID, &members)],
-            users,
-            ..FakeState::default()
-        }));
-        assert_eq!(
-            plan_group_bindings(&mut FakeSystem(state)).map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-    }
-
-    #[test]
-    fn shadow_preflight_covers_all_determinate_build_users() {
-        let names = inspected_user_names();
-        assert_eq!(names.len(), 33);
-        assert_eq!(names.first().map(String::as_str), Some(BROKER_NAME));
-        for number in 1..=DETERMINATE_BUILD_USER_COUNT {
-            assert!(names.contains(&determinate_build_user_name(number)));
-        }
-    }
-
-    #[test]
     fn group_planning_reserves_vendor_ids_across_uid_and_gid_namespaces()
     -> Result<(), Box<dyn Error>> {
         for state in [
@@ -2029,11 +1484,11 @@ mod tests {
                 ..FakeState::default()
             },
             FakeState {
-                users: vec![user("foreign", FIRST_PRODUCT_ID, 42_000, BUILD_HOME)],
+                users: vec![user("foreign", FIRST_PRODUCT_ID, 42_000, "/var/empty")],
                 ..FakeState::default()
             },
             FakeState {
-                users: vec![user("foreign", 42_000, FIRST_PRODUCT_ID, BUILD_HOME)],
+                users: vec![user("foreign", 42_000, FIRST_PRODUCT_ID, "/var/empty")],
                 ..FakeState::default()
             },
         ] {
@@ -2194,13 +1649,12 @@ mod tests {
     #[test]
     fn absent_broker_rechecks_the_planned_uid() {
         let (broker_group, _) = exact_broker_accounts();
-        let users = vec![user("foreign", 31_000, 42_000, BUILD_HOME)];
+        let users = vec![user("foreign", 31_000, 42_000, "/var/empty")];
         let spec = AccountSpec::User {
             name: BROKER_NAME,
             gid: 31_000,
             home: BROKER_HOME,
             shell: DEFAULT_NOLOGIN_SHELL,
-            build_number: None,
         };
         assert_eq!(
             verify_existing(&spec, &[broker_group], &users).map_err(LinuxAccountError::code),
@@ -2231,18 +1685,10 @@ mod tests {
     }
 
     #[test]
-    fn group_planning_keeps_existing_broker_and_determinate_bindings_stable()
-    -> Result<(), Box<dyn Error>> {
-        let (build_group, build_users) = exact_determinate_accounts();
-        let mut users = build_users;
-        users.push(user(BROKER_NAME, 31_235, 31_234, BROKER_HOME));
+    fn group_planning_keeps_existing_broker_bindings_stable() -> Result<(), Box<dyn Error>> {
         let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![
-                group("root", 0, &[]),
-                group(BROKER_NAME, 31_234, &[]),
-                build_group,
-            ],
-            users,
+            groups: vec![group("root", 0, &[]), group(BROKER_NAME, 31_234, &[])],
+            users: vec![user(BROKER_NAME, 31_235, 31_234, BROKER_HOME)],
             ..FakeState::default()
         }));
         let first = plan_group_bindings(&mut FakeSystem(Arc::clone(&state)))?;
@@ -2285,15 +1731,11 @@ mod tests {
             ..FakeState::default()
         }));
         let mut manager = fake_manager(bindings, Arc::clone(&state));
-        for asset in crate::linux_install_assets()
-            .iter()
-            .copied()
-            .filter(|asset| LinuxAccountManager::handles(*asset))
-        {
-            assert!(manager.ensure_asset(asset)?);
+        for asset in ["broker-group", "broker-user"] {
+            assert!(manager.ensure_asset(account_asset(asset))?);
         }
         let state = state.lock().map_err(|_| command_error())?;
-        assert_eq!(state.applied.len(), 19);
+        assert_eq!(state.applied.len(), 2);
         assert_eq!(state.applied[0], b"g pkg-nix-broker 30000\n");
         assert_eq!(
             state
@@ -2304,10 +1746,22 @@ mod tests {
             Some(30_000)
         );
         assert_eq!(
-            state.applied[3],
-            b"u nixbld1 -:30001 \"pkg Nix build user 1\" /var/empty /usr/sbin/nologin\nm nixbld1 nixbld\n"
+            state.applied[1],
+            b"u pkg-nix-broker -:30000 \"pkg Nix broker\" /var/lib/pkg/broker-home /usr/sbin/nologin\n"
         );
-        assert_eq!(state.groups[2].members, managed_build_users());
+        assert!(
+            state
+                .groups
+                .iter()
+                .find(|group| group.name == BROKER_NAME)
+                .is_some_and(|group| group.members.is_empty())
+        );
+        assert!(
+            state
+                .users
+                .iter()
+                .all(|user| user.name == BROKER_NAME || user.name == "root")
+        );
         drop(state);
         Ok(())
     }
@@ -2343,45 +1797,21 @@ mod tests {
                 ]
             )
         );
-        let group = AccountSpec::for_asset(account_asset("build-group"), bindings)
+        let broker_group = AccountSpec::for_asset(account_asset("broker-group"), bindings)
             .ok_or_else(command_error)?;
         assert_eq!(
             create_command(
-                group,
+                broker_group,
                 "/usr/sbin/groupadd",
                 "/usr/sbin/useradd",
                 "/usr/sbin/nologin",
             ),
             (
                 "/usr/sbin/groupadd",
-                vec!["--gid".to_owned(), "30000".to_owned(), "nixbld".to_owned()]
-            )
-        );
-        let user = AccountSpec::for_asset(account_asset("build-user-01"), bindings)
-            .ok_or_else(command_error)?;
-        assert_eq!(
-            create_command(
-                user,
-                "/usr/sbin/groupadd",
-                "/usr/sbin/useradd",
-                "/usr/sbin/nologin",
-            ),
-            (
-                "/usr/sbin/useradd",
                 vec![
-                    "--system".to_owned(),
                     "--gid".to_owned(),
-                    "30000".to_owned(),
-                    "--home-dir".to_owned(),
-                    "/var/empty".to_owned(),
-                    "--shell".to_owned(),
-                    "/usr/sbin/nologin".to_owned(),
-                    "--comment".to_owned(),
-                    "pkg Nix build user 1".to_owned(),
-                    "--no-create-home".to_owned(),
-                    "--groups".to_owned(),
-                    "nixbld".to_owned(),
-                    "nixbld1".to_owned(),
+                    "30033".to_owned(),
+                    "pkg-nix-broker".to_owned()
                 ]
             )
         );
@@ -2391,37 +1821,17 @@ mod tests {
     #[test]
     fn exact_existing_accounts_are_idempotent() -> Result<(), Box<dyn Error>> {
         let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let build_names = managed_build_users();
-        let mut users = vec![user(BROKER_NAME, 31_000, 30_000, BROKER_HOME)];
-        users.extend((1..=BUILD_USER_COUNT).map(|number| {
-            user(
-                &format!("nixbld{number}"),
-                31_000 + u32::from(number),
-                30_001,
-                BUILD_HOME,
-            )
-        }));
         let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![
-                group(BROKER_NAME, 30_000, &[]),
-                GroupRecord {
-                    name: BUILD_GROUP_NAME.to_owned(),
-                    gid: 30_001,
-                    members: build_names,
-                    password_locked: true,
-                    administrators: BTreeSet::new(),
-                },
+            groups: vec![group("root", 0, &[]), group(BROKER_NAME, 30_000, &[])],
+            users: vec![
+                user("root", 0, 0, "/root"),
+                user(BROKER_NAME, 31_000, 30_000, BROKER_HOME),
             ],
-            users,
             ..FakeState::default()
         }));
         let mut manager = fake_manager(bindings, Arc::clone(&state));
-        for asset in crate::linux_install_assets()
-            .iter()
-            .copied()
-            .filter(|asset| LinuxAccountManager::handles(*asset))
-        {
-            assert!(!manager.ensure_asset(asset)?);
+        for asset in ["broker-group", "broker-user"] {
+            assert!(!manager.ensure_asset(account_asset(asset))?);
         }
         assert_eq!(manager.broker_uid()?, 31_000);
         assert!(
@@ -2558,20 +1968,20 @@ mod tests {
         assert!(!manager.ensure_asset(account_asset("broker-group"))?);
         assert_eq!(
             manager
-                .ensure_asset(account_asset("build-group"))
+                .ensure_asset(account_asset("broker-user"))
                 .map_err(LinuxAccountError::code),
             Err(LinuxAccountErrorCode::CommandFailure)
         );
         assert_eq!(
             manager
-                .rollback_asset(account_asset("build-group"))
+                .rollback_asset(account_asset("broker-user"))
                 .map_err(LinuxAccountError::code),
             Err(LinuxAccountErrorCode::Conflict)
         );
-        manager.rollback_asset(account_asset("broker-group"))?;
         let state = state.lock().map_err(|_| command_error())?;
         assert!(state.deleted.is_empty());
         assert!(state.groups.iter().any(|group| group.name == BROKER_NAME));
+        assert!(state.users.iter().any(|user| user.name == BROKER_NAME));
         drop(state);
         Ok(())
     }
@@ -2698,23 +2108,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_groups_accepts_only_the_build_group_gshadow_crash_lag() -> Result<(), LinuxAccountError>
-    {
-        // Power loss between useradd's /etc/group and /etc/gshadow member
-        // writes leaves gshadow lagging by managed build users. The group-side
-        // list stays authoritative so recovery can reconcile the account.
-        let groups = parse_groups(b"nixbld:x:30001:nixbld1,nixbld2\n", b"nixbld:!::nixbld1\n")?;
-        assert_eq!(
-            groups[0].members,
-            BTreeSet::from(["nixbld1".to_owned(), "nixbld2".to_owned()])
-        );
 
+    fn parse_groups_requires_exact_group_shadow_parity() -> Result<(), LinuxAccountError> {
         // A foreign group with any mismatch still fails closed.
         assert!(parse_groups(b"devs:x:1001:alice\n", b"devs:!::\n").is_err());
-        // A non-managed extra member on the build group still fails closed.
-        assert!(parse_groups(b"nixbld:x:30001:nixbld1,root\n", b"nixbld:!::nixbld1\n").is_err());
         // Gshadow ahead of the group file still fails closed.
-        assert!(parse_groups(b"nixbld:x:30001:nixbld1\n", b"nixbld:!::nixbld1,nixbld2\n").is_err());
+        assert!(parse_groups(b"devs:x:1001:alice\n", b"devs:!::alice,bob\n").is_err());
         Ok(())
     }
 }
