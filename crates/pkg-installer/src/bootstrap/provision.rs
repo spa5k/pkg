@@ -1,7 +1,14 @@
 //! Authenticated bundle provisioning for one closed install attempt.
 
+#[allow(
+    clippy::wildcard_imports,
+    reason = "the split module shares the bootstrap parent namespace"
+)]
 use super::*;
-use super::{backend::*, recovery::*};
+use super::{
+    backend::{determinate_succeeded, run_with_new_determinate_handoff},
+    recovery::{prepare_private_directory_at, prepare_vendor_tmp_directory_at},
+};
 pub(super) enum BootstrapOutcome {
     DeterminatePending {
         bundle: Box<AuthenticatedInstallerBundle>,

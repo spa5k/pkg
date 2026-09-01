@@ -8,7 +8,7 @@ mod recovery;
 mod tests;
 use backend::install_macos_with_provisioner_journaled;
 use provision::AuthenticatedProvisioner;
-pub(crate) use recovery::validate_linux_auth_datastore_file;
+pub use recovery::validate_linux_auth_datastore_file;
 use recovery::{
     LinuxJournalLocation, continue_linux_bundle_install, load_linux_bundle_for_recovery,
     load_macos_bundle_for_recovery, macos_recovery_context_digest, recover_macos_bundle_install,

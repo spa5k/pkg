@@ -503,7 +503,7 @@ pub(super) fn validate_derivation_envelope(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct RawPathInfoEnvelope {
+pub struct RawPathInfoEnvelope {
     pub(super) version: u32,
     pub(super) store_dir: String,
     pub(super) info: BTreeMap<String, Option<RawPathInfo>>,

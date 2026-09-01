@@ -1,7 +1,14 @@
 //! Journal recovery and interrupted-install reconciliation.
 
+#[allow(
+    clippy::wildcard_imports,
+    reason = "the split module shares the bootstrap parent namespace"
+)]
 use super::*;
-use super::{backend::*, provision::*};
+use super::{
+    backend::{finalize_committed_linux_install, install_linux_with_provisioner_journaled},
+    provision::BundleProvisioner,
+};
 pub(super) fn continue_linux_bundle_install<'a, P: BundleProvisioner>(
     request: &'a InstallerProvisionRequest<'a>,
     backend: &'a mut dyn LinuxInstallBackend,

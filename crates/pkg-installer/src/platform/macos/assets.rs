@@ -1,6 +1,6 @@
 //! macOS install assets, release steps, and readiness contracts.
 
-use super::*;
+use super::{BUILD_USER_COUNT, BuildReadiness, MacOsError, MacOsErrorCode, System};
 /// Closed macOS privileged-install artifact kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MacOsAssetKind {

@@ -8,7 +8,7 @@ pub(super) const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
 pub(super) const MAX_INTERNAL_JSON_LINE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_STDERR_CHUNKS_PER_TICK: usize = 64;
 pub(super) const INTERNAL_JSON_PREFIX: &[u8] = b"@nix ";
-pub(crate) trait CommandExecutor: Send + Sync {
+pub trait CommandExecutor: Send + Sync {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError>;
 
     fn execute_with_stderr(
@@ -241,20 +241,20 @@ impl ProcessExecutor {
 }
 
 #[derive(Debug)]
-pub(crate) struct CommandSpec {
+pub struct CommandSpec {
     pub(super) program: NixProgram,
     pub(super) args: Vec<OsString>,
     pub(super) timeout: Duration,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NixProgram {
+pub enum NixProgram {
     Modern,
     LegacyStore,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct CommandOutcome {
+pub struct CommandOutcome {
     pub(super) code: Option<i32>,
     pub(super) stdout: Vec<u8>,
     pub(super) stderr: Vec<u8>,
