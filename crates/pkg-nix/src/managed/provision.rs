@@ -1,37 +1,35 @@
 //! Fetch, verify, stage, and receipt-last commit a product-managed Nix runtime.
+#![expect(
+    dead_code,
+    reason = "DN-19 deletes these unreachable managed-Nix provisioning internals (plans/determinate-nix-stacked-prs.md)"
+)]
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, chown, lchown, symlink};
-use std::path::{Component, Path, PathBuf};
+use std::fs;
+use std::io::{Read, Seek};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lzma_rust2::XzReader;
 use pkg_channel::{TrustedRoot, VerifiedChannel};
-use sha2::{Digest as _, Sha256};
-use tar::{Archive, EntryType};
+use tempfile::TempPath;
 use url::Url;
 
-use super::daemon::{DaemonErrorCode, ManagedDaemon};
 use super::detect::{DetectionDisposition, DetectionReport, FindingKind, detect_unmanaged_nix};
 use super::installer_bundle::{DatastoreOwner, VerifiedRuntimeBundle, load_installer_bundle};
 use super::ownership::{
-    ManagedArtifact, ManagedArtifactKind, ManagedGroupBindings, OwnershipExpectation,
-    decode_ownership_asset_manifest, encode_ownership_receipt, ownership_receipt_path,
+    ManagedGroupBindings, OwnershipExpectation, decode_ownership_asset_manifest,
     verify_ownership_receipt_against_manifest, verify_with_owner_uid,
 };
-use super::runtime_archive::{
-    MAX_ARCHIVE_ENTRIES, MAX_REGISTRATION_BYTES, UpstreamArchiveMember,
-    classify_upstream_archive_member, is_runtime_bin,
-};
+
+use super::runtime_archive::MAX_ARCHIVE_ENTRIES;
 use crate::{Digest, NixVersion, System, render_managed_build_nix_conf};
 
-const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const DETERMINATE_STAGING_PREFIX: &str = ".determinate-installer-";
+const DETERMINATE_STAGING_SUFFIX_LENGTH: usize = 16;
+const MAX_DETERMINATE_STAGING_ENTRIES: usize = 8;
 const MAX_ASSET_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_INSTALLER_BINARY_BYTES: u64 = 128 * 1024 * 1024;
-const MAX_UNCOMPRESSED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const PROVISION_WORKSPACE_NAME: &str = "pkg-provision";
 const MAX_PROVISION_WORKSPACE_ENTRIES: usize = MAX_ARCHIVE_ENTRIES + 8;
 
@@ -119,7 +117,7 @@ impl RuntimeSource for VerifiedRuntimeBundle {
 
     #[cfg(test)]
     fn commit_accepted_channel(&self) -> Result<(), ProvisionError> {
-        VerifiedRuntimeBundle::commit_accepted_channel(self)
+        self.persist_accepted_channel()
             .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
     }
 }
@@ -217,7 +215,7 @@ impl AuthenticatedManagedNixConfig {
 
     /// Returns the exact authenticated bytes for atomic installation.
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         self.contents.as_bytes()
     }
 }
@@ -238,23 +236,52 @@ impl std::fmt::Debug for AuthenticatedManagedNixConfig {
 /// the exact bundle identity authenticated before platform mutation.
 pub struct AuthenticatedInstallerBundle {
     source: VerifiedRuntimeBundle,
-    spec: ProvisionSpec,
+    base_nix: AuthenticatedBaseNix,
     managed_nix_config: AuthenticatedManagedNixConfig,
     installer_payloads: AuthenticatedInstallerPayloads,
-    ownership_expectation: OwnershipExpectation,
     installation_root: PathBuf,
     scratch_parent: PathBuf,
     groups: ManagedGroupBindings,
 }
 
+enum AuthenticatedBaseNix {
+    Managed(Box<AuthenticatedManagedBaseNix>),
+    Determinate,
+}
+
+struct AuthenticatedManagedBaseNix {
+    spec: ProvisionSpec,
+    ownership: OwnershipExpectation,
+}
+
 impl AuthenticatedInstallerBundle {
-    fn identity(&self) -> AuthenticatedInstallerIdentity<'_> {
+    fn identity(&self) -> AuthenticatedInstallerIdentity {
         AuthenticatedInstallerIdentity {
-            spec: &self.spec,
-            config: &self.managed_nix_config,
-            payloads: &self.installer_payloads,
-            ownership: &self.ownership_expectation,
+            base_nix: match &self.base_nix {
+                AuthenticatedBaseNix::Managed(managed) => AuthenticatedBaseNixIdentity::Managed {
+                    spec: managed.spec.clone(),
+                    ownership: managed.ownership.clone(),
+                },
+                AuthenticatedBaseNix::Determinate => AuthenticatedBaseNixIdentity::Determinate {
+                    descriptor_sha256: self.source.descriptor_sha256(),
+                    installer: self.source.determinate_installer_identity(),
+                },
+            },
+            config: self.managed_nix_config.clone(),
+            payloads: self.installer_payloads.clone(),
         }
+    }
+
+    /// Returns the native system authenticated by this closed bundle.
+    #[must_use]
+    pub const fn system(&self) -> System {
+        self.source.system()
+    }
+
+    /// Returns the authenticated descriptor digest used as the product release identity.
+    #[must_use]
+    pub const fn release_identity_digest(&self) -> Digest {
+        Digest::from_bytes(self.source.descriptor_sha256())
     }
 
     /// Returns the exact authenticated configuration for the platform backend.
@@ -270,31 +297,147 @@ impl AuthenticatedInstallerBundle {
     }
 
     /// Returns the exact authenticated managed-runtime asset-manifest digest.
-    #[must_use]
-    pub const fn asset_manifest_digest(&self) -> Digest {
-        self.spec.asset_manifest_sha256
+    pub fn asset_manifest_digest(&self) -> Result<Digest, ProvisionError> {
+        match &self.base_nix {
+            AuthenticatedBaseNix::Managed(managed) => Ok(managed.spec.asset_manifest_sha256),
+            AuthenticatedBaseNix::Determinate => Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            )),
+        }
     }
 
     /// Returns the exact authenticated runtime ownership expectation.
+    pub fn ownership_expectation(&self) -> Result<&OwnershipExpectation, ProvisionError> {
+        match &self.base_nix {
+            AuthenticatedBaseNix::Managed(managed) => Ok(&managed.ownership),
+            AuthenticatedBaseNix::Determinate => Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            )),
+        }
+    }
+
+    /// Materializes the fixed authenticated Determinate installer once in a
+    /// private root-owned directory. The file is removed when the returned
+    /// capability is dropped.
+    pub fn stage_determinate_installer(
+        &mut self,
+        directory: &Path,
+    ) -> Result<StagedDeterminateInstaller, ProvisionError> {
+        if !matches!(&self.base_nix, AuthenticatedBaseNix::Determinate) {
+            return Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            ));
+        }
+        validate_private_directory(directory, 0)?;
+        reconcile_determinate_installer_staging_at(directory, 0, 0)?;
+        let (mut source, length, sha256) = self
+            .source
+            .take_determinate_installer()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+        source
+            .seek(std::io::SeekFrom::Start(0))
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        let mut file = tempfile::Builder::new()
+            .prefix(DETERMINATE_STAGING_PREFIX)
+            .rand_bytes(DETERMINATE_STAGING_SUFFIX_LENGTH)
+            .tempfile_in(directory)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        std::io::copy(&mut source, file.as_file_mut())
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        file.as_file_mut()
+            .set_permissions(fs::Permissions::from_mode(0o700))
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        file.as_file_mut()
+            .sync_all()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+        if file
+            .as_file()
+            .metadata()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?
+            .len()
+            != length
+        {
+            return Err(ProvisionError::new(ProvisionErrorCode::FetchFailed));
+        }
+        Ok(StagedDeterminateInstaller {
+            path: file.into_temp_path(),
+            length,
+            sha256,
+        })
+    }
+
+    /// Commits the authenticated release rollback floor after installation.
+    pub fn commit_authenticated_channel(&mut self) -> Result<(), ProvisionError> {
+        self.source
+            .commit_accepted_channel()
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
+    }
+
+    /// Returns the fixed authenticated Determinate executable identity without
+    /// exposing its private snapshot or a filesystem path.
+    pub fn determinate_installer_identity(&self) -> Result<(u64, Digest), ProvisionError> {
+        if !matches!(&self.base_nix, AuthenticatedBaseNix::Determinate) {
+            return Err(ProvisionError::new(
+                ProvisionErrorCode::InvalidAuthenticatedInput,
+            ));
+        }
+        self.source
+            .determinate_installer_identity()
+            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))
+    }
+}
+
+/// One private, authenticated Determinate installer executable.
+pub struct StagedDeterminateInstaller {
+    path: TempPath,
+    length: u64,
+    sha256: Digest,
+}
+
+impl StagedDeterminateInstaller {
+    /// Returns the private executable path for the closed process adapter.
     #[must_use]
-    pub const fn ownership_expectation(&self) -> &OwnershipExpectation {
-        &self.ownership_expectation
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Returns the authenticated executable length.
+    #[must_use]
+    pub const fn length(&self) -> u64 {
+        self.length
+    }
+
+    /// Returns the authenticated executable digest.
+    #[must_use]
+    pub const fn sha256(&self) -> Digest {
+        self.sha256
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct AuthenticatedInstallerIdentity<'a> {
-    spec: &'a ProvisionSpec,
-    config: &'a AuthenticatedManagedNixConfig,
-    payloads: &'a AuthenticatedInstallerPayloads,
-    ownership: &'a OwnershipExpectation,
+struct AuthenticatedInstallerIdentity {
+    base_nix: AuthenticatedBaseNixIdentity,
+    config: AuthenticatedManagedNixConfig,
+    payloads: AuthenticatedInstallerPayloads,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AuthenticatedBaseNixIdentity {
+    Managed {
+        spec: ProvisionSpec,
+        ownership: OwnershipExpectation,
+    },
+    Determinate {
+        descriptor_sha256: [u8; 32],
+        installer: Option<(u64, Digest)>,
+    },
 }
 
 impl std::fmt::Debug for AuthenticatedInstallerBundle {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("AuthenticatedInstallerBundle")
-            .field("system", &self.spec.system)
+            .field("system", &self.source.system())
             .finish_non_exhaustive()
     }
 }
@@ -309,164 +452,6 @@ pub struct ProvisionRequest<'a> {
     pub spec: &'a ProvisionSpec,
     /// Host-local gids for the two stable signed group roles.
     pub groups: ManagedGroupBindings,
-}
-
-/// Successful managed-runtime installation summary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProvisionedRuntime {
-    system: System,
-    nix_version: NixVersion,
-    artifact_count: usize,
-}
-
-/// Successful installer bootstrap result with the authenticated host index.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProvisionedBootstrap {
-    runtime: ProvisionedRuntime,
-    index: Vec<u8>,
-}
-
-/// Pending authenticated runtime installation owned by its provisioning transaction.
-///
-/// Dropping this value rolls back the daemon and every path created by this
-/// attempt. A successful platform installer must explicitly call [`Self::commit`].
-pub struct ProvisionedBootstrapTransaction<'a> {
-    bootstrap: Option<ProvisionedBootstrap>,
-    rollback: Option<RuntimeRollback>,
-    source: Option<VerifiedRuntimeBundle>,
-    channel_committed: bool,
-    daemon: &'a dyn ManagedDaemon,
-}
-
-impl std::fmt::Debug for ProvisionedBootstrapTransaction<'_> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ProvisionedBootstrapTransaction")
-            .field("pending", &self.rollback.is_some())
-            .finish_non_exhaustive()
-    }
-}
-
-impl ProvisionedBootstrapTransaction<'_> {
-    /// Commits platform ownership of the installed runtime and returns its report.
-    ///
-    /// # Errors
-    ///
-    /// Returns a closed failure if the transaction was already consumed.
-    pub fn commit(mut self) -> Result<ProvisionedBootstrap, ProvisionError> {
-        self.commit_channel()?;
-        self.finalize()
-    }
-
-    /// Persists the authenticated channel floor while retaining rollback ownership.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ChannelStateFailed` without consuming rollback ownership when
-    /// the durable floor cannot be committed.
-    pub fn commit_channel(&mut self) -> Result<(), ProvisionError> {
-        if self.channel_committed {
-            return Ok(());
-        }
-        self.source
-            .as_ref()
-            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))?
-            .commit_accepted_channel()
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))?;
-        self.source = None;
-        self.channel_committed = true;
-        Ok(())
-    }
-
-    /// Finalizes a channel-committed transaction after platform receipt publication.
-    ///
-    /// # Errors
-    ///
-    /// Returns a closed failure if the channel floor was not committed or the
-    /// transaction was already consumed. Rollback remains automatic on error.
-    pub fn finalize(mut self) -> Result<ProvisionedBootstrap, ProvisionError> {
-        if !self.channel_committed {
-            return Err(ProvisionError::new(ProvisionErrorCode::ChannelStateFailed));
-        }
-        self.daemon
-            .stop()
-            .map_err(|error| ProvisionError::daemon(error.code()))?;
-        let bootstrap = self
-            .bootstrap
-            .take()
-            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-        if self
-            .rollback
-            .as_ref()
-            .is_some_and(|rollback| rollback.registration_pending)
-        {
-            self.daemon
-                .commit_runtime_registration()
-                .map_err(|error| ProvisionError::daemon(error.code()))?;
-        }
-        self.rollback = None;
-        Ok(bootstrap)
-    }
-
-    /// Rolls back the daemon and every path created by this exact attempt.
-    ///
-    /// # Errors
-    ///
-    /// Returns `RollbackFailed` if any exact reverse operation fails.
-    pub fn rollback(mut self) -> Result<(), ProvisionError> {
-        self.bootstrap = None;
-        self.rollback
-            .take()
-            .map_or(Ok(()), |rollback| rollback.execute(self.daemon))
-    }
-}
-
-impl Drop for ProvisionedBootstrapTransaction<'_> {
-    fn drop(&mut self) {
-        if let Some(rollback) = self.rollback.take() {
-            let _ = rollback.execute(self.daemon);
-        }
-    }
-}
-
-impl ProvisionedBootstrap {
-    /// Returns the verified managed-runtime result.
-    #[must_use]
-    pub const fn runtime(&self) -> &ProvisionedRuntime {
-        &self.runtime
-    }
-
-    /// Returns the exact authenticated compressed index bytes for this host.
-    #[must_use]
-    pub fn index(&self) -> &[u8] {
-        &self.index
-    }
-
-    /// Consumes the result into its runtime report and authenticated index.
-    #[must_use]
-    pub fn into_parts(self) -> (ProvisionedRuntime, Vec<u8>) {
-        (self.runtime, self.index)
-    }
-}
-
-impl ProvisionedRuntime {
-    /// Returns the installed native system.
-    #[must_use]
-    pub const fn system(&self) -> System {
-        self.system
-    }
-
-    /// Returns the installed exact Nix version.
-    #[must_use]
-    pub const fn nix_version(&self) -> &NixVersion {
-        &self.nix_version
-    }
-
-    /// Returns the number of signed static artifacts installed.
-    #[must_use]
-    pub const fn artifact_count(&self) -> usize {
-        self.artifact_count
-    }
 }
 
 /// Stable fail-closed provisioning failure categories.
@@ -490,8 +475,6 @@ pub enum ProvisionErrorCode {
     UnsafeDestination,
     /// Static artifacts could not be committed exactly as declared.
     InstallFailed,
-    /// The managed daemon failed to start or answer its health check.
-    DaemonFailed,
     /// The signed manifest or ownership receipt could not be installed atomically.
     ReceiptFailed,
     /// The authenticated descriptor rollback floor could not be committed.
@@ -500,38 +483,21 @@ pub enum ProvisionErrorCode {
     RollbackFailed,
 }
 
-/// Redacted provisioning error with an optional closed daemon subcode.
+/// Redacted provisioning failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProvisionError {
     code: ProvisionErrorCode,
-    daemon_code: Option<DaemonErrorCode>,
 }
 
 impl ProvisionError {
     const fn new(code: ProvisionErrorCode) -> Self {
-        Self {
-            code,
-            daemon_code: None,
-        }
-    }
-
-    const fn daemon(code: DaemonErrorCode) -> Self {
-        Self {
-            code: ProvisionErrorCode::DaemonFailed,
-            daemon_code: Some(code),
-        }
+        Self { code }
     }
 
     /// Returns the stable top-level failure category.
     #[must_use]
     pub const fn code(self) -> ProvisionErrorCode {
         self.code
-    }
-
-    /// Returns the closed daemon subcode when activation failed.
-    #[must_use]
-    pub const fn daemon_code(self) -> Option<DaemonErrorCode> {
-        self.daemon_code
     }
 }
 
@@ -547,20 +513,6 @@ impl fmt::Display for ProvisionError {
 
 impl std::error::Error for ProvisionError {}
 
-/// Authenticates an offline installer bundle and provisions its managed runtime.
-///
-/// Runtime readers and rollback-state mutation stay private to this one-shot
-/// transaction. The accepted descriptor floor is committed only after the
-/// installed ownership receipt verifies.
-pub async fn provision_managed_nix_from_bundle(
-    trusted_root: TrustedRoot,
-    request: &InstallerProvisionRequest<'_>,
-    daemon: &dyn ManagedDaemon,
-) -> Result<ProvisionedBootstrap, ProvisionError> {
-    let bundle = authenticate_installer_bundle(trusted_root, request).await?;
-    provision_authenticated_installer_bundle(bundle, request, daemon)
-}
-
 /// Authenticates and snapshots one fixed installer bundle before host mutation.
 ///
 /// The returned capability is opaque and single-use. It retains the datastore
@@ -570,21 +522,18 @@ pub async fn authenticate_installer_bundle(
     request: &InstallerProvisionRequest<'_>,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
     let bundle = load_authenticated_installer_bundle(trusted_root, request).await?;
-    let provision_request = ProvisionRequest {
-        installation_root: request.installation_root,
-        scratch_parent: request.scratch_parent,
-        spec: &bundle.spec,
-        groups: request.groups,
-    };
-    let (path_entries, environment_keys) = current_host_inputs();
-    require_host_state(
-        &provision_request,
-        &path_entries,
-        &environment_keys,
-        HostStatePolicy::Strict,
-        Some(&bundle.ownership_expectation),
-        0,
-    )?;
+    if matches!(bundle.base_nix, AuthenticatedBaseNix::Determinate) {
+        let (path_entries, environment_keys) = current_host_inputs();
+        let report = detect_unmanaged_nix(
+            request.installation_root,
+            request.system,
+            &path_entries,
+            &environment_keys,
+        );
+        if report.disposition() != DetectionDisposition::Clean {
+            return Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused));
+        }
+    }
     Ok(bundle)
 }
 
@@ -614,8 +563,7 @@ async fn load_authenticated_installer_bundle_with_owner(
     )
     .await
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
-    let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
-    let installer_payloads = load_authenticated_installer_payloads(&source, spec.system)?;
+    let installer_payloads = load_authenticated_installer_payloads(&source, source.system())?;
     let managed_nix_config = AuthenticatedManagedNixConfig {
         system: source.system(),
         contents: render_managed_build_nix_conf(
@@ -624,25 +572,33 @@ async fn load_authenticated_installer_bundle_with_owner(
         )
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?,
     };
-    let manifest_bytes = read_target_bytes(
-        &source,
-        &spec.asset_manifest_target,
-        MAX_ASSET_MANIFEST_BYTES,
-    )?;
-    let ownership_expectation = decode_ownership_asset_manifest(
-        &manifest_bytes,
-        spec.system,
-        &spec.nix_version,
-        spec.asset_manifest_sha256,
-        request.groups,
-    )
-    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAssetManifest))?;
+    let base_nix = match source.system() {
+        System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin => {
+            AuthenticatedBaseNix::Determinate
+        }
+        System::X8664Darwin => {
+            let spec = ProvisionSpec::from_verified_channel(source.channel(), source.system())?;
+            let manifest_bytes = read_target_bytes(
+                &source,
+                &spec.asset_manifest_target,
+                MAX_ASSET_MANIFEST_BYTES,
+            )?;
+            let ownership = decode_ownership_asset_manifest(
+                &manifest_bytes,
+                spec.system,
+                &spec.nix_version,
+                spec.asset_manifest_sha256,
+                request.groups,
+            )
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAssetManifest))?;
+            AuthenticatedBaseNix::Managed(Box::new(AuthenticatedManagedBaseNix { spec, ownership }))
+        }
+    };
     Ok(AuthenticatedInstallerBundle {
         source,
-        spec,
+        base_nix,
         managed_nix_config,
         installer_payloads,
-        ownership_expectation,
         installation_root: request.installation_root.to_path_buf(),
         scratch_parent: request.scratch_parent.to_path_buf(),
         groups: request.groups,
@@ -664,7 +620,7 @@ pub async fn reauthenticate_installer_bundle(
     authenticated: AuthenticatedInstallerBundle,
     broker_uid: u32,
 ) -> Result<AuthenticatedInstallerBundle, ProvisionError> {
-    if request.system != authenticated.spec.system
+    if request.system != authenticated.source.system()
         || request.installation_root != authenticated.installation_root
         || request.scratch_parent != authenticated.scratch_parent
         || request.groups != authenticated.groups
@@ -675,30 +631,37 @@ pub async fn reauthenticate_installer_bundle(
     }
     let owner = DatastoreOwner::new(broker_uid, request.groups.broker_gid())
         .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
-    let AuthenticatedInstallerBundle {
-        source,
-        spec,
-        managed_nix_config,
-        installer_payloads,
-        ownership_expectation,
-        ..
-    } = authenticated;
+    let original_identity = authenticated.identity();
+    let source = authenticated.source;
     // Release the original datastore lease before reopening it for the broker.
     drop(source);
     let replacement =
         load_authenticated_installer_bundle_with_owner(trusted_root, request, Some(owner)).await?;
-    let original_identity = AuthenticatedInstallerIdentity {
-        spec: &spec,
-        config: &managed_nix_config,
-        payloads: &installer_payloads,
-        ownership: &ownership_expectation,
-    };
     if original_identity != replacement.identity() {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
         ));
     }
     Ok(replacement)
+}
+
+fn read_target_bytes(
+    source: &dyn RuntimeSource,
+    target: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, ProvisionError> {
+    let mut reader = source
+        .open_target(target)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?
+        .take(max_bytes.saturating_add(1));
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ProvisionError::new(ProvisionErrorCode::TargetTooLarge));
+    }
+    Ok(bytes)
 }
 
 fn load_authenticated_installer_payloads(
@@ -721,7 +684,7 @@ fn load_authenticated_installer_payloads(
         product_cli.as_slice(),
     ]
     .into_iter()
-    .any(|payload| payload.is_empty())
+    .any(<[u8]>::is_empty)
     {
         return Err(ProvisionError::new(
             ProvisionErrorCode::InvalidAuthenticatedInput,
@@ -782,91 +745,6 @@ pub fn reauthenticate_installer_bundle_blocking(
         broker_uid,
     ))
 }
-
-/// Consumes a previously authenticated private bundle and provisions it.
-///
-/// # Errors
-///
-/// Returns a closed provisioning error if the request no longer matches the
-/// authenticated host identity or any install, readiness, receipt, or rollback
-/// operation fails.
-pub fn provision_authenticated_installer_bundle(
-    bundle: AuthenticatedInstallerBundle,
-    request: &InstallerProvisionRequest<'_>,
-    daemon: &dyn ManagedDaemon,
-) -> Result<ProvisionedBootstrap, ProvisionError> {
-    provision_authenticated_installer_bundle_transaction(bundle, request, daemon)?.commit()
-}
-
-/// Provisions an authenticated bundle as an explicit rollback-owned transaction.
-///
-/// The transaction must remain pending until the platform installation has
-/// completed. Dropping it or calling `rollback` removes only this attempt.
-pub fn provision_authenticated_installer_bundle_transaction<'a>(
-    mut bundle: AuthenticatedInstallerBundle,
-    request: &InstallerProvisionRequest<'_>,
-    daemon: &'a dyn ManagedDaemon,
-) -> Result<ProvisionedBootstrapTransaction<'a>, ProvisionError> {
-    if request.system != bundle.spec.system
-        || bundle.source.system() != bundle.spec.system
-        || request.installation_root != bundle.installation_root
-        || request.scratch_parent != bundle.scratch_parent
-        || request.groups != bundle.groups
-    {
-        return Err(ProvisionError::new(
-            ProvisionErrorCode::InvalidAuthenticatedInput,
-        ));
-    }
-    let index = bundle
-        .source
-        .take_index()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-    let provision_request = ProvisionRequest {
-        installation_root: request.installation_root,
-        scratch_parent: request.scratch_parent,
-        spec: &bundle.spec,
-        groups: request.groups,
-    };
-    let (path_entries, environment_keys) = current_host_inputs();
-    let (runtime, rollback) = provision_with_owner_policy(
-        &provision_request,
-        &bundle.source,
-        daemon,
-        0,
-        &path_entries,
-        &environment_keys,
-        HostStateRequirements::new(
-            HostStatePolicy::FixedPlatformPrerequisites,
-            Some(&bundle.ownership_expectation),
-        ),
-    )?;
-    Ok(ProvisionedBootstrapTransaction {
-        bootstrap: Some(ProvisionedBootstrap { runtime, index }),
-        rollback: Some(rollback),
-        source: Some(bundle.source),
-        channel_committed: false,
-        daemon,
-    })
-}
-
-/// Runs the one-shot installer transaction from a synchronous privileged entry point.
-///
-/// This function refuses to nest a Tokio runtime. Async callers must use
-/// [`provision_managed_nix_from_bundle`] directly.
-pub fn provision_managed_nix_from_bundle_blocking(
-    trusted_root: TrustedRoot,
-    request: &InstallerProvisionRequest<'_>,
-    daemon: &dyn ManagedDaemon,
-) -> Result<ProvisionedBootstrap, ProvisionError> {
-    refuse_nested_runtime()?;
-    let runtime = installer_runtime()?;
-    runtime.block_on(provision_managed_nix_from_bundle(
-        trusted_root,
-        request,
-        daemon,
-    ))
-}
-
 fn installer_runtime() -> Result<tokio::runtime::Runtime, ProvisionError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -883,258 +761,6 @@ fn refuse_nested_runtime() -> Result<(), ProvisionError> {
     } else {
         Ok(())
     }
-}
-
-#[cfg(test)]
-fn provision_with_owner(
-    request: &ProvisionRequest<'_>,
-    source: &dyn RuntimeSource,
-    daemon: &dyn ManagedDaemon,
-    required_owner_uid: u32,
-    path_entries: &[PathBuf],
-    environment_keys: &[std::ffi::OsString],
-) -> Result<ProvisionedRuntime, ProvisionError> {
-    let (runtime, mut rollback) = provision_with_owner_policy(
-        request,
-        source,
-        daemon,
-        required_owner_uid,
-        path_entries,
-        environment_keys,
-        HostStateRequirements::new(HostStatePolicy::Strict, None),
-    )?;
-    if let Err(error) = source.commit_accepted_channel() {
-        return match rollback.execute(daemon) {
-            Ok(()) => Err(error),
-            Err(rollback_error) => Err(rollback_error),
-        };
-    }
-    if rollback.registration_pending {
-        if let Err(error) = daemon.commit_runtime_registration() {
-            return match rollback.execute(daemon) {
-                Ok(()) => Err(ProvisionError::daemon(error.code())),
-                Err(rollback_error) => Err(rollback_error),
-            };
-        }
-        rollback.registration_pending = false;
-    }
-    Ok(runtime)
-}
-
-#[derive(Clone, Copy)]
-enum HostStatePolicy {
-    Strict,
-    FixedPlatformPrerequisites,
-}
-
-#[derive(Clone, Copy)]
-struct HostStateRequirements<'a> {
-    policy: HostStatePolicy,
-    authenticated_expectation: Option<&'a OwnershipExpectation>,
-}
-
-impl<'a> HostStateRequirements<'a> {
-    const fn new(
-        policy: HostStatePolicy,
-        authenticated_expectation: Option<&'a OwnershipExpectation>,
-    ) -> Self {
-        Self {
-            policy,
-            authenticated_expectation,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VerifiedHostState {
-    CleanOrPlatformPrerequisites,
-    ExistingManagedInstall,
-}
-
-fn provision_with_owner_policy(
-    request: &ProvisionRequest<'_>,
-    source: &dyn RuntimeSource,
-    daemon: &dyn ManagedDaemon,
-    required_owner_uid: u32,
-    path_entries: &[PathBuf],
-    environment_keys: &[std::ffi::OsString],
-    requirements: HostStateRequirements<'_>,
-) -> Result<(ProvisionedRuntime, RuntimeRollback), ProvisionError> {
-    if source.descriptor_sha256() != request.spec.descriptor_sha256 {
-        return Err(ProvisionError::new(
-            ProvisionErrorCode::InvalidAuthenticatedInput,
-        ));
-    }
-    if requirements
-        .authenticated_expectation
-        .is_some_and(|expectation| {
-            expectation.system() != request.spec.system
-                || expectation.nix_version() != &request.spec.nix_version
-                || expectation.asset_manifest_digest() != request.spec.asset_manifest_sha256
-                || expectation.groups() != request.groups
-        })
-    {
-        return Err(ProvisionError::new(
-            ProvisionErrorCode::InvalidAuthenticatedInput,
-        ));
-    }
-    let verified_host_state = require_host_state(
-        request,
-        path_entries,
-        environment_keys,
-        requirements.policy,
-        requirements.authenticated_expectation,
-        required_owner_uid,
-    )?;
-    validate_private_directory(request.scratch_parent, required_owner_uid)?;
-    validate_private_directory(request.installation_root, required_owner_uid)?;
-
-    if verified_host_state == VerifiedHostState::ExistingManagedInstall {
-        return reuse_authenticated_runtime(
-            request,
-            daemon,
-            requirements.authenticated_expectation.ok_or_else(|| {
-                ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput)
-            })?,
-        );
-    }
-
-    let workspace = ScratchWorkspace::new(request.scratch_parent, required_owner_uid)?;
-    let archive_path = workspace.path.join("runtime.tar.xz");
-    fetch_target(
-        source,
-        &request.spec.runtime_target,
-        request.spec.runtime_sha256,
-        MAX_RUNTIME_ARCHIVE_BYTES,
-        &archive_path,
-    )?;
-    let manifest_path = workspace.path.join("assets.json");
-    fetch_target(
-        source,
-        &request.spec.asset_manifest_target,
-        request.spec.asset_manifest_sha256,
-        MAX_ASSET_MANIFEST_BYTES,
-        &manifest_path,
-    )?;
-    let manifest_bytes = fs::read(&manifest_path)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-    let expectation = decode_ownership_asset_manifest(
-        &manifest_bytes,
-        request.spec.system,
-        &request.spec.nix_version,
-        request.spec.asset_manifest_sha256,
-        request.groups,
-    )
-    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAssetManifest))?;
-
-    let staging = workspace.path.join("staging");
-    create_private_directory(&staging)?;
-    let registration = extract_exact_archive(
-        &archive_path,
-        &staging,
-        request.spec.system,
-        &request.spec.nix_version,
-        &expectation,
-    )?;
-
-    // The privileged scan is deliberately repeated immediately before the
-    // first installation mutation. Downloads and archive parsing cannot make
-    // a previously dirty host become trusted.
-    let verified_host_state = require_host_state(
-        request,
-        path_entries,
-        environment_keys,
-        requirements.policy,
-        requirements.authenticated_expectation,
-        required_owner_uid,
-    )?;
-    if verified_host_state == VerifiedHostState::ExistingManagedInstall {
-        return reuse_authenticated_runtime(
-            request,
-            daemon,
-            requirements.authenticated_expectation.ok_or_else(|| {
-                ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput)
-            })?,
-        );
-    }
-    let mut transaction = InstallTransaction::new(request.installation_root, daemon);
-    let result = (|| {
-        transaction.install_artifacts(&staging, &expectation, required_owner_uid)?;
-        transaction.install_manifest(request.spec.system, &manifest_bytes, required_owner_uid)?;
-        daemon
-            .register_runtime(
-                request.installation_root,
-                request.spec.system,
-                &request.spec.nix_version,
-                &registration,
-            )
-            .map_err(|error| ProvisionError::daemon(error.code()))?;
-        transaction.registration_pending = true;
-        daemon
-            .start(
-                request.installation_root,
-                request.spec.system,
-                &request.spec.nix_version,
-            )
-            .map_err(|error| ProvisionError::daemon(error.code()))?;
-        transaction.daemon_started = true;
-        daemon
-            .ping_store()
-            .map_err(|error| ProvisionError::daemon(error.code()))?;
-        transaction.install_receipt(&expectation, required_owner_uid)?;
-        verify_with_owner_uid(request.installation_root, &expectation, required_owner_uid)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        let report = ProvisionedRuntime {
-            system: request.spec.system,
-            nix_version: request.spec.nix_version.clone(),
-            artifact_count: expectation.artifacts().len(),
-        };
-        let rollback = transaction.detach_rollback();
-        Ok((report, rollback))
-    })();
-    match result {
-        Ok(report) => Ok(report),
-        Err(error) => {
-            if transaction.rollback().is_err() {
-                Err(ProvisionError::new(ProvisionErrorCode::RollbackFailed))
-            } else {
-                Err(error)
-            }
-        }
-    }
-}
-
-fn require_host_state(
-    request: &ProvisionRequest<'_>,
-    path_entries: &[PathBuf],
-    environment_keys: &[std::ffi::OsString],
-    policy: HostStatePolicy,
-    authenticated_expectation: Option<&OwnershipExpectation>,
-    required_owner_uid: u32,
-) -> Result<VerifiedHostState, ProvisionError> {
-    let report = detect_unmanaged_nix(
-        request.installation_root,
-        request.spec.system,
-        path_entries,
-        environment_keys,
-    );
-    if report.disposition() == DetectionDisposition::Clean
-        || matches!(policy, HostStatePolicy::FixedPlatformPrerequisites)
-            && has_only_fixed_platform_prerequisites(&report, request.spec.system)
-    {
-        return Ok(VerifiedHostState::CleanOrPlatformPrerequisites);
-    }
-    if authenticated_expectation.is_some_and(|expectation| {
-        authenticated_managed_install_matches(
-            request.installation_root,
-            &report,
-            expectation,
-            required_owner_uid,
-        )
-    }) {
-        return Ok(VerifiedHostState::ExistingManagedInstall);
-    }
-    Err(ProvisionError::new(ProvisionErrorCode::ExistingNixRefused))
 }
 
 /// Verifies that all detected Nix evidence belongs to the exact authenticated install.
@@ -1239,39 +865,6 @@ fn has_only_authenticated_managed_install_evidence(
         })
 }
 
-fn reuse_authenticated_runtime(
-    request: &ProvisionRequest<'_>,
-    daemon: &dyn ManagedDaemon,
-    expectation: &OwnershipExpectation,
-) -> Result<(ProvisionedRuntime, RuntimeRollback), ProvisionError> {
-    daemon
-        .start(
-            request.installation_root,
-            request.spec.system,
-            &request.spec.nix_version,
-        )
-        .map_err(|error| ProvisionError::daemon(error.code()))?;
-    if let Err(error) = daemon.ping_store() {
-        return if daemon.stop().is_err() {
-            Err(ProvisionError::new(ProvisionErrorCode::RollbackFailed))
-        } else {
-            Err(ProvisionError::daemon(error.code()))
-        };
-    }
-    Ok((
-        ProvisionedRuntime {
-            system: request.spec.system,
-            nix_version: request.spec.nix_version.clone(),
-            artifact_count: expectation.artifacts().len(),
-        },
-        RuntimeRollback {
-            created: Vec::new(),
-            daemon_started: true,
-            registration_pending: false,
-        },
-    ))
-}
-
 fn has_only_fixed_platform_prerequisites(report: &DetectionReport, system: System) -> bool {
     report.findings().iter().all(|finding| {
         finding.kind() != FindingKind::Ambiguous
@@ -1298,429 +891,10 @@ fn current_host_inputs() -> (Vec<PathBuf>, Vec<std::ffi::OsString>) {
     let environment_keys = std::env::vars_os().map(|(key, _)| key).collect::<Vec<_>>();
     (path_entries, environment_keys)
 }
-
-fn read_target_bytes(
-    source: &dyn RuntimeSource,
-    target: &str,
-    max_bytes: u64,
-) -> Result<Vec<u8>, ProvisionError> {
-    let mut reader = source
-        .open_target(target)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?
-        .take(max_bytes.saturating_add(1));
-    let mut bytes = Vec::new();
-    reader
-        .read_to_end(&mut bytes)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-    if bytes.len() as u64 > max_bytes {
-        return Err(ProvisionError::new(ProvisionErrorCode::TargetTooLarge));
-    }
-    Ok(bytes)
-}
-
 fn parse_raw_sha256(value: &str) -> Result<Digest, ProvisionError> {
     format!("sha256-{value}")
         .parse()
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))
-}
-
-fn fetch_target(
-    source: &dyn RuntimeSource,
-    target: &str,
-    expected_digest: Digest,
-    max_bytes: u64,
-    destination: &Path,
-) -> Result<(), ProvisionError> {
-    let mut reader = source
-        .open_target(target)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(destination)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-    let mut hasher = Sha256::new();
-    let mut total = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = reader
-            .read(&mut buffer)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-        if count == 0 {
-            break;
-        }
-        total = total.saturating_add(count as u64);
-        if total > max_bytes {
-            return Err(ProvisionError::new(ProvisionErrorCode::TargetTooLarge));
-        }
-        hasher.update(&buffer[..count]);
-        file.write_all(&buffer[..count])
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-    }
-    file.sync_all()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::FetchFailed))?;
-    if Digest::from_bytes(hasher.finalize().into()) != expected_digest {
-        return Err(ProvisionError::new(ProvisionErrorCode::TargetHashMismatch));
-    }
-    Ok(())
-}
-
-fn extract_exact_archive(
-    archive_path: &Path,
-    staging: &Path,
-    system: System,
-    version: &NixVersion,
-    expectation: &OwnershipExpectation,
-) -> Result<PathBuf, ProvisionError> {
-    let expected: BTreeMap<String, &ManagedArtifact> = expectation
-        .artifacts()
-        .iter()
-        .map(|artifact| (artifact.path().to_string_lossy().into_owned(), artifact))
-        .collect();
-    let registration_path = staging.join(".reginfo");
-    let file = File::open(archive_path)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    let decoder = XzReader::new(file, false);
-    let bounded = BoundedReader::new(decoder, MAX_UNCOMPRESSED_BYTES);
-    let mut archive = Archive::new(bounded);
-    let mut seen = BTreeSet::new();
-    let mut runtime_executable = None;
-    let mut runtime_aliases = BTreeMap::new();
-    let entries = archive
-        .entries()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    for (index, entry) in entries.enumerate() {
-        if index >= MAX_ARCHIVE_ENTRIES {
-            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-        }
-        let mut entry =
-            entry.map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        let archived = entry
-            .path()
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        let member = classify_upstream_archive_member(&archived, system, version)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        let store_relative = match member {
-            UpstreamArchiveMember::Registration => {
-                if registration_path.exists()
-                    || !entry.header().entry_type().is_file()
-                    || entry.size() == 0
-                    || entry.size() > MAX_REGISTRATION_BYTES
-                {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-                let mut output = OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .mode(0o600)
-                    .open(&registration_path)
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-                std::io::copy(&mut entry, &mut output)
-                    .and_then(|_| output.sync_all())
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-                continue;
-            }
-            UpstreamArchiveMember::Installer => {
-                if !entry.header().entry_type().is_file() {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-                std::io::copy(&mut entry, &mut std::io::sink())
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-                continue;
-            }
-            UpstreamArchiveMember::Store(relative) => relative,
-        };
-        let installed_relative = Path::new("nix/store").join(store_relative);
-        let absolute = format!("/{}", installed_relative.to_string_lossy());
-        let artifact = expected
-            .get(&absolute)
-            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        if !seen.insert(absolute) {
-            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-        }
-        let destination = staging.join(&installed_relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        }
-        match artifact.kind() {
-            ManagedArtifactKind::File if entry.header().entry_type().is_file() => {
-                extract_file(&mut entry, &destination, artifact)?;
-                if is_runtime_bin(&installed_relative, "nix") {
-                    if runtime_executable.replace(destination.clone()).is_some() {
-                        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                    }
-                } else if is_runtime_bin(&installed_relative, "nix-store")
-                    || is_runtime_bin(&installed_relative, "nix-daemon")
-                {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-            }
-            ManagedArtifactKind::Directory if entry.header().entry_type().is_dir() => {
-                fs::create_dir_all(&destination)
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-            }
-            ManagedArtifactKind::Symlink if entry.header().entry_type() == EntryType::Symlink => {
-                let target = entry
-                    .link_name()
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?
-                    .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-                if target.as_ref() != Path::new(artifact.target().unwrap_or_default()) {
-                    return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                }
-                for name in ["nix-store", "nix-daemon"] {
-                    if is_runtime_bin(&installed_relative, name)
-                        && runtime_aliases
-                            .insert(name, (destination.clone(), target.as_ref().to_path_buf()))
-                            .is_some()
-                    {
-                        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-                    }
-                }
-                symlink(target.as_ref(), &destination)
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-            }
-            _ => return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive)),
-        }
-    }
-    let mut bounded = archive.into_inner();
-    let mut tail = [0_u8; 8192];
-    loop {
-        let count = bounded
-            .read(&mut tail)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        if count == 0 {
-            break;
-        }
-        if tail[..count].iter().any(|byte| *byte != 0) {
-            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-        }
-    }
-    if bounded.exceeded {
-        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-    }
-    if !registration_path.is_file() {
-        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-    }
-    let runtime_executable = runtime_executable
-        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    let runtime_parent = runtime_executable
-        .parent()
-        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    if runtime_aliases.len() != 2
-        || ["nix-store", "nix-daemon"].iter().any(|name| {
-            !runtime_aliases.get(name).is_some_and(|(path, target)| {
-                path.parent() == Some(runtime_parent) && target == Path::new("nix")
-            })
-        })
-    {
-        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-    }
-    for name in ["nix", "nix-store", "nix-daemon"] {
-        let absolute = format!("/opt/pkg/nix/{}/bin/{name}", version.as_str());
-        let artifact = expected
-            .get(&absolute)
-            .filter(|artifact| artifact.kind() == ManagedArtifactKind::File)
-            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        let destination = rooted(staging, artifact.path());
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        }
-        copy_exact_file(&runtime_executable, &destination, artifact)?;
-        seen.insert(absolute);
-    }
-    for artifact in expectation.artifacts().iter().filter(|artifact| {
-        artifact.kind() == ManagedArtifactKind::Symlink
-            && artifact.path().starts_with(Path::new("/opt/pkg/nix"))
-    }) {
-        let absolute = artifact.path().to_string_lossy().into_owned();
-        if seen.contains(&absolute) {
-            continue;
-        }
-        let destination = rooted(staging, artifact.path());
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        }
-        symlink(artifact.target().unwrap_or_default(), &destination)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        seen.insert(absolute);
-    }
-    for artifact in expectation.artifacts() {
-        if artifact.kind() != ManagedArtifactKind::Directory
-            && !seen.contains(&artifact.path().to_string_lossy().into_owned())
-        {
-            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-        }
-    }
-    Ok(registration_path)
-}
-
-fn extract_file<R: Read>(
-    entry: &mut tar::Entry<'_, R>,
-    destination: &Path,
-    artifact: &ManagedArtifact,
-) -> Result<(), ProvisionError> {
-    let expected_size = artifact
-        .size()
-        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    if entry.size() != expected_size {
-        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-    }
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(destination)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    let mut hasher = Sha256::new();
-    let mut remaining = expected_size;
-    let mut buffer = [0_u8; 64 * 1024];
-    while remaining > 0 {
-        let requested = usize::try_from(remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
-        let count = entry
-            .read(&mut buffer[..requested])
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        if count == 0 {
-            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-        }
-        remaining -= count as u64;
-        hasher.update(&buffer[..count]);
-        output
-            .write_all(&buffer[..count])
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    }
-    let expected_digest = artifact
-        .sha256()
-        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    if Digest::from_bytes(hasher.finalize().into()) != expected_digest {
-        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-    }
-    Ok(())
-}
-
-fn copy_exact_file(
-    source: &Path,
-    destination: &Path,
-    artifact: &ManagedArtifact,
-) -> Result<(), ProvisionError> {
-    let expected_size = artifact
-        .size()
-        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    let mut input =
-        File::open(source).map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(destination)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    let mut hasher = Sha256::new();
-    let mut size = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = input
-            .read(&mut buffer)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        if count == 0 {
-            break;
-        }
-        size = size
-            .checked_add(count as u64)
-            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-        if size > expected_size {
-            return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-        }
-        hasher.update(&buffer[..count]);
-        output
-            .write_all(&buffer[..count])
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?;
-    }
-    if size != expected_size
-        || Digest::from_bytes(hasher.finalize().into())
-            != artifact
-                .sha256()
-                .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::InvalidArchive))?
-    {
-        return Err(ProvisionError::new(ProvisionErrorCode::InvalidArchive));
-    }
-    output
-        .sync_all()
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidArchive))
-}
-
-struct BoundedReader<R> {
-    inner: R,
-    remaining: u64,
-    exceeded: bool,
-}
-
-impl<R> BoundedReader<R> {
-    const fn new(inner: R, limit: u64) -> Self {
-        Self {
-            inner,
-            remaining: limit,
-            exceeded: false,
-        }
-    }
-}
-
-impl<R: Read> Read for BoundedReader<R> {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        if self.remaining == 0 {
-            let mut probe = [0_u8; 1];
-            let count = self.inner.read(&mut probe)?;
-            self.exceeded = count != 0;
-            return Ok(0);
-        }
-        let limit =
-            usize::try_from(self.remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
-        let count = self.inner.read(&mut buffer[..limit])?;
-        self.remaining -= count as u64;
-        Ok(count)
-    }
-}
-
-struct ScratchWorkspace {
-    path: PathBuf,
-    parent: PathBuf,
-    owner_uid: u32,
-}
-
-impl ScratchWorkspace {
-    fn new(parent: &Path, owner_uid: u32) -> Result<Self, ProvisionError> {
-        verify_provision_workspace_absent_with_owner(parent, owner_uid)?;
-        let path = parent.join(PROVISION_WORKSPACE_NAME);
-        create_private_directory(&path)?;
-        Ok(Self {
-            path,
-            parent: parent.to_path_buf(),
-            owner_uid,
-        })
-    }
-}
-
-impl Drop for ScratchWorkspace {
-    fn drop(&mut self) {
-        let _ = recover_interrupted_provision_workspace_with_owner(&self.parent, self.owner_uid);
-    }
-}
-
-struct InstallTransaction<'a> {
-    root: &'a Path,
-    daemon: &'a dyn ManagedDaemon,
-    created: Vec<AttemptPath>,
-    daemon_started: bool,
-    registration_pending: bool,
-    committed: bool,
-}
-
-struct RuntimeRollback {
-    created: Vec<AttemptPath>,
-    daemon_started: bool,
-    registration_pending: bool,
 }
 
 struct AttemptPath {
@@ -1728,237 +902,6 @@ struct AttemptPath {
     device: u64,
     inode: u64,
     directory: bool,
-}
-
-impl RuntimeRollback {
-    fn execute(mut self, daemon: &dyn ManagedDaemon) -> Result<(), ProvisionError> {
-        let mut failed = self.daemon_started && daemon.stop().is_err();
-        if self.registration_pending && daemon.rollback_runtime_registration().is_err() {
-            failed = true;
-        }
-        failed |= remove_attempt_paths(&mut self.created);
-        if failed {
-            Err(ProvisionError::new(ProvisionErrorCode::RollbackFailed))
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl<'a> InstallTransaction<'a> {
-    fn new(root: &'a Path, daemon: &'a dyn ManagedDaemon) -> Self {
-        Self {
-            root,
-            daemon,
-            created: Vec::new(),
-            daemon_started: false,
-            registration_pending: false,
-            committed: false,
-        }
-    }
-
-    fn install_artifacts(
-        &mut self,
-        staging: &Path,
-        expectation: &OwnershipExpectation,
-        owner_uid: u32,
-    ) -> Result<(), ProvisionError> {
-        let mut artifacts: Vec<&ManagedArtifact> = expectation.artifacts().iter().collect();
-        artifacts.sort_by_key(|artifact| artifact.path().components().count());
-        let mut created_directories = Vec::new();
-        for artifact in artifacts {
-            let destination = rooted(self.root, artifact.path());
-            ensure_safe_parent(self.root, &destination, owner_uid)?;
-            let gid = expectation.groups().gid_for(artifact.group());
-            match artifact.kind() {
-                ManagedArtifactKind::Directory => {
-                    if let Ok(metadata) = fs::symlink_metadata(&destination) {
-                        let expected_mode = artifact.mode().unwrap_or(0o700);
-                        if !metadata.file_type().is_dir()
-                            || metadata.uid() != owner_uid
-                            || metadata.gid() != gid
-                            || metadata.mode() & 0o7777 != expected_mode
-                        {
-                            return Err(ProvisionError::new(ProvisionErrorCode::InstallFailed));
-                        }
-                        continue;
-                    }
-                    fs::create_dir(&destination)
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    self.record_created(&destination, ProvisionErrorCode::InstallFailed)?;
-                    chown(&destination, Some(owner_uid), Some(gid))
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    let final_mode = artifact.mode().unwrap_or(0o700);
-                    fs::set_permissions(
-                        &destination,
-                        fs::Permissions::from_mode(final_mode | 0o700),
-                    )
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    created_directories.push((artifact, destination));
-                }
-                ManagedArtifactKind::File => {
-                    let source = rooted(staging, artifact.path());
-                    let mut input = File::open(source)
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    let mut output = OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .mode(0o600)
-                        .open(&destination)
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    self.record_created(&destination, ProvisionErrorCode::InstallFailed)?;
-                    std::io::copy(&mut input, &mut output)
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    output
-                        .sync_all()
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    chown(&destination, Some(owner_uid), Some(gid))
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    fs::set_permissions(
-                        &destination,
-                        fs::Permissions::from_mode(artifact.mode().unwrap_or(0o400)),
-                    )
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                }
-                ManagedArtifactKind::Symlink => {
-                    symlink(artifact.target().unwrap_or_default(), &destination)
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                    self.record_created(&destination, ProvisionErrorCode::InstallFailed)?;
-                    lchown(&destination, Some(owner_uid), Some(gid))
-                        .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-                }
-            }
-        }
-        for (artifact, destination) in created_directories.into_iter().rev() {
-            fs::set_permissions(
-                destination,
-                fs::Permissions::from_mode(artifact.mode().unwrap_or(0o700)),
-            )
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::InstallFailed))?;
-        }
-        Ok(())
-    }
-
-    fn install_manifest(
-        &mut self,
-        system: System,
-        bytes: &[u8],
-        owner_uid: u32,
-    ) -> Result<(), ProvisionError> {
-        let path = rooted(self.root, asset_manifest_path(system));
-        self.install_metadata_file(&path, bytes, owner_uid)
-    }
-
-    fn install_receipt(
-        &mut self,
-        expectation: &OwnershipExpectation,
-        owner_uid: u32,
-    ) -> Result<(), ProvisionError> {
-        let bytes = encode_ownership_receipt(expectation)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        let path = rooted(self.root, ownership_receipt_path(expectation.system()));
-        self.install_metadata_file(&path, &bytes, owner_uid)
-    }
-
-    fn install_metadata_file(
-        &mut self,
-        path: &Path,
-        bytes: &[u8],
-        owner_uid: u32,
-    ) -> Result<(), ProvisionError> {
-        let parent = path
-            .parent()
-            .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        if fs::symlink_metadata(parent).is_err() {
-            fs::create_dir(parent)
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-            self.record_created(parent, ProvisionErrorCode::ReceiptFailed)?;
-            let metadata_gid = if owner_uid == 0 {
-                0
-            } else {
-                fs::metadata(self.root)
-                    .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?
-                    .gid()
-            };
-            chown(parent, Some(owner_uid), Some(metadata_gid))
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        }
-        ensure_safe_parent(self.root, path, owner_uid)?;
-        if fs::symlink_metadata(path).is_ok() {
-            return Err(ProvisionError::new(ProvisionErrorCode::ReceiptFailed));
-        }
-        let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        self.record_created(&temporary, ProvisionErrorCode::ReceiptFailed)?;
-        file.write_all(bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        let metadata_gid = if owner_uid == 0 {
-            0
-        } else {
-            fs::metadata(self.root)
-                .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?
-                .gid()
-        };
-        chown(&temporary, Some(owner_uid), Some(metadata_gid))
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        fs::hard_link(&temporary, path)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        self.record_created(path, ProvisionErrorCode::ReceiptFailed)?;
-        fs::remove_file(&temporary)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))?;
-        // The final name publication and the temp unlink both mutate this
-        // directory; the receipt or manifest is not durable until the parent
-        // directory is synced.
-        sync_directory(parent)?;
-        let temporary_index = self.created.len() - 2;
-        self.created.remove(temporary_index);
-        Ok(())
-    }
-
-    fn rollback(&mut self) -> Result<(), ()> {
-        let mut failed = false;
-        if self.daemon_started && self.daemon.stop().is_err() {
-            failed = true;
-        }
-        if self.registration_pending && self.daemon.rollback_runtime_registration().is_err() {
-            failed = true;
-        }
-        self.registration_pending = false;
-        failed |= remove_attempt_paths(&mut self.created);
-        if failed { Err(()) } else { Ok(()) }
-    }
-
-    fn record_created(
-        &mut self,
-        path: &Path,
-        code: ProvisionErrorCode,
-    ) -> Result<(), ProvisionError> {
-        let metadata = fs::symlink_metadata(path).map_err(|_| ProvisionError::new(code))?;
-        self.created.push(AttemptPath {
-            path: path.to_path_buf(),
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            directory: metadata.file_type().is_dir(),
-        });
-        Ok(())
-    }
-
-    fn detach_rollback(&mut self) -> RuntimeRollback {
-        self.committed = true;
-        RuntimeRollback {
-            created: std::mem::take(&mut self.created),
-            daemon_started: self.daemon_started,
-            registration_pending: self.registration_pending,
-        }
-    }
 }
 
 fn remove_attempt_paths(paths: &mut Vec<AttemptPath>) -> bool {
@@ -2008,32 +951,7 @@ fn sync_directory(directory: &Path) -> Result<(), ProvisionError> {
         .map_err(|_| ProvisionError::new(ProvisionErrorCode::ReceiptFailed))
 }
 
-impl Drop for InstallTransaction<'_> {
-    fn drop(&mut self) {
-        if !self.committed && (!self.created.is_empty() || self.registration_pending) {
-            let _ = self.rollback();
-        }
-    }
-}
-
-fn asset_manifest_path(system: System) -> &'static Path {
-    if matches!(system, System::X8664Linux | System::Aarch64Linux) {
-        Path::new("/var/lib/pkg/managed-nix/assets-v1.json")
-    } else {
-        Path::new("/Library/Application Support/pkg/managed-nix/assets-v1.json")
-    }
-}
-
-fn rooted(root: &Path, absolute: &Path) -> PathBuf {
-    absolute
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(value) => Some(value),
-            _ => None,
-        })
-        .fold(root.to_path_buf(), |path, component| path.join(component))
-}
-
+#[cfg(test)]
 fn create_private_directory(path: &Path) -> Result<(), ProvisionError> {
     fs::create_dir(path).map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
@@ -2048,6 +966,61 @@ fn validate_private_directory(path: &Path, owner_uid: u32) -> Result<(), Provisi
         return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
     }
     Ok(())
+}
+
+/// Removes only exact product-created Determinate staging files.
+///
+/// The caller must first authenticate the directory against the same expected
+/// owner. Every accepted entry is a private, single-link regular file.
+#[expect(
+    clippy::similar_names,
+    reason = "owner_uid and owner_gid are one fixed ownership pair"
+)]
+fn reconcile_determinate_installer_staging_at(
+    directory: &Path,
+    owner_uid: u32,
+    owner_gid: u32,
+) -> Result<(), ProvisionError> {
+    let mut paths = Vec::new();
+    let entries = fs::read_dir(directory)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+        if paths.len() >= MAX_DETERMINATE_STAGING_ENTRIES {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        };
+        let suffix = name.strip_prefix(DETERMINATE_STAGING_PREFIX);
+        let Some(suffix) = suffix else {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        };
+        if suffix.len() != DETERMINATE_STAGING_SUFFIX_LENGTH
+            || !suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        }
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+        if !metadata.file_type().is_file()
+            || metadata.uid() != owner_uid
+            || metadata.gid() != owner_gid
+            || !matches!(metadata.mode() & 0o7777, 0o600 | 0o700)
+            || metadata.nlink() != 1
+        {
+            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
+        }
+        paths.push(entry.path());
+    }
+    for path in paths {
+        fs::remove_file(path)
+            .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
+    }
+    sync_directory(directory)
+        .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))
 }
 
 /// Refuses when the fixed production provisioning workspace already exists.
@@ -2171,1206 +1144,5 @@ fn capture_provision_workspace(
     Ok(Some(paths))
 }
 
-fn ensure_safe_parent(
-    root: &Path,
-    destination: &Path,
-    owner_uid: u32,
-) -> Result<(), ProvisionError> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
-    let relative = parent
-        .strip_prefix(root)
-        .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        let Component::Normal(value) = component else {
-            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
-        };
-        current.push(value);
-        let metadata = fs::symlink_metadata(&current)
-            .map_err(|_| ProvisionError::new(ProvisionErrorCode::UnsafeDestination))?;
-        if !metadata.file_type().is_dir()
-            || metadata.uid() != owner_uid
-            || metadata.mode() & 0o002 != 0
-        {
-            return Err(ProvisionError::new(ProvisionErrorCode::UnsafeDestination));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests {
-    use std::future;
-    use std::io::Cursor;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-    use lzma_rust2::{XzOptions, XzWriter};
-    use pkg_core::state::body_digest;
-    use tempfile::TempDir;
-
-    use super::*;
-
-    #[test]
-    fn blocking_installer_runtime_enables_time() {
-        let runtime = installer_runtime().unwrap();
-        assert!(
-            runtime
-                .block_on(async {
-                    tokio::time::timeout(std::time::Duration::ZERO, future::pending::<()>()).await
-                })
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn raw_channel_sha256_uses_the_product_digest_prefix() {
-        let value = "b4e565fe4db5c352547b8146488cab81db06be89301a4c67b081c76f1e457760";
-        assert_eq!(
-            parse_raw_sha256(value).unwrap().to_string(),
-            format!("sha256-{value}")
-        );
-    }
-    use crate::managed::daemon::{DaemonError, DaemonErrorCode};
-    use crate::managed::ownership::{ManagedGroup, encode_ownership_asset_manifest};
-
-    const RUNTIME_PATH: &str = "/nix/store/fixture-nix-2.24.10/bin/nix";
-    const RUNTIME_BYTES: &[u8] = b"fixture managed nix\n";
-
-    #[tokio::test]
-    async fn blocking_entry_point_refuses_a_nested_runtime() {
-        assert_eq!(
-            refuse_nested_runtime().map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::InvalidAuthenticatedInput)
-        );
-    }
-
-    #[test]
-    fn reauthentication_requires_the_exact_authenticated_identity() {
-        assert!(DatastoreOwner::new(0, 30_000).is_none());
-        let fixture = Fixture::new();
-        let expected_spec = fixture.spec.clone();
-        let expected_config = AuthenticatedManagedNixConfig {
-            system: expected_spec.system,
-            contents: "fixed config".to_owned(),
-        };
-        let expected_payloads =
-            load_authenticated_installer_payloads(&fixture.source, expected_spec.system).unwrap();
-        let expected_ownership = fixture.expectation();
-
-        let expected_identity = AuthenticatedInstallerIdentity {
-            spec: &expected_spec,
-            config: &expected_config,
-            payloads: &expected_payloads,
-            ownership: &expected_ownership,
-        };
-        assert_eq!(expected_identity, expected_identity);
-        let mut changed_spec = expected_spec.clone();
-        changed_spec.runtime_sha256 = Digest::from_bytes([9; 32]);
-        assert_ne!(
-            expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &changed_spec,
-                config: &expected_config,
-                payloads: &expected_payloads,
-                ownership: &expected_ownership,
-            }
-        );
-        let changed_config = AuthenticatedManagedNixConfig {
-            system: expected_spec.system,
-            contents: "changed config".to_owned(),
-        };
-        assert_ne!(
-            expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &expected_spec,
-                config: &changed_config,
-                payloads: &expected_payloads,
-                ownership: &expected_ownership,
-            }
-        );
-        let mut changed_payloads = expected_payloads.clone();
-        changed_payloads.product_cli = Arc::from(b"changed pkg".as_slice());
-        assert_ne!(
-            expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &expected_spec,
-                config: &expected_config,
-                payloads: &changed_payloads,
-                ownership: &expected_ownership,
-            }
-        );
-        let changed_ownership = OwnershipExpectation::new(
-            expected_ownership.system(),
-            expected_ownership.nix_version().clone(),
-            expected_ownership.asset_manifest_digest(),
-            ManagedGroupBindings::new(40_000, 40_001).unwrap(),
-            expected_ownership.artifacts().to_vec(),
-        )
-        .unwrap();
-        assert_ne!(
-            expected_identity,
-            AuthenticatedInstallerIdentity {
-                spec: &expected_spec,
-                config: &expected_config,
-                payloads: &expected_payloads,
-                ownership: &changed_ownership,
-            }
-        );
-    }
-
-    #[test]
-    fn metadata_file_syncs_parent_directory_and_publishes_once() {
-        let temp = TempDir::new().unwrap();
-        let root = temp.path().join("root");
-        create_private_directory(&root).unwrap();
-        let owner_uid = fs::metadata(&root).unwrap().uid();
-
-        let daemon = FakeDaemon::healthy();
-        let mut transaction = InstallTransaction::new(&root, &daemon);
-        let path = root.join("manifest.json");
-
-        transaction
-            .install_metadata_file(&path, b"payload", owner_uid)
-            .unwrap();
-
-        // The final metadata name is published with the exact bytes ...
-        assert_eq!(fs::read(&path).unwrap(), b"payload");
-        // ... the installer temp is removed ...
-        let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-        assert!(!temporary.exists());
-        // ... and re-publishing the same final name fails closed.
-        assert_eq!(
-            transaction
-                .install_metadata_file(&path, b"payload", owner_uid)
-                .map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::ReceiptFailed)
-        );
-    }
-
-    #[test]
-    fn interrupted_workspace_recovery_preserves_siblings_and_symlink_targets() {
-        let temp = TempDir::new().unwrap();
-        let scratch = temp.path().join("scratch");
-        create_private_directory(&scratch).unwrap();
-        let owner_uid = fs::metadata(&scratch).unwrap().uid();
-        verify_provision_workspace_absent_with_owner(&scratch, owner_uid).unwrap();
-
-        let workspace = scratch.join(PROVISION_WORKSPACE_NAME);
-        let staging = workspace.join("staging");
-        create_private_directory(&workspace).unwrap();
-        create_private_directory(&staging).unwrap();
-        fs::set_permissions(&staging, fs::Permissions::from_mode(0o777)).unwrap();
-        fs::write(staging.join("runtime"), b"runtime").unwrap();
-        let external = temp.path().join("external");
-        fs::write(&external, b"keep").unwrap();
-        symlink(&external, staging.join("link")).unwrap();
-        let sibling = scratch.join("keep");
-        fs::write(&sibling, b"keep").unwrap();
-
-        assert!(recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid).unwrap());
-        assert!(!workspace.exists());
-        assert_eq!(fs::read(external).unwrap(), b"keep");
-        assert_eq!(fs::read(sibling).unwrap(), b"keep");
-        assert!(!recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid).unwrap());
-    }
-
-    #[test]
-    fn absent_scratch_parent_proves_the_workspace_is_absent() {
-        let temp = TempDir::new().unwrap();
-        let scratch = temp.path().join("scratch");
-        let owner_uid = fs::metadata(temp.path()).unwrap().uid();
-
-        verify_provision_workspace_absent_with_owner(&scratch, owner_uid).unwrap();
-        assert!(!recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid).unwrap());
-        assert!(!scratch.exists());
-
-        symlink(temp.path(), &scratch).unwrap();
-        assert_eq!(
-            verify_provision_workspace_absent_with_owner(&scratch, owner_uid)
-                .map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::UnsafeDestination)
-        );
-    }
-
-    #[test]
-    fn workspace_recovery_refuses_symlinks_and_unsafe_modes() {
-        let temp = TempDir::new().unwrap();
-        let scratch = temp.path().join("scratch");
-        create_private_directory(&scratch).unwrap();
-        let owner_uid = fs::metadata(&scratch).unwrap().uid();
-        let external = temp.path().join("external");
-        create_private_directory(&external).unwrap();
-        let workspace = scratch.join(PROVISION_WORKSPACE_NAME);
-
-        symlink(&external, &workspace).unwrap();
-        assert_eq!(
-            recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid)
-                .map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::UnsafeDestination)
-        );
-        fs::remove_file(&workspace).unwrap();
-        create_private_directory(&workspace).unwrap();
-        fs::set_permissions(&workspace, fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(
-            recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid)
-                .map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::UnsafeDestination)
-        );
-        assert!(workspace.is_dir());
-        assert!(external.is_dir());
-    }
-
-    #[test]
-    fn workspace_recovery_refuses_more_than_the_fixed_entry_bound() {
-        let temp = TempDir::new().unwrap();
-        let scratch = temp.path().join("scratch");
-        create_private_directory(&scratch).unwrap();
-        let owner_uid = fs::metadata(&scratch).unwrap().uid();
-        let workspace = scratch.join(PROVISION_WORKSPACE_NAME);
-        create_private_directory(&workspace).unwrap();
-        for index in 0..MAX_PROVISION_WORKSPACE_ENTRIES {
-            fs::write(workspace.join(index.to_string()), []).unwrap();
-        }
-
-        assert_eq!(
-            recover_interrupted_provision_workspace_with_owner(&scratch, owner_uid)
-                .map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::UnsafeDestination)
-        );
-        assert!(workspace.is_dir());
-    }
-
-    struct FakeSource {
-        descriptor_sha256: [u8; 32],
-        targets: BTreeMap<String, Vec<u8>>,
-        opens: AtomicUsize,
-        commits: AtomicUsize,
-        fail_commit: bool,
-    }
-
-    impl RuntimeSource for FakeSource {
-        fn descriptor_sha256(&self) -> [u8; 32] {
-            self.descriptor_sha256
-        }
-
-        fn open_target(&self, target: &str) -> Result<Box<dyn Read + Send>, ProvisionError> {
-            self.opens.fetch_add(1, Ordering::Relaxed);
-            self.targets
-                .get(target)
-                .cloned()
-                .map(|bytes| Box::new(Cursor::new(bytes)) as Box<dyn Read + Send>)
-                .ok_or_else(|| ProvisionError::new(ProvisionErrorCode::FetchFailed))
-        }
-
-        #[cfg(test)]
-        fn commit_accepted_channel(&self) -> Result<(), ProvisionError> {
-            self.commits.fetch_add(1, Ordering::Relaxed);
-            if self.fail_commit {
-                Err(ProvisionError::new(ProvisionErrorCode::ChannelStateFailed))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    struct FakeDaemon {
-        fail_ping: bool,
-        started: AtomicBool,
-        stopped: AtomicBool,
-        registered: AtomicBool,
-        registration_committed: AtomicBool,
-        registration_rolled_back: AtomicBool,
-    }
-
-    impl FakeDaemon {
-        fn healthy() -> Self {
-            Self {
-                fail_ping: false,
-                started: AtomicBool::new(false),
-                stopped: AtomicBool::new(false),
-                registered: AtomicBool::new(false),
-                registration_committed: AtomicBool::new(false),
-                registration_rolled_back: AtomicBool::new(false),
-            }
-        }
-    }
-
-    impl ManagedDaemon for FakeDaemon {
-        fn register_runtime(
-            &self,
-            _installation_root: &Path,
-            _system: System,
-            _version: &NixVersion,
-            registration: &Path,
-        ) -> Result<(), DaemonError> {
-            if registration.is_file() {
-                self.registered.store(true, Ordering::Relaxed);
-                Ok(())
-            } else {
-                Err(DaemonError::new(DaemonErrorCode::RegistrationFailed))
-            }
-        }
-
-        fn commit_runtime_registration(&self) -> Result<(), DaemonError> {
-            if !self.registered.swap(false, Ordering::Relaxed) {
-                return Err(DaemonError::new(DaemonErrorCode::RegistrationFailed));
-            }
-            self.registration_committed.store(true, Ordering::Relaxed);
-            Ok(())
-        }
-
-        fn rollback_runtime_registration(&self) -> Result<(), DaemonError> {
-            if !self.registered.swap(false, Ordering::Relaxed) {
-                return Err(DaemonError::new(
-                    DaemonErrorCode::RegistrationRollbackFailed,
-                ));
-            }
-            self.registration_rolled_back.store(true, Ordering::Relaxed);
-            Ok(())
-        }
-
-        fn start(
-            &self,
-            _installation_root: &Path,
-            _system: System,
-            _version: &NixVersion,
-        ) -> Result<(), DaemonError> {
-            self.started.store(true, Ordering::Relaxed);
-            Ok(())
-        }
-
-        fn ping_store(&self) -> Result<(), DaemonError> {
-            if self.fail_ping {
-                Err(DaemonError::new(DaemonErrorCode::ReadinessFailed))
-            } else {
-                Ok(())
-            }
-        }
-
-        fn stop(&self) -> Result<(), DaemonError> {
-            self.stopped.store(true, Ordering::Relaxed);
-            Ok(())
-        }
-    }
-
-    struct Fixture {
-        _temp: TempDir,
-        root: PathBuf,
-        scratch: PathBuf,
-        spec: ProvisionSpec,
-        groups: ManagedGroupBindings,
-        source: FakeSource,
-        owner_uid: u32,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let temp = TempDir::new().unwrap();
-            let root = temp.path().join("root");
-            let scratch = temp.path().join("scratch");
-            create_private_directory(&root).unwrap();
-            create_private_directory(&scratch).unwrap();
-            fs::create_dir(root.join("opt")).unwrap();
-            fs::create_dir(root.join("var")).unwrap();
-            fs::create_dir(root.join("var/lib")).unwrap();
-            let metadata = fs::metadata(&root).unwrap();
-            let owner_uid = metadata.uid();
-            let groups = ManagedGroupBindings::same_gid_for_test(metadata.gid());
-            let artifacts = vec![
-                ManagedArtifact::directory("/nix", ManagedGroup::Broker, 0o755).unwrap(),
-                ManagedArtifact::directory("/nix/store", ManagedGroup::BuildUsers, 0o1775).unwrap(),
-                ManagedArtifact::directory(
-                    "/nix/store/fixture-nix-2.24.10",
-                    ManagedGroup::Broker,
-                    0o555,
-                )
-                .unwrap(),
-                ManagedArtifact::directory(
-                    "/nix/store/fixture-nix-2.24.10/bin",
-                    ManagedGroup::Broker,
-                    0o555,
-                )
-                .unwrap(),
-                ManagedArtifact::file(
-                    RUNTIME_PATH,
-                    ManagedGroup::Broker,
-                    0o555,
-                    RUNTIME_BYTES.len() as u64,
-                    body_digest(RUNTIME_BYTES),
-                )
-                .unwrap(),
-                ManagedArtifact::symlink(
-                    "/nix/store/fixture-nix-2.24.10/bin/nix-store",
-                    ManagedGroup::Broker,
-                    "nix",
-                )
-                .unwrap(),
-                ManagedArtifact::symlink(
-                    "/nix/store/fixture-nix-2.24.10/bin/nix-daemon",
-                    ManagedGroup::Broker,
-                    "nix",
-                )
-                .unwrap(),
-                ManagedArtifact::directory("/opt/pkg", ManagedGroup::Broker, 0o755).unwrap(),
-                ManagedArtifact::directory("/opt/pkg/nix", ManagedGroup::Broker, 0o750).unwrap(),
-                ManagedArtifact::directory("/opt/pkg/nix/2.24.10", ManagedGroup::Broker, 0o750)
-                    .unwrap(),
-                ManagedArtifact::directory("/opt/pkg/nix/2.24.10/bin", ManagedGroup::Broker, 0o750)
-                    .unwrap(),
-                ManagedArtifact::file(
-                    "/opt/pkg/nix/2.24.10/bin/nix",
-                    ManagedGroup::Broker,
-                    0o550,
-                    RUNTIME_BYTES.len() as u64,
-                    body_digest(RUNTIME_BYTES),
-                )
-                .unwrap(),
-                ManagedArtifact::file(
-                    "/opt/pkg/nix/2.24.10/bin/nix-store",
-                    ManagedGroup::Broker,
-                    0o550,
-                    RUNTIME_BYTES.len() as u64,
-                    body_digest(RUNTIME_BYTES),
-                )
-                .unwrap(),
-                ManagedArtifact::file(
-                    "/opt/pkg/nix/2.24.10/bin/nix-daemon",
-                    ManagedGroup::Broker,
-                    0o550,
-                    RUNTIME_BYTES.len() as u64,
-                    body_digest(RUNTIME_BYTES),
-                )
-                .unwrap(),
-                ManagedArtifact::symlink("/opt/pkg/nix/current", ManagedGroup::Broker, "2.24.10")
-                    .unwrap(),
-                ManagedArtifact::directory("/var/lib/pkg", ManagedGroup::Broker, 0o700).unwrap(),
-            ];
-            let version = NixVersion::new("2.24.10").unwrap();
-            let manifest =
-                encode_ownership_asset_manifest(System::X8664Linux, &version, &artifacts).unwrap();
-            let archive = archive_with_file(
-                "nix-2.24.10-x86_64-linux/store/fixture-nix-2.24.10/bin/nix",
-                RUNTIME_BYTES,
-            );
-            let runtime_target = "nix/2.24.10/x86_64-linux.tar.xz".to_string();
-            let manifest_target = "nix/2.24.10/x86_64-linux.assets.json".to_string();
-            let spec = ProvisionSpec {
-                descriptor_sha256: [0x42; 32],
-                system: System::X8664Linux,
-                nix_version: version,
-                runtime_target: runtime_target.clone(),
-                runtime_sha256: body_digest(&archive),
-                asset_manifest_target: manifest_target.clone(),
-                asset_manifest_sha256: body_digest(&manifest),
-            };
-            let source = FakeSource {
-                descriptor_sha256: spec.descriptor_sha256,
-                targets: BTreeMap::from([
-                    (runtime_target, archive),
-                    (manifest_target, manifest),
-                    (
-                        "installer/x86_64-linux/pkg-root-helper".to_owned(),
-                        b"root-helper".to_vec(),
-                    ),
-                    (
-                        "installer/x86_64-linux/pkg-nix-broker".to_owned(),
-                        b"broker".to_vec(),
-                    ),
-                    ("installer/x86_64-linux/pkg".to_owned(), b"pkg-cli".to_vec()),
-                ]),
-                opens: AtomicUsize::new(0),
-                commits: AtomicUsize::new(0),
-                fail_commit: false,
-            };
-            Self {
-                _temp: temp,
-                root,
-                scratch,
-                spec,
-                groups,
-                source,
-                owner_uid,
-            }
-        }
-
-        fn request(&self) -> ProvisionRequest<'_> {
-            ProvisionRequest {
-                installation_root: &self.root,
-                scratch_parent: &self.scratch,
-                spec: &self.spec,
-                groups: self.groups,
-            }
-        }
-
-        fn expectation(&self) -> OwnershipExpectation {
-            let bytes = self
-                .source
-                .targets
-                .get(&self.spec.asset_manifest_target)
-                .expect("fixture manifest");
-            decode_ownership_asset_manifest(
-                bytes,
-                self.spec.system,
-                &self.spec.nix_version,
-                self.spec.asset_manifest_sha256,
-                self.groups,
-            )
-            .expect("fixture expectation")
-        }
-    }
-
-    #[test]
-    fn installer_payloads_use_only_fixed_authenticated_targets() {
-        let fixture = Fixture::new();
-        let payloads =
-            load_authenticated_installer_payloads(&fixture.source, System::X8664Linux).unwrap();
-
-        assert_eq!(payloads.system(), System::X8664Linux);
-        assert_eq!(payloads.root_helper(), b"root-helper");
-        assert_eq!(payloads.broker(), b"broker");
-        assert_eq!(payloads.product_cli(), b"pkg-cli");
-        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 3);
-    }
-
-    #[test]
-    fn missing_or_empty_installer_payload_refuses_authentication() {
-        let mut fixture = Fixture::new();
-        fixture.source.targets.insert(
-            "installer/x86_64-linux/pkg-nix-broker".to_owned(),
-            Vec::new(),
-        );
-        assert_eq!(
-            load_authenticated_installer_payloads(&fixture.source, System::X8664Linux)
-                .map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::InvalidAuthenticatedInput)
-        );
-        fixture.source.targets.remove("installer/x86_64-linux/pkg");
-        assert_eq!(
-            load_authenticated_installer_payloads(&fixture.source, System::X8664Linux)
-                .map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::FetchFailed)
-        );
-    }
-
-    fn archive_with_file(path: &str, bytes: &[u8]) -> Vec<u8> {
-        let writer = XzWriter::new(Vec::new(), XzOptions::with_preset(1)).unwrap();
-        let mut archive = tar::Builder::new(writer);
-        let mut header = tar::Header::new_gnu();
-        header.set_path(path).unwrap();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o550);
-        header.set_cksum();
-        archive.append(&header, bytes).unwrap();
-        for name in ["nix-store", "nix-daemon"] {
-            let mut alias = tar::Header::new_gnu();
-            alias.set_entry_type(EntryType::Symlink);
-            alias
-                .set_path(format!(
-                    "nix-2.24.10-x86_64-linux/store/fixture-nix-2.24.10/bin/{name}"
-                ))
-                .unwrap();
-            alias.set_link_name("nix").unwrap();
-            alias.set_size(0);
-            alias.set_mode(0o777);
-            alias.set_cksum();
-            archive.append(&alias, Cursor::new([])).unwrap();
-        }
-        let registration = b"fixture registration\n";
-        let mut registration_header = tar::Header::new_gnu();
-        registration_header
-            .set_path("nix-2.24.10-x86_64-linux/.reginfo")
-            .unwrap();
-        registration_header.set_size(registration.len() as u64);
-        registration_header.set_mode(0o600);
-        registration_header.set_cksum();
-        archive
-            .append(&registration_header, registration.as_slice())
-            .unwrap();
-        let writer = archive.into_inner().unwrap();
-        writer.finish().unwrap()
-    }
-
-    #[test]
-    fn fixture_runtime_is_verified_activated_and_receipted() {
-        let fixture = Fixture::new();
-        let daemon = FakeDaemon::healthy();
-        let report = provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &daemon,
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .unwrap();
-        assert_eq!(report.system(), System::X8664Linux);
-        assert_eq!(report.nix_version().as_str(), "2.24.10");
-        assert_eq!(
-            fs::read(rooted(&fixture.root, Path::new(RUNTIME_PATH))).unwrap(),
-            RUNTIME_BYTES
-        );
-        assert!(rooted(&fixture.root, ownership_receipt_path(System::X8664Linux)).is_file());
-        assert!(daemon.started.load(Ordering::Relaxed));
-        assert!(daemon.registration_committed.load(Ordering::Relaxed));
-        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 2);
-        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    #[ignore = "requires PKG_TEST_NIX_ARCHIVE with the official Nix 2.34.8 aarch64-linux tarball"]
-    fn official_nix_archive_matches_the_shared_manifest_during_extraction() {
-        let archive = std::env::var_os("PKG_TEST_NIX_ARCHIVE")
-            .map(PathBuf::from)
-            .expect("PKG_TEST_NIX_ARCHIVE must be set");
-        let version = NixVersion::new("2.34.8").unwrap();
-        let manifest =
-            crate::build_upstream_runtime_asset_manifest(&archive, System::Aarch64Linux, &version)
-                .unwrap();
-        let expectation = decode_ownership_asset_manifest(
-            &manifest,
-            System::Aarch64Linux,
-            &version,
-            body_digest(&manifest),
-            ManagedGroupBindings::new(1001, 1002).unwrap(),
-        )
-        .unwrap();
-        let staging = TempDir::new().unwrap();
-        let registration = extract_exact_archive(
-            &archive,
-            staging.path(),
-            System::Aarch64Linux,
-            &version,
-            &expectation,
-        )
-        .unwrap();
-        assert_eq!(registration, staging.path().join(".reginfo"));
-        assert!(registration.is_file());
-        for binary in ["nix", "nix-store", "nix-daemon"] {
-            assert!(
-                fs::symlink_metadata(
-                    staging
-                        .path()
-                        .join(format!("opt/pkg/nix/2.34.8/bin/{binary}"))
-                )
-                .unwrap()
-                .file_type()
-                .is_file()
-            );
-        }
-    }
-
-    #[test]
-    #[ignore = "requires PKG_TEST_NIX_ARCHIVE with the official Nix 2.34.8 aarch64-darwin tarball"]
-    fn official_nix_darwin_archive_matches_the_shared_manifest_during_extraction() {
-        let archive = std::env::var_os("PKG_TEST_NIX_ARCHIVE")
-            .map(PathBuf::from)
-            .expect("PKG_TEST_NIX_ARCHIVE must be set");
-        let version = NixVersion::new("2.34.8").unwrap();
-        let system = System::Aarch64Darwin;
-        let manifest =
-            crate::build_upstream_runtime_asset_manifest(&archive, system, &version).unwrap();
-        let expectation = decode_ownership_asset_manifest(
-            &manifest,
-            system,
-            &version,
-            body_digest(&manifest),
-            ManagedGroupBindings::new(333, 350).unwrap(),
-        )
-        .unwrap();
-        let staging = TempDir::new().unwrap();
-        let registration =
-            extract_exact_archive(&archive, staging.path(), system, &version, &expectation)
-                .unwrap();
-        assert_eq!(registration, staging.path().join(".reginfo"));
-        for binary in ["nix", "nix-store", "nix-daemon"] {
-            assert!(
-                fs::symlink_metadata(
-                    staging
-                        .path()
-                        .join(format!("opt/pkg/nix/2.34.8/bin/{binary}"))
-                )
-                .unwrap()
-                .file_type()
-                .is_file()
-            );
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    #[ignore = "mutates only an explicitly opted-in disposable clean Linux container"]
-    fn production_daemon_registers_the_official_runtime_on_a_clean_container() {
-        assert_eq!(
-            std::env::var_os("PKG_TEST_ALLOW_ROOT_INSTALL").as_deref(),
-            Some(std::ffi::OsStr::new("1"))
-        );
-        assert!(Path::new("/.dockerenv").is_file());
-        for path in ["/nix", "/opt/pkg", "/var/lib/pkg"] {
-            assert!(!Path::new(path).exists(), "container must start clean");
-        }
-
-        let archive_path = std::env::var_os("PKG_TEST_NIX_ARCHIVE")
-            .map(PathBuf::from)
-            .expect("PKG_TEST_NIX_ARCHIVE must be set");
-        let system = if cfg!(target_arch = "aarch64") {
-            System::Aarch64Linux
-        } else {
-            System::X8664Linux
-        };
-        let version = NixVersion::new("2.34.8").unwrap();
-        let archive = fs::read(&archive_path).unwrap();
-        let manifest =
-            crate::build_upstream_runtime_asset_manifest(&archive_path, system, &version).unwrap();
-        let groups = ManagedGroupBindings::new(30_001, 30_002).unwrap();
-        let expectation = decode_ownership_asset_manifest(
-            &manifest,
-            system,
-            &version,
-            body_digest(&manifest),
-            groups,
-        )
-        .unwrap();
-        let runtime_target = format!("nix/2.34.8/{system}.tar.xz");
-        let manifest_target = format!("nix/2.34.8/{system}.assets.json");
-        let spec = ProvisionSpec {
-            descriptor_sha256: [0x5a; 32],
-            system,
-            nix_version: version,
-            runtime_target: runtime_target.clone(),
-            runtime_sha256: body_digest(&archive),
-            asset_manifest_target: manifest_target.clone(),
-            asset_manifest_sha256: body_digest(&manifest),
-        };
-        let source = FakeSource {
-            descriptor_sha256: spec.descriptor_sha256,
-            targets: BTreeMap::from([(runtime_target, archive), (manifest_target, manifest)]),
-            opens: AtomicUsize::new(0),
-            commits: AtomicUsize::new(0),
-            fail_commit: false,
-        };
-        let helper_home = Path::new("/var/lib/pkg/helper-home");
-        let scratch = helper_home.join("tmp");
-        fs::create_dir_all(&scratch).unwrap();
-        fs::set_permissions(helper_home, fs::Permissions::from_mode(0o700)).unwrap();
-        fs::set_permissions(&scratch, fs::Permissions::from_mode(0o700)).unwrap();
-        let config_directory = Path::new("/opt/pkg/etc/pkg");
-        fs::create_dir_all(config_directory).unwrap();
-        fs::set_permissions("/opt/pkg", fs::Permissions::from_mode(0o755)).unwrap();
-        fs::set_permissions("/opt/pkg/etc", fs::Permissions::from_mode(0o755)).unwrap();
-        fs::set_permissions(config_directory, fs::Permissions::from_mode(0o755)).unwrap();
-        fs::write(
-            config_directory.join("nix.conf"),
-            b"build-users-group =\ntrusted-users = root\nallowed-users = root\nexperimental-features = nix-command flakes cgroups\nsandbox = true\nsandbox-fallback = false\nallow-import-from-derivation = false\nuse-cgroups = true\nrequire-sigs = true\nbuilders =\nsubstituters =\ntrusted-public-keys =\nmax-jobs = 1\ncores = 0\n",
-        )
-        .unwrap();
-        fs::set_permissions(
-            config_directory.join("nix.conf"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .unwrap();
-        fs::create_dir("/nix").unwrap();
-        fs::create_dir("/nix/store").unwrap();
-        chown("/nix/store", Some(0), Some(groups.build_users_gid())).unwrap();
-        fs::set_permissions("/nix/store", fs::Permissions::from_mode(0o1775)).unwrap();
-        fs::create_dir_all("/nix/var/nix").unwrap();
-        let prepared = detect_unmanaged_nix(Path::new("/"), system, &[], &[]);
-        assert!(
-            has_only_fixed_platform_prerequisites(&prepared, system),
-            "unexpected prerequisite findings: {:?}",
-            prepared.findings()
-        );
-
-        let request = ProvisionRequest {
-            installation_root: Path::new("/"),
-            scratch_parent: &scratch,
-            spec: &spec,
-            groups,
-        };
-        let daemon = crate::ProductionManagedDaemon::production();
-        let (_, rollback) = provision_with_owner_policy(
-            &request,
-            &source,
-            &daemon,
-            0,
-            &[],
-            &[],
-            HostStateRequirements::new(
-                HostStatePolicy::FixedPlatformPrerequisites,
-                Some(&expectation),
-            ),
-        )
-        .unwrap();
-        rollback.execute(&daemon).unwrap();
-        assert!(!Path::new("/nix/var/nix/db").exists());
-        assert!(!Path::new("/opt/pkg/nix").exists());
-        assert_eq!(fs::read_dir("/nix/store").unwrap().count(), 0);
-
-        let (report, mut rollback) = provision_with_owner_policy(
-            &request,
-            &source,
-            &daemon,
-            0,
-            &[],
-            &[],
-            HostStateRequirements::new(
-                HostStatePolicy::FixedPlatformPrerequisites,
-                Some(&expectation),
-            ),
-        )
-        .unwrap();
-        source.commit_accepted_channel().unwrap();
-        daemon.commit_runtime_registration().unwrap();
-        rollback.registration_pending = false;
-        assert_eq!(report.system(), system);
-        assert!(Path::new("/nix/var/nix/db/db.sqlite").is_file());
-        let removal = crate::prepare_managed_runtime_removal(Path::new("/"), &expectation).unwrap();
-        daemon.ping_store().unwrap();
-        daemon.stop().unwrap();
-
-        let garbage =
-            crate::RootNixGcExecutor::new(Path::new("/opt/pkg/nix/current/bin/nix"), helper_home)
-                .unwrap()
-                .collect()
-                .unwrap();
-        assert_eq!(garbage.status(), crate::GcStatus::Collected);
-        let removal_outcome = removal.remove().unwrap();
-        assert_eq!(
-            removal_outcome,
-            crate::ManagedRuntimeRemovalOutcome::Removed
-        );
-        assert!(!Path::new("/opt/pkg/nix").exists());
-        assert!(!Path::new("/nix/var/nix/db").exists());
-        assert_eq!(fs::read_dir("/nix/store").unwrap().count(), 0);
-    }
-
-    #[test]
-    fn authenticated_existing_runtime_is_reused_without_fetch_or_mutation() {
-        let fixture = Fixture::new();
-        provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .expect("first install");
-        let expectation = fixture.expectation();
-        let runtime_path = rooted(&fixture.root, Path::new(RUNTIME_PATH));
-        let receipt_path = rooted(&fixture.root, ownership_receipt_path(System::X8664Linux));
-        let runtime_before = fs::read(&runtime_path).expect("runtime bytes");
-        let receipt_before = fs::read(&receipt_path).expect("receipt bytes");
-        let opens_before = fixture.source.opens.load(Ordering::Relaxed);
-        let daemon = FakeDaemon::healthy();
-
-        let (report, rollback) = provision_with_owner_policy(
-            &fixture.request(),
-            &fixture.source,
-            &daemon,
-            fixture.owner_uid,
-            &[],
-            &[],
-            HostStateRequirements::new(
-                HostStatePolicy::FixedPlatformPrerequisites,
-                Some(&expectation),
-            ),
-        )
-        .expect("authenticated reuse");
-
-        assert_eq!(report.artifact_count(), expectation.artifacts().len());
-        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), opens_before);
-        assert_eq!(
-            fs::read(&runtime_path).expect("runtime bytes"),
-            runtime_before
-        );
-        assert_eq!(
-            fs::read(&receipt_path).expect("receipt bytes"),
-            receipt_before
-        );
-        rollback.execute(&daemon).expect("stop bootstrap daemon");
-        assert!(runtime_path.is_file());
-        assert!(receipt_path.is_file());
-        assert!(daemon.stopped.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn authenticated_existing_runtime_tampering_is_refused_before_fetch() {
-        let fixture = Fixture::new();
-        provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .expect("first install");
-        let expectation = fixture.expectation();
-        let runtime_path = rooted(&fixture.root, Path::new(RUNTIME_PATH));
-        fs::set_permissions(&runtime_path, fs::Permissions::from_mode(0o750)).expect("tamper mode");
-        let opens_before = fixture.source.opens.load(Ordering::Relaxed);
-
-        let result = provision_with_owner_policy(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-            HostStateRequirements::new(
-                HostStatePolicy::FixedPlatformPrerequisites,
-                Some(&expectation),
-            ),
-        );
-
-        assert_eq!(
-            result.map(|_| ()).map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::ExistingNixRefused)
-        );
-        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), opens_before);
-    }
-
-    #[test]
-    fn authenticated_existing_runtime_with_foreign_environment_is_refused() {
-        let fixture = Fixture::new();
-        provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .expect("first install");
-        let expectation = fixture.expectation();
-        let opens_before = fixture.source.opens.load(Ordering::Relaxed);
-
-        let result = provision_with_owner_policy(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[std::ffi::OsString::from("NIX_PATH")],
-            HostStateRequirements::new(
-                HostStatePolicy::FixedPlatformPrerequisites,
-                Some(&expectation),
-            ),
-        );
-
-        assert_eq!(
-            result.map(|_| ()).map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::ExistingNixRefused)
-        );
-        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), opens_before);
-    }
-
-    #[test]
-    fn finalized_platform_transaction_stops_the_bootstrap_daemon() {
-        let fixture = Fixture::new();
-        let daemon = FakeDaemon::healthy();
-        let (runtime, rollback) = provision_with_owner_policy(
-            &fixture.request(),
-            &fixture.source,
-            &daemon,
-            fixture.owner_uid,
-            &[],
-            &[],
-            HostStateRequirements::new(HostStatePolicy::Strict, None),
-        )
-        .unwrap();
-        let transaction = ProvisionedBootstrapTransaction {
-            bootstrap: Some(ProvisionedBootstrap {
-                runtime,
-                index: Vec::new(),
-            }),
-            rollback: Some(rollback),
-            source: None,
-            channel_committed: true,
-            daemon: &daemon,
-        };
-
-        let result = transaction.finalize().unwrap();
-
-        assert_eq!(result.runtime().system(), System::X8664Linux);
-        assert!(daemon.stopped.load(Ordering::Relaxed));
-        assert!(rooted(&fixture.root, Path::new(RUNTIME_PATH)).is_file());
-    }
-
-    #[test]
-    fn prepared_platform_directory_is_reused_only_when_signed_metadata_matches() {
-        let fixture = Fixture::new();
-        let nix_root = fixture.root.join("nix");
-        fs::create_dir(&nix_root).unwrap();
-        fs::set_permissions(&nix_root, fs::Permissions::from_mode(0o755)).unwrap();
-        let daemon = FakeDaemon::healthy();
-        let (report, rollback) = provision_with_owner_policy(
-            &fixture.request(),
-            &fixture.source,
-            &daemon,
-            fixture.owner_uid,
-            &[],
-            &[],
-            HostStateRequirements::new(HostStatePolicy::FixedPlatformPrerequisites, None),
-        )
-        .unwrap();
-
-        assert_eq!(report.system(), System::X8664Linux);
-        assert!(nix_root.is_dir());
-        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 0);
-        rollback.execute(&daemon).unwrap();
-        assert!(nix_root.is_dir());
-        assert!(!rooted(&fixture.root, Path::new(RUNTIME_PATH)).exists());
-        assert!(daemon.stopped.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn prepared_platform_directory_with_wrong_mode_is_refused() {
-        let fixture = Fixture::new();
-        let nix_root = fixture.root.join("nix");
-        fs::create_dir(&nix_root).unwrap();
-        fs::set_permissions(&nix_root, fs::Permissions::from_mode(0o777)).unwrap();
-        let result = provision_with_owner_policy(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-            HostStateRequirements::new(HostStatePolicy::FixedPlatformPrerequisites, None),
-        );
-
-        assert_eq!(
-            result.map(|_| ()).map_err(ProvisionError::code),
-            Err(ProvisionErrorCode::InstallFailed)
-        );
-        assert!(!rooted(&fixture.root, Path::new(RUNTIME_PATH)).exists());
-    }
-
-    #[test]
-    fn prepared_platform_policy_rejects_unexpected_nix_evidence() {
-        let fixture = Fixture::new();
-        fs::create_dir(fixture.root.join("nix")).unwrap();
-        fs::create_dir(fixture.root.join("etc")).unwrap();
-        fs::create_dir(fixture.root.join("etc/nix")).unwrap();
-
-        let error = require_host_state(
-            &fixture.request(),
-            &[],
-            &[],
-            HostStatePolicy::FixedPlatformPrerequisites,
-            None,
-            fixture.owner_uid,
-        )
-        .unwrap_err();
-
-        assert_eq!(error.code(), ProvisionErrorCode::ExistingNixRefused);
-    }
-
-    #[test]
-    fn hash_mismatch_refuses_before_installation() {
-        let mut fixture = Fixture::new();
-        fixture.spec.runtime_sha256 = body_digest(b"different");
-        let error = provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), ProvisionErrorCode::TargetHashMismatch);
-        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 0);
-        assert!(!fixture.root.join("nix").exists());
-    }
-
-    #[test]
-    fn descriptor_mismatch_refuses_before_fetch_or_installation() {
-        let mut fixture = Fixture::new();
-        fixture.source.descriptor_sha256 = [0x24; 32];
-        let error = provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), ProvisionErrorCode::InvalidAuthenticatedInput);
-        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 0);
-        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 0);
-        assert!(!fixture.root.join("nix").exists());
-    }
-
-    #[test]
-    fn channel_state_failure_rolls_back_verified_runtime_and_receipt() {
-        let mut fixture = Fixture::new();
-        fixture.source.fail_commit = true;
-        let daemon = FakeDaemon::healthy();
-        let error = provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &daemon,
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), ProvisionErrorCode::ChannelStateFailed);
-        assert_eq!(fixture.source.commits.load(Ordering::Relaxed), 1);
-        assert!(daemon.stopped.load(Ordering::Relaxed));
-        assert!(daemon.registration_rolled_back.load(Ordering::Relaxed));
-        assert!(!fixture.root.join("nix").exists());
-        assert!(!rooted(&fixture.root, ownership_receipt_path(System::X8664Linux)).exists());
-    }
-
-    #[test]
-    fn daemon_readiness_failure_rolls_back_every_created_asset() {
-        let fixture = Fixture::new();
-        let daemon = FakeDaemon {
-            fail_ping: true,
-            started: AtomicBool::new(false),
-            stopped: AtomicBool::new(false),
-            registered: AtomicBool::new(false),
-            registration_committed: AtomicBool::new(false),
-            registration_rolled_back: AtomicBool::new(false),
-        };
-        let error = provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &daemon,
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), ProvisionErrorCode::DaemonFailed);
-        assert_eq!(error.daemon_code(), Some(DaemonErrorCode::ReadinessFailed));
-        assert!(daemon.stopped.load(Ordering::Relaxed));
-        assert!(daemon.registration_rolled_back.load(Ordering::Relaxed));
-        assert!(!fixture.root.join("nix").exists());
-        assert!(!fixture.root.join("opt/pkg").exists());
-        assert!(!fixture.root.join("var/lib/pkg").exists());
-    }
-
-    #[test]
-    fn unmanaged_nix_refuses_before_fetch() {
-        let fixture = Fixture::new();
-        fs::create_dir(fixture.root.join("nix")).unwrap();
-        let error = provision_with_owner(
-            &fixture.request(),
-            &fixture.source,
-            &FakeDaemon::healthy(),
-            fixture.owner_uid,
-            &[],
-            &[],
-        )
-        .unwrap_err();
-        assert_eq!(error.code(), ProvisionErrorCode::ExistingNixRefused);
-        assert_eq!(fixture.source.opens.load(Ordering::Relaxed), 0);
-    }
-}
+mod tests;

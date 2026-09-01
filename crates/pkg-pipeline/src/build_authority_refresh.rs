@@ -50,7 +50,7 @@ impl AuthenticatedBuildAuthorityService {
                 verify_index_artifact(target.bytes(), verified_channel, system).map_err(|_| ())
             })
             .await
-            .map_err(map_channel_error)?;
+            .map_err(|error| map_channel_error(&error))?;
         let (outcome, index) = refresh.into_parts();
         let verified_channel = into_channel(outcome);
         let authority =
@@ -100,7 +100,7 @@ impl AuthenticatedBuildAuthorityService {
                 verify_index_artifact(target.bytes(), verified_channel, system).map_err(|_| ())
             })
             .await
-            .map_err(map_channel_error)?;
+            .map_err(|error| map_channel_error(&error))?;
         let (outcome, index) = refresh.into_parts();
         let verified_channel = into_channel(outcome);
         let sequence = verified_channel.sequence();
@@ -132,7 +132,7 @@ impl AuthenticatedBuildAuthorityService {
                 verify_index_artifact(target.bytes(), verified_channel, system).map_err(|_| ())
             })
             .await
-            .map_err(map_channel_error)?;
+            .map_err(|error| map_channel_error(&error))?;
         let (outcome, index) = refresh.into_parts();
         let verified_channel = into_channel(outcome);
         let sequence = verified_channel.sequence();
@@ -149,7 +149,7 @@ fn into_channel(outcome: RefreshOutcome) -> pkg_channel::VerifiedChannel {
     }
 }
 
-fn map_channel_error(error: ChannelError) -> BuildAuthorityRefreshError {
+const fn map_channel_error(error: &ChannelError) -> BuildAuthorityRefreshError {
     let code = match error {
         ChannelError::TransportUnavailable => BuildAuthorityRefreshErrorCode::Network,
         ChannelError::DatastoreBusy => BuildAuthorityRefreshErrorCode::Busy,
@@ -240,7 +240,7 @@ mod tests {
                 BuildAuthorityRefreshErrorCode::Verification,
             ),
         ] {
-            assert_eq!(map_channel_error(error).code(), expected);
+            assert_eq!(map_channel_error(&error).code(), expected);
         }
     }
 }

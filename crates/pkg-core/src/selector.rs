@@ -323,7 +323,7 @@ impl PinState {
 
     /// Returns the pinned identity, if any.
     #[must_use]
-    pub fn pinned_identity(&self) -> Option<&RealizationIdentity> {
+    pub const fn pinned_identity(&self) -> Option<&RealizationIdentity> {
         match self {
             PinState::Unpinned => None,
             PinState::Pinned(id) => Some(id),
@@ -356,7 +356,7 @@ impl PackageSelector {
     /// attribute is [`None`] until resolved via
     /// [`PackageSelector::with_attribute`].
     #[must_use]
-    pub fn new(
+    pub const fn new(
         id: SelectorId,
         selector: SelectorInput,
         version_preference: VersionPreference,
@@ -376,43 +376,43 @@ impl PackageSelector {
 
     /// Returns the stable selector id.
     #[must_use]
-    pub fn id(&self) -> &SelectorId {
+    pub const fn id(&self) -> &SelectorId {
         &self.id
     }
 
     /// Returns the user-typed selector input.
     #[must_use]
-    pub fn selector(&self) -> &SelectorInput {
+    pub const fn selector(&self) -> &SelectorInput {
         &self.selector
     }
 
     /// Returns the resolved attribute path, if any.
     #[must_use]
-    pub fn attribute(&self) -> Option<&AttributePath> {
+    pub const fn attribute(&self) -> Option<&AttributePath> {
         self.attribute.as_ref()
     }
 
     /// Returns the version preference.
     #[must_use]
-    pub fn version_preference(&self) -> &VersionPreference {
+    pub const fn version_preference(&self) -> &VersionPreference {
         &self.version_preference
     }
 
     /// Returns the output selection.
     #[must_use]
-    pub fn outputs(&self) -> &OutputSelection {
+    pub const fn outputs(&self) -> &OutputSelection {
         &self.outputs
     }
 
     /// Returns the source revision.
     #[must_use]
-    pub fn source_revision(&self) -> &crate::channel::SourceRevision {
+    pub const fn source_revision(&self) -> &crate::channel::SourceRevision {
         &self.source_revision
     }
 
     /// Returns the pin state.
     #[must_use]
-    pub fn pin_state(&self) -> &PinState {
+    pub const fn pin_state(&self) -> &PinState {
         &self.pin_state
     }
 
@@ -636,7 +636,7 @@ mod tests {
         assert_eq!(sel.attribute().unwrap().as_str(), "ripgrep");
 
         // resolved -> pin succeeds.
-        let pinned = sel.clone().pinned_to(id.clone()).unwrap();
+        let pinned = sel.pinned_to(id).unwrap();
         assert!(pinned.pin_state().is_pinned());
 
         // pinned -> with_attribute fails, and the attribute is left unchanged.

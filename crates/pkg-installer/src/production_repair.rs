@@ -6,9 +6,10 @@ use std::{
 };
 
 use pkg_nix::{
-    AuthenticatedCaller, BuildApprovalReceipt, OperationHandle, RealNixAdapter, RepairBuildPlan,
+    AuthenticatedCaller, BuildApprovalReceipt, OperationHandle, RealNixAdapter,
     RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
-    RepairGenerationStatus, RootSetAttestationRequest, StorePath, verify_closure,
+    RepairGenerationStatus, RootRepairPlanProof, RootRepairPlanRequest, RootSetAttestationRequest,
+    StorePath, verify_closure,
 };
 use pkg_pipeline::AuthenticatedBuildAuthority;
 
@@ -89,11 +90,7 @@ impl RepairAuthorityDispatch for ProductionRepairAuthority {
                     return Err(RepairGenerationErrorCode::FreshApprovalRequired);
                 }
                 let plan = self.repair_plan(damage.damaged(), policy_version)?;
-                if plan
-                    .digest()
-                    .map_err(|_| RepairGenerationErrorCode::InvalidScope)?
-                    != approval.build_plan_digest()
-                {
+                if plan.digest() != approval.build_plan_digest() {
                     return Err(RepairGenerationErrorCode::FreshApprovalRequired);
                 }
                 let timestamp = approval_timestamp()?;
@@ -160,7 +157,7 @@ impl ProductionRepairAuthority {
         &self,
         damaged: &[StorePath],
         policy_version: pkg_core::PolicyVersion,
-    ) -> Result<RepairBuildPlan, RepairGenerationErrorCode> {
+    ) -> Result<RootRepairPlanProof, RepairGenerationErrorCode> {
         let (current_policy, facts) = self
             .build_authority
             .repair_build_context()
@@ -168,14 +165,16 @@ impl ProductionRepairAuthority {
         if current_policy != policy_version {
             return Err(RepairGenerationErrorCode::FreshApprovalRequired);
         }
+        let request = RootRepairPlanRequest::new(
+            damaged.to_vec(),
+            policy_version,
+            facts.system(),
+            facts.readiness().clone(),
+            facts.host_cores(),
+        )
+        .ok_or(RepairGenerationErrorCode::InvalidScope)?;
         self.adapter
-            .repair_build_plan(
-                damaged,
-                policy_version,
-                facts.system(),
-                facts.readiness().clone(),
-                facts.host_cores(),
-            )
+            .repair_plan_proof(&request)
             .map_err(|_| RepairGenerationErrorCode::StillDamaged)
     }
 
@@ -196,7 +195,7 @@ impl ProductionRepairAuthority {
             let preview = self
                 .repair_plan(report.damaged(), policy_version)?
                 .preview()
-                .map_err(|_| RepairGenerationErrorCode::InvalidScope)?;
+                .clone();
             return RepairGenerationReport::needs_approval(count, preview)
                 .map_err(|_| RepairGenerationErrorCode::VerifyFailed);
         }
@@ -226,21 +225,20 @@ impl RepairApprovalGate for ProductionRepairApproval<'_> {
                 RepairCoordinatorErrorCode::FreshApprovalRequired,
             ));
         }
-        let plan = self
-            .adapter
-            .repair_build_plan(
-                scope.paths(),
-                scope.policy_version(),
-                facts.system(),
-                facts.readiness().clone(),
-                facts.host_cores(),
-            )
-            .map_err(|_| {
-                RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
-            })?;
-        let digest = plan.digest().map_err(|_| {
+        let request = RootRepairPlanRequest::new(
+            scope.paths().to_vec(),
+            scope.policy_version(),
+            facts.system(),
+            facts.readiness().clone(),
+            facts.host_cores(),
+        )
+        .ok_or_else(|| {
             RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
         })?;
+        let proof = self.adapter.repair_plan_proof(&request).map_err(|_| {
+            RepairCoordinatorError::new(RepairCoordinatorErrorCode::FreshApprovalRequired)
+        })?;
+        let digest = proof.digest();
         if digest != scope.build_plan_digest() {
             return Err(RepairCoordinatorError::new(
                 RepairCoordinatorErrorCode::FreshApprovalRequired,

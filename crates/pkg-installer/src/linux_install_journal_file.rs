@@ -20,9 +20,9 @@ use rustix::{
 
 use pkg_core::{System, state::Digest};
 
-use crate::LinuxInstallJournal;
+use crate::{LinuxInstallJournal, LinuxInstallJournalErrorCode};
 
-const DIRECTORY_NAME: &str = "pkg-install";
+const DIRECTORY_NAME: &str = "pkg-install-journal";
 const JOURNAL_NAME: &str = "transaction-v1.json";
 const TEMP_NAME: &str = ".transaction-v1.json.tmp";
 const MAX_JOURNAL_BYTES: u64 = 16 * 1024;
@@ -30,6 +30,8 @@ const MAX_JOURNAL_BYTES: u64 = 16 * 1024;
 /// Stable failures at the fixed Linux install-journal boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinuxInstallJournalFileErrorCode {
+    /// The stored journal belongs to a schema this binary must not change.
+    UnsupportedSchema,
     /// Existing directory or journal state is unsafe or malformed.
     InvalidState,
     /// A durable create, replace, sync, or removal failed.
@@ -56,13 +58,21 @@ impl LinuxInstallJournalFileError {
 
 impl fmt::Display for LinuxInstallJournalFileError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("linux install recovery storage failed")
+        formatter.write_str(match self.code {
+            LinuxInstallJournalFileErrorCode::UnsupportedSchema => {
+                "linux install recovery state uses an unsupported schema; keep it unchanged and use the matching installer"
+            }
+            LinuxInstallJournalFileErrorCode::InvalidState
+            | LinuxInstallJournalFileErrorCode::PersistenceFailed => {
+                "linux install recovery storage failed"
+            }
+        })
     }
 }
 
 impl Error for LinuxInstallJournalFileError {}
 
-/// Locked access to the fixed root-only Linux install journal.
+/// Locked access to `/var/lib/pkg-install-journal/transaction-v1.json`.
 pub struct LinuxInstallJournalStorage {
     base: File,
     directory: File,
@@ -179,7 +189,7 @@ impl LinuxInstallJournalStorage {
     }
 
     #[cfg(test)]
-    fn open_existing_for_test(
+    pub(crate) fn open_existing_for_test(
         base: &Path,
         expected_user_id: u32,
         expected_group_id: u32,
@@ -198,7 +208,7 @@ impl LinuxInstallJournalStorage {
     }
 
     #[cfg(test)]
-    fn prepare_for_test(
+    pub(crate) fn prepare_for_test(
         base: &Path,
         expected_user_id: u32,
         expected_group_id: u32,
@@ -440,7 +450,13 @@ fn decode_file(
     if bytes.len() as u64 > MAX_JOURNAL_BYTES {
         return Err(invalid_state());
     }
-    LinuxInstallJournal::decode(&bytes).map_err(|_| invalid_state())
+    LinuxInstallJournal::decode(&bytes).map_err(|error| {
+        if error.code() == LinuxInstallJournalErrorCode::UnsupportedSchema {
+            unsupported_schema()
+        } else {
+            invalid_state()
+        }
+    })
 }
 
 fn open_production_base() -> Result<File, LinuxInstallJournalFileError> {
@@ -547,12 +563,16 @@ const fn invalid_state() -> LinuxInstallJournalFileError {
     LinuxInstallJournalFileError::new(LinuxInstallJournalFileErrorCode::InvalidState)
 }
 
+const fn unsupported_schema() -> LinuxInstallJournalFileError {
+    LinuxInstallJournalFileError::new(LinuxInstallJournalFileErrorCode::UnsupportedSchema)
+}
+
 const fn persistence_failed() -> LinuxInstallJournalFileError {
     LinuxInstallJournalFileError::new(LinuxInstallJournalFileErrorCode::PersistenceFailed)
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
 
@@ -567,6 +587,7 @@ mod tests {
 
     fn journal(byte: u8) -> LinuxInstallJournal {
         LinuxInstallJournal::new(
+            crate::InstallMode::FreshInstall,
             System::X8664Linux,
             Digest::from_bytes([byte; 32]),
             recovery_context(byte),
@@ -588,6 +609,9 @@ mod tests {
     fn create_replace_load_and_remove_are_private_and_durable() {
         let temporary = temporary();
         let (uid, gid) = identity();
+        let determinate = temporary.path().join("pkg-install");
+        fs::create_dir(&determinate).unwrap();
+        fs::write(determinate.join("determinate-handoff-v1.json"), b"accepted").unwrap();
         assert!(
             LinuxInstallJournalStorage::open_existing_for_test(
                 temporary.path(),
@@ -628,6 +652,10 @@ mod tests {
         assert_eq!(metadata.nlink(), 1);
         storage.remove().unwrap();
         assert!(!directory.exists());
+        assert_eq!(
+            fs::read(determinate.join("determinate-handoff-v1.json")).unwrap(),
+            b"accepted"
+        );
     }
 
     #[test]
@@ -702,5 +730,31 @@ mod tests {
         std::os::unix::fs::symlink("missing", directory.join(TEMP_NAME)).unwrap();
         assert_eq!(storage.load(), Err(invalid_state()));
         assert!(directory.join(TEMP_NAME).is_symlink());
+    }
+
+    #[test]
+    fn unsupported_schema_is_refused_without_changing_the_journal() {
+        let temporary = temporary();
+        let (uid, gid) = identity();
+        let storage = LinuxInstallJournalStorage::prepare_for_test(
+            temporary.path(),
+            uid,
+            gid,
+            System::X8664Linux,
+            Digest::from_bytes([8; 32]),
+            recovery_context(8),
+        )
+        .unwrap();
+        storage.create(&journal(8)).unwrap();
+        let path = temporary.path().join(DIRECTORY_NAME).join(JOURNAL_NAME);
+        let current = fs::read(&path).unwrap();
+        let stale = String::from_utf8(current)
+            .unwrap()
+            .replace("\"schemaVersion\":6", "\"schemaVersion\":5")
+            .into_bytes();
+        fs::write(&path, &stale).unwrap();
+
+        assert_eq!(storage.load(), Err(unsupported_schema()));
+        assert_eq!(fs::read(path).unwrap(), stale);
     }
 }

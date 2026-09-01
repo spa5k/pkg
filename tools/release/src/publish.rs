@@ -21,7 +21,10 @@ use crate::{
     TimestampAuthority, TimestampAuthorization,
 };
 
-pub(crate) const RELEASE_OBJECT_COUNT: usize = 25;
+/// One loaded publication transaction and its parts.
+type LoadedTransactionRecord = (TransactionRecord, String, Vec<PublicationObject>, PathBuf);
+
+pub const RELEASE_OBJECT_COUNT: usize = 30;
 
 /// One immutable byte object in a release publication.
 #[derive(Debug, Clone)]
@@ -611,7 +614,7 @@ async fn publish_objects_without_commit(
     Ok(())
 }
 
-pub(crate) fn seal_objects(
+pub fn seal_objects(
     release: &crate::ValidatedRelease,
     output: &Path,
     root_version: u64,
@@ -842,7 +845,7 @@ fn persist_record(
 fn load_record(
     directory: &Path,
     expected_kind: TransactionKind,
-) -> Result<(TransactionRecord, String, Vec<PublicationObject>, PathBuf), PublicationError> {
+) -> Result<LoadedTransactionRecord, PublicationError> {
     let metadata = fs::symlink_metadata(directory).map_err(|_| PublicationError::InvalidObject)?;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
@@ -1305,11 +1308,11 @@ mod tests {
     }
 
     impl TimestampAuthorization for RetryAuthorization {
-        fn lease_id(&self) -> &str {
+        fn lease_id(&self) -> &'static str {
             "retry-lease"
         }
 
-        fn signing_actor(&self) -> &str {
+        fn signing_actor(&self) -> &'static str {
             "timestamp-service"
         }
 
@@ -1415,6 +1418,7 @@ mod tests {
             attempts: Arc::clone(&attempts),
             bound,
         };
+
         let manifest_path = transaction_path.join("transaction.json");
         let original_manifest = std::fs::read(&manifest_path).unwrap();
         let mut tampered: serde_json::Value = serde_json::from_slice(&original_manifest).unwrap();

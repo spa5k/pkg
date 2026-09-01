@@ -1,0 +1,360 @@
+dn12_evidence_version=1
+target=linux/aarch64
+base_image=ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+installer_sha256=9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179
+daemon_v3.22.1_sha256=a808c0cb3a6216ba167c873c8866806114253bcaa90a5cd52eef4b384c27febc
+daemon_v3.22.2_sha256=39876af59651a7c3ec3037c8ef796f3bbbe4855d418b9ef5f98202244620428f
+systemd_package_version=255.4-1ubuntu8.17
+host_mounts=none
+host_nix_used=false
+container_cgroup_namespace=private
+container_run_tmpfs=/run,/run/lock
+harness_sha256=0f6f9bf622a69369493b460971d727fb205899bbdcf2b605a395689c977d245e
+phase=install exit_status=0
+snapshot=installed
+Determinate Nixd daemon version: 3.22.1
+Determinate Nixd client version: 3.22.1
+nix (Determinate Nix 3.22.1) 2.35.2
+file path=/usr/local/bin/determinate-nixd inode=7140 mtime=1787604596 size=30358544 uid=0 gid=0 mode=555
+a808c0cb3a6216ba167c873c8866806114253bcaa90a5cd52eef4b384c27febc  /usr/local/bin/determinate-nixd
+file path=/nix/nix-installer inode=7143 mtime=1787604598 size=69625424 uid=0 gid=0 mode=755
+9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179  /nix/nix-installer
+file path=/nix/receipt.json inode=7142 mtime=1787604598 size=30946 uid=0 gid=0 mode=644
+7eaf550e1049aa0241939cde3c255ff2ed114faa9f83810c5bf2f628cc80d88d  /nix/receipt.json
+file path=/etc/nix/nix.conf inode=9532 mtime=1787604597 size=1265 uid=0 gid=0 mode=644
+7c1edcab8f3a7ae441d1e57b321a5f41fe4a7a11141fcb331b9eaca795fb00ab  /etc/nix/nix.conf
+file path=/etc/nix/nix.custom.conf inode=9535 mtime=1787604597 size=141 uid=0 gid=0 mode=644
+3bd68ef979a42070a44f8d82c205cfd8e8cca425d91253ec2c10a88179bb34aa  /etc/nix/nix.custom.conf
+file path=/etc/nix/sentry-endpoint inode=9531 mtime=1787604598 size=95 uid=0 gid=0 mode=644
+d21f6d21fc5cbf0da38bc72b9a9de8a0c6c1bae72a3727884fd1b84e1a901fc3  /etc/nix/sentry-endpoint
+file path=/nix/var/determinate/identity.json inode=9460 mtime=1787604599 size=4165 uid=0 gid=0 mode=644
+12e7b1c2ab9f34c877d4803736e50d51c6f7733151e578001c8828457a706258  /nix/var/determinate/identity.json
+file path=/nix/var/determinate/netrc inode=7144 mtime=1787604599 size=1 uid=0 gid=0 mode=644
+01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b  /nix/var/determinate/netrc
+file path=/etc/systemd/system/nix-daemon.service inode=9570 mtime=1787604598 size=449 uid=0 gid=0 mode=644
+e1d19518e9503076656aaf5c9ed945bef02a4eacd9048b03d9d584cc24426b30  /etc/systemd/system/nix-daemon.service
+file path=/etc/systemd/system/nix-daemon.socket inode=9576 mtime=1787604598 size=345 uid=0 gid=0 mode=644
+c0031d19756635de9f3f6822e889fd5caa89f93201f92efa5439c1ed925a798a  /etc/systemd/system/nix-daemon.socket
+file path=/etc/systemd/system/determinate-nixd.socket inode=9577 mtime=1787604598 size=335 uid=0 gid=0 mode=644
+c885baddc4632221cee3335551ed296ac26859f9e57f39a405b50aba427a7157  /etc/systemd/system/determinate-nixd.socket
+active_nix path=/nix/store/7yxbjpbi73kl5qyxwm176sffyd2m3qyz-determinate-nix-3.22.1/bin/nix
+profile default=/nix/var/nix/profiles/per-user/root/profile
+profile profile-1-link=/nix/store/s50l5wjcqkqdjnha42hd40j8dfv9qkpr-user-environment
+profile profile=profile-1-link
+TimeoutStopUSec=1min 30s
+Result=success
+ExecMainStatus=0
+KillMode=process
+SendSIGKILL=yes
+ActiveState=active
+SubState=running
+store_inventory phase=installed count=76
+phase=same_version exit_status=0
+snapshot=same_version
+Determinate Nixd daemon version: 3.22.1
+Determinate Nixd client version: 3.22.1
+nix (Determinate Nix 3.22.1) 2.35.2
+file path=/usr/local/bin/determinate-nixd inode=7162 mtime=1787604601 size=30358544 uid=0 gid=0 mode=555
+a808c0cb3a6216ba167c873c8866806114253bcaa90a5cd52eef4b384c27febc  /usr/local/bin/determinate-nixd
+file path=/nix/nix-installer inode=7143 mtime=1787604598 size=69625424 uid=0 gid=0 mode=755
+9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179  /nix/nix-installer
+file path=/nix/receipt.json inode=7142 mtime=1787604598 size=30946 uid=0 gid=0 mode=644
+7eaf550e1049aa0241939cde3c255ff2ed114faa9f83810c5bf2f628cc80d88d  /nix/receipt.json
+file path=/etc/nix/nix.conf inode=9532 mtime=1787604597 size=1265 uid=0 gid=0 mode=644
+7c1edcab8f3a7ae441d1e57b321a5f41fe4a7a11141fcb331b9eaca795fb00ab  /etc/nix/nix.conf
+file path=/etc/nix/nix.custom.conf inode=9535 mtime=1787604597 size=141 uid=0 gid=0 mode=644
+3bd68ef979a42070a44f8d82c205cfd8e8cca425d91253ec2c10a88179bb34aa  /etc/nix/nix.custom.conf
+file path=/etc/nix/sentry-endpoint inode=9531 mtime=1787604698 size=95 uid=0 gid=0 mode=644
+d21f6d21fc5cbf0da38bc72b9a9de8a0c6c1bae72a3727884fd1b84e1a901fc3  /etc/nix/sentry-endpoint
+file path=/nix/var/determinate/identity.json inode=7144 mtime=1787604699 size=4165 uid=0 gid=0 mode=644
+77e0d4cfea1c81e4b8e126124cd97a0018c426c414a9b3ceeb951f8f59ac723d  /nix/var/determinate/identity.json
+file path=/nix/var/determinate/netrc inode=7161 mtime=1787604699 size=1 uid=0 gid=0 mode=644
+01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b  /nix/var/determinate/netrc
+file path=/etc/systemd/system/nix-daemon.service inode=9570 mtime=1787604598 size=449 uid=0 gid=0 mode=644
+e1d19518e9503076656aaf5c9ed945bef02a4eacd9048b03d9d584cc24426b30  /etc/systemd/system/nix-daemon.service
+file path=/etc/systemd/system/nix-daemon.socket inode=9576 mtime=1787604598 size=345 uid=0 gid=0 mode=644
+c0031d19756635de9f3f6822e889fd5caa89f93201f92efa5439c1ed925a798a  /etc/systemd/system/nix-daemon.socket
+file path=/etc/systemd/system/determinate-nixd.socket inode=9577 mtime=1787604598 size=335 uid=0 gid=0 mode=644
+c885baddc4632221cee3335551ed296ac26859f9e57f39a405b50aba427a7157  /etc/systemd/system/determinate-nixd.socket
+active_nix path=/nix/store/chjfxsa4hl5id4yjklq359dww58y5pya-determinate-nix-3.22.1/bin/nix
+profile default=/nix/var/nix/profiles/per-user/root/profile
+profile profile-1-link=/nix/store/s50l5wjcqkqdjnha42hd40j8dfv9qkpr-user-environment
+profile profile-2-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile=profile-2-link
+TimeoutStopUSec=1min 30s
+Result=success
+ExecMainStatus=0
+KillMode=process
+SendSIGKILL=yes
+ActiveState=active
+SubState=running
+store_inventory phase=same_version count=147
+store_diff from=installed to=same_version removed=0 added=71
+store_added 0l8zd0k5znz2y7d2m3qv5yrnipk9skkx-libpsl-0.21.5
+store_added 17zzxqcwzhlxr16kapn4m1fps605xhy2-env-manifest.nix
+store_added 1c5mwlwj4hqginarqvq71s016glm1vc0-libxml2-2.15.3
+store_added 1vz9p4hxz8rhp2hcvwy65n0x40h4ixkl-determinate-nix-store-3.22.1
+store_added 32mdil0cb3alhrbccni4v53q6yfj9lcc-s2n-tls-1.7.2
+store_added 3d59xf4z6xm1xkkrz3p9h4ibs45r3gxw-determinate-nix-main-3.22.1
+store_added 3qssd23wn1imsym130j421k7ksq0dn96-determinate-nix-fetchers-3.22.1
+store_added 3yi4qmqdsafrn1sdcpqyc70dh1siq1b7-determinate-nix-3.22.1
+store_added 4xr9ya7hdsyqv9rswlg33hmklixhp506-determinate-nix-cmd-3.22.1
+store_added 5mwhhhmhnjf9i4y16nr5zvslq3z8z1wb-aws-c-auth-0.9.1
+store_added 5r14mvbc2bng504nyg3bbffyayv5zglq-glibc-2.42-67
+store_added 62axi9r2q83x87yylh0kpygg9xk5zf6n-gcc-15.2.0-libgcc
+store_added 6g87sfz8mxrsic2nj6acj0mpj2i9l8m6-determinate-nix-expr-3.22.1
+store_added 6q1xmjq9g82nr9syh1w8c3525vakzhjs-ngtcp2-1.22.1
+store_added 6qdr1zp4zqgbzpgjswgi9ap03h9jq3ff-acl-2.4.0
+store_added 6w0qqf2gdvjmankxwgcbmr0mphvyzabb-boehm-gc-8.2.12
+store_added 77h2d4411avwcv108g1v5y61nnazp57r-aws-c-common-0.12.4
+store_added 7g0s56yakgphg9s3f6qlvnxlk3kvh3wl-aws-crt-cpp-0.34.3
+store_added 8hjvwv742mgr0rwy39c5kkid8fvd3w4g-determinate-nix-util-3.22.1
+store_added 8zms8jdmk54jld3nkxbdmiyqjrnzc635-llhttp-9.4.2
+store_added 9jwp6387lvvnsff3msjhrfs3i7b5gqfl-xz-5.8.3
+store_added a0j3r62kaqf0ns1irgnh2rv92fgzlg2g-keyutils-1.6.3-lib
+store_added a37mz3rqxcvp9q3ib1gnyr0qzz8lgnrh-sentry-native-0.13.5
+store_added avb2s8b88m2hd8syrxyg4w53g46ah3wr-libsodium-1.0.22-unstable-2026-04-09
+store_added b3fbsvxkdcmrxhdn0s25xdmcmidlqvs4-zlib-1.3.2
+store_added by143jp2fl75rzi5zd0kzimm3wvyhm1n-aws-c-sdkutils-0.2.4
+store_added c9y48s3d2rm7d4sdkxrr158s4ihmhjv4-aws-c-cal-0.9.2
+store_added chjfxsa4hl5id4yjklq359dww58y5pya-determinate-nix-3.22.1
+store_added cvz4dd17f9hp103pw2z7czgp4bxkanjz-sqlite-3.53.2
+store_added fcnn8w0p3d577pk9661fnmcyj7s23741-aws-c-event-stream-0.7.0
+store_added ff0a598grsj9a3i7rp51dhbx4vbr8zy3-lowdown-3.0.1-lib
+store_added fi0pw1irh0flhrwa5qfqj0s118w4c52f-libssh2-1.11.1
+store_added gjylr4z1gp0nyj0pg0wc1z7bad3dbk3a-hwloc-2.13.0-lib
+store_added gqm0asclz88zn85ccvrdcxk5qsivnvgk-libgit2-1.9.4-lib
+store_added gr1vgxljdyygpf742jpriy0fx6j1hqjn-boost-1.89.0
+store_added gs3p647j0g0zlzrji3lrjy3lm9jykw93-brotli-1.2.0-lib
+store_added himvdk8vadf9ls35f1hysr0i8z164a4b-wasmtime-40.0.2-lib
+store_added igdawazbhcaq883sv67d16prq1l4qhl3-libunistring-1.4.2
+store_added kd46sqk7s3sjn11rm86vbx42q4khd950-curl-8.21.0
+store_added kgnk7vzl9lfxjl4wlqw5pfl64sw8qr0n-busybox-1.38.0
+store_added ldx469l1s2ga6ckmx003m3779b03fx67-libblake3-1.8.5
+store_added m6yxln66bhdx43xbz6nlmm05djb7kpka-openssl-3.6.3
+store_added n0fmka3pp21y35n6c073kd6gnh8ai4jm-aws-c-s3-0.8.7
+store_added nqhl5clvs0bzkiy92chlvcc8xzgzpijl-libidn2-2.3.8
+store_added nr70aw01ddf5jpy1g1scw192ycdvnp7n-xgcc-15.2.0-libgcc
+store_added nww34kd82dckcbaf7x4hzw2qr9dwrygv-env-manifest.nix
+store_added p0d4baisq7ygmpflk4xl65zszw2fr5jx-nix-nswrapper-3.22.1
+store_added prgwxa3phwm37xxfq17i772jg61b80lc-user-environment.drv
+store_added q1sg2q48fspyys762jp46rbls9yhq65f-aws-c-io-0.27.2
+store_added qj6kjaparz5mvdgw0ax6dbrnwfa39rlm-libmicrohttpd-1.0.4
+store_added r4j864sm0zp9kdsgfkq1m819swaqc75b-determinate-nix-flake-3.22.1
+store_added rg5ww2bxnn9yqj5hry4wb4i3q85dxp6r-libseccomp-2.6.1-lib
+store_added rp00nzbjdbd3h5788dqcp1f7r7yjzvqj-krb5-1.22.2-lib
+store_added rpivf2h49hrrmrkihsnsv8xzr3qdmwpr-onetbb-2022.3.0
+store_added s13r4lnfw7yis2lbdv2carkbh586069q-user-environment
+store_added s38aac41vhmyw4x8s3ss10q4n8w1374s-pcre2-10.46
+store_added s3zzcyig06ihfvlhlm15z84gk77rcl81-aws-checksums-0.2.7
+store_added s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+store_added sf493fvb6jqr7f70iwb0gpw3jijl59s1-mimalloc-3.3.2
+store_added sph025acwl6gifhxssmbyzgrj8mqlmn3-aws-c-compression-0.3.1
+store_added sxj0p482lklav60wrg621ybs83k6dnh7-nghttp3-1.15.0
+store_added sxpwhsr9jgdhl36zvbbn7lfhnvb219cf-nghttp2-1.69.0-lib
+store_added sz0q8flk38mcbbj734iamc69yqqnpjyy-editline-1.17.1-unstable-2025-05-24
+store_added vhv24p2m7gwg7j7ny5zlfg4pk6wak4h2-gcc-15.2.0-lib
+store_added vj127rxhiihcl1g60yf65jgzb99pygmv-user-environment.drv
+store_added w4hcahg8cvraxjn776p3wkl15ip92j3v-zstd-1.5.7
+store_added w9752kiic58rbbnghq3h8d0ql8kp0qn9-libarchive-3.8.8-lib
+store_added wrxsyj87w2qvvlhrz61xl3iby5h1is8f-bzip2-1.0.8
+store_added wscynxdr1mz1nlv2rzfssf3jy1rg27ny-aws-c-mqtt-0.13.3
+store_added yaw1wgawidrnfvim2s30rrjdrwll15xg-aws-c-http-0.11.0
+store_added yh2v95xcf9x5243bycfjbyy7f5dfqkmn-publicsuffix-list-0-unstable-2026-05-13
+phase=next_version exit_status=0
+snapshot=next_version
+Determinate Nixd daemon version: 3.22.2
+Determinate Nixd client version: 3.22.2
+nix (Determinate Nix 3.22.2) 2.35.2
+file path=/usr/local/bin/determinate-nixd inode=7147 mtime=1787604701 size=30363256 uid=0 gid=0 mode=555
+39876af59651a7c3ec3037c8ef796f3bbbe4855d418b9ef5f98202244620428f  /usr/local/bin/determinate-nixd
+file path=/nix/nix-installer inode=7143 mtime=1787604598 size=69625424 uid=0 gid=0 mode=755
+9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179  /nix/nix-installer
+file path=/nix/receipt.json inode=7142 mtime=1787604598 size=30946 uid=0 gid=0 mode=644
+7eaf550e1049aa0241939cde3c255ff2ed114faa9f83810c5bf2f628cc80d88d  /nix/receipt.json
+file path=/etc/nix/nix.conf inode=9532 mtime=1787604597 size=1265 uid=0 gid=0 mode=644
+7c1edcab8f3a7ae441d1e57b321a5f41fe4a7a11141fcb331b9eaca795fb00ab  /etc/nix/nix.conf
+file path=/etc/nix/nix.custom.conf inode=9535 mtime=1787604597 size=141 uid=0 gid=0 mode=644
+3bd68ef979a42070a44f8d82c205cfd8e8cca425d91253ec2c10a88179bb34aa  /etc/nix/nix.custom.conf
+file path=/etc/nix/sentry-endpoint inode=9531 mtime=1787604796 size=95 uid=0 gid=0 mode=644
+d21f6d21fc5cbf0da38bc72b9a9de8a0c6c1bae72a3727884fd1b84e1a901fc3  /etc/nix/sentry-endpoint
+file path=/nix/var/determinate/identity.json inode=9461 mtime=1787604798 size=4165 uid=0 gid=0 mode=644
+f10dd7ea3579e6babfa79b4fb6673f0535a63c18af4308f320f7252baf5fe739  /nix/var/determinate/identity.json
+file path=/nix/var/determinate/netrc inode=7144 mtime=1787604798 size=1 uid=0 gid=0 mode=644
+01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b  /nix/var/determinate/netrc
+file path=/etc/systemd/system/nix-daemon.service inode=9570 mtime=1787604598 size=449 uid=0 gid=0 mode=644
+e1d19518e9503076656aaf5c9ed945bef02a4eacd9048b03d9d584cc24426b30  /etc/systemd/system/nix-daemon.service
+file path=/etc/systemd/system/nix-daemon.socket inode=9576 mtime=1787604598 size=345 uid=0 gid=0 mode=644
+c0031d19756635de9f3f6822e889fd5caa89f93201f92efa5439c1ed925a798a  /etc/systemd/system/nix-daemon.socket
+file path=/etc/systemd/system/determinate-nixd.socket inode=9577 mtime=1787604598 size=335 uid=0 gid=0 mode=644
+c885baddc4632221cee3335551ed296ac26859f9e57f39a405b50aba427a7157  /etc/systemd/system/determinate-nixd.socket
+active_nix path=/nix/store/fdivm6r29dnvf74ws0fp0vfzc0p7a55d-determinate-nix-3.22.2/bin/nix
+profile default=/nix/var/nix/profiles/per-user/root/profile
+profile profile-1-link=/nix/store/s50l5wjcqkqdjnha42hd40j8dfv9qkpr-user-environment
+profile profile-2-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile-3-link=/nix/store/d3k2f9sc6yr0cha62abd68ypx4crk9li-user-environment
+profile profile=profile-3-link
+TimeoutStopUSec=1min 30s
+Result=success
+ExecMainStatus=0
+KillMode=process
+SendSIGKILL=yes
+ActiveState=active
+SubState=running
+store_inventory phase=next_version count=160
+store_diff from=same_version to=next_version removed=0 added=13
+store_added 59jgz3ia24r066mb38s327y1q4rvb5l9-determinate-nix-fetchers-3.22.2
+store_added 5dr1dhvhxblc59s829dr7a9x8rr8x203-nix-nswrapper-3.22.2
+store_added 6yvghsspy8bsk1vnzacmh0n25nya5x9q-determinate-nix-store-3.22.2
+store_added 9mmypxf0vrgcgh8j34fa99brf9n948x4-determinate-nix-util-3.22.2
+store_added d3k2f9sc6yr0cha62abd68ypx4crk9li-user-environment
+store_added f9qg59nl97myyfyy7qcv38x91rhb0wdd-determinate-nix-flake-3.22.2
+store_added fdivm6r29dnvf74ws0fp0vfzc0p7a55d-determinate-nix-3.22.2
+store_added fry0fzfhmyaqxnwjxq2wbbpcv2mhfnsj-determinate-nix-cmd-3.22.2
+store_added qzw61f9jcf1v1v0p2b422x43pci6hplv-determinate-nix-main-3.22.2
+store_added x3mkyqynv0xd7hbsry4jglxpsaafgwz2-user-environment.drv
+store_added xsqffdd9rzjz88wy2qdl04azva9b9kwr-determinate-nix-3.22.2
+store_added y093v59ph603ikh8ijacq7ylv44q6wl4-determinate-nix-expr-3.22.2
+store_added yagkw8a2nghha5ps85n9m4j7p3yd1cw8-env-manifest.nix
+phase=downgrade exit_status=0
+snapshot=downgrade
+Determinate Nixd daemon version: 3.22.1
+Determinate Nixd client version: 3.22.1
+nix (Determinate Nix 3.22.1) 2.35.2
+file path=/usr/local/bin/determinate-nixd inode=7144 mtime=1787604800 size=30358544 uid=0 gid=0 mode=555
+a808c0cb3a6216ba167c873c8866806114253bcaa90a5cd52eef4b384c27febc  /usr/local/bin/determinate-nixd
+file path=/nix/nix-installer inode=7143 mtime=1787604598 size=69625424 uid=0 gid=0 mode=755
+9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179  /nix/nix-installer
+file path=/nix/receipt.json inode=7142 mtime=1787604598 size=30946 uid=0 gid=0 mode=644
+7eaf550e1049aa0241939cde3c255ff2ed114faa9f83810c5bf2f628cc80d88d  /nix/receipt.json
+file path=/etc/nix/nix.conf inode=9532 mtime=1787604597 size=1265 uid=0 gid=0 mode=644
+7c1edcab8f3a7ae441d1e57b321a5f41fe4a7a11141fcb331b9eaca795fb00ab  /etc/nix/nix.conf
+file path=/etc/nix/nix.custom.conf inode=9535 mtime=1787604597 size=141 uid=0 gid=0 mode=644
+3bd68ef979a42070a44f8d82c205cfd8e8cca425d91253ec2c10a88179bb34aa  /etc/nix/nix.custom.conf
+file path=/etc/nix/sentry-endpoint inode=9531 mtime=1787604891 size=95 uid=0 gid=0 mode=644
+d21f6d21fc5cbf0da38bc72b9a9de8a0c6c1bae72a3727884fd1b84e1a901fc3  /etc/nix/sentry-endpoint
+file path=/nix/var/determinate/identity.json inode=7140 mtime=1787604892 size=4165 uid=0 gid=0 mode=644
+07b6c65d226b08dc4af151e9d79115889869249adaf8ae4e43413e3df37dbdac  /nix/var/determinate/identity.json
+file path=/nix/var/determinate/netrc inode=7163 mtime=1787604893 size=1 uid=0 gid=0 mode=644
+01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b  /nix/var/determinate/netrc
+file path=/etc/systemd/system/nix-daemon.service inode=9570 mtime=1787604598 size=449 uid=0 gid=0 mode=644
+e1d19518e9503076656aaf5c9ed945bef02a4eacd9048b03d9d584cc24426b30  /etc/systemd/system/nix-daemon.service
+file path=/etc/systemd/system/nix-daemon.socket inode=9576 mtime=1787604598 size=345 uid=0 gid=0 mode=644
+c0031d19756635de9f3f6822e889fd5caa89f93201f92efa5439c1ed925a798a  /etc/systemd/system/nix-daemon.socket
+file path=/etc/systemd/system/determinate-nixd.socket inode=9577 mtime=1787604598 size=335 uid=0 gid=0 mode=644
+c885baddc4632221cee3335551ed296ac26859f9e57f39a405b50aba427a7157  /etc/systemd/system/determinate-nixd.socket
+active_nix path=/nix/store/chjfxsa4hl5id4yjklq359dww58y5pya-determinate-nix-3.22.1/bin/nix
+profile default=/nix/var/nix/profiles/per-user/root/profile
+profile profile-1-link=/nix/store/s50l5wjcqkqdjnha42hd40j8dfv9qkpr-user-environment
+profile profile-2-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile-3-link=/nix/store/d3k2f9sc6yr0cha62abd68ypx4crk9li-user-environment
+profile profile-4-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile=profile-4-link
+TimeoutStopUSec=1min 30s
+Result=success
+ExecMainStatus=0
+KillMode=process
+SendSIGKILL=yes
+ActiveState=active
+SubState=running
+store_inventory phase=downgrade count=160
+store_diff from=next_version to=downgrade removed=0 added=0
+phase=invalid_version exit_status=1
+invalid_target http_status=404 target=v0.0.0-pkg-proof
+snapshot=invalid_version
+Determinate Nixd daemon version: 3.22.1
+Determinate Nixd client version: 3.22.1
+nix (Determinate Nix 3.22.1) 2.35.2
+file path=/usr/local/bin/determinate-nixd inode=7144 mtime=1787604800 size=30358544 uid=0 gid=0 mode=555
+a808c0cb3a6216ba167c873c8866806114253bcaa90a5cd52eef4b384c27febc  /usr/local/bin/determinate-nixd
+file path=/nix/nix-installer inode=7143 mtime=1787604598 size=69625424 uid=0 gid=0 mode=755
+9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179  /nix/nix-installer
+file path=/nix/receipt.json inode=7142 mtime=1787604598 size=30946 uid=0 gid=0 mode=644
+7eaf550e1049aa0241939cde3c255ff2ed114faa9f83810c5bf2f628cc80d88d  /nix/receipt.json
+file path=/etc/nix/nix.conf inode=9532 mtime=1787604597 size=1265 uid=0 gid=0 mode=644
+7c1edcab8f3a7ae441d1e57b321a5f41fe4a7a11141fcb331b9eaca795fb00ab  /etc/nix/nix.conf
+file path=/etc/nix/nix.custom.conf inode=9535 mtime=1787604597 size=141 uid=0 gid=0 mode=644
+3bd68ef979a42070a44f8d82c205cfd8e8cca425d91253ec2c10a88179bb34aa  /etc/nix/nix.custom.conf
+file path=/etc/nix/sentry-endpoint inode=9531 mtime=1787604891 size=95 uid=0 gid=0 mode=644
+d21f6d21fc5cbf0da38bc72b9a9de8a0c6c1bae72a3727884fd1b84e1a901fc3  /etc/nix/sentry-endpoint
+file path=/nix/var/determinate/identity.json inode=7163 mtime=1787604895 size=4165 uid=0 gid=0 mode=644
+07b6c65d226b08dc4af151e9d79115889869249adaf8ae4e43413e3df37dbdac  /nix/var/determinate/identity.json
+file path=/nix/var/determinate/netrc inode=7161 mtime=1787604895 size=1 uid=0 gid=0 mode=644
+01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b  /nix/var/determinate/netrc
+file path=/etc/systemd/system/nix-daemon.service inode=9570 mtime=1787604598 size=449 uid=0 gid=0 mode=644
+e1d19518e9503076656aaf5c9ed945bef02a4eacd9048b03d9d584cc24426b30  /etc/systemd/system/nix-daemon.service
+file path=/etc/systemd/system/nix-daemon.socket inode=9576 mtime=1787604598 size=345 uid=0 gid=0 mode=644
+c0031d19756635de9f3f6822e889fd5caa89f93201f92efa5439c1ed925a798a  /etc/systemd/system/nix-daemon.socket
+file path=/etc/systemd/system/determinate-nixd.socket inode=9577 mtime=1787604598 size=335 uid=0 gid=0 mode=644
+c885baddc4632221cee3335551ed296ac26859f9e57f39a405b50aba427a7157  /etc/systemd/system/determinate-nixd.socket
+active_nix path=/nix/store/chjfxsa4hl5id4yjklq359dww58y5pya-determinate-nix-3.22.1/bin/nix
+profile default=/nix/var/nix/profiles/per-user/root/profile
+profile profile-1-link=/nix/store/s50l5wjcqkqdjnha42hd40j8dfv9qkpr-user-environment
+profile profile-2-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile-3-link=/nix/store/d3k2f9sc6yr0cha62abd68ypx4crk9li-user-environment
+profile profile-4-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile=profile-4-link
+TimeoutStopUSec=1min 30s
+Result=success
+ExecMainStatus=0
+KillMode=process
+SendSIGKILL=yes
+ActiveState=active
+SubState=running
+store_inventory phase=invalid_version count=160
+store_diff from=downgrade to=invalid_version removed=0 added=0
+phase=disconnect exit_status=143 cli_pid=<redacted-volatile> signal=TERM
+disconnect_reconciliation wait_seconds=180 target_reached=false
+snapshot=disconnect
+Determinate Nixd daemon version: 3.22.1
+Determinate Nixd client version: 3.22.1
+nix (Determinate Nix 3.22.1) 2.35.2
+file path=/usr/local/bin/determinate-nixd inode=7144 mtime=1787604800 size=30358544 uid=0 gid=0 mode=555
+a808c0cb3a6216ba167c873c8866806114253bcaa90a5cd52eef4b384c27febc  /usr/local/bin/determinate-nixd
+file path=/nix/nix-installer inode=7143 mtime=1787604598 size=69625424 uid=0 gid=0 mode=755
+9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179  /nix/nix-installer
+file path=/nix/receipt.json inode=7142 mtime=1787604598 size=30946 uid=0 gid=0 mode=644
+7eaf550e1049aa0241939cde3c255ff2ed114faa9f83810c5bf2f628cc80d88d  /nix/receipt.json
+file path=/etc/nix/nix.conf inode=9532 mtime=1787604597 size=1265 uid=0 gid=0 mode=644
+7c1edcab8f3a7ae441d1e57b321a5f41fe4a7a11141fcb331b9eaca795fb00ab  /etc/nix/nix.conf
+file path=/etc/nix/nix.custom.conf inode=9535 mtime=1787604597 size=141 uid=0 gid=0 mode=644
+3bd68ef979a42070a44f8d82c205cfd8e8cca425d91253ec2c10a88179bb34aa  /etc/nix/nix.custom.conf
+file path=/etc/nix/sentry-endpoint inode=9531 mtime=1787604891 size=95 uid=0 gid=0 mode=644
+d21f6d21fc5cbf0da38bc72b9a9de8a0c6c1bae72a3727884fd1b84e1a901fc3  /etc/nix/sentry-endpoint
+file path=/nix/var/determinate/identity.json inode=9460 mtime=1787605127 size=4165 uid=0 gid=0 mode=644
+07b6c65d226b08dc4af151e9d79115889869249adaf8ae4e43413e3df37dbdac  /nix/var/determinate/identity.json
+file path=/nix/var/determinate/netrc inode=7161 mtime=1787604899 size=1 uid=0 gid=0 mode=644
+01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b  /nix/var/determinate/netrc
+file path=/etc/systemd/system/nix-daemon.service inode=9570 mtime=1787604598 size=449 uid=0 gid=0 mode=644
+e1d19518e9503076656aaf5c9ed945bef02a4eacd9048b03d9d584cc24426b30  /etc/systemd/system/nix-daemon.service
+file path=/etc/systemd/system/nix-daemon.socket inode=9576 mtime=1787604598 size=345 uid=0 gid=0 mode=644
+c0031d19756635de9f3f6822e889fd5caa89f93201f92efa5439c1ed925a798a  /etc/systemd/system/nix-daemon.socket
+file path=/etc/systemd/system/determinate-nixd.socket inode=9577 mtime=1787604598 size=335 uid=0 gid=0 mode=644
+c885baddc4632221cee3335551ed296ac26859f9e57f39a405b50aba427a7157  /etc/systemd/system/determinate-nixd.socket
+active_nix path=/nix/store/chjfxsa4hl5id4yjklq359dww58y5pya-determinate-nix-3.22.1/bin/nix
+profile default=/nix/var/nix/profiles/per-user/root/profile
+profile profile-1-link=/nix/store/s50l5wjcqkqdjnha42hd40j8dfv9qkpr-user-environment
+profile profile-2-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile-3-link=/nix/store/d3k2f9sc6yr0cha62abd68ypx4crk9li-user-environment
+profile profile-4-link=/nix/store/s6b1jjrgb8gf5cr3bjdp0li2ijmgwrga-user-environment
+profile profile=profile-4-link
+TimeoutStopUSec=1min 30s
+Result=success
+ExecMainStatus=0
+KillMode=process
+SendSIGKILL=yes
+ActiveState=active
+SubState=running
+store_inventory phase=disconnect count=160
+store_diff from=invalid_version to=disconnect removed=0 added=0
+journal systemd[1]: nix-daemon.service: State 'stop-sigterm' timed out. Killing.
+journal systemd[1]: nix-daemon.service: Killing process <redacted-pid> (determinate-nix) with signal SIGKILL.
+journal systemd[1]: nix-daemon.service: State 'stop-sigterm' timed out. Killing.
+journal systemd[1]: nix-daemon.service: Killing process <redacted-pid> (determinate-nix) with signal SIGKILL.
+journal systemd[1]: nix-daemon.service: State 'stop-sigterm' timed out. Killing.
+journal systemd[1]: nix-daemon.service: Killing process <redacted-pid> (determinate-nix) with signal SIGKILL.
+disconnect_final target_reached=false daemon_sha256=a808c0cb3a6216ba167c873c8866806114253bcaa90a5cd52eef4b384c27febc service=active
+receipt_contents_retained=false
+full_logs_retained=false
+binaries_retained=false
+secrets_retained=false

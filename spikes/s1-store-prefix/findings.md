@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Spike** | S1 (PR-4) — *Is `/nix/store` viable for exclusive managed use, and how do we detect / safely refuse an unmanaged Nix?* |
-| **Decision it feeds** | DR-001 (`plans/12-open-decisions-and-risks.md`). **Accepted 2026-08-09 after F/E/A review; see §9 and the acceptance limits in DR-001.** |
+| **Decision it feeds** | DR-001 (`plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md`). **Accepted 2026-08-09 after F/E/A review; see §9 and the acceptance limits in DR-001.** |
 | **Owner (spike)** | This directory only: `spikes/s1-store-prefix/**`. |
 | **Safety** | The **detector is read-only**; the **fixture harness intentionally creates/mutates/cleans only its own verified mktemp scratch tree**. No production code, no `sudo`, no install, no mutation of `/nix`/`/etc`/services. See `detect-unmanaged-nix.sh` header for the safety contract. |
 | **Evidence labels** | **(a)** actually executed · **(b)** official docs/source inspected · **(c)** inference (clearly marked). F/E/A sign-off was recorded on 2026-08-09; no privileged clean-host installer authorization is claimed. |
@@ -774,11 +774,11 @@ root other than literal `/`; the removed `--mode`).
   `src/libstore/meson.options` and consumed in `src/libstore/meson.build`.
   https://github.com/NixOS/nix . Latest release tag at spike time (as of 2026-08-05):
   **`2.35.1`**.
-- **[PLANS]** `plans/00-overview-and-decisions.md` (D-03/04/10/11/14/17, INV-02, §6.1);
-  `plans/07-platform-installation-and-runtime.md` (I1/I3/I4, §5–§8, §18; §6.2 stale
+- **[PLANS]** `plans/archive/2026-08-22-custom-managed-nix-v1/00-overview-and-decisions.md` (D-03/04/10/11/14/17, INV-02, §6.1);
+  `plans/archive/2026-08-22-custom-managed-nix-v1/07-platform-installation-and-runtime.md` (I1/I3/I4, §5–§8, §18; §6.2 stale
   statements superseded by DR-001 on Acceptance — see §9);
-  `plans/08-security-model.md` (T-INST-4, T-UNINST-1);
-  `plans/12-open-decisions-and-risks.md` (DR-001, DR-007, DR-014, RISK-04, §8 AC-D1).
+  `plans/archive/2026-08-22-custom-managed-nix-v1/08-security-model.md` (T-INST-4, T-UNINST-1);
+  `plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md` (DR-001, DR-007, DR-014, RISK-04, §8 AC-D1).
 
 Files in this spike: `README.md`, `findings.md` (this file), `detect-unmanaged-nix.sh`,
 `build-fixtures.sh`, `run-tests.sh`.

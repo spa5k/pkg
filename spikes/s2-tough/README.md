@@ -1,16 +1,19 @@
 # Spike S2 — real TUF via `tough` (PR-5 / DR-002)
 
+> Links into the dated plan archive are legacy-plan context. They are not
+> current design authority.
+
 > **Status:** STANDALONE spike. This directory is its own Cargo workspace (see
 > [`Cargo.toml`](Cargo.toml)) and is deliberately **not** part of the production
 > workspace at the repository root. It is `publish = false`, carries **no**
 > `license` field and **no** SPDX headers (DR-015), and proves nothing about
 > production code. It produces a technical recommendation for **DR-002** only.
 > Concrete results live in [`findings.md`](findings.md); the decision record is
-> [`plans/12`](../../plans/12-open-decisions-and-risks.md) DR-002.
+> [`plans/12`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md) DR-002.
 >
 > ⚠️ **One target-set row below is SUPERSEDED** — the accepted architecture
-> ([`plans/02` §6.5](../../plans/02-trust-and-update-model.md),
-> [`plans/03` §6.2](../../plans/03-nixpkgs-source-and-index.md)) acquires Nixpkgs via
+> ([`plans/02` §6.5](../../plans/archive/2026-08-22-custom-managed-nix-v1/02-trust-and-update-model.md),
+> [`plans/03` §6.2](../../plans/archive/2026-08-22-custom-managed-nix-v1/03-nixpkgs-source-and-index.md)) acquires Nixpkgs via
 > the locked-flake fetcher, **not** as a `src.tar.gz` TUF target. See §7 for the
 > record, preserved verbatim as historical evidence.
 
@@ -374,7 +377,7 @@ This spike deliberately does **not** claim:
 - That it is production code — it is a standalone, `publish = false` spike.
 - That this spike alone accepted DR-002. The decision was subsequently **Accepted on
   2026-08-09** after the F+A review recorded in
-  [`findings.md` §11](findings.md) and [`plans/12`](../../plans/12-open-decisions-and-risks.md).
+  [`findings.md` §11](findings.md) and [`plans/12`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md).
 
 ---
 
@@ -395,8 +398,8 @@ Both pass at the recorded commit:
 
 ## 14. Cross-references
 
-- Decision record: [`plans/12` DR-002](../../plans/12-open-decisions-and-risks.md)
+- Decision record: [`plans/12` DR-002](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
 - Exact results + evidence: [`findings.md`](findings.md)
-- Channel/TUF design: [`plans/02`](../../plans/02-trust-and-update-model.md) §7 (canonical descriptor schema), §6.5 (TUF roles)
-- Threat model: [`plans/08`](../../plans/08-security-model.md) §6.5 (T-CHAN-*), §7 (crypto)
-- PR roadmap: [`plans/11`](../../plans/11-pr-roadmap.md) PR-5 (this spike), PR-11 (production client, gated)
+- Channel/TUF design: [`plans/02`](../../plans/archive/2026-08-22-custom-managed-nix-v1/02-trust-and-update-model.md) §7 (canonical descriptor schema), §6.5 (TUF roles)
+- Threat model: [`plans/08`](../../plans/archive/2026-08-22-custom-managed-nix-v1/08-security-model.md) §6.5 (T-CHAN-*), §7 (crypto)
+- PR roadmap: [`plans/11`](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) PR-5 (this spike), PR-11 (production client, gated)

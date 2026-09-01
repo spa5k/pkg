@@ -5,7 +5,7 @@ use pkg_core::state::Digest;
 use pkg_core::{ChannelSequence, NarHash, NixpkgsRevision, PolicyVersion, System};
 use pkg_nix::{
     BuildCacheEvidence, BuildEngineError, BuildEngineErrorCode, BuildPlan, BuildReadiness,
-    NixVersion, VersionInfo,
+    NixVersion, STANDARD_DETERMINATE_NIX_VERSION, VersionInfo,
 };
 
 use crate::ResolvedInstall;
@@ -76,7 +76,7 @@ pub enum LocalBuildPlanErrorCode {
     InvalidPolicy,
     /// Resolve results do not belong to the same authenticated channel identity.
     SourceIdentityMismatch,
-    /// The running managed Nix version differs from the authenticated descriptor.
+    /// The running Nix version differs from the platform runtime contract.
     RuntimeMismatch,
     /// Resolver-owned targets could not be promoted without rebinding.
     InvalidResolvedTarget,
@@ -151,11 +151,7 @@ pub fn prepare_local_build_plan(
             LocalBuildPlanErrorCode::SourceIdentityMismatch,
         ));
     }
-    if runtime.nix_version() != &policy.nix_runtime_version {
-        return Err(LocalBuildPlanError::new(
-            LocalBuildPlanErrorCode::RuntimeMismatch,
-        ));
-    }
+    let plan_runtime_version = plan_runtime_version(policy, runtime, host_system)?;
     let targets = resolved
         .build_plan_targets()
         .map_err(|_| LocalBuildPlanError::new(LocalBuildPlanErrorCode::InvalidResolvedTarget))?;
@@ -169,7 +165,7 @@ pub fn prepare_local_build_plan(
     }
     let (cache_classification, missing_derivations) = cache_evidence.into_parts();
     BuildPlan::new(
-        &policy.nix_runtime_version,
+        plan_runtime_version,
         Digest::from_bytes(policy.descriptor_sha256),
         policy.policy_version,
         policy.channel_sequence,
@@ -187,62 +183,26 @@ pub fn prepare_local_build_plan(
     .map_err(LocalBuildPlanError::from_engine)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
-    const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
-
-    fn policy() -> AuthenticatedBuildPolicy {
-        AuthenticatedBuildPolicy {
-            channel_sequence: ChannelSequence::from_u64(42).unwrap(),
-            policy_version: PolicyVersion::from_u64(7).unwrap(),
-            descriptor_sha256: [3; 32],
-            nix_runtime_version: NixVersion::new("2.34.8").unwrap(),
-            revision: NixpkgsRevision::new(REVISION).unwrap(),
-            nar_hash: NarHash::new(NAR_HASH).unwrap(),
-            build_mode: BuildMode::AllowWithGates,
+fn plan_runtime_version<'a>(
+    policy: &'a AuthenticatedBuildPolicy,
+    runtime: &'a VersionInfo,
+    host_system: System,
+) -> Result<&'a NixVersion, LocalBuildPlanError> {
+    if matches!(host_system, System::X8664Linux | System::Aarch64Linux) {
+        if runtime.nix_version().as_str() != STANDARD_DETERMINATE_NIX_VERSION {
+            return Err(LocalBuildPlanError::new(
+                LocalBuildPlanErrorCode::RuntimeMismatch,
+            ));
         }
-    }
-
-    #[test]
-    fn authenticated_identity_match_binds_every_source_field() {
-        let policy = policy();
-        let sequence = ChannelSequence::from_u64(42).unwrap();
-        let version = PolicyVersion::from_u64(7).unwrap();
-        let revision = NixpkgsRevision::new(REVISION).unwrap();
-        let nar_hash = NarHash::new(NAR_HASH).unwrap();
-        assert!(policy.matches_source_identity(sequence, version, [3; 32], &revision, &nar_hash));
-
-        assert!(!policy.matches_source_identity(
-            ChannelSequence::from_u64(43).unwrap(),
-            version,
-            [3; 32],
-            &revision,
-            &nar_hash
-        ));
-        assert!(!policy.matches_source_identity(
-            sequence,
-            PolicyVersion::from_u64(8).unwrap(),
-            [3; 32],
-            &revision,
-            &nar_hash
-        ));
-        assert!(!policy.matches_source_identity(sequence, version, [4; 32], &revision, &nar_hash));
-        assert!(!policy.matches_source_identity(
-            sequence,
-            version,
-            [3; 32],
-            &NixpkgsRevision::new("1123456789abcdef0123456789abcdef01234567").unwrap(),
-            &nar_hash
-        ));
-        assert!(!policy.matches_source_identity(
-            sequence,
-            version,
-            [3; 32],
-            &revision,
-            &NarHash::new("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap()
-        ));
+        Ok(runtime.nix_version())
+    } else if runtime.nix_version() == &policy.nix_runtime_version {
+        Ok(&policy.nix_runtime_version)
+    } else {
+        Err(LocalBuildPlanError::new(
+            LocalBuildPlanErrorCode::RuntimeMismatch,
+        ))
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -2,11 +2,11 @@
 set -eu
 
 usage() {
-    echo "usage: build-preview.sh /absolute/path/to/pkg-install /absolute/output.pkg [version]" >&2
+    echo "usage: build-preview.sh /absolute/path/to/pkg-install /absolute/output.pkg version" >&2
     exit 64
 }
 
-[ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
+[ "$#" -eq 3 ] || usage
 [ "$(/usr/bin/uname -s)" = Darwin ] || {
     echo "The macOS preview package must be built on macOS." >&2
     exit 1
@@ -14,7 +14,7 @@ usage() {
 
 installer=$1
 output=$2
-version=${3:-0.1.0-alpha.7}
+version=$3
 
 case "$installer" in /*) ;; *) usage ;; esac
 case "$output" in /*.pkg) ;; *) usage ;; esac

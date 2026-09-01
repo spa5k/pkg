@@ -12,6 +12,9 @@ use crate::cli::{
     CollisionPolicy, GcArgs, HistoryArgs, InfoArgs, InstallArgs, ListArgs, PackageArgs, RemoveArgs,
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
 };
+
+/// One acquired install: its handle, public id, evidence, and phase name.
+type AcquiredInstallEvidence = (OperationHandle, String, InstallEvidence, &'static str);
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
 use crate::commands::query::{
     InstalledCatalogPackage, info_catalog_reports, outdated_catalog_reports, search_catalog_report,
@@ -33,17 +36,18 @@ use pkg_nix::{
     ApprovalSource, BrokerOperationKind, BuildPreview, CacheInstallErrorCode, CacheInstallOutcome,
     CatalogInfoRequest, CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest,
     GenerationId, GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter,
-    MaintenanceError, OperationHandle, RemoveRootSetRequest, RepairGenerationRequest,
-    RepairGenerationStatus, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
-    RootSetAttestationRequest, RootSetReport,
+    MaintenanceError, OperationHandle, OperationStatus, RemoveRootSetRequest,
+    RepairGenerationRequest, RepairGenerationStatus, RepairStorePathsReport,
+    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
     StateEditKind, StateEditMetadata, assemble_upgrade_evidence_state, discard_unprepared_installs,
     discard_unprepared_state_edits, load_active_snapshot, load_retained_history,
-    pending_install_generation, pending_state_edit_generation, pending_state_transition_source,
-    prepare_install_generation, prepare_rollback, prepare_state_edit, recover_generation,
-    recover_transitioned_state_edit, resume_prepared_install, resume_prepared_state_edit,
+    pending_install_discard_generation, pending_install_generation, pending_state_edit_generation,
+    pending_state_transition_source, prepare_install_generation, prepare_rollback,
+    prepare_state_edit, recover_generation, recover_transitioned_state_edit,
+    resume_prepared_install, resume_prepared_state_edit,
 };
 use pkg_store::{
     GcError, GcPolicy, LeaseError, LeaseIdentity, PruneOutcome, StateLayout, StateLease, plan_gc,
@@ -279,7 +283,7 @@ impl CoreOperations for LocalStateOperations {
         run_catalog_outdated(
             &mut broker,
             active.state().manifest().channel_seq(),
-            installed,
+            &installed,
         )
     }
 
@@ -401,130 +405,8 @@ impl CoreOperations for LocalStateOperations {
                 "omit --from-manifest and --from-lock to verify or repair a generation",
             ));
         }
-        let layout = self.layout().clone();
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        let mut handle = broker
-            .begin(BrokerOperationKind::Repair)
-            .map_err(broker_error)?;
-        let result = (|| {
-            let (lease, _) = self.gc_lease(&layout)?;
-            let generation = match args.generation() {
-                Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
-                    CommandError::new(
-                        ExitCode::Usage,
-                        "the repair generation identifier is invalid",
-                        "use an identifier shown by `pkg history`",
-                    )
-                })?,
-                None => {
-                    let active = load_active_snapshot(&layout, &lease)
-                        .map_err(state_read_error)?
-                        .ok_or_else(no_active_generation)?;
-                    pkg_nix::GenerationId::new(active.generation().id()).map_err(|_| {
-                        CommandError::new(
-                            ExitCode::StateCorrupt,
-                            "the active generation identifier is invalid",
-                            "run `pkg doctor` before repairing packages",
-                        )
-                    })?
-                }
-            };
-            let verify_only = args.verify_only() || policy.dry_run();
-            if !verify_only {
-                write_repair_warning()?;
-                confirm_destructive(
-                    policy.yes(),
-                    "Repair can temporarily make affected commands unavailable. Continue?",
-                )?;
-            }
-            let mut report = broker
-                .repair_generation(
-                    handle.clone(),
-                    RepairGenerationRequest::new(generation.clone(), verify_only),
-                )
-                .map_err(repair_broker_error)?;
-            let mut approved_preview = None;
-            if report.status() == RepairGenerationStatus::NeedsApproval {
-                let preview = report.build_preview().ok_or_else(|| {
-                    CommandError::new(
-                        ExitCode::EngineUnavailable,
-                        "the repair service returned no build preview",
-                        "retry after running `pkg doctor`",
-                    )
-                })?;
-                render_build_preview(preview)?;
-                approved_preview = Some(
-                    preview
-                        .to_json_value()
-                        .map_err(|_| install_commit_failed())?,
-                );
-                confirm_destructive(policy.yes(), "Rebuild the damaged packages locally?")?;
-                let source = if policy.yes() {
-                    ApprovalSource::AssumeYes
-                } else {
-                    ApprovalSource::Interactive
-                };
-                let digest = parse_build_plan_digest(preview.build_plan_digest())?;
-                handle = broker
-                    .begin(BrokerOperationKind::Repair)
-                    .map_err(broker_error)?;
-                report = broker
-                    .repair_generation(
-                        handle.clone(),
-                        RepairGenerationRequest::with_approval(
-                            generation.clone(),
-                            pkg_nix::BuildApprovalRequest::new(digest, source),
-                        ),
-                    )
-                    .map_err(repair_broker_error)?;
-            }
-            match report.status() {
-                RepairGenerationStatus::Clean => repair_result(
-                    "The generation is clean.",
-                    &generation,
-                    "clean",
-                    0,
-                    verify_only,
-                    approved_preview,
-                ),
-                RepairGenerationStatus::RepairedFromCache => repair_result(
-                    "The generation was repaired from the signed cache.",
-                    &generation,
-                    "repaired-from-cache",
-                    0,
-                    false,
-                    approved_preview,
-                ),
-                RepairGenerationStatus::RepairedByBuild => repair_result(
-                    "The generation was repaired by an approved local build.",
-                    &generation,
-                    "repaired-by-build",
-                    0,
-                    false,
-                    approved_preview,
-                ),
-                RepairGenerationStatus::DamageDetected => Err(CommandError::new(
-                    ExitCode::VerifyFail,
-                    format!(
-                        "verification found {} damaged store path(s)",
-                        report.damaged_paths()
-                    ),
-                    "run `pkg repair` without --verify-only to restore signed cache paths",
-                )),
-                RepairGenerationStatus::NeedsApproval => Err(CommandError::new(
-                    ExitCode::AcquireNeedsApproval,
-                    format!(
-                        "{} damaged store path(s) require an approved local rebuild",
-                        report.damaged_paths()
-                    ),
-                    "retry and approve the newly displayed repair build plan",
-                )),
-            }
-        })();
-        if result.is_err() {
-            let _ = broker.cancel(handle);
-        }
-        result
+        self.repair_with_broker(&mut broker, args, policy)
     }
 }
 
@@ -572,7 +454,7 @@ fn run_catalog_info(
 fn run_catalog_outdated(
     broker: &mut BrokerLifecycleClient,
     installed_sequence: pkg_core::ChannelSequence,
-    installed: Vec<InstalledCatalogPackage>,
+    installed: &[InstalledCatalogPackage],
 ) -> Result<CommandResult, CommandError> {
     if installed.is_empty() {
         return outdated_catalog_reports(installed_sequence, &[], &[]);
@@ -589,7 +471,7 @@ fn run_catalog_outdated(
             .info_catalog(handle.clone(), requests)
             .map_err(catalog_broker_error)?;
         broker.complete(handle.clone()).map_err(broker_error)?;
-        outdated_catalog_reports(installed_sequence, &installed, &reports)
+        outdated_catalog_reports(installed_sequence, installed, &reports)
     })();
     if result.is_err() {
         let _ = broker.cancel(handle);
@@ -676,7 +558,7 @@ impl LocalStateOperations {
             let currency = run_catalog_outdated(
                 &mut broker,
                 source.state().manifest().channel_seq(),
-                installed,
+                &installed,
             )?;
             let outdated = outdated_attributes(&currency)?;
             if outdated.is_empty() {
@@ -757,7 +639,7 @@ impl LocalStateOperations {
                 layout.clone(),
                 lease,
                 &source,
-                next,
+                &next,
                 StateEditMetadata::new(
                     &generation_id,
                     &created_at,
@@ -854,7 +736,7 @@ impl LocalStateOperations {
                     build_approval,
                 ),
             )
-            .map_err(map_install_generation_error)?;
+            .map_err(|error| map_install_generation_error(&error))?;
             emit_phase(progress, &public_operation_id, "stage", "completed")?;
             emit_phase(progress, &public_operation_id, "activate", "started")?;
             let added_paths = install_output_paths(&evidence);
@@ -905,6 +787,25 @@ impl LocalStateOperations {
         layout: &StateLayout,
         broker: &mut BrokerLifecycleClient,
     ) -> Result<(), CommandError> {
+        let mut reconnect = BrokerLifecycleClient::connect_default;
+        self.recover_pending_install_with(layout, broker, &mut reconnect)
+    }
+
+    fn recover_pending_install_with(
+        &self,
+        layout: &StateLayout,
+        broker: &mut BrokerLifecycleClient,
+        reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    ) -> Result<(), CommandError> {
+        let probe = StateLease::try_shared(layout).map_err(state_lease_error)?;
+        let pending_discard =
+            pending_install_discard_generation(layout, &probe).map_err(state_read_error)?;
+        drop(probe);
+        if let Some(generation) = pending_discard {
+            self.recover_pending_prunes(layout, broker)?;
+            self.discard_unrooted_install_with(layout, broker, reconnect, &generation)?;
+            return Ok(());
+        }
         let nonce = secure_nonce()?;
         let created_at = utc_now()?;
         let identity = LeaseIdentity::new("recover_install", &nonce, &created_at)
@@ -919,49 +820,66 @@ impl LocalStateOperations {
         let handle = broker
             .begin(BrokerOperationKind::Activate)
             .map_err(broker_error)?;
-        if current.as_ref() == Some(&pending) {
-            let report = broker
-                .attest_generation_roots(handle.clone(), pending.clone())
-                .map_err(install_broker_error)?;
-            let maintenance = AttestedRootMaintenance { report };
-            recover_generation(layout, &lease, &pending, &maintenance)
-                .map_err(|_| install_commit_failed())?;
-            let _ = broker.complete(handle);
-            return Ok(());
-        }
-        let prepared = resume_prepared_install(layout.clone(), lease, &pending)
-            .map_err(|_| install_commit_failed())?;
-        let report = match broker.attest_generation_roots(handle.clone(), pending.clone()) {
-            Ok(report) => report,
-            Err(error)
-                if error.generation_root_attestation_code()
-                    == Some(GenerationRootAttestationErrorCode::AttestationFailed) =>
-            {
-                drop(prepared);
-                let _ = broker.cancel(handle);
-                self.discard_unrooted_install(layout, broker, &pending)?;
-                return Ok(());
+        // `local_committed` marks the linearization point after which the
+        // Activate operation must be completed, never cancelled.
+        // `activate_cancelled` marks the AttestationFailed branch, which has
+        // already cancelled the Activate handle before the nested GC discard.
+        let mut local_committed = false;
+        let mut activate_cancelled = false;
+        let result = (|| {
+            if current.as_ref() == Some(&pending) {
+                let report = broker
+                    .attest_generation_roots(handle.clone(), pending.clone())
+                    .map_err(install_broker_error)?;
+                let maintenance = AttestedRootMaintenance { report };
+                recover_generation(layout, &lease, &pending, &maintenance)
+                    .map_err(|_| install_commit_failed())?;
+                local_committed = true;
+                return complete_operation(broker, reconnect, handle.clone());
             }
-            Err(error) => return Err(install_broker_error(error)),
-        };
-        prepared
-            .activate_published(Some(&report), &nonce)
-            .map_err(|_| install_commit_failed())?
-            .finish()
-            .map_err(|_| install_commit_failed())?;
-        let _ = broker.complete(handle);
-        Ok(())
+            let prepared = resume_prepared_install(layout.clone(), lease, &pending)
+                .map_err(|_| install_commit_failed())?;
+            match broker.attest_generation_roots(handle.clone(), pending.clone()) {
+                Ok(report) => {
+                    prepared
+                        .activate_published(Some(&report), &nonce)
+                        .map_err(|_| install_commit_failed())?
+                        .finish()
+                        .map_err(|_| install_commit_failed())?;
+                    local_committed = true;
+                    complete_operation(broker, reconnect, handle.clone())
+                }
+                Err(error)
+                    if error.generation_root_attestation_code()
+                        == Some(GenerationRootAttestationErrorCode::AttestationFailed) =>
+                {
+                    drop(prepared);
+                    if !cancel_operation(broker, reconnect, handle.clone()) {
+                        return Err(install_broker_error(error));
+                    }
+                    activate_cancelled = true;
+                    self.discard_unrooted_install_with(layout, broker, reconnect, &pending)
+                }
+                Err(error) => Err(install_broker_error(error)),
+            }
+        })();
+        if result.is_err() && !local_committed && !activate_cancelled {
+            cancel_operation(broker, reconnect, handle);
+        }
+        result
     }
 
-    fn discard_unrooted_install(
+    fn discard_unrooted_install_with(
         &self,
         layout: &StateLayout,
         broker: &mut BrokerLifecycleClient,
+        reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
         generation: &pkg_nix::GenerationId,
     ) -> Result<(), CommandError> {
         let handle = broker
             .begin(BrokerOperationKind::Gc)
             .map_err(broker_error)?;
+        let mut local_committed = false;
         let result = (|| {
             broker.acquire_gc(handle.clone()).map_err(broker_error)?;
             let (lease, _) = self.gc_lease(layout)?;
@@ -972,11 +890,11 @@ impl LocalStateOperations {
             recover_generation(layout, &lease, generation, &maintenance)
                 .map_err(|_| install_commit_failed())?;
             drop(maintenance);
-            let _ = broker.complete(handle.clone());
-            Ok(())
+            local_committed = true;
+            complete_operation(broker, reconnect, handle.clone())
         })();
-        if result.is_err() {
-            let _ = broker.cancel(handle);
+        if result.is_err() && !local_committed {
+            cancel_operation(broker, reconnect, handle);
         }
         result
     }
@@ -1233,7 +1151,7 @@ impl LocalStateOperations {
                 layout.clone(),
                 lease,
                 &source,
-                next,
+                &next,
                 StateEditMetadata::new(&generation_id, &created_at, &operation_id, kind),
             )
             .map_err(|_| mutation_failed())?;
@@ -1350,6 +1268,231 @@ impl LocalStateOperations {
         }
         result
     }
+
+    fn repair_with_broker(
+        &self,
+        broker: &mut BrokerLifecycleClient,
+        args: &RepairArgs,
+        policy: OperationPolicy,
+    ) -> Result<CommandResult, CommandError> {
+        let layout = self.layout().clone();
+        let verify_only = args.verify_only() || policy.dry_run();
+        if !verify_only {
+            write_repair_warning()?;
+            confirm_destructive(
+                policy.yes(),
+                "Repair can temporarily make affected commands unavailable. Continue?",
+            )?;
+        }
+        let mut handle: Option<OperationHandle> = None;
+        let result = (|| {
+            let (lease, _) = self.gc_lease(&layout)?;
+            let generation = match args.generation() {
+                Some(generation) => pkg_nix::GenerationId::new(generation).map_err(|_| {
+                    CommandError::new(
+                        ExitCode::Usage,
+                        "the repair generation identifier is invalid",
+                        "use an identifier shown by `pkg history`",
+                    )
+                })?,
+                None => {
+                    let active = load_active_snapshot(&layout, &lease)
+                        .map_err(state_read_error)?
+                        .ok_or_else(no_active_generation)?;
+                    pkg_nix::GenerationId::new(active.generation().id()).map_err(|_| {
+                        CommandError::new(
+                            ExitCode::StateCorrupt,
+                            "the active generation identifier is invalid",
+                            "run `pkg doctor` before repairing packages",
+                        )
+                    })?
+                }
+            };
+            let opened = broker
+                .begin(BrokerOperationKind::Repair)
+                .map_err(broker_error)?;
+            handle = Some(opened.clone());
+            if verify_only {
+                // The Broker-held GC inhibitor now protects the selected
+                // generation and its roots. Release the exclusive state lease
+                // before the long read-only verification.
+                drop(lease);
+            }
+            let mut report = broker
+                .repair_generation(
+                    opened,
+                    RepairGenerationRequest::new(generation.clone(), verify_only),
+                )
+                .map_err(repair_broker_error)?;
+            let mut approved_preview = None;
+            if report.status() == RepairGenerationStatus::NeedsApproval {
+                let preview = report.build_preview().ok_or_else(|| {
+                    CommandError::new(
+                        ExitCode::EngineUnavailable,
+                        "the repair service returned no build preview",
+                        "retry after running `pkg doctor`",
+                    )
+                })?;
+                render_build_preview(preview)?;
+                approved_preview = Some(
+                    preview
+                        .to_json_value()
+                        .map_err(|_| install_commit_failed())?,
+                );
+                confirm_destructive(policy.yes(), "Rebuild the damaged packages locally?")?;
+                let source = if policy.yes() {
+                    ApprovalSource::AssumeYes
+                } else {
+                    ApprovalSource::Interactive
+                };
+                let digest = parse_build_plan_digest(preview.build_plan_digest())?;
+                let opened = broker
+                    .begin(BrokerOperationKind::Repair)
+                    .map_err(broker_error)?;
+                handle = Some(opened.clone());
+                report = broker
+                    .repair_generation(
+                        opened,
+                        RepairGenerationRequest::with_approval(
+                            generation.clone(),
+                            pkg_nix::BuildApprovalRequest::new(digest, source),
+                        ),
+                    )
+                    .map_err(repair_broker_error)?;
+            }
+            match report.status() {
+                RepairGenerationStatus::Clean => repair_result(
+                    "The generation is clean.",
+                    &generation,
+                    "clean",
+                    0,
+                    verify_only,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::RepairedFromCache => repair_result(
+                    "The generation was repaired from the signed cache.",
+                    &generation,
+                    "repaired-from-cache",
+                    0,
+                    false,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::RepairedByBuild => repair_result(
+                    "The generation was repaired by an approved local build.",
+                    &generation,
+                    "repaired-by-build",
+                    0,
+                    false,
+                    approved_preview,
+                ),
+                RepairGenerationStatus::DamageDetected => Err(CommandError::new(
+                    ExitCode::VerifyFail,
+                    format!(
+                        "verification found {} damaged store path(s)",
+                        report.damaged_paths()
+                    ),
+                    "run `pkg repair` without --verify-only to restore signed cache paths",
+                )),
+                RepairGenerationStatus::NeedsApproval => Err(CommandError::new(
+                    ExitCode::AcquireNeedsApproval,
+                    format!(
+                        "{} damaged store path(s) require an approved local rebuild",
+                        report.damaged_paths()
+                    ),
+                    "retry and approve the newly displayed repair build plan",
+                )),
+            }
+        })();
+        if result.is_err()
+            && let Some(handle) = handle
+        {
+            let _ = broker.cancel(handle);
+        }
+        result
+    }
+}
+
+/// Completes one committed Broker operation and reconciles an uncertain reply.
+///
+/// A lost completion acknowledgement never returns success while it is
+/// uncertain. The caller polls the exact handle on a fresh same-uid connection.
+/// A confirmed completed report is success. A confirmed live handle is
+/// cancelled before the original error is returned.
+fn complete_operation(
+    broker: &mut BrokerLifecycleClient,
+    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    handle: OperationHandle,
+) -> Result<(), CommandError> {
+    match broker.complete(handle.clone()) {
+        Ok(()) => Ok(()),
+        Err(error) => reconcile_completion(reconnect, handle, error),
+    }
+}
+
+/// Reconciles one operation after a lost completion reply on a fresh connection.
+fn reconcile_completion(
+    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    handle: OperationHandle,
+    first_error: BrokerClientError,
+) -> Result<(), CommandError> {
+    match reconnect() {
+        Ok(mut fresh) => match fresh.poll(handle.clone()) {
+            Ok(OperationStatus::Completed) => Ok(()),
+            Ok(OperationStatus::Running) => {
+                cancel_operation(&mut fresh, reconnect, handle);
+                Err(broker_error(first_error))
+            }
+            Ok(OperationStatus::Cancelled) => Err(broker_error(first_error)),
+            Err(_) => {
+                cancel_operation(&mut fresh, reconnect, handle);
+                Err(broker_error(first_error))
+            }
+        },
+        Err(_) => Err(broker_error(first_error)),
+    }
+}
+
+/// Cancels one still-live Broker operation, falling back to a fresh same-uid
+/// connection when the current connection is poisoned or otherwise unusable.
+///
+/// Returns `true` only after a cancellation acknowledgement or an exact
+/// `Cancelled` status was observed.
+/// Cleanup never overrides the caller's first functional error.
+fn cancel_operation(
+    broker: &mut BrokerLifecycleClient,
+    reconnect: &mut dyn FnMut() -> Result<BrokerLifecycleClient, BrokerClientError>,
+    handle: OperationHandle,
+) -> bool {
+    if broker.cancel(handle.clone()).is_ok() {
+        return true;
+    }
+    let Ok(mut fresh) = reconnect() else {
+        return false;
+    };
+    match fresh.poll(handle.clone()) {
+        Ok(OperationStatus::Cancelled) => {
+            *broker = fresh;
+            true
+        }
+        Ok(OperationStatus::Running) => match fresh.cancel(handle.clone()) {
+            Ok(()) => {
+                *broker = fresh;
+                true
+            }
+            Err(_) => {
+                let Ok(mut final_client) = reconnect() else {
+                    return false;
+                };
+                if final_client.poll(handle) == Ok(OperationStatus::Cancelled) {
+                    *broker = final_client;
+                    true
+                } else {
+                    false
+                }
+            }
+        },
+        Ok(OperationStatus::Completed) | Err(_) => false,
+    }
 }
 
 fn outdated_attributes(result: &CommandResult) -> Result<BTreeSet<String>, CommandError> {
@@ -1376,7 +1519,7 @@ fn require_gc_confirmation(
     let generations = plan
         .candidates()
         .iter()
-        .map(|candidate| candidate.generation_id())
+        .map(pkg_store::PruneCandidate::generation_id)
         .collect::<Vec<_>>()
         .join(", ");
     confirm_destructive(
@@ -1451,7 +1594,7 @@ fn acquire_install_evidence(
     policy: OperationPolicy,
     allow_build: bool,
     progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
-) -> Result<(OperationHandle, String, InstallEvidence, &'static str), CommandError> {
+) -> Result<AcquiredInstallEvidence, CommandError> {
     let acquire_handle = broker
         .begin(BrokerOperationKind::Acquire)
         .map_err(broker_error)?;
@@ -1555,9 +1698,20 @@ fn acquire_install_evidence(
         return Err(error);
     }
     let result = (|| {
-        let preview = broker
-            .prepare_build(build_handle.clone(), selectors)
-            .map_err(install_broker_error)?;
+        let preview = match broker.prepare_build(build_handle.clone(), selectors) {
+            Ok(preview) => preview,
+            Err(error) => {
+                if let Some(code) = error.build_preparation_code() {
+                    emit_phase(
+                        progress,
+                        &public_operation_id,
+                        "build_prepare",
+                        code.as_str(),
+                    )?;
+                }
+                return Err(install_broker_error(error));
+            }
+        };
         if !policy.yes() {
             render_build_preview(&preview)?;
         }
@@ -1677,7 +1831,7 @@ fn preview_install(
         .prepare_build(handle.clone(), selectors)
         .map_err(install_broker_error)
         .and_then(|preview| {
-            let value = public_build_preview(preview)?;
+            let value = public_build_preview(&preview)?;
             CommandResult::new(
                 "Install preview is ready. No package was downloaded or activated.",
                 Map::from_iter([("dryRun".into(), json!(true)), ("preflight".into(), value)]),
@@ -1701,7 +1855,7 @@ fn preview_upgrade(
         .prepare_build(handle.clone(), selectors)
         .map_err(install_broker_error)
         .and_then(|preview| {
-            let value = public_build_preview(preview)?;
+            let value = public_build_preview(&preview)?;
             CommandResult::new(
                 "Upgrade preview is ready. No package was downloaded or activated.",
                 Map::from_iter([
@@ -1717,7 +1871,7 @@ fn preview_upgrade(
     result
 }
 
-fn public_build_preview(preview: BuildPreview) -> Result<Value, CommandError> {
+fn public_build_preview(preview: &BuildPreview) -> Result<Value, CommandError> {
     let mut value = preview
         .to_json_value()
         .map_err(|_| install_commit_failed())?;
@@ -1851,7 +2005,7 @@ fn install_output_paths(evidence: &InstallEvidence) -> Vec<pkg_core::identity::S
     evidence
         .targets()
         .iter()
-        .flat_map(|target| target.acquired())
+        .flat_map(pkg_nix::InstallTargetEvidence::acquired)
         .map(|output| output.path_info().store_path().clone())
         .collect()
 }
@@ -1912,6 +2066,7 @@ fn install_broker_error(error: BrokerClientError) -> CommandError {
             Some(CacheInstallErrorCode::AuthorityUnavailable) | None => ExitCode::EngineUnavailable,
         },
         BrokerClientErrorCode::BuildRefused => ExitCode::BuildFailed,
+        BrokerClientErrorCode::BuildPreparationRefused => ExitCode::EngineUnavailable,
         BrokerClientErrorCode::BuildRootRefused => ExitCode::Permission,
         BrokerClientErrorCode::GenerationRootAttestationRefused => ExitCode::StateCorrupt,
         _ => ExitCode::EngineUnavailable,
@@ -1923,7 +2078,7 @@ fn install_broker_error(error: BrokerClientError) -> CommandError {
     )
 }
 
-fn map_install_generation_error(error: InstallGenerationError) -> CommandError {
+fn map_install_generation_error(error: &InstallGenerationError) -> CommandError {
     match error {
         InstallGenerationError::CurrentChanged => CommandError::new(
             ExitCode::StateLocked,
@@ -2024,7 +2179,7 @@ fn gc_preview_result(plan: &pkg_store::GcPlan) -> Result<CommandResult, CommandE
     let generations = plan
         .candidates()
         .iter()
-        .map(|candidate| candidate.generation_id())
+        .map(pkg_store::PruneCandidate::generation_id)
         .collect::<Vec<_>>();
     let records = generations
         .iter()
@@ -2307,7 +2462,7 @@ fn channel_refresh_error(error: BrokerClientError) -> CommandError {
     CommandError::new(exit_code, message, hint)
 }
 
-fn channel_refresh_error_fields(
+const fn channel_refresh_error_fields(
     code: BrokerClientErrorCode,
 ) -> (ExitCode, &'static str, &'static str) {
     match code {
@@ -2455,1171 +2610,4 @@ fn index_unavailable() -> CommandError {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::io::{Read, Write};
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    use std::os::unix::net::UnixStream;
-    use std::sync::mpsc;
-    use std::thread;
-    use std::time::Duration;
-
-    use serde_json::Value;
-    use tempfile::TempDir;
-
-    use super::*;
-    use crate::broker::BrokerLifecycleClient;
-    use crate::cli::Cli;
-    use crate::commands::execute::{
-        CommandEngine, CommandRequest, CoreEngine, OperationPolicy, write_success,
-    };
-    use crate::ux::OutputMode;
-    use pkg_core::{AttributePath, ChannelSequence, NixpkgsRevision, PackageVersion};
-    use pkg_nix::{
-        BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
-        CatalogInfoLookup, CatalogInfoReport, CatalogPackageInfo, CatalogPackageSummary,
-        CatalogSearchReport, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse,
-        InProcessBroker, InProcessCallerPeer, ProductFrameCodec, StorePath,
-    };
-
-    const FRAME_HEADER_BYTES: usize = 20;
-    const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
-    const NAR_HASH: &str = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
-    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
-
-    fn read_request(stream: &mut UnixStream) -> (u64, CliBrokerRequest) {
-        let mut header = [0_u8; FRAME_HEADER_BYTES];
-        stream.read_exact(&mut header).unwrap();
-        let length = u32::from_be_bytes(header[16..20].try_into().unwrap()) as usize;
-        let mut frame = Vec::with_capacity(FRAME_HEADER_BYTES + length);
-        frame.extend_from_slice(&header);
-        frame.resize(FRAME_HEADER_BYTES + length, 0);
-        stream.read_exact(&mut frame[FRAME_HEADER_BYTES..]).unwrap();
-        ProductFrameCodec::decode_cli_request(&frame).unwrap()
-    }
-
-    fn write_response(stream: &mut UnixStream, request_id: u64, response: CliBrokerResponse) {
-        let frame = ProductFrameCodec::encode_cli_response(request_id, &response).unwrap();
-        stream.write_all(&frame).unwrap();
-    }
-
-    fn install_evidence(provenance: &str) -> InstallEvidence {
-        let store_path = format!("/nix/store/{STORE_HASH}-hello-1.0");
-        let derivation = format!("{store_path}.drv");
-        InstallEvidence::from_json_bytes(
-            &serde_json::to_vec(&serde_json::json!({
-                "schemaVersion": 1,
-                "descriptorHash": format!("sha256-{}", "0".repeat(64)),
-                "channelSequence": 42,
-                "policyVersion": 7,
-                "revision": REVISION,
-                "sourceNarHash": NAR_HASH,
-                "system": "x86_64-linux",
-                "targets": [{
-                    "selectorId": "sel_hello",
-                    "selector": "hello",
-                    "attribute": "hello",
-                    "versionPreference": { "kind": "any" },
-                    "requestedOutputs": null,
-                    "sourceRevision": "channel:current",
-                    "rootDerivation": derivation,
-                    "rootOutputs": [{ "name": "out", "storePath": store_path }],
-                    "outputsToInstall": ["out"],
-                    "packageName": "hello",
-                    "packageVersion": "1.0",
-                    "acquired": [{
-                        "outputName": "out",
-                        "storePath": store_path,
-                        "narHash": NAR_HASH,
-                        "signatures": if provenance == "cacheSigned" {
-                            vec!["cache.nixos.org-1:AAAA"]
-                        } else {
-                            Vec::new()
-                        },
-                        "references": [],
-                        "deriver": derivation,
-                        "narSize": 20,
-                        "closureSize": 42,
-                        "provenance": provenance
-                    }]
-                }]
-            }))
-            .unwrap(),
-        )
-        .unwrap()
-    }
-
-    fn build_preview() -> BuildPreview {
-        BuildPreview::from_json_bytes(
-            &serde_json::to_vec(&serde_json::json!({
-                "schemaVersion": 1,
-                "platform": { "os": "linux", "arch": "x86_64" },
-                "policyVersion": 7,
-                "buildPlanDigest": format!("sha256:{}", "1".repeat(64)),
-                "targets": [{
-                    "selector": "hello",
-                    "packageName": "hello",
-                    "version": "1.0",
-                    "outputsToInstall": ["out"],
-                    "localBuildRequired": true
-                }],
-                "build": { "count": 1, "names": ["hello"], "hasFixedOutput": false },
-                "cache": { "knownDownloadBytes": 0, "knownContentBytes": 0 },
-                "unknownLocalOutputs": 1,
-                "estimates": {
-                    "approxBuildMinutes": null,
-                    "approxNewDiskBytes": 1073741824,
-                    "approxTotalClosureBytes": null
-                },
-                "readiness": {
-                    "sandboxed": true,
-                    "buildIsolationReady": true,
-                    "nativeBuild": true,
-                    "resourceBoundary": {
-                        "isolation": "sandbox",
-                        "perBuildResourceCap": false,
-                        "notice": "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation."
-                    }
-                },
-                "approvalRequired": true
-            }))
-            .unwrap(),
-        )
-        .unwrap()
-    }
-
-    fn hello_selectors() -> Vec<PackageSelector> {
-        let cli = Cli::try_parse(["pkg", "install", "hello"]).unwrap();
-        let crate::cli::Command::Install(args) = cli.parsed_command() else {
-            panic!("expected install command");
-        };
-        install_selectors(args, "00112233445566778899aabbccddeeff").unwrap()
-    }
-
-    #[test]
-    fn gc_wait_does_not_hold_the_local_state_lease() {
-        let home = TempDir::new().unwrap();
-        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
-        let layout = StateLayout::initialize(home.path(), &home.path().join("pkg"), uid).unwrap();
-        let operations = LocalStateOperations {
-            source: layout.clone(),
-            broker_state_compatible: true,
-        };
-
-        let broker = InProcessBroker::new().unwrap();
-        let build_caller = broker
-            .connect(InProcessCallerPeer::authenticated(uid))
-            .unwrap();
-        let build = build_caller.begin(BrokerOperationKind::Build).unwrap();
-        build_caller.acquire_build(&build).unwrap();
-        build_caller.acquire_gc_inhibit(&build).unwrap();
-
-        let (mut server_stream, client_stream) = UnixStream::pair().unwrap();
-        let (waiting_tx, waiting_rx) = mpsc::channel();
-        let server_broker = broker.clone();
-        let server = thread::spawn(move || {
-            let gc_caller = server_broker
-                .connect(InProcessCallerPeer::authenticated(uid))
-                .unwrap();
-            let (request_id, request) = read_request(&mut server_stream);
-            assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Gc));
-            let gc = gc_caller.begin(BrokerOperationKind::Gc).unwrap();
-            write_response(
-                &mut server_stream,
-                request_id,
-                CliBrokerResponse::Started(gc.clone()),
-            );
-
-            let (request_id, request) = read_request(&mut server_stream);
-            assert_eq!(request, CliBrokerRequest::AcquireGc(gc.clone()));
-            waiting_tx.send(()).unwrap();
-            gc_caller.acquire_gc_wait(&gc).unwrap();
-            write_response(
-                &mut server_stream,
-                request_id,
-                CliBrokerResponse::GcAdmissionAcquired,
-            );
-
-            let (request_id, request) = read_request(&mut server_stream);
-            assert_eq!(request, CliBrokerRequest::Complete(gc.clone()));
-            gc_caller.complete(&gc).unwrap();
-            write_response(&mut server_stream, request_id, CliBrokerResponse::Completed);
-        });
-
-        let recovery_layout = layout.clone();
-        let recovery = thread::spawn(move || {
-            let mut client = BrokerLifecycleClient::from_stream(client_stream);
-            operations.recover_pending_prunes(&recovery_layout, &mut client)
-        });
-
-        waiting_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        let identity =
-            LeaseIdentity::new("op_probe", "nonce_probe", "2026-08-21T00:00:00Z").unwrap();
-        let probe = StateLease::try_exclusive(&layout, &identity);
-        let lease_was_available = probe.is_ok();
-        drop(probe);
-        build_caller.cancel(&build).unwrap();
-
-        assert!(lease_was_available, "GC admission wait held StateLease");
-        assert_eq!(recovery.join().unwrap().unwrap(), Vec::<String>::new());
-        server.join().unwrap();
-        let admissions = broker.admission_snapshot();
-        assert!(!admissions.build_held());
-        assert!(!admissions.gc_held());
-        assert_eq!(admissions.gc_inhibitor_count(), 0);
-    }
-
-    #[test]
-    fn install_preview_uses_the_outer_public_schema() {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let preview = build_preview();
-        let worker = thread::spawn(move || {
-            let caller = InProcessBroker::new()
-                .unwrap()
-                .connect(InProcessCallerPeer::authenticated(501))
-                .unwrap();
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Begin(BrokerOperationKind::Build));
-            let handle = caller.begin(BrokerOperationKind::Build).unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(handle.clone()),
-            );
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::PrepareBuild(actual, selectors) = request else {
-                panic!("expected build preparation");
-            };
-            assert_eq!(actual, handle);
-            assert_eq!(selectors[0].selector().as_str(), "hello");
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::BuildPrepared(preview),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Cancel(handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
-        });
-
-        let result = preview_install(
-            &mut BrokerLifecycleClient::from_stream(client),
-            hello_selectors(),
-        )
-        .unwrap();
-        worker.join().unwrap();
-        assert_eq!(result.fields()["dryRun"], true);
-        assert!(result.fields()["preflight"].get("schemaVersion").is_none());
-        assert_eq!(result.fields()["preflight"]["approvalRequired"], true);
-    }
-
-    #[test]
-    fn cache_hit_uses_the_closed_acquire_protocol_and_returns_evidence() {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let expected = install_evidence("cacheSigned");
-        let server_evidence = expected.clone();
-        let worker = thread::spawn(move || {
-            let broker = InProcessBroker::new().unwrap();
-            let caller = broker
-                .connect(InProcessCallerPeer::authenticated(501))
-                .unwrap();
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::Begin(BrokerOperationKind::Acquire) = request else {
-                panic!("expected acquire begin");
-            };
-            let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(handle.clone()),
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::AcquireInstall(actual, selectors) = request else {
-                panic!("expected cache acquisition");
-            };
-            assert_eq!(actual, handle);
-            assert_eq!(selectors.len(), 1);
-            assert_eq!(selectors[0].selector().as_str(), "hello");
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::InstallDownloadProgress(
-                    pkg_nix::InstallDownloadProgress::new(
-                        SelectorInput::new("hello").unwrap(),
-                        0,
-                        42,
-                    )
-                    .unwrap(),
-                ),
-            );
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::InstallDownloadProgress(
-                    pkg_nix::InstallDownloadProgress::new(
-                        SelectorInput::new("hello").unwrap(),
-                        42,
-                        42,
-                    )
-                    .unwrap(),
-                ),
-            );
-            write_response(&mut server, request_id, CliBrokerResponse::InstallAcquired);
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::GetInstallEvidence(actual) = request else {
-                panic!("expected private install evidence request");
-            };
-            assert_eq!(actual, handle);
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::InstallEvidence(server_evidence),
-            );
-            let mut eof = [0_u8; 1];
-            assert_eq!(server.read(&mut eof).unwrap(), 0);
-        });
-
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-        let mut events = Vec::new();
-        let (handle, public_operation_id, actual, approval) = acquire_install_evidence(
-            &mut broker,
-            hello_selectors(),
-            OperationPolicy::for_test(true, false),
-            true,
-            &mut |event| {
-                events.push(event);
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert!(!handle.as_str().is_empty());
-        assert_ne!(public_operation_id, handle.as_str());
-        assert_eq!(actual, expected);
-        assert_eq!(approval, "not_required");
-        assert_eq!(events.len(), 4);
-        let rendered = events
-            .iter()
-            .map(|event| String::from_utf8(event.to_ndjson_line().unwrap()).unwrap())
-            .collect::<String>();
-        assert!(rendered.contains(r#""type":"download_started""#));
-        assert!(rendered.contains(r#""type":"download_progress""#));
-        assert!(rendered.contains(r#""done":42,"total":42"#));
-        assert!(
-            events
-                .iter()
-                .all(|event| event.op_id() == public_operation_id)
-        );
-        drop(broker);
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn cache_miss_uses_one_digest_bound_build_and_returns_local_evidence() {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let preview = build_preview();
-        let digest = parse_build_plan_digest(preview.build_plan_digest()).unwrap();
-        let expected = install_evidence("localBuild");
-        let server_evidence = expected.clone();
-        let worker = thread::spawn(move || {
-            let broker = InProcessBroker::new().unwrap();
-            let caller = broker
-                .connect(InProcessCallerPeer::authenticated(501))
-                .unwrap();
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::Begin(BrokerOperationKind::Acquire) = request else {
-                panic!("expected acquire begin");
-            };
-            let acquire_handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(acquire_handle.clone()),
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::AcquireInstall(actual, selectors) = request else {
-                panic!("expected cache acquisition");
-            };
-            assert_eq!(actual, acquire_handle);
-            assert_eq!(selectors[0].selector().as_str(), "hello");
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::InstallDownloadProgress(
-                    pkg_nix::InstallDownloadProgress::new(
-                        SelectorInput::new("hello").unwrap(),
-                        0,
-                        17_072,
-                    )
-                    .unwrap(),
-                ),
-            );
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::InstallBuildRequired,
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::Complete(actual) = request else {
-                panic!("expected cache operation completion");
-            };
-            assert_eq!(actual, acquire_handle);
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::Begin(BrokerOperationKind::Build) = request else {
-                panic!("expected build begin");
-            };
-            let build_handle = caller.begin(BrokerOperationKind::Build).unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(build_handle.clone()),
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::PrepareBuild(actual, selectors) = request else {
-                panic!("expected private build preparation");
-            };
-            assert_eq!(actual, build_handle);
-            assert_eq!(selectors[0].selector().as_str(), "hello");
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::BuildPrepared(preview),
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::ApproveBuild(actual, approval) = request else {
-                panic!("expected exact build approval");
-            };
-            assert_eq!(actual, build_handle);
-            assert_eq!(approval.build_plan_digest(), digest);
-            assert_eq!(approval.source(), ApprovalSource::AssumeYes);
-            write_response(&mut server, request_id, CliBrokerResponse::BuildApproved);
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::ExecuteBuild(actual, actual_digest) = request else {
-                panic!("expected exact build execution");
-            };
-            assert_eq!(actual, build_handle);
-            assert_eq!(actual_digest, digest);
-            let report = BuildReport::new(
-                BuildStatus::Built,
-                vec![BuildOutput::new(
-                    StorePath::new(&format!("/nix/store/{STORE_HASH}-hello-1.0")).unwrap(),
-                    BuildOutputProvenance::LocalBuild,
-                )],
-            )
-            .unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::BuildExecuted(report),
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::GetInstallEvidence(actual) = request else {
-                panic!("expected post-build install evidence");
-            };
-            assert_eq!(actual, build_handle);
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::InstallEvidence(server_evidence),
-            );
-            let mut eof = [0_u8; 1];
-            assert_eq!(server.read(&mut eof).unwrap(), 0);
-        });
-
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-        let mut events = Vec::new();
-        let result = acquire_install_evidence(
-            &mut broker,
-            hello_selectors(),
-            OperationPolicy::for_test(true, false),
-            true,
-            &mut |event| {
-                events.push(event);
-                Ok(())
-            },
-        );
-        let (handle, public_operation_id, actual, approval) = match result {
-            Ok(result) => result,
-            Err(error) => {
-                drop(broker);
-                let server_result = worker.join();
-                panic!("client failed: {error:?}; server: {server_result:?}");
-            }
-        };
-        assert!(!handle.as_str().is_empty());
-        assert_eq!(actual, expected);
-        assert_eq!(approval, "yes");
-        assert_eq!(
-            events,
-            vec![
-                PublicEvent::phase(&public_operation_id, "acquire", "started").unwrap(),
-                PublicEvent::download_started(&public_operation_id, "hello", 17_072).unwrap(),
-                PublicEvent::phase(&public_operation_id, "acquire", "completed").unwrap(),
-                PublicEvent::phase(&public_operation_id, "build", "started").unwrap(),
-                PublicEvent::build_started(&public_operation_id, "hello", "hello", "1.0",).unwrap(),
-                PublicEvent::build_progress(&public_operation_id, "hello", 0.0).unwrap(),
-                PublicEvent::build_progress(&public_operation_id, "hello", 1.0).unwrap(),
-                PublicEvent::phase(&public_operation_id, "build", "completed").unwrap(),
-            ]
-        );
-        assert!(
-            events
-                .iter()
-                .all(|event| event.op_id() == public_operation_id)
-        );
-        drop(broker);
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn no_build_stops_after_cache_miss_without_opening_build_authority() {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let worker = thread::spawn(move || {
-            let broker = InProcessBroker::new().unwrap();
-            let caller = broker
-                .connect(InProcessCallerPeer::authenticated(501))
-                .unwrap();
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::Begin(BrokerOperationKind::Acquire)
-            );
-            let handle = caller.begin(BrokerOperationKind::Acquire).unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(handle.clone()),
-            );
-            let (request_id, request) = read_request(&mut server);
-            let CliBrokerRequest::AcquireInstall(actual, _) = request else {
-                return;
-            };
-            assert_eq!(actual, handle);
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::InstallBuildRequired,
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Complete(handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
-            let mut eof = [0_u8; 1];
-            assert_eq!(server.read(&mut eof).unwrap(), 0);
-        });
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-
-        let error = acquire_install_evidence(
-            &mut broker,
-            hello_selectors(),
-            OperationPolicy::for_test(true, false),
-            false,
-            &mut |_| Ok(()),
-        )
-        .unwrap_err();
-        assert_eq!(error.exit_code(), ExitCode::AcquireNoBinary);
-        drop(broker);
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn install_success_output_matches_the_v1_golden() {
-        let result = install_result(
-            "op_fixture",
-            "gen-0001",
-            None,
-            &install_evidence("cacheSigned"),
-        )
-        .unwrap();
-        assert_eq!(result.summary(), "Installed 1 package(s) as gen-0001.");
-
-        let mut output = Vec::new();
-        write_success(&mut output, OutputMode::Json, "install", &result).unwrap();
-        assert_eq!(
-            String::from_utf8(output).unwrap(),
-            include_str!("../../../../fixtures/cli-v1/install-success.json")
-        );
-    }
-
-    #[test]
-    fn repeated_install_is_not_reported_as_state_corruption() {
-        let error = map_install_generation_error(InstallGenerationError::InvalidEvidence(
-            InstallStateError::AlreadyInstalled,
-        ));
-
-        assert_eq!(error.exit_code(), ExitCode::PreflightFail);
-        assert_eq!(
-            error.message(),
-            "one or more requested packages are already installed"
-        );
-    }
-
-    #[test]
-    fn missing_state_is_initialized_as_empty_history() {
-        let home = TempDir::new().unwrap();
-        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
-        let cli = Cli::try_parse(["pkg", "history"]).unwrap();
-        let location = StateLocation::alternate(home.path().join("pkg"), home.path().to_path_buf());
-        let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
-        let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
-        assert_eq!(result.fields()["entries"], Value::Array(vec![]));
-        assert_eq!(
-            fs::symlink_metadata(home.path().join("pkg"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-    }
-
-    #[test]
-    fn initialized_empty_state_reports_no_active_generation() {
-        let home = TempDir::new().unwrap();
-        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
-        let state = home.path().join("pkg");
-        let identity =
-            pkg_store::LeaseIdentity::new("op_initialize", "nonce1", "2026-08-11T00:00:00Z")
-                .unwrap();
-        let layout = StateLayout::initialize(home.path(), &state, uid).unwrap();
-        drop(StateLease::try_exclusive(&layout, &identity).unwrap());
-
-        let cli = Cli::try_parse(["pkg", "history"]).unwrap();
-        let location = StateLocation::alternate(state.clone(), home.path().to_path_buf());
-        let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
-        let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
-        assert_eq!(result.fields()["entries"], Value::Array(vec![]));
-    }
-
-    #[test]
-    fn mutation_identity_helpers_are_canonical_and_overflow_safe() {
-        assert_eq!(next_generation_id("gen-0009").unwrap(), "gen-0010");
-        assert_eq!(next_generation_id("gen-9999").unwrap(), "gen-10000");
-        assert!(next_generation_id("generation-1").is_err());
-        assert_eq!(format_utc(0).as_deref(), Some("1970-01-01T00:00:00Z"));
-        assert_eq!(
-            format_utc(951_782_400).as_deref(),
-            Some("2000-02-29T00:00:00Z")
-        );
-        assert_eq!(
-            format_utc(1_787_528_645).as_deref(),
-            Some("2026-08-23T23:44:05Z")
-        );
-    }
-
-    #[test]
-    fn install_arguments_become_closed_current_channel_selectors() {
-        let cli = Cli::try_parse([
-            "pkg",
-            "install",
-            "ripgrep",
-            "fd",
-            "--with-outputs",
-            "out,man",
-        ])
-        .unwrap();
-        let crate::cli::Command::Install(args) = cli.parsed_command() else {
-            panic!("expected install command");
-        };
-        require_supported_install_options(args).unwrap();
-        let selectors = install_selectors(args, "00112233445566778899aabbccddeeff").unwrap();
-
-        assert_eq!(selectors.len(), 2);
-        assert_eq!(selectors[0].selector().as_str(), "ripgrep");
-        assert_eq!(
-            selectors[0]
-                .outputs()
-                .explicit_outputs()
-                .unwrap()
-                .iter()
-                .map(OutputName::as_str)
-                .collect::<Vec<_>>(),
-            ["out", "man"]
-        );
-        assert!(matches!(
-            selectors[0].source_revision(),
-            SourceRevision::CurrentChannel
-        ));
-        assert_ne!(selectors[0].id(), selectors[1].id());
-    }
-
-    #[test]
-    fn install_argument_widening_is_refused_before_broker_access() {
-        for argv in [
-            vec!["pkg", "install", "ripgrep", "ripgrep"],
-            vec!["pkg", "install", "ripgrep", "--channel", "other"],
-        ] {
-            let cli = Cli::try_parse(argv).unwrap();
-            let crate::cli::Command::Install(args) = cli.parsed_command() else {
-                panic!("expected install command");
-            };
-            assert!(
-                require_supported_install_options(args).is_err()
-                    || install_selectors(args, "00112233445566778899aabbccddeeff").is_err()
-            );
-        }
-    }
-
-    #[test]
-    fn install_collision_policy_reaches_the_state_boundary() {
-        for (value, expected) in [
-            ("abort", StateCollisionPolicy::Abort),
-            ("keep-first", StateCollisionPolicy::KeepFirst),
-            ("keep-last", StateCollisionPolicy::KeepLast),
-        ] {
-            let cli =
-                Cli::try_parse(["pkg", "install", "ripgrep", "--on-collision", value]).unwrap();
-            let crate::cli::Command::Install(args) = cli.parsed_command() else {
-                panic!("expected install command");
-            };
-            require_supported_install_options(args).unwrap();
-            assert_eq!(state_collision_policy(args.collision_policy()), expected);
-        }
-    }
-
-    #[test]
-    fn channel_refresh_runs_one_authenticated_transaction() {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let handle = InProcessBroker::new()
-            .unwrap()
-            .connect(InProcessCallerPeer::authenticated(1001))
-            .unwrap()
-            .begin(BrokerOperationKind::Refresh)
-            .unwrap();
-        let server_handle = handle.clone();
-        let (release_tx, release_rx) = mpsc::sync_channel(0);
-        let worker = thread::spawn(move || {
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::Begin(BrokerOperationKind::Refresh)
-            );
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::RefreshChannel(server_handle.clone(), ChannelRefreshMode::Apply,)
-            );
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::ChannelRefreshed(ChannelRefreshReport::new(
-                    true,
-                    ChannelSequence::from_u64(43).unwrap(),
-                )),
-            );
-
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Complete(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
-            release_rx.recv().unwrap();
-        });
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-
-        let result = refresh_channel_metadata(&mut broker, ChannelRefreshMode::Apply);
-        release_tx.send(()).unwrap();
-        worker.join().unwrap();
-        let report = result.unwrap();
-        let result = channel_refresh_result(report, ChannelRefreshMode::Apply, false).unwrap();
-
-        assert_eq!(result.fields()["updated"], Value::Bool(true));
-        assert_eq!(result.fields()["channelSequence"], Value::from(43));
-    }
-
-    #[test]
-    fn channel_refresh_failure_classes_keep_stable_exit_codes() {
-        for (code, expected) in [
-            (
-                BrokerClientErrorCode::ChannelRefreshNetwork,
-                ExitCode::AcquireNetwork,
-            ),
-            (
-                BrokerClientErrorCode::ChannelRefreshVerification,
-                ExitCode::VerifyFail,
-            ),
-            (
-                BrokerClientErrorCode::ChannelRefreshBusy,
-                ExitCode::StateLocked,
-            ),
-            (
-                BrokerClientErrorCode::ChannelRefreshServiceUnavailable,
-                ExitCode::EngineUnavailable,
-            ),
-        ] {
-            assert_eq!(channel_refresh_error_fields(code).0, expected);
-        }
-    }
-
-    #[test]
-    fn catalog_search_runs_one_closed_resolve_transaction() {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let handle = InProcessBroker::new()
-            .unwrap()
-            .connect(InProcessCallerPeer::authenticated(1001))
-            .unwrap()
-            .begin(BrokerOperationKind::Resolve)
-            .unwrap();
-        let server_handle = handle.clone();
-        let (release_tx, release_rx) = mpsc::sync_channel(0);
-        let worker = thread::spawn(move || {
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::Begin(BrokerOperationKind::Resolve)
-            );
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::SearchCatalog(
-                    server_handle.clone(),
-                    CatalogSearchRequest::new("ripgrep", 25, false, None).unwrap(),
-                )
-            );
-            let summary = CatalogPackageSummary::new(
-                "ripgrep",
-                "ripgrep",
-                "14.1.1",
-                "fast search",
-                vec![String::from("MIT")],
-                true,
-                false,
-            )
-            .unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::CatalogSearch(
-                    CatalogSearchReport::new(
-                        ChannelSequence::from_u64(42).unwrap(),
-                        "2026-08-19T00:00:00Z",
-                        vec![summary],
-                    )
-                    .unwrap(),
-                ),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Complete(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
-            release_rx.recv().unwrap();
-        });
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-
-        let result = run_catalog_search(
-            &mut broker,
-            CatalogSearchRequest::new("ripgrep", 25, false, None).unwrap(),
-        );
-        release_tx.send(()).unwrap();
-        worker.join().unwrap();
-        let result = result.unwrap();
-        assert_eq!(result.fields()["stale"], Value::Bool(false));
-        assert_eq!(result.fields()["entries"][0]["package"], "ripgrep");
-    }
-
-    #[test]
-    fn install_failure_diagnosis_lists_ambiguous_catalog_ids() {
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let handle = InProcessBroker::new()
-            .unwrap()
-            .connect(InProcessCallerPeer::authenticated(1001))
-            .unwrap()
-            .begin(BrokerOperationKind::Resolve)
-            .unwrap();
-        let server_handle = handle.clone();
-        let (release_tx, release_rx) = mpsc::sync_channel(0);
-        let worker = thread::spawn(move || {
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::Begin(BrokerOperationKind::Resolve)
-            );
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::InfoCatalog(
-                    server_handle.clone(),
-                    vec![CatalogInfoRequest::new("requests").unwrap()],
-                )
-            );
-            let candidates = ["python3Packages.requests", "pythonPackages.requests"]
-                .map(|package| {
-                    CatalogPackageSummary::new(
-                        package,
-                        "requests",
-                        "2.32.4",
-                        "Python HTTP library",
-                        vec![String::from("Apache-2.0")],
-                        true,
-                        false,
-                    )
-                    .unwrap()
-                })
-                .to_vec();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::CatalogInfo(vec![
-                    CatalogInfoReport::new(
-                        ChannelSequence::from_u64(42).unwrap(),
-                        CatalogInfoLookup::Ambiguous(candidates),
-                    )
-                    .unwrap(),
-                ]),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Cancel(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Cancelled);
-            release_rx.recv().unwrap();
-        });
-        let selector = PackageSelector::new(
-            SelectorId::new("sel_test_0").unwrap(),
-            SelectorInput::new("requests").unwrap(),
-            VersionPreference::Any,
-            OutputSelection::default_selection(),
-            SourceRevision::CurrentChannel,
-        );
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-
-        let error = diagnose_install_selector_error(&mut broker, &[selector]);
-        release_tx.send(()).unwrap();
-        worker.join().unwrap();
-        let error = error.unwrap();
-        assert_eq!(error.exit_code(), ExitCode::ResolveFailed);
-        assert_eq!(
-            error.hint(),
-            "choose one: python3Packages.requests, pythonPackages.requests"
-        );
-    }
-
-    #[test]
-    fn catalog_info_renders_only_product_metadata() {
-        let summary = CatalogPackageSummary::new(
-            "ripgrep",
-            "ripgrep",
-            "14.1.1",
-            "fast search",
-            vec![String::from("MIT")],
-            true,
-            false,
-        )
-        .unwrap();
-        let info = CatalogPackageInfo::new(
-            summary,
-            "https://example.invalid/ripgrep",
-            vec![String::from("out")],
-            vec![String::from("linux-x86-64")],
-            REVISION,
-            "2026-08-12T00:00:00Z",
-        )
-        .unwrap();
-        let report = CatalogInfoReport::new(
-            ChannelSequence::from_u64(42).unwrap(),
-            CatalogInfoLookup::Found(Box::new(info)),
-        )
-        .unwrap();
-
-        let result = info_catalog_reports(&[report]).unwrap();
-        let encoded = serde_json::to_string(result.fields()).unwrap();
-        assert!(encoded.contains("ripgrep"));
-        assert!(!encoded.contains("/nix/store/"));
-        assert!(!encoded.contains("drvPath"));
-        assert!(!encoded.contains("narHash"));
-    }
-
-    #[test]
-    fn catalog_outdated_uses_one_closed_resolve_transaction() {
-        const NEW_REVISION: &str = "89abcdef0123456789abcdef0123456789abcdef";
-        let (mut server, client) = UnixStream::pair().unwrap();
-        let handle = InProcessBroker::new()
-            .unwrap()
-            .connect(InProcessCallerPeer::authenticated(1001))
-            .unwrap()
-            .begin(BrokerOperationKind::Resolve)
-            .unwrap();
-        let server_handle = handle.clone();
-        let (release_tx, release_rx) = mpsc::sync_channel(0);
-        let worker = thread::spawn(move || {
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::Begin(BrokerOperationKind::Resolve)
-            );
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::Started(server_handle.clone()),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(
-                request,
-                CliBrokerRequest::InfoCatalog(
-                    server_handle.clone(),
-                    vec![CatalogInfoRequest::new("ripgrep").unwrap()],
-                )
-            );
-            let summary = CatalogPackageSummary::new(
-                "ripgrep",
-                "ripgrep",
-                "15.0.0",
-                "fast search",
-                vec![String::from("MIT")],
-                true,
-                false,
-            )
-            .unwrap();
-            let info = CatalogPackageInfo::new(
-                summary,
-                "https://example.invalid/ripgrep",
-                vec![String::from("out")],
-                vec![String::from("linux-x86-64")],
-                NEW_REVISION,
-                "2026-08-12T00:00:00Z",
-            )
-            .unwrap();
-            write_response(
-                &mut server,
-                request_id,
-                CliBrokerResponse::CatalogInfo(vec![
-                    CatalogInfoReport::new(
-                        ChannelSequence::from_u64(43).unwrap(),
-                        CatalogInfoLookup::Found(Box::new(info)),
-                    )
-                    .unwrap(),
-                ]),
-            );
-            let (request_id, request) = read_request(&mut server);
-            assert_eq!(request, CliBrokerRequest::Complete(server_handle));
-            write_response(&mut server, request_id, CliBrokerResponse::Completed);
-            release_rx.recv().unwrap();
-        });
-        let installed = vec![InstalledCatalogPackage::new(
-            AttributePath::new("ripgrep").unwrap(),
-            String::from("ripgrep"),
-            PackageVersion::new("14.1.1"),
-            NixpkgsRevision::new(REVISION).unwrap(),
-            true,
-        )];
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-
-        let result = run_catalog_outdated(
-            &mut broker,
-            ChannelSequence::from_u64(42).unwrap(),
-            installed,
-        );
-        release_tx.send(()).unwrap();
-        worker.join().unwrap();
-        let result = result.unwrap();
-        assert_eq!(result.fields()["channelSequence"], 43);
-        assert_eq!(result.fields()["entries"][0]["kind"], "major");
-        assert_eq!(result.fields()["entries"][0]["pinned"], true);
-    }
-
-    #[test]
-    fn empty_catalog_outdated_skips_broker_access() {
-        let (_server, client) = UnixStream::pair().unwrap();
-        let mut broker = BrokerLifecycleClient::from_stream(client);
-        let result = run_catalog_outdated(
-            &mut broker,
-            ChannelSequence::from_u64(42).unwrap(),
-            Vec::new(),
-        )
-        .unwrap();
-        assert_eq!(result.fields()["channelSequence"], 42);
-        assert_eq!(result.fields()["entries"], serde_json::json!([]));
-    }
-
-    #[test]
-    fn alternate_state_roots_are_read_only_for_broker_backed_mutations() {
-        let home = TempDir::new().unwrap();
-        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let uid = fs::symlink_metadata(home.path()).unwrap().uid();
-        let state = home.path().join("alternate");
-        let cli =
-            Cli::try_parse(["pkg", "gc", "--yes", "--state", state.to_str().unwrap()]).unwrap();
-        let location = StateLocation::alternate(state.clone(), home.path().to_path_buf());
-        let mut engine = CoreEngine::new(LocalStateOperations::open(&location, uid).unwrap());
-
-        let error = engine.execute(&CommandRequest::from_cli(&cli)).unwrap_err();
-        assert_eq!(error.exit_code(), ExitCode::Config);
-        assert!(!state.join("journal/operations.jsonl").exists());
-    }
-
-    #[test]
-    fn upgrade_re_resolves_attributes_inside_the_broker() {
-        let selector = PackageSelector::new(
-            SelectorId::new("sel_hello").unwrap(),
-            SelectorInput::new("hello").unwrap(),
-            VersionPreference::Any,
-            OutputSelection::default_selection(),
-            SourceRevision::CurrentChannel,
-        )
-        .with_attribute(AttributePath::new("hello").unwrap())
-        .unwrap();
-
-        let broker = broker_upgrade_selectors(std::slice::from_ref(&selector));
-
-        assert_eq!(broker.len(), 1);
-        assert_eq!(broker[0].id(), selector.id());
-        assert_eq!(broker[0].selector(), selector.selector());
-        assert_eq!(
-            broker[0].version_preference(),
-            selector.version_preference()
-        );
-        assert_eq!(broker[0].outputs(), selector.outputs());
-        assert!(selector.attribute().is_some());
-        assert!(broker[0].attribute().is_none());
-        assert!(matches!(
-            broker[0].source_revision(),
-            SourceRevision::CurrentChannel
-        ));
-    }
-
-    #[test]
-    fn outdated_attributes_are_exact_and_fail_closed() {
-        let result = CommandResult::new(
-            "1 package(s) outdated",
-            Map::from_iter([("entries".into(), json!([{"package": "hello"}]))]),
-            Vec::new(),
-        )
-        .unwrap();
-        assert_eq!(
-            outdated_attributes(&result).unwrap(),
-            BTreeSet::from(["hello".to_owned()])
-        );
-
-        let malformed = CommandResult::new(
-            "invalid",
-            Map::from_iter([("entries".into(), json!([{}]))]),
-            Vec::new(),
-        )
-        .unwrap();
-        assert!(outdated_attributes(&malformed).is_err());
-    }
-}
+mod tests;

@@ -6,12 +6,18 @@ use nix::{
     errno::Errno,
     poll::{PollFd, PollFlags, PollTimeout, poll},
 };
+
+/// Callback that authorizes one removal of a root set.
+type RemoveRootSetAuthorizer = fn(&RemoveRootSetRequest) -> Result<(), MaintenanceError>;
 use pkg_nix::{
-    AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, CallerMaintenance, Digest,
-    MaintenanceAdapter, MaintenanceCapability, MaintenanceError, MaintenanceErrorCode, NixVersion,
-    PINNED_NIX_VERSION, ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsRequest,
-    RootSetAttestationRequest, RootSetPublicationRequest, RootSetTransitionRequest, System,
-    VerifiedRepairScope, verify_authenticated_managed_install_from_receipt,
+    AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, BuildCacheProbe, BuildRequest,
+    CallerMaintenance, Digest, HELPER_FRAME_PAYLOAD_LIMIT, MaintenanceAdapter,
+    MaintenanceCapability, MaintenanceError, MaintenanceErrorCode, NixAdapter, NixAdapterError,
+    NixVersion, NixpkgsMetadataRunner, PINNED_NIX_VERSION, ProductFrameCodec, RealNixAdapter,
+    RemoveRootSetRequest, RepairStorePathsRequest, RootNixFailure, RootNixOperation,
+    RootNixRequest, RootNixResponse, RootSetAttestationRequest, RootSetPublicationRequest,
+    RootSetTransitionRequest, System, VerifiedRepairScope,
+    verify_authenticated_managed_install_from_receipt,
 };
 use pkg_store::{StateLayout, authorize_generation_root_removal};
 use std::{
@@ -21,12 +27,15 @@ use std::{
     io::{self, Read, Write},
     os::fd::AsFd,
     os::unix::net::UnixStream,
-    sync::{Mutex, MutexGuard},
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
     time::{Duration, Instant},
 };
 
 const FRAME_HEADER_BYTES: usize = 20;
-const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 const FRAME_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -81,6 +90,68 @@ pub trait BrokerHelperDispatch: Send + Sync {
         &self,
         request: BrokerHelperRequest,
     ) -> Result<BrokerHelperResponse, MaintenanceError>;
+
+    /// Dispatches one non-streaming root Nix operation against its absolute deadline.
+    fn dispatch_root_nix(&self, request: RootNixRequest, deadline: Instant) -> RootNixResponse {
+        let _ = deadline;
+        root_nix_failure(request.operation(), RootNixFailure::Inactive)
+    }
+
+    /// Dispatches the sole streaming helper operation.
+    fn dispatch_build(
+        &self,
+        request: &BuildRequest,
+        deadline: Instant,
+        cancelled: &AtomicBool,
+        progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> RootNixResponse {
+        let _ = (request, deadline, cancelled, progress);
+        root_nix_failure(RootNixOperation::Build, RootNixFailure::Inactive)
+    }
+}
+
+#[derive(Debug)]
+enum RootNixState {
+    Inactive,
+    #[allow(dead_code, reason = "DN09 keeps production activation closed")]
+    Standard(RealNixAdapter),
+}
+
+pub struct ConnectionLimiter {
+    active: Mutex<usize>,
+    limit: usize,
+}
+
+impl ConnectionLimiter {
+    pub(super) fn new(limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            active: Mutex::new(0),
+            limit,
+        })
+    }
+
+    pub(super) fn try_acquire(self: &Arc<Self>) -> Option<ConnectionPermit> {
+        let mut active = lock_recover(&self.active);
+        if *active >= self.limit {
+            return None;
+        }
+        *active += 1;
+        drop(active);
+        Some(ConnectionPermit {
+            limiter: Arc::clone(self),
+        })
+    }
+}
+
+pub struct ConnectionPermit {
+    limiter: Arc<ConnectionLimiter>,
+}
+
+impl Drop for ConnectionPermit {
+    fn drop(&mut self) {
+        let mut active = lock_recover(&self.limiter.active);
+        *active = active.saturating_sub(1);
+    }
 }
 
 /// Filesystem-backed Linux helper session using PR-39 capability state.
@@ -89,7 +160,10 @@ pub struct LinuxHelperSession {
     roots: LinuxRootSetStore,
     root_transactions: Mutex<()>,
     capability_owners: Mutex<BTreeMap<MaintenanceCapability, u32>>,
-    authorize_removal: fn(&RemoveRootSetRequest) -> Result<(), MaintenanceError>,
+    authorize_removal: RemoveRootSetAuthorizer,
+    nix: RootNixState,
+    nix_operations: Arc<ConnectionLimiter>,
+    nix_builds: Arc<ConnectionLimiter>,
 }
 
 impl fmt::Debug for LinuxHelperSession {
@@ -101,13 +175,16 @@ impl fmt::Debug for LinuxHelperSession {
 impl LinuxHelperSession {
     /// Binds an authenticated PR-39 helper session to the real root filesystem.
     #[must_use]
-    pub const fn new(authenticated: AuthenticatedHelper, roots: LinuxRootSetStore) -> Self {
+    pub fn new(authenticated: AuthenticatedHelper, roots: LinuxRootSetStore) -> Self {
         Self {
             authenticated,
             roots,
             root_transactions: Mutex::new(()),
             capability_owners: Mutex::new(BTreeMap::new()),
             authorize_removal: authorize_production_removal,
+            nix: RootNixState::Inactive,
+            nix_operations: ConnectionLimiter::new(4),
+            nix_builds: ConnectionLimiter::new(1),
         }
     }
 
@@ -119,6 +196,9 @@ impl LinuxHelperSession {
             root_transactions: Mutex::new(()),
             capability_owners: Mutex::new(BTreeMap::new()),
             authorize_removal: |_| Ok(()),
+            nix: RootNixState::Inactive,
+            nix_operations: ConnectionLimiter::new(4),
+            nix_builds: ConnectionLimiter::new(1),
         }
     }
 
@@ -273,6 +353,118 @@ impl LinuxHelperSession {
         )
         .is_ok()
     }
+
+    fn root_adapter(
+        &self,
+        operation: RootNixOperation,
+        deadline: Instant,
+    ) -> Result<RealNixAdapter, RootNixFailure> {
+        let RootNixState::Standard(adapter) = &self.nix else {
+            return Err(RootNixFailure::Inactive);
+        };
+        adapter
+            .for_root_operation(operation, deadline)
+            .map_err(|error| RootNixFailure::Adapter(error.code()))
+    }
+
+    fn dispatch_root_nix_until(
+        &self,
+        request: RootNixRequest,
+        deadline: Instant,
+    ) -> RootNixResponse {
+        let operation = request.operation();
+        if operation == RootNixOperation::Build {
+            return root_nix_failure(operation, RootNixFailure::Busy);
+        }
+        let Some(_permit) = self.nix_operations.try_acquire() else {
+            return root_nix_failure(operation, RootNixFailure::Busy);
+        };
+        let adapter = match self.root_adapter(operation, deadline) {
+            Ok(adapter) => adapter,
+            Err(failure) => return root_nix_failure(operation, failure),
+        };
+        match request {
+            RootNixRequest::Version => {
+                adapter_result(operation, adapter.version(), RootNixResponse::Version)
+            }
+            RootNixRequest::Evaluate(request) => adapter_result(
+                operation,
+                adapter.evaluate_derivation(&request),
+                RootNixResponse::Evaluate,
+            ),
+            RootNixRequest::PathInfo(path) => adapter_result(
+                operation,
+                adapter.path_info(&path),
+                RootNixResponse::PathInfo,
+            ),
+            RootNixRequest::Substitute(path) => adapter_result(
+                operation,
+                adapter.substitute(&path),
+                RootNixResponse::Substitute,
+            ),
+            RootNixRequest::SubstituteMany(paths) => adapter_result(
+                operation,
+                adapter.substitute_many(&paths),
+                RootNixResponse::SubstituteMany,
+            ),
+            RootNixRequest::Build(_) => root_nix_failure(operation, RootNixFailure::Busy),
+            RootNixRequest::Verify(request) => {
+                adapter_result(operation, adapter.verify(&request), RootNixResponse::Verify)
+            }
+            RootNixRequest::Gc => adapter_result(operation, adapter.gc(), RootNixResponse::Gc),
+            RootNixRequest::CacheInspect(paths) => cache_result(
+                operation,
+                adapter.inspect(&paths),
+                RootNixResponse::CacheInspect,
+            ),
+            RootNixRequest::CacheInspectClosures(roots) => cache_result(
+                operation,
+                adapter.inspect_download_closures(&roots),
+                RootNixResponse::CacheInspectClosures,
+            ),
+            RootNixRequest::NixpkgsMetadata(pin) => adapter.run_metadata(&pin).map_or_else(
+                |error| root_nix_failure(operation, RootNixFailure::Nixpkgs(error.code())),
+                RootNixResponse::NixpkgsMetadata,
+            ),
+            RootNixRequest::ClosureForRoots(roots) => adapter_result(
+                operation,
+                adapter.closure_for_roots(&roots),
+                RootNixResponse::ClosureForRoots,
+            ),
+            RootNixRequest::RepairPlan(request) => adapter_result(
+                operation,
+                adapter.repair_plan_proof(&request),
+                RootNixResponse::RepairPlan,
+            ),
+        }
+    }
+}
+
+const fn root_nix_failure(operation: RootNixOperation, failure: RootNixFailure) -> RootNixResponse {
+    RootNixResponse::Failed { operation, failure }
+}
+
+const fn adapter_failure(operation: RootNixOperation, error: &NixAdapterError) -> RootNixResponse {
+    root_nix_failure(operation, RootNixFailure::Adapter(error.code()))
+}
+
+fn adapter_result<T>(
+    operation: RootNixOperation,
+    result: Result<T, NixAdapterError>,
+    success: fn(T) -> RootNixResponse,
+) -> RootNixResponse {
+    result.map_or_else(|error| adapter_failure(operation, &error), success)
+}
+
+fn cache_result<T>(
+    operation: RootNixOperation,
+    result: Result<T, pkg_nix::BuildCacheError>,
+    success: fn(T) -> RootNixResponse,
+) -> RootNixResponse {
+    result.map_or_else(
+        |error| root_nix_failure(operation, RootNixFailure::Cache(error.code())),
+        success,
+    )
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -352,7 +544,44 @@ impl BrokerHelperDispatch for LinuxHelperSession {
             BrokerHelperRequest::VerifyManagedOwnership(digest) => Ok(
                 BrokerHelperResponse::ManagedOwnership(Self::verify_managed_ownership(digest)),
             ),
+            BrokerHelperRequest::RootNix(request) => {
+                let deadline = Instant::now()
+                    .checked_add(request.operation().server_budget())
+                    .ok_or_else(platform_failure)?;
+                Ok(BrokerHelperResponse::RootNix(Box::new(
+                    self.dispatch_root_nix_until(request, deadline),
+                )))
+            }
         }
+    }
+
+    fn dispatch_root_nix(&self, request: RootNixRequest, deadline: Instant) -> RootNixResponse {
+        self.dispatch_root_nix_until(request, deadline)
+    }
+
+    fn dispatch_build(
+        &self,
+        request: &BuildRequest,
+        deadline: Instant,
+        cancelled: &AtomicBool,
+        progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> RootNixResponse {
+        let operation = RootNixOperation::Build;
+        let Some(_operation_permit) = self.nix_operations.try_acquire() else {
+            return root_nix_failure(operation, RootNixFailure::Busy);
+        };
+        let Some(_build_permit) = self.nix_builds.try_acquire() else {
+            return root_nix_failure(operation, RootNixFailure::Busy);
+        };
+        let adapter = match self.root_adapter(operation, deadline) {
+            Ok(adapter) => adapter,
+            Err(failure) => return root_nix_failure(operation, failure),
+        };
+        adapter_result(
+            operation,
+            adapter.build_with_progress_cancelled(request, cancelled, progress),
+            RootNixResponse::Build,
+        )
     }
 }
 
@@ -377,11 +606,29 @@ pub fn serve_helper_connection(
 }
 
 fn serve_helper_connection_with_timeouts(
+    stream: UnixStream,
+    broker_uid: u32,
+    dispatcher: &dyn BrokerHelperDispatch,
+    read_timeout: Duration,
+    write_timeout: Duration,
+) -> Result<(), HelperTransportError> {
+    serve_helper_connection_with_root_budget(
+        stream,
+        broker_uid,
+        dispatcher,
+        read_timeout,
+        write_timeout,
+        None,
+    )
+}
+
+fn serve_helper_connection_with_root_budget(
     mut stream: UnixStream,
     broker_uid: u32,
     dispatcher: &dyn BrokerHelperDispatch,
     read_timeout: Duration,
     write_timeout: Duration,
+    root_budget: Option<Duration>,
 ) -> Result<(), HelperTransportError> {
     authenticate_broker(&stream, broker_uid)
         .map_err(|()| HelperTransportError::new(HelperTransportErrorCode::UnauthenticatedPeer))?;
@@ -397,7 +644,7 @@ fn serve_helper_connection_with_timeouts(
             .try_into()
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?,
     ) as usize;
-    if payload_length > MAX_FRAME_PAYLOAD_BYTES {
+    if payload_length > HELPER_FRAME_PAYLOAD_LIMIT {
         return Err(HelperTransportError::new(
             HelperTransportErrorCode::InvalidFrame,
         ));
@@ -408,13 +655,84 @@ fn serve_helper_connection_with_timeouts(
     read_exact_until(&mut stream, &mut frame[FRAME_HEADER_BYTES..], read_deadline)?;
     let (request_id, request) = ProductFrameCodec::decode_helper_request(&frame)
         .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-    let response = dispatcher
-        .dispatch(request)
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
+    let root_deadline = match &request {
+        BrokerHelperRequest::RootNix(request) => Some(deadline_after(
+            root_budget.unwrap_or_else(|| request.operation().server_budget()),
+        )?),
+        _ => None,
+    };
+    let response = match request {
+        BrokerHelperRequest::RootNix(RootNixRequest::Build(request)) => {
+            let deadline = root_deadline.ok_or_else(transport_failure)?;
+            let monitor = stream.try_clone().map_err(|_| {
+                HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
+            })?;
+            let mut progress = |estimate| {
+                let response = BrokerHelperResponse::RootNix(Box::new(
+                    RootNixResponse::BuildProgress(estimate),
+                ));
+                let encoded = ProductFrameCodec::encode_helper_response(request_id, &response)
+                    .map_err(|_| NixAdapterError::OperationFailed)?;
+                let write_deadline = deadline
+                    .min(deadline_after(write_timeout).map_err(|_| NixAdapterError::Timeout)?);
+                write_all_until(&mut stream, &encoded, write_deadline)
+                    .map_err(|_| NixAdapterError::Unavailable)
+            };
+            let cancelled = AtomicBool::new(false);
+            let complete = AtomicBool::new(false);
+            let terminal = thread::scope(|scope| {
+                let watcher = scope.spawn(|| monitor_peer(monitor, &complete, &cancelled));
+                let terminal =
+                    dispatcher.dispatch_build(&request, deadline, &cancelled, &mut progress);
+                complete.store(true, Ordering::Release);
+                watcher.join().map_err(|_| {
+                    HelperTransportError::new(HelperTransportErrorCode::HelperFailure)
+                })?;
+                Ok(terminal)
+            })?;
+            if !matches!(
+                terminal,
+                RootNixResponse::Build(_)
+                    | RootNixResponse::Failed {
+                        operation: RootNixOperation::Build,
+                        ..
+                    }
+            ) {
+                return Err(HelperTransportError::new(
+                    HelperTransportErrorCode::HelperFailure,
+                ));
+            }
+            BrokerHelperResponse::RootNix(Box::new(terminal))
+        }
+        BrokerHelperRequest::RootNix(request) => BrokerHelperResponse::RootNix(Box::new(
+            dispatcher.dispatch_root_nix(request, root_deadline.ok_or_else(transport_failure)?),
+        )),
+        request => dispatcher
+            .dispatch(request)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?,
+    };
     let encoded = ProductFrameCodec::encode_helper_response(request_id, &response)
         .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-    let write_deadline = deadline_after(write_timeout)?;
+    let write_deadline = match root_deadline {
+        Some(deadline) => deadline.min(deadline_after(write_timeout)?),
+        None => deadline_after(write_timeout)?,
+    };
     write_all_until(&mut stream, &encoded, write_deadline)
+}
+
+fn monitor_peer(mut stream: UnixStream, complete: &AtomicBool, cancelled: &AtomicBool) {
+    let mut unexpected = [0_u8; 1];
+    while !complete.load(Ordering::Acquire) {
+        match stream.read(&mut unexpected) {
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Ok(_) | Err(_) => {
+                cancelled.store(true, Ordering::Release);
+                return;
+            }
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn write_all_until(
@@ -523,7 +841,8 @@ mod tests {
     use crate::platform::linux::LinuxRootSetStore;
     use nix::unistd::Uid;
     use pkg_nix::{
-        GenerationId, InProcessHelper, InProcessPeer, PolicyVersion, RepairMode, RootName, RootSet,
+        BuildApprovalReceipt, DerivationPath, DerivedOutputTarget, GenerationId, InProcessHelper,
+        InProcessPeer, OperationId, OutputName, PolicyVersion, RepairMode, RootName, RootSet,
         RootSetEntry, StorePath, VerifiedRepairScope,
     };
     use std::{
@@ -580,6 +899,23 @@ mod tests {
         Ok(RootSetPublicationRequest::new(root_set, None, added_names)?)
     }
 
+    fn build_request() -> Result<BuildRequest, Box<dyn Error>> {
+        Ok(BuildRequest::new(
+            vec![DerivedOutputTarget::new(
+                DerivationPath::new(StorePath::new(&format!(
+                    "/nix/store/{STORE_HASH}-hello.drv"
+                ))?)?,
+                vec![OutputName::new("out")?],
+            )?],
+            System::X8664Linux,
+            BuildApprovalReceipt::new(
+                OperationId::new("op-helper-limit")?,
+                Digest::from_bytes([0x42; 32]),
+                PolicyVersion::from_u64(7).ok_or("invalid policy version")?,
+            ),
+        )?)
+    }
+
     fn transition_source() -> Result<RootSet, Box<dyn Error>> {
         Ok(RootSet::new(
             501,
@@ -610,6 +946,88 @@ mod tests {
         frame.resize(FRAME_HEADER_BYTES + length, 0);
         stream.read_exact(&mut frame[FRAME_HEADER_BYTES..])?;
         Ok(frame)
+    }
+
+    #[test]
+    fn dn09_production_shape_rejects_root_nix() -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new()?;
+        let broker_uid = Uid::current().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
+        let session = LinuxHelperSession::new(authenticated, root_store);
+
+        assert_eq!(
+            session.dispatch(BrokerHelperRequest::RootNix(RootNixRequest::Version))?,
+            BrokerHelperResponse::RootNix(Box::new(RootNixResponse::Failed {
+                operation: RootNixOperation::Version,
+                failure: RootNixFailure::Inactive,
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nix_limits_reject_busy_recover_and_do_not_block_root_publication()
+    -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new()?;
+        let broker_uid = Uid::current().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let root_store = LinuxRootSetStore::new_at(scratch.0.clone(), broker_uid)?;
+        let session = LinuxHelperSession::new_for_test(authenticated, root_store);
+
+        let operation_permits = (0..4)
+            .map(|_| {
+                session
+                    .nix_operations
+                    .try_acquire()
+                    .ok_or("operation permit unavailable")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            session.dispatch_root_nix_until(
+                RootNixRequest::Version,
+                Instant::now() + RootNixOperation::Version.server_budget(),
+            ),
+            RootNixResponse::Failed {
+                operation: RootNixOperation::Version,
+                failure: RootNixFailure::Busy,
+            }
+        );
+        drop(operation_permits);
+        assert_eq!(
+            session.dispatch_root_nix_until(
+                RootNixRequest::Version,
+                Instant::now() + RootNixOperation::Version.server_budget(),
+            ),
+            RootNixResponse::Failed {
+                operation: RootNixOperation::Version,
+                failure: RootNixFailure::Inactive,
+            }
+        );
+
+        let _build_permit = session
+            .nix_builds
+            .try_acquire()
+            .ok_or("build permit unavailable")?;
+        let build_response = session.dispatch_build(
+            &build_request()?,
+            Instant::now() + RootNixOperation::Build.server_budget(),
+            &AtomicBool::new(false),
+            &mut |_| Ok(()),
+        );
+        assert_eq!(
+            build_response,
+            RootNixResponse::Failed {
+                operation: RootNixOperation::Build,
+                failure: RootNixFailure::Busy,
+            }
+        );
+        let report =
+            session.dispatch(BrokerHelperRequest::PublishRootSet(publication(roots()?)?))?;
+        assert!(matches!(report, BrokerHelperResponse::RootSetPublished(_)));
+        Ok(())
     }
 
     #[test]
@@ -689,7 +1107,7 @@ mod tests {
             serve_helper_connection(server, broker_uid, server_dispatcher.as_ref())
         });
         let mut header = [0_u8; FRAME_HEADER_BYTES];
-        let oversized_length = u32::try_from(MAX_FRAME_PAYLOAD_BYTES)?.saturating_add(1);
+        let oversized_length = u32::try_from(HELPER_FRAME_PAYLOAD_LIMIT)?.saturating_add(1);
         header[16..20].copy_from_slice(&oversized_length.to_be_bytes());
         client.write_all(&header)?;
         let result = worker
@@ -727,6 +1145,78 @@ mod tests {
             Err(HelperTransportErrorCode::TransportFailure)
         );
         assert_eq!(dispatcher.0.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    struct ProgressFlood(AtomicUsize);
+
+    impl BrokerHelperDispatch for ProgressFlood {
+        fn dispatch(
+            &self,
+            _request: BrokerHelperRequest,
+        ) -> Result<BrokerHelperResponse, MaintenanceError> {
+            Err(MaintenanceError::backend_failure())
+        }
+
+        fn dispatch_build(
+            &self,
+            _request: &BuildRequest,
+            _deadline: Instant,
+            _cancelled: &AtomicBool,
+            progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+        ) -> RootNixResponse {
+            for value in 1..1_000_000 {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                let Ok(estimate) = pkg_nix::BuildProgressEstimate::new(value) else {
+                    return root_nix_failure(
+                        RootNixOperation::Build,
+                        RootNixFailure::Adapter(pkg_nix::NixAdapterErrorCode::OperationFailed),
+                    );
+                };
+                if progress(estimate).is_err() {
+                    return root_nix_failure(
+                        RootNixOperation::Build,
+                        RootNixFailure::Adapter(pkg_nix::NixAdapterErrorCode::Unavailable),
+                    );
+                }
+            }
+            root_nix_failure(RootNixOperation::Build, RootNixFailure::Busy)
+        }
+    }
+
+    #[test]
+    fn repeated_progress_cannot_refresh_the_root_operation_deadline() -> Result<(), Box<dyn Error>>
+    {
+        let broker_uid = Uid::current().as_raw();
+        let request = ProductFrameCodec::encode_helper_request(
+            17,
+            &BrokerHelperRequest::RootNix(RootNixRequest::Build(build_request()?)),
+        )?;
+        let dispatcher = Arc::new(ProgressFlood(AtomicUsize::new(0)));
+        let (server, mut stalled_client) = UnixStream::pair()?;
+        let worker_dispatcher = Arc::clone(&dispatcher);
+        let started = Instant::now();
+        let worker = thread::spawn(move || {
+            serve_helper_connection_with_root_budget(
+                server,
+                broker_uid,
+                worker_dispatcher.as_ref(),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                Some(Duration::from_millis(50)),
+            )
+        });
+        stalled_client.write_all(&request)?;
+
+        let result = worker
+            .join()
+            .map_err(|_| io::Error::other("helper thread panicked"))?;
+        assert_eq!(
+            result.map_err(HelperTransportError::code),
+            Err(HelperTransportErrorCode::TransportFailure)
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(dispatcher.0.load(Ordering::Relaxed) < 999_999);
         Ok(())
     }
 
@@ -777,7 +1267,7 @@ mod tests {
         let (mut server, _client) = UnixStream::pair()?;
         socket2::SockRef::from(&server).set_send_buffer_size(4096)?;
         server.set_nonblocking(true)?;
-        let bytes = vec![0_u8; MAX_FRAME_PAYLOAD_BYTES];
+        let bytes = vec![0_u8; HELPER_FRAME_PAYLOAD_LIMIT];
         assert_eq!(
             write_all_until(
                 &mut server,

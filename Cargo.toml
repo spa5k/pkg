@@ -29,3 +29,34 @@ edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
 publish = false
+
+# Strict lint policy (ADR 0005): the deny set here is clean in every target on
+# every supported platform. Lints with known production debt live in the
+# G-QUALITY gate (tools/quality) as denies on lib/bins, warns with a checked-in
+# ratchet baseline, or both. Suppressions are expensive: every allow/expect
+# must carry a `reason` (clippy::allow_attributes_without_reason).
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "deny"
+unused_must_use = "deny"
+unused_imports = "deny"
+unused_variables = "deny"
+unused_assignments = "deny"
+dead_code = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+allow_attributes_without_reason = "deny"
+derive_partial_eq_without_eq = "deny"
+float_cmp = "deny"
+fn_params_excessive_bools = "deny"
+future_not_send = "deny"
+missing_fields_in_debug = "deny"
+missing_panics_doc = "deny"
+must_use_candidate = "deny"
+needless_lifetimes = "deny"
+needless_pass_by_value = "deny"
+redundant_closure_for_method_calls = "deny"
+redundant_pub_crate = "deny"
+suspicious_operation_groupings = "deny"
+too_long_first_doc_paragraph = "deny"

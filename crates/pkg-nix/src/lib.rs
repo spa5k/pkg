@@ -56,6 +56,7 @@ pub mod maintenance;
 pub mod managed;
 pub mod nixpkgs;
 pub mod real;
+pub mod root_nix;
 pub mod substitute;
 pub mod verify;
 
@@ -93,12 +94,12 @@ pub use contract::{
 pub use error::{MalformedKind, NixAdapterError, NixAdapterErrorCode};
 pub use framing::{
     BrokerHelperRequest, BrokerHelperResponse, BuildApprovalRequest, BuildExecutionErrorCode,
-    BuildRootPublicationErrorCode, CacheInstallErrorCode, ChannelRefreshErrorCode,
-    ChannelRefreshMode, ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, FrameError,
-    FrameErrorCode, GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
-    GenerationRootTransitionErrorCode, InstallDownloadProgress, ProductFrameCodec,
-    RepairGenerationErrorCode, RepairGenerationReport, RepairGenerationRequest,
-    RepairGenerationStatus,
+    BuildPreparationErrorCode, BuildRootPublicationErrorCode, CacheInstallErrorCode,
+    ChannelRefreshErrorCode, ChannelRefreshMode, ChannelRefreshReport, CliBrokerRequest,
+    CliBrokerResponse, FrameError, FrameErrorCode, GenerationRootAttestationErrorCode,
+    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HELPER_FRAME_PAYLOAD_LIMIT,
+    InstallDownloadProgress, ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport,
+    RepairGenerationRequest, RepairGenerationStatus,
 };
 pub use maintenance::{
     AuthenticatedHelper, CallerMaintenance, GenerationId, InProcessHelper, InProcessPeer,
@@ -111,7 +112,6 @@ pub use maintenance::{
 pub use managed::accounts::{
     BuildAccount, BuildAccountDirectory, BuildAccountError, observe_build_accounts,
 };
-pub use managed::daemon::{DaemonError, DaemonErrorCode, ManagedDaemon, ProductionManagedDaemon};
 pub use managed::detect::{
     DetectionDisposition, DetectionFinding, DetectionReport, FindingKind, detect_unmanaged_nix,
 };
@@ -125,11 +125,8 @@ pub use managed::ownership::{
 pub use managed::provision::{
     AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
     InstallerProvisionRequest, InstallerRepository, ProvisionError, ProvisionErrorCode,
-    ProvisionRequest, ProvisionSpec, ProvisionedBootstrap, ProvisionedBootstrapTransaction,
-    ProvisionedRuntime, authenticate_installer_bundle, authenticate_installer_bundle_blocking,
-    load_authenticated_installer_bundle_blocking, provision_authenticated_installer_bundle,
-    provision_authenticated_installer_bundle_transaction, provision_managed_nix_from_bundle,
-    provision_managed_nix_from_bundle_blocking, reauthenticate_installer_bundle,
+    ProvisionSpec, authenticate_installer_bundle, authenticate_installer_bundle_blocking,
+    load_authenticated_installer_bundle_blocking, reauthenticate_installer_bundle,
     reauthenticate_installer_bundle_blocking, recover_interrupted_provision_workspace,
     verify_authenticated_managed_install, verify_authenticated_managed_install_from_receipt,
     verify_provision_workspace_absent,
@@ -137,19 +134,24 @@ pub use managed::provision::{
 pub use managed::runtime_archive::{
     RuntimeManifestError, RuntimeManifestErrorCode, build_upstream_runtime_asset_manifest,
 };
+
 pub use managed::uninstall::{
     ExclusiveManagedRuntimeRemoval, ManagedRuntimeRemoval, ManagedRuntimeRemovalError,
     ManagedRuntimeRemovalErrorCode, ManagedRuntimeRemovalOutcome, prepare_managed_runtime_removal,
     prepare_managed_runtime_removal_without_receipt,
 };
 pub use nixpkgs::{
-    NixpkgsFetchSpec, NixpkgsMetadataCommand, NixpkgsMetadataRunner, NixpkgsPin,
-    NixpkgsSourceError, NixpkgsSourceErrorCode, PinnedNixpkgsSource, VerifiedNixpkgsSource,
-    fetch_pinned_nixpkgs, fetch_verified_nixpkgs,
+    NixpkgsFetchSpec, NixpkgsMetadataRunner, NixpkgsPin, NixpkgsSourceError,
+    NixpkgsSourceErrorCode, PinnedNixpkgsSource, VerifiedNixpkgsSource, fetch_pinned_nixpkgs,
+    fetch_verified_nixpkgs,
 };
 pub use real::{
     MAX_REPAIR_EXECUTION_DURATION, PINNED_NIX_VERSION, RealNixAdapter, RootNixGcExecutor,
-    RootNixRepairExecutor,
+    RootNixRepairExecutor, STANDARD_DETERMINATE_NIX_VERSION,
+};
+pub use root_nix::{
+    RootNixFailure, RootNixOperation, RootNixRequest, RootNixResponse, RootRepairPlanProof,
+    RootRepairPlanRequest,
 };
 pub use substitute::{
     CacheMiss, SubstituteError, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,

@@ -54,7 +54,7 @@ enum StateLocationKind {
 impl StateLocation {
     /// Builds an alternate location. Filesystem validation remains mandatory.
     #[must_use]
-    pub fn alternate(state_root: PathBuf, home: PathBuf) -> Self {
+    pub const fn alternate(state_root: PathBuf, home: PathBuf) -> Self {
         Self {
             state_root,
             home,
@@ -241,6 +241,50 @@ impl PathObservation {
     }
 }
 
+/// Whether a raw Nix CLI binary is visible through the supplied PATH.
+///
+/// This is a closed UX-only warning signal, not a trust decision. It never
+/// executes `which`, `nix`, or any external tool, never canonicalizes PATH
+/// entries, and never retains or prints a discovered path or entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawNixVisibility {
+    /// No raw Nix CLI binary is visible through a readable absolute entry.
+    Hidden,
+    /// A raw Nix CLI binary is visible through a readable absolute entry.
+    Visible,
+    /// A PATH entry is relative or unreadable; the verdict is not trustworthy.
+    Unknown,
+}
+
+/// Inspect the supplied PATH for raw Nix CLI visibility.
+///
+/// Entries are split with [`std::env::split_paths`] and probed with
+/// `is_executable`, never executed. A relative or unreadable entry yields
+/// [`RawNixVisibility::Unknown`]. An absolute readable entry that contains an
+/// executable `nix` binary yields [`RawNixVisibility::Visible`]. An absolute
+/// readable entry without one is not a signal.
+#[must_use]
+pub fn observe_raw_nix_visibility(path: &str) -> RawNixVisibility {
+    let mut unknown = false;
+    for entry in std::env::split_paths(path) {
+        if !entry.is_absolute() {
+            unknown = true;
+            continue;
+        }
+        match is_executable(&entry.join("nix")) {
+            Ok(true) => return RawNixVisibility::Visible,
+            Ok(false) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => unknown = true,
+        }
+    }
+    if unknown {
+        RawNixVisibility::Unknown
+    } else {
+        RawNixVisibility::Hidden
+    }
+}
+
 fn inspect_shadowing(expected_bin: &Path, earlier_entries: &[PathBuf]) -> (usize, bool) {
     let commands = match fs::read_dir(expected_bin) {
         Ok(commands) => commands,
@@ -293,115 +337,4 @@ fn is_executable(path: &Path) -> std::io::Result<bool> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use super::*;
-
-    #[test]
-    fn snippets_are_dynamic_idempotent_and_never_expose_managed_nix() {
-        for host in [HostFamily::Linux, HostFamily::MacOs] {
-            let snippet = shell_init(host);
-            assert!(snippet.contains("current/bin"));
-            assert!(snippet.contains("case \":$PATH:\""));
-            assert!(snippet.contains("$HOME"));
-            assert!(!snippet.contains("XDG_DATA_HOME"));
-            assert!(!snippet.contains("/nix/store"));
-            assert!(!snippet.contains("/opt/pkg/nix"));
-        }
-    }
-
-    #[test]
-    fn production_uses_system_home_not_a_spoofed_environment_home() {
-        let spoofed_environment_home = Path::new("/spoofed");
-        let location = resolve_state_location_from(
-            HostFamily::Linux,
-            None,
-            Some(PathBuf::from("/home/u")),
-            Some(PathBuf::new()),
-        )
-        .unwrap();
-        assert!(location.is_production());
-        assert_eq!(location.state_root(), Path::new("/home/u/.local/share/pkg"));
-        assert_ne!(
-            location.state_root(),
-            production_state_root(HostFamily::Linux, spoofed_environment_home)
-        );
-        assert_eq!(
-            production_state_root(HostFamily::MacOs, Path::new("/Users/u")),
-            Path::new("/Users/u/Library/Application Support/pkg")
-        );
-        assert_eq!(location.trusted_boundary(), Path::new("/home/u"));
-    }
-
-    #[test]
-    fn explicit_roots_are_absolute_alternates() {
-        let location = resolve_state_location_from(
-            HostFamily::Linux,
-            None,
-            Some(PathBuf::from("/home/u")),
-            Some(PathBuf::from("/custom/pkg")),
-        )
-        .unwrap();
-        assert!(!location.is_production());
-        assert_eq!(location.state_root(), Path::new("/custom/pkg"));
-        assert_eq!(location.trusted_boundary(), Path::new("/home/u"));
-
-        let relative = resolve_state_location_from(
-            HostFamily::Linux,
-            Some(Path::new("relative")),
-            Some(PathBuf::from("/home/u")),
-            None,
-        );
-        assert_eq!(relative, Err(StateLocationError::RelativeAlternateRoot));
-    }
-
-    #[test]
-    fn missing_system_home_fails_without_an_environment_fallback() {
-        assert_eq!(
-            resolve_state_location_from(HostFamily::Linux, None, None, None),
-            Err(StateLocationError::SystemHomeUnavailable)
-        );
-    }
-
-    #[test]
-    fn path_observation_uses_exact_components_only() {
-        let expected = Path::new("/user/pkg/current/bin");
-        let observation = PathObservation::inspect(
-            expected,
-            [
-                Path::new("/usr/bin"),
-                expected,
-                Path::new("/user/pkg/current/bin-extra"),
-                expected,
-            ],
-        );
-        assert_eq!(observation.first_index(), Some(1));
-        assert_eq!(observation.duplicate_count(), 2);
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn path_observation_counts_managed_commands_shadowed_earlier() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let root = std::env::temp_dir().join(format!(
-            "pkg-path-shadow-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let earlier = root.join("earlier");
-        let expected = root.join("current/bin");
-        fs::create_dir_all(&earlier).unwrap();
-        fs::create_dir_all(&expected).unwrap();
-        for path in [earlier.join("rg"), expected.join("rg"), expected.join("fd")] {
-            fs::write(&path, "#!/bin/sh\n").unwrap();
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-        }
-
-        let observation = PathObservation::inspect(&expected, [&earlier, &expected]);
-        assert_eq!(observation.shadowed_count(), 1);
-        assert!(observation.shadow_scan_complete());
-        fs::remove_dir_all(root).unwrap();
-    }
-}
+mod tests;

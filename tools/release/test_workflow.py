@@ -1,6 +1,12 @@
 """Structural release-workflow security contract."""
 
+import hashlib
+import json
 from pathlib import Path
+import re
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 
@@ -8,6 +14,34 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 PUBLISH_WORKFLOW = (ROOT / ".github/workflows/publish-release.yml").read_text(
     encoding="utf-8"
+)
+LINUX_HARNESS = (ROOT / "tests/linux-clean-host/run.sh").read_text(encoding="utf-8")
+LINUX_STAGE = (ROOT / "tests/linux-clean-host/Dockerfile.stage").read_text(
+    encoding="utf-8"
+)
+LINUX_HOST = (ROOT / "tests/linux-clean-host/Dockerfile").read_text(encoding="utf-8")
+PROOF_PUBLICATION = (
+    ROOT / "tools/release/examples/linux_proof_publication.rs"
+).read_text(encoding="utf-8")
+PROOF_SERVER = (ROOT / "tools/release/serve_proof_channel.py").read_text(
+    encoding="utf-8"
+)
+MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
+    encoding="utf-8"
+)
+MANIFEST_SEALER = textwrap.dedent(
+    PUBLISH_WORKFLOW.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+)
+DISPATCH_GATE = textwrap.dedent(
+    PUBLISH_WORKFLOW.split("- name: Validate immutable proof dispatch", 1)[1]
+    .split("        run: |\n", 1)[1]
+    .split("\n\n  sign-and-publish:", 1)[0]
+)
+PROOF_WORKFLOW_REF = "refs/tags/dn16-proof-workflow-1"
+PROOF_WORKFLOW_SHA = "1" * 40
+PROOF_IDENTITY = (
+    "https://github.com/spa5k/pkg/.github/workflows/"
+    "publish-release.yml@refs/tags/dn16-proof-workflow-1"
 )
 
 
@@ -40,11 +74,32 @@ class ReleaseWorkflowTests(unittest.TestCase):
             WORKFLOW,
         )
         self.assertIn("PKG_CARGO_ABOUT:", WORKFLOW)
-        self.assertIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
+        self.assertIn("cargo-about --version 0.9.1", WORKFLOW)
         self.assertIn("cargo fetch --locked", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux-candidate", WORKFLOW)
-        self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux.tar.gz", WORKFLOW)
+        self.assertNotIn("PKG_NIX_SOURCE_ARCHIVE:", WORKFLOW)
+        self.assertNotIn("nix-2.34.8", WORKFLOW)
+        candidate = "pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz"
+        self.assertIn(f"proof-artifacts/{candidate}", WORKFLOW)
+        self.assertIn('"pkg-${RELEASE_TAG}-linux-x86_64.tar.gz"', PUBLISH_WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.7-linux-x86_64-candidate", WORKFLOW)
+        self.assertIn("proof-artifacts/evidence/", WORKFLOW)
+        self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux-proof", WORKFLOW)
         self.assertIn("retention-days: 7", WORKFLOW)
+        self.assertIn("set -o pipefail", WORKFLOW)
+        self.assertIn('tee "$RUNNER_TEMP/dn15-runtime.log"', WORKFLOW)
+        self.assertIn("proof-artifacts/evidence/dn15-runtime.log", WORKFLOW)
+        self.assertIn("if: ${{ always() }}", WORKFLOW)
+        self.assertIn("if: ${{ success() }}", WORKFLOW)
+        self.assertIn(
+            "- name: Retain the candidate without publishing it\n"
+            "        if: ${{ success() }}",
+            WORKFLOW,
+        )
+        self.assertIn(
+            "- name: Retain the proof evidence without publishing it\n"
+            "        if: ${{ always() }}",
+            WORKFLOW,
+        )
 
     def test_production_linux_input_is_manual_fixed_and_not_published(self) -> None:
         self.assertIn("production-linux:", WORKFLOW)
@@ -58,6 +113,333 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("pkg-v0.1.0-alpha.7-production-linux-input", WORKFLOW)
         self.assertIn("pkg-release-index", WORKFLOW)
 
+    def test_linux_uninstall_uses_plain_terminal_exec_status(self) -> None:
+        self.assertEqual(
+            LINUX_HARNESS.count(
+                'docker exec "$container" /usr/local/bin/pkg --yes uninstall'
+            ),
+            1,
+        )
+        self.assertIn("uninstall_status=$?", LINUX_HARNESS)
+        self.assertIn('exit "$uninstall_status"', LINUX_HARNESS)
+        self.assertIn("flag=--json", LINUX_HARNESS)
+        self.assertIn("flag=--jsonl", LINUX_HARNESS)
+        self.assertEqual(
+            LINUX_HARNESS.count(
+                'docker exec "$container" /usr/local/bin/pkg "$flag" --yes uninstall'
+            ),
+            1,
+        )
+        self.assertIn('test "$status" -eq 78', LINUX_HARNESS)
+        self.assertIn('test ! -s "$stderr"', LINUX_HARNESS)
+        self.assertIn('cmp "$before" "$after"', LINUX_HARNESS)
+        self.assertNotIn("pkg-after-uninstall", LINUX_HARNESS)
+        self.assertNotIn("idempotent uninstall", LINUX_HARNESS)
+
+    def test_linux_proof_binary_is_isolated_and_every_blocker_runs_twice(self) -> None:
+        build = (
+            "cargo test --locked --release \\\n"
+            "        --target x86_64-unknown-linux-gnu \\\n"
+            "        -p pkg-installer --lib --no-run --message-format=json"
+        )
+        self.assertEqual(LINUX_STAGE.count(build), 1)
+        self.assertIn(
+            'COPY test-binaries/pkg-installer-lib-tests '
+            '/usr/local/libexec/pkg-installer-lib-tests',
+            LINUX_HOST,
+        )
+        self.assertIn('cp -a "$raw_stage/test-binaries" "$artifact_context/"', LINUX_HARNESS)
+        self.assertGreater(
+            LINUX_HARNESS.index('package_alpha_candidate.py'),
+            LINUX_HARNESS.index('docker build'),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index('package_alpha_candidate.py'),
+            LINUX_HARNESS.index('cp -a "$raw_stage/test-binaries"'),
+        )
+        self.assertIn('test_binary_sha256', LINUX_HARNESS)
+        self.assertIn("meta\\tsigned_commit", LINUX_HARNESS)
+        self.assertIn("meta\\tdocker_server_arch", LINUX_HARNESS)
+        self.assertIn("file /usr/local/libexec/pkg-installer-lib-tests", LINUX_HARNESS)
+        self.assertIn(
+            "readelf --file-header /usr/local/libexec/pkg-installer-lib-tests",
+            LINUX_HARNESS,
+        )
+        self.assertIn("ldd /usr/local/libexec/pkg-installer-lib-tests", LINUX_HARNESS)
+        for case in (
+            "persisted-started-refusal",
+            "structured-json",
+            "structured-jsonl",
+            "sync-exec-restore",
+            "sync-exec-restore-failure",
+            "post-unlink-clear-restore",
+            "real-sigkill-unmarked",
+            "later-outcome-unknown",
+            "vendor-action-last",
+            "install-process-controls",
+            "product-upgrade",
+            "product-asset-repair",
+            "package-operations",
+            "package-repair",
+            "package-roots-gc",
+            "old-runtime-absent",
+            "terminal-uninstall",
+        ):
+            self.assertIn(case, LINUX_HARNESS)
+        self.assertIn('"$results")" -eq 34', LINUX_HARNESS)
+        self.assertIn(
+            "test ! -e /opt/pkg/nix\n    test ! -L /opt/pkg/nix", LINUX_HARNESS
+        )
+        for evidence in (
+            "docker-inspect.json",
+            "docker.log",
+            "final-state.txt",
+            "residue.txt",
+        ):
+            self.assertIn(evidence, LINUX_HARNESS)
+        cleanup = LINUX_HARNESS.split("cleanup() {\n", 1)[1].split("\n}\n", 1)[0]
+        self.assertLess(
+            cleanup.index('capture_failure "$status"'), cleanup.index("stop_container")
+        )
+        self.assertLess(
+            LINUX_HARNESS.index('mkdir -p -m 0700 "$artifact_output/evidence"'),
+            LINUX_HARNESS.index('echo "+ stage x86_64 Linux release inputs"'),
+        )
+        self.assertIn(
+            "--legacy-linux-fixture /publication-1 /runtime /binaries-n",
+            LINUX_STAGE,
+        )
+        self.assertIn(
+            "--legacy-linux-fixture /publication-2 /runtime /binaries-n-plus-1",
+            LINUX_STAGE,
+        )
+        self.assertIn(
+            "copy_sigstore_bundle(artifact_root, &bundle, &bundle_input)",
+            PROOF_PUBLICATION,
+        )
+        self.assertIn("dn16_refuses_placeholder_and_plain_text_bundles", PROOF_PUBLICATION)
+        for command in ("--prepare-dn16-manifest", "--publish-dn16"):
+            self.assertIn(command, PROOF_PUBLICATION)
+        for mode in ("Dn16Prepared", "Dn16Sealed", "LegacyLinuxFixture"):
+            self.assertIn(mode, PROOF_PUBLICATION)
+        self.assertIn("ReleaseManifest::from_prepared_json", PROOF_PUBLICATION)
+        self.assertNotIn("ProofInputMode::Dn16Fixture", PROOF_PUBLICATION)
+        self.assertIn('"bootstrap": (3, bootstrap)', PROOF_SERVER)
+        self.assertIn('"activate": (2, activate)', PROOF_SERVER)
+        self.assertNotIn('"start":', PROOF_SERVER)
+        self.assertIn("--bind-dn16-pair", PROOF_PUBLICATION)
+        self.assertIn("validate_pair(staging)", PROOF_SERVER)
+        self.assertIn("verify_remote(state[\"url\"], records)", PROOF_SERVER)
+        self.assertIn('state["phase"] = "active"', PROOF_SERVER)
+        self.assertLess(
+            PROOF_SERVER.index("verify_remote(state[\"url\"], records)"),
+            PROOF_SERVER.index('state["phase"] = "active"'),
+        )
+        self.assertIn("$name.sigstore.json", LINUX_STAGE)
+        for name in (
+            "pkg-aarch64-darwin",
+            "pkg-x86_64-linux",
+            "pkg-installer-x86_64-linux",
+        ):
+            self.assertIn(name, LINUX_STAGE)
+        self.assertIn(
+            "PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/./",
+            LINUX_STAGE,
+        )
+        self.assertIn("assert_publication_product /srv/pkg-releases/2", LINUX_HARNESS)
+        self.assertIn("--repair-product-assets", LINUX_HARNESS)
+        self.assertIn("cmp \"$product_evidence/repair-active-before.json\"", LINUX_HARNESS)
+        self.assertIn(
+            'printf "damaged broker service\\n" > '
+            "/usr/lib/systemd/system/pkg-nix-broker.service",
+            LINUX_HARNESS,
+        )
+        self.assertIn(
+            'sha256sum /usr/lib/systemd/system/pkg-nix-broker.service',
+            LINUX_HARNESS,
+        )
+        activation = LINUX_HARNESS.split("activate_product_units() {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertLess(
+            activation.index('assert_publication_product "$1"'),
+            activation.index("systemctl daemon-reload"),
+        )
+        receipt_files = LINUX_HARNESS.split("file_paths = {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        receipt_records = LINUX_HARNESS.split("expected_records = {\n", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertEqual(len(set(re.findall(r'"([a-z0-9-]+)"', receipt_records))), 32)
+        self.assertIn("records.keys() != expected_records", LINUX_HARNESS)
+        for asset in (
+            "root-helper-binary",
+            "broker-binary",
+            "nix-config",
+            "helper-socket-unit",
+            "helper-service-unit",
+            "broker-socket-unit",
+            "broker-service-unit",
+            "runtime-tmpfiles",
+            "profile-snippet",
+            "product-cli",
+        ):
+            self.assertIn(f'"{asset}"', receipt_files)
+        self.assertIn(
+            'records[asset].get("contentDigest") != receipt_digest(actual)',
+            LINUX_HARNESS,
+        )
+        self.assertIn("path.resolve(strict=True)", LINUX_HARNESS)
+        self.assertIn('print("gc-root\\t"', LINUX_HARNESS)
+        active_repair = LINUX_HARNESS.split(
+            'echo "+ active product repair refusal without mutation"', 1
+        )[1].split('echo "+ authenticated offline product asset repair"', 1)[0]
+        active_sequence = """snapshot_package_state "$product_evidence/package-state-before-active-repair-refusal.txt"
+set +e
+docker exec "$container" "$n_plus_1_installer" --repair-product-assets \\
+    > "$product_evidence/repair-active.stdout" \\
+    2> "$product_evidence/repair-active.stderr"
+repair_active_status=$?
+set -e
+snapshot_package_state "$product_evidence/package-state-after-active-repair-refusal.txt"
+cmp "$product_evidence/package-state-before-active-repair-refusal.txt" \\
+    "$product_evidence/package-state-after-active-repair-refusal.txt"""
+        self.assertIn(active_sequence, active_repair)
+
+        offline_repair = LINUX_HARNESS.split(
+            'echo "+ authenticated offline product asset repair"', 1
+        )[1].split('echo "+ activate verified repaired N+1 product services"', 1)[0]
+        offline_sequence = """snapshot_package_state "$product_evidence/package-state-before-offline-repair.txt"
+repair_output=$(docker exec "$container" "$n_plus_1_installer" --repair-product-assets)
+snapshot_package_state "$product_evidence/package-state-after-repair.txt"
+cmp "$product_evidence/package-state-before-offline-repair.txt" \\
+    "$product_evidence/package-state-after-repair.txt"""
+        self.assertIn(offline_sequence, offline_repair)
+
+        active_before = (
+            'snapshot_package_state '
+            '"$product_evidence/package-state-before-active-repair-refusal.txt"'
+        )
+        upgrade_compare = (
+            'cmp "$product_evidence/package-state-before.txt" '
+            '\\\n    "$product_evidence/package-state-after-upgrade.txt"'
+        )
+        intervening_list = (
+            'docker exec "$container" su - proof-user -c '
+            '"/usr/local/bin/pkg --json list"'
+        )
+        upgrade_compare_index = LINUX_HARNESS.index(upgrade_compare)
+        intervening_list_index = LINUX_HARNESS.index(
+            intervening_list, upgrade_compare_index
+        )
+        self.assertLess(upgrade_compare_index, intervening_list_index)
+        self.assertLess(intervening_list_index, LINUX_HARNESS.index(active_before))
+        self.assertEqual(LINUX_HARNESS.count("run_filter_group product-upgrade"), 1)
+        self.assertEqual(
+            LINUX_HARNESS.count("run_filter_group product-asset-repair"), 1
+        )
+        self.assertGreaterEqual(LINUX_HARNESS.count("assert_product_units_offline"), 3)
+        self.assertLess(
+            LINUX_HARNESS.index("assert_publication_product /srv/pkg-releases/2"),
+            LINUX_HARNESS.index('echo "+ activate verified N+1 product services"'),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index("package-state-after-upgrade.txt"),
+            LINUX_HARNESS.index("run_filter_group product-upgrade"),
+        )
+        self.assertLess(
+            LINUX_HARNESS.index("package-state-after-repair.txt"),
+            LINUX_HARNESS.index("run_filter_group product-asset-repair"),
+        )
+        service_digest = (
+            'test "$(docker exec "$container" sha256sum '
+            '/usr/lib/systemd/system/pkg-nix-broker.service | awk \'{print $1}\')" '
+            '= "$repair_service"'
+        )
+        self.assertIn(service_digest, LINUX_HARNESS)
+        self.assertLess(
+            LINUX_HARNESS.index(service_digest),
+            LINUX_HARNESS.index("run_filter_group product-asset-repair"),
+        )
+
+        block = LINUX_HARNESS.split('cat > "$filters" <<\'EOF\'\n', 1)[1].split(
+            "\nEOF\n", 1
+        )[0]
+        filters = [line.split("\t", 1)[1] for line in block.splitlines()]
+        expected_filters = {
+            "linux_backend::tests::production_preflight_refuses_persisted_started_without_later_mutation",
+            "bootstrap::tests::started_handoff_preflight_prevents_product_mutation_and_vendor_start",
+            "determinate_handoff::tests::handoff_record_is_atomic_private_strict_and_contains_no_receipt_data",
+            "determinate_handoff::tests::synchronous_exec_error_restores_exact_accepted_handoff",
+            "determinate_handoff::tests::synchronous_exec_and_restore_failure_is_fail_closed",
+            "determinate_handoff::tests::every_post_unlink_clear_failure_restores_exact_accepted_handoff",
+            "determinate_handoff::tests::sigkill_after_consume_leaves_unmarked_determinate_state_for_install_refusal",
+            "determinate_handoff::tests::sigkill_after_vendor_exec_keeps_later_outcome_unknown_and_refuses_retry",
+            "determinate_handoff::tests::terminal_uninstall_consumes_handoff_only_after_identity_revalidation",
+            "uninstall::tests::linux_vendor_uninstall_is_the_terminal_action",
+            "uninstall::tests::service_stop_is_a_cleanup_barrier",
+            "uninstall::tests::cleanup_failures_do_not_skip_residue_verification",
+            "uninstall::tests::product_cleanup_failure_never_dispatches_terminal_vendor",
+            "uninstall::tests::residue_failure_has_priority_and_success_is_total",
+            "determinate::tests::operations_use_exact_argv_and_cleared_environment",
+            "determinate::tests::terminal_uninstall_uses_exact_fixed_argv_and_environment",
+            "determinate::tests::executable_authentication_rejects_every_invalid_shape",
+            "determinate::tests::both_large_streams_are_drained_and_capped",
+            "determinate::tests::exit_nonzero_and_signal_are_distinct",
+            "determinate::tests::late_success_is_not_reclassified_as_failure",
+            "determinate::tests::synchronous_supervisor_reaps_child_before_return",
+            "determinate::tests::diagnostics_never_expose_captured_bytes_or_paths",
+            "bootstrap::tests::only_exit_zero_is_vendor_success",
+            "determinate::tests::spawn_failure_is_reported_without_terminal_outcome",
+            "determinate::tests::wait_failure_is_reported_after_one_vendor_start",
+            "bootstrap::tests::nonzero_exit_preserves_started_and_refuses_retry",
+            "bootstrap::tests::signal_preserves_started_and_refuses_retry",
+            "bootstrap::tests::real_supervisor_loss_preserves_started_and_refuses_second_start",
+            "bootstrap::tests::crash_before_vendor_start_preserves_started_and_refuses_retry",
+            "bootstrap::tests::crash_after_exit_zero_before_acceptance_preserves_started",
+            "bootstrap::tests::failed_installed_state_validation_preserves_started",
+            "bootstrap::tests::exit_zero_plus_installed_state_validation_accepts_handoff_exactly_once",
+            "bootstrap::tests::spawn_and_wait_uncertainty_preserves_started_and_refuses_retry",
+            "bootstrap::tests::failed_product_receipt_publication_keeps_accepted_handoff",
+            "bootstrap::tests::journaled_existing_product_update_stays_offline_and_never_starts_determinate",
+            "bootstrap::tests::offline_state_change_blocks_the_next_file_mutation_and_rollback",
+            "bootstrap::tests::failed_existing_product_update_restores_files_and_stays_offline",
+            "platform::linux::assets::tests::ordinary_upgrade_requires_different_release_and_prior_content_identity",
+            "linux_filesystem::tests::upgrade_replaces_only_exact_prior_owned_bytes_and_rolls_back",
+            "bootstrap::tests::journaled_offline_repair_changes_product_files_without_service_mutation",
+            "bootstrap::tests::journaled_repair_refuses_non_offline_service_state_before_mutation",
+            "bootstrap::tests::failed_offline_repair_rolls_forward_files_without_service_mutation",
+            "linux_systemd::tests::offline_preflight_is_query_only_and_refuses_every_non_offline_state",
+            "platform::linux::assets::tests::repair_requires_same_release_and_created_product_ownership",
+            "platform::linux::assets::tests::repair_requires_a_receipt_and_non_files_never_gain_implicit_ownership",
+            "linux_filesystem::tests::repair_roll_forward_replaces_unknown_binaries_and_changed_or_missing_units",
+        }
+        self.assertEqual(len(filters), 46)
+        self.assertEqual(len(set(filters)), 46)
+        self.assertEqual(set(filters), expected_filters)
+
+    def test_macos_proof_authenticates_release_checksums_before_use(self) -> None:
+        authenticate = MACOS_WORKFLOW.split(
+            "- name: Download and authenticate signed release inputs", 1
+        )[1].split("- name: Run the destructive proof", 1)[0]
+        self.assertIn("SHA256SUMS.sigstore.json", authenticate)
+        self.assertIn(
+            'cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json"',
+            authenticate,
+        )
+        self.assertLess(
+            authenticate.index('"$dir/SHA256SUMS" >/dev/null'),
+            authenticate.index('for asset in "pkg-$version-preview.pkg"'),
+        )
+        for asset in (
+            '"pkg-$version-preview.pkg"',
+            "pkg-aarch64-darwin",
+            "release-manifest.json",
+        ):
+            self.assertIn(asset, authenticate)
+        self.assertIn('manifest.get("releaseId") != sys.argv[2]', authenticate)
+
     def test_production_signing_is_keyless_protected_and_closed(self) -> None:
         self.assertIn("environment: release", PUBLISH_WORKFLOW)
         self.assertIn("contents: write", PUBLISH_WORKFLOW)
@@ -68,24 +450,210 @@ class ReleaseWorkflowTests(unittest.TestCase):
             PUBLISH_WORKFLOW,
         )
         self.assertIn("test \"$draft\" = true", PUBLISH_WORKFLOW)
+        self.assertNotIn("\n      publish:\n", PUBLISH_WORKFLOW)
         self.assertIn("releases/${RELEASE_ID}", PUBLISH_WORKFLOW)
         self.assertNotIn("releases/tags/${RELEASE_TAG}", PUBLISH_WORKFLOW)
-        self.assertIn("generated_count != 0 && generated_count", PUBLISH_WORKFLOW)
+        self.assertIn(
+            "payload_generated_count != 0 && payload_generated_count != payload_generated_total",
+            PUBLISH_WORKFLOW,
+        )
+        self.assertIn('checksum_signature_present" == true', PUBLISH_WORKFLOW)
         self.assertIn('if [[ ! -f "$bundle" ]]', PUBLISH_WORKFLOW)
-        self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 1)
-        self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 1)
+        self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 2)
+        self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 2)
         self.assertIn("--yes", PUBLISH_WORKFLOW)
         self.assertIn("--certificate-identity", PUBLISH_WORKFLOW)
         self.assertIn("--certificate-oidc-issuer", PUBLISH_WORKFLOW)
         self.assertIn("sha256sum --check --strict", PUBLISH_WORKFLOW)
-        self.assertIn(".trustedRootSha256", PUBLISH_WORKFLOW)
-        self.assertIn('test "${#cli_artifacts[@]}" = 3', PUBLISH_WORKFLOW)
-        self.assertIn(".sigstoreBundleSha256", PUBLISH_WORKFLOW)
-        self.assertIn("diff -u expected-assets actual-assets", PUBLISH_WORKFLOW)
-        self.assertIn("final-assets", PUBLISH_WORKFLOW)
+        self.assertIn('manifest.get("trustedRootSha256")', PUBLISH_WORKFLOW)
+        self.assertIn('len(records) != len(expected)', PUBLISH_WORKFLOW)
+        self.assertIn('"sigstoreBundleSha256"', PUBLISH_WORKFLOW)
+        self.assertIn("SHA256SUMS.sigstore.json", PUBLISH_WORKFLOW)
+        manifest_validation = PUBLISH_WORKFLOW.split(
+            "- name: Seal and validate the draft manifest", 1
+        )[1].split("- name: Upload verified signatures and checksums", 1)[0]
+        self.assertNotIn("if:", manifest_validation)
+        self.assertIn('rm -f release-assets/SHA256SUMS.sigstore.json', manifest_validation)
+        self.assertIn("MANIFEST_INPUT_STATE=prepared", PUBLISH_WORKFLOW)
+        self.assertIn("MANIFEST_INPUT_STATE=sealed", PUBLISH_WORKFLOW)
+        self.assertLess(
+            PUBLISH_WORKFLOW.index("- name: Sign and verify all payloads"),
+            PUBLISH_WORKFLOW.index("- name: Seal and validate the draft manifest"),
+        )
+        checksum_signing = PUBLISH_WORKFLOW.split(
+            "- name: Upload verified signatures and checksums", 1
+        )[1]
+        checksum_inputs = checksum_signing.split("checksum_assets=(", 1)[1].split(
+            "\n          )", 1
+        )[0]
+        self.assertNotIn("SHA256SUMS.sigstore.json", checksum_inputs)
+        self.assertLess(
+            checksum_signing.index('>SHA256SUMS)'),
+            checksum_signing.index("checksum_bundle=release-assets/SHA256SUMS.sigstore.json"),
+        )
+        self.assertIn("release-assets/SHA256SUMS.sigstore.json", checksum_signing)
+        upload_inputs = checksum_signing.split("upload_assets=(", 1)[1].split(
+            "\n          )", 1
+        )[0]
+        self.assertIn("release-assets/release-manifest.json", upload_inputs)
         self.assertIn("gh release upload", PUBLISH_WORKFLOW)
-        self.assertIn("gh release edit", PUBLISH_WORKFLOW)
+        self.assertNotIn("gh release edit", PUBLISH_WORKFLOW)
+        self.assertNotIn("--draft=false", PUBLISH_WORKFLOW)
+        self.assertEqual(PUBLISH_WORKFLOW.count('--jq .draft)'), 2)
+        self.assertLess(
+            checksum_signing.rindex('--jq .draft)'),
+            checksum_signing.index('gh release upload'),
+        )
         self.assertNotIn("gh release", WORKFLOW)
+
+    def test_proof_signer_ref_sha_and_identity_fail_closed(self) -> None:
+        environment = {
+            "GITHUB_REF": PROOF_WORKFLOW_REF,
+            "GITHUB_SHA": PROOF_WORKFLOW_SHA,
+            "GITHUB_WORKFLOW_SHA": PROOF_WORKFLOW_SHA,
+            "GITHUB_REPOSITORY": "spa5k/pkg",
+            "EXPECTED_SHA": PROOF_WORKFLOW_SHA,
+            "COSIGN_CERTIFICATE_IDENTITY": PROOF_IDENTITY,
+            "COSIGN_CERTIFICATE_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
+        }
+
+        accepted = subprocess.run(
+            ["bash"], input=DISPATCH_GATE, text=True, env=environment
+        )
+        self.assertEqual(accepted.returncode, 0)
+
+        for name, value in (
+            ("GITHUB_REF", "refs/heads/main"),
+            ("GITHUB_REPOSITORY", "example/pkg"),
+            ("GITHUB_SHA", "2" * 40),
+            ("GITHUB_WORKFLOW_SHA", "3" * 40),
+            ("EXPECTED_SHA", "not-a-commit"),
+            (
+                "COSIGN_CERTIFICATE_IDENTITY",
+                "https://github.com/spa5k/pkg/.github/workflows/"
+                "publish-release.yml@refs/heads/main",
+            ),
+            ("COSIGN_CERTIFICATE_OIDC_ISSUER", "https://issuer.example.test"),
+        ):
+            refused_environment = environment | {name: value}
+            refused = subprocess.run(
+                ["bash"],
+                input=DISPATCH_GATE,
+                text=True,
+                env=refused_environment,
+            )
+            self.assertNotEqual(refused.returncode, 0, name)
+
+        self.assertIn("expected_sha:", PUBLISH_WORKFLOW)
+        self.assertIn(
+            "github.ref == 'refs/tags/dn16-proof-workflow-1'",
+            PUBLISH_WORKFLOW,
+        )
+        self.assertIn("github.sha == inputs.expected_sha", PUBLISH_WORKFLOW)
+        self.assertIn("github.workflow_sha == inputs.expected_sha", PUBLISH_WORKFLOW)
+        self.assertNotIn("${{ vars.COSIGN_CERTIFICATE_IDENTITY }}", PUBLISH_WORKFLOW)
+        self.assertNotIn("${{ vars.COSIGN_CERTIFICATE_OIDC_ISSUER }}", PUBLISH_WORKFLOW)
+        self.assertNotIn("@refs/heads/main", PUBLISH_WORKFLOW)
+
+    def test_proof_signer_has_no_publication_path(self) -> None:
+        trigger = PUBLISH_WORKFLOW.split("permissions:", 1)[0]
+        self.assertNotIn("publish:", trigger)
+        self.assertNotIn("gh release edit", PUBLISH_WORKFLOW)
+        self.assertNotIn("--draft=false", PUBLISH_WORKFLOW)
+        self.assertNotIn("draft=false", PUBLISH_WORKFLOW)
+        self.assertEqual(PUBLISH_WORKFLOW.count("gh release upload"), 1)
+        self.assertEqual(PUBLISH_WORKFLOW.count('test "$draft" = true'), 1)
+        self.assertEqual(PUBLISH_WORKFLOW.count('--jq .draft)'), 2)
+
+    def test_manifest_sealer_bootstraps_once_and_rejects_partial_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trusted_root = root / "1.root.json"
+            trusted_root.write_bytes(b"trusted root\n")
+            artifacts = (
+                ("pkg", "aarch64-darwin", "pkg-aarch64-darwin"),
+                ("pkg", "x86_64-linux", "pkg-x86_64-linux"),
+                ("pkg-install", "x86_64-linux", "pkg-installer-x86_64-linux"),
+            )
+            records = []
+            for kind, system, name in artifacts:
+                payload = f"payload {name}\n".encode()
+                (root / name).write_bytes(payload)
+                (root / f"{name}.sigstore.json").write_bytes(
+                    f"bundle {name}\n".encode()
+                )
+                records.append(
+                    {
+                        "kind": kind,
+                        "system": system,
+                        "source": f"cli/{name}",
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "length": len(payload),
+                    }
+                )
+            manifest_path = root / "release-manifest.json"
+            prepared = {
+                "releaseId": "v0.1.0-alpha.8",
+                "trustedRootSha256": hashlib.sha256(
+                    trusted_root.read_bytes()
+                ).hexdigest(),
+                "cliArtifacts": records,
+            }
+            manifest_path.write_text(json.dumps(prepared), encoding="utf-8")
+            command = [
+                "python3",
+                "-",
+                str(manifest_path),
+                str(trusted_root),
+                str(root),
+                "v0.1.0-alpha.8",
+                "prepared",
+            ]
+
+            first = subprocess.run(
+                command,
+                input=MANIFEST_SEALER,
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+            self.assertEqual(first.stdout, "prepared\n")
+            sealed_bytes = manifest_path.read_bytes()
+            sealed = json.loads(sealed_bytes)
+            for record in sealed["cliArtifacts"]:
+                bundle = root / record["sigstoreBundle"].removeprefix("cli/")
+                self.assertEqual(
+                    record["sigstoreBundleSha256"],
+                    hashlib.sha256(bundle.read_bytes()).hexdigest(),
+                )
+                self.assertEqual(record["sigstoreBundleLength"], bundle.stat().st_size)
+
+            command[-1] = "sealed"
+            second = subprocess.run(
+                command,
+                input=MANIFEST_SEALER,
+                text=True,
+                check=True,
+                capture_output=True,
+            )
+            self.assertEqual(second.stdout, "sealed\n")
+            self.assertEqual(manifest_path.read_bytes(), sealed_bytes)
+
+            partial = prepared.copy()
+            partial["cliArtifacts"] = [record.copy() for record in records]
+            partial["cliArtifacts"][0]["sigstoreBundle"] = (
+                "cli/pkg-aarch64-darwin.sigstore.json"
+            )
+            manifest_path.write_text(json.dumps(partial), encoding="utf-8")
+            command[-1] = "prepared"
+            refused = subprocess.run(
+                command,
+                input=MANIFEST_SEALER,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("already has Sigstore bundle identity", refused.stderr)
 
 
 if __name__ == "__main__":

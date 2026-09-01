@@ -6,7 +6,7 @@ WORKDIR /workspace
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-        gcc-x86-64-linux-gnu libc6-dev-amd64-cross \
+        gcc-x86-64-linux-gnu libc6-dev-amd64-cross python3 \
     && rm -rf /var/lib/apt/lists/* \
     && rustup target add x86_64-unknown-linux-gnu
 
@@ -31,32 +31,131 @@ RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
         -p pkg-installer --bin pkg-nix-broker \
         -p pkg-installer --bin pkg-root-helper \
         -p pkg-installer --bin pkg-install \
-    && mkdir /binaries \
+    && mkdir -p /binaries-n/determinate \
     && cp /target/x86_64-unknown-linux-gnu/release/pkg \
         /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
         /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
-        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries/
-RUN curl -fL --retry 3 \
-    --output /tmp/nix.tar.xz \
-    https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-x86_64-linux.tar.xz \
-    && printf '%s  %s\n' \
-        2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464 \
-        /tmp/nix.tar.xz \
-        | sha256sum --check --strict
+        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries-n/ \
+    && cp /binaries-n/pkg /binaries-n/pkg-x86_64-linux \
+    && cp /binaries-n/pkg-install /binaries-n/pkg-installer-x86_64-linux \
+    && printf 'aarch64-darwin CLI fixture\n' > /binaries-n/pkg-aarch64-darwin \
+    && for name in pkg-aarch64-darwin pkg-x86_64-linux pkg-installer-x86_64-linux; do \
+        printf '{"proofFixture":"%s"}\n' "$name" > "/binaries-n/$name.sigstore.json"; \
+    done
+RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
+    PKG_RELEASE_TUF_ROOT_JSON="$(cat /proof-signing/root.json)" \
+    PKG_RELEASE_CHANNEL_METADATA_URL=https://127.0.0.1:8443/metadata/./ \
+    PKG_RELEASE_CHANNEL_TARGETS_URL=https://127.0.0.1:8443/targets/./ \
+    CARGO_TARGET_DIR=/target cargo build --locked --release \
+        --target x86_64-unknown-linux-gnu \
+        -p pkg-cli --bin pkg \
+        -p pkg-installer --bin pkg-nix-broker \
+        -p pkg-installer --bin pkg-root-helper \
+        -p pkg-installer --bin pkg-install \
+    && mkdir -p /binaries-n-plus-1/determinate \
+    && cp /target/x86_64-unknown-linux-gnu/release/pkg \
+        /target/x86_64-unknown-linux-gnu/release/pkg-nix-broker \
+        /target/x86_64-unknown-linux-gnu/release/pkg-root-helper \
+        /target/x86_64-unknown-linux-gnu/release/pkg-install /binaries-n-plus-1/ \
+    && cp /binaries-n-plus-1/pkg /binaries-n-plus-1/pkg-x86_64-linux \
+    && cp /binaries-n-plus-1/pkg-install \
+        /binaries-n-plus-1/pkg-installer-x86_64-linux \
+    && printf 'aarch64-darwin CLI fixture\n' \
+        > /binaries-n-plus-1/pkg-aarch64-darwin \
+    && for name in pkg-aarch64-darwin pkg-x86_64-linux pkg-installer-x86_64-linux; do \
+        printf '{"proofFixture":"%s"}\n' "$name" \
+            > "/binaries-n-plus-1/$name.sigstore.json"; \
+    done \
+    && ! cmp /binaries-n/pkg-nix-broker /binaries-n-plus-1/pkg-nix-broker \
+    && ! cmp /binaries-n/pkg-install /binaries-n-plus-1/pkg-install
+RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
+    CARGO_TARGET_DIR=/target cargo test --locked --release \
+        --target x86_64-unknown-linux-gnu \
+        -p pkg-installer --lib --no-run --message-format=json \
+        > /tmp/pkg-installer-test.json \
+    && mkdir /test-binaries \
+    && python3 - <<'PY'
+import json
+import pathlib
+import shutil
+
+artifacts = []
+for line in pathlib.Path("/tmp/pkg-installer-test.json").read_text().splitlines():
+    message = json.loads(line)
+    target = message.get("target", {})
+    if (
+        message.get("reason") == "compiler-artifact"
+        and target.get("name") == "pkg_installer"
+        and target.get("kind") == ["lib"]
+        and message.get("profile", {}).get("test")
+        and message.get("executable")
+    ):
+        artifacts.append(pathlib.Path(message["executable"]))
+if len(artifacts) != 1:
+    raise SystemExit(f"expected one pkg-installer lib test executable, found {artifacts!r}")
+shutil.copy2(artifacts[0], "/test-binaries/pkg-installer-lib-tests")
+PY
+RUN set -eu; \
+    stage_determinate() { \
+        name="$1"; expected_length="$2"; expected_sha256="$3"; url="$4"; \
+        path="/binaries-n/determinate/$name"; \
+        curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
+            --output "$path" "$url"; \
+        test "$(stat -c '%s' "$path")" = "$expected_length"; \
+        printf '%s  %s\n' "$expected_sha256" "$path" \
+            | sha256sum --check --strict; \
+    }; \
+    stage_determinate nix-installer-aarch64-darwin 58427232 \
+        90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b \
+        https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-darwin; \
+    stage_determinate nix-installer-aarch64-linux 69625424 \
+        9cf29b616f7a2ea430e054b163f507a9157511c6951dfa9e55dd9e3a270d9179 \
+        https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-linux; \
+    stage_determinate nix-installer-x86_64-linux 74918096 \
+        9e7a42aaf618a42231dfe400f36fe7438b9d916ccd13b29c2ff4de90ecc95c5c \
+        https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-x86_64-linux; \
+    stage_determinate nix-installer-v3.22.1.tar.gz 214322 \
+        e946ce0920e1ac0a76281d1d0d24b5ddb0fa1807f5317d1545130fe8a04ff084 \
+        https://codeload.github.com/DeterminateSystems/nix-installer/tar.gz/refs/tags/v3.22.1; \
+    stage_determinate LICENSE 26434 \
+        36b6d3fa47916943fd5fec313c584784946047ec1337a78b440e5992cb595f89 \
+        https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE
+RUN cp -a /binaries-n/determinate/. /binaries-n-plus-1/determinate/
+RUN set -eu; \
+    mkdir /runtime; \
+    stage_runtime() { \
+        system="$1"; expected_sha256="$2"; \
+        path="/runtime/$system.tar.xz"; \
+        curl --fail --location --retry 3 --proto '=https' --proto-redir '=https' \
+            --output "$path" \
+            "https://releases.nixos.org/nix/nix-2.34.8/nix-2.34.8-$system.tar.xz"; \
+        printf '%s  %s\n' "$expected_sha256" "$path" \
+            | sha256sum --check --strict; \
+    }; \
+    stage_runtime aarch64-darwin \
+        ae3b2b1a74b956110d14dd813bee80ea46626a51ddce28d142e0805379a34acf; \
+    stage_runtime x86_64-linux \
+        2c2e146b80834fe0ca201b51deeb939405b4f18e8d2071bf80b10f8123c50464
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-1 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 1
+        --legacy-linux-fixture /publication-1 /runtime /binaries-n \
+        x86_64-linux /proof-signing 1 linux-proof-1
 RUN --mount=type=cache,id=pkg-linux-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=pkg-linux-cross-target-v2,target=/target \
     CARGO_TARGET_DIR=/target cargo run --locked --release \
         -p pkg-release --example linux_proof_publication -- \
-        /publication-2 /tmp/nix.tar.xz /binaries x86_64-linux /proof-signing 2
+        --legacy-linux-fixture /publication-2 /runtime /binaries-n-plus-1 \
+        x86_64-linux /proof-signing 2 linux-proof-2
 RUN mkdir /out \
     && cp -a /publication-1 /publication-2 /out/ \
     && mkdir /out/binaries \
-    && cp /binaries/pkg-install /out/binaries/
+    && cp /binaries-n/pkg-install /out/binaries/ \
+    && cp /binaries-n-plus-1/pkg-install /out/binaries/pkg-install-n-plus-1 \
+    && cp -a /test-binaries /out/
 
 FROM scratch
 COPY --from=builder /out /

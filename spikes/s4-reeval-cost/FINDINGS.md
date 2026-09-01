@@ -4,12 +4,12 @@ This is an **evidence ledger**, not marketing. It records the reviewed Complete
 Real measurements, their limits, and the budgets derived from them.
 
 - **Spike:** S4 — Nixpkgs re-evaluation cost. Harness: [`pkg-spike-s4-reeval-cost`](README.md).
-- **PR:** [PR-6 — SPIKE S4: single-attribute reevaluation cost](../../plans/11-pr-roadmap.md)
+- **PR:** [PR-6 — SPIKE S4: single-attribute reevaluation cost](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md)
   (M0.5). Owns this directory and DR-004.
-- **Decision:** [DR-004 — Resolve UX & index strategy gated on reevaluation cost](../../plans/12-open-decisions-and-risks.md)
+- **Decision:** [DR-004 — Resolve UX & index strategy gated on reevaluation cost](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — **Status: Accepted 2026-08-09**.
-- **Downstream gates:** [PR-14](../../plans/11-pr-roadmap.md) (disposable index),
-  [PR-16](../../plans/11-pr-roadmap.md) (resolver), [PR-32](../../plans/11-pr-roadmap.md)
+- **Downstream gates:** [PR-14](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) (disposable index),
+  [PR-16](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) (resolver), [PR-32](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md)
   (perf bench + budget gate) — the S4 gate is cleared; each PR retains its own
   implementation and validation gates.
 - **Recorded (host UTC):** 2026-08-09. Native host lanes: macOS
@@ -250,7 +250,7 @@ and review requirements.
   Incomplete, prerequisites, semantics, exit codes).
 - [`benchmark.json`](benchmark.json) — embedded, validated pin and
   sampling/caps/timeouts constants.
-- [DR-004 in `plans/12-open-decisions-and-risks.md`](../../plans/12-open-decisions-and-risks.md)
+- [DR-004 in `plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — the decision record this evidence feeds.
-- [PR-6 in `plans/11-pr-roadmap.md`](../../plans/11-pr-roadmap.md) — spike owner
+- [PR-6 in `plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) — spike owner
   and downstream gates (PR-14 / PR-16 / PR-32).

@@ -22,6 +22,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// One capture result: the exit status and the captured stdout bytes.
+type CaptureStatus = (Option<i32>, Vec<u8>);
+
 #[cfg(unix)]
 use std::os::unix::{
     fs::{MetadataExt, OpenOptionsExt},
@@ -42,18 +45,14 @@ const NOLOGIN_PATHS: &[&str] = &[
 const INSTALL_LOCK: &str = "/run/pkg-install-accounts.lock";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
-const FIRST_MANAGED_GID: u32 = 30_000;
+const DETERMINATE_BUILD_GID: u32 = 30_000;
+const DETERMINATE_BUILD_USER_ID_BASE: u32 = 30_000;
+const DETERMINATE_BUILD_USER_COUNT: u32 = 32;
+const FIRST_PRODUCT_ID: u32 = DETERMINATE_BUILD_USER_ID_BASE + DETERMINATE_BUILD_USER_COUNT + 1;
 const LAST_MANAGED_GID: u32 = 39_999;
 const BROKER_NAME: &str = "pkg-nix-broker";
-const BUILD_GROUP_NAME: &str = "nixbld";
 const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
-const BUILD_HOME: &str = "/var/empty";
 const DEFAULT_NOLOGIN_SHELL: &str = "/usr/sbin/nologin";
-const BUILD_USER_COUNT: u8 = 16;
-const BUILD_NAMES: [&str; 16] = [
-    "nixbld1", "nixbld2", "nixbld3", "nixbld4", "nixbld5", "nixbld6", "nixbld7", "nixbld8",
-    "nixbld9", "nixbld10", "nixbld11", "nixbld12", "nixbld13", "nixbld14", "nixbld15", "nixbld16",
-];
 
 /// Stable Linux account failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,11 +123,78 @@ trait AccountSystem {
 
 struct ProductionAccountSystem;
 
-/// Selects two free, stable group ids from the configured Linux account view.
+#[cfg(test)]
+struct PreflightAccountSystem {
+    groups: Vec<GroupRecord>,
+    users: Vec<UserRecord>,
+    mutation_calls: std::rc::Rc<std::cell::Cell<usize>>,
+    create_groups: bool,
+    read_failures: usize,
+}
+
+#[cfg(test)]
+impl AccountSystem for PreflightAccountSystem {
+    fn acquire_lock(&mut self) -> Result<Option<File>, LinuxAccountError> {
+        Ok(None)
+    }
+
+    fn groups(&mut self) -> Result<Vec<GroupRecord>, LinuxAccountError> {
+        if self.read_failures > 0 {
+            self.read_failures = self.read_failures.saturating_sub(1);
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::CommandFailure,
+            ));
+        }
+        Ok(self.groups.clone())
+    }
+
+    fn users(&mut self) -> Result<Vec<UserRecord>, LinuxAccountError> {
+        Ok(self.users.clone())
+    }
+
+    fn create(&mut self, spec: AccountSpec) -> Result<(), LinuxAccountError> {
+        self.mutation_calls
+            .set(self.mutation_calls.get().saturating_add(1));
+        if self.create_groups
+            && let AccountSpec::Group { name, gid, .. } = spec
+        {
+            self.groups.push(GroupRecord {
+                name: name.to_owned(),
+                gid,
+                members: BTreeSet::new(),
+                password_locked: true,
+                administrators: BTreeSet::new(),
+            });
+            return Ok(());
+        }
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
+
+    fn delete_user(&mut self, _name: &'static str) -> Result<(), LinuxAccountError> {
+        self.mutation_calls
+            .set(self.mutation_calls.get().saturating_add(1));
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
+
+    fn delete_group(&mut self, _name: &'static str) -> Result<(), LinuxAccountError> {
+        self.mutation_calls
+            .set(self.mutation_calls.get().saturating_add(1));
+        Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ))
+    }
+}
+
+/// Selects the stable vendor build id and one free product account id.
 ///
-/// An exact existing product group keeps its current id. A new group receives
-/// the first unoccupied id in the fixed managed range. The later creation step
-/// rechecks every collision, so a concurrent administrator change fails closed.
+/// An exact existing product account keeps its current ids. A new product
+/// account receives the first id above Determinate's reserved group and user
+/// ids that is unoccupied in either namespace. The later creation step rechecks
+/// every collision, so a concurrent administrator change fails closed.
 ///
 /// # Errors
 ///
@@ -197,6 +263,83 @@ impl LinuxAccountManager {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn for_existing_preflight_test(
+        groups: ManagedGroupBindings,
+        missing_id: Option<&str>,
+    ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let mut group_records = Vec::new();
+        let mut user_records = Vec::new();
+        for asset in crate::linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| matches!(asset.id(), "broker-group" | "broker-user"))
+            .filter(|asset| Some(asset.id()) != missing_id)
+        {
+            match AccountSpec::for_asset(asset, groups)
+                .unwrap_or_else(|| unreachable!("broker asset has a specification"))
+            {
+                AccountSpec::Group { name, gid } => group_records.push(GroupRecord {
+                    name: name.to_owned(),
+                    gid,
+                    members: BTreeSet::new(),
+                    password_locked: true,
+                    administrators: BTreeSet::new(),
+                }),
+                AccountSpec::User {
+                    name,
+                    gid,
+                    home,
+                    shell,
+                } => user_records.push(UserRecord {
+                    name: name.to_owned(),
+                    uid: 31_000_u32.saturating_add(
+                        u32::try_from(user_records.len()).unwrap_or_else(|_| unreachable!()),
+                    ),
+                    primary_gid: gid,
+                    home: home.to_owned(),
+                    shell: shell.to_owned(),
+                    locked: true,
+                }),
+            }
+        }
+        let mutation_calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        (
+            Self::with_system(
+                groups,
+                Box::new(PreflightAccountSystem {
+                    groups: group_records,
+                    users: user_records,
+                    mutation_calls: mutation_calls.clone(),
+                    create_groups: false,
+                    read_failures: 0,
+                }),
+            ),
+            mutation_calls,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_fresh_preflight_test(
+        groups: ManagedGroupBindings,
+        read_failures: usize,
+    ) -> (Self, std::rc::Rc<std::cell::Cell<usize>>) {
+        let mutation_calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        (
+            Self::with_system(
+                groups,
+                Box::new(PreflightAccountSystem {
+                    groups: Vec::new(),
+                    users: Vec::new(),
+                    mutation_calls: mutation_calls.clone(),
+                    create_groups: true,
+                    read_failures,
+                }),
+            ),
+            mutation_calls,
+        )
+    }
+
     /// Returns true when this manager owns the fixed account asset kind.
     #[must_use]
     pub const fn handles(asset: LinuxInstallAsset) -> bool {
@@ -249,19 +392,22 @@ impl LinuxAccountManager {
                 LinuxAccountErrorCode::VerificationFailure,
             ));
         }
-        if spec.is_last_build_user() {
-            verify_complete_build_group(&groups, &users, self.groups.build_users_gid())?;
-        }
         let uid = match spec {
-            AccountSpec::User { name, .. } => Some(
-                users
+            AccountSpec::User { name, gid, .. } => {
+                let uid = users
                     .iter()
                     .find(|user| user.name == name)
                     .ok_or_else(|| {
                         LinuxAccountError::new(LinuxAccountErrorCode::VerificationFailure)
                     })?
-                    .uid,
-            ),
+                    .uid;
+                if uid != gid {
+                    return Err(LinuxAccountError::new(
+                        LinuxAccountErrorCode::VerificationFailure,
+                    ));
+                }
+                Some(uid)
+            }
             AccountSpec::Group { .. } => None,
         };
         self.attempt_owned
@@ -289,7 +435,6 @@ impl LinuxAccountManager {
             gid: self.groups.broker_gid(),
             home: BROKER_HOME,
             shell: DEFAULT_NOLOGIN_SHELL,
-            build_number: None,
         };
         let groups = self.system.groups()?;
         let users = self.system.users()?;
@@ -298,7 +443,9 @@ impl LinuxAccountManager {
         }
         users
             .iter()
-            .find(|user| user.name == BROKER_NAME && user.uid != 0)
+            .find(|user| {
+                user.name == BROKER_NAME && user.uid != 0 && !determinate_id_reserved(user.uid)
+            })
             .map(|user| user.uid)
             .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::Conflict))
     }
@@ -491,21 +638,13 @@ enum AccountSpec {
     Group {
         name: &'static str,
         gid: u32,
-        permitted_members: BuildMembers,
     },
     User {
         name: &'static str,
         gid: u32,
         home: &'static str,
         shell: &'static str,
-        build_number: Option<u8>,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BuildMembers {
-    None,
-    ManagedSubset,
 }
 
 impl AccountSpec {
@@ -514,29 +653,13 @@ impl AccountSpec {
             ("broker-group", LinuxAssetKind::Group, BROKER_NAME) => Some(Self::Group {
                 name: BROKER_NAME,
                 gid: groups.broker_gid(),
-                permitted_members: BuildMembers::None,
             }),
             ("broker-user", LinuxAssetKind::User, BROKER_NAME) => Some(Self::User {
                 name: BROKER_NAME,
                 gid: groups.broker_gid(),
                 home: BROKER_HOME,
                 shell: DEFAULT_NOLOGIN_SHELL,
-                build_number: None,
             }),
-            ("build-group", LinuxAssetKind::Group, BUILD_GROUP_NAME) => Some(Self::Group {
-                name: BUILD_GROUP_NAME,
-                gid: groups.build_users_gid(),
-                permitted_members: BuildMembers::ManagedSubset,
-            }),
-            (id, LinuxAssetKind::User, name) => {
-                build_user_number(id, name).map(|number| Self::User {
-                    name,
-                    gid: groups.build_users_gid(),
-                    home: BUILD_HOME,
-                    shell: DEFAULT_NOLOGIN_SHELL,
-                    build_number: Some(number),
-                })
-            }
             _ => None,
         }
     }
@@ -544,35 +667,14 @@ impl AccountSpec {
     #[cfg(test)]
     fn directives(self) -> Vec<u8> {
         match self {
-            Self::Group { name, gid, .. } => format!("g {name} {gid}\n").into_bytes(),
+            Self::Group { name, gid } => format!("g {name} {gid}\n").into_bytes(),
             Self::User {
                 name,
                 gid,
                 home,
                 shell,
-                build_number,
-            } => {
-                let description = build_number.map_or_else(
-                    || "pkg Nix broker".to_owned(),
-                    |number| format!("pkg Nix build user {number}"),
-                );
-                let membership = build_number
-                    .map(|_| format!("m {name} {BUILD_GROUP_NAME}\n"))
-                    .unwrap_or_default();
-                format!("u {name} -:{gid} \"{description}\" {home} {shell}\n{membership}")
-                    .into_bytes()
-            }
+            } => format!("u {name} -:{gid} \"pkg Nix broker\" {home} {shell}\n").into_bytes(),
         }
-    }
-
-    const fn is_last_build_user(self) -> bool {
-        matches!(
-            self,
-            Self::User {
-                build_number: Some(BUILD_USER_COUNT),
-                ..
-            }
-        )
     }
 }
 
@@ -583,7 +685,7 @@ fn create_command(
     nologin: &'static str,
 ) -> (&'static str, Vec<String>) {
     match spec {
-        AccountSpec::Group { name, gid, .. } => (
+        AccountSpec::Group { name, gid } => (
             groupadd,
             vec!["--gid".to_owned(), gid.to_string(), name.to_owned()],
         ),
@@ -592,12 +694,7 @@ fn create_command(
             gid,
             home,
             shell: _,
-            build_number,
         } => {
-            let description = build_number.map_or_else(
-                || "pkg Nix broker".to_owned(),
-                |number| format!("pkg Nix build user {number}"),
-            );
             let mut arguments = vec![
                 "--system".to_owned(),
                 "--gid".to_owned(),
@@ -607,27 +704,15 @@ fn create_command(
                 "--shell".to_owned(),
                 nologin.to_owned(),
                 "--comment".to_owned(),
-                description,
+                "pkg Nix broker".to_owned(),
                 "--no-create-home".to_owned(),
+                "--uid".to_owned(),
+                gid.to_string(),
             ];
-            if build_number.is_some() {
-                arguments.extend(["--groups".to_owned(), BUILD_GROUP_NAME.to_owned()]);
-            }
             arguments.push(name.to_owned());
             (useradd, arguments)
         }
     }
-}
-
-fn build_user_number(id: &str, name: &str) -> Option<u8> {
-    (1..=BUILD_USER_COUNT)
-        .find(|number| id == format!("build-user-{number:02}") && name == format!("nixbld{number}"))
-}
-
-fn managed_build_users() -> BTreeSet<String> {
-    (1..=BUILD_USER_COUNT)
-        .map(|number| format!("nixbld{number}"))
-        .collect()
 }
 
 fn plan_group_bindings(
@@ -642,18 +727,64 @@ fn plan_group_bindings(
         .map(|group| group.gid)
         .collect::<BTreeSet<_>>();
     occupied.extend(users.iter().map(|user| user.primary_gid));
-    let broker_gid = existing_group_gid(&groups, BROKER_NAME)?
-        .unwrap_or_else(|| first_free_gid(&occupied, &BTreeSet::new()).unwrap_or(0));
-    let reserved = BTreeSet::from([broker_gid]);
-    let build_gid = existing_group_gid(&groups, BUILD_GROUP_NAME)?
-        .unwrap_or_else(|| first_free_gid(&occupied, &reserved).unwrap_or(0));
-    ManagedGroupBindings::new(broker_gid, build_gid)
+    occupied.extend(users.iter().map(|user| user.uid));
+    let existing_broker_gid = existing_group_gid(&groups, BROKER_NAME)?;
+    let broker_user = users.iter().find(|user| user.name == BROKER_NAME);
+    if existing_broker_gid.is_none() && broker_user.is_some() {
+        return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+    }
+    if broker_user.is_none()
+        && groups.iter().any(|group| {
+            group.members.contains(BROKER_NAME) || group.administrators.contains(BROKER_NAME)
+        })
+    {
+        return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+    }
+    if let Some(gid) = existing_broker_gid {
+        if !(FIRST_PRODUCT_ID..=LAST_MANAGED_GID).contains(&gid)
+            || !verify_existing(
+                &AccountSpec::Group {
+                    name: BROKER_NAME,
+                    gid,
+                },
+                &groups,
+                &users,
+            )?
+        {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        if let Some(user) = broker_user
+            && (determinate_id_reserved(user.uid)
+                || !verify_existing(
+                    &AccountSpec::User {
+                        name: BROKER_NAME,
+                        gid,
+                        home: BROKER_HOME,
+                        shell: DEFAULT_NOLOGIN_SHELL,
+                    },
+                    &groups,
+                    &users,
+                )?)
+        {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+        if broker_user.is_none() && users.iter().any(|user| user.uid == gid) {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+        }
+    }
+    let broker_gid =
+        existing_broker_gid.unwrap_or_else(|| first_free_product_id(&occupied).unwrap_or(0));
+    ManagedGroupBindings::new(broker_gid, DETERMINATE_BUILD_GID)
         .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::Conflict))
 }
 
-fn first_free_gid(occupied: &BTreeSet<u32>, reserved: &BTreeSet<u32>) -> Option<u32> {
-    (FIRST_MANAGED_GID..=LAST_MANAGED_GID)
-        .find(|gid| !occupied.contains(gid) && !reserved.contains(gid))
+const fn determinate_id_reserved(id: u32) -> bool {
+    id >= DETERMINATE_BUILD_GID
+        && id <= DETERMINATE_BUILD_USER_ID_BASE + DETERMINATE_BUILD_USER_COUNT
+}
+
+fn first_free_product_id(occupied: &BTreeSet<u32>) -> Option<u32> {
+    (FIRST_PRODUCT_ID..=LAST_MANAGED_GID).find(|id| !occupied.contains(id))
 }
 
 fn existing_group_gid(
@@ -677,15 +808,13 @@ fn validate_group_directory(groups: &[GroupRecord]) -> Result<(), LinuxAccountEr
             return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
         }
     }
-    for managed_name in [BROKER_NAME, BUILD_GROUP_NAME] {
-        if let Some(group) = groups.iter().find(|group| group.name == managed_name) {
-            let aliases = groups
-                .iter()
-                .filter(|candidate| candidate.gid == group.gid)
-                .count();
-            if group.gid == 0 || aliases != 1 {
-                return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-            }
+    if let Some(group) = groups.iter().find(|group| group.name == BROKER_NAME) {
+        let aliases = groups
+            .iter()
+            .filter(|candidate| candidate.gid == group.gid)
+            .count();
+        if group.gid == 0 || aliases != 1 {
+            return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
         }
     }
     Ok(())
@@ -699,11 +828,7 @@ fn verify_existing(
     validate_group_directory(groups)?;
     validate_user_directory(users)?;
     match *spec {
-        AccountSpec::Group {
-            name,
-            gid,
-            permitted_members,
-        } => {
+        AccountSpec::Group { name, gid } => {
             if groups
                 .iter()
                 .any(|group| group.gid == gid && group.name != name)
@@ -717,10 +842,13 @@ fn verify_existing(
                 return Ok(false);
             };
             if group.gid != gid
-                || !members_permitted(&group.members, permitted_members)
-                || !primary_members_permitted(users, gid, permitted_members)
+                || !group.members.is_empty()
                 || !group.password_locked
                 || !group.administrators.is_empty()
+                || !users
+                    .iter()
+                    .filter(|user| user.primary_gid == gid)
+                    .all(|user| user.name == BROKER_NAME)
             {
                 return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
             }
@@ -731,20 +859,17 @@ fn verify_existing(
             gid,
             home,
             shell,
-            build_number,
         } => {
             let Some(group) = groups.iter().find(|group| group.gid == gid) else {
                 return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
             };
-            let expected_group = if build_number.is_some() {
-                BUILD_GROUP_NAME
-            } else {
-                BROKER_NAME
-            };
-            if group.name != expected_group {
+            if group.name != BROKER_NAME {
                 return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
             }
             let Some(user) = users.iter().find(|user| user.name == name) else {
+                if users.iter().any(|user| user.uid == gid) {
+                    return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
+                }
                 return Ok(false);
             };
             let uid_uses = users
@@ -757,8 +882,7 @@ fn verify_existing(
                 || user.home != home
                 || user.shell != shell && !NOLOGIN_PATHS.contains(&user.shell.as_str())
                 || !user.locked
-                || build_number.is_some() && !group.members.contains(name)
-                || !supplementary_memberships_are_exact(groups, name, build_number.is_some())
+                || !supplementary_memberships_are_empty(groups, name)
                 || groups
                     .iter()
                     .any(|candidate| candidate.administrators.contains(name))
@@ -770,40 +894,8 @@ fn verify_existing(
     }
 }
 
-fn supplementary_memberships_are_exact(
-    groups: &[GroupRecord],
-    user_name: &str,
-    is_build_user: bool,
-) -> bool {
-    let actual = groups
-        .iter()
-        .filter(|group| group.members.contains(user_name))
-        .map(|group| group.name.as_str())
-        .collect::<BTreeSet<_>>();
-    if is_build_user {
-        actual == BTreeSet::from([BUILD_GROUP_NAME])
-    } else {
-        actual.is_empty()
-    }
-}
-
-fn members_permitted(members: &BTreeSet<String>, policy: BuildMembers) -> bool {
-    match policy {
-        BuildMembers::None => members.is_empty(),
-        BuildMembers::ManagedSubset => members.is_subset(&managed_build_users()),
-    }
-}
-
-fn primary_members_permitted(users: &[UserRecord], gid: u32, policy: BuildMembers) -> bool {
-    let primary = users
-        .iter()
-        .filter(|user| user.primary_gid == gid)
-        .map(|user| user.name.clone())
-        .collect::<BTreeSet<_>>();
-    match policy {
-        BuildMembers::None => primary.is_subset(&BTreeSet::from([BROKER_NAME.to_owned()])),
-        BuildMembers::ManagedSubset => primary.is_subset(&managed_build_users()),
-    }
+fn supplementary_memberships_are_empty(groups: &[GroupRecord], user_name: &str) -> bool {
+    !groups.iter().any(|group| group.members.contains(user_name))
 }
 
 fn validate_user_directory(users: &[UserRecord]) -> Result<(), LinuxAccountError> {
@@ -813,29 +905,6 @@ fn validate_user_directory(users: &[UserRecord]) -> Result<(), LinuxAccountError
         .any(|user| user.name.is_empty() || !names.insert(user.name.as_str()))
     {
         return Err(LinuxAccountError::new(LinuxAccountErrorCode::Conflict));
-    }
-    Ok(())
-}
-
-fn verify_complete_build_group(
-    groups: &[GroupRecord],
-    users: &[UserRecord],
-    gid: u32,
-) -> Result<(), LinuxAccountError> {
-    let expected = managed_build_users();
-    let group = groups
-        .iter()
-        .find(|group| group.name == BUILD_GROUP_NAME && group.gid == gid)
-        .ok_or_else(|| LinuxAccountError::new(LinuxAccountErrorCode::VerificationFailure))?;
-    let primary = users
-        .iter()
-        .filter(|user| user.primary_gid == gid)
-        .map(|user| user.name.clone())
-        .collect::<BTreeSet<_>>();
-    if group.members != expected || primary != expected {
-        return Err(LinuxAccountError::new(
-            LinuxAccountErrorCode::VerificationFailure,
-        ));
     }
     Ok(())
 }
@@ -855,12 +924,12 @@ impl AccountSystem for ProductionAccountSystem {
     fn users(&mut self) -> Result<Vec<UserRecord>, LinuxAccountError> {
         let getent = resolve_program(GETENT_PATHS)?;
         let passwd = run_capture(getent, &["passwd"])?;
-        let locked = managed_user_names()
+        let locked = inspected_user_names()
             .into_iter()
             .filter_map(
-                |name| match run_capture_allow_absent(getent, &["shadow", name]) {
+                |name| match run_capture_allow_absent(getent, &["shadow", &name]) {
                     Ok(Some(bytes)) => {
-                        Some(parse_shadow_lock(name, &bytes).map(|locked| (name, locked)))
+                        Some(parse_shadow_lock(&name, &bytes).map(|locked| (name, locked)))
                     }
                     Ok(None) => None,
                     Err(error) => Some(Err(error)),
@@ -890,79 +959,8 @@ impl AccountSystem for ProductionAccountSystem {
     }
 }
 
-fn managed_user_names() -> Vec<&'static str> {
-    let mut names = vec![BROKER_NAME];
-    names.extend(BUILD_NAMES);
-    names
-}
-
-fn parse_groups(bytes: &[u8], gshadow_bytes: &[u8]) -> Result<Vec<GroupRecord>, LinuxAccountError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?;
-    let gshadow = parse_gshadow(gshadow_bytes)?;
-    let mut groups = Vec::new();
-    for line in text.lines() {
-        let fields = line.split(':').collect::<Vec<_>>();
-        if fields.len() != 4 || fields[0].is_empty() {
-            return Err(LinuxAccountError::new(
-                LinuxAccountErrorCode::CommandFailure,
-            ));
-        }
-        let members = fields[3]
-            .split(',')
-            .filter(|member| !member.is_empty())
-            .map(ToOwned::to_owned)
-            .collect::<BTreeSet<_>>();
-        let shadow = gshadow.get(fields[0]);
-        if shadow.is_some_and(|shadow| shadow.members != members)
-            && !gshadow_lags_build_group(fields[0], &members, shadow)
-        {
-            return Err(LinuxAccountError::new(
-                LinuxAccountErrorCode::CommandFailure,
-            ));
-        }
-        groups.push(GroupRecord {
-            name: fields[0].to_owned(),
-            gid: fields[2]
-                .parse()
-                .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?,
-            members,
-            password_locked: shadow.is_some_and(|shadow| shadow.password_locked),
-            administrators: shadow
-                .map(|shadow| shadow.administrators.clone())
-                .unwrap_or_default(),
-        });
-    }
-    if groups.is_empty() {
-        return Err(LinuxAccountError::new(
-            LinuxAccountErrorCode::CommandFailure,
-        ));
-    }
-    Ok(groups)
-}
-
-/// Accepts the exact account-database crash signature of interrupted build-user
-/// creation: `useradd` appends the supplementary member to `/etc/group` before
-/// `/etc/gshadow`, so a power loss in that window leaves gshadow lagging by
-/// managed build users only. The group-side list stays authoritative because
-/// every managed contract check still compares exact member sets, and any other
-/// mismatch (foreign groups, gshadow ahead, non-managed differences) keeps
-/// failing closed.
-fn gshadow_lags_build_group(
-    name: &str,
-    members: &BTreeSet<String>,
-    shadow: Option<&ShadowGroupRecord>,
-) -> bool {
-    let Some(shadow) = shadow else {
-        return false;
-    };
-    if name != BUILD_GROUP_NAME || !shadow.members.is_subset(members) {
-        return false;
-    }
-    let managed = managed_build_users();
-    members
-        .difference(&shadow.members)
-        .all(|member| managed.contains(member))
+fn inspected_user_names() -> Vec<String> {
+    vec![BROKER_NAME.to_owned()]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1018,9 +1016,52 @@ fn parse_comma_set(value: &str) -> Result<BTreeSet<String>, LinuxAccountError> {
     Ok(values)
 }
 
+fn parse_groups(bytes: &[u8], gshadow_bytes: &[u8]) -> Result<Vec<GroupRecord>, LinuxAccountError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?;
+    let gshadow = parse_gshadow(gshadow_bytes)?;
+    let mut groups = Vec::new();
+    for line in text.lines() {
+        let fields = line.split(':').collect::<Vec<_>>();
+        if fields.len() != 4 || fields[0].is_empty() {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::CommandFailure,
+            ));
+        }
+        let members = fields[3]
+            .split(',')
+            .filter(|member| !member.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<BTreeSet<_>>();
+        let shadow = gshadow.get(fields[0]);
+        if shadow.is_some_and(|shadow| shadow.members != members) {
+            return Err(LinuxAccountError::new(
+                LinuxAccountErrorCode::CommandFailure,
+            ));
+        }
+        groups.push(GroupRecord {
+            name: fields[0].to_owned(),
+            gid: fields[2]
+                .parse()
+                .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?,
+            members,
+            password_locked: shadow.is_some_and(|shadow| shadow.password_locked),
+            administrators: shadow
+                .map(|shadow| shadow.administrators.clone())
+                .unwrap_or_default(),
+        });
+    }
+    if groups.is_empty() {
+        return Err(LinuxAccountError::new(
+            LinuxAccountErrorCode::CommandFailure,
+        ));
+    }
+    Ok(groups)
+}
+
 fn parse_users(
     bytes: &[u8],
-    locked: &BTreeMap<&str, bool>,
+    locked: &BTreeMap<String, bool>,
 ) -> Result<Vec<UserRecord>, LinuxAccountError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure))?;
@@ -1100,7 +1141,7 @@ fn run_capture_allow_absent(
 pub fn run_capture_status(
     program: &str,
     arguments: &[&str],
-) -> Result<(Option<i32>, Vec<u8>), LinuxAccountError> {
+) -> Result<CaptureStatus, LinuxAccountError> {
     require_program(program)?;
     let mut child = base_command(program)
         .args(arguments)
@@ -1264,565 +1305,4 @@ fn terminate(child: &mut Child) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Default)]
-    struct FakeState {
-        groups: Vec<GroupRecord>,
-        users: Vec<UserRecord>,
-        applied: Vec<Vec<u8>>,
-        deleted: Vec<String>,
-        fail_create_after_mutation: bool,
-    }
-
-    struct FakeSystem(Arc<Mutex<FakeState>>);
-
-    impl AccountSystem for FakeSystem {
-        fn acquire_lock(&mut self) -> Result<Option<File>, LinuxAccountError> {
-            Ok(None)
-        }
-
-        fn groups(&mut self) -> Result<Vec<GroupRecord>, LinuxAccountError> {
-            Ok(self.0.lock().map_err(|_| command_error())?.groups.clone())
-        }
-
-        fn users(&mut self) -> Result<Vec<UserRecord>, LinuxAccountError> {
-            Ok(self.0.lock().map_err(|_| command_error())?.users.clone())
-        }
-
-        fn create(&mut self, spec: AccountSpec) -> Result<(), LinuxAccountError> {
-            let directives = spec.directives();
-            let mut state = self.0.lock().map_err(|_| command_error())?;
-            state.applied.push(directives.clone());
-            apply_fake(&mut state, &directives)?;
-            if state.fail_create_after_mutation {
-                return Err(command_error());
-            }
-            drop(state);
-            Ok(())
-        }
-
-        fn delete_user(&mut self, name: &'static str) -> Result<(), LinuxAccountError> {
-            let mut state = self.0.lock().map_err(|_| command_error())?;
-            state.users.retain(|user| user.name != name);
-            for group in &mut state.groups {
-                group.members.remove(name);
-            }
-            if state
-                .groups
-                .iter()
-                .find(|group| group.name == name)
-                .is_some_and(|group| {
-                    group.members.is_empty()
-                        && state.users.iter().all(|user| user.primary_gid != group.gid)
-                })
-            {
-                state.groups.retain(|group| group.name != name);
-            }
-            state.deleted.push(format!("user:{name}"));
-            drop(state);
-            Ok(())
-        }
-
-        fn delete_group(&mut self, name: &'static str) -> Result<(), LinuxAccountError> {
-            let mut state = self.0.lock().map_err(|_| command_error())?;
-            state.groups.retain(|group| group.name != name);
-            state.deleted.push(format!("group:{name}"));
-            drop(state);
-            Ok(())
-        }
-    }
-
-    fn command_error() -> LinuxAccountError {
-        LinuxAccountError::new(LinuxAccountErrorCode::CommandFailure)
-    }
-
-    fn group(name: &str, gid: u32, members: &[&str]) -> GroupRecord {
-        GroupRecord {
-            name: name.to_owned(),
-            gid,
-            members: members.iter().map(|member| (*member).to_owned()).collect(),
-            password_locked: true,
-            administrators: BTreeSet::new(),
-        }
-    }
-
-    fn user(name: &str, uid: u32, gid: u32, home: &str) -> UserRecord {
-        UserRecord {
-            name: name.to_owned(),
-            uid,
-            primary_gid: gid,
-            home: home.to_owned(),
-            shell: DEFAULT_NOLOGIN_SHELL.to_owned(),
-            locked: true,
-        }
-    }
-
-    fn fake_manager(
-        groups: ManagedGroupBindings,
-        state: Arc<Mutex<FakeState>>,
-    ) -> LinuxAccountManager {
-        LinuxAccountManager::with_system(groups, Box::new(FakeSystem(state)))
-    }
-
-    fn account_asset(id: &str) -> LinuxInstallAsset {
-        crate::linux_install_assets()
-            .iter()
-            .copied()
-            .find(|asset| asset.id() == id)
-            .unwrap_or_else(|| unreachable!())
-    }
-
-    fn apply_fake(state: &mut FakeState, directives: &[u8]) -> Result<(), LinuxAccountError> {
-        let text = std::str::from_utf8(directives).map_err(|_| command_error())?;
-        for line in text.lines() {
-            let fields = line.split_whitespace().collect::<Vec<_>>();
-            match fields.as_slice() {
-                ["g", name, gid] => {
-                    state
-                        .groups
-                        .push(group(name, gid.parse().map_err(|_| command_error())?, &[]));
-                }
-                ["u", name, uid_gid, ..] => {
-                    let gid = uid_gid
-                        .strip_prefix("-:")
-                        .ok_or_else(command_error)?
-                        .parse()
-                        .map_err(|_| command_error())?;
-                    let home = if *name == BROKER_NAME {
-                        BROKER_HOME
-                    } else {
-                        BUILD_HOME
-                    };
-                    let uid = 31_000_u32.saturating_add(
-                        u32::try_from(state.users.len()).map_err(|_| command_error())?,
-                    );
-                    state.users.push(user(name, uid, gid, home));
-                }
-                ["m", name, group_name] => {
-                    state
-                        .groups
-                        .iter_mut()
-                        .find(|group| group.name == *group_name)
-                        .ok_or_else(command_error)?
-                        .members
-                        .insert((*name).to_owned());
-                }
-                _ => return Err(command_error()),
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn group_planning_reuses_exact_groups_and_fills_first_free_ids() -> Result<(), Box<dyn Error>> {
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group("root", 0, &[]), group(BROKER_NAME, 31_234, &[])],
-            users: vec![user("foreign", 42_000, 30_000, "/var/empty")],
-            ..FakeState::default()
-        }));
-        let bindings = plan_group_bindings(&mut FakeSystem(state))?;
-        assert_eq!(bindings.broker_gid(), 31_234);
-        assert_eq!(bindings.build_users_gid(), 30_001);
-        Ok(())
-    }
-
-    #[test]
-    fn group_planning_refuses_managed_gid_aliases_and_exhaustion() {
-        let alias = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BROKER_NAME, 30_000, &[]), group("other", 30_000, &[])],
-            ..FakeState::default()
-        }));
-        assert_eq!(
-            plan_group_bindings(&mut FakeSystem(alias)).map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-
-        let full = Arc::new(Mutex::new(FakeState {
-            groups: (FIRST_MANAGED_GID..=LAST_MANAGED_GID)
-                .map(|gid| group(&format!("g{gid}"), gid, &[]))
-                .collect(),
-            ..FakeState::default()
-        }));
-        assert_eq!(
-            plan_group_bindings(&mut FakeSystem(full)).map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-    }
-
-    #[test]
-    fn exact_directives_create_locked_primary_and_explicit_members() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group("root", 0, &[])],
-            users: vec![user("root", 0, 0, "/root")],
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        for asset in crate::linux_install_assets()
-            .iter()
-            .copied()
-            .filter(|asset| LinuxAccountManager::handles(*asset))
-        {
-            assert!(manager.ensure_asset(asset)?);
-        }
-        let state = state.lock().map_err(|_| command_error())?;
-        assert_eq!(state.applied.len(), 19);
-        assert_eq!(state.applied[0], b"g pkg-nix-broker 30000\n");
-        assert_eq!(
-            state.applied[3],
-            b"u nixbld1 -:30001 \"pkg Nix build user 1\" /var/empty /usr/sbin/nologin\nm nixbld1 nixbld\n"
-        );
-        assert_eq!(state.groups[2].members, managed_build_users());
-        drop(state);
-        Ok(())
-    }
-
-    #[test]
-    fn production_create_commands_are_fixed_and_non_interactive() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let group = AccountSpec::for_asset(account_asset("build-group"), bindings)
-            .ok_or_else(command_error)?;
-        assert_eq!(
-            create_command(
-                group,
-                "/usr/sbin/groupadd",
-                "/usr/sbin/useradd",
-                "/usr/sbin/nologin",
-            ),
-            (
-                "/usr/sbin/groupadd",
-                vec!["--gid".to_owned(), "30001".to_owned(), "nixbld".to_owned()]
-            )
-        );
-        let user = AccountSpec::for_asset(account_asset("build-user-01"), bindings)
-            .ok_or_else(command_error)?;
-        assert_eq!(
-            create_command(
-                user,
-                "/usr/sbin/groupadd",
-                "/usr/sbin/useradd",
-                "/usr/sbin/nologin",
-            ),
-            (
-                "/usr/sbin/useradd",
-                vec![
-                    "--system".to_owned(),
-                    "--gid".to_owned(),
-                    "30001".to_owned(),
-                    "--home-dir".to_owned(),
-                    "/var/empty".to_owned(),
-                    "--shell".to_owned(),
-                    "/usr/sbin/nologin".to_owned(),
-                    "--comment".to_owned(),
-                    "pkg Nix build user 1".to_owned(),
-                    "--no-create-home".to_owned(),
-                    "--groups".to_owned(),
-                    "nixbld".to_owned(),
-                    "nixbld1".to_owned(),
-                ]
-            )
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn exact_existing_accounts_are_idempotent() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let build_names = managed_build_users();
-        let mut users = vec![user(BROKER_NAME, 31_000, 30_000, BROKER_HOME)];
-        users.extend((1..=BUILD_USER_COUNT).map(|number| {
-            user(
-                &format!("nixbld{number}"),
-                31_000 + u32::from(number),
-                30_001,
-                BUILD_HOME,
-            )
-        }));
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![
-                group(BROKER_NAME, 30_000, &[]),
-                GroupRecord {
-                    name: BUILD_GROUP_NAME.to_owned(),
-                    gid: 30_001,
-                    members: build_names,
-                    password_locked: true,
-                    administrators: BTreeSet::new(),
-                },
-            ],
-            users,
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        for asset in crate::linux_install_assets()
-            .iter()
-            .copied()
-            .filter(|asset| LinuxAccountManager::handles(*asset))
-        {
-            assert!(!manager.ensure_asset(asset)?);
-        }
-        assert_eq!(manager.broker_uid()?, 31_000);
-        assert!(
-            state
-                .lock()
-                .map_err(|_| command_error())?
-                .applied
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn conflicts_refuse_without_mutation() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BROKER_NAME, 30_002, &[])],
-            users: vec![user("root", 0, 0, "/root")],
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        assert_eq!(
-            manager
-                .ensure_asset(account_asset("broker-group"))
-                .map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-        assert!(
-            state
-                .lock()
-                .map_err(|_| command_error())?
-                .applied
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn foreign_primary_group_members_refuse_without_mutation() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BROKER_NAME, 30_000, &[])],
-            users: vec![user("foreign", 31_500, 30_000, "/var/empty")],
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        assert_eq!(
-            manager
-                .ensure_asset(account_asset("broker-group"))
-                .map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-        assert!(
-            state
-                .lock()
-                .map_err(|_| command_error())?
-                .applied
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn unexpected_supplementary_memberships_refuse_adoption() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![
-                group(BROKER_NAME, 30_000, &[]),
-                group("docker", 999, &[BROKER_NAME]),
-            ],
-            users: vec![user(BROKER_NAME, 31_000, 30_000, BROKER_HOME)],
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        assert_eq!(
-            manager
-                .ensure_asset(account_asset("broker-user"))
-                .map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-        assert!(
-            state
-                .lock()
-                .map_err(|_| command_error())?
-                .applied
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn uncertain_creation_is_never_deleted_and_existing_assets_are_never_deleted()
-    -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BROKER_NAME, 30_000, &[])],
-            users: vec![user("root", 0, 0, "/root")],
-            fail_create_after_mutation: true,
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        assert!(!manager.ensure_asset(account_asset("broker-group"))?);
-        assert_eq!(
-            manager
-                .ensure_asset(account_asset("build-group"))
-                .map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::CommandFailure)
-        );
-        assert_eq!(
-            manager
-                .rollback_asset(account_asset("build-group"))
-                .map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-        manager.rollback_asset(account_asset("broker-group"))?;
-        let state = state.lock().map_err(|_| command_error())?;
-        assert!(state.deleted.is_empty());
-        assert!(state.groups.iter().any(|group| group.name == BROKER_NAME));
-        drop(state);
-        Ok(())
-    }
-
-    #[test]
-    fn rollback_refuses_to_delete_a_changed_identity() -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BROKER_NAME, 30_000, &[])],
-            users: vec![user("root", 0, 0, "/root")],
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        let broker = account_asset("broker-user");
-        assert!(manager.ensure_asset(broker)?);
-        state
-            .lock()
-            .map_err(|_| command_error())?
-            .users
-            .iter_mut()
-            .find(|user| user.name == BROKER_NAME)
-            .ok_or_else(command_error)?
-            .uid = 49_999;
-        assert_eq!(
-            manager
-                .rollback_asset(broker)
-                .map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-        assert!(
-            state
-                .lock()
-                .map_err(|_| command_error())?
-                .deleted
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn verified_uninstall_removes_only_exact_accounts_and_is_retry_safe()
-    -> Result<(), Box<dyn Error>> {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            users: vec![user("root", 0, 0, "/root")],
-            ..FakeState::default()
-        }));
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-        let group = account_asset("broker-group");
-        let user = account_asset("broker-user");
-        assert!(manager.ensure_asset(group)?);
-        assert!(manager.ensure_asset(user)?);
-
-        manager.remove_verified_asset(user)?;
-        manager.remove_verified_asset(group)?;
-        manager.remove_verified_asset(user)?;
-        manager.remove_verified_asset(group)?;
-
-        let state = state.lock().map_err(|_| command_error())?;
-        assert_eq!(state.deleted, ["user:pkg-nix-broker"]);
-        assert!(state.users.iter().all(|user| user.name != BROKER_NAME));
-        assert!(state.groups.iter().all(|group| group.name != BROKER_NAME));
-        drop(state);
-        Ok(())
-    }
-
-    #[test]
-    fn verified_uninstall_refuses_changed_accounts_without_deletion() -> Result<(), Box<dyn Error>>
-    {
-        let bindings = ManagedGroupBindings::new(30_000, 30_001)?;
-        let state = Arc::new(Mutex::new(FakeState {
-            groups: vec![group(BROKER_NAME, 30_000, &[])],
-            users: vec![
-                user("root", 0, 0, "/root"),
-                user(BROKER_NAME, 31_000, 30_000, BROKER_HOME),
-            ],
-            ..FakeState::default()
-        }));
-        state
-            .lock()
-            .map_err(|_| command_error())?
-            .users
-            .iter_mut()
-            .find(|user| user.name == BROKER_NAME)
-            .ok_or_else(command_error)?
-            .shell = "/bin/sh".to_owned();
-        let mut manager = fake_manager(bindings, Arc::clone(&state));
-
-        assert_eq!(
-            manager
-                .remove_verified_asset(account_asset("broker-user"))
-                .map_err(LinuxAccountError::code),
-            Err(LinuxAccountErrorCode::Conflict)
-        );
-        assert!(
-            state
-                .lock()
-                .map_err(|_| command_error())?
-                .deleted
-                .is_empty()
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn parsers_require_locked_exact_directory_records() -> Result<(), Box<dyn Error>> {
-        let groups = parse_groups(
-            b"root:x:0:\nnixbld:x:30001:nixbld1\n",
-            b"root:*::\nnixbld:!::nixbld1\n",
-        )?;
-        assert_eq!(groups[1].members, BTreeSet::from(["nixbld1".to_owned()]));
-        let locked = BTreeMap::from([("nixbld1", true)]);
-        let users = parse_users(
-            b"root:x:0:0:root:/root:/bin/sh\nnixbld1:x:31001:30001::/var/empty:/usr/sbin/nologin\n",
-            &locked,
-        )?;
-        assert!(users[1].locked);
-        assert!(parse_shadow_lock("nixbld1", b"nixbld1:!:1:2:3:4:5:6:7\n")?);
-        assert!(!parse_shadow_lock(
-            "nixbld1",
-            b"nixbld1:$6$hash:1:2:3:4:5:6:7\n"
-        )?);
-        Ok(())
-    }
-
-    #[test]
-    fn parse_groups_accepts_only_the_build_group_gshadow_crash_lag() -> Result<(), LinuxAccountError>
-    {
-        // Power loss between useradd's /etc/group and /etc/gshadow member
-        // writes leaves gshadow lagging by managed build users. The group-side
-        // list stays authoritative so recovery can reconcile the account.
-        let groups = parse_groups(b"nixbld:x:30001:nixbld1,nixbld2\n", b"nixbld:!::nixbld1\n")?;
-        assert_eq!(
-            groups[0].members,
-            BTreeSet::from(["nixbld1".to_owned(), "nixbld2".to_owned()])
-        );
-
-        // A foreign group with any mismatch still fails closed.
-        assert!(parse_groups(b"devs:x:1001:alice\n", b"devs:!::\n").is_err());
-        // A non-managed extra member on the build group still fails closed.
-        assert!(parse_groups(b"nixbld:x:30001:nixbld1,root\n", b"nixbld:!::nixbld1\n").is_err());
-        // Gshadow ahead of the group file still fails closed.
-        assert!(parse_groups(b"nixbld:x:30001:nixbld1\n", b"nixbld:!::nixbld1,nixbld2\n").is_err());
-        Ok(())
-    }
-}
+mod tests;

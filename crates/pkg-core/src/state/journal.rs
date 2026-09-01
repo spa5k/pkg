@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::schema::parse_unique_json;
-use super::{Digest, IntegrityError, canonical_digest};
+use super::{Digest, canonical_digest};
 
 /// Fixed previous-hash sentinel carried by the first journal row.
 pub const GENESIS_PREVIOUS_HASH: &str = "sha256-Genesis";
@@ -47,7 +47,7 @@ impl FromStr for PreviousRowHash {
 }
 
 /// Operation-specific fields carried by a journal row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalPayload {
     fields: BTreeMap<String, Value>,
 }
@@ -78,13 +78,13 @@ impl JournalPayload {
 
     /// Returns operation-specific fields in deterministic key order.
     #[must_use]
-    pub fn fields(&self) -> &BTreeMap<String, Value> {
+    pub const fn fields(&self) -> &BTreeMap<String, Value> {
         &self.fields
     }
 }
 
 /// One validated journal row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalRow {
     seq: u64,
     previous: PreviousRowHash,
@@ -143,7 +143,7 @@ impl JournalRow {
 }
 
 /// Result of scanning the journal from its head.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalRecovery {
     accepted: Vec<JournalRow>,
     quarantined_suffix: Vec<u8>,
@@ -262,7 +262,8 @@ fn decode_row(line: &[u8], previous: Option<&JournalRow>) -> Result<JournalRow, 
         return Err(JournalError::InvalidRow("row must be an object".into()));
     };
     body_object.remove("rowHash");
-    let calculated = canonical_digest(&body).map_err(integrity_to_journal)?;
+    let calculated =
+        canonical_digest(&body).map_err(|error| JournalError::InvalidRow(error.to_string()))?;
     if recorded != calculated {
         return Err(JournalError::InvalidRow("rowHash mismatch".into()));
     }
@@ -305,10 +306,8 @@ fn hash_body(
     for (key, value) in &payload.fields {
         object.insert(key.clone(), value.clone());
     }
-    canonical_digest(&Value::Object(object)).map_err(integrity_to_journal)
-}
-fn integrity_to_journal(error: IntegrityError) -> JournalError {
-    JournalError::InvalidRow(error.to_string())
+    canonical_digest(&Value::Object(object))
+        .map_err(|error| JournalError::InvalidRow(error.to_string()))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -412,7 +411,7 @@ mod tests {
         )
         .unwrap();
         let with_later_content = [
-            bytes.clone(),
+            bytes,
             third.to_ndjson_line().unwrap(),
             fourth.to_ndjson_line().unwrap(),
         ]

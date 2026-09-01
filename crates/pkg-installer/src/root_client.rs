@@ -9,10 +9,16 @@ use nix::{
     poll::{PollFd, PollFlags, PollTimeout, poll},
 };
 use pkg_nix::{
-    BrokerHelperRequest, BrokerHelperResponse, Digest, MAX_REPAIR_EXECUTION_DURATION,
-    MaintenanceCapability, ProductFrameCodec, RemoveRootSetRequest, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetPublicationRequest,
-    RootSetReport, RootSetTransitionReport, RootSetTransitionRequest, VerifiedRepairScope,
+    BrokerHelperRequest, BrokerHelperResponse, BuildCacheError, BuildCacheProbe, BuildReport,
+    BuildRequest, CacheDownloadClosure, CachePathObservation, DerivationPlanReport, Digest,
+    EvaluateDerivationRequest, GcReport, HELPER_FRAME_PAYLOAD_LIMIT, MAX_REPAIR_EXECUTION_DURATION,
+    MaintenanceCapability, NixAdapter, NixAdapterError, NixpkgsMetadataRunner, NixpkgsPin,
+    NixpkgsSourceError, PathInfoReport, ProductFrameCodec, RemoveRootSetRequest,
+    RepairStorePathsReport, RepairStorePathsRequest, RootNixFailure, RootNixOperation,
+    RootNixRequest, RootNixResponse, RootRepairPlanProof, RootRepairPlanRequest, RootSet,
+    RootSetAttestationRequest, RootSetPublicationRequest, RootSetReport, RootSetTransitionReport,
+    RootSetTransitionRequest, StorePath, SubstituteReport, VerifiedRepairScope, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 use socket2::{Domain, SockAddr, Socket, Type};
 use std::{
@@ -26,7 +32,6 @@ use std::{
 };
 
 const FRAME_HEADER_BYTES: usize = 20;
-const MAX_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 const REQUEST_ID: u64 = 1;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -83,26 +88,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetPublicationRequest,
     ) -> Result<RootSetReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let request = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::PublishRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &request, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetPublished(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -120,26 +109,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetTransitionRequest,
     ) -> Result<RootSetTransitionReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::TransitionRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetTransitioned(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -157,26 +130,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetAttestationRequest,
     ) -> Result<RootSetReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::AttestRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetAttested(report) => Ok(report),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -195,26 +152,10 @@ impl RootHelperClient {
         &self,
         request: &RemoveRootSetRequest,
     ) -> Result<(), HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::RemoveRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RootSetRemoved => Ok(()),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -234,26 +175,10 @@ impl RootHelperClient {
         &self,
         request: &RootSetAttestationRequest,
     ) -> Result<RootSet, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::LoadRepairRootSet(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RepairRootSetLoaded(root_set) => Ok(root_set),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -268,26 +193,10 @@ impl RootHelperClient {
     /// Returns a redacted transport error unless the root helper returns the
     /// exact correlated ownership response.
     pub fn verify_managed_ownership(&self, digest: Digest) -> Result<bool, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::VerifyManagedOwnership(digest),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::ManagedOwnership(verified) => Ok(verified),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -304,26 +213,10 @@ impl RootHelperClient {
         &self,
         scope: &VerifiedRepairScope,
     ) -> Result<MaintenanceCapability, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
+        match self.round_trip(
             &BrokerHelperRequest::IssueRepairCapability(scope.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        let deadline = deadline_after(RESPONSE_TIMEOUT)?;
-        write_all_until(&mut stream, &frame, deadline)?;
-        stream
-            .shutdown(Shutdown::Write)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
-        let response = read_frame(&mut stream, deadline)?;
-        let (response_id, response) = ProductFrameCodec::decode_helper_response(&response)
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
-        if response_id != REQUEST_ID {
-            return Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            ));
-        }
-        match response {
+            RESPONSE_TIMEOUT,
+        )? {
             BrokerHelperResponse::RepairCapabilityIssued(capability) => Ok(capability),
             _ => Err(HelperTransportError::new(
                 HelperTransportErrorCode::InvalidFrame,
@@ -340,17 +233,30 @@ impl RootHelperClient {
         &self,
         request: &RepairStorePathsRequest,
     ) -> Result<RepairStorePathsReport, HelperTransportError> {
-        let mut stream = self.connect()?;
-        let frame = ProductFrameCodec::encode_helper_request(
-            REQUEST_ID,
-            &BrokerHelperRequest::RepairStorePaths(request.clone()),
-        )
-        .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
         // The privileged executor owns a bounded process-group deadline. The
         // broker waits beyond that bound so it does not release build or GC
         // admission while the helper can still mutate the store.
-        let deadline = deadline_after(repair_response_timeout()?)?;
-        write_all_until(&mut stream, &frame, deadline)?;
+        match self.round_trip(
+            &BrokerHelperRequest::RepairStorePaths(request.clone()),
+            repair_response_timeout()?,
+        )? {
+            BrokerHelperResponse::RepairCompleted(report) => Ok(report),
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    fn round_trip(
+        &self,
+        request: &BrokerHelperRequest,
+        timeout: Duration,
+    ) -> Result<BrokerHelperResponse, HelperTransportError> {
+        let mut stream = self.connect()?;
+        let request = ProductFrameCodec::encode_helper_request(REQUEST_ID, request)
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+        let deadline = deadline_after(timeout)?;
+        write_all_until(&mut stream, &request, deadline)?;
         stream
             .shutdown(Shutdown::Write)
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
@@ -362,12 +268,7 @@ impl RootHelperClient {
                 HelperTransportErrorCode::InvalidFrame,
             ));
         }
-        match response {
-            BrokerHelperResponse::RepairCompleted(report) => Ok(report),
-            _ => Err(HelperTransportError::new(
-                HelperTransportErrorCode::InvalidFrame,
-            )),
-        }
+        Ok(response)
     }
 
     fn connect(&self) -> Result<UnixStream, HelperTransportError> {
@@ -395,6 +296,223 @@ impl RootHelperClient {
             .set_nonblocking(true)
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
         Ok(stream)
+    }
+
+    fn root_round_trip(
+        &self,
+        request: RootNixRequest,
+    ) -> Result<RootNixResponse, HelperTransportError> {
+        let operation = request.operation();
+        let timeout = operation
+            .client_budget()
+            .ok_or_else(|| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))?;
+        match self.round_trip(&BrokerHelperRequest::RootNix(request), timeout)? {
+            BrokerHelperResponse::RootNix(response) if response.operation() == operation => {
+                Ok(*response)
+            }
+            _ => Err(HelperTransportError::new(
+                HelperTransportErrorCode::InvalidFrame,
+            )),
+        }
+    }
+
+    /// Resolves the exact typed closure of generation roots through the helper.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed adapter error for transport, framing, helper, or validation failure.
+    #[allow(
+        dead_code,
+        reason = "inactive typed proxy contract kept for the DN09 contract test"
+    )]
+    pub(crate) fn closure_for_roots(
+        &self,
+        roots: &[StorePath],
+    ) -> Result<Vec<StorePath>, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::ClosureForRoots(roots.to_vec()))? {
+            RootNixResponse::ClosureForRoots(closure) => Ok(closure),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    /// Requests the sanitized repair preview and digest proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns a closed adapter error for transport, framing, helper, or validation failure.
+    #[allow(
+        dead_code,
+        reason = "inactive typed proxy contract kept for the DN09 contract test"
+    )]
+    pub(crate) fn repair_plan_proof(
+        &self,
+        request: &RootRepairPlanRequest,
+    ) -> Result<RootRepairPlanProof, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::RepairPlan(request.clone()))? {
+            RootNixResponse::RepairPlan(proof) if request.accepts(&proof) => Ok(proof),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    fn adapter_response(
+        &self,
+        request: RootNixRequest,
+    ) -> Result<RootNixResponse, NixAdapterError> {
+        let operation = request.operation();
+        match self
+            .root_round_trip(request)
+            .map_err(adapter_transport_failure)?
+        {
+            RootNixResponse::Failed {
+                operation: response_operation,
+                failure: RootNixFailure::Adapter(code),
+            } if response_operation == operation => Err(NixAdapterError::remote(code)),
+            RootNixResponse::Failed { .. } => Err(NixAdapterError::Unavailable),
+            response if response.operation() == operation => Ok(response),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+}
+
+impl NixAdapter for RootHelperClient {
+    fn version(&self) -> Result<VersionInfo, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::Version)? {
+            RootNixResponse::Version(report) => Ok(report),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    fn evaluate_derivation(
+        &self,
+        request: &EvaluateDerivationRequest,
+    ) -> Result<DerivationPlanReport, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::Evaluate(request.clone()))? {
+            RootNixResponse::Evaluate(report) => Ok(report),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::PathInfo(path.clone()))? {
+            RootNixResponse::PathInfo(report) => Ok(report),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    fn substitute(&self, path: &StorePath) -> Result<SubstituteReport, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::Substitute(path.clone()))? {
+            RootNixResponse::Substitute(report) => Ok(report),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    fn substitute_many(
+        &self,
+        paths: &[StorePath],
+    ) -> Result<Vec<SubstituteReport>, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::SubstituteMany(paths.to_vec()))? {
+            RootNixResponse::SubstituteMany(reports) => Ok(reports),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    fn build(&self, request: &BuildRequest) -> Result<BuildReport, NixAdapterError> {
+        self.build_with_progress(request, &mut |_| Ok(()))
+    }
+
+    fn build_with_progress(
+        &self,
+        request: &BuildRequest,
+        progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<BuildReport, NixAdapterError> {
+        let mut stream = self.connect().map_err(adapter_transport_failure)?;
+        let request = BrokerHelperRequest::RootNix(RootNixRequest::Build(request.clone()));
+        let encoded = ProductFrameCodec::encode_helper_request(REQUEST_ID, &request)
+            .map_err(|_| NixAdapterError::OperationFailed)?;
+        let timeout = RootNixOperation::Build
+            .client_budget()
+            .ok_or(NixAdapterError::Timeout)?;
+        let deadline = deadline_after(timeout).map_err(adapter_transport_failure)?;
+        write_all_until(&mut stream, &encoded, deadline).map_err(adapter_transport_failure)?;
+        let mut last_progress = 0;
+        loop {
+            let frame = read_frame(&mut stream, deadline).map_err(adapter_transport_failure)?;
+            let (response_id, response) = ProductFrameCodec::decode_helper_response(&frame)
+                .map_err(|_| NixAdapterError::OperationFailed)?;
+            if response_id != REQUEST_ID {
+                return Err(NixAdapterError::OperationFailed);
+            }
+            let BrokerHelperResponse::RootNix(response) = response else {
+                return Err(NixAdapterError::OperationFailed);
+            };
+            if let Some(report) = handle_build_response(response, &mut last_progress, progress)? {
+                return Ok(report);
+            }
+        }
+    }
+
+    fn verify(&self, request: &VerifyRequest) -> Result<VerifyReport, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::Verify(request.clone()))? {
+            RootNixResponse::Verify(report) => Ok(report),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+
+    fn gc(&self) -> Result<GcReport, NixAdapterError> {
+        match self.adapter_response(RootNixRequest::Gc)? {
+            RootNixResponse::Gc(report) => Ok(report),
+            _ => Err(NixAdapterError::OperationFailed),
+        }
+    }
+}
+
+impl BuildCacheProbe for RootHelperClient {
+    fn inspect(&self, paths: &[StorePath]) -> Result<Vec<CachePathObservation>, BuildCacheError> {
+        match self.root_round_trip(RootNixRequest::CacheInspect(paths.to_vec())) {
+            Ok(RootNixResponse::CacheInspect(observations)) => Ok(observations),
+            Ok(RootNixResponse::Failed {
+                operation: RootNixOperation::CacheInspect,
+                failure: RootNixFailure::Cache(code),
+            }) => Err(BuildCacheError::remote(code)),
+            _ => Err(BuildCacheError::remote(
+                pkg_nix::BuildCacheErrorCode::ProbeFailed,
+            )),
+        }
+    }
+
+    fn inspect_download_closures(
+        &self,
+        roots: &[StorePath],
+    ) -> Result<Vec<CacheDownloadClosure>, BuildCacheError> {
+        match self.root_round_trip(RootNixRequest::CacheInspectClosures(roots.to_vec())) {
+            Ok(RootNixResponse::CacheInspectClosures(closures)) => Ok(closures),
+            Ok(RootNixResponse::Failed {
+                operation: RootNixOperation::CacheInspectClosures,
+                failure: RootNixFailure::Cache(code),
+            }) => Err(BuildCacheError::remote(code)),
+            _ => Err(BuildCacheError::remote(
+                pkg_nix::BuildCacheErrorCode::ProbeFailed,
+            )),
+        }
+    }
+}
+
+impl NixpkgsMetadataRunner for RootHelperClient {
+    fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError> {
+        match self.root_round_trip(RootNixRequest::NixpkgsMetadata(pin.clone())) {
+            Ok(RootNixResponse::NixpkgsMetadata(metadata)) => Ok(metadata),
+            _ => Err(NixpkgsSourceError::runner_failure()),
+        }
+    }
+}
+
+const fn adapter_transport_failure(error: HelperTransportError) -> NixAdapterError {
+    match error.code() {
+        HelperTransportErrorCode::UnauthenticatedPeer => NixAdapterError::PermissionDenied,
+        HelperTransportErrorCode::TransportFailure => NixAdapterError::Unavailable,
+        HelperTransportErrorCode::InvalidFrame | HelperTransportErrorCode::HelperFailure => {
+            NixAdapterError::OperationFailed
+        }
     }
 }
 
@@ -429,7 +547,7 @@ fn read_frame(stream: &mut UnixStream, deadline: Instant) -> Result<Vec<u8>, Hel
             .try_into()
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?,
     ) as usize;
-    if payload_length > MAX_FRAME_PAYLOAD_BYTES {
+    if payload_length > HELPER_FRAME_PAYLOAD_LIMIT {
         return Err(HelperTransportError::new(
             HelperTransportErrorCode::InvalidFrame,
         ));
@@ -556,17 +674,28 @@ fn remaining(deadline: Instant) -> Result<Duration, HelperTransportError> {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
     use crate::{BrokerHelperDispatch, serve_helper_connection};
     use nix::unistd::Uid;
     use pkg_nix::{
-        AuthenticatedHelper, GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter,
-        MaintenanceError, RootName, RootSetAttestationRequest, RootSetEntry,
-        RootSetTransitionRequest, StorePath,
+        AuthenticatedHelper, BuildApprovalReceipt, BuildOutput, BuildOutputProvenance,
+        BuildPreview, BuildReadiness, BuildStatus, DerivationPath, DerivedOutputTarget,
+        GenerationId, InProcessHelper, InProcessPeer, MaintenanceAdapter, MaintenanceError,
+        OperationId, OutputName, PolicyVersion, RootName, RootRepairPlanProof,
+        RootRepairPlanRequest, RootSetAttestationRequest, RootSetEntry, RootSetTransitionRequest,
+        StorePath, System,
     };
-    use std::{error::Error, os::unix::net::UnixListener, thread};
+    use std::{
+        error::Error,
+        os::unix::net::UnixListener,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        thread,
+    };
     use tempfile::TempDir;
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
@@ -609,6 +738,12 @@ mod tests {
                     .for_caller(request.owner_uid())
                     .attest_root_set(&request)
                     .map(BrokerHelperResponse::RootSetAttested),
+                BrokerHelperRequest::RootNix(request) => Ok(BrokerHelperResponse::RootNix(
+                    Box::new(RootNixResponse::Failed {
+                        operation: request.operation(),
+                        failure: RootNixFailure::Inactive,
+                    }),
+                )),
                 _ => Err(MaintenanceError::backend_failure()),
             }
         }
@@ -624,6 +759,167 @@ mod tests {
             )],
         )
         .unwrap()
+    }
+
+    fn build_request() -> BuildRequest {
+        BuildRequest::new(
+            vec![
+                DerivedOutputTarget::new(
+                    DerivationPath::new(
+                        StorePath::new(&format!("/nix/store/{STORE_HASH}-hello.drv")).unwrap(),
+                    )
+                    .unwrap(),
+                    vec![OutputName::new("out").unwrap()],
+                )
+                .unwrap(),
+            ],
+            System::X8664Linux,
+            BuildApprovalReceipt::new(
+                OperationId::new("op-root-client").unwrap(),
+                Digest::from_bytes([0x42; 32]),
+                PolicyVersion::from_u64(7).unwrap(),
+            ),
+        )
+        .unwrap()
+    }
+
+    fn build_report() -> BuildReport {
+        BuildReport::new(
+            BuildStatus::Built,
+            vec![BuildOutput::new(
+                StorePath::new(&format!("/nix/store/{STORE_HASH}-hello")).unwrap(),
+                BuildOutputProvenance::LocalBuild,
+            )],
+        )
+        .unwrap()
+    }
+
+    fn repair_proof() -> RootRepairPlanProof {
+        let preview = BuildPreview::from_json_bytes(
+            br#"{"schemaVersion":1,"purpose":"repair","platform":{"os":"linux","arch":"x86_64"},"policyVersion":7,"buildPlanDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","targets":[{"selector":"repair-1","packageName":"hello-1.0","version":"installed","outputsToInstall":["out"],"localBuildRequired":true}],"build":{"count":1,"names":["hello-1.0"],"hasFixedOutput":false},"cache":{"knownDownloadBytes":0,"knownContentBytes":0},"unknownLocalOutputs":1,"estimates":{"approxBuildMinutes":null,"approxNewDiskBytes":null,"approxTotalClosureBytes":null},"readiness":{"sandboxed":true,"buildIsolationReady":true,"nativeBuild":true,"resourceBoundary":{"isolation":"sandbox","perBuildResourceCap":false,"notice":"Repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits."}},"approvalRequired":true}"#,
+        )
+        .unwrap();
+        RootRepairPlanProof::new(preview).unwrap()
+    }
+
+    struct ProgressDispatch {
+        estimates: Vec<u32>,
+        delay: Duration,
+        sink_failed: Arc<AtomicBool>,
+    }
+
+    struct RepairPlanningDispatch {
+        roots: Vec<StorePath>,
+        closure: Vec<StorePath>,
+        request: RootRepairPlanRequest,
+        proof: RootRepairPlanProof,
+        calls: AtomicUsize,
+    }
+
+    impl BrokerHelperDispatch for RepairPlanningDispatch {
+        fn dispatch(
+            &self,
+            _request: BrokerHelperRequest,
+        ) -> Result<BrokerHelperResponse, MaintenanceError> {
+            Err(MaintenanceError::backend_failure())
+        }
+
+        fn dispatch_root_nix(
+            &self,
+            request: RootNixRequest,
+            _deadline: Instant,
+        ) -> RootNixResponse {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            match request {
+                RootNixRequest::ClosureForRoots(roots) if roots == self.roots => {
+                    RootNixResponse::ClosureForRoots(self.closure.clone())
+                }
+                RootNixRequest::RepairPlan(request) if request == self.request => {
+                    RootNixResponse::RepairPlan(self.proof.clone())
+                }
+                request => RootNixResponse::Failed {
+                    operation: request.operation(),
+                    failure: RootNixFailure::Inactive,
+                },
+            }
+        }
+    }
+
+    type ProgressRun = (
+        Result<BuildReport, NixAdapterError>,
+        bool,
+        Result<(), HelperTransportError>,
+    );
+
+    impl BrokerHelperDispatch for ProgressDispatch {
+        fn dispatch(
+            &self,
+            _request: BrokerHelperRequest,
+        ) -> Result<BrokerHelperResponse, MaintenanceError> {
+            Err(MaintenanceError::backend_failure())
+        }
+
+        fn dispatch_build(
+            &self,
+            _request: &BuildRequest,
+            _deadline: Instant,
+            cancelled: &AtomicBool,
+            progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+        ) -> RootNixResponse {
+            for value in &self.estimates {
+                if !self.delay.is_zero() {
+                    thread::sleep(self.delay);
+                }
+                if cancelled.load(Ordering::Acquire) {
+                    self.sink_failed.store(true, Ordering::Release);
+                    return RootNixResponse::Failed {
+                        operation: RootNixOperation::Build,
+                        failure: RootNixFailure::Adapter(pkg_nix::NixAdapterErrorCode::Unavailable),
+                    };
+                }
+                if progress(pkg_nix::BuildProgressEstimate::new(*value).unwrap()).is_err() {
+                    self.sink_failed.store(true, Ordering::Relaxed);
+                    return RootNixResponse::Failed {
+                        operation: RootNixOperation::Build,
+                        failure: RootNixFailure::Adapter(pkg_nix::NixAdapterErrorCode::Unavailable),
+                    };
+                }
+            }
+            RootNixResponse::Build(build_report())
+        }
+    }
+
+    fn run_progress_build(
+        estimates: Vec<u32>,
+        delay: Duration,
+        progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+    ) -> Result<ProgressRun, Box<dyn Error>> {
+        let temporary = TempDir::new()?;
+        let endpoint = temporary.path().join("root-helper.sock");
+        let listener = UnixListener::bind(&endpoint)?;
+        let helper_uid = Uid::effective().as_raw();
+        let sink_failed = Arc::new(AtomicBool::new(false));
+        let observed_failure = Arc::clone(&sink_failed);
+        let worker = thread::spawn(move || {
+            let (stream, _) = listener.accept().map_err(|_| {
+                HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
+            })?;
+            serve_helper_connection(
+                stream,
+                helper_uid,
+                &ProgressDispatch {
+                    estimates,
+                    delay,
+                    sink_failed: observed_failure,
+                },
+            )
+        });
+        let result = RootHelperClient::at(endpoint, helper_uid)
+            .build_with_progress(&build_request(), progress);
+        let served = worker
+            .join()
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
+        Ok((result, sink_failed.load(Ordering::Relaxed), served))
     }
 
     fn publication() -> RootSetPublicationRequest {
@@ -661,6 +957,114 @@ mod tests {
         let report = report?;
         assert_eq!(report.entry_count(), 1);
         assert!(report.reference().as_str().ends_with("/1001/gen-0007"));
+        Ok(())
+    }
+
+    #[test]
+    fn typed_adapter_maps_the_closed_inactive_result_without_fallback() -> Result<(), Box<dyn Error>>
+    {
+        let temporary = TempDir::new()?;
+        let endpoint = temporary.path().join("root-helper.sock");
+        let listener = UnixListener::bind(&endpoint)?;
+        let broker_uid = Uid::effective().as_raw();
+        let helper = InProcessHelper::new(broker_uid)?;
+        let authenticated = helper.connect(InProcessPeer::authenticated_uid(broker_uid))?;
+        let worker = thread::spawn(move || {
+            let (stream, _) = listener.accept().map_err(|_| {
+                HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
+            })?;
+            serve_helper_connection(stream, broker_uid, &RootDispatch(authenticated))
+        });
+        let client = RootHelperClient::at(endpoint, broker_uid);
+
+        assert_eq!(
+            client.version().unwrap_err().code(),
+            pkg_nix::NixAdapterErrorCode::Unavailable
+        );
+        assert!(worker.join().unwrap().is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn repair_planning_seam_round_trips_exact_closure_and_proof_requests()
+    -> Result<(), Box<dyn Error>> {
+        let temporary = TempDir::new()?;
+        let endpoint = temporary.path().join("root-helper.sock");
+        let listener = UnixListener::bind(&endpoint)?;
+        let helper_uid = Uid::effective().as_raw();
+        let root = StorePath::new(&format!("/nix/store/{STORE_HASH}-hello"))?;
+        let dependency = StorePath::new(&format!("/nix/store/{STORE_HASH}-glibc"))?;
+        let request = RootRepairPlanRequest::new(
+            vec![root.clone()],
+            PolicyVersion::from_u64(7).unwrap(),
+            System::X8664Linux,
+            BuildReadiness::new(true, false, true, true, true),
+            8,
+        )
+        .ok_or("invalid repair request")?;
+        let proof = repair_proof();
+        let dispatcher = Arc::new(RepairPlanningDispatch {
+            roots: vec![root.clone()],
+            closure: vec![root.clone(), dependency.clone()],
+            request: request.clone(),
+            proof: proof.clone(),
+            calls: AtomicUsize::new(0),
+        });
+        let worker_dispatcher = Arc::clone(&dispatcher);
+        let worker = thread::spawn(move || -> Result<(), HelperTransportError> {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().map_err(|_| {
+                    HelperTransportError::new(HelperTransportErrorCode::TransportFailure)
+                })?;
+                serve_helper_connection(stream, helper_uid, worker_dispatcher.as_ref())?;
+            }
+            Ok(())
+        });
+        let client = RootHelperClient::at(endpoint, helper_uid);
+
+        assert_eq!(
+            client.closure_for_roots(std::slice::from_ref(&root))?,
+            vec![root, dependency]
+        );
+        assert_eq!(client.repair_plan_proof(&request)?, proof);
+        worker
+            .join()
+            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))??;
+        assert_eq!(dispatcher.calls.load(Ordering::Relaxed), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_build_preserves_order_and_rejects_non_monotonic_progress()
+    -> Result<(), Box<dyn Error>> {
+        let mut observed = Vec::new();
+        let (result, sink_failed, served) =
+            run_progress_build(vec![100, 200], Duration::ZERO, &mut |estimate| {
+                observed.push(estimate.millionths());
+                Ok(())
+            })?;
+        assert_eq!(result, Ok(build_report()));
+        assert_eq!(observed, [100, 200]);
+        assert!(!sink_failed);
+        assert!(served.is_ok());
+
+        let (result, _, _) = run_progress_build(vec![200, 100], Duration::ZERO, &mut |_| Ok(()))?;
+        assert_eq!(result, Err(NixAdapterError::OperationFailed));
+        Ok(())
+    }
+
+    #[test]
+    fn build_callback_failure_disconnects_the_helper_progress_sink() -> Result<(), Box<dyn Error>> {
+        let (result, sink_failed, served) =
+            run_progress_build(vec![100, 200], Duration::from_millis(50), &mut |_| {
+                Err(NixAdapterError::OperationFailed)
+            })?;
+        assert_eq!(result, Err(NixAdapterError::OperationFailed));
+        assert!(sink_failed);
+        assert_eq!(
+            served.map_err(HelperTransportError::code),
+            Err(HelperTransportErrorCode::TransportFailure)
+        );
         Ok(())
     }
 
@@ -762,8 +1166,14 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn wrong_response_kind_is_rejected_after_exact_request() -> Result<(), Box<dyn Error>> {
+    /// Serves one scripted reply to the exact root-publication request and
+    /// returns the mapped client result. The script fixes both the response
+    /// frame id and the response kind, so id correlation failures and kind
+    /// mismatches share one socket setup.
+    fn scripted_reply_result(
+        response_id: u64,
+        response: BrokerHelperResponse,
+    ) -> Result<Result<RootSetReport, HelperTransportErrorCode>, Box<dyn Error>> {
         let temporary = TempDir::new()?;
         let endpoint = temporary.path().join("root-helper.sock");
         let listener = UnixListener::bind(&endpoint)?;
@@ -793,11 +1203,8 @@ mod tests {
                 ProductFrameCodec::decode_helper_request(&request),
                 Ok((REQUEST_ID, BrokerHelperRequest::PublishRootSet(expected)))
             );
-            let response = ProductFrameCodec::encode_helper_response(
-                REQUEST_ID,
-                &BrokerHelperResponse::RootSetRemoved,
-            )
-            .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
+            let response = ProductFrameCodec::encode_helper_response(response_id, &response)
+                .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::InvalidFrame))?;
             stream
                 .write_all(&response)
                 .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::TransportFailure))
@@ -811,7 +1218,34 @@ mod tests {
             .join()
             .map_err(|_| HelperTransportError::new(HelperTransportErrorCode::HelperFailure))?;
         assert_eq!(served.map_err(HelperTransportError::code), Ok(()));
-        assert_eq!(result, Err(HelperTransportErrorCode::InvalidFrame));
+        Ok(result)
+    }
+
+    #[test]
+    fn wrong_response_id_is_rejected_after_exact_request() -> Result<(), Box<dyn Error>> {
+        assert_eq!(
+            scripted_reply_result(REQUEST_ID + 1, BrokerHelperResponse::RootSetRemoved)?,
+            Err(HelperTransportErrorCode::InvalidFrame)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn wrong_response_kind_is_rejected_after_exact_request() -> Result<(), Box<dyn Error>> {
+        assert_eq!(
+            scripted_reply_result(REQUEST_ID, BrokerHelperResponse::RootSetRemoved)?,
+            Err(HelperTransportErrorCode::InvalidFrame)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn response_timeouts_remain_fixed() -> Result<(), Box<dyn Error>> {
+        assert_eq!(RESPONSE_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(
+            repair_response_timeout()?,
+            MAX_REPAIR_EXECUTION_DURATION + REPAIR_RESPONSE_GRACE
+        );
         Ok(())
     }
 
@@ -845,5 +1279,36 @@ mod tests {
             format!("{client:?}"),
             "RootHelperClient(<fixed-private-endpoint>)"
         );
+    }
+}
+
+/// Handles one build-stream response frame.
+///
+/// Returns `Ok(Some(report))` when the build finished, `Ok(None)` when
+/// progress was forwarded and the stream continues.
+fn handle_build_response(
+    response: Box<RootNixResponse>,
+    last_progress: &mut u32,
+    progress: &mut dyn FnMut(pkg_nix::BuildProgressEstimate) -> Result<(), NixAdapterError>,
+) -> Result<Option<BuildReport>, NixAdapterError> {
+    match *response {
+        RootNixResponse::BuildProgress(estimate) => {
+            if estimate.millionths() <= *last_progress {
+                return Err(NixAdapterError::OperationFailed);
+            }
+            *last_progress = estimate.millionths();
+            progress(estimate)?;
+            Ok(None)
+        }
+        RootNixResponse::Build(report) => Ok(Some(report)),
+        RootNixResponse::Failed {
+            operation: RootNixOperation::Build,
+            failure: RootNixFailure::Adapter(code),
+        } => Err(NixAdapterError::remote(code)),
+        RootNixResponse::Failed {
+            operation: RootNixOperation::Build,
+            ..
+        } => Err(NixAdapterError::Unavailable),
+        _ => Err(NixAdapterError::OperationFailed),
     }
 }

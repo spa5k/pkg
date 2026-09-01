@@ -84,8 +84,9 @@ fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> String {
     s[..end].to_owned()
 }
 
-/// A coarse, stable classification of a malformed-payload failure. It carries
-/// **no raw bytes**; it only distinguishes JSON-shape problems from
+/// A coarse, stable classification of a malformed-payload failure.
+///
+/// It carries **no raw bytes**; it only distinguishes JSON-shape problems from
 /// excessive-nesting problems (the latter surfaced by serde_json's default
 /// recursion protection).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -359,10 +360,10 @@ impl NixAdapterError {
     /// text can ever enter the error.
     #[must_use]
     pub fn unexpected_call(expected: MethodKind, actual: MethodKind) -> Self {
-        let summary = if expected != actual {
-            "method mismatch"
-        } else {
+        let summary = if expected == actual {
             "request mismatch"
+        } else {
+            "method mismatch"
         };
         Self::UnexpectedCall {
             expected,

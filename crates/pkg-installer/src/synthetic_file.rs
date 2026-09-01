@@ -1,9 +1,10 @@
 //! Closed transactional filesystem adapter for `/private/etc/synthetic.conf`.
 
-use crate::{
-    store_journal_file::full_sync,
-    synthetic_conf::{MacOsSyntheticConfPlan, plan_macos_synthetic_entry},
-};
+use crate::synthetic_conf::{MacOsSyntheticConfPlan, plan_macos_synthetic_entry};
+
+pub fn full_sync(file: &std::fs::File) -> Result<(), std::io::Error> {
+    file.sync_all()
+}
 use exacl::getfacl;
 use nix::{
     fcntl::{OFlag, open},
@@ -408,7 +409,11 @@ fn ensure_backup(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "synthetic.conf restore needs every captured identity fact to refuse drift"
+)]
 fn restore_at(
     config_parent: &Path,
     config: &Path,

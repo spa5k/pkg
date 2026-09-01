@@ -16,5 +16,6 @@ RUSTUP_TOOLCHAIN=1.96.1 cargo run --locked --example export_fixture
 ```
 
 The fixture deliberately has long-lived test-only expirations so tests do not
-become date-dependent. Production channel metadata uses the shorter expiry and
-rotation policy in `plans/02-trust-and-update-model.md`.
+become date-dependent. Its rotation-policy citation points to the
+[legacy plan](../../plans/archive/2026-08-22-custom-managed-nix-v1/02-trust-and-update-model.md).
+That citation records fixture history. It is not current design authority.

@@ -1,19 +1,25 @@
 //! Strict, secret-free state for Linux install recovery.
 
+use crate::InstallMode;
 use std::{error::Error, fmt, str::FromStr};
 
 use pkg_core::{System, state::Digest};
 use serde::{Deserialize, Serialize};
 
-use crate::{LinuxAssetKind, linux_install_assets};
+use crate::{
+    LinuxAssetKind,
+    assets::{is_linux_product_gcroots_asset, linux_product_mutation_assets},
+};
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 6;
 const PRODUCT: &str = "pkg";
 const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 
 /// Stable Linux install-journal failure classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinuxInstallJournalErrorCode {
+    /// The snapshot belongs to a journal schema this binary does not support.
+    UnsupportedSchema,
     /// The snapshot is malformed, oversized, stale, or has unknown data.
     InvalidJournal,
     /// A mutation was repeated, skipped, or completed out of order.
@@ -40,7 +46,15 @@ impl LinuxInstallJournalError {
 
 impl fmt::Display for LinuxInstallJournalError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("linux install recovery state is invalid")
+        formatter.write_str(match self.code {
+            LinuxInstallJournalErrorCode::UnsupportedSchema => {
+                "linux install recovery state uses an unsupported schema; keep it unchanged and use the matching installer"
+            }
+            LinuxInstallJournalErrorCode::InvalidJournal
+            | LinuxInstallJournalErrorCode::InvalidTransition => {
+                "linux install recovery state is invalid"
+            }
+        })
     }
 }
 
@@ -51,7 +65,10 @@ impl Error for LinuxInstallJournalError {}
 #[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
 pub enum LinuxInstallMutation {
     /// One compiled account, directory, or file asset.
-    Asset { id: String },
+    Asset {
+        /// The exact compiled asset id.
+        id: String,
+    },
     /// The authenticated managed runtime transaction.
     ManagedRuntime,
     /// The fixed systemd activation transaction.
@@ -70,6 +87,7 @@ pub enum LinuxInstallMutationState {
     PreExisting,
 }
 
+/// Durable product-asset recovery policy for one Linux invocation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LinuxInstallJournalEntry {
@@ -86,7 +104,9 @@ pub struct LinuxInstallJournal {
     system: String,
     ownership_manifest_digest: String,
     recovery_context_digest: String,
+    mode: InstallMode,
     committed: bool,
+    fresh_services_deactivated: bool,
     entries: Vec<LinuxInstallJournalEntry>,
 }
 
@@ -106,6 +126,7 @@ impl LinuxInstallJournal {
     ///
     /// Returns `InvalidJournal` for a non-Linux system.
     pub fn new(
+        mode: InstallMode,
         system: System,
         ownership_manifest_digest: Digest,
         recovery_context_digest: Digest,
@@ -119,9 +140,22 @@ impl LinuxInstallJournal {
             system: system.to_string(),
             ownership_manifest_digest: ownership_manifest_digest.to_string(),
             recovery_context_digest: recovery_context_digest.to_string(),
+            mode,
             committed: false,
+            fresh_services_deactivated: false,
             entries: Vec::new(),
         })
+    }
+
+    /// Returns the durable recovery policy.
+    #[must_use]
+    pub const fn mode(&self) -> InstallMode {
+        self.mode
+    }
+
+    /// Returns the Linux target bound into this validated journal.
+    pub(crate) fn system(&self) -> Result<System, LinuxInstallJournalError> {
+        System::from_str(&self.system).map_err(|_| invalid_journal())
     }
 
     /// Decodes and fully validates one bounded strict snapshot.
@@ -133,7 +167,18 @@ impl LinuxInstallJournal {
         if bytes.len() > MAX_JOURNAL_BYTES {
             return Err(invalid_journal());
         }
-        let journal: Self = serde_json::from_slice(bytes).map_err(|_| invalid_journal())?;
+        let value: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| invalid_journal())?;
+        let schema = value
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(invalid_journal)?;
+        if schema != u64::from(SCHEMA_VERSION) {
+            return Err(LinuxInstallJournalError::new(
+                LinuxInstallJournalErrorCode::UnsupportedSchema,
+            ));
+        }
+        let journal: Self = serde_json::from_value(value).map_err(|_| invalid_journal())?;
         journal.validate()?;
         Ok(journal)
     }
@@ -189,6 +234,44 @@ impl LinuxInstallJournal {
             state: LinuxInstallMutationState::Intended,
         });
         Ok(())
+    }
+
+    /// Records fresh-install service activation intent before any systemd mutation.
+    pub(crate) fn intend_services(&mut self) -> Result<(), LinuxInstallJournalError> {
+        if self.mode != InstallMode::FreshInstall {
+            return Err(invalid_transition());
+        }
+        self.intend(LinuxInstallMutation::Services)
+    }
+
+    pub(crate) fn mark_fresh_services_deactivated(
+        &mut self,
+    ) -> Result<(), LinuxInstallJournalError> {
+        if self.committed
+            || self.mode != InstallMode::FreshInstall
+            || self.fresh_services_deactivated
+            || !self.recovery_actions().iter().any(|action| {
+                matches!(
+                    action,
+                    LinuxInstallRecoveryAction::RevalidateIntended(LinuxInstallMutation::Services)
+                        | LinuxInstallRecoveryAction::RevertCreated(LinuxInstallMutation::Services)
+                )
+            })
+        {
+            return Err(invalid_transition());
+        }
+        self.fresh_services_deactivated = true;
+        Ok(())
+    }
+
+    pub(crate) const fn fresh_services_deactivated(&self) -> bool {
+        self.fresh_services_deactivated
+    }
+
+    pub(crate) fn records_asset(&self, id: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            matches!(&entry.mutation, LinuxInstallMutation::Asset { id: recorded } if recorded == id)
+        })
     }
 
     /// Records one exact object that existed before this attempt.
@@ -332,6 +415,16 @@ impl LinuxInstallJournal {
         Ok(())
     }
 
+    pub(crate) fn finish_recovery(&mut self) -> Result<bool, LinuxInstallJournalError> {
+        if self.committed || !self.recovery_actions().is_empty() {
+            return Err(invalid_transition());
+        }
+        let changed = !self.entries.is_empty() || self.fresh_services_deactivated;
+        self.entries.clear();
+        self.fresh_services_deactivated = false;
+        Ok(changed)
+    }
+
     fn validate(&self) -> Result<(), LinuxInstallJournalError> {
         if self.schema_version != SCHEMA_VERSION
             || self.product != PRODUCT
@@ -342,6 +435,20 @@ impl LinuxInstallJournal {
             || Digest::from_str(&self.ownership_manifest_digest).is_err()
             || Digest::from_str(&self.recovery_context_digest).is_err()
             || self.entries.len() > install_sequence().len()
+        {
+            return Err(invalid_journal());
+        }
+        let changed_services = self.entries.iter().any(|entry| {
+            entry.mutation == LinuxInstallMutation::Services
+                && entry.state != LinuxInstallMutationState::PreExisting
+        });
+        let service_state_valid = match self.mode {
+            InstallMode::FreshInstall => true,
+            InstallMode::OfflineUpgrade | InstallMode::OfflineRepair => !changed_services,
+        };
+        if !service_state_valid
+            || (self.fresh_services_deactivated
+                && (self.mode != InstallMode::FreshInstall || self.committed))
         {
             return Err(invalid_journal());
         }
@@ -368,9 +475,10 @@ impl LinuxInstallJournal {
 }
 
 fn install_sequence() -> Vec<LinuxInstallMutation> {
-    let mut sequence = linux_install_assets()
-        .iter()
-        .filter(|asset| asset.kind() != LinuxAssetKind::File && asset.id() != "nix-gcroots")
+    let mut sequence = linux_product_mutation_assets()
+        .filter(|asset| {
+            asset.kind() != LinuxAssetKind::File && !is_linux_product_gcroots_asset(*asset)
+        })
         .map(|asset| LinuxInstallMutation::Asset {
             id: asset.id().to_owned(),
         })
@@ -380,10 +488,9 @@ fn install_sequence() -> Vec<LinuxInstallMutation> {
     });
     sequence.push(LinuxInstallMutation::ManagedRuntime);
     sequence.extend(
-        linux_install_assets()
-            .iter()
+        linux_product_mutation_assets()
             .filter(|asset| {
-                asset.id() == "nix-gcroots"
+                is_linux_product_gcroots_asset(*asset)
                     || (asset.kind() == LinuxAssetKind::File
                         && !matches!(asset.id(), "nix-config" | "uninstall-manifest"))
             })
@@ -411,12 +518,13 @@ const fn invalid_transition() -> LinuxInstallJournalError {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
 
     fn journal() -> LinuxInstallJournal {
         LinuxInstallJournal::new(
+            InstallMode::FreshInstall,
             System::X8664Linux,
             Digest::from_bytes([0x5a; 32]),
             Digest::from_bytes([0x6a; 32]),
@@ -452,6 +560,110 @@ mod tests {
             decoded.recovery_actions(),
             vec![LinuxInstallRecoveryAction::RevertCreated(&first)]
         );
+    }
+
+    #[test]
+    fn repair_round_trip_has_no_service_mutation_state() {
+        let mut journal = LinuxInstallJournal::new(
+            InstallMode::OfflineRepair,
+            System::X8664Linux,
+            Digest::from_bytes([0x7a; 32]),
+            Digest::from_bytes([0x7b; 32]),
+        )
+        .unwrap();
+        let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
+        assert_eq!(decoded.mode(), InstallMode::OfflineRepair);
+
+        journal
+            .record_preexisting(install_sequence()[0].clone())
+            .unwrap();
+        let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
+        assert!(decoded.recovery_actions().is_empty());
+        assert_eq!(journal.intend_services(), Err(invalid_transition()));
+    }
+
+    #[test]
+    fn schema_six_persists_each_distinct_operation_mode() {
+        for mode in [
+            InstallMode::FreshInstall,
+            InstallMode::OfflineUpgrade,
+            InstallMode::OfflineRepair,
+        ] {
+            let journal = LinuxInstallJournal::new(
+                mode,
+                System::X8664Linux,
+                Digest::from_bytes([0x81; 32]),
+                Digest::from_bytes([0x82; 32]),
+            )
+            .unwrap();
+            assert_eq!(
+                LinuxInstallJournal::decode(&journal.encode().unwrap())
+                    .unwrap()
+                    .mode(),
+                mode
+            );
+        }
+
+        let old = journal()
+            .encode()
+            .unwrap()
+            .windows(b"\"schemaVersion\":6".len())
+            .position(|bytes| bytes == b"\"schemaVersion\":6")
+            .unwrap();
+        let mut bytes = journal().encode().unwrap();
+        bytes[old + b"\"schemaVersion\":".len()] = b'5';
+        assert_eq!(
+            LinuxInstallJournal::decode(&bytes).map_err(LinuxInstallJournalError::code),
+            Err(LinuxInstallJournalErrorCode::UnsupportedSchema)
+        );
+
+        let encoded = journal().encode().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove("schemaVersion");
+        for invalid in [
+            missing,
+            {
+                let mut invalid = value.clone();
+                invalid["schemaVersion"] = serde_json::json!("6");
+                invalid
+            },
+            {
+                let mut invalid = value;
+                invalid["schemaVersion"] = serde_json::json!(6.5);
+                invalid
+            },
+        ] {
+            assert_eq!(
+                LinuxInstallJournal::decode(&serde_json::to_vec(&invalid).unwrap())
+                    .map_err(LinuxInstallJournalError::code),
+                Err(LinuxInstallJournalErrorCode::InvalidJournal)
+            );
+        }
+
+        let mut fresh = journal();
+        for mutation in install_sequence()
+            .into_iter()
+            .take_while(|mutation| *mutation != LinuxInstallMutation::Services)
+        {
+            fresh.record_preexisting(mutation).unwrap();
+        }
+        assert_eq!(fresh.intend_services(), Ok(()));
+
+        let mut upgrade = LinuxInstallJournal::new(
+            InstallMode::OfflineUpgrade,
+            System::X8664Linux,
+            Digest::from_bytes([0x83; 32]),
+            Digest::from_bytes([0x84; 32]),
+        )
+        .unwrap();
+        for mutation in install_sequence()
+            .into_iter()
+            .take_while(|mutation| *mutation != LinuxInstallMutation::Services)
+        {
+            upgrade.record_preexisting(mutation).unwrap();
+        }
+        assert_eq!(upgrade.intend_services(), Err(invalid_transition()));
     }
 
     #[test]
@@ -571,12 +783,14 @@ mod tests {
                 LinuxInstallMutation::ManagedRuntime | LinuxInstallMutation::Services => None,
             })
             .collect::<std::collections::BTreeSet<_>>();
-        let expected = linux_install_assets()
-            .iter()
-            .map(|asset| asset.id())
+        let expected = crate::assets::linux_product_mutation_assets()
+            .map(crate::LinuxInstallAsset::id)
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(actual, expected);
-        assert_eq!(sequence.len(), linux_install_assets().len() + 2);
+        assert_eq!(
+            sequence.len(),
+            crate::assets::linux_product_mutation_assets().count() + 2
+        );
         let runtime = sequence
             .iter()
             .position(|mutation| mutation == &LinuxInstallMutation::ManagedRuntime);
@@ -586,10 +800,23 @@ mod tests {
                     id: "nix-gcroots".to_owned(),
                 }
         });
+        let gcroots_users = sequence.iter().position(|mutation| {
+            mutation
+                == &LinuxInstallMutation::Asset {
+                    id: "nix-gcroots-users".to_owned(),
+                }
+        });
+        let services = sequence
+            .iter()
+            .position(|mutation| mutation == &LinuxInstallMutation::Services);
         assert!(
             runtime
                 .zip(gcroots)
-                .is_some_and(|(runtime, gcroots)| runtime < gcroots)
+                .zip(gcroots_users)
+                .zip(services)
+                .is_some_and(|(((runtime, gcroots), users), services)| {
+                    runtime < gcroots && gcroots < users && users < services
+                })
         );
     }
 }

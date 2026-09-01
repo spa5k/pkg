@@ -267,6 +267,25 @@
     .long-callout.caution { border-left-color: var(--caution); background: var(--caution-soft); }
     .long-callout p:last-child { margin-bottom: 0; }
 
+    .historical-snapshot {
+      margin-top: 42px;
+      padding: clamp(18px, 4vw, 34px);
+      border: 3px dashed #a86545;
+      border-radius: var(--radius);
+      background: #fbf3ed;
+    }
+    .historical-snapshot > :last-child { margin-bottom: 0; }
+    .historical-banner {
+      margin: 0 0 28px;
+      padding: 18px 20px;
+      border-left: 6px solid #a86545;
+      border-radius: 10px;
+      color: #552b1c;
+      background: #f5dfd2;
+    }
+    .historical-banner h2 { margin: 0; font-size: 1.12rem; }
+    .historical-banner p { margin: 6px 0 0; max-width: 88ch; }
+
     .table-wrap { max-width: 100%; overflow-x: auto; margin: 18px 0 24px; border: 1px solid var(--line); border-radius: 12px; }
     .decision-table { width: 100%; min-width: 720px; border-collapse: collapse; background: var(--surface); }
     .decision-table th, .decision-table td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -309,9 +328,6 @@
     .next-list span { color: var(--muted); font-size: .9rem; }
     .work-group + .work-group { margin-top: 24px; }
     .work-group h3 { color: var(--next); }
-    .next-list.start-5 { counter-reset: next 4; }
-    .next-list.start-8 { counter-reset: next 7; }
-
     .change-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--line); }
     .change-strip.transition-strip { grid-template-columns: repeat(3, 1fr); }
     .change-strip > div { padding: 18px; background: var(--surface); }
@@ -384,17 +400,21 @@
     <div class="wrap">
       <p class="eyebrow">Architecture and domain review</p>
       <h1>A smaller and safer base for the pkg alpha</h1>
-      <p class="lede">The Determinate Nix ownership decision is accepted. Delivery is not complete. Earlier checks passed, but they do not prove the new external-installer path.</p>
+      <p class="lede">The Linux code now uses Determinate for Base Nix. Fresh install, offline product upgrade, and offline product-file repair have separate rules. Native x86-64 proof is still required.</p>
       <div class="status-row" aria-label="Report status">
-        <span class="pill complete">Decision accepted</span>
-        <span class="pill caution">Delivery not complete</span>
-        <span class="pill complete">162 earlier tests passed</span>
-        <span class="pill caution">Two current-alpha safety fixes open</span>
+        <span class="pill complete">PR 1 and PR 2 complete</span>
+        <span class="pill caution">DN-15 native proof pending</span>
+        <span class="pill next">Linux code active</span>
       </div>
     </div>
   </header>
 
   <main class="wrap">
+    <section class="historical-snapshot" aria-labelledby="historical-report-title">
+      <div class="historical-banner">
+        <h2 id="historical-report-title">Old report: 24 August 2026</h2>
+        <p>This content is old. We keep it for design history. Do not use its roadmap, work order, or status cards. Use the current four-PR section and active plan after this frame.</p>
+      </div>
     <section class="summary-grid" aria-label="Key results">
       <article class="card metric">
         <span class="number">162</span>
@@ -472,6 +492,37 @@
       </div>
     </section>
 
+    <section aria-labelledby="dn03-status-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" style="color: var(--complete)">DN-03 evidence</p>
+          <h2 id="dn03-status-title">The evidence gate is complete</h2>
+        </div>
+        <p>Evidence complete does not mean clean uninstall or successful crash recovery.</p>
+      </div>
+      <div class="card-grid" aria-label="DN-03 platform and product status">
+        <article class="card">
+          <span class="tag">Linux evidence</span>
+          <h3>Evidence complete</h3>
+          <p>Linux R12 proves broad x86_64 behavior. The functional behavior checks passed. Retained x86_64 R11 and aarch64 R10 prove the two target Asset records.</p>
+          <p><span class="tag caution">Strict vendor cleanup: FAIL</span></p>
+        </article>
+        <article class="card">
+          <span class="tag">macOS evidence</span>
+          <h3>Evidence complete</h3>
+          <p>R10 proves the lifecycle and residue evidence. The functional lifecycle and reboots passed. Crash R1 records a failed recovery after the installer exits 0 because <code>_nixbld1</code> is missing.</p>
+          <p><span class="tag caution">Strict vendor cleanup: FAIL</span> <span class="tag caution">Crash recovery: FAIL</span></p>
+        </article>
+        <article class="card">
+          <span class="tag caution">Product status</span>
+          <h3>Delivery NO-GO</h3>
+          <p>DN-04 documents the proved contract. DN-05–07 is one delivery PR with three ordered checkpoints. DN-08–14 is one later inactive delivery PR with seven ordered checkpoints.</p>
+          <p><strong>Next: the grouped DN-05–07 PR.</strong> The roadmap has 25 delivery PRs and keeps 33 stable DN requirement labels.</p>
+        </article>
+      </div>
+      <p>Read the <a href="spikes/s6-determinate-installer/FINDINGS.md">DN-03 parent decision</a>, the <a href="spikes/s6-determinate-installer/linux-vm/LINUX-FINDINGS.md">Linux findings</a>, and the <a href="spikes/s6-determinate-installer/macos-vm/FSTAB-CONTRACT-RESEARCH.md">macOS lifecycle, residue, and crash findings</a>.</p>
+    </section>
+
     <article class="longform" aria-labelledby="chapter-title">
       <header>
         <p class="eyebrow" style="color: var(--next)">Long-form decision chapter</p>
@@ -497,7 +548,8 @@
             <tbody>
               <tr><td>Earlier current alpha</td><td>162 tests passed and zero failed. Three defect groups were fixed. A total of 296 unused lines were removed.</td><td>These facts do not test Determinate Nix integration.</td></tr>
               <tr><td>Accepted target</td><td>Users install pkg only. pkg will verify and run a pinned Determinate Nix Installer. Determinate will own the machine-wide Nix base.</td><td>The target is a decision. It is not delivered code.</td></tr>
-              <tr><td>Delivery pending</td><td>The contract, adapter, clean-host tests, lifecycle tests, and deletion proof are planned.</td><td>No old machine-wide path can be deleted yet.</td></tr>
+              <tr><td>DN-03 and DN-04</td><td>The standalone evidence gate and ownership documents are complete.</td><td>Clean vendor uninstall and successful crash recovery are not proved.</td></tr>
+              <tr><td>Product delivery</td><td>Delivery is NO-GO. The roadmap has 25 delivery PRs and 33 stable DN requirement labels.</td><td>No old machine-wide path can be deleted yet.</td></tr>
             </tbody>
           </table>
         </div>
@@ -650,7 +702,7 @@
             </tbody>
           </table>
         </div>
-        <p>The exact vendor CLI flags are not yet fixed. They remain VM-spike work. One flag must not be treated as proof of lifecycle or PATH behavior.</p>
+        <p>DN-03 recorded the exact standalone executable evidence. DN-04 maps the documented contract to the accepted reports. One flag is still not proof of lifecycle, product Handoff, or PATH behavior.</p>
 
         <h4>PATH is a blocking compatibility gate</h4>
         <p>Raw Nix must stay outside the normal pkg PATH and UX. This is a product compatibility rule. It is not secrecy and it is not a security boundary. A local administrator can use an absolute path and can change system configuration.</p>
@@ -702,7 +754,8 @@
         </ul>
 
         <h4>Crash and power-loss behavior</h4>
-        <p>Before execution, pkg writes only a small handoff marker with the pinned contract identity. During execution, Determinate owns its machine transaction. After a crash or reboot, pkg reads the vendor receipt and real machine behavior. It never turns its marker into machine authority. It resumes, repairs, or stops only through the supported vendor lifecycle. VM tests must prove SIGKILL and power-loss boundaries.</p>
+        <p>Before execution, pkg writes only a small handoff marker with the pinned contract identity. During execution, Determinate owns its machine transaction. After a crash or reboot, pkg reads the vendor receipt and real machine behavior. It never turns its marker into machine authority.</p>
+        <p>Crash R1 is an accepted negative observation. The vendor recovery install exited 0, but the later state check failed because <code>_nixbld1</code> was missing. Functional Nix recovery was not reached. The DN-06 checkpoint in the grouped DN-05–07 PR must not use SIGKILL or accept exit 0 alone. Its DN-07 checkpoint must validate Handoff and state. The DN-12 checkpoint in the grouped DN-08–14 PR may run an optional <code>repair sequoia</code> proof. DN-16 remains blocked until the full crash and reboot lifecycle passes twice.</p>
       </section>
 
       <section aria-labelledby="chapter-delete-title">
@@ -783,7 +836,7 @@
       <section aria-labelledby="chapter-proof-title">
         <span class="evidence-label proof">VM proof required</span>
         <h3 id="chapter-proof-title">11. Clean-host proof matrix</h3>
-        <p>Run the matrix on disposable clean hosts. A developer laptop is not clean-host proof.</p>
+        <p>Run the matrix on disposable clean hosts. A developer laptop is not clean-host proof. DN-03 observations are in the evidence cards above. The required results below remain the future product and deletion gates.</p>
         <div class="table-wrap" role="region" tabindex="0" aria-label="Clean-host VM proof matrix">
           <table class="decision-table">
             <caption>Proof required before old code deletion</caption>
@@ -880,10 +933,10 @@
 
       <section aria-labelledby="chapter-docs-title">
         <span class="evidence-label accepted">Accepted direction</span>
-        <h3 id="chapter-docs-title">15. Domain documents need a later update</h3>
+        <h3 id="chapter-docs-title">15. DN-04 records the domain decision</h3>
         <p>The existing CONTEXT, ADR, and product documents describe the Broker, Root Helper, and private runtime as the current-alpha architecture. They remain valid history for that implementation.</p>
         <p>The Determinate decision supersedes those documents only for the future machine-wide Nix lifecycle. It does not supersede per-user Manifest and Lock, generations, activation, product repair, package policy, catalog, or the package Application direction.</p>
-        <p>After the packaging spike confirms the exact contract, add an ADR for Determinate ownership. Update the domain terms for Pinned Determinate Nix Installer, Determinate Nix, Vendor Receipt, pkg Handoff Marker, Foreign Nix, and the five base states. Do not rewrite the documents as delivered architecture before the spike passes.</p>
+        <p>DN-03 supplies the standalone evidence. DN-04 records Determinate ownership and the domain terms. It includes the negative cleanup and crash results. It does not describe the product as delivered.</p>
       </section>
 
       <section aria-labelledby="chapter-appendix-title">
@@ -1044,7 +1097,7 @@
           <p class="eyebrow" style="color: var(--complete)">Verification</p>
           <h2 id="tests-title">162 earlier tests passed</h2>
         </div>
-        <p>These tests do not prove the new external-installer path. New tests and review are required.</p>
+        <p>These earlier current-alpha tests are separate from the accepted DN-03 evidence. They do not prove product delivery.</p>
       </div>
       <div class="card test-panel">
         <div class="test-score" aria-label="162 tests passed and 0 failed">
@@ -1217,70 +1270,302 @@
       <div class="section-head">
         <div>
           <p class="eyebrow" style="color: var(--next)">Transition</p>
-          <h2 id="transition-title">The decision starts a new proof cycle</h2>
+          <h2 id="transition-title">The grouped vendor foundation is next</h2>
         </div>
-        <p>Earlier facts stay valid for the earlier alpha. The new path needs new evidence.</p>
+        <p>DN-03 evidence is complete. Product delivery remains NO-GO.</p>
       </div>
       <div class="change-strip transition-strip" aria-label="Architecture transition">
-        <div><strong>1</strong><span>Earlier alpha snapshot</span></div>
-        <div><strong>2</strong><span>Accepted Determinate ownership change</span></div>
-        <div><strong>3</strong><span>New tests and review required</span></div>
+        <div><strong>Done</strong><span>DN-00–04 evidence and decisions</span></div>
+        <div><strong>Next</strong><span>One DN-05–07 PR with three checkpoints</span></div>
+        <div><strong>Later</strong><span>One inactive DN-08–14 PR, then separate DN-15 and DN-16 proofs</span></div>
       </div>
     </section>
 
     <section aria-labelledby="proof-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow" style="color: var(--caution)">Proof before removal</p>
+          <p class="eyebrow" style="color: var(--caution)">Product proof before removal</p>
           <h2 id="proof-title">Do not delete the current installer yet</h2>
         </div>
-        <p>Delete the custom machine-wide installer only after every gate passes.</p>
+        <p>DN-03 is complete. The later product gates still block deletion.</p>
       </div>
       <div class="card">
         <ul class="test-list" aria-label="External installer proof gates">
-          <li><span>Disposable Linux VM</span><strong>Required</strong></li>
-          <li><span>Disposable Apple Silicon macOS VM</span><strong>Required</strong></li>
-          <li><span>Failed verification</span><strong>Fail closed</strong></li>
-          <li><span>Normal PATH</span><strong>No raw Nix</strong></li>
-          <li><span>File ownership</span><strong>Correct</strong></li>
-          <li><span>Repeat run</span><strong>Safe</strong></li>
-          <li><span>SIGKILL and reboot recovery</span><strong>Safe</strong></li>
-          <li><span>Uninstall</span><strong>No owned residue</strong></li>
+          <li><span>DN-03 Linux evidence</span><strong>Complete</strong></li>
+          <li><span>DN-03 macOS evidence</span><strong>Complete</strong></li>
+          <li><span>Clean vendor uninstall</span><span class="tag caution">FAIL</span></li>
+          <li><span>Successful crash recovery</span><span class="tag caution">Unproved</span></li>
+          <li><span>DN-05–07 authenticated asset, safe process, and Handoff checkpoints</span><strong>One PR required</strong></li>
+          <li><span>DN-08–14 inactive lifecycle checkpoints</span><strong>One later PR required</strong></li>
+          <li><span>DN-12 checkpoint: <code>repair sequoia</code> proof</span><span>Optional</span></li>
+          <li><span>DN-13 checkpoint: exact cleanup</span><strong>Required</strong></li>
+          <li><span>DN-15 Complete Linux lifecycle</span><strong>Pass twice before cutover</strong></li>
+          <li><span>DN-16 macOS product lifecycle</span><strong>Required twice</strong></li>
         </ul>
       </div>
     </section>
+    </section>
 
+    <section class="longform" aria-labelledby="linux-modes-title">
+      <header>
+        <span class="evidence-label accepted">Approved DN-15 architecture</span>
+        <h2 id="linux-modes-title">The Linux installer now has three simple modes</h2>
+        <p class="chapter-lede">This section is the current design. Earlier sections remain above as the history that led to it. The code and local tests exist. The final native x86-64 proof does not exist yet.</p>
+      </header>
+
+      <section aria-labelledby="current-stack-title">
+        <h3 id="current-stack-title">Current four-PR status</h3>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Current four-PR delivery status">
+          <table class="decision-table">
+            <thead><tr><th>Delivery PR</th><th>Scope</th><th>Current status</th></tr></thead>
+            <tbody>
+              <tr><td>PR 1</td><td>DN-00 through DN-07</td><td class="yes">Complete</td></tr>
+              <tr><td>PR 2</td><td>DN-08 through DN-14</td><td class="yes">Complete</td></tr>
+              <tr><td>PR 3</td><td>DN-15 Linux lifecycle</td><td class="maybe">Active. Native proof is pending.</td></tr>
+              <tr><td>PR 4</td><td>DN-16 macOS lifecycle and later cleanup</td><td class="no">Blocked. Linux completion and macOS proof remain.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="long-callout">
+          <strong>Use the current plan.</strong>
+          <p>Read the <a href="plans/determinate-nix-stacked-prs.md">active four-PR implementation plan</a>. The old roadmap in the historical frames is not an instruction.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="linux-result-title">
+        <h3 id="linux-result-title">1. The result in plain language</h3>
+        <div class="card-grid">
+          <article class="card">
+            <span class="tag">Fresh host</span>
+            <h4>Install and start</h4>
+            <p>pkg verifies and runs Determinate once when Base Nix is absent. It installs product files. It then enables and starts the fixed product services.</p>
+          </article>
+          <article class="card">
+            <span class="tag next">Existing product</span>
+            <h4>Upgrade while offline</h4>
+            <p>The operator stops and disables product services. pkg replaces authenticated product files. pkg does not change service state.</p>
+          </article>
+          <article class="card">
+            <span class="tag next">Damaged product file</span>
+            <h4>Repair while offline</h4>
+            <p>The operator uses the same release. pkg replaces the damaged product file with authenticated same-release bytes. Services stay offline.</p>
+          </article>
+        </div>
+        <div class="long-callout caution">
+          <strong>This is not a Base Nix repair.</strong>
+          <p>Determinate alone owns Base Nix. Product Asset Repair can change product files only. Package Repair remains a different command for damaged Nix store content.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="linux-owner-title">
+        <h3 id="linux-owner-title">2. One owner for each lifecycle</h3>
+        <div class="architecture">
+          <div class="flow" role="img" aria-label="The user runs the pkg installer. pkg authenticates release inputs. Determinate owns Base Nix. pkg owns product files and user package state.">
+            <div class="node"><div><strong>Operator</strong><span>Runs one authenticated pkg installer</span></div></div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="node"><div><strong>pkg trust boundary</strong><span>Checks release identity and exact bytes</span></div></div>
+            <div class="arrow" aria-hidden="true">→</div>
+            <div class="node future"><div><strong>Determinate owns Base Nix</strong><span>/nix, daemon, build users, native install and uninstall</span></div></div>
+            <div class="arrow" aria-hidden="true">+</div>
+            <div class="node"><div><strong>pkg owns the product</strong><span>Product files, services, package state, roots, GC, and Package Repair</span></div></div>
+          </div>
+        </div>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Lifecycle ownership table">
+          <table class="decision-table">
+            <thead><tr><th>Area</th><th>Owner</th><th>What pkg does</th><th>What pkg does not do</th></tr></thead>
+            <tbody>
+              <tr><td>Base Nix</td><td>Determinate</td><td>Authenticates one pinned installer, starts it once, validates the result, and records Base Nix Handoff.</td><td>Does not copy vendor Rust code. Does not build a second install, repair, update, uninstall, or residue engine.</td></tr>
+              <tr><td>Product files and services</td><td>pkg</td><td>Installs exact release files. Fresh Install activates services. Existing-install work requires services to be offline.</td><td>Does not let an offline operation run service hooks or change service state.</td></tr>
+              <tr><td>User packages</td><td>pkg</td><td>Owns selection, Generations, roots, garbage collection, builds, and Package Repair.</td><td>Does not transfer package policy to Determinate.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="fresh-flow-title">
+        <h3 id="fresh-flow-title">3. Fresh Install: install Base Nix once, then activate pkg</h3>
+        <ol class="process-flow">
+          <li><strong>Authenticate</strong>pkg authenticates the product release and the pinned Determinate Nix Installer 3.22.1 executable.</li>
+          <li><strong>Install Base Nix</strong>pkg records <code>Started</code>. It starts Determinate once. One supervisor drains bounded output, waits, and reaps.</li>
+          <li><strong>Accept the handoff</strong>Only vendor exit status 0 plus installed-state validation becomes <code>Accepted</code>.</li>
+          <li><strong>Activate product</strong>pkg installs exact product files. It enables and starts the four fixed product units. The product receipt is published last.</li>
+        </ol>
+        <div class="plain-example">
+          <strong>Command and success message</strong>
+          <p><code>sudo ./pkg-install</code></p>
+          <p><code>pkg is installed.</code></p>
+        </div>
+        <h4>Fresh retry after Base Nix is Accepted</h4>
+        <p>A crash can happen after Base Nix is Accepted and before product installation finishes. pkg keeps the Fresh Install recovery. The operator runs the same authenticated installer again without an option. pkg does not start Determinate again.</p>
+        <div class="plain-example">
+          <strong>Exact retry message</strong>
+          <p><code>Base Nix is ready, but pkg product installation is incomplete. Run pkg-install again.</code></p>
+        </div>
+      </section>
+
+      <section aria-labelledby="upgrade-flow-title">
+        <h3 id="upgrade-flow-title">4. Offline Upgrade: the operator owns the service window</h3>
+        <ol class="process-flow">
+          <li><strong>Stop and disable</strong>The operator makes all four product units inactive and disabled.</li>
+          <li><strong>Query only</strong>pkg checks unit state, exact fragment paths, and the absence of drop-ins. It does not run a systemd mutation command.</li>
+          <li><strong>Replace product files</strong>pkg authenticates N+1. It replaces only product-owned files. Base Nix Handoff and user package state stay in place.</li>
+          <li><strong>Activate later</strong>pkg leaves services offline. The operator inspects the result, reloads systemd, and activates the new release or reboots.</li>
+        </ol>
+        <div class="plain-example">
+          <strong>Command and success message</strong>
+          <p><code>sudo ./pkg-install</code></p>
+          <p><code>pkg product files are upgraded. Product services remain offline.</code></p>
+        </div>
+        <p>This design deletes active-upgrade service recovery. There is no service state to restore because pkg never changes service state during the upgrade.</p>
+      </section>
+
+      <section aria-labelledby="repair-flow-title">
+        <h3 id="repair-flow-title">5. Offline Repair: move forward to known same-release bytes</h3>
+        <ol class="process-flow">
+          <li><strong>Use the same release</strong>The operator uses the authenticated installer that matches the installed product receipt.</li>
+          <li><strong>Prove offline state</strong>All four units must be inactive and disabled. Their fragments must be exact. Drop-ins must be absent.</li>
+          <li><strong>Repair files only</strong>pkg replaces receipt-owned product files with authenticated same-release bytes. It never keeps or restores unknown damaged bytes.</li>
+          <li><strong>Stay offline</strong>Every retry checks offline state again. Success, failure, and recovery leave services inactive and disabled.</li>
+        </ol>
+        <div class="plain-example">
+          <strong>Command and success message</strong>
+          <p><code>sudo ./pkg-install --repair-product-assets</code></p>
+          <p><code>pkg product files are repaired. Product services remain offline.</code></p>
+        </div>
+        <p>Repair refuses a directory, account, unrecorded file, wrong-release receipt, missing receipt, damaged ownership record, active unit, enabled unit, changed fragment, drop-in, or failed systemd query. It fails before product-file mutation when the preflight is unsafe.</p>
+      </section>
+
+      <section aria-labelledby="operator-flow-title">
+        <h3 id="operator-flow-title">6. Exact operator steps for upgrade or repair</h3>
+        <ol class="numbered-detail">
+          <li><strong>Stop the product units while their files are trusted.</strong><code>sudo systemctl stop pkg-nix-broker.service pkg-root-helper.service pkg-nix-broker.socket pkg-root-helper.socket</code></li>
+          <li><strong>Disable the product units while their files are trusted.</strong><code>sudo systemctl disable pkg-nix-broker.service pkg-root-helper.service pkg-nix-broker.socket pkg-root-helper.socket</code></li>
+          <li><strong>Remove product unit drop-ins.</strong>Do this before the installer runs. The fixed fragments must resolve under <code>/usr/lib/systemd/system</code>.</li>
+          <li><strong>Run one operation.</strong>Use no option for upgrade. Use <code>--repair-product-assets</code> for same-release Product Asset Repair.</li>
+          <li><strong>Activate after success.</strong>Run <code>sudo systemctl daemon-reload</code>. Then use <code>systemctl enable --now</code> for the four units. Or enable the units and reboot.</li>
+        </ol>
+        <div class="long-callout caution">
+          <strong>Do not change service state during the installer run.</strong>
+          <p>pkg rechecks service state before product-file writes. Another root process can still change state between a query and a write. The checks reduce this time-of-check/time-of-use window. They cannot remove it against a concurrent root administrator.</p>
+        </div>
+        <div class="long-callout caution">
+          <strong>Do not stop a service through an untrusted unit file.</strong>
+          <p><code>systemctl stop</code> can execute a changed <code>ExecStop</code>. <code>systemctl disable</code> can interpret changed install rules. Take the service set offline while product files are still authenticated. If damage happened first, use a trusted rescue procedure. The alpha repair command refuses active or enabled services. It does not make them safe.</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="recovery-title">
+        <h3 id="recovery-title">7. Crash, retry, and refusal rules</h3>
+        <div class="state-strip" aria-label="Recovery state sequence">
+          <div><strong>Authenticate</strong><span>Bind one exact product release.</span></div>
+          <div><strong>Journal</strong><span>Record mode and intent before a file change.</span></div>
+          <div><strong>Mutate</strong><span>Recheck offline state for existing-install work.</span></div>
+          <div><strong>Receipt last</strong><span>Publish ownership only after exact files exist.</span></div>
+          <div><strong>Retry safely</strong><span>Use the same mode and matching installer schema.</span></div>
+        </div>
+        <ul class="clean-list">
+          <li>A pending Fresh Install must continue as Fresh Install.</li>
+          <li>A pending Offline Upgrade must continue as Offline Upgrade.</li>
+          <li>A pending Offline Repair must continue with <code>--repair-product-assets</code>.</li>
+          <li>A mode mismatch is refused. pkg does not reinterpret durable state.</li>
+          <li>An unsupported recovery schema is left unchanged. The matching installer must finish it.</li>
+          <li>An older, newer, or malformed product receipt is not migrated by upgrade or repair. pkg refuses it and keeps it for review.</li>
+          <li>Upgrade rollback uses authenticated prior receipt bytes.</li>
+          <li>Repair recovery rolls forward to authenticated same-release bytes.</li>
+        </ul>
+      </section>
+
+      <section aria-labelledby="deps-current-title">
+        <h3 id="deps-current-title">8. Reuse the code that already exists</h3>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Dependency and deletion decisions">
+          <table class="decision-table">
+            <thead><tr><th>Need</th><th>Decision</th><th>Reason</th></tr></thead>
+            <tbody>
+              <tr><td>Base Nix lifecycle</td><td class="yes">Use the pinned Determinate executable</td><td>It already handles native Nix install and uninstall. A source copy or partial Rust fork would create a second incomplete owner.</td></tr>
+              <tr><td>Product file identity</td><td class="yes">Reuse <code>pkg_core::state::body_digest</code> and the existing SHA-256 code</td><td>The repository already has the required digest types and checks.</td></tr>
+              <tr><td>Durable recovery</td><td class="yes">Extend the existing Linux install journal</td><td>One strict journal already owns product install recovery. A second journal would add conflicting state.</td></tr>
+              <tr><td>System service control</td><td class="yes">Use native systemd queries</td><td>Offline modes need state and definition checks only. No service-management library is needed.</td></tr>
+              <tr><td>New dependency</td><td class="no">Add none</td><td>Existing modules, the Rust standard library, and native systemd cover the approved design.</td></tr>
+              <tr><td>Active-upgrade recovery</td><td class="no">Delete it</td><td>Offline upgrade and repair never change service state. There is no service mutation to recover.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section aria-labelledby="proof-current-title">
+        <h3 id="proof-current-title">9. What is proved and what remains</h3>
+        <div class="table-wrap" role="region" tabindex="0" aria-label="Current Linux proof status">
+          <table class="decision-table">
+            <thead><tr><th>Area</th><th>Status</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Local Rust tests and strict checks</td><td class="yes">Passed on the reviewed code</td><td>The mode, receipt, recovery, offline-query, and file-safety contracts have local test coverage.</td></tr>
+              <tr><td>Existing Linux harness rows</td><td class="yes">Implemented</td><td>The harness covers package roots and GC. It also checks that the old <code>/opt/pkg/nix</code> runtime is absent.</td></tr>
+              <tr><td>Real N-to-N+1 product upgrade</td><td class="maybe">Native proof pending</td><td>It needs a signed N build, signed N+1 build, identity transition, unchanged Base Nix Handoff and package state, and offline services.</td></tr>
+              <tr><td>Same-release repair of a modified service asset</td><td class="maybe">Native proof pending</td><td>It must restore exact product bytes without a vendor start or service mutation.</td></tr>
+              <tr><td>Vendor cgroup behavior</td><td class="maybe">Native proof pending</td><td>The proof must show one vendor start and the expected process containment.</td></tr>
+              <tr><td>Real systemd refusal and offline success</td><td class="maybe">Native proof pending</td><td>Active, enabled, mixed, changed-fragment, drop-in, and query-failure cases must refuse before file mutation.</td></tr>
+              <tr><td>Public release</td><td class="no">Not claimed</td><td>The report describes current source and candidate behavior. It does not say that these changes are published.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>A native x86-64 GitHub-hosted runner can complete the Linux proof for one exact signed commit. An emulated Docker server cannot complete it. Linux proof does not prove host reboot, SELinux, all distributions, or macOS behavior.</p>
+      </section>
+
+      <section aria-labelledby="limits-current-title">
+        <h3 id="limits-current-title">10. Deliberate alpha limits</h3>
+        <ul class="clean-list">
+          <li>Foreign Nix, upstream Nix, unmarked Determinate Nix, and unclear ownership fail closed.</li>
+          <li>A persisted Base Nix <code>Started</code> state remains an Unknown Base Nix Outcome. pkg does not retry it.</li>
+          <li>Determinate can leave vendor-owned residue after uninstall. pkg records it. pkg does not build a cleanup engine for it.</li>
+          <li>Product Asset Repair is Linux-only and same-release only.</li>
+          <li>Offline upgrade and repair need an operator service window.</li>
+          <li>Concurrent root mutation can still race a state query. Operators must not change product units during the operation.</li>
+          <li>Old Linux Base Nix code stays until DN-17. Deletion follows native replacement proof.</li>
+          <li>macOS stays separate until Apple Silicon lifecycle, APFS, launchd, crash, and reboot proof pass.</li>
+        </ul>
+      </section>
+    </section>
+
+    <section class="historical-snapshot" aria-labelledby="historical-report-continued-title">
+      <div class="historical-banner">
+        <h2 id="historical-report-continued-title">Old report continued</h2>
+        <p>This content is old. We keep it for design history. Do not use its roadmap or work order. Use the current four-PR section and active plan above.</p>
+      </div>
     <section aria-labelledby="next-title">
       <div class="section-head">
         <div>
-          <p class="eyebrow" style="color: var(--next)">Next</p>
-          <h2 id="next-title">Work in this order</h2>
+          <p class="eyebrow" style="color: var(--caution)">Historical roadmap · superseded</p>
+          <h2 id="next-title">Old work order</h2>
         </div>
-        <p>Prove the external installer contract before removing the current machine-wide path.</p>
+        <p>This old roadmap had 25 delivery PRs and 33 stable DN requirement labels. The current plan has four delivery PRs. Do not use this old work order.</p>
       </div>
       <div class="work-group">
-        <h3>Now</h3>
+        <h3>Now: one DN-05–07 delivery PR</h3>
         <ol class="next-list">
-          <li><div><strong>Cancel failed pending installs.</strong><span>Make <code>recover_pending_install</code> cancel the broker operation on every required error path.</span></div></li>
-          <li><div><strong>Reduce the verify-only repair lease.</strong><span>Do not hold an exclusive state lease for a read-only check.</span></div></li>
-          <li><div><strong>Record the pinned Determinate binary contract.</strong><span>Record the version, checksum, input, and fail-safe behavior.</span></div></li>
-          <li><div><strong>Record the ownership and support boundary.</strong><span>Determinate owns base Nix. pkg owns product work. Local administrator tampering is outside support.</span></div></li>
+          <li><div><strong>DN-05 checkpoint: authenticate the vendor asset.</strong><span>Pin the exact asset and digest. Refuse a missing or wrong asset before privilege or execution.</span></div></li>
+          <li><div><strong>DN-06 checkpoint: run one private process boundary.</strong><span>Use a fixed command. Do not use SIGKILL. Do not accept exit 0 as sufficient proof.</span></div></li>
+          <li><div><strong>DN-07 checkpoint: validate Receipt and Handoff.</strong><span>Check the private receipt and real machine state. Fail closed when they do not agree.</span></div></li>
         </ol>
       </div>
       <div class="work-group">
-        <h3>Next</h3>
-        <ol class="next-list start-5" start="5">
-          <li><div><strong>Build one thin subprocess adapter.</strong><span>Install Nix automatically after pkg installation.</span></div></li>
-          <li><div><strong>Run disposable VM gates.</strong><span>Test Linux and Apple Silicon macOS.</span></div></li>
-          <li><div><strong>Test the failure and cleanup contract.</strong><span>Test failed verification, no-PATH behavior, repeat run, crash and reboot recovery, ownership, and uninstall.</span></div></li>
+        <h3>Next: one inactive DN-08–14 delivery PR</h3>
+        <p>This PR deletes no production code.</p>
+        <ol class="next-list">
+          <li><div><strong>DN-08 checkpoint: split product and Base Nix assets.</strong><span>Keep one writer for each owned asset.</span></div></li>
+          <li><div><strong>DN-09 checkpoint: prove standard-daemon package parity.</strong><span>Keep the new route inactive.</span></div></li>
+          <li><div><strong>DN-10 checkpoint: classify existing and foreign Nix.</strong><span>Refuse unsafe takeover without changing the machine.</span></div></li>
+          <li><div><strong>DN-11 checkpoint: verify PATH behavior.</strong><span>Test login, non-login, and GUI launches.</span></div></li>
+          <li><div><strong>DN-12 checkpoint: route inactive repair and update.</strong><span>Use only the proved Base Nix owner.</span></div></li>
+          <li><div><strong>DN-13 checkpoint: handle uninstall and exact cleanup.</strong><span>Revalidate every live identity before any removal. Do not use recursive deletion.</span></div></li>
+          <li><div><strong>DN-14 checkpoint: reset or refuse the old alpha.</strong><span>Use an authenticated old-alpha reset path.</span></div></li>
         </ol>
       </div>
       <div class="work-group">
-        <h3>Later</h3>
-        <ol class="next-list start-8" start="8">
-          <li><div><strong>Delete only proven redundant machine-wide paths.</strong><span>Remove custom installer, broker, and helper paths only after the proof gates pass.</span></div></li>
-          <li><div><strong>Keep the concrete Application seam.</strong><span>Split pkg-owned workflows from <code>local.rs</code>. Do not move machine-wide Nix lifecycle into it.</span></div></li>
-          <li><div><strong>Fork only if the external contract fails.</strong><span>Use a small full upstream fork only for a verified blocking gap. Do not copy individual upstream source files.</span></div></li>
+        <h3>Later: separate platform delivery PRs</h3>
+        <ol class="next-list">
+          <li><div><strong>Prove the Linux product lifecycle in DN-15.</strong><span>Standalone vendor evidence is not package integration proof.</span></div></li>
+          <li><div><strong>Prove the macOS product lifecycle twice in DN-16.</strong><span>The full crash and reboot lifecycle must pass twice before cutover.</span></div></li>
+          <li><div><strong>Delete only proven redundant paths.</strong><span>Keep the current path until its complete replacement proof passes.</span></div></li>
         </ol>
       </div>
       <div class="caution-box">
@@ -1314,12 +1599,13 @@
         <p><small>The review evidence is in the active Herdr and TraceDecay transcripts. It is not repo source evidence.</small></p>
       </div>
     </section>
+    </section>
   </main>
 
   <footer>
     <div class="wrap">
       <p><strong>pkg architecture report</strong></p>
-      <p>Internal alpha · Earlier checks passed · Two current-alpha safety fixes remain open · Determinate Nix change pending</p>
+      <p>Internal alpha · PR 1 and PR 2 complete · DN-15 Linux native proof pending</p>
     </div>
   </footer>
 </body>

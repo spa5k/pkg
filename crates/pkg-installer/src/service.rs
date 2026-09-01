@@ -1,6 +1,8 @@
 //! Production service entry points with fixed socket and identity contracts.
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::helper::ConnectionLimiter;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::{
     BrokerApprovalAudit, BrokerRepairJournals, ChannelRefreshDispatch, ProductionRepairAuthority,
     RootHelperClient, serve_broker_connection_with_product_authority, serve_helper_connection,
@@ -14,9 +16,13 @@ use exacl::getfacl;
 #[cfg(target_os = "linux")]
 use listenfd::ListenFd;
 #[cfg(target_os = "macos")]
-use nix::sys::stat::{Mode, umask};
+use nix::fcntl::{OFlag, open, openat, renameat};
+#[cfg(target_os = "macos")]
+use nix::sys::stat::{FchmodatFlags, Mode, fchmodat, mkdirat};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nix::unistd::{Gid, Uid, User};
+#[cfg(target_os = "macos")]
+use nix::unistd::{UnlinkatFlags, unlinkat};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use pkg_channel::{ChannelClient, TrustedRoot};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -29,6 +35,8 @@ use pkg_pipeline::{
     AuthenticatedBuildAuthorityService, BuildAuthorityRefreshErrorCode, BuildAuthorityUpdate,
     BuildPlanningAdapter,
 };
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{error::Error, fmt};
 #[cfg(target_os = "macos")]
 use std::{
@@ -36,13 +44,7 @@ use std::{
     os::unix::fs::{FileTypeExt, MetadataExt},
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::{
-    io,
-    os::unix::net::UnixListener,
-    path::Path,
-    sync::{Arc, Mutex},
-    thread,
-};
+use std::{io, os::unix::net::UnixListener, path::Path, sync::Arc, thread};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::runtime::{Builder, Handle};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -50,12 +52,12 @@ use url::Url;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const BROKER_ACCOUNT: &str = "pkg-nix-broker";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_HELPER_WORKERS: usize = 8;
 /// Fixed Linux CLI-to-broker endpoint installed by pkg.
 pub const LINUX_BROKER_SOCKET: &str = "/run/pkg/broker.sock";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_SOCKET: &str = "/run/pkg-helper/root-helper.sock";
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const MANAGED_NIX_BINARY: &str = "/opt/pkg/nix/current/bin/nix";
 #[cfg(target_os = "linux")]
 const LINUX_HELPER_HOME: &str = "/var/lib/pkg/helper-home";
 #[cfg(target_os = "linux")]
@@ -206,8 +208,14 @@ fn run_broker_listener(
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
     let repair_journals = BrokerRepairJournals::open(log, expected_uid)
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    #[cfg(target_os = "linux")]
     let adapter = Arc::new(
-        RealNixAdapter::new(Path::new(MANAGED_NIX_BINARY), home)
+        RealNixAdapter::new_standard_determinate(home)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+    );
+    #[cfg(target_os = "macos")]
+    let adapter = Arc::new(
+        RealNixAdapter::new_standard_determinate(home)
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
     let planning_adapter: Arc<dyn BuildPlanningAdapter> =
@@ -359,7 +367,7 @@ pub fn run_linux_root_helper_from_activation() -> Result<(), ServiceError> {
     let broker_uid = broker_identity()?.uid;
     let listener = activated_unix_listener(LINUX_HELPER_SOCKET)?;
     let repair_executor: Arc<dyn VerifiedRepairExecutor> = Arc::new(
-        RootNixRepairExecutor::new(Path::new(MANAGED_NIX_BINARY), Path::new(LINUX_HELPER_HOME))
+        RootNixRepairExecutor::new_standard_determinate(Path::new(LINUX_HELPER_HOME))
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
     let helper = InProcessHelper::with_repair_executor(broker_uid, repair_executor)
@@ -369,12 +377,23 @@ pub fn run_linux_root_helper_from_activation() -> Result<(), ServiceError> {
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
     let roots = LinuxRootSetStore::production()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let session = LinuxHelperSession::new(authenticated, roots);
+    let session = Arc::new(LinuxHelperSession::new(authenticated, roots));
+    let workers = ConnectionLimiter::new(MAX_HELPER_WORKERS);
 
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                let _ = serve_helper_connection(stream, broker_uid, &session);
+                let Some(permit) = workers.try_acquire() else {
+                    continue;
+                };
+                let session = Arc::clone(&session);
+                thread::Builder::new()
+                    .name("pkg-root-helper".to_owned())
+                    .spawn(move || {
+                        let _permit = permit;
+                        let _ = serve_helper_connection(stream, broker_uid, session.as_ref());
+                    })
+                    .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return Err(ServiceError::new(ServiceErrorCode::ListenerFailed)),
@@ -468,7 +487,7 @@ pub fn run_macos_root_helper() -> Result<(), ServiceError> {
         &parents,
     )?;
     let repair_executor: Arc<dyn VerifiedRepairExecutor> = Arc::new(
-        RootNixRepairExecutor::new(Path::new(MANAGED_NIX_BINARY), Path::new(MACOS_HELPER_HOME))
+        RootNixRepairExecutor::new_standard_determinate(Path::new(MACOS_HELPER_HOME))
             .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
     );
     let helper = InProcessHelper::with_repair_executor(identity.uid, repair_executor)
@@ -478,12 +497,23 @@ pub fn run_macos_root_helper() -> Result<(), ServiceError> {
         .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
     let roots = MacOsRootSetStore::production()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let session = MacOsHelperSession::new(authenticated, roots);
+    let session = Arc::new(MacOsHelperSession::new(authenticated, roots));
+    let workers = ConnectionLimiter::new(MAX_HELPER_WORKERS);
 
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
-                let _ = serve_helper_connection(stream, identity.uid, &session);
+                let Some(permit) = workers.try_acquire() else {
+                    continue;
+                };
+                let session = Arc::clone(&session);
+                thread::Builder::new()
+                    .name("pkg-root-helper".to_owned())
+                    .spawn(move || {
+                        let _permit = permit;
+                        let _ = serve_helper_connection(stream, identity.uid, session.as_ref());
+                    })
+                    .map_err(|_| ServiceError::new(ServiceErrorCode::WorkerUnavailable))?;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(_) => return Err(ServiceError::new(ServiceErrorCode::ListenerFailed)),
@@ -510,28 +540,9 @@ struct DirectoryExpectation<'a> {
     mode: u32,
 }
 
+/// Distinguishes concurrent staging directories within one process.
 #[cfg(target_os = "macos")]
-#[derive(Debug)]
-struct ScopedUmask(Mode);
-
-#[cfg(target_os = "macos")]
-impl ScopedUmask {
-    fn for_exact_mode(mode: u32) -> Result<Self, ServiceError> {
-        if mode & !0o777 != 0 {
-            return Err(ServiceError::new(ServiceErrorCode::InvalidServiceSocket));
-        }
-        let mask = u16::try_from(0o777 & !mode)
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
-        Ok(Self(umask(Mode::from_bits_truncate(mask))))
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for ScopedUmask {
-    fn drop(&mut self) {
-        umask(self.0);
-    }
-}
+static STAGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
 fn macos_socket_parents(
@@ -601,13 +612,77 @@ fn bind_macos_listener(
         }
     }
     // A Unix-domain socket descriptor does not identify its filesystem node on
-    // macOS, so `fchmod` cannot secure that node. Set its exact creation mode
-    // with a scoped umask instead, avoiding a pathname-based chmod race.
-    let listener = {
-        let _umask = ScopedUmask::for_exact_mode(mode)?;
-        UnixListener::bind(path)
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?
-    };
+    // macOS, so `fchmod` cannot secure that node. `umask` is process-global:
+    // any parallel thread creating paths during a scoped window would inherit
+    // the restricted mask (the parallel test suite proved this race). Bind
+    // the socket inside a private staging directory instead, fix its exact
+    // mode there, then rename it into place atomically. The final path never
+    // carries a permissive mode.
+    let endpoint_parent = path
+        .parent()
+        .ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let socket_name = path
+        .file_name()
+        .ok_or_else(|| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let parent_fd = open(
+        endpoint_parent,
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    // Keep the name short: macOS limits a Unix socket path to 104 bytes, and
+    // the endpoint parent plus socket name already consumes most of it. The
+    // pid scopes the name so two overlapping processes (e.g. a launchd
+    // restart while the old broker still runs) can never collide; the seq
+    // separates repeated binds within one process.
+    let staging_name = format!(
+        ".pkg-s{:x}-{:x}",
+        std::process::id(),
+        STAGE_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    // A crashed earlier run may have left this pid's stage directory behind.
+    let _ = unlinkat(&parent_fd, staging_name.as_str(), UnlinkatFlags::RemoveDir);
+    mkdirat(
+        &parent_fd,
+        staging_name.as_str(),
+        Mode::from_bits_truncate(0o700),
+    )
+    .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let staging_fd = openat(
+        &parent_fd,
+        staging_name.as_str(),
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+    let staging_path = endpoint_parent.join(&staging_name).join(socket_name);
+    let result = (|| {
+        let listener = UnixListener::bind(&staging_path)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        let socket_mode = u16::try_from(mode)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        fchmodat(
+            &staging_fd,
+            socket_name,
+            Mode::from_bits_truncate(socket_mode),
+            FchmodatFlags::NoFollowSymlink,
+        )
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        if !socket_metadata_matches(&staging_path, mode, owner_uid, group_gid) {
+            return Err(ServiceError::new(ServiceErrorCode::InvalidServiceSocket));
+        }
+        renameat(&staging_fd, socket_name, &parent_fd, socket_name)
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidServiceSocket))?;
+        Ok(listener)
+    })();
+    // On success the staging dir is empty. On failure the bound socket may
+    // still sit inside it; remove it so the dir cleanup below succeeds and
+    // the next run has no residue to trip over.
+    if result.is_err() {
+        let _ = unlinkat(&staging_fd, socket_name, UnlinkatFlags::NoRemoveDir);
+    }
+    let _ = unlinkat(&parent_fd, staging_name.as_str(), UnlinkatFlags::RemoveDir);
+    let listener = result?;
     if !socket_metadata_matches(path, mode, owner_uid, group_gid) {
         let _ = fs::remove_file(path);
         return Err(ServiceError::new(ServiceErrorCode::InvalidServiceSocket));
@@ -670,54 +745,6 @@ fn validate_listener_path(listener: &UnixListener, expected: &Path) -> Result<()
         Ok(())
     } else {
         Err(ServiceError::new(ServiceErrorCode::InvalidActivatedSocket))
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct ConnectionLimiter {
-    active: Mutex<usize>,
-    limit: usize,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl ConnectionLimiter {
-    fn new(limit: usize) -> Arc<Self> {
-        Arc::new(Self {
-            active: Mutex::new(0),
-            limit,
-        })
-    }
-
-    fn try_acquire(self: &Arc<Self>) -> Option<ConnectionPermit> {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *active >= self.limit {
-            return None;
-        }
-        *active += 1;
-        drop(active);
-        Some(ConnectionPermit {
-            limiter: Arc::clone(self),
-        })
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-struct ConnectionPermit {
-    limiter: Arc<ConnectionLimiter>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl Drop for ConnectionPermit {
-    fn drop(&mut self) {
-        let mut active = self
-            .limiter
-            .active
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *active = active.saturating_sub(1);
     }
 }
 

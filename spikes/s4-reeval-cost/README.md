@@ -1,5 +1,8 @@
 # Spike S4 — Nixpkgs re-evaluation cost (PR-6 / DR-004)
 
+> Links into the dated plan archive are legacy-plan context. They are not
+> current design authority.
+
 `pkg-spike-s4-reeval-cost` is an **evidence harness**, not production `pkg`
 code. It measures **pinned-Nixpkgs re-evaluation cost** with a hardened,
 deterministic, fail-closed `s4-runner` binary. It is a standalone Cargo
@@ -260,8 +263,8 @@ performance evidence.
   constants.
 - [`FINDINGS.md`](FINDINGS.md) — accepted Complete Real evidence and the budgets
   derived from it.
-- [`plans/11-pr-roadmap.md`](../../plans/11-pr-roadmap.md), DR-004 in
-  [`plans/12-open-decisions-and-risks.md`](../../plans/12-open-decisions-and-risks.md)
+- [`plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md), DR-004 in
+  [`plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — spike context and decision record.
 - `src/report.rs`, `src/manifest.rs`, `src/validate.rs`, `src/real.rs`,
   `src/runner.rs`, `src/command.rs`, `src/execute.rs` — the implementation the

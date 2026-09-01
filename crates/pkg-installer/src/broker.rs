@@ -9,16 +9,17 @@ use nix::{
 };
 use pkg_core::PackageSelector;
 use pkg_nix::{
-    AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreview,
-    BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode, CacheInstallErrorCode,
-    CacheInstallOutcome, CatalogInfoReport, CatalogInfoRequest, CatalogSearchReport,
-    CatalogSearchRequest, ChannelRefreshErrorCode, ChannelRefreshMode, ChannelRefreshReport,
-    CliBrokerRequest, CliBrokerResponse, Digest, GenerationId, GenerationRootAttestationErrorCode,
-    GenerationRootRemovalErrorCode, GenerationRootTransitionErrorCode, HostResourceProbe,
-    InProcessBroker, InProcessCallerPeer, InstallDownloadProgress, MaintenanceError, MethodKind,
-    NixAdapter, NixAdapterError, OperationHandle, ProductFrameCodec, RepairGenerationErrorCode,
-    RepairGenerationReport, RepairGenerationRequest, RootSetIntent, RootSetReport,
-    RootSetTransitionIntent, RootSetTransitionReport,
+    AuthenticatedCaller, BrokerErrorCode, BuildExecutionErrorCode, BuildPreparationErrorCode,
+    BuildPreview, BuildProgressEstimate, BuildReport, BuildRootPublicationErrorCode,
+    CacheInstallErrorCode, CacheInstallOutcome, CatalogInfoReport, CatalogInfoRequest,
+    CatalogSearchReport, CatalogSearchRequest, ChannelRefreshErrorCode, ChannelRefreshMode,
+    ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, Digest, GenerationId,
+    GenerationRootAttestationErrorCode, GenerationRootRemovalErrorCode,
+    GenerationRootTransitionErrorCode, HostResourceProbe, InProcessBroker, InProcessCallerPeer,
+    InstallDownloadProgress, MaintenanceError, MethodKind, NixAdapter, NixAdapterError,
+    OperationHandle, ProductFrameCodec, RepairGenerationErrorCode, RepairGenerationReport,
+    RepairGenerationRequest, RootSetIntent, RootSetReport, RootSetTransitionIntent,
+    RootSetTransitionReport,
 };
 use pkg_pipeline::{AuthenticatedBuildAuthority, BuildAuthorityErrorCode};
 use std::{
@@ -301,6 +302,9 @@ pub trait ChannelRefreshDispatch: Send + Sync {
 pub trait RepairAuthorityDispatch: Send + Sync {
     /// Repairs one authenticated rooted generation without accepting paths or Nix controls.
     ///
+    /// A successful authority must close its repair through
+    /// [`AuthenticatedCaller::complete_repair_dispatch`].
+    ///
     /// # Errors
     ///
     /// Returns only a stable sanitized repair failure category.
@@ -335,7 +339,7 @@ trait BuildAuthorityDispatch: Send + Sync {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
-    ) -> Result<BuildPreview, ()>;
+    ) -> Result<BuildPreview, BuildPreparationErrorCode>;
 
     fn execute(
         &self,
@@ -482,7 +486,7 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         handle: &OperationHandle,
         progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
     ) -> Result<CacheInstallOutcome, CacheInstallErrorCode> {
-        self.acquire_install_with_progress(selectors, caller, handle, progress)
+        self.acquire_install_with_progress(&selectors, caller, handle, progress)
             .map_err(|error| match error.code() {
                 BuildAuthorityErrorCode::AcquisitionCancelled => CacheInstallErrorCode::Cancelled,
                 BuildAuthorityErrorCode::AcquisitionIntentRefused => {
@@ -500,9 +504,9 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
-    ) -> Result<BuildPreview, ()> {
+    ) -> Result<BuildPreview, BuildPreparationErrorCode> {
         self.prepare_and_install(selectors, caller, handle)
-            .map_err(|_| ())
+            .map_err(pkg_pipeline::BuildPreparationError::code)
     }
 
     fn execute(
@@ -622,7 +626,10 @@ fn dispatch_request_with_refresh(
     )
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the broker dispatch is one closed match over the wire grammar; each arm delegates immediately"
+)]
 fn dispatch_request_with_progress(
     caller: &AuthenticatedCaller,
     request: CliBrokerRequest,
@@ -690,11 +697,13 @@ fn dispatch_request_with_progress(
         CliBrokerRequest::AcquireGc(handle) => gc_admission_response(caller, &handle),
         CliBrokerRequest::GetInstallEvidence(handle) => install_evidence_response(caller, &handle),
         CliBrokerRequest::GetBuildPreview(handle) => build_preview_response(caller, &handle),
-        CliBrokerRequest::PrepareBuild(handle, selectors) => authorities
-            .build
-            .ok_or(())?
-            .prepare(selectors, caller, &handle)
-            .map(CliBrokerResponse::BuildPrepared),
+        CliBrokerRequest::PrepareBuild(handle, selectors) => Ok(authorities.build.map_or(
+            CliBrokerResponse::BuildPreparationRefused(BuildPreparationErrorCode::BrokerRefused),
+            |authority| match authority.prepare(selectors, caller, &handle) {
+                Ok(preview) => CliBrokerResponse::BuildPrepared(preview),
+                Err(code) => CliBrokerResponse::BuildPreparationRefused(code),
+            },
+        )),
         CliBrokerRequest::ExecuteBuild(handle, digest) => Ok(build_execution_response(
             authorities.build,
             caller,
@@ -747,6 +756,28 @@ fn dispatch_request_with_progress(
     }
 }
 
+/// Runs one repair authority body inside the repair-execution lifecycle.
+///
+/// A begin or finish failure always maps to `admission_failure`, including when
+/// the body itself already failed, so a failed cleanup never reports a body
+/// result as if admission were healthy.
+pub fn run_repair_dispatch<T, E>(
+    caller: &AuthenticatedCaller,
+    handle: &OperationHandle,
+    body: impl FnOnce() -> Result<T, E>,
+    admission_failure: impl Fn() -> E,
+) -> Result<T, E> {
+    caller
+        .begin_repair_dispatch(handle)
+        .map_err(|_| admission_failure())?;
+    let result = body();
+    let success = result.is_ok();
+    if caller.finish_repair_dispatch(handle, success).is_err() {
+        return Err(admission_failure());
+    }
+    result
+}
+
 fn repair_generation_response(
     authority: Option<&dyn RepairAuthorityDispatch>,
     caller: &AuthenticatedCaller,
@@ -754,13 +785,20 @@ fn repair_generation_response(
     request: &RepairGenerationRequest,
     approval_journal: Option<&BrokerCallerApprovalJournal>,
 ) -> CliBrokerResponse {
-    authority.map_or(
-        CliBrokerResponse::RepairGenerationRefused(RepairGenerationErrorCode::AuthorityUnavailable),
-        |repair| match repair.repair(caller, handle, request, approval_journal) {
-            Ok(report) => CliBrokerResponse::RepairGeneration(report),
-            Err(error) => CliBrokerResponse::RepairGenerationRefused(error),
-        },
-    )
+    let Some(repair) = authority else {
+        return CliBrokerResponse::RepairGenerationRefused(
+            RepairGenerationErrorCode::AuthorityUnavailable,
+        );
+    };
+    match run_repair_dispatch(
+        caller,
+        handle,
+        || repair.repair(caller, handle, request, approval_journal),
+        || RepairGenerationErrorCode::AdmissionFailed,
+    ) {
+        Ok(report) => CliBrokerResponse::RepairGeneration(report),
+        Err(error) => CliBrokerResponse::RepairGenerationRefused(error),
+    }
 }
 
 fn dispatch_evaluation(
@@ -1406,7 +1444,7 @@ fn remaining(deadline: Instant) -> Result<Duration, BrokerTransportError> {
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, reason = "tests may unwrap")]
 mod tests {
     use super::*;
     use pkg_channel::BuildMode;
@@ -1613,15 +1651,24 @@ mod tests {
             selectors: Vec<PackageSelector>,
             caller: &AuthenticatedCaller,
             handle: &OperationHandle,
-        ) -> Result<BuildPreview, ()> {
-            if selectors.len() != 1 || selectors[0].selector().as_str() != "hello" {
-                return Err(());
+        ) -> Result<BuildPreview, BuildPreparationErrorCode> {
+            if selectors.len() != 1 {
+                return Err(BuildPreparationErrorCode::IntentRefused);
+            }
+            match selectors[0].selector().as_str() {
+                "host-refusal" => return Err(BuildPreparationErrorCode::HostRefused),
+                "planning-refusal" => return Err(BuildPreparationErrorCode::PlanningRefused),
+                "broker-refusal" => return Err(BuildPreparationErrorCode::BrokerRefused),
+                "hello" => {}
+                _ => return Err(BuildPreparationErrorCode::IntentRefused),
             }
             let plan = self.0.clone();
-            let preview = plan.preview().map_err(|_| ())?;
+            let preview = plan
+                .preview()
+                .map_err(|_| BuildPreparationErrorCode::PlanningRefused)?;
             caller
                 .prepare_build_with_replanner(handle, plan.clone(), Arc::new(TestReplanner(plan)))
-                .map_err(|_| ())?;
+                .map_err(|_| BuildPreparationErrorCode::BrokerRefused)?;
             Ok(preview)
         }
 
@@ -1670,6 +1717,9 @@ mod tests {
                 request.generation().as_str().to_owned(),
                 request.verify_only(),
             ));
+            caller
+                .complete_repair_dispatch(handle)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
             RepairGenerationReport::new(pkg_nix::RepairGenerationStatus::DamageDetected, 2)
                 .map_err(|_| RepairGenerationErrorCode::VerifyFailed)
         }
@@ -1712,17 +1762,96 @@ mod tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
             Some((1001, String::from("gen-0042"), true))
         );
-        assert_eq!(
-            dispatch_request(
-                &caller,
-                CliBrokerRequest::Cancel(handle),
-                None,
-                None,
-                None,
-                None,
-            ),
-            Ok(CliBrokerResponse::Cancelled)
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+    }
+
+    struct ObservingRepairAuthority {
+        broker: Arc<InProcessBroker>,
+        inhibited_during: std::sync::Mutex<usize>,
+        gc_blocked_during: std::sync::Mutex<bool>,
+    }
+
+    impl RepairAuthorityDispatch for ObservingRepairAuthority {
+        fn repair(
+            &self,
+            caller: &AuthenticatedCaller,
+            handle: &OperationHandle,
+            _request: &RepairGenerationRequest,
+            _approval_journal: Option<&BrokerCallerApprovalJournal>,
+        ) -> Result<RepairGenerationReport, RepairGenerationErrorCode> {
+            caller
+                .authorize_repair(handle)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
+            *self
+                .inhibited_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                self.broker.admission_snapshot().gc_inhibitor_count();
+            let gc = caller
+                .begin(BrokerOperationKind::Gc)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
+            *self
+                .gc_blocked_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                caller.acquire_gc(&gc).is_err();
+            let _ = caller.cancel(&gc);
+            caller
+                .complete_repair_dispatch(handle)
+                .map_err(|_| RepairGenerationErrorCode::AdmissionFailed)?;
+            RepairGenerationReport::new(pkg_nix::RepairGenerationStatus::DamageDetected, 2)
+                .map_err(|_| RepairGenerationErrorCode::VerifyFailed)
+        }
+    }
+
+    #[test]
+    fn repair_dispatch_holds_gc_inhibitor_across_authority_and_releases_after() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let handle = caller.begin(BrokerOperationKind::Repair).unwrap();
+        let authority = ObservingRepairAuthority {
+            broker: broker.clone(),
+            inhibited_during: std::sync::Mutex::new(0),
+            gc_blocked_during: std::sync::Mutex::new(false),
+        };
+        let request = RepairGenerationRequest::new(GenerationId::new("gen-0043").unwrap(), true);
+
+        let response = dispatch_request_with_progress(
+            &caller,
+            CliBrokerRequest::RepairGeneration(handle.clone(), request),
+            DispatchAuthorities {
+                adapter: None,
+                approval_journal: None,
+                build: None,
+                roots: None,
+                refresh: None,
+                repair: Some(&authority),
+            },
+            &mut |_| Ok(()),
         );
+
+        assert!(matches!(
+            response,
+            Ok(CliBrokerResponse::RepairGeneration(_))
+        ));
+        assert_eq!(
+            *authority
+                .inhibited_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            1
+        );
+        assert!(
+            *authority
+                .gc_blocked_during
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        );
+        assert_eq!(broker.admission_snapshot().gc_inhibitor_count(), 0);
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Completed);
     }
 
     #[test]
@@ -2249,6 +2378,49 @@ mod tests {
     }
 
     #[test]
+    fn broker_disconnect_cancels_running_recovery_handle() -> Result<(), Box<dyn Error>> {
+        let broker = InProcessBroker::new()?;
+        let (first_server, mut first_client) = UnixStream::pair()?;
+        let first_broker = Arc::clone(&broker);
+        let first_worker =
+            thread::spawn(move || serve_broker_connection(first_server, &first_broker));
+
+        first_client.write_all(&ProductFrameCodec::encode_cli_request(
+            1,
+            &CliBrokerRequest::Begin(BrokerOperationKind::Activate),
+        )?)?;
+        let (_, started) =
+            ProductFrameCodec::decode_cli_response(&read_response(&mut first_client)?)?;
+        let CliBrokerResponse::Started(handle) = started else {
+            return Err(io::Error::other("expected started response").into());
+        };
+        drop(first_client);
+        first_worker
+            .join()
+            .map_err(|_| io::Error::other("broker thread panicked"))??;
+
+        let (second_server, mut second_client) = UnixStream::pair()?;
+        let second_broker = Arc::clone(&broker);
+        let second_worker =
+            thread::spawn(move || serve_broker_connection(second_server, &second_broker));
+        second_client.write_all(&ProductFrameCodec::encode_cli_request(
+            1,
+            &CliBrokerRequest::Poll(handle),
+        )?)?;
+        let (_, status) =
+            ProductFrameCodec::decode_cli_response(&read_response(&mut second_client)?)?;
+        assert_eq!(
+            status,
+            CliBrokerResponse::Status(OperationStatus::Cancelled)
+        );
+        second_client.shutdown(Shutdown::Write)?;
+        second_worker
+            .join()
+            .map_err(|_| io::Error::other("broker thread panicked"))??;
+        Ok(())
+    }
+
+    #[test]
     fn partial_authenticated_frame_expires_without_dispatch() -> Result<(), Box<dyn Error>> {
         let (mut server, mut client) = UnixStream::pair()?;
         server.set_nonblocking(true)?;
@@ -2278,6 +2450,69 @@ mod tests {
             Err(BrokerTransportErrorCode::TransportFailure)
         );
         Ok(())
+    }
+
+    #[test]
+    fn preparation_dispatch_returns_every_refusal_without_closing_the_operation() {
+        let broker = InProcessBroker::new().unwrap();
+        let caller = broker
+            .connect(InProcessCallerPeer::authenticated(1001))
+            .unwrap();
+        let authority = TestAuthority(build_plan());
+        for (selector, code) in [
+            ("host-refusal", BuildPreparationErrorCode::HostRefused),
+            ("intent-refusal", BuildPreparationErrorCode::IntentRefused),
+            (
+                "planning-refusal",
+                BuildPreparationErrorCode::PlanningRefused,
+            ),
+            ("broker-refusal", BuildPreparationErrorCode::BrokerRefused),
+        ] {
+            let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+            let selector = PackageSelector::new(
+                SelectorId::new(&format!("sel_{}", selector.replace('-', "_"))).unwrap(),
+                SelectorInput::new(selector).unwrap(),
+                VersionPreference::Any,
+                OutputSelection::default_selection(),
+                SourceRevision::CurrentChannel,
+            );
+            assert_eq!(
+                dispatch_request(
+                    &caller,
+                    CliBrokerRequest::PrepareBuild(handle.clone(), vec![selector]),
+                    None,
+                    None,
+                    Some(&authority),
+                    None,
+                ),
+                Ok(CliBrokerResponse::BuildPreparationRefused(code))
+            );
+            assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
+            caller.cancel(&handle).unwrap();
+        }
+
+        let handle = caller.begin(BrokerOperationKind::Build).unwrap();
+        let selector = PackageSelector::new(
+            SelectorId::new("sel_missing_authority").unwrap(),
+            SelectorInput::new("hello").unwrap(),
+            VersionPreference::Any,
+            OutputSelection::default_selection(),
+            SourceRevision::CurrentChannel,
+        );
+        assert_eq!(
+            dispatch_request(
+                &caller,
+                CliBrokerRequest::PrepareBuild(handle.clone(), vec![selector]),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Ok(CliBrokerResponse::BuildPreparationRefused(
+                BuildPreparationErrorCode::BrokerRefused
+            ))
+        );
+        assert_eq!(caller.poll(&handle).unwrap(), OperationStatus::Running);
     }
 
     #[test]

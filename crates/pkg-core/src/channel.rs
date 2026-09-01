@@ -462,7 +462,7 @@ mod tests {
                 "channel:pinned:7",
             ),
             (
-                SourceRevision::ExactRevision(rev.clone()),
+                SourceRevision::ExactRevision(rev),
                 "rev:0123456789abcdef0123456789abcdef01234567",
             ),
         ];

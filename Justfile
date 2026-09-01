@@ -8,6 +8,25 @@ smoke_platform := "linux/amd64"
 default:
     @just --list
 
+# Fast local gate: format plus the workspace deny lints.
+lint:
+    cargo fmt --all -- --check
+    cargo clippy --locked --workspace --all-targets --all-features
+
+# Strict quality gate: strict complexity budgets plus the debt ratchet.
+quality:
+    tools/quality/quality-gate.sh check
+
+# Strictest gate: every file changed against BASE_REF must be debt-free.
+# BASE_REF defaults to origin/main; export it for stacked branches, e.g.
+# `BASE_REF=origin/dn/16-determinate-cutover just lint-strict`.
+lint-strict:
+    FULL_TOUCHED=1 tools/quality/quality-gate.sh check
+
+# Record the current debt as the new baseline after deliberate paydown.
+ratchet-rebase:
+    tools/quality/quality-gate.sh rebase
+
 # Build the clean x86-64 Linux image.
 vm-build:
     docker build --platform {{ smoke_platform }} --file tests/linux-public-smoke/Dockerfile --tag {{ smoke_image }} .

@@ -3,6 +3,7 @@
 use std::{
     error::Error,
     fmt,
+    io::{self, Write},
     str::FromStr,
     sync::{Arc, Mutex},
 };
@@ -14,7 +15,8 @@ use pkg_nix::{
     AuthenticatedCaller, BrokerErrorCode, BuildPreview, CacheInstallAttempt, CacheInstallOutcome,
     CatalogInfoLookup, CatalogInfoReport, CatalogInfoRequest, CatalogPackageInfo,
     CatalogPackageSummary, CatalogSearchReport, CatalogSearchRequest, Digest,
-    InstallDownloadProgress, NixAdapter, NixpkgsFetchSpec, OperationHandle, fetch_verified_nixpkgs,
+    InstallDownloadProgress, NixAdapter, NixAdapterErrorCode, NixpkgsFetchSpec, OperationHandle,
+    SubstituteErrorCode, fetch_verified_nixpkgs,
 };
 
 use crate::{
@@ -301,9 +303,11 @@ impl AuthenticatedBuildAuthority {
         selectors: Vec<PackageSelector>,
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
-    ) -> Result<BuildPreview, BuildAuthorityError> {
+    ) -> Result<BuildPreview, crate::BuildPreparationError> {
         let (channel, index) = {
-            let state = self.lock_state()?;
+            let state = self.lock_state().map_err(|_| {
+                crate::BuildPreparationError::new(crate::BuildPreparationErrorCode::BrokerRefused)
+            })?;
             (state.channel.clone(), state.index.clone())
         };
         AuthenticatedBuildPreparation::from_verified_channel(
@@ -313,7 +317,6 @@ impl AuthenticatedBuildAuthority {
             Arc::clone(&self.adapter),
         )
         .and_then(|preparation| preparation.install(caller, handle))
-        .map_err(|_| BuildAuthorityError::new(BuildAuthorityErrorCode::PreparationRefused))
     }
 
     /// Acquires one cache-first install from the current authenticated authority snapshot.
@@ -329,7 +332,7 @@ impl AuthenticatedBuildAuthority {
     /// cancellation through one redacted category.
     pub fn acquire_install(
         &self,
-        selectors: Vec<PackageSelector>,
+        selectors: &[PackageSelector],
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
     ) -> Result<CacheInstallOutcome, BuildAuthorityError> {
@@ -339,7 +342,7 @@ impl AuthenticatedBuildAuthority {
     /// Acquires one cache-first install and streams sanitized trusted bytes.
     pub fn acquire_install_with_progress(
         &self,
-        selectors: Vec<PackageSelector>,
+        selectors: &[PackageSelector],
         caller: &AuthenticatedCaller,
         handle: &OperationHandle,
         progress: &mut dyn FnMut(InstallDownloadProgress) -> Result<(), ()>,
@@ -351,20 +354,22 @@ impl AuthenticatedBuildAuthority {
         let adapter = Arc::clone(&self.adapter);
         caller
             .acquire_cache_install(handle, || {
-                let source_spec =
-                    NixpkgsFetchSpec::from_verified_channel(&channel).map_err(|_| ())?;
-                let source =
-                    fetch_verified_nixpkgs(&source_spec, adapter.as_ref()).map_err(|_| ())?;
-                let system = production_native_system().map_err(|_| ())?;
+                let source_spec = NixpkgsFetchSpec::from_verified_channel(&channel)
+                    .map_err(|_| acquisition_refused("source"))?;
+                let source = fetch_verified_nixpkgs(&source_spec, adapter.as_ref())
+                    .map_err(|_| acquisition_refused("fetch"))?;
+                let system =
+                    production_native_system().map_err(|_| acquisition_refused("resolve"))?;
                 let resolved = resolve_install(
-                    &selectors,
+                    selectors,
                     &source,
                     system,
                     index.as_ref().map(VerifiedIndex::document),
                     adapter.as_ref(),
                 )
-                .map_err(|_| ())?;
-                let preflight = preflight_cache_only(&resolved).map_err(|_| ())?;
+                .map_err(|_| acquisition_refused("resolve"))?;
+                let preflight = preflight_cache_only(&resolved)
+                    .map_err(|_| acquisition_refused("preflight"))?;
                 let acquired = match acquire_cache_only_with_progress(
                     &resolved,
                     &preflight,
@@ -377,12 +382,20 @@ impl AuthenticatedBuildAuthority {
                     Err(AcquireError::BuildRequired) => {
                         return Ok(CacheInstallAttempt::BuildRequired);
                     }
-                    Err(AcquireError::Refused) => return Err(()),
+                    Err(AcquireError::SubstituteRefused(code, adapter_code)) => {
+                        substitution_refused(code, adapter_code);
+                        return Err(());
+                    }
+                    Err(error) => {
+                        acquisition_refused(error.stage());
+                        return Err(());
+                    }
                 };
-                let verified = verify_acquired(acquired).map_err(|_| ())?;
+                let verified =
+                    verify_acquired(acquired).map_err(|_| acquisition_refused("verification"))?;
                 let evidence =
                     assemble_cache_install_evidence(&resolved, &verified, adapter.as_ref())
-                        .map_err(|_| ())?;
+                        .map_err(|_| acquisition_refused("evidence"))?;
                 Ok(CacheInstallAttempt::Acquired(evidence))
             })
             .map_err(|error| {
@@ -466,6 +479,37 @@ impl AuthenticatedBuildAuthority {
     }
 }
 
+fn acquisition_refused(stage: &'static str) {
+    let _ = write_acquisition_diagnostic(&mut io::stderr().lock(), stage);
+}
+
+fn substitution_refused(code: SubstituteErrorCode, adapter_code: Option<NixAdapterErrorCode>) {
+    let _ = write_substitution_diagnostic(&mut io::stderr().lock(), code, adapter_code);
+}
+
+fn write_acquisition_diagnostic(writer: &mut impl Write, stage: &'static str) -> io::Result<()> {
+    writeln!(writer, "pkg broker acquisition refused: stage={stage}")
+}
+
+fn write_substitution_diagnostic(
+    writer: &mut impl Write,
+    code: SubstituteErrorCode,
+    adapter_code: Option<NixAdapterErrorCode>,
+) -> io::Result<()> {
+    let code = match code {
+        SubstituteErrorCode::AdapterFailure => "adapter_failure",
+        SubstituteErrorCode::UnapprovedSignature => "unapproved_signature",
+        SubstituteErrorCode::IntegrityFailure => "integrity_failure",
+        SubstituteErrorCode::TrustFailure => "trust_failure",
+        SubstituteErrorCode::MetadataMismatch => "metadata_mismatch",
+    };
+    let adapter = adapter_code.map_or("none", NixAdapterErrorCode::as_str);
+    writeln!(
+        writer,
+        "pkg broker acquisition refused: stage=substitute code={code} adapter={adapter}"
+    )
+}
+
 fn catalog_summary(
     value: &pkg_index::PackageSummary,
 ) -> Result<CatalogPackageSummary, BuildAuthorityError> {
@@ -521,7 +565,7 @@ struct ChannelAuthorityIdentity {
 }
 
 impl ChannelAuthorityIdentity {
-    fn from_channel(channel: &VerifiedChannel) -> Self {
+    const fn from_channel(channel: &VerifiedChannel) -> Self {
         Self {
             sequence: channel.sequence(),
             policy_version: channel.policy_version(),
@@ -657,6 +701,21 @@ mod tests {
         assert_eq!(
             BuildAuthorityError::new(BuildAuthorityErrorCode::IndexMismatch).to_string(),
             "authenticated build authority refused"
+        );
+    }
+
+    #[test]
+    fn acquisition_diagnostics_are_one_static_redacted_line() {
+        let mut output = Vec::new();
+        write_substitution_diagnostic(
+            &mut output,
+            SubstituteErrorCode::AdapterFailure,
+            Some(NixAdapterErrorCode::OperationFailed),
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "pkg broker acquisition refused: stage=substitute code=adapter_failure adapter=operation_failed\n"
         );
     }
 }

@@ -558,7 +558,7 @@ pub fn compress_index(bytes: &[u8]) -> std::io::Result<Vec<u8>> {
     Ok(compressed)
 }
 
-fn check_projection_len(length: usize) -> Result<(), IndexBuildError> {
+const fn check_projection_len(length: usize) -> Result<(), IndexBuildError> {
     if length > MAX_PROJECTION_BYTES {
         Err(IndexBuildError::LimitExceeded("projection-byte"))
     } else {

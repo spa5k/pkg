@@ -4,6 +4,8 @@ Status: Accepted
 
 # Per-user authoritative state over the shared machine store
 
+> **Status note:** This decision remains accepted for per-user Package Lifecycle state. [ADR 0004](./0004-determinate-base-nix-lifecycle.md) partially supersedes only its machine-wide Base Nix ownership claim, including the Base Nix runtime, Base Nix service definitions, Base Nix configuration, Base Nix trust bootstrap, Vendor Receipt, and `/nix` lifecycle.
+
 ## Context
 
 The managed Nix store and runtime are root-owned and machine-global. V1 had to choose between one shared package state for all users and per-user state on shared hosts (UD-00.4).

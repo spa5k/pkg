@@ -5,7 +5,8 @@ use pkg_channel::VerifiedChannel;
 use pkg_core::{ChannelSequence, PolicyVersion};
 use pkg_nix::{
     BuildCacheProbe, Digest, InstallDownloadProgress, InstallEvidence, NixAdapter,
-    SubstituteResult, VerifiedSubstitute, acquire_substitute,
+    NixAdapterErrorCode, SubstituteErrorCode, SubstituteResult, VerifiedSubstitute,
+    acquire_substitute,
 };
 
 use crate::{PlannedOutput, PreflightInstall, ResolvedInstall, VerifiedInstall};
@@ -51,14 +52,14 @@ impl AcquiredInstall {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CacheAuthorityIdentity {
+pub struct CacheAuthorityIdentity {
     channel_sequence: ChannelSequence,
     policy_version: PolicyVersion,
     descriptor_sha256: [u8; 32],
 }
 
 impl CacheAuthorityIdentity {
-    fn from_channel(channel: &VerifiedChannel) -> Self {
+    const fn from_channel(channel: &VerifiedChannel) -> Self {
         Self {
             channel_sequence: channel.sequence(),
             policy_version: channel.policy_version(),
@@ -78,8 +79,25 @@ impl CacheAuthorityIdentity {
 pub enum AcquireError {
     /// At least one output needs the PR-26 approved local-build path.
     BuildRequired,
-    /// Substitution or verification failed closed.
+    /// Cache-only acquisition failed closed.
     Refused,
+    /// Cache download probing failed closed.
+    ProbeRefused,
+    /// Cache substitution failed with stable, redacted nested categories.
+    SubstituteRefused(SubstituteErrorCode, Option<NixAdapterErrorCode>),
+    /// Trusted progress accounting failed closed.
+    ProgressRefused,
+}
+impl AcquireError {
+    pub(crate) const fn stage(self) -> &'static str {
+        match self {
+            Self::BuildRequired => "build-required",
+            Self::Refused => "preflight",
+            Self::ProbeRefused => "probe",
+            Self::SubstituteRefused(..) => "substitute",
+            Self::ProgressRefused => "progress",
+        }
+    }
 }
 impl fmt::Display for AcquireError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -119,7 +137,7 @@ pub fn acquire_cache_only(
     let mut outputs = Vec::with_capacity(preflight.outputs().len());
     for planned in preflight.outputs() {
         match acquire_substitute(planned.store_path(), channel.descriptor().cache(), adapter)
-            .map_err(|_| AcquireError::Refused)?
+            .map_err(|error| AcquireError::SubstituteRefused(error.code(), error.adapter_code()))?
         {
             SubstituteResult::Fetched(substitute) => outputs.push(AcquiredOutput {
                 planned: planned.clone(),
@@ -151,6 +169,86 @@ pub fn acquire_cache_only_with_progress(
         return Err(AcquireError::Refused);
     }
 
+    let selectors = selector_map(resolved)?;
+    let planned_paths = deduped_planned_paths(preflight);
+    let download_bytes = trusted_download_bytes(&planned_paths, probe)?;
+    let (root_owners, selector_totals) = owner_totals(preflight, &selectors, &download_bytes)?;
+
+    let mut fetched = BTreeMap::<String, VerifiedSubstitute>::new();
+    let mut selector_completed = BTreeMap::<String, u64>::new();
+    let mut outputs = Vec::with_capacity(preflight.outputs().len());
+    for planned in preflight.outputs() {
+        let path_key = planned.store_path().as_str();
+        let substitute = if let Some(existing) = fetched.get(path_key) {
+            existing.clone()
+        } else {
+            let total = download_bytes
+                .get(path_key)
+                .copied()
+                .ok_or(AcquireError::Refused)?;
+            let owner = root_owners.get(path_key).ok_or(AcquireError::Refused)?;
+            let (selector, selector_total) =
+                selector_totals.get(owner).ok_or(AcquireError::Refused)?;
+            if *selector_total > 0 && !selector_completed.contains_key(owner) {
+                progress(
+                    InstallDownloadProgress::new(selector.clone(), 0, *selector_total)
+                        .map_err(|_| AcquireError::ProgressRefused)?,
+                )
+                .map_err(|()| AcquireError::ProgressRefused)?;
+                selector_completed.insert(owner.clone(), 0);
+            }
+            let substitute = match acquire_substitute(
+                planned.store_path(),
+                channel.descriptor().cache(),
+                adapter,
+            )
+            .map_err(|error| AcquireError::SubstituteRefused(error.code(), error.adapter_code()))?
+            {
+                SubstituteResult::Fetched(substitute) => substitute,
+                SubstituteResult::Miss(_) => return Err(AcquireError::BuildRequired),
+            };
+            if total > 0 {
+                let completed = selector_completed
+                    .get_mut(owner)
+                    .ok_or(AcquireError::ProgressRefused)?;
+                *completed = completed
+                    .checked_add(total)
+                    .ok_or(AcquireError::ProgressRefused)?;
+                if *completed == *selector_total {
+                    progress(
+                        InstallDownloadProgress::new(
+                            selector.clone(),
+                            *selector_total,
+                            *selector_total,
+                        )
+                        .map_err(|_| AcquireError::ProgressRefused)?,
+                    )
+                    .map_err(|()| AcquireError::ProgressRefused)?;
+                } else if *completed > *selector_total {
+                    return Err(AcquireError::ProgressRefused);
+                }
+            }
+            fetched.insert(path_key.to_owned(), substitute.clone());
+            substitute
+        };
+        outputs.push(AcquiredOutput {
+            planned: planned.clone(),
+            substitute,
+        });
+    }
+    if selector_totals
+        .iter()
+        .any(|(selector, (_, total))| *total > 0 && selector_completed.get(selector) != Some(total))
+    {
+        return Err(AcquireError::ProgressRefused);
+    }
+    Ok(AcquiredInstall { outputs, authority })
+}
+
+/// Builds the one-to-one selector map, refusing duplicate selector ids.
+fn selector_map(
+    resolved: &ResolvedInstall,
+) -> Result<BTreeMap<String, pkg_core::SelectorInput>, AcquireError> {
     let mut selectors = BTreeMap::new();
     for target in resolved.targets() {
         if selectors
@@ -163,6 +261,11 @@ pub fn acquire_cache_only_with_progress(
             return Err(AcquireError::Refused);
         }
     }
+    Ok(selectors)
+}
+
+/// Deduplicates the planned output store paths in first-seen order.
+fn deduped_planned_paths(preflight: &PreflightInstall) -> Vec<pkg_core::StorePath> {
     let mut seen_paths = BTreeSet::new();
     let mut planned_paths = Vec::new();
     for planned in preflight.outputs() {
@@ -170,8 +273,22 @@ pub fn acquire_cache_only_with_progress(
             planned_paths.push(planned.store_path().clone());
         }
     }
-    let download_bytes = trusted_download_bytes(&planned_paths, probe)?;
+    planned_paths
+}
 
+/// One resolved owner table: path-to-selector plus per-selector byte totals.
+type OwnerTotals = (
+    BTreeMap<String, String>,
+    BTreeMap<String, (pkg_core::SelectorInput, u64)>,
+);
+
+/// Maps each planned root path to its selector and sums trusted bytes per
+/// selector, refusing unknown selectors or missing byte totals.
+fn owner_totals(
+    preflight: &PreflightInstall,
+    selectors: &BTreeMap<String, pkg_core::SelectorInput>,
+    download_bytes: &BTreeMap<String, u64>,
+) -> Result<OwnerTotals, AcquireError> {
     let mut root_owners = BTreeMap::new();
     let mut selector_totals = BTreeMap::<String, (pkg_core::SelectorInput, u64)>::new();
     for planned in preflight.outputs() {
@@ -193,74 +310,7 @@ pub fn acquire_cache_only_with_progress(
             .or_insert((selector, 0));
         entry.1 = entry.1.checked_add(bytes).ok_or(AcquireError::Refused)?;
     }
-
-    let mut fetched = BTreeMap::<String, VerifiedSubstitute>::new();
-    let mut selector_completed = BTreeMap::<String, u64>::new();
-    let mut outputs = Vec::with_capacity(preflight.outputs().len());
-    for planned in preflight.outputs() {
-        let path_key = planned.store_path().as_str();
-        let substitute = if let Some(existing) = fetched.get(path_key) {
-            existing.clone()
-        } else {
-            let total = download_bytes
-                .get(path_key)
-                .copied()
-                .ok_or(AcquireError::Refused)?;
-            let owner = root_owners.get(path_key).ok_or(AcquireError::Refused)?;
-            let (selector, selector_total) =
-                selector_totals.get(owner).ok_or(AcquireError::Refused)?;
-            if *selector_total > 0 && !selector_completed.contains_key(owner) {
-                progress(
-                    InstallDownloadProgress::new(selector.clone(), 0, *selector_total)
-                        .map_err(|_| AcquireError::Refused)?,
-                )
-                .map_err(|()| AcquireError::Refused)?;
-                selector_completed.insert(owner.clone(), 0);
-            }
-            let substitute = match acquire_substitute(
-                planned.store_path(),
-                channel.descriptor().cache(),
-                adapter,
-            )
-            .map_err(|_| AcquireError::Refused)?
-            {
-                SubstituteResult::Fetched(substitute) => substitute,
-                SubstituteResult::Miss(_) => return Err(AcquireError::BuildRequired),
-            };
-            if total > 0 {
-                let completed = selector_completed
-                    .get_mut(owner)
-                    .ok_or(AcquireError::Refused)?;
-                *completed = completed.checked_add(total).ok_or(AcquireError::Refused)?;
-                if *completed == *selector_total {
-                    progress(
-                        InstallDownloadProgress::new(
-                            selector.clone(),
-                            *selector_total,
-                            *selector_total,
-                        )
-                        .map_err(|_| AcquireError::Refused)?,
-                    )
-                    .map_err(|()| AcquireError::Refused)?;
-                } else if *completed > *selector_total {
-                    return Err(AcquireError::Refused);
-                }
-            }
-            fetched.insert(path_key.to_owned(), substitute.clone());
-            substitute
-        };
-        outputs.push(AcquiredOutput {
-            planned: planned.clone(),
-            substitute,
-        });
-    }
-    if selector_totals
-        .iter()
-        .any(|(selector, (_, total))| *total > 0 && selector_completed.get(selector) != Some(total))
-    {
-        return Err(AcquireError::Refused);
-    }
-    Ok(AcquiredInstall { outputs, authority })
+    Ok((root_owners, selector_totals))
 }
 
 fn trusted_download_bytes(
@@ -268,36 +318,36 @@ fn trusted_download_bytes(
     probe: &dyn BuildCacheProbe,
 ) -> Result<BTreeMap<String, u64>, AcquireError> {
     if planned_paths.is_empty() || planned_paths.len() > MAX_DOWNLOAD_CLOSURE_PATHS {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let closures = probe
         .inspect_download_closures(planned_paths)
-        .map_err(|_| AcquireError::Refused)?;
+        .map_err(|_| AcquireError::ProbeRefused)?;
     if closures.len() != planned_paths.len() {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let expected = planned_paths
         .iter()
         .map(|path| path.as_str().to_owned())
         .collect::<BTreeSet<_>>();
     if expected.len() != planned_paths.len() {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let mut by_root = BTreeMap::new();
     for closure in closures {
         let key = closure.root().as_str().to_owned();
         if !expected.contains(&key) || by_root.insert(key, closure).is_some() {
-            return Err(AcquireError::Refused);
+            return Err(AcquireError::ProbeRefused);
         }
     }
     if by_root.len() != planned_paths.len() {
-        return Err(AcquireError::Refused);
+        return Err(AcquireError::ProbeRefused);
     }
     let mut claimed = BTreeMap::<String, ()>::new();
     let mut download_bytes = BTreeMap::new();
     for root in planned_paths {
         let root_key = root.as_str();
-        let closure = by_root.get(root_key).ok_or(AcquireError::Refused)?;
+        let closure = by_root.get(root_key).ok_or(AcquireError::ProbeRefused)?;
         let mut total = 0_u64;
         for observation in closure.paths() {
             let Some(bytes) = observation.download_bytes() else {
@@ -306,10 +356,10 @@ fn trusted_download_bytes(
             let path = observation.path().as_str().to_owned();
             if !claimed.contains_key(&path) {
                 if claimed.len() == MAX_DOWNLOAD_CLOSURE_PATHS {
-                    return Err(AcquireError::Refused);
+                    return Err(AcquireError::ProbeRefused);
                 }
                 claimed.insert(path, ());
-                total = total.checked_add(bytes).ok_or(AcquireError::Refused)?;
+                total = total.checked_add(bytes).ok_or(AcquireError::ProbeRefused)?;
             }
         }
         download_bytes.insert(root_key.to_owned(), total);
@@ -348,7 +398,7 @@ pub fn assemble_cache_install_evidence(
         resolved.revision().clone(),
         resolved.nar_hash().clone(),
         resolved.system(),
-        targets,
+        &targets,
         substitutes,
         adapter,
     )
@@ -442,7 +492,7 @@ mod tests {
         ] {
             assert_eq!(
                 trusted_download_bytes(&planned, &Probe(observations)),
-                Err(AcquireError::Refused)
+                Err(AcquireError::ProbeRefused)
             );
         }
     }

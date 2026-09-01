@@ -1,6 +1,6 @@
 //! Build an ephemeral signed publication for clean-host product proofs.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error;
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{Cursor, Read as _, Write as _};
@@ -15,7 +15,7 @@ use aws_lc_rs::signature::Ed25519KeyPair;
 use jiff::Timestamp;
 use olpc_cjson::CanonicalFormatter;
 use pkg_core::{ChannelSequence, NixpkgsRevision, System};
-use pkg_index::{BuildMetadata, IndexCandidate, build_index, verify_index_release_input};
+use pkg_index::{BuildMetadata, IndexCandidate, build_index};
 use pkg_nix::{NixVersion, build_upstream_runtime_asset_manifest};
 use pkg_release::{
     Approval, MetadataPolicy, ReleaseAuthority, ReleaseAuthorization, ReleaseManifest,
@@ -45,6 +45,7 @@ const NIXPKGS: [(&str, &str); 2] = [
 const SYSTEMS: [&str; 2] = ["aarch64-darwin", "x86_64-linux"];
 const CACHE_URL: &str = "https://cache.nixos.org";
 const CACHE_KEY: &str = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+const DETERMINATE_REVISION: &str = "4132ad07a15ee7d88c096ac7172b7afb2672866b";
 
 #[derive(Clone)]
 struct ProofKey {
@@ -100,15 +101,12 @@ impl KeySource for ProofKey {
 struct ProofAuthority;
 struct ProofAuthorization;
 
-struct LocalPreviewAuthority;
-struct LocalPreviewAuthorization;
-
 impl ReleaseAuthorization for ProofAuthorization {
-    fn lease_id(&self) -> &str {
+    fn lease_id(&self) -> &'static str {
         "linux-proof-lease"
     }
 
-    fn signing_actor(&self) -> &str {
+    fn signing_actor(&self) -> &'static str {
         "linux-proof"
     }
 
@@ -155,61 +153,54 @@ impl ReleaseAuthority for ProofAuthority {
     }
 }
 
-impl ReleaseAuthorization for LocalPreviewAuthorization {
-    fn lease_id(&self) -> &str {
-        "local-preview-v1"
-    }
-
-    fn signing_actor(&self) -> &str {
-        "local-preview"
-    }
-
-    fn bind_transaction(&mut self, digest: &str) -> Result<(), ValidationError> {
-        (digest.len() == 64)
-            .then_some(())
-            .ok_or(ValidationError::InvalidPolicy)
-    }
-
-    fn commit(&mut self) -> Result<(), ValidationError> {
-        Ok(())
-    }
-}
-
-impl ReleaseAuthority for LocalPreviewAuthority {
-    fn authorize(
-        &self,
-        digest: &str,
-        sequence: u64,
-        timestamp_version: u64,
-        approvals: &[Approval],
-    ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
-        let evidence = approvals.iter().map(Approval::evidence).collect::<Vec<_>>();
-        if digest.len() != 64
-            || sequence != 11
-            || timestamp_version != 11
-            || evidence != ["local-preview:release", "local-preview:security"]
-        {
-            return Err(ValidationError::InvalidPolicy);
-        }
-        Ok(Box::new(LocalPreviewAuthorization))
-    }
-
-    fn resume(
-        &self,
-        digest: &str,
-        transaction_digest: &str,
-        lease_id: &str,
-    ) -> Result<Box<dyn ReleaseAuthorization>, ValidationError> {
-        if digest.len() != 64 || transaction_digest.len() != 64 || lease_id != "local-preview-v1" {
-            return Err(ValidationError::InvalidPolicy);
-        }
-        Ok(Box::new(LocalPreviewAuthorization))
-    }
-}
-
 struct FileRecord {
     digest: String,
     length: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProofInventory {
+    schema_version: u64,
+    files: Vec<ProofInventoryFile>,
+}
+
+#[derive(Serialize)]
+struct ProofInventoryFile {
+    path: String,
+    sha256: String,
+    length: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProofPair {
+    schema_version: u64,
+    channels: Vec<ProofPairChannel>,
+    product_commit: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProofPairChannel {
+    name: &'static str,
+    release_id: String,
+    manifest_schema_version: u64,
+    channel_sequence: u64,
+    timestamp_version: u64,
+    trusted_root_sha256: String,
+    inventory: String,
+    inventory_sha256: String,
+    inventory_length: u64,
+    required_metadata_paths: Vec<String>,
+    required_target_prefix: &'static str,
+}
+
+#[derive(Clone, Copy)]
+enum ProofInputMode {
+    Dn16Prepared,
+    Dn16Sealed,
+    LegacyLinuxFixture,
 }
 
 fn write_file(root: &Path, relative: &str, bytes: &[u8]) -> Result<FileRecord, AnyError> {
@@ -224,13 +215,177 @@ fn write_file(root: &Path, relative: &str, bytes: &[u8]) -> Result<FileRecord, A
     })
 }
 
-fn copy_file(root: &Path, relative: &str, source: &Path) -> Result<FileRecord, AnyError> {
+fn read_regular_file(source: &Path) -> Result<Vec<u8>, AnyError> {
     let metadata = fs::symlink_metadata(source)?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err("preview input must be a regular file".into());
     }
-    let bytes = fs::read(source)?;
+    Ok(fs::read(source)?)
+}
+
+fn preserve_exact_sealed_manifest(output: &Path, sealed: &[u8]) -> Result<(), AnyError> {
+    let manifest = output.join("release-manifest.json");
+    let canonical: serde_json::Value = serde_json::from_slice(&read_regular_file(&manifest)?)?;
+    let sealed_value: serde_json::Value = serde_json::from_slice(sealed)?;
+    if canonical != sealed_value {
+        return Err("signed channel manifest does not match the sealed manifest".into());
+    }
+    fs::write(manifest, sealed)?;
+    Ok(())
+}
+
+fn copy_file(root: &Path, relative: &str, source: &Path) -> Result<FileRecord, AnyError> {
+    write_file(root, relative, &read_regular_file(source)?)
+}
+
+fn copy_sigstore_bundle(
+    root: &Path,
+    relative: &str,
+    source: &Path,
+) -> Result<FileRecord, AnyError> {
+    let bytes = read_regular_file(source)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| "invalid Sigstore bundle envelope")?;
+    let verification = value
+        .get("verificationMaterial")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("invalid Sigstore bundle envelope")?;
+    let certificate = verification
+        .get("certificate")
+        .and_then(|value| value.get("rawBytes"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| !value.is_empty());
+    let certificate_chain = verification
+        .get("x509CertificateChain")
+        .and_then(|value| value.get("certificates"))
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|certificates| {
+            certificates.iter().any(|certificate| {
+                certificate
+                    .get("rawBytes")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| !value.is_empty())
+            })
+        });
+    let signature = value
+        .get("messageSignature")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("invalid Sigstore bundle envelope")?;
+    let digest = signature
+        .get("messageDigest")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("invalid Sigstore bundle envelope")?;
+    if value.get("mediaType").and_then(serde_json::Value::as_str)
+        != Some("application/vnd.dev.sigstore.bundle.v0.3+json")
+        || value.get("proofFixture").is_some()
+        || (!certificate && !certificate_chain)
+        || digest.get("algorithm").and_then(serde_json::Value::as_str) != Some("SHA2_256")
+        || digest
+            .get("digest")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(str::is_empty)
+        || signature
+            .get("signature")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return Err("invalid Sigstore bundle envelope".into());
+    }
     write_file(root, relative, &bytes)
+}
+
+fn prepare_cli_artifacts(
+    artifact_root: &Path,
+    aarch64_input: &Path,
+    x86_64_input: &Path,
+    mode: ProofInputMode,
+) -> Result<Vec<serde_json::Value>, AnyError> {
+    [
+        ("pkg", "aarch64-darwin", "pkg-aarch64-darwin"),
+        ("pkg", "x86_64-linux", "pkg-x86_64-linux"),
+        ("pkg-install", "x86_64-linux", "pkg-installer-x86_64-linux"),
+    ]
+    .into_iter()
+    .map(|(kind, system, name)| {
+        let input = if system == "aarch64-darwin" {
+            aarch64_input
+        } else {
+            x86_64_input
+        };
+        let source = format!("cli/{name}");
+        let record = copy_file(artifact_root, &source, &input.join(name))?;
+        let mut artifact = serde_json::json!({
+            "kind":kind, "system":system, "source":source,
+            "sha256":record.digest, "length":record.length,
+        });
+        if matches!(mode, ProofInputMode::Dn16Prepared) {
+            return Ok(artifact);
+        }
+        let bundle = format!("{source}.sigstore.json");
+        let bundle_input = input.join(format!("{name}.sigstore.json"));
+        let bundle_record = match mode {
+            ProofInputMode::Dn16Sealed => {
+                copy_sigstore_bundle(artifact_root, &bundle, &bundle_input)?
+            }
+            ProofInputMode::LegacyLinuxFixture => copy_file(artifact_root, &bundle, &bundle_input)?,
+            ProofInputMode::Dn16Prepared => unreachable!("prepared returned above"),
+        };
+        artifact["sigstoreBundle"] = serde_json::json!(bundle);
+        artifact["sigstoreBundleSha256"] = serde_json::json!(bundle_record.digest);
+        artifact["sigstoreBundleLength"] = serde_json::json!(bundle_record.length);
+        Ok(artifact)
+    })
+    .collect()
+}
+
+fn prepare_determinate_inventory(
+    artifact_root: &Path,
+    input: &Path,
+) -> Result<serde_json::Value, AnyError> {
+    let mut artifacts = Vec::new();
+    for (kind, system, name, upstream_url) in [
+        (
+            "installer",
+            Some("aarch64-darwin"),
+            "nix-installer-aarch64-darwin",
+            "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-darwin",
+        ),
+        (
+            "installer",
+            Some("aarch64-linux"),
+            "nix-installer-aarch64-linux",
+            "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-aarch64-linux",
+        ),
+        (
+            "installer",
+            Some("x86_64-linux"),
+            "nix-installer-x86_64-linux",
+            "https://github.com/DeterminateSystems/nix-installer/releases/download/v3.22.1/nix-installer-x86_64-linux",
+        ),
+        (
+            "source",
+            None,
+            "nix-installer-v3.22.1.tar.gz",
+            "https://codeload.github.com/DeterminateSystems/nix-installer/tar.gz/refs/tags/v3.22.1",
+        ),
+        (
+            "license",
+            None,
+            "LICENSE",
+            "https://raw.githubusercontent.com/DeterminateSystems/nix-installer/4132ad07a15ee7d88c096ac7172b7afb2672866b/LICENSE",
+        ),
+    ] {
+        let target = format!("determinate/3.22.1/{name}");
+        let record = copy_file(artifact_root, &target, &input.join(name))?;
+        artifacts.push(serde_json::json!({
+            "kind":kind, "system":system, "target":target, "source":target,
+            "upstreamUrl":upstream_url, "sha256":record.digest, "length":record.length,
+        }));
+    }
+    Ok(serde_json::json!({
+        "version":"3.22.1", "revision":DETERMINATE_REVISION,
+        "license":"LGPL-2.1", "artifacts":artifacts,
+    }))
 }
 
 fn compress(bytes: &[u8]) -> Result<Vec<u8>, AnyError> {
@@ -238,6 +393,78 @@ fn compress(bytes: &[u8]) -> Result<Vec<u8>, AnyError> {
     let mut compressed = Vec::new();
     reader.read_to_end(&mut compressed)?;
     Ok(compressed)
+}
+
+fn build_proof_index(
+    sequence: u64,
+    system: System,
+    nixpkgs_revision: &str,
+) -> Result<Vec<u8>, AnyError> {
+    let metadata = BuildMetadata::new(
+        ChannelSequence::from_u64(sequence).ok_or("invalid sequence")?,
+        system,
+        NixpkgsRevision::new(nixpkgs_revision)?,
+        "2026-08-14T00:00:00Z",
+    )?;
+    let candidate =
+        |attr_path: &str, pname: &str, version: &str, description: &str| IndexCandidate {
+            attr_path: attr_path.into(),
+            pname: Some(pname.into()),
+            version: Some(version.into()),
+            description: Some(description.into()),
+            homepage: None,
+            licenses: Vec::new(),
+            platforms: vec![system.to_string()],
+            available_here: true,
+            broken: false,
+            position: None,
+            outputs: vec!["out".into()],
+            aliases: Vec::new(),
+            skipped: false,
+        };
+    compress(
+        build_index(
+            metadata,
+            vec![
+                candidate("hello", "hello", "2.12.1", "Print a greeting"),
+                candidate(
+                    "ripgrep",
+                    "ripgrep",
+                    if sequence == 1 { "13.0.0" } else { "15.1.0" },
+                    "Search text",
+                ),
+                candidate("fd", "fd", "8.7.1", "Find files"),
+                candidate("bat", "bat", "0.24.0", "View text files"),
+                candidate("tree", "tree", "2.1.1", "List directory trees"),
+                candidate("wget", "wget", "1.21.4", "Download files"),
+                candidate("git", "git", "2.42.2", "Manage source history"),
+                candidate("tmux", "tmux", "3.3a", "Use terminal sessions"),
+                candidate(
+                    "zoxide",
+                    "zoxide",
+                    "unstable-2023-11-20",
+                    "Navigate directories",
+                ),
+                candidate("fzf", "fzf", "0.46.0", "Find items with fuzzy search"),
+                IndexCandidate {
+                    attr_path: "cxx-prettyprint".into(),
+                    pname: Some("cxx-prettyprint-unstable".into()),
+                    version: Some("2016-04-30".into()),
+                    description: Some("Print C++ containers".into()),
+                    homepage: Some("https://github.com/louisdx/cxx-prettyprint".into()),
+                    licenses: Vec::new(),
+                    platforms: vec![system.to_string()],
+                    available_here: true,
+                    broken: false,
+                    position: None,
+                    outputs: vec!["out".into()],
+                    aliases: Vec::new(),
+                    skipped: false,
+                },
+            ],
+        )?
+        .bytes(),
+    )
 }
 
 async fn signed_root(
@@ -309,6 +536,180 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), AnyError> {
     Ok(())
 }
 
+fn canonical_json(value: &impl Serialize) -> Result<Vec<u8>, AnyError> {
+    let mut bytes = Vec::new();
+    let mut serializer =
+        serde_json::Serializer::with_formatter(&mut bytes, CanonicalFormatter::new());
+    value.serialize(&mut serializer)?;
+    Ok(bytes)
+}
+
+fn inventory(root: &Path) -> Result<(ProofInventory, BTreeSet<String>), AnyError> {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        files: &mut Vec<ProofInventoryFile>,
+    ) -> Result<(), AnyError> {
+        let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() {
+                return Err("proof publication contains a symlink".into());
+            }
+            if metadata.is_dir() {
+                visit(root, &path, files)?;
+                continue;
+            }
+            if !metadata.is_file() {
+                return Err("proof publication contains a non-file entry".into());
+            }
+            let relative = path
+                .strip_prefix(root)?
+                .to_str()
+                .ok_or("proof publication path is not UTF-8")?
+                .replace('\\', "/");
+            let mut file = fs::File::open(&path)?;
+            let mut digest = Sha256::new();
+            let length = std::io::copy(&mut file, &mut digest)?;
+            files.push(ProofInventoryFile {
+                path: relative,
+                sha256: hex::encode(digest.finalize()),
+                length,
+            });
+        }
+        Ok(())
+    }
+
+    let metadata = fs::symlink_metadata(root)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("proof channel must be a regular directory".into());
+    }
+    let mut files = Vec::new();
+    visit(root, root, &mut files)?;
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    let paths = files.iter().map(|file| file.path.clone()).collect();
+    Ok((
+        ProofInventory {
+            schema_version: 1,
+            files,
+        },
+        paths,
+    ))
+}
+
+fn bind_proof_pair(
+    root: &Path,
+    n_release_id: &str,
+    n_plus_1_release_id: &str,
+    product_commit: &str,
+) -> Result<(), AnyError> {
+    if n_release_id == n_plus_1_release_id
+        || product_commit.len() != 40
+        || !product_commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("proof releases or product commit are invalid".into());
+    }
+    let metadata = fs::symlink_metadata(root)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("proof pair must be a regular directory".into());
+    }
+    let entries = fs::read_dir(root)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if entries != ["n", "n-plus-1"].into_iter().map(Into::into).collect() {
+        return Err("proof pair must contain only n and n-plus-1".into());
+    }
+
+    let mut channels = Vec::new();
+    let mut inventories = Vec::new();
+    let mut trusted_root = None;
+    for (name, release_id, version) in [
+        ("n", n_release_id, 1_u64),
+        ("n-plus-1", n_plus_1_release_id, 2_u64),
+    ] {
+        let channel = root.join(name);
+        let (inventory, paths) = inventory(&channel)?;
+        let required_metadata_paths = [
+            "metadata/1.root.json".to_owned(),
+            format!("metadata/{version}.targets.json"),
+            format!("metadata/{version}.snapshot.json"),
+            "metadata/timestamp.json".to_owned(),
+        ];
+        if !required_metadata_paths
+            .iter()
+            .all(|path| paths.contains(path))
+            || !paths.contains("release-manifest.json")
+            || !paths.iter().any(|path| path.starts_with("targets/"))
+        {
+            return Err("proof channel is missing required metadata or targets".into());
+        }
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&read_regular_file(&channel.join("release-manifest.json"))?)?;
+        let root_digest = manifest
+            .get("trustedRootSha256")
+            .and_then(serde_json::Value::as_str)
+            .filter(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+            .ok_or("proof manifest has an invalid trusted root")?;
+        if manifest
+            .get("schemaVersion")
+            .and_then(serde_json::Value::as_u64)
+            != Some(2)
+            || manifest
+                .get("releaseId")
+                .and_then(serde_json::Value::as_str)
+                != Some(release_id)
+            || manifest
+                .get("channelSequence")
+                .and_then(serde_json::Value::as_u64)
+                != Some(version)
+            || manifest
+                .get("timestampVersion")
+                .and_then(serde_json::Value::as_u64)
+                != Some(version)
+            || trusted_root
+                .as_deref()
+                .is_some_and(|trusted| trusted != root_digest)
+        {
+            return Err("proof manifest does not match the pair".into());
+        }
+        trusted_root = Some(root_digest.to_owned());
+        let inventory_bytes = canonical_json(&inventory)?;
+        let inventory_name = format!("{name}.inventory.json");
+        channels.push(ProofPairChannel {
+            name,
+            release_id: release_id.to_owned(),
+            manifest_schema_version: 2,
+            channel_sequence: version,
+            timestamp_version: version,
+            trusted_root_sha256: root_digest.to_owned(),
+            inventory: inventory_name.clone(),
+            inventory_sha256: hex::encode(Sha256::digest(&inventory_bytes)),
+            inventory_length: inventory_bytes.len() as u64,
+            required_metadata_paths: required_metadata_paths.into(),
+            required_target_prefix: "targets/",
+        });
+        inventories.push((inventory_name, inventory_bytes));
+    }
+    let descriptor = canonical_json(&ProofPair {
+        schema_version: 1,
+        channels,
+        product_commit: product_commit.to_owned(),
+    })?;
+    for (name, bytes) in inventories {
+        write_private(&root.join(name), &bytes)?;
+    }
+    write_private(&root.join("proof-pair.json"), &descriptor)
+}
+
 fn write_keys(state: &Path, prefix: &str, keys: &[ProofKey]) -> Result<(), AnyError> {
     for (index, key) in keys.iter().enumerate() {
         write_private(&state.join(format!("{prefix}-{index}.pk8")), &key.pkcs8)?;
@@ -346,168 +747,6 @@ async fn prepare_signing_state(state: &Path) -> Result<(), AnyError> {
     Ok(())
 }
 
-async fn build_preview_publication(
-    output: PathBuf,
-    input: PathBuf,
-    signing_state: PathBuf,
-    sequence: u64,
-) -> Result<(), AnyError> {
-    if output.exists() || sequence != 11 {
-        return Err("usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 11".into());
-    }
-
-    let online = read_keys(&signing_state, "online")?;
-    let now = Timestamp::now();
-    let root_path = signing_state.join("root.json");
-    let root_bytes = fs::read(&root_path)?;
-    let root_digest = hex::encode(Sha256::digest(&root_bytes));
-    let (nixpkgs_revision, nixpkgs_nar_hash) = NIXPKGS[1];
-    let channel_sequence = ChannelSequence::from_u64(sequence).ok_or("invalid channel sequence")?;
-    let artifacts = tempfile::tempdir()?;
-    let artifact_root = artifacts.path();
-    let mut release_artifacts = Vec::new();
-    let mut runtime_entries = BTreeMap::new();
-    let mut index_entries = BTreeMap::new();
-
-    for candidate in SYSTEMS {
-        eprintln!("Prepare {candidate} runtime.");
-        let system = System::from_str(candidate)?;
-        let runtime_target = format!("nix/{NIX_VERSION}/{candidate}.tar.xz");
-        let manifest_target = format!("nix/{NIX_VERSION}/{candidate}.assets.json");
-        let index_target = format!("index/{sequence}/{candidate}.json.br");
-        let runtime_source = input.join("runtime").join(format!("{candidate}.tar.xz"));
-        let runtime = copy_file(artifact_root, &runtime_target, &runtime_source)?;
-        let runtime_manifest = build_upstream_runtime_asset_manifest(
-            &runtime_source,
-            system,
-            &NixVersion::new(NIX_VERSION)?,
-        )?;
-        eprintln!("Prepare {candidate} index and binaries.");
-        let manifest = write_file(artifact_root, &manifest_target, &runtime_manifest)?;
-        let index_source = input.join("index").join(format!("{candidate}.json.br"));
-        verify_index_release_input(
-            &fs::read(&index_source)?,
-            channel_sequence,
-            system,
-            nixpkgs_revision,
-        )?;
-        let index = copy_file(artifact_root, &index_target, &index_source)?;
-        runtime_entries.insert(
-            candidate,
-            serde_json::json!({
-                "url": format!("https://releases.nixos.org/nix/nix-{NIX_VERSION}/nix-{NIX_VERSION}-{candidate}.tar.xz"),
-                "sha256": runtime.digest,
-                "assetManifestTarget": manifest_target,
-                "assetManifestSha256": manifest.digest,
-            }),
-        );
-        index_entries.insert(
-            candidate,
-            serde_json::json!({"target":index_target, "sha256":index.digest}),
-        );
-        for (kind, target, record) in [
-            ("managed-nix", runtime_target, runtime),
-            ("managed-nix-assets", manifest_target, manifest),
-            ("index", index_target, index),
-        ] {
-            release_artifacts.push(serde_json::json!({
-                "kind":kind, "system":candidate, "target":target, "source":target,
-                "sha256":record.digest, "length":record.length,
-            }));
-        }
-        for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
-            let target = format!("installer/{candidate}/{name}");
-            let record = copy_file(artifact_root, &target, &input.join(candidate).join(name))?;
-            release_artifacts.push(serde_json::json!({
-                "kind":"installer-payload", "system":candidate, "target":target,
-                "source":target, "sha256":record.digest, "length":record.length,
-            }));
-        }
-    }
-
-    let build_policy = SYSTEMS
-        .into_iter()
-        .map(|candidate| (candidate, serde_json::json!({"mode":"allow-with-gates"})))
-        .collect::<BTreeMap<_, _>>();
-    let descriptor = serde_json::to_vec_pretty(&serde_json::json!({
-        "schemaVersion":1, "channel":"preview", "policyVersion":1, "sequence":sequence,
-        "expiresAt":(now + jiff::SignedDuration::from_hours(24 * 30)).to_string(),
-        "supportedSystems":SYSTEMS,
-        "buildPolicy":{"nativeLocalBuilds":build_policy},
-        "nixRuntime":{"version":NIX_VERSION,"perSystem":runtime_entries},
-        "nixpkgs":{"owner":"NixOS","repo":"nixpkgs","rev":nixpkgs_revision,"narHash":nixpkgs_nar_hash},
-        "index":{"source":"self-built","perSystem":index_entries},
-        "substituters":{"urls":[CACHE_URL],"trustedPublicKeys":[CACHE_KEY]},
-    }))?;
-    let descriptor_record = write_file(artifact_root, "descriptor.json", &descriptor)?;
-    release_artifacts.push(serde_json::json!({
-        "kind":"descriptor", "system":null, "target":"descriptor.json", "source":"descriptor.json",
-        "sha256":descriptor_record.digest, "length":descriptor_record.length,
-    }));
-
-    let mut cli_artifacts = Vec::new();
-    for (kind, candidate, binary) in [
-        ("pkg", "aarch64-darwin", "pkg"),
-        ("pkg", "x86_64-linux", "pkg"),
-        ("pkg-install", "x86_64-linux", "pkg-install"),
-    ] {
-        let source = match kind {
-            "pkg" => format!("cli/pkg-{candidate}"),
-            _ => format!("cli/pkg-installer-{candidate}"),
-        };
-        let record = copy_file(artifact_root, &source, &input.join(candidate).join(binary))?;
-        let bundle = format!("{source}.sigstore.json");
-        let bundle_record = copy_file(artifact_root, &bundle, &input.join(&bundle))?;
-        cli_artifacts.push(serde_json::json!({
-            "kind":kind, "system":candidate, "source":source,
-            "sha256":record.digest, "length":record.length,
-            "sigstoreBundle":bundle, "sigstoreBundleSha256":bundle_record.digest,
-            "sigstoreBundleLength":bundle_record.length,
-        }));
-    }
-
-    let manifest = serde_json::json!({
-        "schemaVersion":1, "releaseId":"v0.1.0-alpha.7", "channelSequence":sequence,
-        "timestampVersion":sequence, "trustedRootSha256":root_digest, "policyVersion":1,
-        "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
-        "approvals":[
-            {"actor":"local-release","role":"release","evidence":"local-preview:release"},
-            {"actor":"local-security","role":"security","evidence":"local-preview:security"}
-        ]
-    });
-    let release = ReleaseManifest::from_json(
-        &serde_json::to_vec(&manifest)?,
-        artifact_root,
-        &LocalPreviewAuthority,
-    )?;
-    eprintln!("Sign preview metadata.");
-    let online_sources = online
-        .into_iter()
-        .map(|key| Box::new(key) as Box<dyn KeySource>)
-        .collect::<Vec<_>>();
-    let signed = sign_channel(
-        release,
-        &root_path,
-        &online_sources,
-        MetadataPolicy {
-            targets_version: NonZeroU64::new(sequence).expect("nonzero targets version"),
-            snapshot_version: NonZeroU64::new(sequence).expect("nonzero snapshot version"),
-            timestamp_version: NonZeroU64::new(sequence).expect("nonzero timestamp version"),
-            targets_expires: now + jiff::SignedDuration::from_hours(24 * 30),
-            snapshot_expires: now + jiff::SignedDuration::from_hours(24 * 7),
-            timestamp_expires: now + jiff::SignedDuration::from_hours(48),
-        },
-        &output,
-    )
-    .await?;
-    let output = fs::canonicalize(output)?;
-    fs::write(output.join("root.json"), root_bytes)?;
-    eprintln!("Seal {} preview objects.", signed.objects().len());
-    signed.persist(&output.join("transaction"))?;
-    println!("{}", output.display());
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<(), AnyError> {
     let mut arguments = std::env::args().skip(1);
@@ -519,118 +758,124 @@ async fn main() -> Result<(), AnyError> {
         }
         return prepare_signing_state(&state).await;
     }
-    if first == "--preview" {
-        let output = required_argument(&mut arguments)?;
-        let input = required_argument(&mut arguments)?;
-        let signing_state = required_argument(&mut arguments)?;
-        let sequence = arguments
-            .next()
-            .ok_or("missing channel sequence")?
-            .parse::<u64>()?;
+    if first == "--bind-dn16-pair" {
+        let root = required_argument(&mut arguments)?;
+        let n_release_id = arguments.next().ok_or("missing N release id")?;
+        let n_plus_1_release_id = arguments.next().ok_or("missing N+1 release id")?;
+        let product_commit = arguments.next().ok_or("missing product commit")?;
         if arguments.next().is_some() {
             return Err(
-                "usage: linux_proof_publication --preview OUTPUT INPUT STATE_DIR 11".into(),
+                "usage: linux_proof_publication --bind-dn16-pair PAIR_DIR N_RELEASE_ID N_PLUS_1_RELEASE_ID PRODUCT_COMMIT"
+                    .into(),
             );
         }
-        return build_preview_publication(output, input, signing_state, sequence).await;
+        return bind_proof_pair(&root, &n_release_id, &n_plus_1_release_id, &product_commit);
     }
-    let output = PathBuf::from(first);
-    let archive = required_argument(&mut arguments)?;
-    let binaries = required_argument(&mut arguments)?;
-    let system_name = arguments.next().ok_or("missing system")?;
-    let signing_state = required_argument(&mut arguments)?;
-    let sequence = arguments
-        .next()
-        .ok_or("missing channel sequence")?
-        .parse::<u64>()?;
-    if arguments.next().is_some()
-        || output.exists()
-        || !SYSTEMS.contains(&system_name.as_str())
-        || !(1..=2).contains(&sequence)
-    {
-        return Err(
-            "usage: linux_proof_publication OUTPUT ARCHIVE BIN_DIR SYSTEM STATE_DIR SEQUENCE"
-                .into(),
-        );
+    let (
+        output,
+        runtimes,
+        aarch64_input,
+        x86_64_input,
+        signing_state,
+        sequence,
+        release_id,
+        input_mode,
+        sealed_manifest,
+        legacy_system,
+    ) = match first.as_str() {
+        "--prepare-dn16-manifest" => {
+            let output = required_argument(&mut arguments)?;
+            let runtimes = required_argument(&mut arguments)?;
+            let aarch64_input = required_argument(&mut arguments)?;
+            let x86_64_input = required_argument(&mut arguments)?;
+            let signing_state = required_argument(&mut arguments)?;
+            let sequence = arguments
+                .next()
+                .ok_or("missing channel sequence")?
+                .parse()?;
+            let release_id = arguments.next().ok_or("missing proof release id")?;
+            (
+                output,
+                runtimes,
+                aarch64_input,
+                x86_64_input,
+                signing_state,
+                sequence,
+                release_id,
+                ProofInputMode::Dn16Prepared,
+                None,
+                None,
+            )
+        }
+        "--publish-dn16" => {
+            let output = required_argument(&mut arguments)?;
+            let runtimes = required_argument(&mut arguments)?;
+            let aarch64_input = required_argument(&mut arguments)?;
+            let x86_64_input = required_argument(&mut arguments)?;
+            let sealed_manifest = required_argument(&mut arguments)?;
+            let signing_state = required_argument(&mut arguments)?;
+            let sequence = arguments
+                .next()
+                .ok_or("missing channel sequence")?
+                .parse()?;
+            let release_id = arguments.next().ok_or("missing proof release id")?;
+            (
+                output,
+                runtimes,
+                aarch64_input,
+                x86_64_input,
+                signing_state,
+                sequence,
+                release_id,
+                ProofInputMode::Dn16Sealed,
+                Some(sealed_manifest),
+                None,
+            )
+        }
+        "--legacy-linux-fixture" => {
+            let output = required_argument(&mut arguments)?;
+            let runtimes = required_argument(&mut arguments)?;
+            let binaries = required_argument(&mut arguments)?;
+            let system = arguments.next().ok_or("missing system")?;
+            let signing_state = required_argument(&mut arguments)?;
+            let sequence = arguments
+                .next()
+                .ok_or("missing channel sequence")?
+                .parse()?;
+            let release_id = arguments.next().ok_or("missing proof release id")?;
+            (
+                output,
+                runtimes,
+                binaries.clone(),
+                binaries,
+                signing_state,
+                sequence,
+                release_id,
+                ProofInputMode::LegacyLinuxFixture,
+                None,
+                Some(system),
+            )
+        }
+        _ => return Err("invalid proof publication command".into()),
+    };
+    if arguments.next().is_some() || output.exists() || !(1..=2).contains(&sequence) {
+        return Err("invalid proof publication arguments".into());
     }
-    let system = System::from_str(&system_name)?;
+    if legacy_system.as_deref().is_some_and(|system| {
+        system != "x86_64-linux" || release_id != format!("linux-proof-{sequence}")
+    }) {
+        return Err("legacy Linux fixtures require x86_64-linux and linux-proof-SEQUENCE".into());
+    }
     let (nixpkgs_revision, nixpkgs_nar_hash) = NIXPKGS[(sequence - 1) as usize];
 
     let artifacts = tempfile::tempdir()?;
     let artifact_root = artifacts.path();
-    let online = read_keys(&signing_state, "online")?;
+    let determinate =
+        prepare_determinate_inventory(artifact_root, &x86_64_input.join("determinate"))?;
     let now = Timestamp::now();
     let root_path = signing_state.join("root.json");
     let root_bytes = fs::read(&root_path)?;
     let root_digest = hex::encode(Sha256::digest(&root_bytes));
-
-    let runtime_manifest =
-        build_upstream_runtime_asset_manifest(&archive, system, &NixVersion::new(NIX_VERSION)?)?;
-    let metadata = BuildMetadata::new(
-        ChannelSequence::from_u64(sequence).ok_or("invalid sequence")?,
-        system,
-        NixpkgsRevision::new(nixpkgs_revision)?,
-        "2026-08-14T00:00:00Z",
-    )?;
-    let candidate =
-        |attr_path: &str, pname: &str, version: &str, description: &str| IndexCandidate {
-            attr_path: attr_path.into(),
-            pname: Some(pname.into()),
-            version: Some(version.into()),
-            description: Some(description.into()),
-            homepage: None,
-            licenses: Vec::new(),
-            platforms: vec![system.to_string()],
-            available_here: true,
-            broken: false,
-            position: None,
-            outputs: vec!["out".into()],
-            aliases: Vec::new(),
-            skipped: false,
-        };
-    let index = compress(
-        build_index(
-            metadata,
-            vec![
-                candidate("hello", "hello", "2.12.1", "Print a greeting"),
-                candidate(
-                    "ripgrep",
-                    "ripgrep",
-                    if sequence == 1 { "13.0.0" } else { "15.1.0" },
-                    "Search text",
-                ),
-                candidate("fd", "fd", "8.7.1", "Find files"),
-                candidate("bat", "bat", "0.24.0", "View text files"),
-                candidate("tree", "tree", "2.1.1", "List directory trees"),
-                candidate("wget", "wget", "1.21.4", "Download files"),
-                candidate("git", "git", "2.42.2", "Manage source history"),
-                candidate("tmux", "tmux", "3.3a", "Use terminal sessions"),
-                candidate(
-                    "zoxide",
-                    "zoxide",
-                    "unstable-2023-11-20",
-                    "Navigate directories",
-                ),
-                candidate("fzf", "fzf", "0.46.0", "Find items with fuzzy search"),
-                IndexCandidate {
-                    attr_path: "cxx-prettyprint".into(),
-                    pname: Some("cxx-prettyprint-unstable".into()),
-                    version: Some("2016-04-30".into()),
-                    description: Some("Print C++ containers".into()),
-                    homepage: Some("https://github.com/louisdx/cxx-prettyprint".into()),
-                    licenses: Vec::new(),
-                    platforms: vec![system.to_string()],
-                    available_here: true,
-                    broken: false,
-                    position: None,
-                    outputs: vec!["out".into()],
-                    aliases: Vec::new(),
-                    skipped: false,
-                },
-            ],
-        )?
-        .bytes(),
-    )?;
 
     let mut release_artifacts = Vec::new();
     let mut runtime_entries = BTreeMap::new();
@@ -639,26 +884,31 @@ async fn main() -> Result<(), AnyError> {
         let runtime_target = format!("nix/{NIX_VERSION}/{candidate}.tar.xz");
         let manifest_target = format!("nix/{NIX_VERSION}/{candidate}.assets.json");
         let index_target = format!("index/{sequence}/{candidate}.json.br");
-        let (runtime, manifest, index_record) = if candidate == system_name {
-            (
-                copy_file(artifact_root, &runtime_target, &archive)?,
-                write_file(artifact_root, &manifest_target, &runtime_manifest)?,
-                write_file(artifact_root, &index_target, &index)?,
-            )
+        let runtime_source = runtimes.join(format!("{candidate}.tar.xz"));
+        let runtime_manifest = build_upstream_runtime_asset_manifest(
+            &runtime_source,
+            System::from_str(candidate)?,
+            &NixVersion::new(NIX_VERSION)?,
+        )?;
+        let runtime_record = copy_file(artifact_root, &runtime_target, &runtime_source)?;
+        let manifest_record = write_file(artifact_root, &manifest_target, &runtime_manifest)?;
+        let real_index =
+            build_proof_index(sequence, System::from_str(candidate)?, nixpkgs_revision)?;
+        let index_record = if legacy_system
+            .as_deref()
+            .is_some_and(|system| candidate != system)
+        {
+            write_file(artifact_root, &index_target, candidate.as_bytes())?
         } else {
-            (
-                write_file(artifact_root, &runtime_target, candidate.as_bytes())?,
-                write_file(artifact_root, &manifest_target, candidate.as_bytes())?,
-                write_file(artifact_root, &index_target, candidate.as_bytes())?,
-            )
+            write_file(artifact_root, &index_target, &real_index)?
         };
         runtime_entries.insert(
             candidate,
-                serde_json::json!({
-                    "url": format!("https://releases.nixos.org/nix/nix-{NIX_VERSION}/nix-{NIX_VERSION}-{candidate}.tar.xz"),
-                    "sha256": runtime.digest,
-                    "assetManifestTarget": manifest_target,
-                "assetManifestSha256": manifest.digest,
+            serde_json::json!({
+                "url":format!("https://releases.nixos.org/nix/nix-{NIX_VERSION}/nix-{NIX_VERSION}-{candidate}.tar.xz"),
+                "sha256":runtime_record.digest,
+                "assetManifestTarget":manifest_target,
+                "assetManifestSha256":manifest_record.digest,
             }),
         );
         index_entries.insert(
@@ -666,25 +916,33 @@ async fn main() -> Result<(), AnyError> {
             serde_json::json!({"target": index_target, "sha256": index_record.digest}),
         );
         for (kind, target, record) in [
-            ("managed-nix", runtime_target, runtime),
-            ("managed-nix-assets", manifest_target, manifest),
+            ("managed-nix", runtime_target, runtime_record),
+            ("managed-nix-assets", manifest_target, manifest_record),
             ("index", index_target, index_record),
         ] {
             release_artifacts.push(serde_json::json!({
-                "kind": kind, "system": candidate, "target": target, "source": target,
-                "sha256": record.digest, "length": record.length,
+                "kind":kind, "system":candidate, "target":target, "source":target,
+                "sha256":record.digest, "length":record.length,
             }));
         }
+        let input = if candidate == "aarch64-darwin" {
+            &aarch64_input
+        } else {
+            &x86_64_input
+        };
         for name in ["pkg-root-helper", "pkg-nix-broker", "pkg"] {
             let target = format!("installer/{candidate}/{name}");
-            let record = if candidate == system_name {
-                copy_file(artifact_root, &target, &binaries.join(name))?
-            } else {
+            let record = if legacy_system
+                .as_deref()
+                .is_some_and(|system| candidate != system)
+            {
                 write_file(
                     artifact_root,
                     &target,
                     format!("{candidate} {name}\n").as_bytes(),
                 )?
+            } else {
+                copy_file(artifact_root, &target, &input.join(name))?
             };
             release_artifacts.push(serde_json::json!({
                 "kind":"installer-payload", "system":candidate, "target":target, "source":target,
@@ -698,7 +956,9 @@ async fn main() -> Result<(), AnyError> {
         .map(|candidate| (candidate, serde_json::json!({"mode":"allow-with-gates"})))
         .collect::<BTreeMap<_, _>>();
     let descriptor = serde_json::to_vec_pretty(&serde_json::json!({
-        "schemaVersion":1, "channel":"pkg-linux-proof", "policyVersion":1, "sequence":sequence,
+        "schemaVersion":1,
+        "channel":if legacy_system.is_some() { "pkg-linux-proof" } else { "pkg-dn16-proof" },
+        "policyVersion":1, "sequence":sequence,
         "expiresAt":"2037-01-01T00:00:00Z", "supportedSystems":SYSTEMS,
         "buildPolicy":{"nativeLocalBuilds":build_policy},
         "nixRuntime":{"version":NIX_VERSION,"perSystem":runtime_entries},
@@ -712,54 +972,56 @@ async fn main() -> Result<(), AnyError> {
         "sha256":descriptor_record.digest, "length":descriptor_record.length,
     }));
 
-    let mut cli_artifacts = Vec::new();
-    for (kind, candidate, source) in [
-        ("pkg", "aarch64-darwin", "cli/pkg-aarch64-darwin"),
-        ("pkg", "x86_64-linux", "cli/pkg-x86_64-linux"),
-        (
-            "pkg-install",
-            "x86_64-linux",
-            "cli/pkg-installer-x86_64-linux",
-        ),
-    ] {
-        let release_binary = match (kind, candidate == system_name) {
-            ("pkg", true) => Some("pkg"),
-            ("pkg-install", true) => Some("pkg-install"),
-            _ => None,
-        };
-        let record = if let Some(binary) = release_binary {
-            copy_file(artifact_root, source, &binaries.join(binary))?
-        } else {
-            write_file(
-                artifact_root,
-                source,
-                format!("{kind} {candidate}\n").as_bytes(),
-            )?
-        };
-        let bundle = format!("{source}.sigstore.json");
-        let bundle_record = write_file(artifact_root, &bundle, b"linux proof only\n")?;
-        cli_artifacts.push(serde_json::json!({
-            "kind":kind, "system":candidate, "source":source,
-            "sha256":record.digest, "length":record.length,
-            "sigstoreBundle":bundle, "sigstoreBundleSha256":bundle_record.digest,
-            "sigstoreBundleLength":bundle_record.length,
-        }));
-    }
+    let cli_artifacts =
+        prepare_cli_artifacts(artifact_root, &aarch64_input, &x86_64_input, input_mode)?;
     let manifest = serde_json::json!({
-        "schemaVersion":1, "releaseId":format!("linux-proof-{sequence}"),
+        "schemaVersion":2, "releaseId":release_id,
         "channelSequence":sequence, "timestampVersion":sequence,
         "trustedRootSha256":root_digest, "policyVersion":1,
+        "determinate":determinate,
         "artifacts":release_artifacts, "cliArtifacts":cli_artifacts,
         "approvals":[
             {"actor":"proof-release","role":"release","evidence":"proof:release"},
             {"actor":"proof-security","role":"security","evidence":"proof:security"}
         ]
     });
-    let release = ReleaseManifest::from_json(
-        &serde_json::to_vec(&manifest)?,
-        artifact_root,
-        &ProofAuthority,
-    )?;
+    let generated_manifest = serde_json::to_vec(&manifest)?;
+    if matches!(input_mode, ProofInputMode::Dn16Prepared) {
+        let prepared = ReleaseManifest::from_prepared_json(
+            &generated_manifest,
+            artifact_root,
+            &ProofAuthority,
+        )?;
+        write_private(&output, prepared.manifest())?;
+        println!("{}", output.display());
+        return Ok(());
+    }
+    let manifest_bytes = if matches!(input_mode, ProofInputMode::Dn16Sealed) {
+        let sealed = read_regular_file(
+            sealed_manifest
+                .as_deref()
+                .ok_or("sealed DN-16 manifest is required")?,
+        )?;
+        let sealed_value: serde_json::Value = serde_json::from_slice(&sealed)?;
+        if sealed_value != manifest {
+            return Err("sealed manifest does not match the exact proof inputs".into());
+        }
+        sealed
+    } else {
+        generated_manifest
+    };
+    let release = ReleaseManifest::from_json(&manifest_bytes, artifact_root, &ProofAuthority)?;
+    let prepared_manifest_bytes = if matches!(input_mode, ProofInputMode::LegacyLinuxFixture) {
+        Some(
+            release
+                .authorize_prepared_manifest(&ProofAuthority)?
+                .manifest()
+                .to_vec(),
+        )
+    } else {
+        None
+    };
+    let online = read_keys(&signing_state, "online")?;
     let online_sources = online
         .into_iter()
         .map(|key| Box::new(key) as Box<dyn KeySource>)
@@ -779,7 +1041,296 @@ async fn main() -> Result<(), AnyError> {
         &output,
     )
     .await?;
+    if matches!(input_mode, ProofInputMode::Dn16Sealed) {
+        preserve_exact_sealed_manifest(&output, &manifest_bytes)?;
+    }
+    if let Some(prepared) = prepared_manifest_bytes {
+        fs::write(output.join("release-manifest.json"), prepared)?;
+    }
     fs::write(output.join("root.json"), root_bytes)?;
     println!("{}", output.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIGSTORE_BUNDLE: &str = r#"{
+        "mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json",
+        "verificationMaterial":{"certificate":{"rawBytes":"Y2VydA=="}},
+        "messageSignature":{
+            "messageDigest":{"algorithm":"SHA2_256","digest":"ZGlnZXN0"},
+            "signature":"c2lnbmF0dXJl"
+        }
+    }"#;
+
+    fn write_cli_inputs(root: &Path, bundle: &[u8]) {
+        for name in [
+            "pkg-aarch64-darwin",
+            "pkg-x86_64-linux",
+            "pkg-installer-x86_64-linux",
+        ] {
+            fs::write(root.join(name), format!("payload:{name}\n")).expect("write payload");
+            fs::write(root.join(format!("{name}.sigstore.json")), bundle).expect("write bundle");
+        }
+    }
+
+    #[test]
+    fn cli_artifacts_bind_exact_input_payloads_and_bundles() {
+        let aarch64_input = tempfile::tempdir().expect("Apple Silicon input directory");
+        let x86_64_input = tempfile::tempdir().expect("Linux input directory");
+        let output = tempfile::tempdir().expect("output directory");
+        fs::write(aarch64_input.path().join("pkg-aarch64-darwin"), b"darwin\n")
+            .expect("write Apple Silicon payload");
+        fs::write(
+            aarch64_input
+                .path()
+                .join("pkg-aarch64-darwin.sigstore.json"),
+            SIGSTORE_BUNDLE,
+        )
+        .expect("write Apple Silicon bundle");
+        for name in ["pkg-x86_64-linux", "pkg-installer-x86_64-linux"] {
+            fs::write(x86_64_input.path().join(name), format!("linux:{name}\n"))
+                .expect("write Linux payload");
+            fs::write(
+                x86_64_input.path().join(format!("{name}.sigstore.json")),
+                SIGSTORE_BUNDLE,
+            )
+            .expect("write Linux bundle");
+        }
+
+        let records = prepare_cli_artifacts(
+            output.path(),
+            aarch64_input.path(),
+            x86_64_input.path(),
+            ProofInputMode::Dn16Sealed,
+        )
+        .expect("CLI artifacts");
+
+        assert_eq!(records.len(), 3);
+        for record in records {
+            let source = record["source"].as_str().expect("payload source");
+            let bundle = record["sigstoreBundle"].as_str().expect("bundle source");
+            let payload = fs::read(output.path().join(source)).expect("copied payload");
+            let bundle_bytes = fs::read(output.path().join(bundle)).expect("copied bundle");
+            assert_eq!(record["sha256"], hex::encode(Sha256::digest(&payload)));
+            assert_eq!(record["length"], payload.len() as u64);
+            assert_eq!(
+                record["sigstoreBundleSha256"],
+                hex::encode(Sha256::digest(&bundle_bytes))
+            );
+            assert_eq!(record["sigstoreBundleLength"], bundle_bytes.len() as u64);
+        }
+    }
+
+    #[test]
+    fn dn16_refuses_placeholder_and_plain_text_bundles() {
+        let mut disguised: serde_json::Value =
+            serde_json::from_str(SIGSTORE_BUNDLE).expect("Sigstore fixture");
+        disguised["proofFixture"] = serde_json::json!(true);
+        for bundle in [
+            b"{\"proofFixture\":true}".to_vec(),
+            b"plain text".to_vec(),
+            serde_json::to_vec(&disguised).expect("disguised fixture"),
+        ] {
+            let input = tempfile::tempdir().expect("input directory");
+            let output = tempfile::tempdir().expect("output directory");
+            write_cli_inputs(input.path(), &bundle);
+
+            let error = prepare_cli_artifacts(
+                output.path(),
+                input.path(),
+                input.path(),
+                ProofInputMode::Dn16Sealed,
+            )
+            .expect_err("placeholder must be refused");
+            assert_eq!(error.to_string(), "invalid Sigstore bundle envelope");
+        }
+    }
+
+    #[test]
+    fn prepared_cli_artifacts_need_no_bundle_files() {
+        let input = tempfile::tempdir().expect("input directory");
+        let output = tempfile::tempdir().expect("output directory");
+        write_cli_inputs(input.path(), SIGSTORE_BUNDLE.as_bytes());
+        for name in [
+            "pkg-aarch64-darwin",
+            "pkg-x86_64-linux",
+            "pkg-installer-x86_64-linux",
+        ] {
+            fs::remove_file(input.path().join(format!("{name}.sigstore.json")))
+                .expect("remove bundle");
+        }
+
+        let records = prepare_cli_artifacts(
+            output.path(),
+            input.path(),
+            input.path(),
+            ProofInputMode::Dn16Prepared,
+        )
+        .expect("prepared CLI artifacts");
+        assert!(records.iter().all(|record| {
+            record.get("sigstoreBundle").is_none()
+                && record.get("sigstoreBundleSha256").is_none()
+                && record.get("sigstoreBundleLength").is_none()
+        }));
+    }
+
+    #[test]
+    fn dn16_channel_preserves_exact_sealed_manifest_bytes() {
+        let output = tempfile::tempdir().expect("output directory");
+        let canonical = br#"{"releaseId":"proof-n","schemaVersion":2}"#;
+        let sealed = b"{\n  \"schemaVersion\": 2,\n  \"releaseId\": \"proof-n\"\n}\n";
+        fs::write(output.path().join("release-manifest.json"), canonical)
+            .expect("write canonical manifest");
+
+        preserve_exact_sealed_manifest(output.path(), sealed).expect("preserve sealed manifest");
+
+        assert_eq!(
+            fs::read(output.path().join("release-manifest.json")).expect("read sealed manifest"),
+            sealed
+        );
+    }
+
+    #[test]
+    fn dn16_channel_refuses_a_different_sealed_manifest() {
+        let output = tempfile::tempdir().expect("output directory");
+        let canonical = br#"{"releaseId":"proof-n","schemaVersion":2}"#;
+        let sealed = b"{\n  \"schemaVersion\": 2,\n  \"releaseId\": \"other\"\n}\n";
+        let manifest = output.path().join("release-manifest.json");
+        fs::write(&manifest, canonical).expect("write canonical manifest");
+
+        let error = preserve_exact_sealed_manifest(output.path(), sealed)
+            .expect_err("different manifest must be refused");
+
+        assert_eq!(
+            error.to_string(),
+            "signed channel manifest does not match the sealed manifest"
+        );
+        assert_eq!(
+            fs::read(manifest).expect("read canonical manifest"),
+            canonical
+        );
+    }
+
+    #[test]
+    fn proof_pair_binds_complete_canonical_inventories() {
+        let pair = tempfile::tempdir().expect("proof pair");
+        let trusted_root = "a".repeat(64);
+        for (name, release_id, version) in [
+            ("n", "proof-n", 1_u64),
+            ("n-plus-1", "proof-n-plus-1", 2_u64),
+        ] {
+            let channel = pair.path().join(name);
+            for relative in [
+                "metadata/1.root.json".to_owned(),
+                format!("metadata/{version}.targets.json"),
+                format!("metadata/{version}.snapshot.json"),
+                "metadata/timestamp.json".to_owned(),
+                "targets/payload".to_owned(),
+            ] {
+                let path = channel.join(relative);
+                fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+                fs::write(path, b"proof\n").expect("write proof file");
+            }
+            fs::write(
+                channel.join("release-manifest.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "schemaVersion":2,
+                    "releaseId":release_id,
+                    "channelSequence":version,
+                    "timestampVersion":version,
+                    "trustedRootSha256":trusted_root,
+                }))
+                .expect("manifest"),
+            )
+            .expect("write manifest");
+        }
+
+        let product_commit = "8ffd325a4be12a998f3a5684097b57841a11540e";
+        bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1", product_commit)
+            .expect("bind pair");
+        let descriptor: serde_json::Value = serde_json::from_slice(
+            &fs::read(pair.path().join("proof-pair.json")).expect("pair descriptor"),
+        )
+        .expect("parse pair descriptor");
+        assert_eq!(descriptor["productCommit"], product_commit);
+        assert_eq!(descriptor["channels"][0]["channelSequence"], 1);
+        assert_eq!(descriptor["channels"][1]["channelSequence"], 2);
+        assert_eq!(
+            descriptor["channels"][0]["trustedRootSha256"],
+            descriptor["channels"][1]["trustedRootSha256"]
+        );
+        for name in ["n", "n-plus-1"] {
+            let bytes =
+                fs::read(pair.path().join(format!("{name}.inventory.json"))).expect("inventory");
+            let inventory: serde_json::Value =
+                serde_json::from_slice(&bytes).expect("parse inventory");
+            assert!(inventory["files"].as_array().is_some_and(|files| {
+                files.len() == 6
+                    && files.iter().all(|file| {
+                        file["sha256"]
+                            .as_str()
+                            .is_some_and(|digest| digest.len() == 64)
+                            && file["length"].as_u64().is_some_and(|length| length > 0)
+                    })
+            }));
+        }
+        assert!(
+            bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1", product_commit,).is_err()
+        );
+    }
+
+    #[test]
+    fn proof_pair_refuses_invalid_product_commits_before_writing() {
+        for product_commit in [
+            "8ffd325a4be12a998f3a5684097b57841a11540",
+            "8ffd325a4be12a998f3a5684097b57841a11540E",
+            "8ffd325a4be12a998f3a5684097b57841a11540g",
+        ] {
+            let pair = tempfile::tempdir().expect("proof pair");
+            assert!(
+                bind_proof_pair(pair.path(), "proof-n", "proof-n-plus-1", product_commit,).is_err()
+            );
+            assert!(!pair.path().join("proof-pair.json").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_artifacts_refuse_a_symlinked_bundle() {
+        use std::os::unix::fs::symlink;
+
+        let input = tempfile::tempdir().expect("input directory");
+        let output = tempfile::tempdir().expect("output directory");
+        for name in [
+            "pkg-aarch64-darwin",
+            "pkg-x86_64-linux",
+            "pkg-installer-x86_64-linux",
+        ] {
+            fs::write(input.path().join(name), b"payload\n").expect("write payload");
+            fs::write(
+                input.path().join(format!("{name}.sigstore.json")),
+                b"bundle\n",
+            )
+            .expect("write bundle");
+        }
+        fs::remove_file(input.path().join("pkg-aarch64-darwin.sigstore.json"))
+            .expect("remove bundle");
+        symlink(
+            input.path().join("pkg-x86_64-linux.sigstore.json"),
+            input.path().join("pkg-aarch64-darwin.sigstore.json"),
+        )
+        .expect("symlink bundle");
+
+        let error = prepare_cli_artifacts(
+            output.path(),
+            input.path(),
+            input.path(),
+            ProofInputMode::LegacyLinuxFixture,
+        )
+        .expect_err("symlink must be refused");
+        assert_eq!(error.to_string(), "preview input must be a regular file");
+    }
 }

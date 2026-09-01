@@ -1,23 +1,25 @@
 # Contributing to `pkg`
 
-> **The plans are the source of truth.** Design decisions, invariants, threats, risks, and
-> the PR DAG all live in [`plans/`](plans/README.md). This document makes the *engineering
-> process* operational: how PRs are sized, reviewed, gated, and rolled back. It restates the
-> rules from the roadmap ([§1 Principles](plans/11-pr-roadmap.md#1-principles) and
-> [§2 Reviewer Model](plans/11-pr-roadmap.md#2-reviewer-model)) in checklist form; if this
-> file and the roadmap ever disagree, **the roadmap wins** and a follow-up fixes this file.
+> **The active plan is the source of truth.** Design decisions, risks, and the
+> stacked-PR sequence live in the
+> [Determinate Nix implementation plan](plans/determinate-nix-stacked-prs.md).
+> The [plan index](plans/README.md) separates active and historical material.
+> The plan defines future implementation work. It does not change current alpha
+> behavior by itself.
+> If this file and the active plan disagree, the active plan wins.
 
 ## 1. Before you open a PR
 
-- **Find your PR in the [roadmap](plans/11-pr-roadmap.md#4-pr-entries).** Every change maps
-  to a numbered PR (PR-0 … PR-38). State the PR number in the PR description and copy its
+- **Find your PR in the [active plan](plans/determinate-nix-stacked-prs.md).**
+  Every implementation change maps to one stacked PR. State its identifier in
+  the PR description and copy its
   `Purpose / Owns / Depends / Tests & gates` fields.
 - **Respect `Depends:`.** A PR may not merge until each listed dependency has merged. The
   DAG and parallelism matrix in the roadmap are authoritative; do not invent new edges.
 - **One purpose per PR.** A reviewer must be able to hold the whole change in their head.
   Target a few hundred lines of *logic* (fixtures/tests excluded); anything larger is split.
 - **Every PR is reversible.** Your PR description must include the rollback strategy from the
-  roadmap entry (usually `git revert` plus any state it leaves behind).
+  active-plan entry (usually `git revert` plus any state it leaves behind).
 - **Plans are owned.** Edit a plan document only if you own that area (see reviewer model
   below) **or** the change is links/typos/cross-references that do not alter a decision.
   Link-only fixes to plan cross-references are always allowed. Never silently revert another
@@ -25,44 +27,43 @@
 
 ## 2. Reviewer model (areas F / E / A)
 
-Three area owners (people TBD; **roles fixed** — see [roadmap §2](plans/11-pr-roadmap.md#2-reviewer-model)):
+Three review roles remain useful:
 
-| Role | Owns | Plans |
+| Role | Owns | Review focus |
 | --- | --- | --- |
-| **F** — Foundations & Trust | architecture, channel/TUF, Nixpkgs/index, Nix adapter contract | `00`–`03` |
-| **E** — Execution & Platform | resolve/install/build, state/locks/gen/GC, CLI/UX, installers | `04`–`07` |
-| **A** — Assurance | security, tests, release/ops, roadmap, risks | `08`–`12` |
+| **F** — Foundations & Trust | architecture, channel/TUF, Nixpkgs/index, Nix adapter contract | inputs and trust |
+| **E** — Execution & Platform | resolve/install/build, state/locks/gen/GC, CLI/UX, installers | runtime behavior |
+| **A** — Assurance | security, tests, release/ops, roadmap, risks | proof and release safety |
 
 **Every PR requires:**
 
-1. A **primary reviewer** — the owner of the plan most touched by the PR.
+1. A **primary reviewer** for the area most touched by the PR.
 2. **≥ 1 cross-area reviewer** — a *different* owner than the primary.
 3. **Mandatory security review by A** for any PR on the **trust surface**:
    channel/keys, state integrity, privileged helper, substitution, eval purity, uninstall,
-   or release signing. The roadmap marks these with **"mandatory security"** on the PR entry.
+   or release signing. The active plan marks these review gates on each PR.
 
-Spikes (PR-4 … PR-8) additionally require sign-off by the owner whose plan the spike informs,
-and must close with an accepted Decision Record in [`plans/12`](plans/12-open-decisions-and-risks.md)
-before their dependent PR opens. No irreversible architecture merges before the gating spike's
-DR is accepted (roadmap §9 guardrails).
+Any spike required by the active plan must complete its stated review and proof
+gate before a dependent PR opens. Do not merge an irreversible architecture
+change before its gate passes.
 
 ## 3. Required gates
 
 - **All PRs:** the **docs-linkcheck** CI job is green. It validates Markdown cross-references
   across the repo (including fragments), rejects repository-escaping paths, and enforces the
-  PR-0 structural invariants (all of `plans/00`–`12` and `plans/README.md` exist;
-  `README.md` links the threat model; this file links the reviewer model). Run it locally:
+  plan-index invariants (`plans/README.md` and the active plan exist; `README.md`
+  and this file link the active plan). Run it locally:
   ```sh
   python3 .github/scripts/check_docs_links.py
   ```
-- **Code PRs (PR-1 onward):** the lanes defined in [`plans/09`](plans/09-testing-and-validation.md)
-  apply as the roadmap entry specifies — at minimum the Fast-CI **G-LINT** job
+- **Code PRs:** the lanes in the
+  [active plan](plans/determinate-nix-stacked-prs.md) apply as its PR entry
+  specifies. At minimum, run the Fast-CI **G-LINT** job
   ([`ci-fast.yml`](.github/workflows/ci-fast.yml): `fmt`, `clippy -D warnings`, `doc`,
   `build`, `cargo deny check`, `cargo audit`). Do not disable a gate to make CI green; fix
   the cause or split the PR.
-- **Trust-surface PRs:** the relevant security test lane from
-  [`plans/08`](plans/08-security-model.md) must be green *and* A's security review recorded
-  on the PR before merge.
+- **Trust-surface PRs:** the relevant security test lane in the active plan must
+  be green. Record A's security review before merge.
 
 ### 3.1 Toolchain, MSRV, and the local G-LINT gate
 
@@ -92,9 +93,8 @@ DR is accepted (roadmap §9 guardrails).
   ```
   The final G-LINT gate must run on exactly `1.96.1`; an older toolchain (below the MSRV
   of `1.96`) is **not** acceptable for final validation, even temporarily.
-- **Project license (DR-015).** The project uses Apache-2.0. Keep the workspace
-  package metadata, release archives, and notices consistent with the accepted
-  [decision](plans/12-open-decisions-and-risks.md#dr-015--project-license-and-source-header-policy).
+- **Project license.** The project uses Apache-2.0. Keep the workspace package
+  metadata, release archives, and notices consistent with that license.
 
 ## 4. Rollback evidence
 
@@ -105,15 +105,14 @@ Every merged PR must leave enough trace to roll back cleanly:
 - PRs that lay down files or mutate state (installers, provisioning, migrations) record the
   manifest/keys/paths needed to undo them, as the roadmap entry requires.
 - For release/channel PRs, rollback is the published higher-`sequence` channel — rehearse key
-  revocation before it is needed (roadmap §7, [`plans/10`](plans/10-release-and-operations.md)).
+  revocation before it is needed.
 
 ## 5. Spikes and unresolved questions
 
-Open go/no-go questions live in [`plans/12`](plans/12-open-decisions-and-risks.md) as
-**DR-***/spikes **S1–S5**/**RISK-***. Raise new ones there (status `Proposed`) rather than
-leaving them in a PR thread. Mark a DR `Accepted` only when the spike owner and the affected
-area owner(s) both sign off.
+Add open go/no-go questions to the active plan. Do not leave an implementation
+decision only in a PR thread. Record the required owner sign-off before the
+decision becomes accepted.
 
 ---
 
-*This document is process, not product. For design authority, read the plans.*
+*This document is process, not product. For design authority, read the active plan.*

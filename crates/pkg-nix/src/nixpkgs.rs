@@ -77,6 +77,10 @@ pub struct NixpkgsFetchSpec {
     pin: NixpkgsPin,
 }
 
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "the debug view redacts the authenticated pin material"
+)]
 impl fmt::Debug for NixpkgsFetchSpec {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -155,10 +159,10 @@ impl NixpkgsFetchSpec {
         self.pin.nar_hash()
     }
 
-    /// Builds the only metadata command admitted by this contract.
+    /// Returns the exact authenticated source pin.
     #[must_use]
-    pub fn command(&self) -> NixpkgsMetadataCommand {
-        self.pin.command()
+    pub const fn pin(&self) -> &NixpkgsPin {
+        &self.pin
     }
 }
 
@@ -197,63 +201,13 @@ impl NixpkgsPin {
     pub const fn nar_hash(&self) -> &NarHash {
         &self.nar_hash
     }
-
-    /// Builds the only metadata command admitted by this contract.
-    #[must_use]
-    pub fn command(&self) -> NixpkgsMetadataCommand {
-        let direct_ref = format!(
-            "github:{}/{}/{}?narHash={}",
-            NIXPKGS_OWNER,
-            NIXPKGS_REPO,
-            self.revision.as_str(),
-            self.nar_hash.as_str()
-        );
-        NixpkgsMetadataCommand {
-            argv: vec![
-                "flake".to_owned(),
-                "metadata".to_owned(),
-                "--no-use-registries".to_owned(),
-                direct_ref,
-                "--json".to_owned(),
-            ],
-        }
-    }
-}
-
-/// Exact argv handed to the contained bundled-Nix child launcher.
-#[derive(Clone, PartialEq, Eq)]
-pub struct NixpkgsMetadataCommand {
-    argv: Vec<String>,
-}
-
-impl NixpkgsMetadataCommand {
-    /// Returns the complete fixed argument vector, excluding the immutable
-    /// bundled executable selected by [`crate::ChildContainmentPolicy`].
-    #[must_use]
-    pub fn argv(&self) -> &[String] {
-        &self.argv
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(argv: &[&str]) -> Self {
-        Self {
-            argv: argv.iter().map(|value| (*value).to_owned()).collect(),
-        }
-    }
-}
-
-impl fmt::Debug for NixpkgsMetadataCommand {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("NixpkgsMetadataCommand(<fixed-authenticated-ref>)")
-    }
 }
 
 /// Closed execution seam implemented by FakeNix today and the contained
 /// bundled-Nix subprocess adapter in the Real-Nix lane.
 pub trait NixpkgsMetadataRunner: Send + Sync {
-    /// Executes exactly the supplied closed command and returns JSON stdout.
-    fn run_metadata(&self, command: &NixpkgsMetadataCommand)
-    -> Result<Vec<u8>, NixpkgsSourceError>;
+    /// Executes the one fixed metadata command reconstructed from this pin.
+    fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError>;
 }
 
 /// A Nix-materialized source whose identity matched an exact release pin.
@@ -313,6 +267,10 @@ pub struct VerifiedNixpkgsSource {
     source: PinnedNixpkgsSource,
 }
 
+#[expect(
+    clippy::missing_fields_in_debug,
+    reason = "the debug view redacts the private verified source identity"
+)]
 impl fmt::Debug for VerifiedNixpkgsSource {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -376,7 +334,7 @@ pub fn fetch_pinned_nixpkgs(
     pin: &NixpkgsPin,
     runner: &dyn NixpkgsMetadataRunner,
 ) -> Result<PinnedNixpkgsSource, NixpkgsSourceError> {
-    let metadata = runner.run_metadata(&pin.command())?;
+    let metadata = runner.run_metadata(pin)?;
     verify_metadata(pin, &metadata)
 }
 
@@ -475,214 +433,4 @@ impl LockedWire {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::num::NonZeroU64;
-    use std::sync::Mutex;
-
-    use super::*;
-
-    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
-    const NAR_HASH: &str = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    const STORE_PATH: &str = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-source";
-
-    fn spec() -> NixpkgsFetchSpec {
-        NixpkgsFetchSpec::from_parts(
-            ChannelSequence::new(NonZeroU64::new(7).unwrap()),
-            PolicyVersion::new(NonZeroU64::new(3).unwrap()),
-            [0x42; 32],
-            NIXPKGS_OWNER,
-            NIXPKGS_REPO,
-            REVISION,
-            NAR_HASH,
-        )
-        .unwrap()
-    }
-
-    fn metadata(revision: &str, nar_hash: &str) -> Vec<u8> {
-        format!(
-            r#"{{"locked":{{"type":"github","owner":"NixOS","repo":"nixpkgs","rev":"{revision}","narHash":"{nar_hash}","lastModified":1}},"path":"{STORE_PATH}","revision":"{revision}","locks":{{"version":7,"root":"root","nodes":{{"root":{{"locked":{{"rev":"ignored"}}}}}}}}}}"#
-        )
-        .into_bytes()
-    }
-
-    fn replace_ascii(input: Vec<u8>, from: &str, to: &str) -> Vec<u8> {
-        String::from_utf8(input)
-            .unwrap()
-            .replace(from, to)
-            .into_bytes()
-    }
-
-    struct ExactRunner {
-        expected: NixpkgsMetadataCommand,
-        response: Mutex<Option<Result<Vec<u8>, NixpkgsSourceError>>>,
-    }
-
-    impl ExactRunner {
-        fn new(
-            expected: NixpkgsMetadataCommand,
-            response: Result<Vec<u8>, NixpkgsSourceError>,
-        ) -> Self {
-            Self {
-                expected,
-                response: Mutex::new(Some(response)),
-            }
-        }
-    }
-
-    impl NixpkgsMetadataRunner for ExactRunner {
-        fn run_metadata(
-            &self,
-            command: &NixpkgsMetadataCommand,
-        ) -> Result<Vec<u8>, NixpkgsSourceError> {
-            if command != &self.expected {
-                return Err(NixpkgsSourceError::runner_failure());
-            }
-            self.response
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .take()
-                .unwrap_or_else(|| Err(NixpkgsSourceError::runner_failure()))
-        }
-    }
-
-    #[test]
-    fn command_is_exact_and_contains_only_the_authenticated_direct_ref() {
-        let command = spec().command();
-        assert_eq!(
-            command.argv(),
-            vec![
-                "flake".to_owned(),
-                "metadata".to_owned(),
-                "--no-use-registries".to_owned(),
-                format!("github:NixOS/nixpkgs/{REVISION}?narHash={NAR_HASH}"),
-                "--json".to_owned(),
-            ]
-        );
-        let joined = command.argv().join(" ");
-        for forbidden in ["NIX_PATH", "--impure", "--override-input", "--registry"] {
-            assert!(!joined.contains(forbidden));
-        }
-    }
-
-    #[test]
-    fn top_level_locked_identity_promotes_a_private_source() {
-        let spec = spec();
-        let runner = ExactRunner::new(spec.command(), Ok(metadata(REVISION, NAR_HASH)));
-        let source = fetch_verified_nixpkgs(&spec, &runner).unwrap();
-        assert_eq!(source.revision().as_str(), REVISION);
-        assert_eq!(source.nar_hash().as_str(), NAR_HASH);
-        assert_eq!(source.private_store_path().as_str(), STORE_PATH);
-        assert_eq!(source.marker_key(), REVISION);
-        let debug = format!("{source:?}");
-        assert!(!debug.contains(STORE_PATH));
-        assert!(!debug.contains(NAR_HASH));
-    }
-
-    #[test]
-    fn release_pin_promotes_the_same_verified_private_source() {
-        let pin = NixpkgsPin::new(REVISION, NAR_HASH).unwrap();
-        let runner = ExactRunner::new(pin.command(), Ok(metadata(REVISION, NAR_HASH)));
-
-        let source = fetch_pinned_nixpkgs(&pin, &runner).unwrap();
-
-        assert_eq!(source.revision().as_str(), REVISION);
-        assert_eq!(source.nar_hash().as_str(), NAR_HASH);
-        let debug = format!("{source:?}");
-        assert!(!debug.contains(STORE_PATH));
-        assert!(!debug.contains(NAR_HASH));
-    }
-
-    #[test]
-    fn revision_nar_hash_and_top_level_revision_mismatches_fail_closed() {
-        let spec = spec();
-        let other_revision = "1123456789abcdef0123456789abcdef01234567";
-        let top_level_only = replace_ascii(
-            metadata(REVISION, NAR_HASH),
-            &format!(r#""revision":"{REVISION}""#),
-            &format!(r#""revision":"{other_revision}""#),
-        );
-        for response in [
-            metadata(other_revision, NAR_HASH),
-            metadata(
-                REVISION,
-                "sha256-BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            ),
-            top_level_only,
-        ] {
-            let runner = ExactRunner::new(spec.command(), Ok(response));
-            assert_eq!(
-                fetch_verified_nixpkgs(&spec, &runner).unwrap_err().code(),
-                NixpkgsSourceErrorCode::IdentityMismatch
-            );
-        }
-    }
-
-    #[test]
-    fn source_kind_owner_and_repo_mismatches_fail_closed() {
-        let spec = spec();
-        for response in [
-            replace_ascii(metadata(REVISION, NAR_HASH), "github", "gitlab"),
-            replace_ascii(metadata(REVISION, NAR_HASH), "NixOS", "attacker"),
-            replace_ascii(metadata(REVISION, NAR_HASH), "nixpkgs", "other"),
-        ] {
-            let runner = ExactRunner::new(spec.command(), Ok(response));
-            assert_eq!(
-                fetch_verified_nixpkgs(&spec, &runner).unwrap_err().code(),
-                NixpkgsSourceErrorCode::IdentityMismatch
-            );
-        }
-    }
-
-    #[test]
-    fn optional_top_level_revision_may_be_absent() {
-        let spec = spec();
-        let without_revision = replace_ascii(
-            metadata(REVISION, NAR_HASH),
-            &format!(r#","revision":"{REVISION}""#),
-            "",
-        );
-        let runner = ExactRunner::new(spec.command(), Ok(without_revision));
-        assert!(fetch_verified_nixpkgs(&spec, &runner).is_ok());
-    }
-
-    #[test]
-    fn malformed_oversized_duplicate_and_non_store_outputs_are_refused() {
-        let spec = spec();
-        let cases = [
-            (Vec::new(), NixpkgsSourceErrorCode::MalformedMetadata),
-            (
-                vec![b' '; MAX_METADATA_BYTES + 1],
-                NixpkgsSourceErrorCode::MetadataTooLarge,
-            ),
-            (
-                br#"{"locked":{},"locked":{},"path":"x"}"#.to_vec(),
-                NixpkgsSourceErrorCode::MalformedMetadata,
-            ),
-            (
-                replace_ascii(
-                    metadata(REVISION, NAR_HASH),
-                    STORE_PATH,
-                    "/tmp/attacker-source",
-                ),
-                NixpkgsSourceErrorCode::InvalidSourcePath,
-            ),
-        ];
-        for (response, expected) in cases {
-            let runner = ExactRunner::new(spec.command(), Ok(response));
-            assert_eq!(
-                fetch_verified_nixpkgs(&spec, &runner).unwrap_err().code(),
-                expected
-            );
-        }
-    }
-
-    #[test]
-    fn runner_failure_stays_closed_and_redacted() {
-        let spec = spec();
-        let runner = ExactRunner::new(spec.command(), Err(NixpkgsSourceError::runner_failure()));
-        let error = fetch_verified_nixpkgs(&spec, &runner).unwrap_err();
-        assert_eq!(error.code(), NixpkgsSourceErrorCode::RunnerFailure);
-        assert!(!error.to_string().contains(REVISION));
-        assert!(!format!("{:?}", spec.command()).contains(REVISION));
-    }
-}
+mod tests;

@@ -100,7 +100,7 @@ impl<A> CapturingNix<A> {
         let mut state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.calls.len() == MAX_ENTRIES {
             state.overflowed = true;
         } else if !state.overflowed {
@@ -113,7 +113,7 @@ impl<A> CapturingNix<A> {
         let state = self
             .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.overflowed {
             return Err(ParityError::TooManyEntries);
         }
@@ -185,13 +185,13 @@ pub struct ParityTranscript {
 impl ParityTranscript {
     /// Returns the number of captured adapter calls.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.calls.len()
     }
 
     /// Returns `true` when the capture contains no calls.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.calls.is_empty()
     }
 

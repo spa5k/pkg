@@ -1,8 +1,11 @@
 # Spike S3 — macOS binary coverage + signing/notarization evidence harness (PR-7 / DR-003)
 
+> Links into the dated plan archive are legacy-plan context. They are not
+> current design authority.
+
 `pkg-spike-s3-macos` is an **evidence harness**, not production `pkg` code. It
 builds a closed, five-lane evidence model for the macOS binary-coverage and
-signing/notarization questions behind [DR-003](../../plans/12-open-decisions-and-risks.md),
+signing/notarization questions behind [DR-003](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md),
 and drives them through a hardened, fail-closed `s3-probe` binary. It is a
 standalone Cargo workspace (own `Cargo.toml`, `Cargo.lock`, `target/`) and is
 excluded from the repo-root workspace lanes — the same isolation model as
@@ -464,9 +467,9 @@ version string, or hash.
   environment limitation, with every result cell `Pending`.
 - [`run.sh`](run.sh) — the executable wrapper (effect warnings before Detect/
   Preflight; closed grammar).
-- [DR-003 in `plans/12-open-decisions-and-risks.md`](../../plans/12-open-decisions-and-risks.md)
+- [DR-003 in `plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/12-open-decisions-and-risks.md)
   — the decision record this evidence feeds.
-- [PR-7 in `plans/11-pr-roadmap.md`](../../plans/11-pr-roadmap.md) — spike owner.
+- [PR-7 in `plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md`](../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md) — spike owner.
   Downstream macOS evidence gates: **PR-28** and **PR-36** are direct S3 gates;
   **PR-26** (shared local-build engine) is gated on S5/DR-005 for its shared
   mechanism, with its Darwin *policy* informed/blocked by S3 (see `plans/12`).
@@ -474,4 +477,4 @@ version string, or hash.
   `src/cli.rs`, `src/detect.rs`, `src/preflight.rs`, `src/command.rs`,
   `src/main.rs` — the implementation the behavior above is derived from.
 
-[S5]: ../../plans/11-pr-roadmap.md
+[S5]: ../../plans/archive/2026-08-22-custom-managed-nix-v1/11-pr-roadmap.md

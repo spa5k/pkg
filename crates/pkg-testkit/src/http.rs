@@ -166,7 +166,7 @@ impl FixtureHttpServer {
             std::net::SocketAddr::V4(address) if address.ip().is_loopback() => address,
             _ => return Err(HttpFixtureError::InvalidScript),
         };
-        let worker = thread::spawn(move || serve(listener, script));
+        let worker = thread::spawn(move || serve(&listener, script));
         Ok(Self {
             address,
             worker: Some(worker),
@@ -206,9 +206,9 @@ fn validate_script(script: &[HttpExchange]) -> Result<(), HttpFixtureError> {
     Ok(())
 }
 
-fn serve(listener: TcpListener, script: Vec<HttpExchange>) -> Result<(), HttpFixtureError> {
+fn serve(listener: &TcpListener, script: Vec<HttpExchange>) -> Result<(), HttpFixtureError> {
     for exchange in script {
-        let mut stream = accept_bounded(&listener)?;
+        let mut stream = accept_bounded(listener)?;
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
         stream.set_write_timeout(Some(IO_TIMEOUT))?;
         let (method, path) = read_request_line(&mut stream)?;

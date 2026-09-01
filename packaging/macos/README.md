@@ -11,7 +11,8 @@ Run this command on macOS:
 ```sh
 packaging/macos/build-preview.sh \
   /absolute/path/to/pkg-install \
-  /absolute/path/to/pkg-0.1.0-alpha.4-preview.pkg
+  /absolute/path/to/pkg-0.1.0-alpha.7-preview.pkg \
+  0.1.0-alpha.7
 ```
 
 The recipe ad-hoc signs a temporary copy of `pkg-install`.

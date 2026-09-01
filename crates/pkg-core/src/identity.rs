@@ -12,6 +12,9 @@ use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 
 /// The fixed prefix of every Nix store path.
+/// The `(hash, name, name_offset)` pieces of one candidate store path.
+type StorePathParts<'a> = (&'a [u8], &'a [u8], usize);
+
 const STORE_PREFIX: &str = "/nix/store/";
 
 /// The Nix "base32" alphabet used for store-path hashes (32 symbols; note the
@@ -221,7 +224,7 @@ impl FromStr for StorePath {
 ///
 /// Returns `None` if the prefix is wrong or no `-` separates the hash from a
 /// nonempty name.
-fn split_store_path(path: &str) -> Option<(&[u8], &[u8], usize)> {
+fn split_store_path(path: &str) -> Option<StorePathParts<'_>> {
     let bytes = path.as_bytes();
     let prefix = STORE_PREFIX.as_bytes();
     if bytes.len() < prefix.len() + STORE_HASH_LEN + 2 || !bytes.starts_with(prefix) {
@@ -256,7 +259,7 @@ impl DerivationPath {
 
     /// Returns the underlying store path.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.0
     }
 
@@ -430,13 +433,13 @@ pub struct RealizationIdentity(StorePath);
 impl RealizationIdentity {
     /// Constructs an identity from a store path.
     #[must_use]
-    pub fn new(store_path: StorePath) -> Self {
+    pub const fn new(store_path: StorePath) -> Self {
         Self(store_path)
     }
 
     /// Returns the store path that is this identity.
     #[must_use]
-    pub fn store_path(&self) -> &StorePath {
+    pub const fn store_path(&self) -> &StorePath {
         &self.0
     }
 

@@ -20,7 +20,10 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Result<u32, ()> {
             .map(macos::MacOsPeerCredentials::uid)
             .map_err(|_| ());
     }
-    #[allow(unreachable_code)]
+    #[expect(
+        unreachable_code,
+        reason = "the cfg-gated return above makes this fallback reachable only on unsupported platforms"
+    )]
     Err(())
 }
 
