@@ -4,8 +4,8 @@ use crate::{
     BrokerTransportErrorCode, DeterminateHandoffState, InstallError, LinuxAssetPresence,
     LinuxInstallAsset, LinuxInstallBackend, LinuxPlatformAssetManager,
     determinate_handoff::DeterminateHandoff,
-    linux_platform_assets::LinuxProductAssetIntent,
     linux_systemd::{LinuxSystemdFailure, LinuxSystemdFailurePhase, LinuxSystemdManager},
+    platform::linux::LinuxProductAssetIntent,
 };
 use nix::unistd::{Gid, Uid};
 use pkg_core::{System, state::Digest};
