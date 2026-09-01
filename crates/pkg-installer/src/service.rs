@@ -35,6 +35,8 @@ use pkg_pipeline::{
     AuthenticatedBuildAuthorityService, BuildAuthorityRefreshErrorCode, BuildAuthorityUpdate,
     BuildPlanningAdapter,
 };
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{error::Error, fmt};
 #[cfg(target_os = "macos")]
 use std::{
@@ -42,16 +44,7 @@ use std::{
     os::unix::fs::{FileTypeExt, MetadataExt},
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::{
-    io,
-    os::unix::net::UnixListener,
-    path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    thread,
-};
+use std::{io, os::unix::net::UnixListener, path::Path, sync::Arc, thread};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::runtime::{Builder, Handle};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -548,6 +541,7 @@ struct DirectoryExpectation<'a> {
 }
 
 /// Distinguishes concurrent staging directories within one process.
+#[cfg(target_os = "macos")]
 static STAGE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "macos")]
