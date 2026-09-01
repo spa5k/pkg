@@ -35,9 +35,9 @@ use pkg_channel::TrustedRoot;
 use pkg_core::{System, state::Digest};
 use pkg_nix::{
     AuthenticatedInstallerBundle, AuthenticatedInstallerPayloads, AuthenticatedManagedNixConfig,
-    InstallerProvisionRequest, InstallerRepository,
-    load_authenticated_installer_bundle_blocking, reauthenticate_installer_bundle_blocking,
-    recover_interrupted_provision_workspace, verify_provision_workspace_absent,
+    InstallerProvisionRequest, InstallerRepository, load_authenticated_installer_bundle_blocking,
+    reauthenticate_installer_bundle_blocking, recover_interrupted_provision_workspace,
+    verify_provision_workspace_absent,
 };
 use sha2::{Digest as _, Sha256};
 
