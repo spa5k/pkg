@@ -8,7 +8,7 @@ use pkg_nix::{AuthenticatedInstallerPayloads, ManagedGroupBindings};
 use sha2::{Digest as _, Sha256};
 
 use crate::{
-    MacOsAssetKind, MacOsAssetPresence, MacOsInstallAsset, MacOsInstallJournal,
+    AssetPresence, MacOsAssetKind, MacOsInstallAsset, MacOsInstallJournal,
     MacOsInstallJournalStorage, RecordedAssetState, UninstallAction, UninstallAssetKind,
     UninstallBackend, UninstallError, UninstallManifest,
     determinate::DeterminateInstaller,
@@ -104,8 +104,8 @@ impl ProductionMacOsUninstallBackend {
         match crate::macos_accounts::broker_account_presence(self.groups)
             .map_err(|_| UninstallError::backend_failure())?
         {
-            MacOsAssetPresence::ExactPresent => {}
-            MacOsAssetPresence::Absent => self
+            AssetPresence::ExactPresent => {}
+            AssetPresence::Absent => self
                 .assets
                 .bind_filesystem_after_broker_removal()
                 .map_err(|_| UninstallError::backend_failure())?,
@@ -231,7 +231,7 @@ impl ProductionMacOsUninstallBackend {
                     .assets
                     .classify_asset(asset)
                     .map_err(|_| UninstallError::backend_failure())?
-                    != MacOsAssetPresence::ExactPresent
+                    != AssetPresence::ExactPresent
                 {
                     return Err(UninstallError::backend_failure());
                 }
@@ -241,7 +241,7 @@ impl ProductionMacOsUninstallBackend {
                 .assets
                 .classify_for_removal(asset)
                 .map_err(|_| UninstallError::backend_failure())?
-                != MacOsAssetPresence::Absent
+                != AssetPresence::Absent
             {
                 return Err(UninstallError::backend_failure());
             }
@@ -283,7 +283,7 @@ impl UninstallBackend for ProductionMacOsUninstallBackend {
                         .assets
                         .classify_asset(asset)
                         .map_err(|_| UninstallError::backend_failure())?
-                        != MacOsAssetPresence::ExactPresent
+                        != AssetPresence::ExactPresent
                 {
                     return Err(UninstallError::backend_failure());
                 }
@@ -292,7 +292,7 @@ impl UninstallBackend for ProductionMacOsUninstallBackend {
                     .assets
                     .classify_asset(asset)
                     .map_err(|_| UninstallError::backend_failure())?
-                    != MacOsAssetPresence::ExactPresent
+                    != AssetPresence::ExactPresent
             {
                 return Err(UninstallError::backend_failure());
             } else if self.recovery_mode {
@@ -448,7 +448,7 @@ pub fn verify_macos_install_absent() -> Result<(), UninstallError> {
         .map_err(|_| UninstallError::backend_failure())?;
     if crate::macos_accounts::broker_account_presence(groups)
         .map_err(|_| UninstallError::backend_failure())?
-        != MacOsAssetPresence::Absent
+        != AssetPresence::Absent
     {
         return Err(UninstallError::backend_failure());
     }

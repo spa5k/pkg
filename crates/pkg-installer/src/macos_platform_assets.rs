@@ -8,7 +8,7 @@ use pkg_nix::{
 };
 
 use crate::{
-    MacOsAssetPresence, MacOsError, MacOsInstallAsset, RecordedAsset, RecordedAssetState,
+    AssetPresence, MacOsError, MacOsInstallAsset, RecordedAsset, RecordedAssetState,
     UninstallManifest, macos_accounts::MacOsAccountManager,
     macos_filesystem::MacOsFilesystemManager, macos_install_assets, macos_product_install_assets,
 };
@@ -120,28 +120,28 @@ impl MacOsPlatformAssetManager {
     pub(crate) fn classify_asset(
         &mut self,
         asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError> {
+    ) -> Result<AssetPresence, MacOsError> {
         if MacOsAccountManager::handles(asset) {
             if self.accounts.verify_asset(asset).is_ok() {
-                return Ok(MacOsAssetPresence::ExactPresent);
+                return Ok(AssetPresence::ExactPresent);
             }
             self.accounts
                 .verify_asset_absent(asset)
-                .map(|()| MacOsAssetPresence::Absent)
+                .map(|()| AssetPresence::Absent)
         } else {
             if self.ensure_filesystem()?.verify_asset(asset).is_ok() {
-                return Ok(MacOsAssetPresence::ExactPresent);
+                return Ok(AssetPresence::ExactPresent);
             }
             self.ensure_filesystem()?
                 .verify_asset_absent(asset)
-                .map(|()| MacOsAssetPresence::Absent)
+                .map(|()| AssetPresence::Absent)
         }
     }
 
     pub(crate) fn classify_for_removal(
         &mut self,
         asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError> {
+    ) -> Result<AssetPresence, MacOsError> {
         if MacOsAccountManager::handles(asset) {
             self.accounts.classify_for_removal(asset)
         } else {
@@ -243,7 +243,7 @@ impl MacOsPlatformAssetManager {
         Ok(())
     }
 
-    pub(crate) fn classify_uninstall_manifest(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    pub(crate) fn classify_uninstall_manifest(&mut self) -> Result<AssetPresence, MacOsError> {
         let (system, digest) = self
             .receipt_binding
             .ok_or_else(MacOsError::backend_failure)?;
@@ -252,7 +252,7 @@ impl MacOsPlatformAssetManager {
             .ensure_filesystem()?
             .existing_uninstall_manifest(asset)?
         else {
-            return Ok(MacOsAssetPresence::Absent);
+            return Ok(AssetPresence::Absent);
         };
         if existing.system() != system || existing.ownership_manifest_digest() != digest {
             return Err(MacOsError::backend_failure());
@@ -260,7 +260,7 @@ impl MacOsPlatformAssetManager {
         let filesystem = self.ensure_filesystem()?;
         filesystem.bind_uninstall_manifest(&existing)?;
         filesystem.verify_asset(asset)?;
-        Ok(MacOsAssetPresence::ExactPresent)
+        Ok(AssetPresence::ExactPresent)
     }
 
     pub(crate) fn publish_uninstall_manifest(&mut self) -> Result<bool, MacOsError> {

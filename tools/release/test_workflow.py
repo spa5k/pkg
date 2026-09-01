@@ -405,14 +405,14 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
             "bootstrap::tests::journaled_existing_product_update_stays_offline_and_never_starts_determinate",
             "bootstrap::tests::offline_state_change_blocks_the_next_file_mutation_and_rollback",
             "bootstrap::tests::failed_existing_product_update_restores_files_and_stays_offline",
-            "linux_platform_assets::tests::ordinary_upgrade_requires_different_release_and_prior_content_identity",
+            "platform::linux::assets::tests::ordinary_upgrade_requires_different_release_and_prior_content_identity",
             "linux_filesystem::tests::upgrade_replaces_only_exact_prior_owned_bytes_and_rolls_back",
             "bootstrap::tests::journaled_offline_repair_changes_product_files_without_service_mutation",
             "bootstrap::tests::journaled_repair_refuses_non_offline_service_state_before_mutation",
             "bootstrap::tests::failed_offline_repair_rolls_forward_files_without_service_mutation",
             "linux_systemd::tests::offline_preflight_is_query_only_and_refuses_every_non_offline_state",
-            "linux_platform_assets::tests::repair_requires_same_release_and_created_product_ownership",
-            "linux_platform_assets::tests::repair_requires_a_receipt_and_non_files_never_gain_implicit_ownership",
+            "platform::linux::assets::tests::repair_requires_same_release_and_created_product_ownership",
+            "platform::linux::assets::tests::repair_requires_a_receipt_and_non_files_never_gain_implicit_ownership",
             "linux_filesystem::tests::repair_roll_forward_replaces_unknown_binaries_and_changed_or_missing_units",
         }
         self.assertEqual(len(filters), 46)

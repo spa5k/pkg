@@ -2,7 +2,7 @@
   "clippy::cast_possible_truncation": {
     "crates/pkg-nix/src/managed/ownership.rs": 1,
     "crates/pkg-nix/src/managed/uninstall.rs": 1,
-    "crates/pkg-nix/src/real.rs": 1
+    "crates/pkg-nix/src/real/process.rs": 1
   },
   "clippy::cast_possible_wrap": {
     "crates/pkg-store/src/gc.rs": 6
@@ -21,9 +21,8 @@
     "crates/pkg-cli/src/broker.rs": 1,
     "crates/pkg-nix/src/broker.rs": 1,
     "crates/pkg-nix/src/maintenance.rs": 1,
-    "crates/pkg-nix/src/managed/daemon.rs": 1,
     "crates/pkg-nix/src/managed/uninstall.rs": 1,
-    "crates/pkg-nix/src/real.rs": 5
+    "crates/pkg-nix/src/real/mod.rs": 5
   },
   "clippy::expect_used": {
     "crates/pkg-index/src/build.rs": 2,
@@ -34,7 +33,6 @@
   },
   "clippy::large_stack_arrays": {
     "crates/pkg-nix/src/managed/ownership.rs": 1,
-    "crates/pkg-nix/src/managed/provision.rs": 3,
     "crates/pkg-nix/src/managed/runtime_archive.rs": 1,
     "tools/release/src/publish.rs": 1
   },
@@ -47,10 +45,9 @@
     "crates/pkg-channel/src/state.rs": 3,
     "crates/pkg-cli/src/commands/local.rs": 3,
     "crates/pkg-nix/src/error.rs": 3,
-    "crates/pkg-nix/src/managed/daemon.rs": 1,
     "crates/pkg-nix/src/managed/detect.rs": 1,
     "crates/pkg-nix/src/managed/installer_bundle.rs": 4,
-    "crates/pkg-nix/src/real.rs": 1,
+    "crates/pkg-nix/src/real/substitute.rs": 1,
     "crates/pkg-pipeline/src/commit.rs": 5,
     "crates/pkg-store/src/activate.rs": 1,
     "crates/pkg-store/src/gc.rs": 2,
@@ -101,12 +98,12 @@
     "crates/pkg-nix/src/contract.rs": 24,
     "crates/pkg-nix/src/framing.rs": 11,
     "crates/pkg-nix/src/maintenance.rs": 22,
-    "crates/pkg-nix/src/managed/daemon.rs": 6,
     "crates/pkg-nix/src/managed/ownership.rs": 10,
     "crates/pkg-nix/src/managed/provision.rs": 13,
     "crates/pkg-nix/src/managed/uninstall.rs": 3,
     "crates/pkg-nix/src/nixpkgs.rs": 5,
-    "crates/pkg-nix/src/real.rs": 9,
+    "crates/pkg-nix/src/real/mod.rs": 7,
+    "crates/pkg-nix/src/real/root.rs": 2,
     "crates/pkg-nix/src/substitute.rs": 1,
     "crates/pkg-pipeline/src/acquire.rs": 2,
     "crates/pkg-pipeline/src/activate.rs": 3,
@@ -149,7 +146,10 @@
     "crates/pkg-cli/src/commands/local.rs": 1,
     "crates/pkg-cli/src/main.rs": 1,
     "crates/pkg-nix/src/managed/uninstall.rs": 1,
-    "crates/pkg-nix/src/real.rs": 5
+    "crates/pkg-nix/src/real/mod.rs": 1,
+    "crates/pkg-nix/src/real/process.rs": 1,
+    "crates/pkg-nix/src/real/root.rs": 2,
+    "crates/pkg-nix/src/real/substitute.rs": 1
   },
   "clippy::or_fun_call": {
     "crates/pkg-core/src/channel.rs": 2,
@@ -159,7 +159,6 @@
     "crates/pkg-nix/src/broker.rs": 33,
     "crates/pkg-nix/src/build.rs": 2,
     "crates/pkg-nix/src/maintenance.rs": 7,
-    "crates/pkg-nix/src/managed/daemon.rs": 4,
     "crates/pkg-pipeline/src/build_authority.rs": 7
   },
   "clippy::similar_names": {
@@ -171,7 +170,7 @@
     "crates/pkg-nix/src/broker.rs": 1,
     "crates/pkg-nix/src/managed/detect.rs": 1,
     "crates/pkg-nix/src/managed/uninstall.rs": 1,
-    "crates/pkg-nix/src/real.rs": 2
+    "crates/pkg-nix/src/real/mod.rs": 2
   },
   "clippy::struct_excessive_bools": {
     "crates/pkg-cli/src/cli.rs": 3,
@@ -188,7 +187,8 @@
     "crates/pkg-index/src/build.rs": 1,
     "crates/pkg-installer/src/approval_audit.rs": 1,
     "crates/pkg-installer/src/assets.rs": 1,
-    "crates/pkg-installer/src/bootstrap.rs": 4,
+    "crates/pkg-installer/src/bootstrap/backend.rs": 2,
+    "crates/pkg-installer/src/bootstrap/recovery.rs": 1,
     "crates/pkg-installer/src/broker.rs": 1,
     "crates/pkg-installer/src/determinate.rs": 1,
     "crates/pkg-installer/src/determinate_handoff.rs": 3,
@@ -197,7 +197,7 @@
     "crates/pkg-installer/src/linux_uninstall.rs": 2,
     "crates/pkg-installer/src/linux_user_cleanup.rs": 3,
     "crates/pkg-installer/src/macos_install_journal_file.rs": 2,
-    "crates/pkg-installer/src/platform/macos.rs": 1,
+    "crates/pkg-installer/src/platform/macos/assets.rs": 1,
     "crates/pkg-installer/src/repair.rs": 4,
     "crates/pkg-installer/src/synthetic_file.rs": 7,
     "crates/pkg-nix/src/broker.rs": 4,
@@ -205,9 +205,10 @@
     "crates/pkg-nix/src/catalog.rs": 2,
     "crates/pkg-nix/src/maintenance.rs": 1,
     "crates/pkg-nix/src/managed/ownership.rs": 3,
-    "crates/pkg-nix/src/managed/provision.rs": 1,
     "crates/pkg-nix/src/nixpkgs.rs": 1,
-    "crates/pkg-nix/src/real.rs": 3,
+    "crates/pkg-nix/src/real/mod.rs": 1,
+    "crates/pkg-nix/src/real/process.rs": 1,
+    "crates/pkg-nix/src/real/substitute.rs": 1,
     "crates/pkg-pipeline/src/acquire.rs": 1,
     "crates/pkg-pipeline/src/build_plan.rs": 2,
     "crates/pkg-pipeline/src/commit.rs": 1,
@@ -241,21 +242,23 @@
     "crates/pkg-index/src/search.rs": 1,
     "crates/pkg-installer/src/approval_audit.rs": 1,
     "crates/pkg-installer/src/bin/pkg-install.rs": 1,
-    "crates/pkg-installer/src/bootstrap.rs": 5,
+    "crates/pkg-installer/src/bootstrap/backend.rs": 1,
+    "crates/pkg-installer/src/bootstrap/mod.rs": 3,
+    "crates/pkg-installer/src/bootstrap/recovery.rs": 1,
     "crates/pkg-installer/src/determinate.rs": 1,
     "crates/pkg-installer/src/determinate_handoff.rs": 2,
     "crates/pkg-installer/src/helper.rs": 2,
     "crates/pkg-installer/src/installer.rs": 2,
-    "crates/pkg-installer/src/linux_accounts.rs": 4,
+    "crates/pkg-installer/src/linux_accounts.rs": 3,
     "crates/pkg-installer/src/linux_filesystem.rs": 5,
-    "crates/pkg-installer/src/linux_platform_assets.rs": 2,
     "crates/pkg-installer/src/linux_systemd.rs": 2,
     "crates/pkg-installer/src/linux_user_cleanup.rs": 1,
     "crates/pkg-installer/src/macos_accounts.rs": 1,
     "crates/pkg-installer/src/macos_backend.rs": 1,
     "crates/pkg-installer/src/macos_install_journal.rs": 1,
     "crates/pkg-installer/src/macos_uninstall.rs": 1,
-    "crates/pkg-installer/src/platform/macos.rs": 1,
+    "crates/pkg-installer/src/platform/linux/assets.rs": 2,
+    "crates/pkg-installer/src/platform/macos/mod.rs": 1,
     "crates/pkg-installer/src/production_repair.rs": 1,
     "crates/pkg-installer/src/repair_journal_file.rs": 2,
     "crates/pkg-installer/src/service.rs": 2,
@@ -266,14 +269,15 @@
     "crates/pkg-nix/src/build.rs": 10,
     "crates/pkg-nix/src/build_cache.rs": 1,
     "crates/pkg-nix/src/framing.rs": 10,
-    "crates/pkg-nix/src/managed/daemon.rs": 1,
     "crates/pkg-nix/src/managed/detect.rs": 2,
     "crates/pkg-nix/src/managed/installer_bundle.rs": 3,
     "crates/pkg-nix/src/managed/ownership.rs": 2,
-    "crates/pkg-nix/src/managed/provision.rs": 5,
+    "crates/pkg-nix/src/managed/provision.rs": 2,
     "crates/pkg-nix/src/managed/runtime_archive.rs": 1,
     "crates/pkg-nix/src/managed/uninstall.rs": 5,
-    "crates/pkg-nix/src/real.rs": 7,
+    "crates/pkg-nix/src/real/mod.rs": 2,
+    "crates/pkg-nix/src/real/process.rs": 2,
+    "crates/pkg-nix/src/real/substitute.rs": 3,
     "crates/pkg-nix/src/substitute.rs": 1,
     "crates/pkg-pipeline/src/acquire.rs": 1,
     "crates/pkg-pipeline/src/build_authority.rs": 1,
@@ -294,7 +298,7 @@
   },
   "clippy::type_complexity": {
     "crates/pkg-nix/src/build_cache.rs": 1,
-    "crates/pkg-nix/src/real.rs": 1
+    "crates/pkg-nix/src/real/mod.rs": 1
   },
   "clippy::unnecessary_wraps": {
     "crates/pkg-cli/src/support.rs": 1,
@@ -320,10 +324,6 @@
   },
   "clippy::used_underscore_binding": {
     "crates/pkg-pipeline/src/commit.rs": 1
-  },
-  "clippy::useless_let_if_seq": {
-    "crates/pkg-nix/src/managed/daemon.rs": 1,
-    "crates/pkg-nix/src/managed/provision.rs": 1
   },
   "clippy::zero_sized_map_values": {
     "crates/pkg-pipeline/src/acquire.rs": 1

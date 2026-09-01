@@ -669,3 +669,10 @@ mod tests {
         Ok(())
     }
 }
+
+mod assets;
+mod systemd_assets;
+
+pub use assets::LinuxPlatformAssetManager;
+pub(crate) use assets::LinuxProductAssetIntent;
+pub use systemd_assets::LinuxSystemdAssets;

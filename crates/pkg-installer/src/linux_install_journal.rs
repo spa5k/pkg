@@ -1,5 +1,6 @@
 //! Strict, secret-free state for Linux install recovery.
 
+use crate::InstallMode;
 use std::{error::Error, fmt, str::FromStr};
 
 use pkg_core::{System, state::Digest};
@@ -87,17 +88,6 @@ pub enum LinuxInstallMutationState {
 }
 
 /// Durable product-asset recovery policy for one Linux invocation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum LinuxInstallMode {
-    /// Create a new installation and activate its product service set.
-    FreshInstall,
-    /// Replace an existing installation while its product service set stays offline.
-    OfflineUpgrade,
-    /// Keep authenticated same-release candidate bytes during offline repair.
-    OfflineRepair,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LinuxInstallJournalEntry {
@@ -114,7 +104,7 @@ pub struct LinuxInstallJournal {
     system: String,
     ownership_manifest_digest: String,
     recovery_context_digest: String,
-    mode: LinuxInstallMode,
+    mode: InstallMode,
     committed: bool,
     fresh_services_deactivated: bool,
     entries: Vec<LinuxInstallJournalEntry>,
@@ -136,7 +126,7 @@ impl LinuxInstallJournal {
     ///
     /// Returns `InvalidJournal` for a non-Linux system.
     pub fn new(
-        mode: LinuxInstallMode,
+        mode: InstallMode,
         system: System,
         ownership_manifest_digest: Digest,
         recovery_context_digest: Digest,
@@ -159,7 +149,7 @@ impl LinuxInstallJournal {
 
     /// Returns the durable recovery policy.
     #[must_use]
-    pub const fn mode(&self) -> LinuxInstallMode {
+    pub const fn mode(&self) -> InstallMode {
         self.mode
     }
 
@@ -248,7 +238,7 @@ impl LinuxInstallJournal {
 
     /// Records fresh-install service activation intent before any systemd mutation.
     pub(crate) fn intend_services(&mut self) -> Result<(), LinuxInstallJournalError> {
-        if self.mode != LinuxInstallMode::FreshInstall {
+        if self.mode != InstallMode::FreshInstall {
             return Err(invalid_transition());
         }
         self.intend(LinuxInstallMutation::Services)
@@ -258,7 +248,7 @@ impl LinuxInstallJournal {
         &mut self,
     ) -> Result<(), LinuxInstallJournalError> {
         if self.committed
-            || self.mode != LinuxInstallMode::FreshInstall
+            || self.mode != InstallMode::FreshInstall
             || self.fresh_services_deactivated
             || !self.recovery_actions().iter().any(|action| {
                 matches!(
@@ -453,12 +443,12 @@ impl LinuxInstallJournal {
                 && entry.state != LinuxInstallMutationState::PreExisting
         });
         let service_state_valid = match self.mode {
-            LinuxInstallMode::FreshInstall => true,
-            LinuxInstallMode::OfflineUpgrade | LinuxInstallMode::OfflineRepair => !changed_services,
+            InstallMode::FreshInstall => true,
+            InstallMode::OfflineUpgrade | InstallMode::OfflineRepair => !changed_services,
         };
         if !service_state_valid
             || (self.fresh_services_deactivated
-                && (self.mode != LinuxInstallMode::FreshInstall || self.committed))
+                && (self.mode != InstallMode::FreshInstall || self.committed))
         {
             return Err(invalid_journal());
         }
@@ -534,7 +524,7 @@ mod tests {
 
     fn journal() -> LinuxInstallJournal {
         LinuxInstallJournal::new(
-            LinuxInstallMode::FreshInstall,
+            InstallMode::FreshInstall,
             System::X8664Linux,
             Digest::from_bytes([0x5a; 32]),
             Digest::from_bytes([0x6a; 32]),
@@ -575,14 +565,14 @@ mod tests {
     #[test]
     fn repair_round_trip_has_no_service_mutation_state() {
         let mut journal = LinuxInstallJournal::new(
-            LinuxInstallMode::OfflineRepair,
+            InstallMode::OfflineRepair,
             System::X8664Linux,
             Digest::from_bytes([0x7a; 32]),
             Digest::from_bytes([0x7b; 32]),
         )
         .unwrap();
         let decoded = LinuxInstallJournal::decode(&journal.encode().unwrap()).unwrap();
-        assert_eq!(decoded.mode(), LinuxInstallMode::OfflineRepair);
+        assert_eq!(decoded.mode(), InstallMode::OfflineRepair);
 
         journal
             .record_preexisting(install_sequence()[0].clone())
@@ -595,9 +585,9 @@ mod tests {
     #[test]
     fn schema_six_persists_each_distinct_operation_mode() {
         for mode in [
-            LinuxInstallMode::FreshInstall,
-            LinuxInstallMode::OfflineUpgrade,
-            LinuxInstallMode::OfflineRepair,
+            InstallMode::FreshInstall,
+            InstallMode::OfflineUpgrade,
+            InstallMode::OfflineRepair,
         ] {
             let journal = LinuxInstallJournal::new(
                 mode,
@@ -661,7 +651,7 @@ mod tests {
         assert_eq!(fresh.intend_services(), Ok(()));
 
         let mut upgrade = LinuxInstallJournal::new(
-            LinuxInstallMode::OfflineUpgrade,
+            InstallMode::OfflineUpgrade,
             System::X8664Linux,
             Digest::from_bytes([0x83; 32]),
             Digest::from_bytes([0x84; 32]),

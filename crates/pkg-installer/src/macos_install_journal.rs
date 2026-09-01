@@ -1,5 +1,6 @@
 //! Strict, secret-free state for macOS install recovery.
 
+use crate::InstallMode;
 use std::{error::Error, fmt, str::FromStr};
 
 use pkg_core::{System, state::Digest};
@@ -80,17 +81,6 @@ pub enum MacOsInstallMutationState {
 }
 
 /// Closed macOS product installation mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum MacOsInstallMode {
-    /// A clean host with no prior product state.
-    FreshInstall,
-    /// An ordinary N-to-N+1 product upgrade; services stay offline.
-    OfflineUpgrade,
-    /// A same-release restore of product assets; services stay offline.
-    OfflineRepair,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MacOsInstallJournalEntry {
@@ -109,7 +99,7 @@ pub struct MacOsInstallJournal {
     system: String,
     ownership_manifest_digest: String,
     recovery_context_digest: String,
-    mode: MacOsInstallMode,
+    mode: InstallMode,
     committed: bool,
     entries: Vec<MacOsInstallJournalEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,7 +134,7 @@ impl MacOsInstallJournal {
             system,
             ownership_manifest_digest,
             recovery_context_digest,
-            MacOsInstallMode::FreshInstall,
+            InstallMode::FreshInstall,
         )
     }
 
@@ -157,7 +147,7 @@ impl MacOsInstallJournal {
         system: System,
         ownership_manifest_digest: Digest,
         recovery_context_digest: Digest,
-        mode: MacOsInstallMode,
+        mode: InstallMode,
     ) -> Result<Self, MacOsInstallJournalError> {
         if !matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
             return Err(invalid_journal());
@@ -177,7 +167,7 @@ impl MacOsInstallJournal {
 
     /// The classified install mode of this snapshot.
     #[must_use]
-    pub const fn mode(&self) -> MacOsInstallMode {
+    pub const fn mode(&self) -> InstallMode {
         self.mode
     }
 
@@ -293,8 +283,8 @@ impl MacOsInstallJournal {
             | MacOsInstallMutation::Services => false,
         };
         if !replaceable
-            || self.mode == MacOsInstallMode::FreshInstall
-            || (self.mode == MacOsInstallMode::OfflineUpgrade && prior_digest.is_none())
+            || self.mode == InstallMode::FreshInstall
+            || (self.mode == InstallMode::OfflineUpgrade && prior_digest.is_none())
             || self.committed
             || self
                 .entries
@@ -334,8 +324,8 @@ impl MacOsInstallJournal {
     pub fn complete_replaced(&mut self) -> Result<(), MacOsInstallJournalError> {
         let entry = self.entries.last_mut().ok_or_else(invalid_transition)?;
         if entry.state != MacOsInstallMutationState::Intended
-            || self.mode == MacOsInstallMode::FreshInstall
-            || (self.mode == MacOsInstallMode::OfflineUpgrade && entry.prior_digest.is_none())
+            || self.mode == InstallMode::FreshInstall
+            || (self.mode == InstallMode::OfflineUpgrade && entry.prior_digest.is_none())
         {
             return Err(invalid_transition());
         }
@@ -351,7 +341,7 @@ impl MacOsInstallJournal {
     pub fn complete_unchanged_replacement(&mut self) -> Result<(), MacOsInstallJournalError> {
         let entry = self.entries.last_mut().ok_or_else(invalid_transition)?;
         if entry.state != MacOsInstallMutationState::Intended
-            || self.mode == MacOsInstallMode::FreshInstall
+            || self.mode == InstallMode::FreshInstall
         {
             return Err(invalid_transition());
         }
@@ -397,7 +387,7 @@ impl MacOsInstallJournal {
     ) -> Result<(), MacOsInstallJournalError> {
         if self.committed
             || !self.entries.is_empty()
-            || self.mode != MacOsInstallMode::FreshInstall
+            || self.mode != InstallMode::FreshInstall
             || self.uninstall_registered_uids.is_some()
             || !valid_uninstall_user_snapshot(uids)
         {
@@ -461,32 +451,32 @@ impl MacOsInstallJournal {
                         .as_deref()
                         .and_then(|digest| Digest::from_str(digest).ok()),
                 ) {
-                    (MacOsInstallMode::OfflineUpgrade, Some(digest)) => Some(
+                    (InstallMode::OfflineUpgrade, Some(digest)) => Some(
                         MacOsInstallRecoveryAction::RestoreReplaced(&entry.mutation, digest),
                     ),
-                    (MacOsInstallMode::OfflineRepair, Some(_)) => Some(
+                    (InstallMode::OfflineRepair, Some(_)) => Some(
                         MacOsInstallRecoveryAction::RollForwardReplaced(&entry.mutation),
                     ),
                     (_, None) => Some(MacOsInstallRecoveryAction::RevalidateIntended(
                         &entry.mutation,
                     )),
-                    (MacOsInstallMode::FreshInstall, Some(_)) => None,
+                    (InstallMode::FreshInstall, Some(_)) => None,
                 },
                 MacOsInstallMutationState::Created => {
                     Some(MacOsInstallRecoveryAction::RevertCreated(&entry.mutation))
                 }
                 MacOsInstallMutationState::Replaced => match self.mode {
-                    MacOsInstallMode::OfflineUpgrade => entry
+                    InstallMode::OfflineUpgrade => entry
                         .prior_digest
                         .as_deref()
                         .and_then(|digest| Digest::from_str(digest).ok())
                         .map(|digest| {
                             MacOsInstallRecoveryAction::RestoreReplaced(&entry.mutation, digest)
                         }),
-                    MacOsInstallMode::OfflineRepair => Some(
+                    InstallMode::OfflineRepair => Some(
                         MacOsInstallRecoveryAction::RollForwardReplaced(&entry.mutation),
                     ),
-                    MacOsInstallMode::FreshInstall => None,
+                    InstallMode::FreshInstall => None,
                 },
                 MacOsInstallMutationState::PreExisting => None,
             })
@@ -535,7 +525,7 @@ impl MacOsInstallJournal {
                 .is_some_and(|uids| {
                     self.committed
                         || !self.entries.is_empty()
-                        || self.mode != MacOsInstallMode::FreshInstall
+                        || self.mode != InstallMode::FreshInstall
                         || !valid_uninstall_user_snapshot(uids)
                 })
         {
@@ -554,8 +544,8 @@ impl MacOsInstallJournal {
                     && entry.state != MacOsInstallMutationState::Intended
                     && entry.prior_digest.is_some())
                 || (entry.state == MacOsInstallMutationState::Replaced
-                    && (self.mode == MacOsInstallMode::FreshInstall
-                        || (self.mode == MacOsInstallMode::OfflineUpgrade
+                    && (self.mode == InstallMode::FreshInstall
+                        || (self.mode == InstallMode::OfflineUpgrade
                             && entry.prior_digest.is_none())))
             {
                 return Err(invalid_journal());
@@ -691,8 +681,8 @@ mod tests {
     fn upgrade_and_repair_record_distinct_replacement_recovery() -> Result<(), Box<dyn Error>> {
         let digest = Digest::from_bytes([0x7a; 32]);
         for (mode, restore) in [
-            (MacOsInstallMode::OfflineUpgrade, true),
-            (MacOsInstallMode::OfflineRepair, false),
+            (InstallMode::OfflineUpgrade, true),
+            (InstallMode::OfflineRepair, false),
         ] {
             let mut journal = MacOsInstallJournal::new_with_mode(
                 System::Aarch64Darwin,
@@ -731,7 +721,7 @@ mod tests {
             System::Aarch64Darwin,
             Digest::from_bytes([0x5a; 32]),
             Digest::from_bytes([0x6a; 32]),
-            MacOsInstallMode::OfflineUpgrade,
+            InstallMode::OfflineUpgrade,
         )?;
         assert!(
             journal
