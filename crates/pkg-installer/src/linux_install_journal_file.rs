@@ -587,7 +587,7 @@ mod tests {
 
     fn journal(byte: u8) -> LinuxInstallJournal {
         LinuxInstallJournal::new(
-            crate::LinuxInstallMode::FreshInstall,
+            crate::InstallMode::FreshInstall,
             System::X8664Linux,
             Digest::from_bytes([byte; 32]),
             recovery_context(byte),

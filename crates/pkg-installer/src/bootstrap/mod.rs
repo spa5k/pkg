@@ -24,10 +24,10 @@ use std::{
 };
 
 use crate::{
-    InstallError, LinuxAssetPresence, LinuxInstallAsset, LinuxInstallBackend, LinuxInstallJournal,
+    AssetPresence, InstallError, LinuxInstallAsset, LinuxInstallBackend, LinuxInstallJournal,
     LinuxInstallJournalFileError, LinuxInstallJournalFileErrorCode, LinuxInstallJournalStorage,
-    LinuxInstallMutation, LinuxInstallReport, LinuxReleasePayloads, MacOsAssetPresence,
-    MacOsBuildReadiness, MacOsError, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallJournal,
+    LinuxInstallMutation, LinuxInstallReport, LinuxReleasePayloads, MacOsBuildReadiness,
+    MacOsError, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallJournal,
     MacOsInstallJournalStorage, MacOsInstallMutation, MacOsInstallReport,
     ProductionLinuxUninstallBackend, ProductionMacOsUninstallBackend, UninstallError,
     UninstallErrorCode,

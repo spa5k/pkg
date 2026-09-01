@@ -29,9 +29,9 @@ impl LinuxJournalTransaction<'_> {
     pub(super) fn begin(
         &mut self,
         mutation: LinuxInstallMutation,
-        presence: LinuxAssetPresence,
+        presence: AssetPresence,
     ) -> Result<(), InstallError> {
-        if presence == LinuxAssetPresence::Absent {
+        if presence == AssetPresence::Absent {
             self.journal
                 .intend(mutation)
                 .map_err(|_| InstallError::backend_failure())?;
@@ -43,10 +43,10 @@ impl LinuxJournalTransaction<'_> {
     pub(super) fn complete(
         &mut self,
         mutation: LinuxInstallMutation,
-        presence: LinuxAssetPresence,
+        presence: AssetPresence,
         changed: bool,
     ) -> Result<(), InstallError> {
-        if changed != (presence == LinuxAssetPresence::Absent) {
+        if changed != (presence == AssetPresence::Absent) {
             return Err(InstallError::backend_failure());
         }
         if changed {
@@ -104,7 +104,7 @@ impl LinuxJournalTransaction<'_> {
 }
 
 impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P> {
-    fn install_mode(&self) -> crate::LinuxInstallMode {
+    fn install_mode(&self) -> crate::InstallMode {
         self.inner.install_mode()
     }
 
@@ -144,13 +144,13 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
     fn classify_asset(
         &mut self,
         asset: LinuxInstallAsset,
-    ) -> Result<crate::LinuxAssetPresence, InstallError> {
+    ) -> Result<crate::AssetPresence, InstallError> {
         self.inner.classify_asset(asset)
     }
-    fn classify_managed_runtime(&mut self) -> Result<LinuxAssetPresence, InstallError> {
+    fn classify_managed_runtime(&mut self) -> Result<AssetPresence, InstallError> {
         self.inner.classify_managed_runtime()
     }
-    fn classify_services(&mut self) -> Result<LinuxAssetPresence, InstallError> {
+    fn classify_services(&mut self) -> Result<AssetPresence, InstallError> {
         self.inner.classify_services()
     }
     fn services_need_mutation(&self, prior_active: bool) -> bool {
@@ -190,7 +190,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
     fn provision_managed_runtime(&mut self) -> Result<bool, InstallError> {
         let mutation = LinuxInstallMutation::ManagedRuntime;
         let presence = self.inner.classify_managed_runtime()?;
-        if presence == LinuxAssetPresence::ExactPresent
+        if presence == AssetPresence::ExactPresent
             && self
                 .provisioner
                 .reuse_existing()
@@ -213,7 +213,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
                 .provision(self.request)
                 .map_err(linux_provision_error)?,
         );
-        let changed = presence == LinuxAssetPresence::Absent;
+        let changed = presence == AssetPresence::Absent;
         complete_linux_mutation(&mut self.journal, mutation, presence, changed)?;
         Ok(true)
     }
@@ -271,7 +271,7 @@ impl<P: BundleProvisioner> LinuxInstallBackend for LinuxBundleBackend<'_, '_, P>
         }
         let mutation = LinuxInstallMutation::Services;
         let presence = self.inner.classify_services()?;
-        let prior_active = presence == LinuxAssetPresence::ExactPresent;
+        let prior_active = presence == AssetPresence::ExactPresent;
         let needed = self.inner.services_need_mutation(prior_active);
         if needed {
             self.journal
@@ -401,7 +401,7 @@ pub(super) fn publish_determinate_receipt(
     backend: &mut dyn LinuxInstallBackend,
     journal: &mut Option<LinuxJournalTransaction<'_>>,
     mutation: LinuxInstallMutation,
-    presence: LinuxAssetPresence,
+    presence: AssetPresence,
 ) -> Result<bool, InstallError> {
     let changed = backend.publish_ownership_receipt()?;
     complete_linux_mutation(journal, mutation, presence, changed)?;
@@ -434,7 +434,7 @@ pub(super) fn asset_mutation(asset: LinuxInstallAsset) -> LinuxInstallMutation {
 pub(super) fn begin_linux_mutation(
     journal: &mut Option<LinuxJournalTransaction<'_>>,
     mutation: LinuxInstallMutation,
-    presence: LinuxAssetPresence,
+    presence: AssetPresence,
 ) -> Result<(), InstallError> {
     journal
         .as_mut()
@@ -444,7 +444,7 @@ pub(super) fn begin_linux_mutation(
 pub(super) fn complete_linux_mutation(
     journal: &mut Option<LinuxJournalTransaction<'_>>,
     mutation: LinuxInstallMutation,
-    presence: LinuxAssetPresence,
+    presence: AssetPresence,
     changed: bool,
 ) -> Result<(), InstallError> {
     journal.as_mut().map_or(Ok(()), |journal| {
@@ -467,7 +467,7 @@ pub(super) fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>
     if backend.install_mode() != mode {
         return Err(InstallError::recovery_mode_mismatch());
     }
-    if mode == crate::LinuxInstallMode::OfflineRepair {
+    if mode == crate::InstallMode::OfflineRepair {
         backend.preflight_clean_host(system)?;
     }
     let mut adapter = LinuxBundleBackend {
@@ -479,11 +479,11 @@ pub(super) fn install_linux_with_provisioner_journaled<'a, P: BundleProvisioner>
     };
     let report = match crate::installer::install_linux_journaled_preflighted(&mut adapter) {
         Ok(report) => report,
-        Err(_) if mode == crate::LinuxInstallMode::OfflineRepair => {
+        Err(_) if mode == crate::InstallMode::OfflineRepair => {
             return Err(InstallError::rollback_incomplete());
         }
         Err(_)
-            if mode == crate::LinuxInstallMode::FreshInstall
+            if mode == crate::InstallMode::FreshInstall
                 && adapter
                     .outcome
                     .as_ref()
@@ -577,7 +577,7 @@ impl MacOsJournalTransaction<'_> {
     pub(super) fn begin(
         &mut self,
         mutation: MacOsInstallMutation,
-        presence: MacOsAssetPresence,
+        presence: AssetPresence,
     ) -> Result<(), MacOsError> {
         if self
             .journal
@@ -585,11 +585,11 @@ impl MacOsJournalTransaction<'_> {
             .map_err(|_| MacOsError::backend_failure())?
             == Some(crate::MacOsInstallMutationState::PreExisting)
         {
-            return (presence == MacOsAssetPresence::ExactPresent)
+            return (presence == AssetPresence::ExactPresent)
                 .then_some(())
                 .ok_or_else(MacOsError::backend_failure);
         }
-        if presence == MacOsAssetPresence::Absent {
+        if presence == AssetPresence::Absent {
             self.journal
                 .intend(mutation)
                 .map_err(|_| MacOsError::backend_failure())?;
@@ -601,7 +601,7 @@ impl MacOsJournalTransaction<'_> {
     pub(super) fn complete(
         &mut self,
         mutation: MacOsInstallMutation,
-        presence: MacOsAssetPresence,
+        presence: AssetPresence,
         changed: bool,
     ) -> Result<(), MacOsError> {
         if self
@@ -610,11 +610,11 @@ impl MacOsJournalTransaction<'_> {
             .map_err(|_| MacOsError::backend_failure())?
             == Some(crate::MacOsInstallMutationState::PreExisting)
         {
-            return (!changed && presence == MacOsAssetPresence::ExactPresent)
+            return (!changed && presence == AssetPresence::ExactPresent)
                 .then_some(())
                 .ok_or_else(MacOsError::backend_failure);
         }
-        if changed != (presence == MacOsAssetPresence::Absent) {
+        if changed != (presence == AssetPresence::Absent) {
             return Err(MacOsError::backend_failure());
         }
         if changed {
@@ -693,7 +693,7 @@ impl MacOsJournalTransaction<'_> {
 }
 
 impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P> {
-    fn install_mode(&self) -> crate::MacOsInstallMode {
+    fn install_mode(&self) -> crate::InstallMode {
         self.inner.install_mode()
     }
 
@@ -723,10 +723,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
             .bind_authenticated_release_identity(system, release_identity_digest)
     }
 
-    fn begin_authenticated_recovery(
-        &mut self,
-        mode: crate::MacOsInstallMode,
-    ) -> Result<(), MacOsError> {
+    fn begin_authenticated_recovery(&mut self, mode: crate::InstallMode) -> Result<(), MacOsError> {
         self.inner.begin_authenticated_recovery(mode)
     }
 
@@ -739,19 +736,16 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     fn broker_uid(&mut self) -> Result<u32, MacOsError> {
         self.inner.broker_uid()
     }
-    fn classify_asset(
-        &mut self,
-        asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_asset(&mut self, asset: MacOsInstallAsset) -> Result<AssetPresence, MacOsError> {
         self.inner.classify_asset(asset)
     }
-    fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_managed_runtime(&mut self) -> Result<AssetPresence, MacOsError> {
         self.inner.classify_managed_runtime()
     }
-    fn classify_services(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_services(&mut self) -> Result<AssetPresence, MacOsError> {
         self.inner.classify_services()
     }
-    fn classify_ownership_receipt(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_ownership_receipt(&mut self) -> Result<AssetPresence, MacOsError> {
         self.inner.classify_ownership_receipt()
     }
     fn recover_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
@@ -777,17 +771,17 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
         let mutation = macos_asset_mutation(asset);
         let observed = self.inner.classify_asset(asset)?;
         let presence = if self.store_created && asset.id() == "nix-root" {
-            if observed != MacOsAssetPresence::ExactPresent {
+            if observed != AssetPresence::ExactPresent {
                 return Err(MacOsError::backend_failure());
             }
-            MacOsAssetPresence::Absent
+            AssetPresence::Absent
         } else {
             observed
         };
         self.inner.preflight_product_mutation()?;
-        let replacing = self.install_mode() != crate::MacOsInstallMode::FreshInstall
+        let replacing = self.install_mode() != crate::InstallMode::FreshInstall
             && asset.kind() == crate::MacOsAssetKind::File
-            && presence == MacOsAssetPresence::ExactPresent;
+            && presence == AssetPresence::ExactPresent;
         if replacing {
             let prior = self.inner.prior_file_digest(asset)?;
             self.journal
@@ -816,8 +810,8 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
         let mutation = macos_asset_mutation(asset);
         let presence = self.inner.classify_asset(asset)?;
         self.inner.preflight_product_mutation()?;
-        let replacing = self.install_mode() != crate::MacOsInstallMode::FreshInstall
-            && presence == MacOsAssetPresence::ExactPresent;
+        let replacing = self.install_mode() != crate::InstallMode::FreshInstall
+            && presence == AssetPresence::ExactPresent;
         if replacing {
             let prior = self.inner.prior_file_digest(asset)?;
             self.journal
@@ -849,7 +843,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
     fn provision_managed_runtime(&mut self) -> Result<bool, MacOsError> {
         let mutation = MacOsInstallMutation::ManagedRuntime;
         let presence = self.inner.classify_managed_runtime()?;
-        if presence == MacOsAssetPresence::ExactPresent
+        if presence == AssetPresence::ExactPresent
             && self
                 .provisioner
                 .reuse_existing()
@@ -872,7 +866,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
                 .provision(self.request)
                 .map_err(macos_provision_error)?,
         );
-        let changed = presence == MacOsAssetPresence::Absent;
+        let changed = presence == AssetPresence::Absent;
         complete_macos_mutation(&mut self.journal, mutation, presence, changed)?;
         Ok(changed)
     }
@@ -953,8 +947,8 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
         let mutation = MacOsInstallMutation::OwnershipReceipt;
         let presence = self.inner.classify_ownership_receipt()?;
         self.inner.preflight_product_mutation()?;
-        let replacing = self.install_mode() != crate::MacOsInstallMode::FreshInstall
-            && presence == MacOsAssetPresence::ExactPresent;
+        let replacing = self.install_mode() != crate::InstallMode::FreshInstall
+            && presence == AssetPresence::ExactPresent;
         if replacing {
             let prior = self.inner.prior_ownership_receipt_digest()?;
             self.journal
@@ -1098,7 +1092,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
         self.inner.roll_forward_replaced_ownership_receipt()
     }
 
-    fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_store_volume(&mut self) -> Result<AssetPresence, MacOsError> {
         self.inner.classify_store_volume()
     }
     fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
@@ -1115,7 +1109,7 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
 pub(super) fn complete_macos_receipt(
     journal: &mut Option<MacOsJournalTransaction<'_>>,
     mutation: MacOsInstallMutation,
-    presence: MacOsAssetPresence,
+    presence: AssetPresence,
     changed: bool,
     replacing: bool,
 ) -> Result<(), MacOsError> {
@@ -1138,7 +1132,7 @@ pub(super) fn macos_asset_mutation(asset: MacOsInstallAsset) -> MacOsInstallMuta
 pub(super) fn begin_macos_mutation(
     journal: &mut Option<MacOsJournalTransaction<'_>>,
     mutation: MacOsInstallMutation,
-    presence: MacOsAssetPresence,
+    presence: AssetPresence,
 ) -> Result<(), MacOsError> {
     journal
         .as_mut()
@@ -1148,7 +1142,7 @@ pub(super) fn begin_macos_mutation(
 pub(super) fn complete_macos_mutation(
     journal: &mut Option<MacOsJournalTransaction<'_>>,
     mutation: MacOsInstallMutation,
-    presence: MacOsAssetPresence,
+    presence: AssetPresence,
     changed: bool,
 ) -> Result<(), MacOsError> {
     journal.as_mut().map_or(Ok(()), |journal| {
@@ -1217,11 +1211,11 @@ pub(super) fn install_macos_with_provisioner_journaled<'a, P: BundleProvisioner>
         .mode();
     let report = match install_macos(system, &mut adapter) {
         Ok(report) => report,
-        Err(_) if mode == crate::MacOsInstallMode::OfflineRepair => {
+        Err(_) if mode == crate::InstallMode::OfflineRepair => {
             return Err(MacOsError::rollback_incomplete());
         }
         Err(_)
-            if mode == crate::MacOsInstallMode::FreshInstall
+            if mode == crate::InstallMode::FreshInstall
                 && adapter
                     .outcome
                     .as_ref()

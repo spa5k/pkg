@@ -6,7 +6,7 @@ mod launchd;
 mod tests;
 
 use crate::{
-    BrokerHelperDispatch, LinuxHelperSession,
+    AssetPresence, BrokerHelperDispatch, LinuxHelperSession,
     platform::linux::{LinuxRootSetStore, provision_product_root_if_absent},
 };
 pub use assets::*;
@@ -228,20 +228,11 @@ impl BrokerHelperDispatch for MacOsHelperSession {
     }
 }
 
-/// Whether one fixed macOS object is exact-present or absent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MacOsAssetPresence {
-    /// The object exists and matches the complete closed contract.
-    ExactPresent,
-    /// The object does not exist.
-    Absent,
-}
-
 /// Closed privileged operations used by the macOS installer.
 pub trait MacOsInstallBackend {
     /// Returns the durable product operation mode.
-    fn install_mode(&self) -> crate::MacOsInstallMode {
-        crate::MacOsInstallMode::FreshInstall
+    fn install_mode(&self) -> crate::InstallMode {
+        crate::InstallMode::FreshInstall
     }
     /// Rechecks the offline barrier before one product mutation.
     ///
@@ -285,10 +276,7 @@ pub trait MacOsInstallBackend {
     ///
     /// # Errors
     /// Returns a closed error when recovery state cannot be bound.
-    fn begin_authenticated_recovery(
-        &mut self,
-        mode: crate::MacOsInstallMode,
-    ) -> Result<(), MacOsError>;
+    fn begin_authenticated_recovery(&mut self, mode: crate::InstallMode) -> Result<(), MacOsError>;
 
     /// Verifies AuthorizationServices/sudo authority.
     ///
@@ -309,30 +297,27 @@ pub trait MacOsInstallBackend {
     ///
     /// # Errors
     /// Returns a closed error for unsafe, changed, or ambiguous state.
-    fn classify_asset(
-        &mut self,
-        asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError>;
+    fn classify_asset(&mut self, asset: MacOsInstallAsset) -> Result<AssetPresence, MacOsError>;
     /// Classifies the complete APFS/keychain/synthetic/record contract.
     ///
     /// # Errors
     /// Returns a closed error for unsafe, changed, or ambiguous state.
-    fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError>;
+    fn classify_store_volume(&mut self) -> Result<AssetPresence, MacOsError>;
     /// Classifies the authenticated managed runtime.
     ///
     /// # Errors
     /// Returns a closed error for unsafe, changed, or ambiguous state.
-    fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError>;
+    fn classify_managed_runtime(&mut self) -> Result<AssetPresence, MacOsError>;
     /// Classifies the four fixed launchd jobs.
     ///
     /// # Errors
     /// Returns a closed error for partial, unreadable, or ambiguous state.
-    fn classify_services(&mut self) -> Result<MacOsAssetPresence, MacOsError>;
+    fn classify_services(&mut self) -> Result<AssetPresence, MacOsError>;
     /// Classifies the authenticated root ownership receipt.
     ///
     /// # Errors
     /// Returns a closed error for unsafe, changed, or unbound state.
-    fn classify_ownership_receipt(&mut self) -> Result<MacOsAssetPresence, MacOsError>;
+    fn classify_ownership_receipt(&mut self) -> Result<AssetPresence, MacOsError>;
     /// Removes one revalidated artifact during interrupted-install recovery.
     ///
     /// # Errors
@@ -607,8 +592,8 @@ pub fn install_macos(
             .check_managed_daemon()
             .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))?;
         let receipt_presence = backend.classify_ownership_receipt()?;
-        if receipt_presence == MacOsAssetPresence::Absent
-            || backend.install_mode() == crate::MacOsInstallMode::OfflineUpgrade
+        if receipt_presence == AssetPresence::Absent
+            || backend.install_mode() == crate::InstallMode::OfflineUpgrade
         {
             mutations.push(InstallMutation::OwnershipReceipt);
         }
@@ -616,9 +601,9 @@ pub fn install_macos(
             .publish_ownership_receipt()
             .map_err(|_| MacOsError::new(MacOsErrorCode::ReceiptFailure))?;
         let expected_receipt_change = match backend.install_mode() {
-            crate::MacOsInstallMode::FreshInstall => receipt_presence == MacOsAssetPresence::Absent,
-            crate::MacOsInstallMode::OfflineUpgrade => true,
-            crate::MacOsInstallMode::OfflineRepair => false,
+            crate::InstallMode::FreshInstall => receipt_presence == AssetPresence::Absent,
+            crate::InstallMode::OfflineUpgrade => true,
+            crate::InstallMode::OfflineRepair => false,
         };
         if receipt_created != expected_receipt_change {
             return Err(MacOsError::backend_failure());
@@ -683,7 +668,7 @@ pub fn recover_macos_install(
             crate::MacOsInstallMutation::Asset { id } => {
                 let asset = macos_asset_by_id(id)?;
                 match disposition {
-                    0 if backend.classify_asset(asset)? == MacOsAssetPresence::ExactPresent => {
+                    0 if backend.classify_asset(asset)? == AssetPresence::ExactPresent => {
                         backend.recover_asset(asset)?;
                     }
                     0 => {}
@@ -698,21 +683,19 @@ pub fn recover_macos_install(
             }
             crate::MacOsInstallMutation::StoreVolume => {
                 if disposition == 1
-                    || backend.classify_store_volume()? == MacOsAssetPresence::ExactPresent
+                    || backend.classify_store_volume()? == AssetPresence::ExactPresent
                 {
                     backend.recover_store_volume()?;
                 }
             }
             crate::MacOsInstallMutation::ManagedRuntime => recover_runtime()?,
             crate::MacOsInstallMutation::Services => {
-                if disposition == 1
-                    || backend.classify_services()? == MacOsAssetPresence::ExactPresent
-                {
+                if disposition == 1 || backend.classify_services()? == AssetPresence::ExactPresent {
                     backend.recover_services()?;
                 }
             }
             crate::MacOsInstallMutation::OwnershipReceipt => match disposition {
-                0 if backend.classify_ownership_receipt()? == MacOsAssetPresence::ExactPresent => {
+                0 if backend.classify_ownership_receipt()? == AssetPresence::ExactPresent => {
                     backend.recover_ownership_receipt()?;
                 }
                 0 => {}

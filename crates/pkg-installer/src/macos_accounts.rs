@@ -8,7 +8,7 @@ use std::{
 
 use pkg_nix::ManagedGroupBindings;
 
-use crate::MacOsAssetPresence;
+use crate::AssetPresence;
 use crate::{MacOsAssetKind, MacOsError, MacOsInstallAsset};
 
 const DSCL: &str = "/usr/bin/dscl";
@@ -175,13 +175,13 @@ impl MacOsAccountManager {
     pub(crate) fn classify_for_removal(
         &mut self,
         asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError> {
+    ) -> Result<AssetPresence, MacOsError> {
         self.ensure_lock()?;
         let spec = AccountSpec::for_asset(asset, self.groups)?;
         if Self::verify(spec, false)? {
-            Ok(MacOsAssetPresence::ExactPresent)
+            Ok(AssetPresence::ExactPresent)
         } else if Self::is_absent(spec)? {
-            Ok(MacOsAssetPresence::Absent)
+            Ok(AssetPresence::Absent)
         } else {
             Err(MacOsError::backend_failure())
         }
@@ -363,9 +363,7 @@ impl MacOsAccountManager {
     }
 }
 
-pub fn broker_account_presence(
-    groups: ManagedGroupBindings,
-) -> Result<MacOsAssetPresence, MacOsError> {
+pub fn broker_account_presence(groups: ManagedGroupBindings) -> Result<AssetPresence, MacOsError> {
     let _manager = MacOsAccountManager::new(groups)?;
     let spec = AccountSpec::User {
         name: BROKER_NAME,
@@ -375,9 +373,9 @@ pub fn broker_account_presence(
         group: BROKER_NAME,
     };
     if MacOsAccountManager::verify(spec, true)? {
-        Ok(MacOsAssetPresence::ExactPresent)
+        Ok(AssetPresence::ExactPresent)
     } else if MacOsAccountManager::is_absent(spec)? {
-        Ok(MacOsAssetPresence::Absent)
+        Ok(AssetPresence::Absent)
     } else {
         Err(MacOsError::backend_failure())
     }

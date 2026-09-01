@@ -445,7 +445,7 @@ pub(super) fn recover_linux_bundle_install(
                 .map_err(|_| InstallError::backend_failure())?;
             return Ok(LinuxBundleRecovery::Committed);
         }
-        if journal.mode() == crate::LinuxInstallMode::FreshInstall {
+        if journal.mode() == crate::InstallMode::FreshInstall {
             return Ok(LinuxBundleRecovery::Fresh {
                 storage,
                 journal: Box::new(journal),

@@ -10,21 +10,12 @@ use pkg_nix::{
 };
 
 use crate::{
-    InstallError, LinuxAccountManager, LinuxFilesystemManager, LinuxInstallAsset,
+    AssetPresence, InstallError, LinuxAccountManager, LinuxFilesystemManager, LinuxInstallAsset,
     LinuxReleasePayloads, RecordedAsset, RecordedAssetState, UninstallManifest,
     assets::{is_linux_product_asset, is_linux_service_runtime_asset},
     linux_filesystem::LinuxReceiptReader,
     linux_install_assets,
 };
-
-/// Whether one fixed asset is exact-present or absent before a write-ahead intent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinuxAssetPresence {
-    /// The exact fixed asset exists and matches the closed contract.
-    ExactPresent,
-    /// The fixed asset is absent.
-    Absent,
-}
 
 /// Explicit product-file mutation authority for one installer invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -638,7 +629,7 @@ impl LinuxPlatformAssetManager {
     /// # Errors
     ///
     /// Returns a redacted error when the receipt binding is absent, unsafe, or changed.
-    pub fn classify_uninstall_manifest(&mut self) -> Result<LinuxAssetPresence, InstallError> {
+    pub fn classify_uninstall_manifest(&mut self) -> Result<AssetPresence, InstallError> {
         let (system, digest) = self
             .receipt_binding
             .ok_or_else(InstallError::backend_failure)?;
@@ -648,20 +639,20 @@ impl LinuxPlatformAssetManager {
             .map_err(|_| InstallError::backend_failure())?;
         let Some(existing) = self.load_installed_manifest()? else {
             return Ok(if has_backup {
-                LinuxAssetPresence::ExactPresent
+                AssetPresence::ExactPresent
             } else {
-                LinuxAssetPresence::Absent
+                AssetPresence::Absent
             });
         };
         if existing.system() != system {
             return Err(InstallError::backend_failure());
         }
         if has_backup {
-            return Ok(LinuxAssetPresence::ExactPresent);
+            return Ok(AssetPresence::ExactPresent);
         }
         if existing.ownership_manifest_digest() != digest {
             return if self.intent == LinuxProductAssetIntent::InstallOrUpgrade {
-                Ok(LinuxAssetPresence::Absent)
+                Ok(AssetPresence::Absent)
             } else {
                 Err(InstallError::backend_failure())
             };
@@ -673,7 +664,7 @@ impl LinuxPlatformAssetManager {
         filesystem
             .verify_asset(uninstall_manifest_asset()?)
             .map_err(|_| InstallError::backend_failure())?;
-        Ok(LinuxAssetPresence::ExactPresent)
+        Ok(AssetPresence::ExactPresent)
     }
 
     /// Removes one exact attempt-owned account or filesystem artifact.
@@ -741,18 +732,18 @@ impl LinuxPlatformAssetManager {
     pub fn classify_asset(
         &mut self,
         asset: LinuxInstallAsset,
-    ) -> Result<LinuxAssetPresence, InstallError> {
+    ) -> Result<AssetPresence, InstallError> {
         if LinuxAccountManager::handles(asset) {
             if self.accounts.verify_asset(asset).is_ok() {
-                return Ok(LinuxAssetPresence::ExactPresent);
+                return Ok(AssetPresence::ExactPresent);
             }
             self.accounts
                 .verify_asset_absent(asset)
-                .map(|()| LinuxAssetPresence::Absent)
+                .map(|()| AssetPresence::Absent)
                 .map_err(|_| InstallError::backend_failure())
         } else {
             if self.ensure_filesystem()?.verify_asset(asset).is_ok() {
-                return Ok(LinuxAssetPresence::ExactPresent);
+                return Ok(AssetPresence::ExactPresent);
             }
             if asset.kind() == crate::LinuxAssetKind::File
                 && self
@@ -760,13 +751,13 @@ impl LinuxPlatformAssetManager {
                     .replacement_backup_exists(asset)
                     .map_err(|_| InstallError::backend_failure())?
             {
-                return Ok(LinuxAssetPresence::ExactPresent);
+                return Ok(AssetPresence::ExactPresent);
             }
             let absent = self.ensure_filesystem()?.verify_asset_absent(asset).is_ok();
             let manifest = self.load_installed_manifest()?;
             let Some(manifest) = manifest else {
                 return absent
-                    .then_some(LinuxAssetPresence::Absent)
+                    .then_some(AssetPresence::Absent)
                     .ok_or_else(InstallError::backend_failure);
             };
             if asset.kind() != crate::LinuxAssetKind::File {
@@ -775,7 +766,7 @@ impl LinuxPlatformAssetManager {
             let replacement = self.replacement_authority(asset, &manifest)?;
             if absent {
                 return if replacement.is_repair() {
-                    Ok(LinuxAssetPresence::Absent)
+                    Ok(AssetPresence::Absent)
                 } else {
                     Err(InstallError::backend_failure())
                 };
@@ -785,7 +776,7 @@ impl LinuxPlatformAssetManager {
                     .verify_asset_digest(asset, prior)
                     .map_err(|_| InstallError::backend_failure())?;
             }
-            Ok(LinuxAssetPresence::Absent)
+            Ok(AssetPresence::Absent)
         }
     }
 

@@ -6,7 +6,7 @@ use nix::unistd::Uid;
 use pkg_channel::{TrustedRoot, validate_https_repository_url};
 use pkg_core::System;
 use pkg_installer::{
-    InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallMode,
+    InstallError, InstallErrorCode, InstallMode, LinuxInstallBackend,
     ProductionLinuxInstallBackend, ProductionMacOsInstallBackend, install_linux_from_bundle,
     install_macos_from_bundle, plan_linux_group_bindings,
 };
@@ -82,9 +82,9 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
         install_macos_from_bundle(system, trusted_root, &request, &mut backend)
             .map_err(|_| PublicInstallError::InstallFailed)?;
         Ok(match backend.install_mode() {
-            pkg_installer::MacOsInstallMode::FreshInstall => InstallSuccess::Installed,
-            pkg_installer::MacOsInstallMode::OfflineUpgrade => InstallSuccess::Upgraded,
-            pkg_installer::MacOsInstallMode::OfflineRepair => InstallSuccess::Repaired,
+            pkg_installer::InstallMode::FreshInstall => InstallSuccess::Installed,
+            pkg_installer::InstallMode::OfflineUpgrade => InstallSuccess::Upgraded,
+            pkg_installer::InstallMode::OfflineRepair => InstallSuccess::Repaired,
         })
     } else {
         let mut backend = match invocation {
@@ -99,7 +99,7 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
         Ok(match invocation {
             Invocation::RepairProductAssets => InstallSuccess::Repaired,
             Invocation::InstallOrUpgrade
-                if backend.install_mode() == LinuxInstallMode::OfflineUpgrade =>
+                if backend.install_mode() == InstallMode::OfflineUpgrade =>
             {
                 InstallSuccess::Upgraded
             }

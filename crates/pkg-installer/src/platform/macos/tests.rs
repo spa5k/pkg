@@ -346,7 +346,7 @@ impl MacOsInstallBackend for FakeBackend {
 
     fn begin_authenticated_recovery(
         &mut self,
-        _mode: crate::MacOsInstallMode,
+        _mode: crate::InstallMode,
     ) -> Result<(), MacOsError> {
         Ok(())
     }
@@ -364,34 +364,31 @@ impl MacOsInstallBackend for FakeBackend {
     fn broker_uid(&mut self) -> Result<u32, MacOsError> {
         Ok(333)
     }
-    fn classify_asset(
-        &mut self,
-        asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_asset(&mut self, asset: MacOsInstallAsset) -> Result<AssetPresence, MacOsError> {
         Ok(if self.existing.contains(asset.id) {
-            MacOsAssetPresence::ExactPresent
+            AssetPresence::ExactPresent
         } else {
-            MacOsAssetPresence::Absent
+            AssetPresence::Absent
         })
     }
-    fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_store_volume(&mut self) -> Result<AssetPresence, MacOsError> {
         Ok(if self.store_volume {
-            MacOsAssetPresence::ExactPresent
+            AssetPresence::ExactPresent
         } else {
-            MacOsAssetPresence::Absent
+            AssetPresence::Absent
         })
     }
-    fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        Ok(MacOsAssetPresence::Absent)
+    fn classify_managed_runtime(&mut self) -> Result<AssetPresence, MacOsError> {
+        Ok(AssetPresence::Absent)
     }
-    fn classify_services(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        Ok(MacOsAssetPresence::Absent)
+    fn classify_services(&mut self) -> Result<AssetPresence, MacOsError> {
+        Ok(AssetPresence::Absent)
     }
-    fn classify_ownership_receipt(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_ownership_receipt(&mut self) -> Result<AssetPresence, MacOsError> {
         Ok(if self.receipt {
-            MacOsAssetPresence::ExactPresent
+            AssetPresence::ExactPresent
         } else {
-            MacOsAssetPresence::Absent
+            AssetPresence::Absent
         })
     }
     fn recover_asset(&mut self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {

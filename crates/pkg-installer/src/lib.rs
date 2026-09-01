@@ -4,12 +4,14 @@
 //! commands, arbitrary install paths, or caller-supplied identities.
 
 mod approval_audit;
+mod asset_presence;
 mod assets;
 mod bootstrap;
 mod broker;
 mod determinate;
 mod determinate_handoff;
 mod helper;
+mod install_mode;
 mod installer;
 mod linux_accounts;
 mod linux_backend;
@@ -42,6 +44,7 @@ mod synthetic_file;
 mod uninstall;
 
 pub use approval_audit::{BrokerApprovalAudit, BrokerCallerApprovalJournal};
+pub use asset_presence::AssetPresence;
 pub use assets::{
     LinuxAssetKind, LinuxAssetPrincipal, LinuxInstallAsset, LinuxSystemdAssets,
     linux_install_assets,
@@ -62,6 +65,7 @@ pub use helper::{
     BrokerHelperDispatch, HelperTransportError, HelperTransportErrorCode, LinuxHelperSession,
     serve_helper_connection,
 };
+pub use install_mode::InstallMode;
 pub use installer::{InstallError, InstallErrorCode, LinuxInstallBackend, LinuxInstallReport};
 pub use linux_accounts::{
     LinuxAccountError, LinuxAccountErrorCode, LinuxAccountManager, plan_linux_group_bindings,
@@ -71,7 +75,7 @@ pub use linux_filesystem::{
     LinuxFilesystemError, LinuxFilesystemErrorCode, LinuxFilesystemManager, LinuxReleasePayloads,
 };
 pub use linux_install_journal::{
-    LinuxInstallJournal, LinuxInstallJournalError, LinuxInstallJournalErrorCode, LinuxInstallMode,
+    LinuxInstallJournal, LinuxInstallJournalError, LinuxInstallJournalErrorCode,
     LinuxInstallMutation, LinuxInstallMutationState, LinuxInstallRecoveryAction,
 };
 pub use linux_install_journal_file::{
@@ -81,24 +85,23 @@ pub use linux_systemd::{LinuxSystemdError, LinuxSystemdErrorCode};
 pub use linux_uninstall::ProductionLinuxUninstallBackend;
 pub use macos_backend::ProductionMacOsInstallBackend;
 pub use macos_install_journal::{
-    MacOsInstallJournal, MacOsInstallJournalError, MacOsInstallJournalErrorCode, MacOsInstallMode,
+    MacOsInstallJournal, MacOsInstallJournalError, MacOsInstallJournalErrorCode,
     MacOsInstallMutation, MacOsInstallMutationState, MacOsInstallRecoveryAction,
 };
 pub use macos_install_journal_file::{MacOsInstallJournalFileError, MacOsInstallJournalStorage};
 pub use macos_uninstall::{ProductionMacOsUninstallBackend, verify_macos_install_absent};
-pub use platform::linux::{LinuxAssetPresence, LinuxPlatformAssetManager};
+pub use platform::linux::LinuxPlatformAssetManager;
 pub use platform::linux::{
     LinuxPeerCredentials, LinuxPlatformError, LinuxPlatformErrorCode, LinuxRootSetStore,
     authenticate_broker_peer, peer_credentials,
 };
 pub use platform::macos::{
-    MacOsAssetKind, MacOsAssetPresence, MacOsAssetPrincipal, MacOsBuildReadiness,
-    MacOsBuildUsersReadiness, MacOsError, MacOsErrorCode, MacOsHelperSession, MacOsInstallAsset,
-    MacOsInstallBackend, MacOsInstallReport, MacOsLaunchdAssets, MacOsPeerCredentials,
-    MacOsReleaseStep, MacOsReleaseTarget, MacOsRootSetStore, MacOsSandboxReadiness,
-    MacOsSocketContract, MacOsStoreVolumeContract, MacOsToolchainReadiness, install_macos,
-    is_macos_product_asset, macos_install_assets, macos_product_install_assets,
-    macos_release_steps, recover_macos_install,
+    MacOsAssetKind, MacOsAssetPrincipal, MacOsBuildReadiness, MacOsBuildUsersReadiness, MacOsError,
+    MacOsErrorCode, MacOsHelperSession, MacOsInstallAsset, MacOsInstallBackend, MacOsInstallReport,
+    MacOsLaunchdAssets, MacOsPeerCredentials, MacOsReleaseStep, MacOsReleaseTarget,
+    MacOsRootSetStore, MacOsSandboxReadiness, MacOsSocketContract, MacOsStoreVolumeContract,
+    MacOsToolchainReadiness, install_macos, is_macos_product_asset, macos_install_assets,
+    macos_product_install_assets, macos_release_steps, recover_macos_install,
 };
 pub use production_repair::ProductionRepairAuthority;
 pub use repair::{

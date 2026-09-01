@@ -673,6 +673,6 @@ mod tests {
 mod assets;
 mod systemd_assets;
 
+pub use assets::LinuxPlatformAssetManager;
 pub(crate) use assets::LinuxProductAssetIntent;
-pub use assets::{LinuxAssetPresence, LinuxPlatformAssetManager};
 pub use systemd_assets::LinuxSystemdAssets;

@@ -653,7 +653,7 @@ struct LinuxBackend {
     raw_provision_calls: usize,
     create: bool,
     replace_files: bool,
-    mode: Option<crate::LinuxInstallMode>,
+    mode: Option<crate::InstallMode>,
     active_install: bool,
     active_install_checks: usize,
     clean_host_checks: usize,
@@ -672,8 +672,8 @@ struct LinuxBackend {
 }
 
 impl LinuxInstallBackend for LinuxBackend {
-    fn install_mode(&self) -> crate::LinuxInstallMode {
-        self.mode.unwrap_or(crate::LinuxInstallMode::FreshInstall)
+    fn install_mode(&self) -> crate::InstallMode {
+        self.mode.unwrap_or(crate::InstallMode::FreshInstall)
     }
 
     fn classify_active_install(&mut self) -> Result<bool, InstallError> {
@@ -686,7 +686,7 @@ impl LinuxInstallBackend for LinuxBackend {
             self.service_state = TestServiceState::EnabledInactive;
         }
         self.offline_preflight_calls = self.offline_preflight_calls.saturating_add(1);
-        if self.install_mode() != crate::LinuxInstallMode::FreshInstall
+        if self.install_mode() != crate::InstallMode::FreshInstall
             && self.service_state != TestServiceState::Offline
         {
             return Err(InstallError::offline_services_required());
@@ -699,7 +699,7 @@ impl LinuxInstallBackend for LinuxBackend {
         journal: &LinuxInstallJournal,
     ) -> Result<(), InstallError> {
         self.offline_preflight_calls = self.offline_preflight_calls.saturating_add(1);
-        if journal.mode() != crate::LinuxInstallMode::FreshInstall
+        if journal.mode() != crate::InstallMode::FreshInstall
             || !journal.fresh_services_deactivated()
             || self.service_state != TestServiceState::Offline
         {
@@ -731,7 +731,7 @@ impl LinuxInstallBackend for LinuxBackend {
     }
     fn preflight_clean_host(&mut self, _system: System) -> Result<(), InstallError> {
         self.clean_host_checks = self.clean_host_checks.saturating_add(1);
-        if self.mode == Some(crate::LinuxInstallMode::OfflineRepair) {
+        if self.mode == Some(crate::InstallMode::OfflineRepair) {
             if self.preflight_handoff != Some(DeterminateHandoffState::Accepted)
                 || self.service_state != TestServiceState::Offline
             {
@@ -745,13 +745,13 @@ impl LinuxInstallBackend for LinuxBackend {
     }
     fn preflight_recovery(
         &mut self,
-        mode: crate::LinuxInstallMode,
+        mode: crate::InstallMode,
         _system: System,
     ) -> Result<(), InstallError> {
         if self.install_mode() != mode {
             return Err(InstallError::recovery_mode_mismatch());
         }
-        if mode != crate::LinuxInstallMode::FreshInstall
+        if mode != crate::InstallMode::FreshInstall
             && self.service_state != TestServiceState::Offline
         {
             return Err(InstallError::backend_failure());
@@ -761,38 +761,38 @@ impl LinuxInstallBackend for LinuxBackend {
     fn classify_asset(
         &mut self,
         asset: LinuxInstallAsset,
-    ) -> Result<crate::LinuxAssetPresence, InstallError> {
+    ) -> Result<crate::AssetPresence, InstallError> {
         Ok(
             if self.create || (self.replace_files && asset.kind() == crate::LinuxAssetKind::File) {
-                crate::LinuxAssetPresence::Absent
+                crate::AssetPresence::Absent
             } else {
-                crate::LinuxAssetPresence::ExactPresent
+                crate::AssetPresence::ExactPresent
             },
         )
     }
     fn classify_ownership_receipt(
         &mut self,
         asset: LinuxInstallAsset,
-    ) -> Result<crate::LinuxAssetPresence, InstallError> {
-        if self.mode == Some(crate::LinuxInstallMode::OfflineRepair) {
-            Ok(crate::LinuxAssetPresence::ExactPresent)
+    ) -> Result<crate::AssetPresence, InstallError> {
+        if self.mode == Some(crate::InstallMode::OfflineRepair) {
+            Ok(crate::AssetPresence::ExactPresent)
         } else {
             self.classify_asset(asset)
         }
     }
-    fn classify_managed_runtime(&mut self) -> Result<crate::LinuxAssetPresence, InstallError> {
+    fn classify_managed_runtime(&mut self) -> Result<crate::AssetPresence, InstallError> {
         Ok(if self.managed_runtime_present.unwrap_or(!self.create) {
-            crate::LinuxAssetPresence::ExactPresent
+            crate::AssetPresence::ExactPresent
         } else {
-            crate::LinuxAssetPresence::Absent
+            crate::AssetPresence::Absent
         })
     }
-    fn classify_services(&mut self) -> Result<crate::LinuxAssetPresence, InstallError> {
+    fn classify_services(&mut self) -> Result<crate::AssetPresence, InstallError> {
         Ok(
             if self.create || self.service_state == TestServiceState::Offline {
-                crate::LinuxAssetPresence::Absent
+                crate::AssetPresence::Absent
             } else {
-                crate::LinuxAssetPresence::ExactPresent
+                crate::AssetPresence::ExactPresent
             },
         )
     }
@@ -802,7 +802,7 @@ impl LinuxInstallBackend for LinuxBackend {
         Ok(())
     }
     fn services_need_mutation(&self, _prior_active: bool) -> bool {
-        self.install_mode() == crate::LinuxInstallMode::FreshInstall && self.create
+        self.install_mode() == crate::InstallMode::FreshInstall && self.create
     }
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
         self.mutation_calls = self.mutation_calls.saturating_add(1);
@@ -852,7 +852,7 @@ impl LinuxInstallBackend for LinuxBackend {
         Ok(())
     }
     fn activate_services(&mut self) -> Result<bool, InstallError> {
-        if self.install_mode() != crate::LinuxInstallMode::FreshInstall {
+        if self.install_mode() != crate::InstallMode::FreshInstall {
             return (self.service_state == TestServiceState::Offline)
                 .then_some(false)
                 .ok_or_else(InstallError::backend_failure);
@@ -868,7 +868,7 @@ impl LinuxInstallBackend for LinuxBackend {
         }
     }
     fn rollback_services(&mut self) -> Result<(), InstallError> {
-        if self.install_mode() != crate::LinuxInstallMode::FreshInstall {
+        if self.install_mode() != crate::InstallMode::FreshInstall {
             return Err(InstallError::backend_failure());
         }
         self.mutation_calls = self.mutation_calls.saturating_add(1);
@@ -882,7 +882,7 @@ impl LinuxInstallBackend for LinuxBackend {
         Ok(())
     }
     fn check_managed_daemon(&mut self) -> Result<(), InstallError> {
-        if self.install_mode() != crate::LinuxInstallMode::FreshInstall {
+        if self.install_mode() != crate::InstallMode::FreshInstall {
             return (self.service_state == TestServiceState::Offline)
                 .then_some(())
                 .ok_or_else(InstallError::backend_failure);
@@ -900,7 +900,7 @@ impl LinuxInstallBackend for LinuxBackend {
         if self.failure == LinuxBackendFailure::Receipt {
             Err(InstallError::backend_failure())
         } else {
-            Ok(self.mode != Some(crate::LinuxInstallMode::OfflineRepair)
+            Ok(self.mode != Some(crate::InstallMode::OfflineRepair)
                 && (self.create || self.replace_files))
         }
     }
@@ -969,7 +969,7 @@ fn run_real_determinate_install(
         accepted_before_completion: std::cell::Cell::new(false),
     };
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::FreshInstall,
+        crate::InstallMode::FreshInstall,
         request.system,
         Digest::from_bytes([0xb1; 32]),
         Digest::from_bytes([0xb2; 32]),
@@ -1236,7 +1236,7 @@ fn assert_accepted_fresh_continuation(
     let retained = retained_storage
         .load()?
         .ok_or_else(|| std::io::Error::other("missing retained Fresh journal"))?;
-    assert_eq!(retained.mode(), crate::LinuxInstallMode::FreshInstall);
+    assert_eq!(retained.mode(), crate::InstallMode::FreshInstall);
     assert!(!retained.is_committed());
     assert!(retained.fresh_services_deactivated());
     drop(retained_storage);
@@ -1313,7 +1313,7 @@ fn journaled_linux_install_persists_each_intent_completion_and_commit()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::FreshInstall,
+        crate::InstallMode::FreshInstall,
         System::X8664Linux,
         Digest::from_bytes([0x91; 32]),
         Digest::from_bytes([0xa1; 32]),
@@ -1366,7 +1366,7 @@ fn post_commit_cleanup_failure_keeps_a_resumable_committed_journal()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::FreshInstall,
+        crate::InstallMode::FreshInstall,
         System::X8664Linux,
         Digest::from_bytes([0xc1; 32]),
         Digest::from_bytes([0xc2; 32]),
@@ -1423,7 +1423,7 @@ fn journaled_linux_install_keeps_uncertain_intent_on_mutation_error()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::FreshInstall,
+        crate::InstallMode::FreshInstall,
         System::X8664Linux,
         Digest::from_bytes([0x92; 32]),
         Digest::from_bytes([0xa2; 32]),
@@ -1482,7 +1482,7 @@ fn journaled_linux_install_preserves_provision_rollback_failure()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::FreshInstall,
+        crate::InstallMode::FreshInstall,
         System::X8664Linux,
         Digest::from_bytes([0x95; 32]),
         Digest::from_bytes([0xa5; 32]),
@@ -1530,7 +1530,7 @@ fn journaled_linux_reinstall_records_exact_state_without_created_artifacts()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::OfflineUpgrade,
+        crate::InstallMode::OfflineUpgrade,
         System::X8664Linux,
         Digest::from_bytes([0x93; 32]),
         Digest::from_bytes([0xa3; 32]),
@@ -1544,7 +1544,7 @@ fn journaled_linux_reinstall_records_exact_state_without_created_artifacts()
         groups: ManagedGroupBindings::new(100, 101)?,
     };
     let mut backend = LinuxBackend {
-        mode: Some(crate::LinuxInstallMode::OfflineUpgrade),
+        mode: Some(crate::InstallMode::OfflineUpgrade),
         service_state: TestServiceState::Offline,
         ..LinuxBackend::default()
     };
@@ -1583,7 +1583,7 @@ fn journaled_existing_product_update_stays_offline_and_never_starts_determinate(
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::OfflineUpgrade,
+        crate::InstallMode::OfflineUpgrade,
         System::X8664Linux,
         Digest::from_bytes([0xd1; 32]),
         Digest::from_bytes([0xd2; 32]),
@@ -1598,7 +1598,7 @@ fn journaled_existing_product_update_stays_offline_and_never_starts_determinate(
     };
     let mut backend = LinuxBackend {
         replace_files: true,
-        mode: Some(crate::LinuxInstallMode::OfflineUpgrade),
+        mode: Some(crate::InstallMode::OfflineUpgrade),
         service_state: TestServiceState::Offline,
         preflight_handoff: Some(DeterminateHandoffState::Accepted),
         ..LinuxBackend::default()
@@ -1656,7 +1656,7 @@ fn offline_state_change_blocks_the_next_file_mutation_and_rollback()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::OfflineUpgrade,
+        crate::InstallMode::OfflineUpgrade,
         System::X8664Linux,
         Digest::from_bytes([0xd3; 32]),
         Digest::from_bytes([0xd4; 32]),
@@ -1671,7 +1671,7 @@ fn offline_state_change_blocks_the_next_file_mutation_and_rollback()
     };
     let mut backend = LinuxBackend {
         replace_files: true,
-        mode: Some(crate::LinuxInstallMode::OfflineUpgrade),
+        mode: Some(crate::InstallMode::OfflineUpgrade),
         service_state: TestServiceState::Offline,
         change_service_state_after_preflight: Some(1),
         ..LinuxBackend::default()
@@ -1710,7 +1710,7 @@ fn journaled_offline_repair_changes_product_files_without_service_mutation()
     // journal storage, so the native clean-host proof covers that final boundary.
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::OfflineRepair,
+        crate::InstallMode::OfflineRepair,
         System::X8664Linux,
         Digest::from_bytes([0xd3; 32]),
         Digest::from_bytes([0xd4; 32]),
@@ -1725,7 +1725,7 @@ fn journaled_offline_repair_changes_product_files_without_service_mutation()
     };
     let mut backend = LinuxBackend {
         replace_files: true,
-        mode: Some(crate::LinuxInstallMode::OfflineRepair),
+        mode: Some(crate::InstallMode::OfflineRepair),
         service_state: TestServiceState::Offline,
         preflight_handoff: Some(DeterminateHandoffState::Accepted),
         ..LinuxBackend::default()
@@ -1786,14 +1786,14 @@ fn journaled_repair_refuses_non_offline_service_state_before_mutation()
     ] {
         let persistence = MemoryJournalPersistence::default();
         let journal = LinuxInstallJournal::new(
-            crate::LinuxInstallMode::OfflineRepair,
+            crate::InstallMode::OfflineRepair,
             System::X8664Linux,
             Digest::from_bytes([0xd5; 32]),
             Digest::from_bytes([0xd6; 32]),
         )?;
         let mut backend = LinuxBackend {
             replace_files: true,
-            mode: Some(crate::LinuxInstallMode::OfflineRepair),
+            mode: Some(crate::InstallMode::OfflineRepair),
             service_state: state,
             preflight_handoff: Some(DeterminateHandoffState::Accepted),
             ..LinuxBackend::default()
@@ -1829,12 +1829,12 @@ fn recovery_never_switches_between_upgrade_and_repair_modes()
 -> Result<(), Box<dyn std::error::Error>> {
     for (journal_mode, requested_mode) in [
         (
-            crate::LinuxInstallMode::OfflineRepair,
-            crate::LinuxInstallMode::OfflineUpgrade,
+            crate::InstallMode::OfflineRepair,
+            crate::InstallMode::OfflineUpgrade,
         ),
         (
-            crate::LinuxInstallMode::OfflineUpgrade,
-            crate::LinuxInstallMode::OfflineRepair,
+            crate::InstallMode::OfflineUpgrade,
+            crate::InstallMode::OfflineRepair,
         ),
     ] {
         let mut journal = LinuxInstallJournal::new(
@@ -1868,7 +1868,7 @@ fn failed_offline_repair_rolls_forward_files_without_service_mutation()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::OfflineRepair,
+        crate::InstallMode::OfflineRepair,
         System::X8664Linux,
         Digest::from_bytes([0xd7; 32]),
         Digest::from_bytes([0xd8; 32]),
@@ -1883,7 +1883,7 @@ fn failed_offline_repair_rolls_forward_files_without_service_mutation()
     };
     let mut backend = LinuxBackend {
         replace_files: true,
-        mode: Some(crate::LinuxInstallMode::OfflineRepair),
+        mode: Some(crate::InstallMode::OfflineRepair),
         service_state: TestServiceState::Offline,
         failure: LinuxBackendFailure::Unit,
         preflight_handoff: Some(DeterminateHandoffState::Accepted),
@@ -1929,7 +1929,7 @@ fn failed_existing_product_update_restores_files_and_stays_offline()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::OfflineUpgrade,
+        crate::InstallMode::OfflineUpgrade,
         System::X8664Linux,
         Digest::from_bytes([0xe1; 32]),
         Digest::from_bytes([0xe2; 32]),
@@ -1944,7 +1944,7 @@ fn failed_existing_product_update_restores_files_and_stays_offline()
     };
     let mut backend = LinuxBackend {
         replace_files: true,
-        mode: Some(crate::LinuxInstallMode::OfflineUpgrade),
+        mode: Some(crate::InstallMode::OfflineUpgrade),
         service_state: TestServiceState::Offline,
         failure: LinuxBackendFailure::Receipt,
         preflight_handoff: Some(DeterminateHandoffState::Accepted),
@@ -1985,7 +1985,7 @@ fn journaled_linux_reinstall_rolls_back_its_temporary_daemon()
 -> Result<(), Box<dyn std::error::Error>> {
     let persistence = MemoryJournalPersistence::default();
     let journal = LinuxInstallJournal::new(
-        crate::LinuxInstallMode::FreshInstall,
+        crate::InstallMode::FreshInstall,
         System::X8664Linux,
         Digest::from_bytes([0x94; 32]),
         Digest::from_bytes([0xa4; 32]),
@@ -2065,7 +2065,7 @@ impl MacOsInstallBackend for MacBackend {
 
     fn begin_authenticated_recovery(
         &mut self,
-        _mode: crate::MacOsInstallMode,
+        _mode: crate::InstallMode,
     ) -> Result<(), MacOsError> {
         Ok(())
     }
@@ -2079,24 +2079,21 @@ impl MacOsInstallBackend for MacBackend {
     fn broker_uid(&mut self) -> Result<u32, MacOsError> {
         Ok(333)
     }
-    fn classify_asset(
-        &mut self,
-        _asset: MacOsInstallAsset,
-    ) -> Result<MacOsAssetPresence, MacOsError> {
-        Ok(MacOsAssetPresence::ExactPresent)
+    fn classify_asset(&mut self, _asset: MacOsInstallAsset) -> Result<AssetPresence, MacOsError> {
+        Ok(AssetPresence::ExactPresent)
     }
-    fn classify_managed_runtime(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_managed_runtime(&mut self) -> Result<AssetPresence, MacOsError> {
         Ok(if self.runtime_present {
-            MacOsAssetPresence::ExactPresent
+            AssetPresence::ExactPresent
         } else {
-            MacOsAssetPresence::Absent
+            AssetPresence::Absent
         })
     }
-    fn classify_services(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        Ok(MacOsAssetPresence::ExactPresent)
+    fn classify_services(&mut self) -> Result<AssetPresence, MacOsError> {
+        Ok(AssetPresence::ExactPresent)
     }
-    fn classify_ownership_receipt(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
-        Ok(MacOsAssetPresence::Absent)
+    fn classify_ownership_receipt(&mut self) -> Result<AssetPresence, MacOsError> {
+        Ok(AssetPresence::Absent)
     }
     fn recover_asset(&mut self, _asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         Ok(())
@@ -2178,11 +2175,11 @@ impl MacOsInstallBackend for MacBackend {
         }
     }
 
-    fn classify_store_volume(&mut self) -> Result<MacOsAssetPresence, MacOsError> {
+    fn classify_store_volume(&mut self) -> Result<AssetPresence, MacOsError> {
         Ok(if self.create_store {
-            MacOsAssetPresence::Absent
+            AssetPresence::Absent
         } else {
-            MacOsAssetPresence::ExactPresent
+            AssetPresence::ExactPresent
         })
     }
     fn provision_store_volume(&mut self) -> Result<bool, MacOsError> {
