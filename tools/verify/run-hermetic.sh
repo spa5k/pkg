@@ -143,9 +143,12 @@ if [ "${AUDIT_ONLY:-0}" = "1" ]; then
 fi
 
 # Private per-invocation TMPDIR: tests that honor TMPDIR get a fresh root,
-# removed on exit. Per-TEST isolation is enforced by the audit above plus
-# the pkg-testkit harness, not by this wrapper.
-HERMETIC_TMP="$(mktemp -d)"
+# removed on exit. The path is deliberately SHORT (/tmp/hm.XXXXXXXX):
+# broker transport tests bind unix sockets whose paths extend TMPDIR, and
+# macOS SUN_LEN is 104 bytes — a longer hermetic TMPDIR overflowed it on
+# the CI probe (run 33676912359). Per-TEST isolation is enforced by the
+# audit above plus the pkg-testkit harness, not by this wrapper.
+HERMETIC_TMP="$(mktemp -d /tmp/hm.XXXXXXXX)"
 export TMPDIR="$HERMETIC_TMP"
 cleanup_tmpdir() { rm -rf "$HERMETIC_TMP"; }
 trap cleanup_tmpdir EXIT
@@ -191,10 +194,17 @@ Linux)
 		# network namespace as real root; setpriv then drops back to the
 		# invoking user so cargo execs from $HOME/.cargo/bin with normal
 		# permissions and owns its target/ files. sudo resets the
-		# environment, so everything cargo needs is passed explicitly.
+		# environment, so everything cargo needs is re-exported inside —
+		# conditionally, because cargo rejects EMPTY CARGO_TARGET_DIR
+		# (run 33676912359) and empty RUSTUP_TOOLCHAIN confuses rustup.
 		network_mode="sudo unshare -n (root netns, setpriv back to invoking uid)"
+		inner_env="export PATH='$PATH' HOME='$HOME' TMPDIR='$HERMETIC_TMP' PKG_HERMETIC=1 CARGO_NET_OFFLINE=true"
+		[ -n "${RUSTUP_TOOLCHAIN:-}" ] \
+			&& inner_env="$inner_env RUSTUP_TOOLCHAIN='$RUSTUP_TOOLCHAIN'"
+		[ -n "${CARGO_TARGET_DIR:-}" ] \
+			&& inner_env="$inner_env CARGO_TARGET_DIR='$CARGO_TARGET_DIR'"
 		run_wrapped "$network_mode" sudo -n unshare -n \
-			bash -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) --clear-groups env HOME='$HOME' PATH='$PATH' RUSTUP_TOOLCHAIN='${RUSTUP_TOOLCHAIN:-}' PKG_HERMETIC=1 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR='${CARGO_TARGET_DIR:-}' TMPDIR='$HERMETIC_TMP' \"\$0\" test \"\${@}\"" \
+			bash -c "$inner_env; ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) --clear-groups \"\$0\" test \"\${@}\"" \
 			"$cargo_bin" "${cargo_args[@]}"
 	elif command -v unshare >/dev/null 2>&1; then
 		echo "error: no usable network namespace (unprivileged uid_map and sudo both refused)" >&2
