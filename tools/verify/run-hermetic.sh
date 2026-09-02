@@ -18,8 +18,9 @@
 #
 # Usage: tools/verify/run-hermetic.sh [-- test-args...]
 #        Everything after `--` is passed to cargo test.
-#        AUDIT_ONLY=1 runs only the static ambient-time audit (the fast
-#        ci-fast gate); no tests execute and no network denial is needed.
+#        AUDIT_ONLY=1 runs only the static ambient-time audit and the
+#        temp-root audit (the fast ci-fast gates); no tests execute and no
+#        network denial is needed.
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -81,10 +82,73 @@ if [ "$violations" -ne 0 ]; then
 fi
 echo "    clean"
 
+# ---------------------------------------------------------------------------
+# Temp-root audit (DN-1 PR-2).
+#
+# Product runtime code must use explicit roots, never the ambient temp dir.
+# Tests may use temp roots (that is what they are for); this codebase keeps
+# every test module either inline behind a `#[cfg(test)]` marker or in a
+# sibling `tests.rs` / `tests/` path (skipped by find). pkg-testkit is the
+# allowed everywhere. A hit outside both allowances fails the run: a new
+# production temp-dir dependency cannot hide.
+#
+# Sanctioned production temp-dir uses (documented baseline):
+# - pkg-nix/src/managed/installer_bundle.rs  spools streamed TUF targets to
+#   an anonymous tempfile while digesting; deliberate, disk-bounded design
+# - pkg-nix/src/managed/provision.rs          extraction TempPath plumbing
+#   for the same bundle path
+# Both stay until an explicit-root spool design lands (IMPL-NOTES-PR2).
+TEMP_ALLOWED=(
+	'crates/pkg-nix/src/managed/installer_bundle.rs'
+	'crates/pkg-nix/src/managed/provision.rs'
+)
+# ---------------------------------------------------------------------------
+echo "==> temp-root audit (production code must not use the ambient temp dir)"
+
+violations=0
+while IFS= read -r hit; do
+	[ -z "$hit" ] && continue
+	path="${hit%%:*}"
+	skip=""
+	for entry in "${TEMP_ALLOWED[@]}"; do
+		if [ "$entry" = "$path" ]; then
+			skip=1
+			break
+		fi
+	done
+	[ -n "$skip" ] && continue
+	echo "    temp-root violation: $hit" >&2
+	violations=$((violations + 1))
+done < <(find crates -name '*.rs' -not -path '*/target/*' \
+	-not -name 'tests.rs' -not -path '*/tests/*' -print0 \
+	| xargs -0 awk '
+		FNR == 1 { in_test = 0 }
+		/#\[cfg\(test\)\]/ { in_test = 1 }
+		in_test { next }
+		/std::env::temp_dir\(|tempfile::|tempdir::|TempDir::new\(/ {
+			print FILENAME ":" FNR
+		}' \
+	| grep -v '^crates/pkg-testkit/' || true)
+
+if [ "$violations" -ne 0 ]; then
+	echo "==> temp-root audit FAILED" >&2
+	echo "    use an explicit product root, or the pkg-testkit harness" >&2
+	exit 1
+fi
+echo "    clean"
+
 if [ "${AUDIT_ONLY:-0}" = "1" ]; then
 	echo "==> audit-only mode: skipping tripwire and test run"
 	exit 0
 fi
+
+# Private per-invocation TMPDIR: tests that honor TMPDIR get a fresh root,
+# removed on exit. Per-TEST isolation is enforced by the audit above plus
+# the pkg-testkit harness, not by this wrapper.
+HERMETIC_TMP="$(mktemp -d)"
+export TMPDIR="$HERMETIC_TMP"
+cleanup_tmpdir() { rm -rf "$HERMETIC_TMP"; }
+trap cleanup_tmpdir EXIT
 
 export PKG_HERMETIC=1
 export CARGO_NET_OFFLINE=1
