@@ -143,14 +143,27 @@ if [ "${AUDIT_ONLY:-0}" = "1" ]; then
 fi
 
 # Private per-invocation TMPDIR: tests that honor TMPDIR get a fresh root,
-# removed on exit. The path is deliberately SHORT (/tmp/hm.XXXXXXXX):
-# broker transport tests bind unix sockets whose paths extend TMPDIR, and
-# macOS SUN_LEN is 104 bytes — a longer hermetic TMPDIR overflowed it on
-# the CI probe (run 33676912359). Per-TEST isolation is enforced by the
-# audit above plus the pkg-testkit harness, not by this wrapper.
-HERMETIC_TMP="$(mktemp -d /tmp/hm.XXXXXXXX)"
+# removed on exit. Platform choice matters twice:
+# - SHORT path: broker transport tests bind unix sockets whose paths
+#   extend TMPDIR and macOS SUN_LEN is 104 bytes (run 33676912359).
+# - PRIVATE ancestors on macOS: the installer journal's safety checks
+#   reject world-writable ancestor directories, so /tmp (mode 1777)
+#   fails 27 tests (run 33678019679); $HOME is private. Linux tests
+#   pass with /tmp, which stays the shorter choice there.
+# Per-TEST isolation is enforced by the audit plus the pkg-testkit
+# harness, not by this wrapper.
+case "$(uname -s)" in
+Darwin) HERMETIC_TMP="$(mktemp -d "$HOME/hm.XXXXXXXX")" ;;
+*) HERMETIC_TMP="$(mktemp -d /tmp/hm.XXXXXXXX)" ;;
+esac
 export TMPDIR="$HERMETIC_TMP"
-cleanup_tmpdir() { rm -rf "$HERMETIC_TMP"; }
+# Best-effort cleanup: ownership tests deliberately leave root-owned or
+# mode-restricted fixtures behind; the trap must never fail a green run
+# (run 33678019679) — the job filesystem is ephemeral anyway.
+cleanup_tmpdir() {
+	chmod -R u+rwx "$HERMETIC_TMP" 2>/dev/null || true
+	rm -rf "$HERMETIC_TMP" 2>/dev/null || true
+}
 trap cleanup_tmpdir EXIT
 
 # Prefetch pinned dependencies while the network is still up: the hermetic
