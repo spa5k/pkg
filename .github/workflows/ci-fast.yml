@@ -32,6 +32,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # DN-1: static ambient-time audit gate. Fast (grep-only, no build): every
+  # wall-clock family outside the one seam or the record-only baseline fails
+  # the PR. The full hermetic run (tripwire + network denial) lives in the
+  # nightly lane; this is the cheap static half wired per review change 17.
+  g-ambient-time-audit:
+    name: G-AMBIENT-TIME-AUDIT (DN-1 static clock-seam gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Ambient-time audit (all wall-clock families)
+        run: AUDIT_ONLY=1 tools/verify/run-hermetic.sh
+
   g-lint:
     name: G-LINT (fmt / clippy / doc / build / deny / audit)
     runs-on: ubuntu-latest
