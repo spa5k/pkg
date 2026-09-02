@@ -150,6 +150,14 @@ export TMPDIR="$HERMETIC_TMP"
 cleanup_tmpdir() { rm -rf "$HERMETIC_TMP"; }
 trap cleanup_tmpdir EXIT
 
+# Prefetch pinned dependencies while the network is still up: the hermetic
+# run itself is offline (CARGO_NET_OFFLINE), but a fresh CI runner has an
+# empty cargo cache, and fetching the --locked dependency set is not the
+# network the tripwire is hunting. This must happen BEFORE the offline
+# export.
+cargo_bin="$(command -v cargo)"
+"$cargo_bin" fetch --locked
+
 export PKG_HERMETIC=1
 export CARGO_NET_OFFLINE=true
 
@@ -158,8 +166,6 @@ if [ "${1:-}" = "--" ]; then
 	shift
 	cargo_args+=("$@")
 fi
-
-cargo_bin="$(command -v cargo)"
 
 run_wrapped() {
 	# $1 = label, rest = command
@@ -179,18 +185,16 @@ Linux)
 		run_wrapped "$network_mode" unshare -rn \
 			bash -c 'ip link set lo up && exec "$0" test "${@}"' \
 			"$cargo_bin" "${cargo_args[@]}"
-	elif sudo -n unshare -rn /usr/bin/true >/dev/null 2>&1; then
-		# GitHub ubuntu runners block unprivileged uid_map writes, so the
-		# spike (PR-2, run 33674556472) fell back to a root-mapped userns
-		# via passwordless sudo. cargo runs as root inside the namespace;
-		# a fresh CARGO_TARGET_DIR keeps root-owned artifacts out of the
-		# workspace target/ (the job VM is ephemeral, so this is safe).
-		network_mode="sudo unshare -rn (root-mapped userns; fresh target dir)"
-		fresh_target="$(mktemp -d)/target"
-		mkdir -p "$fresh_target"
-		export HERMETIC_CARGO_TARGET_DIR="$fresh_target"
-		run_wrapped "$network_mode" sudo -n -E unshare -rn \
-			bash -c 'ip link set lo up && exec env CARGO_TARGET_DIR="$HERMETIC_CARGO_TARGET_DIR" "$0" test "${@}"' \
+	elif sudo -n unshare -n /usr/bin/true >/dev/null 2>&1; then
+		# GitHub ubuntu runners block unprivileged uid_map writes (spike
+		# verdict, run 33674556472). Passwordless sudo can still create a
+		# network namespace as real root; setpriv then drops back to the
+		# invoking user so cargo execs from $HOME/.cargo/bin with normal
+		# permissions and owns its target/ files. sudo resets the
+		# environment, so everything cargo needs is passed explicitly.
+		network_mode="sudo unshare -n (root netns, setpriv back to invoking uid)"
+		run_wrapped "$network_mode" sudo -n unshare -n \
+			bash -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) --clear-groups env HOME='$HOME' PATH='$PATH' RUSTUP_TOOLCHAIN='${RUSTUP_TOOLCHAIN:-}' PKG_HERMETIC=1 CARGO_NET_OFFLINE=true CARGO_TARGET_DIR='${CARGO_TARGET_DIR:-}' TMPDIR='$HERMETIC_TMP' \"\$0\" test \"\${@}\"" \
 			"$cargo_bin" "${cargo_args[@]}"
 	elif command -v unshare >/dev/null 2>&1; then
 		echo "error: no usable network namespace (unprivileged uid_map and sudo both refused)" >&2

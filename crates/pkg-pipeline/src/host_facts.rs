@@ -318,17 +318,17 @@ fn ensure_safe_ancestors(path: &Path) -> Result<(), BuildHostFactsError> {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
+pub const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::X8664Linux)
 }
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
+pub const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::Aarch64Linux)
 }
 
 #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
+pub const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Ok(System::X8664Darwin)
 }
 
@@ -343,7 +343,7 @@ pub const fn production_native_system() -> Result<System, BuildHostFactsError> {
     all(target_os = "macos", target_arch = "x86_64"),
     all(target_os = "macos", target_arch = "aarch64")
 )))]
-pub(crate) const fn production_native_system() -> Result<System, BuildHostFactsError> {
+pub const fn production_native_system() -> Result<System, BuildHostFactsError> {
     Err(BuildHostFactsError)
 }
 
