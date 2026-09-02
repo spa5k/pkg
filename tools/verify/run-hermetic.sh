@@ -151,7 +151,7 @@ cleanup_tmpdir() { rm -rf "$HERMETIC_TMP"; }
 trap cleanup_tmpdir EXIT
 
 export PKG_HERMETIC=1
-export CARGO_NET_OFFLINE=1
+export CARGO_NET_OFFLINE=true
 
 cargo_args=("--workspace" "--locked")
 if [ "${1:-}" = "--" ]; then
@@ -171,16 +171,37 @@ run_wrapped() {
 
 case "$(uname -s)" in
 Linux)
-	network_mode="none (unshare unavailable)"
-	if ! command -v unshare >/dev/null 2>&1; then
+	network_mode="none (no usable namespace)"
+	if unshare -rn /usr/bin/true >/dev/null 2>&1; then
+		# Unprivileged user namespace with an isolated network. Loopback
+		# must come up because broker and channel tests bind 127.0.0.1.
+		network_mode="unshare -rn (unprivileged userns)"
+		run_wrapped "$network_mode" unshare -rn \
+			bash -c 'ip link set lo up && exec "$0" test "${@}"' \
+			"$cargo_bin" "${cargo_args[@]}"
+	elif sudo -n unshare -rn /usr/bin/true >/dev/null 2>&1; then
+		# GitHub ubuntu runners block unprivileged uid_map writes, so the
+		# spike (PR-2, run 33674556472) fell back to a root-mapped userns
+		# via passwordless sudo. cargo runs as root inside the namespace;
+		# a fresh CARGO_TARGET_DIR keeps root-owned artifacts out of the
+		# workspace target/ (the job VM is ephemeral, so this is safe).
+		network_mode="sudo unshare -rn (root-mapped userns; fresh target dir)"
+		fresh_target="$(mktemp -d)/target"
+		mkdir -p "$fresh_target"
+		export HERMETIC_CARGO_TARGET_DIR="$fresh_target"
+		run_wrapped "$network_mode" sudo -n -E unshare -rn \
+			bash -c 'ip link set lo up && exec env CARGO_TARGET_DIR="$HERMETIC_CARGO_TARGET_DIR" "$0" test "${@}"' \
+			"$cargo_bin" "${cargo_args[@]}"
+	elif command -v unshare >/dev/null 2>&1; then
+		echo "error: no usable network namespace (unprivileged uid_map and sudo both refused)" >&2
+		[ "${STRICT:-0}" = "1" ] && exit 1
+		echo "warning: running WITHOUT network denial (set STRICT=1 in CI)" >&2
+		run_wrapped "unwrapped (denial refused)" "$cargo_bin" test "${cargo_args[@]}"
+	else
 		echo "error: unshare is unavailable; cannot deny networking" >&2
 		[ "${STRICT:-0}" = "1" ] && exit 1
 		echo "warning: running WITHOUT network denial (set STRICT=1 in CI)" >&2
-	else
-		# `-r -n`: user namespace with an isolated loopback-only network.
-		# Loopback stays up because broker and channel tests bind it.
-		network_mode="unshare -rn"
-		run_wrapped "$network_mode" unshare -rn "$cargo_bin" test "${cargo_args[@]}"
+		run_wrapped "unwrapped (unshare missing)" "$cargo_bin" test "${cargo_args[@]}"
 	fi
 	;;
 Darwin)
