@@ -89,3 +89,21 @@ D10. Protocol compatibility matrix builds from git-pinned tags, not branch heads
 Rationale for what is NOT added: no per-PR VM tier (the ceremony proof owns that tier;
 duplicating it slowly is waste), no load/soak tier (no observed load sensitivity), no
 UI-level snapshot sprawl beyond trycmd transcripts.
+
+## Amendment 2: Clock scope narrowed to the one decision (owner review, 2026-09-03)
+
+A grounding audit of every ambient time read found the clock decides exactly one
+security-relevant thing: channel descriptor freshness (`policy.rs` `expires_at <= now`,
+freeze-attack protection). All other `SystemTime` sites are record-only (approval journal
+timestamps, repair report timestamps, CLI state files, log lines) and are already excluded
+from byte stability. `Instant::now` sites are timeouts, not wall-clock, and stay out of
+scope. Consequences:
+
+- Clock injection targets `validate_descriptor`'s `now` parameter only; a freeze-attack
+  boundary test (expired-by-one-instant refused) pins the decision deterministically.
+- The ambient-time audit must flag ALL wall-clock families: `SystemTime::now`,
+  `jiff::Timestamp::now`, `Utc::now`, `OffsetDateTime::now_utc`. The original
+  `SystemTime`-only grep would have missed the jiff-based freshness check — the one site
+  that matters.
+- The `PKG_HERMETIC` panic on ambient `SystemClock` reads remains as the hermetic tripwire
+  proving no new decision site appears unnoticed.
