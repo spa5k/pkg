@@ -18,7 +18,7 @@ use pkg_channel::{
     AcceptedChannel, ChannelError, RefreshOutcome, TrustedRoot, VerifiedChannel,
     validate_https_repository_url, validate_private_datastore, verify_authenticated_descriptor,
 };
-use pkg_core::{ChannelSequence, PolicyVersion, System, state::Digest};
+use pkg_core::{ChannelSequence, Clock, PolicyVersion, System, state::Digest};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tough::{
@@ -190,6 +190,14 @@ impl VerifiedRuntimeBundle {
     }
 }
 
+/// One authenticated bundle evaluation: host identity, datastore ownership,
+/// and the wall-clock source for the freshness decision.
+pub(super) struct BundleEnvironment {
+    pub(super) host: System,
+    pub(super) datastore_owner: Option<DatastoreOwner>,
+    pub(super) clock: std::sync::Arc<dyn Clock>,
+}
+
 /// Authenticates one fixed-layout offline installer repository without
 /// publishing any target reader or rollback-state capability outside this
 /// crate.
@@ -197,9 +205,13 @@ pub(super) async fn load_installer_bundle(
     trusted_root: TrustedRoot,
     source: InstallerRepository<'_>,
     datastore: &Path,
-    host: System,
-    datastore_owner: Option<DatastoreOwner>,
+    environment: BundleEnvironment,
 ) -> Result<VerifiedRuntimeBundle, ChannelError> {
+    let BundleEnvironment {
+        host,
+        datastore_owner,
+        clock,
+    } = environment;
     if host == System::X8664Darwin {
         return Err(ChannelError::InstallerBundleUnavailable);
     }
@@ -272,14 +284,7 @@ pub(super) async fn load_installer_bundle(
     }
     .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
     handoff_datastore_files(datastore, datastore_owner)?;
-    load_verified_repository(
-        repository,
-        accepted,
-        datastore_lease,
-        host,
-        Timestamp::now(),
-    )
-    .await
+    load_verified_repository(repository, accepted, datastore_lease, host, clock.now()).await
 }
 
 async fn load_verified_repository(
@@ -914,6 +919,15 @@ fn validate_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Test-only fixed clock standing in for the injected bundle-clock seam.
+    #[derive(Debug)]
+    struct FixedTestClock;
+
+    impl Clock for FixedTestClock {
+        fn now(&self) -> Timestamp {
+            "2026-08-19T00:00:00Z".parse().expect("fixed test instant")
+        }
+    }
     use tempfile::TempDir;
 
     const ROOT: &[u8] = include_bytes!("../../../../fixtures/channel-v1/root.json");
@@ -967,8 +981,11 @@ mod tests {
                 targets_url: &targets_url,
             },
             &datastore,
-            System::Aarch64Linux,
-            None,
+            BundleEnvironment {
+                host: System::Aarch64Linux,
+                datastore_owner: None,
+                clock: std::sync::Arc::new(FixedTestClock),
+            },
         )
         .await;
 
@@ -992,8 +1009,11 @@ mod tests {
             TrustedRoot::from_embedded(ROOT).unwrap(),
             InstallerRepository::Bundle(&fixture),
             &datastore,
-            System::Aarch64Darwin,
-            None,
+            BundleEnvironment {
+                host: System::Aarch64Darwin,
+                datastore_owner: None,
+                clock: std::sync::Arc::new(FixedTestClock),
+            },
         )
         .await;
         assert!(matches!(
@@ -1018,8 +1038,11 @@ mod tests {
             TrustedRoot::from_embedded(ROOT).unwrap(),
             InstallerRepository::Bundle(&fixture),
             &datastore,
-            System::X8664Darwin,
-            None,
+            BundleEnvironment {
+                host: System::X8664Darwin,
+                datastore_owner: None,
+                clock: std::sync::Arc::new(FixedTestClock),
+            },
         )
         .await;
         assert!(matches!(
