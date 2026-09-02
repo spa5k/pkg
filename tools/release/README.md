@@ -163,6 +163,28 @@ already contain their exact HTTPS metadata and targets base URLs. Release N uses
 `https://HOST/n-plus-1/metadata/` and
 `https://HOST/n-plus-1/targets/`.
 
+The DN-1 repeat-run proof uses a second helper, `serve_pair_loopback.py`,
+inside the disposable macOS VM. The proof product runs in that VM, so the
+baked `https://127.0.0.1:8443` URLs are only correct when the channel server
+runs in the same VM. `bootstrap STAGING PUBLICATION STATE PORT` validates the
+pair exactly as the sealed inventories describe it, moves it to the final
+read-only publication path with one rename, generates a disposable CA and one
+server certificate (SAN `127.0.0.1`), serves `n/` and `n-plus-1/` over TLS
+only, and fetches every sealed file back through the live endpoint before it
+reports success. The workflow installs the CA into the VM System keychain
+before the product runs and reverses it with `security remove-trusted-cert -d`
+in an `if: always()` teardown. `stop` refuses foreign processes, removes the
+publication and its private state, and fails if the port still accepts
+connections. The helper has no plaintext fallback and no cloudflared
+dependency:
+
+```sh
+python3 tools/release/serve_pair_loopback.py bootstrap \
+  "$PAIR_STAGING" "$PAIR_PUBLICATION" "$LOOPBACK_STATE" 8443
+python3 tools/release/serve_pair_loopback.py status "$LOOPBACK_STATE"
+python3 tools/release/serve_pair_loopback.py stop "$LOOPBACK_STATE"
+```
+
 These keys and channels are proof-only. Do not upload them to the production
 release, production CDN, or any stable channel. Delete the signing state and
 served directory after retained proof evidence is complete.

@@ -1,0 +1,1395 @@
+name: Repeat-run loopback proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      destructive_confirmation:
+        description: Type DESTROY-PKG-DISPOSABLE-MACOS
+        required: true
+        type: string
+      production_environment:
+        description: This runner is a production machine
+        required: true
+        type: boolean
+        default: true
+      pair_tag:
+        description: Dedicated tag holding the sealed proof pair
+        required: true
+        type: string
+      from_release:
+        description: Signed release tag for lifecycle N
+        required: true
+        type: string
+      to_release:
+        description: Signed release tag for lifecycle N+1
+        required: true
+        type: string
+      expected_sha:
+        description: Exact commit signed by dn1-proof-workflow-1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-disposable-repeat-proof
+  cancel-in-progress: false
+
+env:
+  RUSTUP_TOOLCHAIN: "1.96.1"
+  CARGO_TERM_COLOR: always
+  PKG_REVIEWED_COMMIT: cbd3494443b94283430d8a48e9fec65699d0210a
+  PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
+  PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-1
+  PKG_PROOF_PAIR_TAG: dn1-proof-pair-1
+  PKG_PROOF_PAIR_TARBALL: dn1-proof-pair.tar.gz
+  PKG_PROOF_CHANNEL_URL: https://127.0.0.1:8443
+  PKG_PROOF_LOOPBACK_PORT: "8443"
+  # The pair stays on the DN-16 TEST root. Proofs never touch production.
+  PKG_PROOF_TRUSTED_ROOT_SHA256: 1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90
+  # PENDING-DN1-MINT: fill every pending pin below from the sealed pair
+  # produced by tools/release/mint_dn1_proof_pair.sh before any dispatch.
+  PKG_PROOF_PAIR_TARBALL_LENGTH: "1" # PENDING-DN1-MINT
+  PKG_PROOF_PAIR_TARBALL_SHA256: 0000000000000000000000000000000000000000000000000000000000000000 # PENDING-DN1-MINT
+  PKG_PROOF_PAIR_LENGTH: "1" # PENDING-DN1-MINT
+  PKG_PROOF_PAIR_SHA256: 0000000000000000000000000000000000000000000000000000000000000000 # PENDING-DN1-MINT
+  PKG_PROOF_N_INVENTORY_LENGTH: "1" # PENDING-DN1-MINT
+  PKG_PROOF_N_INVENTORY_SHA256: 0000000000000000000000000000000000000000000000000000000000000000 # PENDING-DN1-MINT
+  PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH: "1" # PENDING-DN1-MINT
+  PKG_PROOF_N_PLUS_1_INVENTORY_SHA256: 0000000000000000000000000000000000000000000000000000000000000000 # PENDING-DN1-MINT
+  PKG_PROOF_N_TOTAL_BYTES: "1" # PENDING-DN1-MINT
+  PKG_PROOF_N_ROWS_SHA256: 0000000000000000000000000000000000000000000000000000000000000000 # PENDING-DN1-MINT
+  PKG_PROOF_N_PLUS_1_TOTAL_BYTES: "1" # PENDING-DN1-MINT
+  PKG_PROOF_N_PLUS_1_ROWS_SHA256: 0000000000000000000000000000000000000000000000000000000000000000 # PENDING-DN1-MINT
+  PKG_PROOF_CONFIRMATION: ${{ inputs.destructive_confirmation }}
+  PKG_PROOF_PRODUCTION: ${{ inputs.production_environment }}
+
+jobs:
+  validate-dispatch:
+    name: Validate immutable repeat dispatch
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions:
+      contents: read
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      PAIR_TAG: ${{ inputs.pair_tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate immutable repeat dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$PAIR_TAG" = "$PKG_PROOF_PAIR_TAG"
+          for digest in "$PKG_PROOF_PAIR_TARBALL_SHA256" \
+              "$PKG_PROOF_PAIR_SHA256" \
+              "$PKG_PROOF_N_INVENTORY_SHA256" \
+              "$PKG_PROOF_N_PLUS_1_INVENTORY_SHA256" \
+              "$PKG_PROOF_N_ROWS_SHA256" \
+              "$PKG_PROOF_N_PLUS_1_ROWS_SHA256" \
+              "$PKG_PROOF_TRUSTED_ROOT_SHA256"; do
+            [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          done
+          for count in "$PKG_PROOF_PAIR_TARBALL_LENGTH" \
+              "$PKG_PROOF_PAIR_LENGTH" \
+              "$PKG_PROOF_N_INVENTORY_LENGTH" \
+              "$PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH" \
+              "$PKG_PROOF_N_TOTAL_BYTES" \
+              "$PKG_PROOF_N_PLUS_1_TOTAL_BYTES"; do
+            [[ "$count" =~ ^[1-9][0-9]*$ ]]
+          done
+          test "$GITHUB_REPOSITORY" = spa5k/pkg
+          test "$GITHUB_REF" = "refs/tags/$PKG_PROOF_WORKFLOW_TAG"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA"
+          IFS=$'\t' read -r ref_type tag_object <<EOF
+          $(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_PROOF_WORKFLOW_TAG" \
+            --jq '[.object.type, .object.sha] | @tsv')
+          EOF
+          test "$ref_type" = tag
+          [[ "$tag_object" =~ ^[0-9a-f]{40}$ ]]
+          IFS=$'\t' read -r target_type target_sha verified <<EOF
+          $(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" \
+            --jq '[.object.type, .object.sha, .verification.verified] | @tsv')
+          EOF
+          test "$target_type" = commit
+          test "$target_sha" = "$EXPECTED_SHA"
+          test "$verified" = true
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PKG_PROOF_PAIR_TAG" \
+            --jq '.draft')" = false
+
+  harness:
+    name: Build proof-only fault harness
+    needs: validate-dispatch
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout the proof harness
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: proof-source
+          persist-credentials: false
+
+      - name: Checkout the reviewed production source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.PKG_REVIEWED_COMMIT }}
+          path: reviewed-source
+          persist-credentials: false
+
+      - name: Build the proof-only test executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(git -C proof-source rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest proof-source/tests/macos-clean-host/test_workflow.py
+          python3 -m unittest proof-source/tests/macos-clean-host/test_repeat_workflow.py
+          python3 -m unittest proof-source/tools/release/test_serve_pair_loopback.py
+          bash -n proof-source/tests/macos-clean-host/prove.sh
+          cd reviewed-source
+          test "$(git rev-parse HEAD)" = "$PKG_REVIEWED_COMMIT"
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo test --locked --release -p pkg-installer --lib --no-run
+          test_bin=$(find target/release/deps -type f -perm -111 \
+            -name 'pkg_installer-*' ! -name '*.dSYM' -print | head -n 1)
+          test -n "$test_bin"
+          out="$RUNNER_TEMP/pkg-macos-proof-harness"
+          install -d -m 0700 "$out"
+          install -m 0755 "$test_bin" "$out/pkg-installer-tests"
+          install -m 0755 ../proof-source/tests/macos-clean-host/prove.sh "$out/prove.sh"
+          install -m 0755 ../proof-source/tools/release/serve_pair_loopback.py \
+            "$out/serve_pair_loopback.py"
+          install -m 0644 ../proof-source/tests/macos-clean-host/REPEAT.md "$out/README.md"
+          (
+            cd "$out"
+            printf '%s\n' ./README.md ./pkg-installer-tests ./prove.sh ./serve_pair_loopback.py | LC_ALL=C sort > INVENTORY
+            shasum -a 256 ./README.md ./pkg-installer-tests ./prove.sh ./serve_pair_loopback.py > SHA256SUMS
+          )
+
+      - name: Upload proof-only harness
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pkg-macos-proof-harness
+          path: ${{ runner.temp }}/pkg-macos-proof-harness
+          if-no-files-found: error
+          retention-days: 3
+
+  acquire-inputs:
+    name: Acquire and authenticate the sealed pair
+    needs: validate-dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PAIR_TAG: ${{ inputs.pair_tag }}
+      FROM_RELEASE: ${{ inputs.from_release }}
+      TO_RELEASE: ${{ inputs.to_release }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install the pinned Sigstore verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+
+      - name: Download and authenticate the sealed pair bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$FROM_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
+          [[ "$TO_RELEASE" =~ ^v0\.1\.0-alpha\.[1-9][0-9]*$ ]]
+          test "$FROM_RELEASE" = v0.1.0-alpha.26
+          test "$TO_RELEASE" = v0.1.0-alpha.27
+          test "$PAIR_TAG" = "$PKG_PROOF_PAIR_TAG"
+          from_sequence=${FROM_RELEASE##*.}
+          to_sequence=${TO_RELEASE##*.}
+          test "$from_sequence" -lt "$to_sequence"
+          root="$RUNNER_TEMP/pkg-dn1-acquisition"
+          install -d -m 0700 "$root/evidence"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PAIR_TAG" \
+            --jq '.draft')" = false
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PAIR_TAG" \
+            --jq '.assets[] | [.id, .name, (.size|tostring)] | @tsv' > "$root/assets.tsv"
+          tarball_id=""
+          tarball_size=""
+          while IFS=$'\t' read -r asset_id asset_name asset_size; do
+            if [ "$asset_name" = "$PKG_PROOF_PAIR_TARBALL" ]; then
+              test -z "$tarball_id"
+              tarball_id="$asset_id"
+              tarball_size="$asset_size"
+            fi
+          done < "$root/assets.tsv"
+          test -n "$tarball_id"
+          test "$tarball_size" = "$PKG_PROOF_PAIR_TARBALL_LENGTH"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$tarball_id" \
+            -H "Accept: application/octet-stream" > "$root/$PKG_PROOF_PAIR_TARBALL"
+          test ! -L "$root/$PKG_PROOF_PAIR_TARBALL"
+          test "$(stat -c '%s' "$root/$PKG_PROOF_PAIR_TARBALL")" \
+            = "$PKG_PROOF_PAIR_TARBALL_LENGTH"
+          test "$(sha256sum "$root/$PKG_PROOF_PAIR_TARBALL" | awk '{print $1}')" \
+            = "$PKG_PROOF_PAIR_TARBALL_SHA256"
+          python3 -I - "$root/$PKG_PROOF_PAIR_TARBALL" "$root/pair" <<'PY'
+          import os
+          import pathlib
+          import sys
+          import tarfile
+
+          source = pathlib.Path(sys.argv[1])
+          destination = pathlib.Path(sys.argv[2])
+          maximum_members = 4096
+          maximum_bytes = 2 * 1024 * 1024 * 1024
+          roots = {
+              "n", "n-plus-1", "n.inventory.json", "n-plus-1.inventory.json",
+              "proof-pair.json",
+          }
+          total = 0
+          extracted = 0
+          with tarfile.open(source, "r:gz") as archive:
+              destination.mkdir(mode=0o700)
+              for member in archive:
+                  name = member.name
+                  while name.startswith("./"):
+                      name = name[2:]
+                  if name != "." and name.endswith("/"):
+                      name = name.rstrip("/")
+                  parts = [part for part in name.split("/") if part]
+                  if (
+                      member.mode & 0o222
+                      or not parts
+                      or parts[0] not in roots
+                      or pathlib.PurePosixPath(name).is_absolute()
+                      or any(part in {"", ".", ".."} for part in parts)
+                  ):
+                      raise SystemExit(f"unsafe tar member: {member.name!r}")
+                  if member.isdir():
+                      continue
+                  if not member.isreg():
+                      raise SystemExit(f"non-regular tar member: {member.name!r}")
+                  if member.size > int(os.environ["PKG_PROOF_N_TOTAL_BYTES"]):
+                      raise SystemExit(f"oversized tar member: {member.name!r}")
+                  total = total + member.size
+                  if total > maximum_bytes or extracted >= maximum_members:
+                      raise SystemExit("tar members exceed the bounded extraction")
+                  target = destination.joinpath(*parts)
+                  if not target.resolve().is_relative_to(destination.resolve()):
+                      raise SystemExit(f"escaping tar member: {member.name!r}")
+                  target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                  descriptor = os.open(
+                      target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                  )
+                  with os.fdopen(descriptor, "wb") as stream:
+                      member_stream = archive.extractfile(member)
+                      if member_stream is None:
+                          raise SystemExit(f"unreadable tar member: {member.name!r}")
+                      while chunk := member_stream.read(1024 * 1024):
+                          stream.write(chunk)
+                  extracted = extracted + 1
+          present = {path.name for path in destination.iterdir()}
+          if present != roots:
+              raise SystemExit(f"pair bundle has unexpected top-level entries: {present!r}")
+          PY
+          python3 -I - "$root/pair" "$FROM_RELEASE" "$TO_RELEASE" \
+            "$PKG_REVIEWED_COMMIT" > "$root/channel-files.tsv" <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+          import sys
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          root = pathlib.Path(sys.argv[1])
+          releases = sys.argv[2:4]
+          reviewed_commit = sys.argv[4]
+          expected = {
+              "pair": (int(os.environ["PKG_PROOF_PAIR_LENGTH"]),
+                       os.environ["PKG_PROOF_PAIR_SHA256"]),
+              "n": (int(os.environ["PKG_PROOF_N_INVENTORY_LENGTH"]),
+                    os.environ["PKG_PROOF_N_INVENTORY_SHA256"]),
+              "n-plus-1": (int(os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH"]),
+                           os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_SHA256"]),
+          }
+          pair_length, pair_sha = expected["pair"]
+          raw = (root / "proof-pair.json").read_bytes()
+          require(len(raw) == pair_length
+                  and hashlib.sha256(raw).hexdigest() == pair_sha,
+                  "proof pair digest mismatch")
+          pair = json.loads(raw)
+          require(set(pair) == {"schemaVersion", "channels", "productCommit"},
+                  "invalid proof pair")
+          require(pair["schemaVersion"] == 1 and pair["productCommit"] == reviewed_commit,
+                  "proof pair product commit mismatch")
+          require(isinstance(pair["channels"], list) and len(pair["channels"]) == 2,
+                  "invalid proof pair channels")
+          rows = []
+          roots = set()
+          for record, name, sequence, release in zip(
+              pair["channels"], ("n", "n-plus-1"), (1, 2), releases
+          ):
+              keys = {
+                  "channelSequence", "inventory", "inventoryLength", "inventorySha256",
+                  "manifestSchemaVersion", "name", "releaseId", "requiredMetadataPaths",
+                  "requiredTargetPrefix", "timestampVersion", "trustedRootSha256",
+              }
+              required_metadata = [
+                  "metadata/1.root.json",
+                  f"metadata/{sequence}.targets.json",
+                  f"metadata/{sequence}.snapshot.json",
+                  "metadata/timestamp.json",
+              ]
+              require(isinstance(record, dict) and set(record) == keys,
+                      "invalid proof channel record")
+              require(record["name"] == name and record["releaseId"] == release,
+                      "proof channel release mismatch")
+              require(record["channelSequence"] == sequence
+                      and record["timestampVersion"] == sequence
+                      and record["manifestSchemaVersion"] == 2,
+                      "proof channel sequence mismatch")
+              require(record["inventory"] == f"{name}.inventory.json"
+                      and record["requiredMetadataPaths"] == required_metadata
+                      and record["requiredTargetPrefix"] == "targets/",
+                      "proof channel layout mismatch")
+              inventory_length, inventory_sha = expected[name]
+              require((record["inventoryLength"], record["inventorySha256"])
+                      == (inventory_length, inventory_sha),
+                      "proof inventory identity mismatch")
+              require(record["trustedRootSha256"]
+                      == os.environ["PKG_PROOF_TRUSTED_ROOT_SHA256"],
+                      "proof channels use an unexpected trusted root")
+              roots.add(record["trustedRootSha256"])
+              raw = (root / record["inventory"]).read_bytes()
+              require(len(raw) == record["inventoryLength"]
+                      and hashlib.sha256(raw).hexdigest() == record["inventorySha256"],
+                      "proof inventory digest mismatch")
+              inventory = json.loads(raw)
+              require(set(inventory) == {"schemaVersion", "files"}
+                      and inventory["schemaVersion"] == 1
+                      and isinstance(inventory["files"], list),
+                      "invalid proof inventory")
+              files = {}
+              for item in inventory["files"]:
+                  require(isinstance(item, dict)
+                          and set(item) == {"length", "path", "sha256"},
+                          "invalid proof inventory entry")
+                  path = item["path"]
+                  require(isinstance(path, str)
+                          and re.fullmatch(r"[A-Za-z0-9._/-]+", path) is not None
+                          and not path.startswith("/")
+                          and all(part not in {"", ".", ".."} for part in path.split("/"))
+                          and path not in files,
+                          "unsafe or duplicate proof path")
+                  require(isinstance(item["length"], int) and item["length"] >= 0
+                          and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None,
+                          "invalid proof file identity")
+                  files[path] = item
+              version = release[1:]
+              proof_inputs = {
+                  "proof-inputs/SHA256SUMS",
+                  "proof-inputs/SHA256SUMS.sigstore.json",
+                  "proof-inputs/release-manifest.json",
+                  "proof-inputs/COSIGN_IDENTITY.txt",
+                  "proof-inputs/COSIGN_ISSUER.txt",
+                  f"proof-inputs/pkg-{version}-preview.pkg",
+                  f"proof-inputs/pkg-{version}-preview.pkg.sigstore.json",
+                  "proof-inputs/pkg-aarch64-darwin",
+                  "proof-inputs/pkg-aarch64-darwin.sigstore.json",
+              }
+              fixed = {"root.json", "release-manifest.json", "signing-audit.ndjson",
+                       *required_metadata}
+              require(set(files) >= fixed | proof_inputs
+                      and all(path in fixed or path in proof_inputs
+                              or path.startswith("targets/") for path in files)
+                      and any(path.startswith("targets/") for path in files),
+                      "proof inventory has missing or extra entries")
+              require(list(files) == sorted(files), "proof inventory is not canonical")
+              require({path for path in files if path.startswith("proof-inputs/")}
+                      == proof_inputs, "proof inputs are missing or extra")
+              channel_root = root / name
+              actual = {
+                  path.relative_to(channel_root).as_posix()
+                  for path in channel_root.rglob("*") if path.is_file()
+              }
+              require(actual == set(files),
+                      "proof tree does not match its inventory")
+              expected_directories = {
+                  "/".join(path.split("/")[:-1])
+                  for path in files if "/" in path
+              }
+              actual_directories = {
+                  path.relative_to(channel_root).as_posix()
+                  for path in channel_root.rglob("*") if path.is_dir()
+              }
+              require(actual_directories == expected_directories,
+                      "proof tree has missing or extra directories")
+              for path in sorted(files):
+                  item = files[path]
+                  candidate = channel_root / path
+                  require(candidate.is_file() and not candidate.is_symlink(),
+                          "unsafe proof file")
+                  blob = candidate.read_bytes()
+                  require(len(blob) == item["length"]
+                          and hashlib.sha256(blob).hexdigest() == item["sha256"],
+                          "proof file does not match its inventory")
+                  rows.append((name, path, item["length"], item["sha256"]))
+              total = sum(item["length"] for item in files.values())
+              require(total == int(os.environ[f"PKG_PROOF_{name.upper().replace('-', '_')}_TOTAL_BYTES"]),
+                      "proof channel total bytes mismatch")
+              canonical = "".join(
+                  "\t".join(row[1:]) + "\n"
+                  for row in rows if row[0] == name
+              ).encode()
+              require(hashlib.sha256(canonical).hexdigest()
+                      == os.environ[f"PKG_PROOF_{name.upper().replace('-', '_')}_ROWS_SHA256"],
+                      "proof channel rows digest mismatch")
+          require(len(roots) == 1, "proof channels use different roots")
+          for row in rows:
+              print(*row, sep="\t")
+          PY
+          : > "$root/selected.tsv"
+          while IFS=$'\t' read -r name path length sha; do
+            candidate="$root/pair/$name/$path"
+            test -f "$candidate"
+            test "$(stat -c '%s' "$candidate")" -eq "$length"
+            case "$path" in
+              proof-inputs/pkg-*-preview.pkg|proof-inputs/pkg-aarch64-darwin|proof-inputs/release-manifest.json)
+                printf '%s\n' "$name\t$path\t$length\t$sha" >> "$root/selected.tsv"
+                ;;
+            esac
+          done < "$root/channel-files.tsv"
+          test "$(wc -l < "$root/selected.tsv")" -eq 6
+          identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
+          issuer=https://token.actions.githubusercontent.com
+          for selection in "n:$FROM_RELEASE" "n-plus-1:$TO_RELEASE"; do
+            channel_name=${selection%%:*}
+            tag=${selection#*:}
+            version=${tag#v}
+            dir="$root/pair/$channel_name/proof-inputs"
+            test "$(cat "$dir/COSIGN_IDENTITY.txt")" = "$identity"
+            test "$(cat "$dir/COSIGN_ISSUER.txt")" = "$issuer"
+            cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json" \
+              --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              "$dir/SHA256SUMS" >/dev/null
+            awk '$2 == "SHA256SUMS" || $2 == "SHA256SUMS.sigstore.json" { found=1 } \
+              END { exit found ? 1 : 0 }' "$dir/SHA256SUMS"
+            : > "$root/evidence/$channel_name-selected.txt"
+            while IFS=$'\t' read -r row_name row_path row_length row_sha; do
+              if [ "$row_name" = "$channel_name" ]; then
+                printf '%s  %s\n' "$row_sha" "${row_path#proof-inputs/}" \
+                  >> "$root/evidence/$channel_name-selected.txt"
+              fi
+            done < "$root/selected.tsv"
+            test "$(wc -l < "$root/evidence/$channel_name-selected.txt")" -eq 3
+            (cd "$dir" && sha256sum --check --strict \
+              "$root/evidence/$channel_name-selected.txt")
+            python3 -I - "$dir/release-manifest.json" "$tag" "$channel_name" \
+              "$root/pair/proof-pair.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
+          pair = json.loads(pathlib.Path(sys.argv[4]).read_bytes())
+          record = next(item for item in pair["channels"] if item["name"] == sys.argv[3])
+          if (
+              manifest.get("releaseId") != sys.argv[2]
+              or manifest.get("trustedRootSha256") != record["trustedRootSha256"]
+          ):
+              raise SystemExit("release manifest does not match the sealed channel")
+          PY
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
+              cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
+                --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+                "$dir/$asset" >/dev/null
+            done
+          done
+          printf '%s\n' \
+            'schema=PKG-DN1-HOSTED-ACQUISITION-V1' \
+            "run_id=$GITHUB_RUN_ID" \
+            "run_attempt=$GITHUB_RUN_ATTEMPT" \
+            "workflow_sha=$GITHUB_WORKFLOW_SHA" \
+            "pair_tag=$PAIR_TAG" \
+            "pair_tarball_length=$PKG_PROOF_PAIR_TARBALL_LENGTH" \
+            "pair_tarball_sha256=$PKG_PROOF_PAIR_TARBALL_SHA256" \
+            "proof_pair_sha256=$PKG_PROOF_PAIR_SHA256" \
+            "n_inventory_length=$PKG_PROOF_N_INVENTORY_LENGTH" \
+            "n_inventory_sha256=$PKG_PROOF_N_INVENTORY_SHA256" \
+            "n_plus_1_inventory_length=$PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH" \
+            "n_plus_1_inventory_sha256=$PKG_PROOF_N_PLUS_1_INVENTORY_SHA256" \
+            "n_total_bytes=$PKG_PROOF_N_TOTAL_BYTES" \
+            "n_rows_sha256=$PKG_PROOF_N_ROWS_SHA256" \
+            "n_plus_1_total_bytes=$PKG_PROOF_N_PLUS_1_TOTAL_BYTES" \
+            "n_plus_1_rows_sha256=$PKG_PROOF_N_PLUS_1_ROWS_SHA256" \
+            "trusted_root_sha256=$PKG_PROOF_TRUSTED_ROOT_SHA256" \
+            "product_commit=$PKG_REVIEWED_COMMIT" \
+            "from_release=$FROM_RELEASE" \
+            "to_release=$TO_RELEASE" \
+            "verified_files=$(wc -l < "$root/channel-files.tsv" | tr -d ' ')" \
+            'status=complete' \
+            > "$root/evidence/hosted-acquisition.txt"
+          test "$(wc -l < "$root/evidence/hosted-acquisition.txt")" -eq 22
+
+      - name: Upload bounded hosted acquisition receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pkg-dn1-hosted-acquisition-receipt
+          path: ${{ runner.temp }}/pkg-dn1-acquisition/evidence/hosted-acquisition.txt
+          if-no-files-found: error
+          retention-days: 3
+
+  prepare-slot-1:
+    name: Prepare slot 1 through offline N+1
+    needs: [validate-dispatch, harness, acquire-inputs]
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-1"]
+    timeout-minutes: 360
+    env:
+      PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-1
+      PKG_PROOF_LIFECYCLE_RUN: "1"
+      PKG_PROOF_PHASE: prepare
+    steps: &proof-phase-steps
+      - name: Initialize bounded phase evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/pkg-macos-proof/evidence"
+          printf '%s\n' \
+            "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+            "phase=$PKG_PROOF_PHASE" \
+            'status=preflight-incomplete' \
+            > "$RUNNER_TEMP/pkg-macos-proof/evidence/result.txt"
+
+      - name: Refuse an unsafe host before input download or mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          root_capacity=$(LC_ALL=C /bin/df -Pk /)
+          python3 -I - 75161927680 "$root_capacity" <<'PY'
+          import re
+          import sys
+
+          minimum = int(sys.argv[1])
+          lines = sys.argv[2].splitlines()
+          if len(lines) != 2 or lines[0].split() != [
+              "Filesystem", "1024-blocks", "Used", "Available", "Capacity",
+              "Mounted", "on",
+          ]:
+              raise SystemExit("invalid root capacity report")
+          fields = lines[1].split()
+          if (len(fields) != 6 or fields[5] != "/"
+                  or any(re.fullmatch(r"[0-9]+", value) is None
+                         for value in fields[1:4])
+                  or re.fullmatch(r"[0-9]+%", fields[4]) is None):
+              raise SystemExit("invalid root capacity row")
+          blocks_kib, used_kib, available_kib = map(int, fields[1:4])
+          if max(blocks_kib, used_kib, available_kib) > (2**63 - 1) // 1024:
+              raise SystemExit("root capacity overflows bytes")
+          if available_kib * 1024 < minimum:
+              raise SystemExit("root has less than 75161927680 bytes free")
+          PY
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$PKG_PROOF_CONFIRMATION" = DESTROY-PKG-DISPOSABLE-MACOS
+          test "$PKG_PROOF_PRODUCTION" = false
+          test "${RUNNER_ENVIRONMENT:-}" = self-hosted
+          test "$RUNNER_NAME" = "$PKG_PROOF_EXPECTED_RUNNER"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(sysctl -n kern.hv_vmm_present)" = 1
+          case "$(sysctl -n hw.model)" in VirtualMac*) ;; *) exit 1 ;; esac
+          /usr/bin/sudo -n /usr/bin/true
+          preflight_time=$(date +%s)
+          disposable=/var/tmp/pkg-disposable-macos-proof
+          /usr/bin/sudo -n /bin/test -f "$disposable"
+          /usr/bin/sudo -n /bin/test ! -L "$disposable"
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$disposable")" = \
+            root:wheel:600
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$disposable")" -le 128
+          test "$(/usr/bin/sudo -n /bin/cat "$disposable")" = \
+            "PKG-DN16-DISPOSABLE-V1:${GITHUB_RUN_ID}:$PKG_PROOF_LIFECYCLE_RUN"
+          run_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 "$disposable" \
+            | /usr/bin/awk '{print $1}')
+          marker_age=$(( preflight_time - \
+            $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$disposable") ))
+          test "$marker_age" -ge 0
+          test "$marker_age" -le 300
+          instance_marker=/var/tmp/pkg-disposable-macos-instance
+          /usr/bin/sudo -n /bin/test -f "$instance_marker"
+          /usr/bin/sudo -n /bin/test ! -L "$instance_marker"
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$instance_marker")" = \
+            root:wheel:600
+          test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$instance_marker")" -le 128
+          instance_record=$(/usr/bin/sudo -n /bin/cat "$instance_marker")
+          [[ "$instance_record" =~ ^PKG-DN16-INSTANCE-V1:([0-9a-f]{64})$ ]]
+          instance_nonce=${BASH_REMATCH[1]}
+          instance_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 \
+            "$instance_marker" | /usr/bin/awk '{print $1}')
+          current_boot=$(sysctl -n kern.bootsessionuuid)
+          [[ "$current_boot" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
+          reboot_marker_sha256=none
+          if test "$PKG_PROOF_PHASE" = prepare; then
+            instance_age=$(( preflight_time - \
+              $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$instance_marker") ))
+            test "$instance_age" -ge 0
+            test "$instance_age" -le 300
+            reboot_marker=/var/tmp/pkg-disposable-macos-reboot-v2
+            /usr/bin/sudo -n /bin/test -f "$reboot_marker"
+            /usr/bin/sudo -n /bin/test ! -L "$reboot_marker"
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' \
+              "$reboot_marker")" = root:wheel:600
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$reboot_marker")" -le 256
+            test "$(/usr/bin/sudo -n /bin/cat "$reboot_marker" \
+              | /usr/bin/wc -l | /usr/bin/tr -d ' ')" -eq 1
+            test "$(/usr/bin/sudo -n /usr/bin/tail -c 1 "$reboot_marker" \
+              | /usr/bin/od -An -tuC | /usr/bin/tr -d ' ')" = 10
+            reboot_record=$(/usr/bin/sudo -n /bin/cat "$reboot_marker")
+            IFS=: read -r reboot_kind reboot_run reboot_slot reboot_runner reboot_nonce \
+              old_boot reboot_time reboot_extra <<<"$reboot_record"
+            test "$reboot_kind" = PKG-DN16-REBOOT-V2
+            test "$reboot_run" = "$GITHUB_RUN_ID"
+            test "$reboot_slot" = "$PKG_PROOF_LIFECYCLE_RUN"
+            test "$reboot_runner" = "$RUNNER_NAME"
+            test "$reboot_nonce" = "$instance_nonce"
+            test -z "$reboot_extra"
+            [[ "$old_boot" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]
+            [[ "$reboot_time" =~ ^[0-9]+$ ]]
+            test "$old_boot" != "$current_boot"
+            reboot_age=$(( preflight_time - reboot_time ))
+            reboot_marker_age=$(( preflight_time - \
+              $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$reboot_marker") ))
+            test "$reboot_age" -ge 0
+            test "$reboot_age" -le 300
+            test "$reboot_marker_age" -ge 0
+            test "$reboot_marker_age" -le 300
+            reboot_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 \
+              "$reboot_marker" | /usr/bin/awk '{print $1}')
+            for path in /nix /etc/nix /opt/pkg /private/var/db/pkg-install \
+              /private/var/db/pkg-install-journal /private/var/db/pkg-install-auth \
+              /Library/LaunchDaemons/org.pkg.root-helper.plist \
+              /Library/LaunchDaemons/org.pkg.nix-broker.plist \
+              /Library/LaunchDaemons/org.nixos.nix-daemon.plist \
+              /Library/LaunchDaemons/systems.determinate.nix-daemon.plist; do
+              test ! -e "$path" && test ! -L "$path"
+            done
+            for command in nix nix-daemon nix-store nix-env nix-build; do
+              ! command -v "$command" >/dev/null 2>&1
+            done
+            for service in org.pkg.root-helper org.pkg.nix-broker \
+              org.nixos.nix-daemon systems.determinate.nix-daemon; do
+              ! launchctl print "system/$service" >/dev/null 2>&1
+            done
+          else
+            continuation=/private/var/db/pkg-dn16-proof-continuation-v1
+            /usr/bin/sudo -n /bin/test -f "$continuation"
+            /usr/bin/sudo -n /bin/test ! -L "$continuation"
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%Su:%Sg:%Lp' "$continuation")" = \
+              root:wheel:600
+            test "$(/usr/bin/sudo -n /usr/bin/stat -f '%z' "$continuation")" -le 4096
+          fi
+          umask 077
+          printf '%s\n' \
+            "run_id=$GITHUB_RUN_ID" \
+            "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+            "phase=$PKG_PROOF_PHASE" \
+            "runner_name=$RUNNER_NAME" \
+            "instance_nonce=$instance_nonce" \
+            "boot_uuid=$current_boot" \
+            "run_marker_sha256=$run_marker_sha256" \
+            "instance_marker_sha256=$instance_marker_sha256" \
+            "reboot_marker_sha256=$reboot_marker_sha256" \
+            "status=preflight-passed" \
+            > "$RUNNER_TEMP/pkg-macos-proof/evidence/preflight.txt"
+
+      - name: Download proof-only harness
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pkg-macos-proof-harness
+          path: ${{ runner.temp }}/pkg-macos-proof/harness
+
+      - name: Verify the harness inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/pkg-macos-proof/harness"
+          printf '%s\n' ./README.md ./pkg-installer-tests ./prove.sh ./serve_pair_loopback.py | LC_ALL=C sort > EXPECTED
+          cmp EXPECTED INVENTORY
+          awk '{print $2}' SHA256SUMS | LC_ALL=C sort > CHECKSUM_PATHS
+          cmp EXPECTED CHECKSUM_PATHS
+          shasum -a 256 --check SHA256SUMS
+          chmod 0755 ./prove.sh ./pkg-installer-tests ./serve_pair_loopback.py
+          chmod 0644 ./README.md ./INVENTORY ./SHA256SUMS ./EXPECTED ./CHECKSUM_PATHS
+
+      - name: Verify the provisioned Sigstore verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign=/usr/local/bin/cosign
+          test -f "$cosign"
+          test ! -L "$cosign"
+          test -x "$cosign"
+          test "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$cosign")" = root:wheel:755
+          test "$(/usr/bin/shasum -a 256 "$cosign" | /usr/bin/awk '{print $1}')" = \
+            77bbab240111761d50044f37541da0734d964dfe5f092cab6d584663c912372e
+          version=$("$cosign" version)
+          test "$(printf '%s\n' "$version" \
+            | /usr/bin/awk '$1 == "GitVersion:" { count++; value=$2 } \
+              END { if (count == 1) print value }')" = v3.1.3
+
+      - name: Acquire the sealed pair from the proof-pair tag
+        shell: bash
+        env:
+          PAIR_TAG: ${{ inputs.pair_tag }}
+          FROM_RELEASE: ${{ inputs.from_release }}
+          TO_RELEASE: ${{ inputs.to_release }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$RUNNER_TEMP/pkg-macos-proof"
+          test "$PAIR_TAG" = "$PKG_PROOF_PAIR_TAG"
+          test "$FROM_RELEASE" = v0.1.0-alpha.26
+          test "$TO_RELEASE" = v0.1.0-alpha.27
+          staging="$root/channel-staging"
+          test ! -e "$staging"
+          install -d -m 0700 "$staging" "$root/evidence"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PAIR_TAG" \
+            --jq '.draft')" = false
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PAIR_TAG" \
+            --jq '.assets[] | [.id, .name, (.size|tostring)] | @tsv' > "$root/assets.tsv"
+          tarball_id=""
+          tarball_size=""
+          while IFS=$'\t' read -r asset_id asset_name asset_size; do
+            if [ "$asset_name" = "$PKG_PROOF_PAIR_TARBALL" ]; then
+              test -z "$tarball_id"
+              tarball_id="$asset_id"
+              tarball_size="$asset_size"
+            fi
+          done < "$root/assets.tsv"
+          test -n "$tarball_id"
+          test "$tarball_size" = "$PKG_PROOF_PAIR_TARBALL_LENGTH"
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$tarball_id" \
+            -H "Accept: application/octet-stream" > "$root/$PKG_PROOF_PAIR_TARBALL"
+          test ! -L "$root/$PKG_PROOF_PAIR_TARBALL"
+          test "$(stat -f '%z' "$root/$PKG_PROOF_PAIR_TARBALL")" \
+            = "$PKG_PROOF_PAIR_TARBALL_LENGTH"
+          test "$(shasum -a 256 "$root/$PKG_PROOF_PAIR_TARBALL" | awk '{print $1}')" \
+            = "$PKG_PROOF_PAIR_TARBALL_SHA256"
+          python3 -I - "$root/$PKG_PROOF_PAIR_TARBALL" "$staging" <<'PY'
+          import os
+          import pathlib
+          import sys
+          import tarfile
+
+          source = pathlib.Path(sys.argv[1])
+          destination = pathlib.Path(sys.argv[2])
+          maximum_members = 4096
+          maximum_bytes = 2 * 1024 * 1024 * 1024
+          roots = {
+              "n", "n-plus-1", "n.inventory.json", "n-plus-1.inventory.json",
+              "proof-pair.json",
+          }
+          total = 0
+          extracted = 0
+          with tarfile.open(source, "r:gz") as archive:
+              destination.mkdir(mode=0o700)
+              for member in archive:
+                  name = member.name
+                  while name.startswith("./"):
+                      name = name[2:]
+                  if name != "." and name.endswith("/"):
+                      name = name.rstrip("/")
+                  parts = [part for part in name.split("/") if part]
+                  if (
+                      member.mode & 0o222
+                      or not parts
+                      or parts[0] not in roots
+                      or pathlib.PurePosixPath(name).is_absolute()
+                      or any(part in {"", ".", ".."} for part in parts)
+                  ):
+                      raise SystemExit(f"unsafe tar member: {member.name!r}")
+                  if member.isdir():
+                      continue
+                  if not member.isreg():
+                      raise SystemExit(f"non-regular tar member: {member.name!r}")
+                  if member.size > int(os.environ["PKG_PROOF_N_TOTAL_BYTES"]):
+                      raise SystemExit(f"oversized tar member: {member.name!r}")
+                  total = total + member.size
+                  if total > maximum_bytes or extracted >= maximum_members:
+                      raise SystemExit("tar members exceed the bounded extraction")
+                  target = destination.joinpath(*parts)
+                  if not target.resolve().is_relative_to(destination.resolve()):
+                      raise SystemExit(f"escaping tar member: {member.name!r}")
+                  target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                  descriptor = os.open(
+                      target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+                  )
+                  with os.fdopen(descriptor, "wb") as stream:
+                      member_stream = archive.extractfile(member)
+                      if member_stream is None:
+                          raise SystemExit(f"unreadable tar member: {member.name!r}")
+                      while chunk := member_stream.read(1024 * 1024):
+                          stream.write(chunk)
+                  extracted = extracted + 1
+          present = {path.name for path in destination.iterdir()}
+          if present != roots:
+              raise SystemExit(f"pair bundle has unexpected top-level entries: {present!r}")
+          PY
+          python3 -I - "$staging" "$FROM_RELEASE" "$TO_RELEASE" \
+            "$PKG_REVIEWED_COMMIT" > "$root/channel-files.tsv" <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+          import sys
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          root = pathlib.Path(sys.argv[1])
+          releases = sys.argv[2:4]
+          reviewed_commit = sys.argv[4]
+          expected = {
+              "pair": (int(os.environ["PKG_PROOF_PAIR_LENGTH"]),
+                       os.environ["PKG_PROOF_PAIR_SHA256"]),
+              "n": (int(os.environ["PKG_PROOF_N_INVENTORY_LENGTH"]),
+                    os.environ["PKG_PROOF_N_INVENTORY_SHA256"]),
+              "n-plus-1": (int(os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH"]),
+                           os.environ["PKG_PROOF_N_PLUS_1_INVENTORY_SHA256"]),
+          }
+          pair_length, pair_sha = expected["pair"]
+          raw = (root / "proof-pair.json").read_bytes()
+          require(len(raw) == pair_length
+                  and hashlib.sha256(raw).hexdigest() == pair_sha,
+                  "proof pair digest mismatch")
+          pair = json.loads(raw)
+          require(set(pair) == {"schemaVersion", "channels", "productCommit"},
+                  "invalid proof pair")
+          require(pair["schemaVersion"] == 1 and pair["productCommit"] == reviewed_commit,
+                  "proof pair product commit mismatch")
+          require(isinstance(pair["channels"], list) and len(pair["channels"]) == 2,
+                  "invalid proof pair channels")
+          rows = []
+          roots = set()
+          for record, name, sequence, release in zip(
+              pair["channels"], ("n", "n-plus-1"), (1, 2), releases
+          ):
+              keys = {
+                  "channelSequence", "inventory", "inventoryLength", "inventorySha256",
+                  "manifestSchemaVersion", "name", "releaseId", "requiredMetadataPaths",
+                  "requiredTargetPrefix", "timestampVersion", "trustedRootSha256",
+              }
+              required_metadata = [
+                  "metadata/1.root.json",
+                  f"metadata/{sequence}.targets.json",
+                  f"metadata/{sequence}.snapshot.json",
+                  "metadata/timestamp.json",
+              ]
+              require(isinstance(record, dict) and set(record) == keys,
+                      "invalid proof channel record")
+              require(record["name"] == name and record["releaseId"] == release,
+                      "proof channel release mismatch")
+              require(record["channelSequence"] == sequence
+                      and record["timestampVersion"] == sequence
+                      and record["manifestSchemaVersion"] == 2,
+                      "proof channel sequence mismatch")
+              require(record["inventory"] == f"{name}.inventory.json"
+                      and record["requiredMetadataPaths"] == required_metadata
+                      and record["requiredTargetPrefix"] == "targets/",
+                      "proof channel layout mismatch")
+              inventory_length, inventory_sha = expected[name]
+              require((record["inventoryLength"], record["inventorySha256"])
+                      == (inventory_length, inventory_sha),
+                      "proof inventory identity mismatch")
+              require(record["trustedRootSha256"]
+                      == os.environ["PKG_PROOF_TRUSTED_ROOT_SHA256"],
+                      "proof channels use an unexpected trusted root")
+              roots.add(record["trustedRootSha256"])
+              raw = (root / record["inventory"]).read_bytes()
+              require(len(raw) == record["inventoryLength"]
+                      and hashlib.sha256(raw).hexdigest() == record["inventorySha256"],
+                      "proof inventory digest mismatch")
+              inventory = json.loads(raw)
+              require(set(inventory) == {"schemaVersion", "files"}
+                      and inventory["schemaVersion"] == 1
+                      and isinstance(inventory["files"], list),
+                      "invalid proof inventory")
+              files = {}
+              for item in inventory["files"]:
+                  require(isinstance(item, dict)
+                          and set(item) == {"length", "path", "sha256"},
+                          "invalid proof inventory entry")
+                  path = item["path"]
+                  require(isinstance(path, str)
+                          and re.fullmatch(r"[A-Za-z0-9._/-]+", path) is not None
+                          and not path.startswith("/")
+                          and all(part not in {"", ".", ".."} for part in path.split("/"))
+                          and path not in files,
+                          "unsafe or duplicate proof path")
+                  require(isinstance(item["length"], int) and item["length"] >= 0
+                          and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None,
+                          "invalid proof file identity")
+                  files[path] = item
+              version = release[1:]
+              proof_inputs = {
+                  "proof-inputs/SHA256SUMS",
+                  "proof-inputs/SHA256SUMS.sigstore.json",
+                  "proof-inputs/release-manifest.json",
+                  "proof-inputs/COSIGN_IDENTITY.txt",
+                  "proof-inputs/COSIGN_ISSUER.txt",
+                  f"proof-inputs/pkg-{version}-preview.pkg",
+                  f"proof-inputs/pkg-{version}-preview.pkg.sigstore.json",
+                  "proof-inputs/pkg-aarch64-darwin",
+                  "proof-inputs/pkg-aarch64-darwin.sigstore.json",
+              }
+              fixed = {"root.json", "release-manifest.json", "signing-audit.ndjson",
+                       *required_metadata}
+              require(set(files) >= fixed | proof_inputs
+                      and all(path in fixed or path in proof_inputs
+                              or path.startswith("targets/") for path in files)
+                      and any(path.startswith("targets/") for path in files),
+                      "proof inventory has missing or extra entries")
+              require(list(files) == sorted(files), "proof inventory is not canonical")
+              require({path for path in files if path.startswith("proof-inputs/")}
+                      == proof_inputs, "proof inputs are missing or extra")
+              channel_root = root / name
+              actual = {
+                  path.relative_to(channel_root).as_posix()
+                  for path in channel_root.rglob("*") if path.is_file()
+              }
+              require(actual == set(files),
+                      "proof tree does not match its inventory")
+              expected_directories = {
+                  "/".join(path.split("/")[:-1])
+                  for path in files if "/" in path
+              }
+              actual_directories = {
+                  path.relative_to(channel_root).as_posix()
+                  for path in channel_root.rglob("*") if path.is_dir()
+              }
+              require(actual_directories == expected_directories,
+                      "proof tree has missing or extra directories")
+              for path in sorted(files):
+                  item = files[path]
+                  candidate = channel_root / path
+                  require(candidate.is_file() and not candidate.is_symlink(),
+                          "unsafe proof file")
+                  blob = candidate.read_bytes()
+                  require(len(blob) == item["length"]
+                          and hashlib.sha256(blob).hexdigest() == item["sha256"],
+                          "proof file does not match its inventory")
+                  rows.append((name, path, item["length"], item["sha256"]))
+              total = sum(item["length"] for item in files.values())
+              require(total == int(os.environ[f"PKG_PROOF_{name.upper().replace('-', '_')}_TOTAL_BYTES"]),
+                      "proof channel total bytes mismatch")
+              canonical = "".join(
+                  "\t".join(row[1:]) + "\n"
+                  for row in rows if row[0] == name
+              ).encode()
+              require(hashlib.sha256(canonical).hexdigest()
+                      == os.environ[f"PKG_PROOF_{name.upper().replace('-', '_')}_ROWS_SHA256"],
+                      "proof channel rows digest mismatch")
+          require(len(roots) == 1, "proof channels use different roots")
+          for row in rows:
+              print(*row, sep="\t")
+          PY
+          identity="https://github.com/spa5k/pkg/.github/workflows/publish-release.yml@refs/tags/dn16-proof-workflow-1"
+          issuer=https://token.actions.githubusercontent.com
+          for selection in "n:$FROM_RELEASE" "n-plus-1:$TO_RELEASE"; do
+            channel_name=${selection%%:*}
+            tag=${selection#*:}
+            version=${tag#v}
+            dir="$staging/$channel_name/proof-inputs"
+            test "$(cat "$dir/COSIGN_IDENTITY.txt")" = "$identity"
+            test "$(cat "$dir/COSIGN_ISSUER.txt")" = "$issuer"
+            /usr/local/bin/cosign verify-blob --bundle "$dir/SHA256SUMS.sigstore.json" \
+              --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+              "$dir/SHA256SUMS" >/dev/null
+            awk '$2 == "SHA256SUMS" || $2 == "SHA256SUMS.sigstore.json" { found=1 } \
+              END { exit found ? 1 : 0 }' "$dir/SHA256SUMS"
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin \
+              release-manifest.json; do
+              awk -v a="$asset" '$2 == a { n++; print } END { exit n != 1 }' \
+                "$dir/SHA256SUMS" >> "$root/evidence/$channel_name-selected-sha256.txt"
+            done
+            (cd "$dir" && shasum -a 256 --check "$root/evidence/$channel_name-selected-sha256.txt")
+            python3 -I - "$dir/release-manifest.json" "$tag" "$channel_name" \
+              "$staging/proof-pair.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
+          pair = json.loads(pathlib.Path(sys.argv[4]).read_bytes())
+          record = next(item for item in pair["channels"] if item["name"] == sys.argv[3])
+          if (
+              manifest.get("releaseId") != sys.argv[2]
+              or manifest.get("trustedRootSha256") != record["trustedRootSha256"]
+          ):
+              raise SystemExit("release manifest does not match the sealed channel")
+          PY
+            for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
+              /usr/local/bin/cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
+                --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+                "$dir/$asset" >/dev/null
+            done
+          done
+          printf '%s\n' \
+            'schema=PKG-DN1-VM-ACQUISITION-V1' \
+            "run_id=$GITHUB_RUN_ID" \
+            "run_attempt=$GITHUB_RUN_ATTEMPT" \
+            "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+            "phase=$PKG_PROOF_PHASE" \
+            "runner_name=$RUNNER_NAME" \
+            "proof_pair_sha256=$PKG_PROOF_PAIR_SHA256" \
+            "pair_tag=$PAIR_TAG" \
+            "tarball_bytes=$PKG_PROOF_PAIR_TARBALL_LENGTH" \
+            "channel_url=$PKG_PROOF_CHANNEL_URL" \
+            'status=complete' \
+            > "$root/evidence/vm-acquisition.txt"
+
+      - name: Publish the loopback channel inside the VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$RUNNER_TEMP/pkg-macos-proof"
+          state="$root/loopback-state"
+          test ! -e "$state"
+          bootstrap_output=$(
+            "$root/harness/serve_pair_loopback.py" bootstrap \
+              "$root/channel-staging" "$root/channel" "$state" \
+              "$PKG_PROOF_LOOPBACK_PORT"
+          )
+          test "$(printf '%s\n' "$bootstrap_output" | /usr/bin/grep -c '^url=')" -eq 1
+          test "$(printf '%s\n' "$bootstrap_output" | /usr/bin/grep -c '^verified_files=')" -eq 1
+          test "$(printf '%s\n' "$bootstrap_output" | /usr/bin/grep -c '^verified_bytes=')" -eq 1
+          if /usr/bin/curl --silent --show-error --max-time 5 \
+            "http://127.0.0.1:$PKG_PROOF_LOOPBACK_PORT/proof-pair.json" \
+            >/dev/null 2>&1; then
+            echo "the loopback endpoint answered plaintext HTTP" >&2
+            exit 1
+          fi
+          /usr/bin/curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            --max-time 15 --cacert "$state/ca.pem" \
+            "$PKG_PROOF_CHANNEL_URL/proof-pair.json" > /dev/null
+          {
+            printf '%s\n' 'schema=PKG-DN1-LOOPBACK-V1' \
+              "run_id=$GITHUB_RUN_ID" \
+              "run_attempt=$GITHUB_RUN_ATTEMPT" \
+              "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+              "phase=$PKG_PROOF_PHASE" \
+              "runner_name=$RUNNER_NAME"
+            printf '%s\n' "$bootstrap_output"
+            printf '%s\n' \
+              "channel_url=$PKG_PROOF_CHANNEL_URL" \
+              'status=serving-tls-only'
+          } > "$root/evidence/in-vm-channel.txt"
+
+      - name: Trust the disposable loopback CA
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          root="$RUNNER_TEMP/pkg-macos-proof"
+          ca="$root/loopback-state/ca.pem"
+          server="$root/loopback-state/server.pem"
+          test -f "$ca" && test ! -L "$ca"
+          test -f "$server" && test ! -L "$server"
+          /usr/bin/sudo -n /usr/bin/security add-trusted-cert -d -r trustRoot \
+            -k /Library/Keychains/System.keychain "$ca"
+          /usr/bin/security verify-cert -c "$server" >/dev/null
+          /usr/bin/sudo -n /usr/bin/security find-certificate \
+            -c pkg-dn1-loopback-ca /Library/Keychains/System.keychain >/dev/null
+          printf '%s\n' \
+            'schema=PKG-DN1-LOOPBACK-TRUST-V1' \
+            "run_id=$GITHUB_RUN_ID" \
+            "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
+            "phase=$PKG_PROOF_PHASE" \
+            'status=trusted' \
+            > "$root/evidence/loopback-trust.txt"
+
+      - name: Run the selected proof phase
+        shell: bash
+        env:
+          PKG_PROOF_FROM_RELEASE: ${{ inputs.from_release }}
+          PKG_PROOF_TO_RELEASE: ${{ inputs.to_release }}
+          PKG_PROOF_PAIR_TAG: ${{ inputs.pair_tag }}
+          PKG_PROOF_ROOT: ${{ runner.temp }}/pkg-macos-proof
+          PKG_PROOF_REBOOT_MARKER: /var/tmp/pkg-disposable-macos-reboot-v2
+        run: ${{ runner.temp }}/pkg-macos-proof/harness/prove.sh
+
+      - name: Retire the loopback channel and CA trust
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pkg-macos-proof"
+          state="$root/loopback-state"
+          ca="$state/ca.pem"
+          server="$state/server.pem"
+          if [ -f "$ca" ] && [ ! -L "$ca" ]; then
+            /usr/bin/sudo -n /usr/bin/security remove-trusted-cert -d "$ca"
+          fi
+          /usr/bin/sudo -n /usr/bin/security delete-certificate \
+            -c pkg-dn1-loopback-ca /Library/Keychains/System.keychain >/dev/null 2>&1 || true
+          if [ -f "$state/state.json" ] && [ ! -L "$state/state.json" ]; then
+            "$root/harness/serve_pair_loopback.py" stop "$state"
+          fi
+          if [ -d "$root/channel-staging" ]; then
+            /usr/bin/chmod -R u+rwx "$root/channel-staging"
+            /bin/rm -rf "$root/channel-staging"
+          fi
+          test ! -e "$root/channel"
+          if [ -f "$server" ] && [ ! -L "$server" ]; then
+            if /usr/bin/security verify-cert -c "$server" >/dev/null 2>&1; then
+              echo "the loopback CA is still trusted after teardown" >&2
+              exit 1
+            fi
+            /bin/rm -rf "$state"
+          fi
+          test ! -e "$state"
+          if /usr/bin/sudo -n /usr/bin/security find-certificate \
+            -c pkg-dn1-loopback-ca /Library/Keychains/System.keychain >/dev/null 2>&1; then
+            echo "the loopback CA certificate is still in the System keychain" >&2
+            exit 1
+          fi
+          if /usr/bin/nc -z 127.0.0.1 "$PKG_PROOF_LOOPBACK_PORT" >/dev/null 2>&1; then
+            echo "the loopback port is still accepting connections" >&2
+            exit 1
+          fi
+
+      - name: Upload bounded phase evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pkg-macos-lifecycle-evidence-${{ env.PKG_PROOF_LIFECYCLE_RUN }}-${{ env.PKG_PROOF_PHASE }}
+          path: ${{ runner.temp }}/pkg-macos-proof/evidence
+          if-no-files-found: error
+          retention-days: 3
+
+  resume-slot-1:
+    name: Resume slot 1 after operator reboot
+    needs: prepare-slot-1
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-1"]
+    timeout-minutes: 360
+    env:
+      PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-1
+      PKG_PROOF_LIFECYCLE_RUN: "1"
+      PKG_PROOF_PHASE: resume
+    steps: *proof-phase-steps
+
+  prepare-slot-2:
+    name: Prepare slot 2 after slot 1 completes
+    needs: [resume-slot-1, harness, acquire-inputs]
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-2"]
+    timeout-minutes: 360
+    env:
+      PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-2
+      PKG_PROOF_LIFECYCLE_RUN: "2"
+      PKG_PROOF_PHASE: prepare
+    steps: *proof-phase-steps
+
+  resume-slot-2:
+    name: Resume slot 2 after operator reboot
+    needs: prepare-slot-2
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    runs-on: [self-hosted, macOS, ARM64, "pkg-disposable-macos-proof-2"]
+    timeout-minutes: 360
+    env:
+      PKG_PROOF_EXPECTED_RUNNER: pkg-dn16-proof-runner-2
+      PKG_PROOF_LIFECYCLE_RUN: "2"
+      PKG_PROOF_PHASE: resume
+    steps: *proof-phase-steps
+
+  aggregate:
+    name: Verify two complete repeat-proof slots
+    needs: [prepare-slot-1, resume-slot-1, prepare-slot-2, resume-slot-2]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download bounded hosted acquisition receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: pkg-dn1-hosted-acquisition-receipt
+          path: ${{ runner.temp }}/pkg-dn1-hosted-acquisition
+
+      - name: Download all bounded evidence artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: pkg-macos-lifecycle-evidence-*
+          path: ${{ runner.temp }}/pkg-macos-proof-results
+
+      - name: Verify digest-level evidence from four complete phases
+        shell: bash
+        env:
+          PREPARE_1_RESULT: ${{ needs.prepare-slot-1.result }}
+          RESUME_1_RESULT: ${{ needs.resume-slot-1.result }}
+          PREPARE_2_RESULT: ${{ needs.prepare-slot-2.result }}
+          RESUME_2_RESULT: ${{ needs.resume-slot-2.result }}
+          FROM_RELEASE: ${{ inputs.from_release }}
+          TO_RELEASE: ${{ inputs.to_release }}
+        run: |
+          set -euo pipefail
+          test "$PREPARE_1_RESULT" = success
+          test "$RESUME_1_RESULT" = success
+          test "$PREPARE_2_RESULT" = success
+          test "$RESUME_2_RESULT" = success
+          python3 -I - "$RUNNER_TEMP/pkg-macos-proof-results" \
+            "$RUNNER_TEMP/pkg-dn1-hosted-acquisition/hosted-acquisition.txt" <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          receipt_path = pathlib.Path(sys.argv[2])
+          if (receipt_path.is_symlink() or not receipt_path.is_file()
+                  or receipt_path.stat().st_size > 4096):
+              raise SystemExit("hosted acquisition receipt is absent or unsafe")
+
+          def records(path):
+              values = {}
+              for line in path.read_text(encoding="utf-8").splitlines():
+                  key, separator, value = line.partition("=")
+                  if separator != "=" or not key or key in values:
+                      raise SystemExit("phase evidence is malformed")
+                  values[key] = value
+              return values
+
+          env = os.environ
+          expected_channel = {
+              "schema": "PKG-DN1-HOSTED-ACQUISITION-V1",
+              "pair_tag": env["PKG_PROOF_PAIR_TAG"],
+              "pair_tarball_length": env["PKG_PROOF_PAIR_TARBALL_LENGTH"],
+              "pair_tarball_sha256": env["PKG_PROOF_PAIR_TARBALL_SHA256"],
+              "proof_pair_sha256": env["PKG_PROOF_PAIR_SHA256"],
+              "n_inventory_length": env["PKG_PROOF_N_INVENTORY_LENGTH"],
+              "n_inventory_sha256": env["PKG_PROOF_N_INVENTORY_SHA256"],
+              "n_plus_1_inventory_length": env["PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH"],
+              "n_plus_1_inventory_sha256": env["PKG_PROOF_N_PLUS_1_INVENTORY_SHA256"],
+              "n_total_bytes": env["PKG_PROOF_N_TOTAL_BYTES"],
+              "n_rows_sha256": env["PKG_PROOF_N_ROWS_SHA256"],
+              "n_plus_1_total_bytes": env["PKG_PROOF_N_PLUS_1_TOTAL_BYTES"],
+              "n_plus_1_rows_sha256": env["PKG_PROOF_N_PLUS_1_ROWS_SHA256"],
+              "trusted_root_sha256": env["PKG_PROOF_TRUSTED_ROOT_SHA256"],
+              "product_commit": env["PKG_REVIEWED_COMMIT"],
+              "from_release": env["FROM_RELEASE"],
+              "to_release": env["TO_RELEASE"],
+              "status": "complete",
+          }
+          receipt = records(receipt_path)
+          for key, value in expected_channel.items():
+              if receipt.get(key) != value:
+                  raise SystemExit(f"hosted acquisition digest mismatch: {key}")
+
+          def phase(slot, phase, expected_runner):
+              directory = root / f"pkg-macos-lifecycle-evidence-{slot}-{phase}"
+              if not directory.is_dir():
+                  raise SystemExit("the exact four phase evidence artifacts are required")
+              evidence = {}
+              for name in (
+                  "result.txt", "preflight.txt", "vm-acquisition.txt",
+                  "in-vm-channel.txt", "loopback-trust.txt",
+              ):
+                  path = directory / name
+                  if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
+                      raise SystemExit(f"phase evidence artifact is absent or unsafe: {name}")
+                  evidence[name] = records(path)
+              for side in ("n", "n-plus-1"):
+                  selected = directory / f"{side}-selected-sha256.txt"
+                  if selected.is_symlink() or not selected.is_file() \
+                      or selected.stat().st_size > 1024:
+                      raise SystemExit("the selected digest evidence is absent or unsafe")
+                  rows = selected.read_text(encoding="utf-8").splitlines()
+                  if len(rows) != 3 or any(
+                      re.fullmatch(r"[0-9a-f]{64}  [A-Za-z0-9._-]+", row) is None
+                      for row in rows
+                  ):
+                      raise SystemExit("the selected digest evidence is incomplete")
+                  evidence[f"{side}-selected-sha256.txt"] = rows
+              if evidence["result.txt"]["phase"] != phase \
+                  or evidence["result.txt"]["status"] != "passed":
+                  raise SystemExit("a phase did not report a passed result")
+              preflight = evidence["preflight.txt"]
+              if preflight["runner_name"] != expected_runner \
+                  or preflight["status"] != "preflight-passed":
+                  raise SystemExit("the phase preflight does not bind the expected runner")
+              if not preflight.get("instance_nonce") or not preflight.get("boot_uuid"):
+                  raise SystemExit("the phase preflight has no VM identity")
+              acquisition = evidence["vm-acquisition.txt"]
+              if (
+                  acquisition["schema"] != "PKG-DN1-VM-ACQUISITION-V1"
+                  or acquisition["proof_pair_sha256"] != env["PKG_PROOF_PAIR_SHA256"]
+                  or acquisition["pair_tag"] != env["PKG_PROOF_PAIR_TAG"]
+                  or acquisition["tarball_bytes"] != env["PKG_PROOF_PAIR_TARBALL_LENGTH"]
+                  or acquisition["channel_url"] != env["PKG_PROOF_CHANNEL_URL"]
+                  or acquisition["status"] != "complete"
+              ):
+                  raise SystemExit("the VM acquisition evidence does not match the sealed pair")
+              loopback = evidence["in-vm-channel.txt"]
+              if (
+                  loopback["schema"] != "PKG-DN1-LOOPBACK-V1"
+                  or loopback["channel_url"] != env["PKG_PROOF_CHANNEL_URL"]
+                  or loopback["url"] != env["PKG_PROOF_CHANNEL_URL"]
+                  or loopback["status"] != "serving-tls-only"
+                  or int(loopback["verified_files"]) <= 0
+                  or int(loopback["verified_bytes"]) != (
+                      int(env["PKG_PROOF_N_TOTAL_BYTES"])
+                      + int(env["PKG_PROOF_N_PLUS_1_TOTAL_BYTES"])
+                      + int(env["PKG_PROOF_PAIR_LENGTH"])
+                      + int(env["PKG_PROOF_N_INVENTORY_LENGTH"])
+                      + int(env["PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH"])
+                  )
+              ):
+                  raise SystemExit("the loopback channel evidence does not match the sealed pair")
+              trust = evidence["loopback-trust.txt"]
+              if trust["schema"] != "PKG-DN1-LOOPBACK-TRUST-V1" or trust["status"] != "trusted":
+                  raise SystemExit("the loopback CA trust evidence is absent")
+              return {
+                  "runner": preflight["runner_name"],
+                  "nonce": preflight["instance_nonce"],
+                  "boot": preflight["boot_uuid"],
+              }
+
+          prepare_1 = phase(1, "prepare", "pkg-dn16-proof-runner-1")
+          resume_1 = phase(1, "resume", "pkg-dn16-proof-runner-1")
+          prepare_2 = phase(2, "prepare", "pkg-dn16-proof-runner-2")
+          resume_2 = phase(2, "resume", "pkg-dn16-proof-runner-2")
+          if prepare_1["runner"] != resume_1["runner"] \
+              or prepare_2["runner"] != resume_2["runner"]:
+              raise SystemExit("runner identity changed within a slot")
+          if prepare_1["nonce"] != resume_1["nonce"] \
+              or prepare_2["nonce"] != resume_2["nonce"]:
+              raise SystemExit("VM identity changed within a slot")
+          if prepare_1["boot"] == resume_1["boot"] \
+              or prepare_2["boot"] == resume_2["boot"]:
+              raise SystemExit("the boot UUID did not change within the slot")
+          if prepare_1["nonce"] == prepare_2["nonce"]:
+              raise SystemExit("the two slots used the same VM nonce")
+          print("repeat-proof verdict: both slots passed on the sealed loopback pair")
+          PY
