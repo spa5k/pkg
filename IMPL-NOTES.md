@@ -15,11 +15,11 @@ timeouts are out of scope.
 1. `pkg-core/src/clock.rs` — `Clock` trait + `Timestamp` (jiff-backed, the
    same civil-time type the boundary already parses). `SystemClock` ambient
    default. `PKG_HERMETIC=1` turns ambient reads into panics (the tripwire).
-   Combined single test covers both phases (env set → panic via
-   `catch_unwind`; env cleared → valid read) to avoid parallel-test env
-   races.
+   The two-phase regression (armed → catchable panic naming the remedy;
+   disarmed → valid read) lives in `crates/pkg-core/tests/clock_tripwire.rs`,
+   its own integration binary so the env mutation is race-free.
 2. `pkg-testkit/src/clock.rs` — `FixedClock`: freeze / advance / set,
-   fail-closed when exhausted, `constant()` for steady time.
+   fail-closed when exhausted (it never invents time).
 3. `pkg-channel/src/tuf.rs` — `ChannelClient` holds the clock; production
    constructors install `SystemClock`; `new_with_clock` for tests.
    `pkg-nix/src/managed/installer_bundle.rs` feeds the same decision and
@@ -44,6 +44,12 @@ timeouts are out of scope.
 - Observed once: `pkg-testkit http::tests::exact_transcript_serves_drop_and_
   truncate_faults` failed under full machine load; ephemeral-port timing
   flake, not a clock leak. Follow-up task recommended.
+- `just lint-strict` (FULL_TOUCHED=1) reports 8 debt sites in the 3 files
+  this PR touches. All 8 are pre-existing baseline debt, not introduced
+  here; the standard G-QUALITY ratchet passes and the sites stay tolerated
+  where they live per ADR 0005.
+- Reviewer: deepseek-v4-pro, verdict approve — findings folded in this
+  commit (regression test added, notes corrected, lint-strict documented).
 - Branch rebased onto `openspec/pre-production-roadmap` (4c86f22) before
   committing; the agent's duplicate OpenSpec edits were dropped in favor of
   the parent's authoritative Amendment 2 text.
