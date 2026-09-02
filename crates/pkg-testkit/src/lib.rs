@@ -51,6 +51,7 @@
 #![deny(missing_docs)]
 
 pub mod chaos;
+pub mod clock;
 pub mod fake_nix;
 pub mod fake_nixpkgs;
 pub mod http;
@@ -61,6 +62,7 @@ pub use chaos::{
     ChaosCheckpoint, ChaosChild, ChaosCommand, ChaosConfigError, ChaosError, FsyncMode,
     publish_checkpoint,
 };
+pub use clock::FixedClock;
 pub use fake_nix::FakeNix;
 pub use fake_nixpkgs::{FakeNixpkgsError, FakeNixpkgsRunner};
 pub use http::{

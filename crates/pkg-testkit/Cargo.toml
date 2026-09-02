@@ -29,6 +29,11 @@ publish.workspace = true
 # `[dev-dependencies]` entry is needed and no reverse dependency is
 # introduced.
 pkg-nix = { path = "../pkg-nix" }
+# The fixed clock double implements `pkg_core::Clock`, the same injected
+# seam production constructors install `SystemClock` behind. Path dep only;
+# the one-way `pkg-nix` → `pkg-testkit` rule stays intact.
+pkg-core = { path = "../pkg-core" }
+jiff = "=0.2.35"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 
