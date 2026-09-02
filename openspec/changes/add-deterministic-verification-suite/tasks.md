@@ -48,3 +48,24 @@
 - [ ] 5.2 Nightly schedule for the report; two clean weeks before making it a merge gate
 - [ ] 5.3 Rebase `tools/quality/baseline.json` if lint sites moved
 - [ ] 5.4 Update `plans/` index and ADR 0005 quality-gate docs to reference the new gate
+
+## 7. Integration tier (amended after plan review)
+
+- [ ] 7.1 Fast lifecycle smoke tier: reduced ~8-case list as a subset of the staged-proof
+      blocking matrix, containerized, real binaries + local TUF channel, per-push, <15 min
+- [ ] 7.2 Black-box CLI process tests with trycmd: spawn compiled binary, snapshot
+      stdout/stderr/exit codes/filesystem effects; golden transcripts for help, errors,
+      doctor
+- [ ] 7.3 cargo-fuzz targets: journal file parser, framing protocol decoder, TUF metadata
+      JSON parser; committed corpora; nightly 5-min bursts; reproducer artifact on finding
+- [ ] 7.4 Property-based operation sequences: proptest-generated install/repair/upgrade/
+      uninstall interleavings asserting idempotency, monotonic generations, exact receipt
+      reuse, fail-closed recovery; shrinkers recorded
+- [ ] 7.5 Protocol compatibility matrix: pinned old/new broker + client builds run the
+      framing contract tests; unsupported combos fail closed with the version error
+- [ ] 7.6 Cross-platform receipt equality test pinning byte-identical receipts for the
+      same pair across Linux container and macOS
+- [ ] 7.7 Journal schema migration goldens: one golden journal per historical schema
+      version; upgrade-or-refuse assertions; future-version refusal fail-closed
+- [ ] 7.8 Tooling adoption: cargo-nextest as the workspace runner; cargo-llvm-cov report
+      published nightly; coverage gaps triaged into follow-up tasks

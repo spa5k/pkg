@@ -86,3 +86,102 @@ verdict: DETERMINISTIC, or NON-DETERMINISTIC with a cause list.
 
 - **WHEN** the determinism report completes
 - **THEN** it prints exactly one verdict line and a machine-readable summary to a results file
+
+### Requirement: Fast lifecycle smoke tier
+
+The system SHALL provide a per-push integration test that executes the real product
+binaries through install, doctor, update, one package operation, and terminal uninstall
+against a local TUF channel inside a container, completing within 15 minutes on
+standard CI runners.
+
+#### Scenario: Per-push lifecycle smoke
+
+- **WHEN** a pull request changes product code
+- **THEN** the smoke tier runs the reduced case list (~8 cases) against real binaries
+- **AND** the tier completes within 15 minutes and fails the pull request on any case failure
+
+#### Scenario: Reduced case list is a subset of the proof matrix
+
+- **WHEN** the smoke case list is defined
+- **THEN** every smoke case also exists in the staged-proof blocking matrix, so smoke failures
+  predict proof failures and smoke coverage can never exceed proven behavior
+
+### Requirement: Black-box CLI process tests
+
+The system SHALL test the compiled CLI binary as a process: spawning the binary, asserting
+exit codes per the documented mapping, stdout/stderr transcripts, JSON output shape, and
+filesystem effects. Transcript snapshots SHALL pin help, error, and doctor output.
+
+#### Scenario: Process-level transcript
+
+- **WHEN** a CLI scenario runs
+- **THEN** the test spawns the compiled binary and compares stdout, stderr, and exit code
+  against a checked-in snapshot
+- **AND** snapshot changes require deliberate review
+
+### Requirement: Fuzzing of untrusted input surfaces
+
+The journal file parser, the broker framing protocol decoder, and the TUF metadata JSON
+parser SHALL have coverage-guided fuzz targets. Fuzzing SHALL run in short nightly bursts
+with committed corpora, and any crash, hang, or sanitizer finding SHALL fail the nightly
+lane.
+
+#### Scenario: Nightly fuzz burst
+
+- **WHEN** the nightly lane runs
+- **THEN** each fuzz target executes for a bounded duration against its committed corpus
+- **AND** a finding fails the lane and files the reproducer input as an artifact
+
+### Requirement: Property-based operation sequences
+
+The journal state machine SHALL be exercised by property-based tests that generate random
+operation sequences (install, repair, upgrade, uninstall interleavings) and assert the
+documented invariants after every step: idempotency, monotonic generation numbers, exact
+receipt reuse, and fail-closed recovery from injected interruption.
+
+#### Scenario: Generated sequence invariant check
+
+- **WHEN** a generated operation sequence executes
+- **THEN** the invariants hold after every step
+- **AND** a failing sequence shrinks to a minimal reproducer recorded in the test output
+
+### Requirement: Protocol compatibility matrix
+
+The broker framing protocol SHALL carry a compatibility test matrix: an older client
+binary against a newer broker, and a newer client against an older broker, built from
+pinned protocol versions. Any combination the protocol claims to support SHALL pass the
+existing framing contract tests; unsupported combinations SHALL fail closed with the
+documented version error.
+
+#### Scenario: Rolling upgrade safety
+
+- **WHEN** the matrix runs for a protocol change
+- **THEN** each supported old-new combination passes and each unsupported combination
+  refuses with the version handshake error
+
+### Requirement: Cross-platform receipt equality
+
+Ownership receipts produced for the same release pair on different platforms SHALL be
+byte-identical, and this equality SHALL be pinned by a test comparing receipts produced
+in the Linux container and macOS environments.
+
+#### Scenario: Same pair, same receipt bytes
+
+- **WHEN** the same release pair installs on two platforms
+- **THEN** the produced ownership receipts compare bit-identical
+
+### Requirement: Journal schema migration compatibility
+
+Golden journal files for each historical schema version SHALL be checked in, and the
+product SHALL read, upgrade per the documented policy, or refuse each with a fail-closed
+error. Refusal cases SHALL include journals from a newer schema version.
+
+#### Scenario: Old journal upgrade
+
+- **WHEN** the product opens a golden v-older journal
+- **THEN** it upgrades per policy or reports the documented error
+
+#### Scenario: Future journal refusal
+
+- **WHEN** the product opens a journal whose schema version exceeds its own
+- **THEN** it refuses fail-closed without mutation

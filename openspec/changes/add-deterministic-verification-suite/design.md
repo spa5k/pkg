@@ -64,3 +64,28 @@ output shows `skipped (platform: …)` rather than a red X on a developer laptop
 
 - Should the determinism report gate merges to `main`, or run nightly first? Proposal: nightly
   first, gate after two clean weeks.
+
+## Amendment: Integration tier (post-review)
+
+D6. Smoke tier reuses the staged-proof container image with a case-list flag, not a
+    second harness. The ~8 smoke cases are a strict subset of the 34 blocking cases, so
+    smoke can never claim coverage the proof does not prove.
+
+D7. Black-box CLI tests use trycmd with checked-in snapshots. They test the process
+    boundary only (exit codes, transcripts, files); behavior belongs to the library
+    tests. Snapshots live beside the scenario files and are covered by the quality gate.
+
+D8. Fuzz targets wrap the existing parsers, not copies. Corpora are committed, small,
+    and grown by the nightly bursts; a finding fails the lane and the reproducer is
+    committed as a regression unit test before the fuzz target is allowed green again.
+
+D9. Property tests run against the real journal implementation in a temp root (no fake
+    filesystem layer) so the invariants are proven at the integration boundary they
+    protect. Sequences are seeded; nightly runs extend the seed range.
+
+D10. Protocol compatibility matrix builds from git-pinned tags, not branch heads, so a
+     red matrix always names the two exact protocol versions involved.
+
+Rationale for what is NOT added: no per-PR VM tier (the ceremony proof owns that tier;
+duplicating it slowly is waste), no load/soak tier (no observed load sensitivity), no
+UI-level snapshot sprawl beyond trycmd transcripts.
