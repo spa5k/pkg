@@ -37,7 +37,7 @@ jobs:
   # the PR. The full hermetic run (tripwire + network denial) lives in the
   # nightly lane; this is the cheap static half wired per review change 17.
   g-ambient-time-audit:
-    name: G-AMBIENT-TIME-AUDIT (DN-1 static clock-seam gate)
+    name: G-STATIC-AUDITS (DN-1 clock-seam + temp-root gates)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -45,8 +45,77 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-      - name: Ambient-time audit (all wall-clock families)
+      - name: Static audits (all wall-clock families + temp roots)
         run: AUDIT_ONLY=1 tools/verify/run-hermetic.sh
+
+  # DN-1 PR-2 userns spike made permanent: the full hermetic run (audits +
+  # PKG_HERMETIC tripwire + network denial via `unshare -rn`) on Linux,
+  # STRICT so a missing wrapper fails closed. User namespaces on
+  # ubuntu-24.04/ubuntu-latest were verified by this very job first passing.
+  g-hermetic:
+    name: G-HERMETIC (full run-hermetic.sh, unshare -rn, STRICT)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install and verify pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${RUSTUP_TOOLCHAIN}"
+          channel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \
+                     | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [ -z "$channel" ]; then
+            echo "::error::could not parse channel from rust-toolchain.toml" >&2
+            exit 1
+          fi
+          if [ "$channel" != "$expected" ]; then
+            echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2
+            exit 1
+          fi
+          rustup toolchain install "$channel" --profile minimal
+          rustc --version
+          cargo --version
+      - name: Full hermetic run (tripwire + network denial)
+        run: STRICT=1 tools/verify/run-hermetic.sh
+
+  # DN-1 PR-2 macOS probe: always-green lane whose LOG is the evidence.
+  # Runs the full hermetic suite; if the runner's sandbox-exec is refused
+  # the script warns loudly and continues (no STRICT). When sandbox-exec
+  # works on the runner, network denial engages for real. Linux stays the
+  # authoritative network-denial lane (design Amendment 2 record).
+  g-hermetic-macos:
+    name: G-HERMETIC-MACOS (probe, log-evidence lane)
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install and verify pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${RUSTUP_TOOLCHAIN}"
+          channel="$(grep -E '^channel[[:space:]]*=' rust-toolchain.toml \
+                     | sed -E 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [ -z "$channel" ]; then
+            echo "::error::could not parse channel from rust-toolchain.toml" >&2
+            exit 1
+          fi
+          if [ "$channel" != "$expected" ]; then
+            echo "::error::rust-toolchain.toml channel '$channel' != expected '$expected'" >&2
+            exit 1
+          fi
+          rustup toolchain install "$channel" --profile minimal
+          rustc --version
+          cargo --version
+      - name: Full hermetic run (probe; denial evidence in the log)
+        run: tools/verify/run-hermetic.sh
 
   g-lint:
     name: G-LINT (fmt / clippy / doc / build / deny / audit)
