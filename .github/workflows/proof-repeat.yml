@@ -112,7 +112,9 @@ jobs:
             [[ "$count" =~ ^[1-9][0-9]*$ ]]
           done
           test "$GITHUB_REPOSITORY" = spa5k/pkg
-          test "$GITHUB_REF" = "refs/tags/$PKG_PROOF_WORKFLOW_TAG"
+          dispatch_tag="${GITHUB_REF#refs/tags/}"
+          [[ "$dispatch_tag" =~ ^dn1-proof-workflow-[0-9]+$ ]]
+          test "$GITHUB_REF" = "refs/tags/$dispatch_tag"
           # The dispatch runs from the workflow tag tree; that tree is
           # self-binding (this very workflow is executing from it), so it
           # only needs to be an annotated tag. The REVIEWED commit is
