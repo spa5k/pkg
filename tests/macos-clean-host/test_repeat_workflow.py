@@ -64,7 +64,7 @@ class RepeatWorkflowTests(unittest.TestCase):
             validate.index("[[ \"$count\" =~ ^[1-9][0-9]*$ ]]"),
             validate.index("gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/"),
         )
-        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-1", REPEAT)
+        self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-2", REPEAT)
         self.assertIn("PKG_REVIEWED_TAG: dn1-reviewed-1", REPEAT)
         self.assertIn(
             "gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_REVIEWED_TAG\"",

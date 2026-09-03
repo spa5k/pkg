@@ -41,7 +41,7 @@ env:
   CARGO_TERM_COLOR: always
   PKG_REVIEWED_COMMIT: 56f6782efcd34451c63cd2a940cd8b4e36fd7d44
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
-  PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-1
+  PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-2
   PKG_PROOF_PAIR_TAG: dn1-proof-pair-4
   # The reviewed product commit is pinned twice: as the raw sha the
   # acquisition binds against, and as this SIGNED ANNOTATED tag whose
