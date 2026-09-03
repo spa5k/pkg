@@ -22,7 +22,9 @@ jobs:
           from test_serve_pair_loopback import pair
           pair(pathlib.Path("/tmp/dbg/staging"))
           PY
+          set +e
           python3 tools/release/serve_pair_loopback.py bootstrap /tmp/dbg/staging /tmp/dbg/channel /tmp/dbg/state 8444; ec=$?
+          set -e
           echo "bootstrap exit: $ec"
           echo "--- state dir:"; ls -la /tmp/dbg/state 2>/dev/null
           echo "--- http.log:"; cat /tmp/dbg/state/http.log 2>/dev/null
