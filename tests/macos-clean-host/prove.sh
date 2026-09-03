@@ -13,7 +13,7 @@ require_env() {
 
 for name in PKG_PROOF_FROM_RELEASE PKG_PROOF_TO_RELEASE PKG_PROOF_ROOT \
     PKG_PROOF_CHANNEL_URL PKG_PROOF_PAIR_SHA256 PKG_PROOF_REBOOT_MARKER \
-    PKG_PROOF_INPUT_BYTES PKG_PROOF_RESPONSE_BYTES \
+    PKG_PROOF_PAIR_TAG PKG_PROOF_PAIR_TARBALL_LENGTH \
     PKG_REVIEWED_COMMIT \
     PKG_PROOF_LIFECYCLE_RUN PKG_PROOF_PHASE GITHUB_RUN_ID GITHUB_RUN_ATTEMPT \
     GITHUB_WORKFLOW_SHA RUNNER_NAME; do
@@ -33,10 +33,10 @@ for tag in "$PKG_PROOF_FROM_RELEASE" "$PKG_PROOF_TO_RELEASE"; do
         || fail "a release tag is invalid"
 done
 [ "$PKG_PROOF_FROM_RELEASE" != "$PKG_PROOF_TO_RELEASE" ] || fail "the release tags are equal"
-[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.24 ] \
-    || fail "the release N tag is not the reviewed final release"
-[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.25 ] \
-    || fail "the release N+1 tag is not the reviewed final release"
+[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.26 ] \
+    || fail "the release N tag is not the repeat-proof release"
+[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.27 ] \
+    || fail "the release N+1 tag is not the repeat-proof release"
 
 root=$PKG_PROOF_ROOT
 case "$root" in "${RUNNER_TEMP:-/no-runner-temp}"/*) ;; *) fail "the proof root is unsafe" ;; esac
@@ -118,16 +118,16 @@ vm_acquisition="$evidence/vm-acquisition.txt"
     && [ "$(/usr/bin/wc -l <"$vm_acquisition" | /usr/bin/tr -d ' ')" -eq 11 ] \
     || fail "the bounded VM acquisition evidence is invalid"
 [ "$(/bin/cat "$vm_acquisition")" = "$(printf '%s\n' \
-    'schema=PKG-DN16-VM-ACQUISITION-V1' \
+    'schema=PKG-DN1-VM-ACQUISITION-V1' \
     "run_id=$GITHUB_RUN_ID" \
     "run_attempt=$GITHUB_RUN_ATTEMPT" \
     "lifecycle_run=$PKG_PROOF_LIFECYCLE_RUN" \
     "phase=$PKG_PROOF_PHASE" \
     "runner_name=$RUNNER_NAME" \
     "proof_pair_sha256=$PKG_PROOF_PAIR_SHA256" \
-    'logical_fetches=21' \
-    "proof_input_bytes=$PKG_PROOF_INPUT_BYTES" \
-    "response_bytes=$PKG_PROOF_RESPONSE_BYTES" \
+    "pair_tag=$PKG_PROOF_PAIR_TAG" \
+    "tarball_bytes=$PKG_PROOF_PAIR_TARBALL_LENGTH" \
+    "channel_url=$PKG_PROOF_CHANNEL_URL" \
     'status=complete')" ] || fail "the VM acquisition evidence does not bind this job"
 
 disposable=/var/tmp/pkg-disposable-macos-proof
@@ -443,26 +443,30 @@ for record, name, sequence, release, sealed_path in zip(
         "proof-inputs/pkg-aarch64-darwin",
         "proof-inputs/pkg-aarch64-darwin.sigstore.json",
     }
-    require(len(files) == 34 and set(files) >= fixed | proof_inputs
+    require(set(files) >= fixed | proof_inputs
             and all(path in fixed or path in proof_inputs
                     or path.startswith("targets/") for path in files)
             and any(path.startswith("targets/") for path in files),
             "proof inventory has missing or extra entries")
     require(list(files) == sorted(files), "proof inventory is not canonical")
     require({path for path in files if path.startswith("proof-inputs/")}
-            == proof_inputs, "compact proof inputs are missing or extra")
+            == proof_inputs, "proof inputs are missing or extra")
     actual = {
         path.relative_to(channel / name).as_posix()
         for path in (channel / name).rglob("*") if path.is_file()
     }
-    require(actual == proof_inputs, "compact proof tree has missing or extra files")
+    require(actual == set(files), "proof tree does not match its inventory")
+    expected_directories = {
+        "/".join(path.split("/")[:-1])
+        for path in files if "/" in path
+    }
     actual_directories = {
         path.relative_to(channel / name).as_posix()
         for path in (channel / name).rglob("*") if path.is_dir()
     }
-    require(actual_directories == {"proof-inputs"},
-            "compact proof tree has missing or extra directories")
-    for path in proof_inputs:
+    require(actual_directories == expected_directories,
+            "proof tree has missing or extra directories")
+    for path in sorted(files):
         item = files[path]
         candidate = channel / name / path
         require(candidate.is_file() and not candidate.is_symlink(), "unsafe proof file")

@@ -96,10 +96,10 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertIn('test "$FROM_RELEASE" = v0.1.0-alpha.24', WORKFLOW)
         self.assertIn('test "$TO_RELEASE" = v0.1.0-alpha.25', WORKFLOW)
         self.assertIn(
-            '[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.24 ]', PROOF
+            '[ "$PKG_PROOF_FROM_RELEASE" = v0.1.0-alpha.26 ]', PROOF
         )
         self.assertIn(
-            '[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.25 ]', PROOF
+            '[ "$PKG_PROOF_TO_RELEASE" = v0.1.0-alpha.27 ]', PROOF
         )
 
     def test_persistent_handoff_lock_has_exact_residue_metadata(self) -> None:
@@ -536,8 +536,8 @@ class MacOsProofWorkflowTests(unittest.TestCase):
         self.assertNotIn("pkg-macos-authenticated-inputs", phase)
         self.assertIn('from="$channel/n/proof-inputs"', PROOF)
         self.assertIn('to="$channel/n-plus-1/proof-inputs"', PROOF)
-        self.assertIn("actual == proof_inputs", PROOF)
-        self.assertNotIn("actual == set(files)", PROOF)
+        self.assertIn("actual == set(files)", PROOF)
+        self.assertNotIn("actual == proof_inputs", PROOF)
         for required in (
             "schema=PKG-DN16-VM-ACQUISITION-V1",
             "logical_fetches=21",
