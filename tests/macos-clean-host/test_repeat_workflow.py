@@ -70,7 +70,7 @@ class RepeatWorkflowTests(unittest.TestCase):
             "gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_REVIEWED_TAG\"",
             validate,
         )
-        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-3", REPEAT)
+        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-4", REPEAT)
         self.assertIn("PKG_PROOF_PAIR_TARBALL: dn1-proof-pair.tar.gz", REPEAT)
         self.assertIn(
             "PKG_REVIEWED_COMMIT: 56f6782efcd34451c63cd2a940cd8b4e36fd7d44",
@@ -81,11 +81,11 @@ class RepeatWorkflowTests(unittest.TestCase):
         self.assertNotIn('test "$FROM_RELEASE" = v0.1.0-alpha.24', REPEAT)
         self.assertNotIn('test "$TO_RELEASE" = v0.1.0-alpha.25', REPEAT)
 
-    def test_pair_pins_bind_the_sealed_dn1_proof_pair_3(self) -> None:
+    def test_pair_pins_bind_the_sealed_dn1_proof_pair_4(self) -> None:
         self.assertNotIn("PENDING-DN1-MINT", REPEAT)
         minted = {
             "PKG_PROOF_PAIR_TARBALL_SHA256":
-                "aac6aa23d5a76057ce506bc56a0a3e545d4da74f894d59487c02c808f27c16df",
+                "6446cc5dd4681e5fcf21aa4753665764fd61b764bd13008a4d066e9ad997efa6",
             "PKG_PROOF_PAIR_SHA256":
                 "3ee51dd5cad659f7dce01df3bcccbcf5942bcf3ba704d1b07e06602ae8034a77",
             "PKG_PROOF_N_INVENTORY_SHA256":
@@ -100,7 +100,7 @@ class RepeatWorkflowTests(unittest.TestCase):
         for name, digest in minted.items():
             self.assertIn(f"{name}: {digest}", REPEAT)
         for count, value in (
-            ("PKG_PROOF_PAIR_TARBALL_LENGTH", "419431832"),
+            ("PKG_PROOF_PAIR_TARBALL_LENGTH", "418660262"),
             ("PKG_PROOF_PAIR_LENGTH", "1101"),
             ("PKG_PROOF_N_INVENTORY_LENGTH", "6085"),
             ("PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH", "6085"),

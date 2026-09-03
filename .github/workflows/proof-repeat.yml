@@ -42,7 +42,7 @@ env:
   PKG_REVIEWED_COMMIT: 56f6782efcd34451c63cd2a940cd8b4e36fd7d44
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
   PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-1
-  PKG_PROOF_PAIR_TAG: dn1-proof-pair-3
+  PKG_PROOF_PAIR_TAG: dn1-proof-pair-4
   # The reviewed product commit is pinned twice: as the raw sha the
   # acquisition binds against, and as this SIGNED ANNOTATED tag whose
   # target must equal the sha. The workflow tag below is a different,
@@ -54,11 +54,11 @@ env:
   PKG_PROOF_LOOPBACK_PORT: "8443"
   # The pair stays on the DN-1 TEST root. Proofs never touch production.
   PKG_PROOF_TRUSTED_ROOT_SHA256: c317d2ad134e0e9efe7c0e836b9b62fa386309e78fa859a516d3ecc943168dd8
-  # Pins from the sealed pair dn1-proof-pair-3 (minted 2026-09-03 from
+  # Pins from the sealed pair dn1-proof-pair-4 (minted 2026-09-03 from
   # productCommit 56f6782; see tools/release/mint_dn1_proof_pair.sh and
   # assemble_dn1_pair.sh for the minting recipe).
-  PKG_PROOF_PAIR_TARBALL_LENGTH: "419431832"
-  PKG_PROOF_PAIR_TARBALL_SHA256: aac6aa23d5a76057ce506bc56a0a3e545d4da74f894d59487c02c808f27c16df
+  PKG_PROOF_PAIR_TARBALL_LENGTH: "418660262"
+  PKG_PROOF_PAIR_TARBALL_SHA256: 6446cc5dd4681e5fcf21aa4753665764fd61b764bd13008a4d066e9ad997efa6
   PKG_PROOF_PAIR_LENGTH: "1101"
   PKG_PROOF_PAIR_SHA256: 3ee51dd5cad659f7dce01df3bcccbcf5942bcf3ba704d1b07e06602ae8034a77
   PKG_PROOF_N_INVENTORY_LENGTH: "6085"
