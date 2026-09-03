@@ -1188,10 +1188,15 @@ jobs:
           ca="$state/ca.pem"
           server="$state/server.pem"
           if [ -f "$ca" ] && [ ! -L "$ca" ]; then
-            /usr/bin/sudo -n /usr/bin/security remove-trusted-cert -d "$ca"
+            /usr/bin/sudo -n /usr/bin/security remove-trusted-cert -d "$ca" || true
+            ca_sha1=$(/usr/bin/security find-certificate -a -c pkg-dn1-loopback-ca \
+              -Z /Library/Keychains/System.keychain 2>/dev/null \
+              | /usr/bin/awk '/SHA-1 hash:/ {print $3}' | sort -u)
+            for hash in $ca_sha1; do
+              /usr/bin/sudo -n /usr/bin/security delete-certificate \
+                -Z "$hash" /Library/Keychains/System.keychain >/dev/null 2>&1 || true
+            done
           fi
-          /usr/bin/sudo -n /usr/bin/security delete-certificate \
-            -c pkg-dn1-loopback-ca /Library/Keychains/System.keychain >/dev/null 2>&1 || true
           if [ -f "$state/state.json" ] && [ ! -L "$state/state.json" ]; then
             "$root/harness/serve_pair_loopback.py" stop "$state"
           fi
