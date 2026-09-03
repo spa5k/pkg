@@ -69,7 +69,7 @@ class RepeatWorkflowTests(unittest.TestCase):
             "gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_REVIEWED_TAG\"",
             validate,
         )
-        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-4", REPEAT)
+        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-5", REPEAT)
         self.assertIn("PKG_PROOF_PAIR_TARBALL: dn1-proof-pair.tar.gz", REPEAT)
         self.assertIn(
             "PKG_REVIEWED_COMMIT: 56f6782efcd34451c63cd2a940cd8b4e36fd7d44",
@@ -80,31 +80,31 @@ class RepeatWorkflowTests(unittest.TestCase):
         self.assertNotIn('test "$FROM_RELEASE" = v0.1.0-alpha.24', REPEAT)
         self.assertNotIn('test "$TO_RELEASE" = v0.1.0-alpha.25', REPEAT)
 
-    def test_pair_pins_bind_the_sealed_dn1_proof_pair_4(self) -> None:
+    def test_pair_pins_bind_the_sealed_dn1_proof_pair_5(self) -> None:
         self.assertNotIn("PENDING-DN1-MINT", REPEAT)
         minted = {
             "PKG_PROOF_PAIR_TARBALL_SHA256":
-                "6446cc5dd4681e5fcf21aa4753665764fd61b764bd13008a4d066e9ad997efa6",
+                "c38e7503bf8b760235fd2381219ed74b7d90f5e009bbeb81ad23def4c9301d8a",
             "PKG_PROOF_PAIR_SHA256":
-                "3ee51dd5cad659f7dce01df3bcccbcf5942bcf3ba704d1b07e06602ae8034a77",
+                "657e5a5084960014af2297c9ffaf083712a9fb8df7efc8cd68864ad3b81bdf73",
             "PKG_PROOF_N_INVENTORY_SHA256":
-                "9f52cc950409553494c6acd13c3d4d1cfdf16c19e1b3f557eb0102301356ede1",
+                "bfc21bcf6b0e297b153ec497fac19024c2238fac00b341f55e6ddf30ceeec76e",
             "PKG_PROOF_N_PLUS_1_INVENTORY_SHA256":
-                "959d74a0b8e3ec7fd7a27d259a4be43fe25eb0f3ec78ceb0123ba0f75d8dfb99",
+                "ed33330454699630cc5d524f4d3791e967e805cb17fac80c53bcac6140734122",
             "PKG_PROOF_N_ROWS_SHA256":
-                "ffb4ab2658220398b174782ff185cfb618f4a205b5c9db6ea14e42269674e490",
+                "5b3d0687404773150819149d98bd09580360477cb98faa5cd7c6e7cbb32ab5ba",
             "PKG_PROOF_N_PLUS_1_ROWS_SHA256":
-                "d76f562ae24ada6894d348450449996281afe0d1ea66155c8c6bc9ec1a9daa7f",
+                "4f9d54b9464acd88c59357d4bd987ee7dbeee890ce7fce76440504e84603cee6",
         }
         for name, digest in minted.items():
             self.assertIn(f"{name}: {digest}", REPEAT)
         for count, value in (
-            ("PKG_PROOF_PAIR_TARBALL_LENGTH", "418660262"),
+            ("PKG_PROOF_PAIR_TARBALL_LENGTH", "418659193"),
             ("PKG_PROOF_PAIR_LENGTH", "1101"),
-            ("PKG_PROOF_N_INVENTORY_LENGTH", "6085"),
-            ("PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH", "6085"),
-            ("PKG_PROOF_N_TOTAL_BYTES", "321645504"),
-            ("PKG_PROOF_N_PLUS_1_TOTAL_BYTES", "321645391"),
+            ("PKG_PROOF_N_INVENTORY_LENGTH", "5959"),
+            ("PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH", "5959"),
+            ("PKG_PROOF_N_TOTAL_BYTES", "321642435"),
+            ("PKG_PROOF_N_PLUS_1_TOTAL_BYTES", "321642322"),
         ):
             self.assertIn(f'{count}: "{value}"', REPEAT)
         self.assertIn(
