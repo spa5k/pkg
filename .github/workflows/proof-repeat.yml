@@ -808,7 +808,7 @@ jobs:
           test "$TO_RELEASE" = v0.1.0-alpha.27
           staging="$root/channel-staging"
           test ! -e "$staging"
-          install -d -m 0700 "$staging" "$root/evidence"
+          install -d -m 0700 "$root/evidence"
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PAIR_TAG" \
             --jq '.draft')" = false
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$PAIR_TAG" \
