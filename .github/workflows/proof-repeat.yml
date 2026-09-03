@@ -798,6 +798,7 @@ jobs:
           FROM_RELEASE: ${{ inputs.from_release }}
           TO_RELEASE: ${{ inputs.to_release }}
           GH_TOKEN: ${{ github.token }}
+          PATH: /usr/local/bin:/usr/bin:/bin
         run: |
           set -euo pipefail
           umask 077
