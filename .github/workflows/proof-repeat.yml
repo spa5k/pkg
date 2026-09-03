@@ -505,7 +505,8 @@ jobs:
             test "$(stat -c '%s' "$candidate")" -eq "$length"
             case "$path" in
               proof-inputs/pkg-*-preview.pkg|proof-inputs/pkg-aarch64-darwin|proof-inputs/release-manifest.json)
-                printf '%s\n' "$name\t$path\t$length\t$sha" >> "$root/selected.tsv"
+                printf '%s\t%s\t%s\t%s\n' "$name" "$path" "$length" "$sha" \
+                  >> "$root/selected.tsv"
                 ;;
             esac
           done < "$root/channel-files.tsv"
