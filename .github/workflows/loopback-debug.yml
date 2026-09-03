@@ -21,7 +21,7 @@ jobs:
 
           pattern = sys.argv[1] if len(sys.argv) > 1 else "both"
 
-          def run_pattern(name):
+          def run_pattern(name, port):
               code = '''
           import http.server, ssl, sys
           port = int(sys.argv[1]); mode = sys.argv[2]
@@ -46,7 +46,7 @@ jobs:
           srv.serve_forever()
               '''
               import tempfile, os
-              p = subprocess.Popen([sys.executable, "-c", code, str(port), name, str(state)])
+              proc = subprocess.Popen([sys.executable, "-c", code, str(port), name, str(state)])
               time.sleep(2.5)
               ctx = ssl.create_default_context(cafile=str(state / "ca.pem"))
               try:
@@ -54,10 +54,10 @@ jobs:
                       print(name, "PROBE OK", r.status)
               except Exception as e:
                   print(name, "PROBE FAIL", type(e).__name__, str(e)[:80])
-              p.terminate(); p.wait()
+              proc.terminate(); proc.wait()
               time.sleep(0.5)
 
-          run_pattern("listenwrap")   # wrap listening socket
-          run_pattern("getrequest")   # wrap per-connection in get_request
+          run_pattern("listenwrap", 8451)
+          run_pattern("getrequest", 8452)
           PY
           exit 0
