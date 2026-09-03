@@ -101,7 +101,7 @@ reboot)
     nonce=\${nonce#PKG-DN16-INSTANCE-V1:}
     old_boot=\$(sysctl -n kern.bootsessionuuid)
     now=\$(date +%s)
-    printf 'PKG-DN16-REBOOT-V2:${run_id}:${lifecycle}:${runner}:%s:%s:%s' \
+    printf 'PKG-DN16-REBOOT-V2:${run_id}:${lifecycle}:${runner}:%s:%s:%s\n' \
       \"\$nonce\" \"\$old_boot\" \"\$now\" \
       | sudo -n tee /var/tmp/pkg-disposable-macos-reboot-v2 >/dev/null
     sudo -n chown root:wheel /var/tmp/pkg-disposable-macos-reboot-v2
