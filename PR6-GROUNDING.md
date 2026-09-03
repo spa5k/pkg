@@ -39,7 +39,7 @@ One release (N), repeat for N+1 with `/n-plus-1/` URLs:
    AARCH64_INPUT X86_64_INPUT SEALED_MANIFEST SIGNING_STATE SEQ RELEASE_ID`
    (prepare-dn16-manifest first). SIGNING_STATE is preserved at
    `/private/tmp/pkg-dn16-proof-build.CoSikP/signing-state/` (root
-   `1c5ceff8…`, 3 online keys — the DN-16 proof root).
+   `c317d2ad…`, 3 online keys — the DN-1 proof root, minted 2026-09-03 after the DN-16 state was wiped; the pair carries its own root).
 7. Pair: `linux_proof_publication --bind-dn16-pair PAIR_DIR N_ID N+1_ID \
    PRODUCT_COMMIT` → proof-pair.json + n.inventory.json + n-plus-1.inventory.json.
 8. Upload the pair bundle to the dedicated tag `dn1-proof-pair-1`.
@@ -74,4 +74,4 @@ One release (N), repeat for N+1 with `/n-plus-1/` URLs:
 - Discovered during recon: `release.yml` now pins the PRODUCTION channel
   (`releases.happytoolin.com`, root `52523a9b…`, live, root expires
   2027-08-18). The proof pair deliberately stays on the TEST root
-  (`1c5ceff8…`) — proofs must not touch production.
+  (`c317d2ad…`) — proofs must not touch production.

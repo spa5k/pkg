@@ -37,8 +37,14 @@ signing_state=$5
 [ "$n_seq" -lt "$n1_seq" ] || usage
 [[ "$pair_tag" =~ ^[a-z0-9][a-z0-9-]*$ ]] || usage
 [[ "$product_commit" =~ ^[0-9a-f]{40}$ ]] || usage
+expected_root=c317d2ad134e0e9efe7c0e836b9b62fa386309e78fa859a516d3ecc943168dd8
 [ -f "$signing_state/1.root.json" ] || {
     echo "signing state is missing 1.root.json: $signing_state" >&2
+    exit 1
+}
+actual_root=$(shasum -a 256 "$signing_state/1.root.json" | awk '{print $1}')
+[ "$actual_root" = "$expected_root" ] || {
+    echo "signing-state root digest mismatch: want $expected_root got $actual_root" >&2
     exit 1
 }
 

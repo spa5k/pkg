@@ -74,7 +74,7 @@ The Linux leg needs nothing new: `Dockerfile.stage` already bakes
   `pkg-disposable-macos-proof-1/2`, names `pkg-dn16-proof-runner-1/2`,
   marker and continuation schemas). The runners were removed after the DN-16
   cleanup; re-registration is the recorded user action before any dispatch.
-- **The pair stays on the DN-16 TEST root** (`1c5ceff8…`), pinned as
+- **The pair stays on the DN-1 TEST root** (`c317d2ad…`, minted 2026-09-03 after the DN-16 signing state was wiped), pinned as
   `PKG_PROOF_TRUSTED_ROOT_SHA256`. The production channel root
   (`52523a9b…`) is untouched.
 

@@ -47,7 +47,7 @@ env:
   PKG_PROOF_CHANNEL_URL: https://127.0.0.1:8443
   PKG_PROOF_LOOPBACK_PORT: "8443"
   # The pair stays on the DN-16 TEST root. Proofs never touch production.
-  PKG_PROOF_TRUSTED_ROOT_SHA256: 1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90
+  PKG_PROOF_TRUSTED_ROOT_SHA256: c317d2ad134e0e9efe7c0e836b9b62fa386309e78fa859a516d3ecc943168dd8
   # PENDING-DN1-MINT: fill every pending pin below from the sealed pair
   # produced by tools/release/mint_dn1_proof_pair.sh before any dispatch.
   PKG_PROOF_PAIR_TARBALL_LENGTH: "1" # PENDING-DN1-MINT

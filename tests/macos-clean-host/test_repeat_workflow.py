@@ -92,7 +92,7 @@ class RepeatWorkflowTests(unittest.TestCase):
             self.assertIn(f'{count}: "1"', REPEAT)
         self.assertIn(
             "PKG_PROOF_TRUSTED_ROOT_SHA256: "
-            "1c5ceff864e736f06b6343b21feff3a56efa0eb62231f638390298a1dc5c0f90",
+            "c317d2ad134e0e9efe7c0e836b9b62fa386309e78fa859a516d3ecc943168dd8",
             REPEAT,
         )
         self.assertNotIn(
