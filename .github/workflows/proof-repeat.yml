@@ -43,6 +43,12 @@ env:
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
   PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-1
   PKG_PROOF_PAIR_TAG: dn1-proof-pair-3
+  # The reviewed product commit is pinned twice: as the raw sha the
+  # acquisition binds against, and as this SIGNED ANNOTATED tag whose
+  # target must equal the sha. The workflow tag below is a different,
+  # later commit: the pins only exist after the mint, so the workflow
+  # tree and the reviewed tree cannot be the same commit.
+  PKG_REVIEWED_TAG: dn1-reviewed-1
   PKG_PROOF_PAIR_TARBALL: dn1-proof-pair.tar.gz
   PKG_PROOF_CHANNEL_URL: https://127.0.0.1:8443
   PKG_PROOF_LOOPBACK_PORT: "8443"
@@ -107,16 +113,25 @@ jobs:
           done
           test "$GITHUB_REPOSITORY" = spa5k/pkg
           test "$GITHUB_REF" = "refs/tags/$PKG_PROOF_WORKFLOW_TAG"
-          test "$GITHUB_SHA" = "$EXPECTED_SHA"
-          test "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA"
+          # The dispatch runs from the workflow tag tree; that tree is
+          # self-binding (this very workflow is executing from it), so it
+          # only needs to be an annotated tag. The REVIEWED commit is
+          # pinned separately and must be a signed annotated tag whose
+          # verified target equals the expected sha.
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
           IFS=$'\t' read -r ref_type tag_object <<EOF
           $(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_PROOF_WORKFLOW_TAG" \
             --jq '[.object.type, .object.sha] | @tsv')
           EOF
           test "$ref_type" = tag
           [[ "$tag_object" =~ ^[0-9a-f]{40}$ ]]
+          IFS=$'\t' read -r ref_type reviewed_object <<EOF
+          $(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_REVIEWED_TAG" \
+            --jq '[.object.type, .object.sha] | @tsv')
+          EOF
+          test "$ref_type" = tag
           IFS=$'\t' read -r target_type target_sha verified <<EOF
-          $(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object" \
+          $(gh api "repos/$GITHUB_REPOSITORY/git/tags/$reviewed_object" \
             --jq '[.object.type, .object.sha, .verification.verified] | @tsv')
           EOF
           test "$target_type" = commit

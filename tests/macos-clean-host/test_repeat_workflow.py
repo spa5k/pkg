@@ -51,8 +51,8 @@ class RepeatWorkflowTests(unittest.TestCase):
             "environment: release",
             'test "$PAIR_TAG" = "$PKG_PROOF_PAIR_TAG"',
             'test "$GITHUB_REF" = "refs/tags/$PKG_PROOF_WORKFLOW_TAG"',
-            'test "$GITHUB_SHA" = "$EXPECTED_SHA"',
-            'test "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA"',
+            'test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"',
+            'test "$target_sha" = "$EXPECTED_SHA"',
             'test "$target_sha" = "$EXPECTED_SHA"',
             'test "$verified" = true',
             "[[ \"$digest\" =~ ^[0-9a-f]{64}$ ]]",
@@ -65,6 +65,11 @@ class RepeatWorkflowTests(unittest.TestCase):
             validate.index("gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/"),
         )
         self.assertIn("PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-1", REPEAT)
+        self.assertIn("PKG_REVIEWED_TAG: dn1-reviewed-1", REPEAT)
+        self.assertIn(
+            "gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_REVIEWED_TAG\"",
+            validate,
+        )
         self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-3", REPEAT)
         self.assertIn("PKG_PROOF_PAIR_TARBALL: dn1-proof-pair.tar.gz", REPEAT)
         self.assertIn(
