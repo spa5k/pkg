@@ -785,7 +785,7 @@ jobs:
           test -x "$cosign"
           test "$(/usr/bin/stat -f '%Su:%Sg:%Lp' "$cosign")" = root:wheel:755
           test "$(/usr/bin/shasum -a 256 "$cosign" | /usr/bin/awk '{print $1}')" = \
-            77bbab240111761d50044f37541da0734d964dfe5f092cab6d584663c912372e
+            5cf948c2f4dfe59687bdd0b8523709067383e03982cc543475c8a7dc70e92a76
           version=$("$cosign" version)
           test "$(printf '%s\n' "$version" \
             | /usr/bin/awk '$1 == "GitVersion:" { count++; value=$2 } \
