@@ -8,46 +8,56 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with: { persist-credentials: false }
-      - name: Drive the tool internals with full diagnostics
+      - name: minimal TLS server patterns under python 3.14
         shell: bash
         run: |
           python3 - <<'PY' 2>&1 || true
-          import importlib.util, pathlib, subprocess, sys, time, ssl, urllib.request
+          import http.server, pathlib, ssl, subprocess, sys, threading, time, urllib.request
+          state = pathlib.Path("/tmp/dbg5"); state.mkdir(mode=0o700, exist_ok=True)
+          import importlib.util
           spec = importlib.util.spec_from_file_location("spl", "tools/release/serve_pair_loopback.py")
           spl = importlib.util.module_from_spec(spec); spec.loader.exec_module(spl)
-          staging = pathlib.Path("/tmp/dbg/staging")
-          sys.path.insert(0, "tools/release")
-          from test_serve_pair_loopback import pair
-          pair(staging)
-          print("== validate_pair")
-          records = spl.validate_pair(staging)
-          print("records:", len(records))
-          print("== certs")
-          state = pathlib.Path("/tmp/dbg/state4"); state.mkdir(mode=0o700, parents=True, exist_ok=True)
           spl.generate_certificate_material(state)
-          print("cert files:", sorted(p.name for p in state.iterdir()))
-          print("== spawn _serve")
-          pub = pathlib.Path("/tmp/dbg/pub")
-          import shutil; shutil.copytree(staging, pub)
-          spl.make_read_only(pub)
-          log = (state / "http.log").open("wb")
-          server = subprocess.Popen([sys.executable, "-I", "tools/release/serve_pair_loopback.py",
-              "_serve", str(pub), "8444", str(state)], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-          time.sleep(3)
-          print("server pid:", server.pid, "poll:", server.poll())
-          log.close()
-          print("== http.log:")
-          print((state / "http.log").read_text()[-2000:])
-          print("== probe with CA")
-          ctx = ssl.create_default_context(cafile=str(state / "ca.pem"))
-          try:
-              with urllib.request.urlopen("https://127.0.0.1:8444/proof-pair.json", timeout=5, context=ctx) as r:
-                  print("status:", r.status, "bytes:", len(r.read()))
-          except Exception as e:
-              print("PROBE FAIL:", type(e).__name__, e)
-          print("== raw curl")
-          subprocess.run(["curl", "-sk", "--max-time", "5", "https://127.0.0.1:8444/proof-pair.json",
-              "-o", "/dev/null", "-w", "curl http %{http_code}\n"])
-          server.terminate()
+
+          pattern = sys.argv[1] if len(sys.argv) > 1 else "both"
+
+          def run_pattern(name):
+              code = '''
+          import http.server, ssl, sys
+          port = int(sys.argv[1]); mode = sys.argv[2]
+          state = sys.argv[3]
+          tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          tls.minimum_version = ssl.TLSVersion.TLSv1_2
+          tls.load_cert_chain(certfile=state + "/server.pem", keyfile=state + "/server-key.pem")
+          class H(http.server.SimpleHTTPRequestHandler):
+              def log_message(self, *a): pass
+          if mode == "getrequest":
+              class S(http.server.ThreadingHTTPServer):
+                  daemon_threads = True
+                  def get_request(self):
+                      c, a = super().get_request()
+                      return tls.wrap_socket(c, server_side=True), a
+              srv = S(("127.0.0.1", port), H)
+          else:
+              class S(http.server.ThreadingHTTPServer):
+                  daemon_threads = True
+              srv = S(("127.0.0.1", port), H)
+              srv.socket = tls.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+              '''
+              import tempfile, os
+              p = subprocess.Popen([sys.executable, "-c", code, str(port), name, str(state)])
+              time.sleep(2.5)
+              ctx = ssl.create_default_context(cafile=str(state / "ca.pem"))
+              try:
+                  with urllib.request.urlopen(f"https://127.0.0.1:{port}/", timeout=5, context=ctx) as r:
+                      print(name, "PROBE OK", r.status)
+              except Exception as e:
+                  print(name, "PROBE FAIL", type(e).__name__, str(e)[:80])
+              p.terminate(); p.wait()
+              time.sleep(0.5)
+
+          run_pattern("listenwrap")   # wrap listening socket
+          run_pattern("getrequest")   # wrap per-connection in get_request
           PY
           exit 0
