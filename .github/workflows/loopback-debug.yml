@@ -8,26 +8,45 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with: { persist-credentials: false }
-      - name: Reproduce the loopback bootstrap and dump all state
+      - name: Drive the tool internals with full diagnostics
         shell: bash
         run: |
-          set -x
-          python3 --version
-          which python3 openssl
-          openssl version
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate || true
-          python3 - <<'PY'
-          import sys, pathlib
+          python3 - <<'PY' 2>&1 || true
+          import importlib.util, pathlib, subprocess, sys, time, ssl, urllib.request
+          spec = importlib.util.spec_from_file_location("spl", "tools/release/serve_pair_loopback.py")
+          spl = importlib.util.module_from_spec(spec); spec.loader.exec_module(spl)
+          staging = pathlib.Path("/tmp/dbg/staging")
           sys.path.insert(0, "tools/release")
           from test_serve_pair_loopback import pair
-          pair(pathlib.Path("/tmp/dbg/staging"))
+          pair(staging)
+          print("== validate_pair")
+          records = spl.validate_pair(staging)
+          print("records:", len(records))
+          print("== certs")
+          state = pathlib.Path("/tmp/dbg/state2"); state.mkdir(parents=True, exist_ok=True)
+          spl.generate_certificate_material(state)
+          print("cert files:", sorted(p.name for p in state.iterdir()))
+          print("== spawn _serve")
+          pub = pathlib.Path("/tmp/dbg/pub")
+          import shutil; shutil.copytree(staging, pub)
+          log = (state / "http.log").open("wb")
+          server = subprocess.Popen([sys.executable, "-I", "tools/release/serve_pair_loopback.py",
+              "_serve", str(pub), "8444", str(state)], stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+          time.sleep(3)
+          print("server pid:", server.pid, "poll:", server.poll())
+          log.close()
+          print("== http.log:")
+          print((state / "http.log").read_text()[-2000:])
+          print("== probe with CA")
+          ctx = ssl.create_default_context(cafile=str(state / "ca.pem"))
+          try:
+              with urllib.request.urlopen("https://127.0.0.1:8444/proof-pair.json", timeout=5, context=ctx) as r:
+                  print("status:", r.status, "bytes:", len(r.read()))
+          except Exception as e:
+              print("PROBE FAIL:", type(e).__name__, e)
+          print("== raw curl")
+          subprocess.run(["curl", "-sk", "--max-time", "5", "https://127.0.0.1:8444/proof-pair.json",
+              "-o", "/dev/null", "-w", "curl http %{http_code}\n"])
+          server.terminate()
           PY
-          set +e
-          python3 tools/release/serve_pair_loopback.py bootstrap /tmp/dbg/staging /tmp/dbg/channel /tmp/dbg/state 8444; ec=$?
-          set -e
-          echo "bootstrap exit: $ec"
-          echo "--- state dir:"; ls -la /tmp/dbg/state 2>/dev/null
-          echo "--- http.log:"; cat /tmp/dbg/state/http.log 2>/dev/null
-          echo "--- probe:"
-          curl -vk --cacert /tmp/dbg/state/ca.pem https://127.0.0.1:8444/proof-pair.json 2>&1 | tail -12 || true
           exit 0
