@@ -458,10 +458,11 @@ for record, name, sequence, release, sealed_path in zip(
         for path in (channel / name).rglob("*") if path.is_file()
     }
     require(actual == set(files), "proof tree does not match its inventory")
-    expected_directories = {
-        "/".join(path.split("/")[:-1])
-        for path in files if "/" in path
-    }
+    expected_directories = set()
+    for path in files:
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            expected_directories.add("/".join(parts[:depth]))
     actual_directories = {
         path.relative_to(channel / name).as_posix()
         for path in (channel / name).rglob("*") if path.is_dir()
