@@ -173,7 +173,7 @@ class RepeatWorkflowTests(unittest.TestCase):
 
     def test_harness_ships_the_four_file_inventory_and_the_tool_tests(self) -> None:
         payload = "./README.md ./pkg-installer-tests ./prove.sh ./serve_pair_loopback.py"
-        harness = self.job("harness", "acquire-inputs")
+        harness = self.job("harness", "harness-build") + self.job("harness-build", "acquire-inputs")
         for required in (
             "python3 -m unittest proof-source/tests/macos-clean-host/test_workflow.py",
             "python3 -m unittest proof-source/tests/macos-clean-host/test_repeat_workflow.py",
@@ -272,9 +272,9 @@ class RepeatWorkflowTests(unittest.TestCase):
 
     def test_jobs_have_the_exact_two_slot_two_phase_order(self) -> None:
         expected = (
-            ("prepare-slot-1", "resume-slot-1", "needs: [validate-dispatch, harness, acquire-inputs]"),
+            ("prepare-slot-1", "resume-slot-1", "needs: [validate-dispatch, harness, harness-build, acquire-inputs]"),
             ("resume-slot-1", "prepare-slot-2", "needs: prepare-slot-1"),
-            ("prepare-slot-2", "resume-slot-2", "needs: [resume-slot-1, harness, acquire-inputs]"),
+            ("prepare-slot-2", "resume-slot-2", "needs: [resume-slot-1, harness, harness-build, acquire-inputs]"),
             ("resume-slot-2", "aggregate", "needs: prepare-slot-2"),
         )
         for job, following, need in expected:

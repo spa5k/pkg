@@ -143,7 +143,33 @@ jobs:
             --jq '.draft')" = false
 
   harness:
-    name: Build proof-only fault harness
+    name: Run proof harness contract and loopback tool tests
+    needs: validate-dispatch
+    if: >-
+      inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
+      inputs.production_environment == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the workflow tree
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          path: proof-source
+          persist-credentials: false
+
+      - name: Run the proof harness contract and loopback tool tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C proof-source rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest proof-source/tests/macos-clean-host/test_workflow.py
+          python3 -m unittest proof-source/tests/macos-clean-host/test_repeat_workflow.py
+          python3 -m unittest proof-source/tools/release/test_serve_pair_loopback.py
+          bash -n proof-source/tests/macos-clean-host/prove.sh
+
+  harness-build:
+    name: Build the proof-only test executable
     needs: validate-dispatch
     if: >-
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
@@ -165,18 +191,11 @@ jobs:
           path: reviewed-source
           persist-credentials: false
 
-      - name: Build the proof-only test executable
+      - name: Assemble the proof-only harness
         shell: bash
         run: |
           set -euo pipefail
           test "$(uname -m)" = arm64
-          test "$(git -C proof-source rev-parse HEAD)" = "$GITHUB_SHA"
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off 2>/dev/null || true
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null || true
-          python3 -m unittest proof-source/tests/macos-clean-host/test_workflow.py
-          python3 -m unittest proof-source/tests/macos-clean-host/test_repeat_workflow.py
-          python3 -m unittest proof-source/tools/release/test_serve_pair_loopback.py
-          bash -n proof-source/tests/macos-clean-host/prove.sh
           cd reviewed-source
           test "$(git rev-parse HEAD)" = "$PKG_REVIEWED_COMMIT"
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
@@ -572,7 +591,7 @@ jobs:
 
   prepare-slot-1:
     name: Prepare slot 1 through offline N+1
-    needs: [validate-dispatch, harness, acquire-inputs]
+    needs: [validate-dispatch, harness, harness-build, acquire-inputs]
     if: >-
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
@@ -1221,7 +1240,7 @@ jobs:
 
   prepare-slot-2:
     name: Prepare slot 2 after slot 1 completes
-    needs: [resume-slot-1, harness, acquire-inputs]
+    needs: [resume-slot-1, harness, harness-build, acquire-inputs]
     if: >-
       inputs.destructive_confirmation == 'DESTROY-PKG-DISPOSABLE-MACOS' &&
       inputs.production_environment == false
