@@ -8,56 +8,48 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with: { persist-credentials: false }
-      - name: minimal TLS server patterns under python 3.14
+      - name: plain http vs tls on loopback
         shell: bash
         run: |
           python3 - <<'PY' 2>&1 || true
-          import http.server, pathlib, ssl, subprocess, sys, threading, time, urllib.request
-          state = pathlib.Path("/tmp/dbg5"); state.mkdir(mode=0o700, exist_ok=True)
-          import importlib.util
+          import http.server, subprocess, sys, time, urllib.request, pathlib, importlib.util, ssl
+          code_tls = '''
+          import http.server, ssl, sys
+          tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          tls.load_cert_chain(certfile=sys.argv[3] + "/server.pem", keyfile=sys.argv[3] + "/server-key.pem")
+          class H(http.server.SimpleHTTPRequestHandler):
+              def log_message(self, *a): pass
+          class S(http.server.ThreadingHTTPServer): daemon_threads = True
+          srv = S(("127.0.0.1", int(sys.argv[1])), H)
+          srv.socket = tls.wrap_socket(srv.socket, server_side=True)
+          srv.serve_forever()
+          '''
+          code_plain = '''
+          import http.server, sys
+          class H(http.server.SimpleHTTPRequestHandler):
+              def log_message(self, *a): pass
+          class S(http.server.ThreadingHTTPServer): daemon_threads = True
+          S(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+          '''
+          state = pathlib.Path("/tmp/dbg6"); state.mkdir(mode=0o700, exist_ok=True)
           spec = importlib.util.spec_from_file_location("spl", "tools/release/serve_pair_loopback.py")
           spl = importlib.util.module_from_spec(spec); spec.loader.exec_module(spl)
           spl.generate_certificate_material(state)
-
-          pattern = sys.argv[1] if len(sys.argv) > 1 else "both"
-
-          def run_pattern(name, port):
-              code = '''
-          import http.server, ssl, sys
-          port = int(sys.argv[1]); mode = sys.argv[2]
-          state = sys.argv[3]
-          tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-          tls.minimum_version = ssl.TLSVersion.TLSv1_2
-          tls.load_cert_chain(certfile=state + "/server.pem", keyfile=state + "/server-key.pem")
-          class H(http.server.SimpleHTTPRequestHandler):
-              def log_message(self, *a): pass
-          if mode == "getrequest":
-              class S(http.server.ThreadingHTTPServer):
-                  daemon_threads = True
-                  def get_request(self):
-                      c, a = super().get_request()
-                      return tls.wrap_socket(c, server_side=True), a
-              srv = S(("127.0.0.1", port), H)
-          else:
-              class S(http.server.ThreadingHTTPServer):
-                  daemon_threads = True
-              srv = S(("127.0.0.1", port), H)
-              srv.socket = tls.wrap_socket(srv.socket, server_side=True)
-          srv.serve_forever()
-              '''
-              import tempfile, os
-              proc = subprocess.Popen([sys.executable, "-c", code, str(port), name, str(state)])
-              time.sleep(2.5)
-              ctx = ssl.create_default_context(cafile=str(state / "ca.pem"))
+          root = pathlib.Path("/tmp/dbg6/root"); root.mkdir(exist_ok=True)
+          (root / "hello.txt").write_text("ok")
+          def probe(name, port):
               try:
-                  with urllib.request.urlopen(f"https://127.0.0.1:{port}/", timeout=5, context=ctx) as r:
-                      print(name, "PROBE OK", r.status)
+                  ctx = ssl.create_default_context(cafile=str(state / "ca.pem"))
+                  kw = {"context": ctx} if "tls" in name else {}
+                  with urllib.request.urlopen(f"https://127.0.0.1:{port}/hello.txt" if "tls" in name else f"http://127.0.0.1:{port}/hello.txt", timeout=5, **kw) as r:
+                      print(name, "OK", r.status, r.read()[:20])
               except Exception as e:
-                  print(name, "PROBE FAIL", type(e).__name__, str(e)[:80])
-              proc.terminate(); proc.wait()
-              time.sleep(0.5)
-
-          run_pattern("listenwrap", 8451)
-          run_pattern("getrequest", 8452)
+                  print(name, "FAIL", type(e).__name__, str(e)[:60])
+          p1 = subprocess.Popen([sys.executable, "-c", code_plain, "8461"])
+          p2 = subprocess.Popen([sys.executable, "-c", code_tls, "8462", "x", str(state)])
+          time.sleep(2.5)
+          probe("plain-http", 8461)
+          probe("tls", 8462)
+          p1.terminate(); p2.terminate()
           PY
           exit 0
