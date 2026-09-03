@@ -294,7 +294,9 @@ to_pkg_sha=$(/usr/bin/shasum -a 256 "$to_pkg" | /usr/bin/awk '{print $1}')
     || fail "release N and N+1 packages have the same authenticated digest"
 for side in from to; do
     eval "directory=\$$side"
-    (cd "$directory" && /usr/bin/shasum -a 256 --check "$evidence/$side-selected-sha256.txt") \
+    channel_name=$([ "$side" = from ] && printf 'n' || printf 'n-plus-1')
+    (cd "$directory" && /usr/bin/shasum -a 256 --check \
+        "$evidence/${channel_name}-selected-sha256.txt") \
         >"$evidence/$side-checksums.txt" 2>&1 \
         || fail "a local candidate checksum failed"
 done
