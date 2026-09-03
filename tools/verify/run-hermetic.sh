@@ -18,8 +18,9 @@
 #
 # Usage: tools/verify/run-hermetic.sh [-- test-args...]
 #        Everything after `--` is passed to cargo test.
-#        AUDIT_ONLY=1 runs only the static ambient-time audit (the fast
-#        ci-fast gate); no tests execute and no network denial is needed.
+#        AUDIT_ONLY=1 runs only the static ambient-time audit and the
+#        temp-root audit (the fast ci-fast gates); no tests execute and no
+#        network denial is needed.
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -81,21 +82,106 @@ if [ "$violations" -ne 0 ]; then
 fi
 echo "    clean"
 
+# ---------------------------------------------------------------------------
+# Temp-root audit (DN-1 PR-2).
+#
+# Product runtime code must use explicit roots, never the ambient temp dir.
+# Tests may use temp roots (that is what they are for); this codebase keeps
+# every test module either inline behind a `#[cfg(test)]` marker or in a
+# sibling `tests.rs` / `tests/` path (skipped by find). pkg-testkit is the
+# allowed everywhere. A hit outside both allowances fails the run: a new
+# production temp-dir dependency cannot hide.
+#
+# Sanctioned production temp-dir uses (documented baseline):
+# - pkg-nix/src/managed/installer_bundle.rs  spools streamed TUF targets to
+#   an anonymous tempfile while digesting; deliberate, disk-bounded design
+# - pkg-nix/src/managed/provision.rs          extraction TempPath plumbing
+#   for the same bundle path
+# Both stay until an explicit-root spool design lands (IMPL-NOTES-PR2).
+TEMP_ALLOWED=(
+	'crates/pkg-nix/src/managed/installer_bundle.rs'
+	'crates/pkg-nix/src/managed/provision.rs'
+)
+# ---------------------------------------------------------------------------
+echo "==> temp-root audit (production code must not use the ambient temp dir)"
+
+violations=0
+while IFS= read -r hit; do
+	[ -z "$hit" ] && continue
+	path="${hit%%:*}"
+	skip=""
+	for entry in "${TEMP_ALLOWED[@]}"; do
+		if [ "$entry" = "$path" ]; then
+			skip=1
+			break
+		fi
+	done
+	[ -n "$skip" ] && continue
+	echo "    temp-root violation: $hit" >&2
+	violations=$((violations + 1))
+done < <(find crates -name '*.rs' -not -path '*/target/*' \
+	-not -name 'tests.rs' -not -path '*/tests/*' -print0 \
+	| xargs -0 awk '
+		FNR == 1 { in_test = 0 }
+		/#\[cfg\(test\)\]/ { in_test = 1 }
+		in_test { next }
+		/std::env::temp_dir\(|tempfile::|tempdir::|TempDir::new\(/ {
+			print FILENAME ":" FNR
+		}' \
+	| grep -v '^crates/pkg-testkit/' || true)
+
+if [ "$violations" -ne 0 ]; then
+	echo "==> temp-root audit FAILED" >&2
+	echo "    use an explicit product root, or the pkg-testkit harness" >&2
+	exit 1
+fi
+echo "    clean"
+
 if [ "${AUDIT_ONLY:-0}" = "1" ]; then
 	echo "==> audit-only mode: skipping tripwire and test run"
 	exit 0
 fi
 
+# Private per-invocation TMPDIR: tests that honor TMPDIR get a fresh root,
+# removed on exit. Platform choice matters twice:
+# - SHORT path: broker transport tests bind unix sockets whose paths
+#   extend TMPDIR and macOS SUN_LEN is 104 bytes (run 33676912359).
+# - PRIVATE ancestors on macOS: the installer journal's safety checks
+#   reject world-writable ancestor directories, so /tmp (mode 1777)
+#   fails 27 tests (run 33678019679); $HOME is private. Linux tests
+#   pass with /tmp, which stays the shorter choice there.
+# Per-TEST isolation is enforced by the audit plus the pkg-testkit
+# harness, not by this wrapper.
+case "$(uname -s)" in
+Darwin) HERMETIC_TMP="$(mktemp -d "$HOME/hm.XXXXXXXX")" ;;
+*) HERMETIC_TMP="$(mktemp -d /tmp/hm.XXXXXXXX)" ;;
+esac
+export TMPDIR="$HERMETIC_TMP"
+# Best-effort cleanup: ownership tests deliberately leave root-owned or
+# mode-restricted fixtures behind; the trap must never fail a green run
+# (run 33678019679) — the job filesystem is ephemeral anyway.
+cleanup_tmpdir() {
+	chmod -R u+rwx "$HERMETIC_TMP" 2>/dev/null || true
+	rm -rf "$HERMETIC_TMP" 2>/dev/null || true
+}
+trap cleanup_tmpdir EXIT
+
+# Prefetch pinned dependencies while the network is still up: the hermetic
+# run itself is offline (CARGO_NET_OFFLINE), but a fresh CI runner has an
+# empty cargo cache, and fetching the --locked dependency set is not the
+# network the tripwire is hunting. This must happen BEFORE the offline
+# export.
+cargo_bin="$(command -v cargo)"
+"$cargo_bin" fetch --locked
+
 export PKG_HERMETIC=1
-export CARGO_NET_OFFLINE=1
+export CARGO_NET_OFFLINE=true
 
 cargo_args=("--workspace" "--locked")
 if [ "${1:-}" = "--" ]; then
 	shift
 	cargo_args+=("$@")
 fi
-
-cargo_bin="$(command -v cargo)"
 
 run_wrapped() {
 	# $1 = label, rest = command
@@ -107,16 +193,42 @@ run_wrapped() {
 
 case "$(uname -s)" in
 Linux)
-	network_mode="none (unshare unavailable)"
-	if ! command -v unshare >/dev/null 2>&1; then
+	network_mode="none (no usable namespace)"
+	if unshare -rn /usr/bin/true >/dev/null 2>&1; then
+		# Unprivileged user namespace with an isolated network. Loopback
+		# must come up because broker and channel tests bind 127.0.0.1.
+		network_mode="unshare -rn (unprivileged userns)"
+		run_wrapped "$network_mode" unshare -rn \
+			bash -c 'ip link set lo up && exec "$0" test "${@}"' \
+			"$cargo_bin" "${cargo_args[@]}"
+	elif sudo -n unshare -n /usr/bin/true >/dev/null 2>&1; then
+		# GitHub ubuntu runners block unprivileged uid_map writes (spike
+		# verdict, run 33674556472). Passwordless sudo can still create a
+		# network namespace as real root; setpriv then drops back to the
+		# invoking user so cargo execs from $HOME/.cargo/bin with normal
+		# permissions and owns its target/ files. sudo resets the
+		# environment, so everything cargo needs is re-exported inside —
+		# conditionally, because cargo rejects EMPTY CARGO_TARGET_DIR
+		# (run 33676912359) and empty RUSTUP_TOOLCHAIN confuses rustup.
+		network_mode="sudo unshare -n (root netns, setpriv back to invoking uid)"
+		inner_env="export PATH='$PATH' HOME='$HOME' TMPDIR='$HERMETIC_TMP' PKG_HERMETIC=1 CARGO_NET_OFFLINE=true"
+		[ -n "${RUSTUP_TOOLCHAIN:-}" ] \
+			&& inner_env="$inner_env RUSTUP_TOOLCHAIN='$RUSTUP_TOOLCHAIN'"
+		[ -n "${CARGO_TARGET_DIR:-}" ] \
+			&& inner_env="$inner_env CARGO_TARGET_DIR='$CARGO_TARGET_DIR'"
+		run_wrapped "$network_mode" sudo -n unshare -n \
+			bash -c "$inner_env; ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) --clear-groups \"\$0\" test \"\${@}\"" \
+			"$cargo_bin" "${cargo_args[@]}"
+	elif command -v unshare >/dev/null 2>&1; then
+		echo "error: no usable network namespace (unprivileged uid_map and sudo both refused)" >&2
+		[ "${STRICT:-0}" = "1" ] && exit 1
+		echo "warning: running WITHOUT network denial (set STRICT=1 in CI)" >&2
+		run_wrapped "unwrapped (denial refused)" "$cargo_bin" test "${cargo_args[@]}"
+	else
 		echo "error: unshare is unavailable; cannot deny networking" >&2
 		[ "${STRICT:-0}" = "1" ] && exit 1
 		echo "warning: running WITHOUT network denial (set STRICT=1 in CI)" >&2
-	else
-		# `-r -n`: user namespace with an isolated loopback-only network.
-		# Loopback stays up because broker and channel tests bind it.
-		network_mode="unshare -rn"
-		run_wrapped "$network_mode" unshare -rn "$cargo_bin" test "${cargo_args[@]}"
+		run_wrapped "unwrapped (unshare missing)" "$cargo_bin" test "${cargo_args[@]}"
 	fi
 	;;
 Darwin)
