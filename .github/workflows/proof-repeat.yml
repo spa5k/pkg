@@ -619,6 +619,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -x
           root_capacity=$(LC_ALL=C /bin/df -Pk /)
           python3 -I - 75161927680 "$root_capacity" <<'PY'
           import re
