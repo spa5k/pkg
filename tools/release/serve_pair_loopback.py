@@ -435,9 +435,12 @@ def bootstrap(staging_value: str, publication_value: str, state_value: str, port
     server = None
     try:
         records = validate_pair(staging)
-        make_read_only(staging)
+        # macOS refuses to rename a directory without write permission on
+        # the directory itself (the rename must update its '..' entry), so
+        # the tree is renamed FIRST and made read-only AFTER.
         os.replace(staging, publication)
         renamed = True
+        make_read_only(publication)
         generate_certificate_material(state_root)
         log = (state_root / "http.log").open("xb")
         server = subprocess.Popen(
