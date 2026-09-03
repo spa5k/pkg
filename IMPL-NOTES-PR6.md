@@ -92,3 +92,36 @@ The Linux leg needs nothing new: `Dockerfile.stage` already bakes
   tampered receipt (fail closed)
 - `bash -n` on `prove.sh` and `mint_dn1_proof_pair.sh` — clean
 - No Rust source changed; `cargo` gates unaffected
+
+## Mint record (2026-09-03, the completion run)
+
+- **Releases**: v0.1.0-alpha.26 (N, sequence 1) and v0.1.0-alpha.27 (N+1,
+  sequence 2), built from 56f6782 with `https://127.0.0.1:8443/{n,n-plus-1}/`
+  URLs baked via `option_env!`, tagged at 56f6782, signed through
+  publish-release.yml dispatched from the dn16-proof-workflow-1 tag
+  (expected_sha 42c4244f, environment approval via the pending-deployments
+  API). Both releases carry the full 19-asset set (10 base + 9 generated).
+- **SHA256SUMS gotcha**: the signer requires every base asset checksummed —
+  including 1.root.json and release-manifest.json. The mint script now
+  documents this.
+- **Sealed-manifest gotcha**: --prepare-dn16-manifest emits a bundle-free
+  manifest; publish-dn16 (Dn16Sealed) requires one WITH the three
+  cliArtifact bundle fields. The sealed manifest is constructed by adding
+  the bundle digest/length/target fields to the prepared manifest; the
+  publish equality check validates the construction.
+- **Channel sequences are 1..=2**, not release numbers.
+- **Upstream artifacts** (nix 2.34.8 tarballs, determinate 3.22.1 set) are
+  reused byte-exact from the preserved DN-16 pair tree, digest-verified.
+- **AppleDouble gotcha**: macOS tar injects `._*` members; the workflow
+  extractor rejects them. The bundle tarball is built with
+  COPYFILE_DISABLE=1 (pair-2 was discarded for this; pair-3 is clean).
+- **Immutability**: releases are immutable in this repo — a bad bundle
+  means a new tag, not an asset swap (hence pair-3).
+- **Pair**: proof-pair.json sha 3ee51dd5…, productCommit 56f6782, channels
+  n (total 321645504 bytes, 35 files) and n-plus-1 (321645391, 35 files),
+  test root c317d2ad. Bundle tarball sha aac6aa23…, 419431832 bytes, at
+  tag dn1-proof-pair-3.
+- **Pins**: all twelve filled; PKG_REVIEWED_COMMIT now 56f6782 (the actual
+  build commit — cbd3494 was the DN-16 tree, wrong for this pair).
+- Verified locally: bundle layout extraction (workflow's own algorithm),
+  every inventory digest against the extracted tree, 15 structural tests.

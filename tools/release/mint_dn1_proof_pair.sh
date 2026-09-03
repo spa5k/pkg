@@ -97,10 +97,12 @@ build_release() {
         -C target/release pkg pkg-nix-broker pkg-root-helper pkg-install
     (
         cd "$out"
-        shasum -a 256 pkg-aarch64-darwin pkg-x86_64-linux \
+        # SHA256SUMS must cover EVERY base asset the signer validates,
+        # including 1.root.json (and release-manifest.json once prepared).
+        shasum -a 256 1.root.json install.sh pkg-aarch64-darwin pkg-x86_64-linux \
             pkg-installer-x86_64-linux "pkg-${version}-preview.pkg" \
             "pkg-${release}-macos-aarch64.tar.gz" \
-            "pkg-${release}-linux-x86_64.tar.gz" install.sh >SHA256SUMS
+            "pkg-${release}-linux-x86_64.tar.gz" >SHA256SUMS
     )
 }
 
