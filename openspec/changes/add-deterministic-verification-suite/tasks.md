@@ -2,18 +2,18 @@
 
 ## 1. Time injection
 
-- [ ] 1.1 Define `Clock` trait in `pkg-core` with `now()` returning a `Timestamp`; default
+- [x] 1.1 Define `Clock` trait in `pkg-core` with `now()` returning a `Timestamp`; default
       impl delegates to `SystemTime`
-- [ ] 1.2 Inject `Clock` at the single wall-clock decision: the channel freshness check
+- [x] 1.2 Inject `Clock` at the single wall-clock decision: the channel freshness check
       (`pkg-channel/src/policy.rs` `validate_descriptor` `now` parameter, fed from
       `jiff::Timestamp::now()` at `tuf.rs` call sites). Record-only timestamp sites
       (broker approval journal, repair report, CLI state files, logs) stay ambient:
       a grounding audit confirmed they decide nothing and are excluded from byte
       stability (owner decision, 2026-09-03). `Instant::now` timeouts are out of scope.
-- [ ] 1.3 Add `FixedClock` test double in `pkg-testkit`
-- [ ] 1.4 Convert timestamp-dependent tests to `FixedClock`; verify zero ambient-time reads in
+- [x] 1.3 Add `FixedClock` test double in `pkg-testkit`
+- [x] 1.4 Convert timestamp-dependent tests to `FixedClock`; verify zero ambient-time reads in
       `#[cfg(test)]` builds via a debug assertion
-- [ ] 1.5 Run workspace tests with networking disabled (`tools/verify/run-hermetic.sh` wrapper
+- [x] 1.5 Run workspace tests with networking disabled (`tools/verify/run-hermetic.sh` wrapper
       using `unshare -n` on Linux and a network-deny wrapper on macOS CI); fix every leak
 
 ## 2. Repeat-run proof workflow

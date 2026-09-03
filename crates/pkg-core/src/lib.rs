@@ -26,6 +26,7 @@
 #![deny(missing_docs)]
 
 pub mod channel;
+pub mod clock;
 pub mod generation;
 pub mod history;
 pub mod identity;
@@ -48,6 +49,7 @@ mod lifecycle_test_support;
 pub use channel::{
     ChannelError, ChannelName, ChannelSequence, NixpkgsRevision, PolicyVersion, SourceRevision,
 };
+pub use clock::{Clock, SystemClock};
 pub use generation::{
     GenerationSnapshot, GenerationSnapshotError, RollbackError, RollbackPlan, RollbackTarget,
     plan_rollback,

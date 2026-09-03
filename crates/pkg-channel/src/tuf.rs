@@ -2,10 +2,11 @@ use std::fs::File;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use jiff::Timestamp;
-use pkg_core::System;
+use pkg_core::{Clock, System, SystemClock};
 use tough::{
     DefaultTransport, ExpirationEnforcement, HttpTransportBuilder, IntoVec, Limits,
     RepositoryLoader, TargetName,
@@ -132,8 +133,15 @@ impl<T> ChannelRefresh<T> {
     }
 }
 
+/// One TUF view: pinned origins and the private, persistent datastore.
+struct ChannelEndpoints {
+    trusted_root: TrustedRoot,
+    metadata_url: Url,
+    targets_url: Url,
+    datastore: PathBuf,
+}
+
 /// Fixed-policy production TUF client.
-#[derive(Debug)]
 pub struct ChannelClient {
     trusted_root: TrustedRoot,
     metadata_url: Url,
@@ -141,7 +149,16 @@ pub struct ChannelClient {
     datastore: PathBuf,
     accepted: AcceptedChannelStore,
     refresh_lease: tokio::sync::Mutex<()>,
+    clock: Arc<dyn Clock>,
     _datastore_lease: File,
+}
+
+impl std::fmt::Debug for ChannelClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChannelClient")
+            .finish_non_exhaustive()
+    }
 }
 
 impl ChannelClient {
@@ -188,9 +205,58 @@ impl ChannelClient {
         trusted_root: TrustedRoot,
         metadata_url: Url,
         targets_url: Url,
-        datastore: PathBuf,
+        datastore: impl Into<PathBuf>,
         legacy: Option<&AcceptedChannel>,
     ) -> Result<Self, ChannelError> {
+        Self::with_clock_inner(
+            ChannelEndpoints {
+                trusted_root,
+                metadata_url,
+                targets_url,
+                datastore: datastore.into(),
+            },
+            legacy,
+            Arc::new(SystemClock),
+        )
+    }
+
+    /// Creates a client that reads time through the injected clock.
+    ///
+    /// Production callers use [`ChannelClient::new`]; hermetic tests install
+    /// a fixed clock so expiry verdicts never read the ambient system clock.
+    ///
+    /// # Errors
+    /// Returns the same redacted failures as [`ChannelClient::new`].
+    pub fn new_with_clock(
+        trusted_root: TrustedRoot,
+        metadata_url: Url,
+        targets_url: Url,
+        datastore: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, ChannelError> {
+        Self::with_clock_inner(
+            ChannelEndpoints {
+                trusted_root,
+                metadata_url,
+                targets_url,
+                datastore: datastore.into(),
+            },
+            None,
+            clock,
+        )
+    }
+
+    fn with_clock_inner(
+        endpoints: ChannelEndpoints,
+        legacy: Option<&AcceptedChannel>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, ChannelError> {
+        let ChannelEndpoints {
+            trusted_root,
+            metadata_url,
+            targets_url,
+            datastore,
+        } = endpoints;
         validate_repository_url(&metadata_url)?;
         validate_repository_url(&targets_url)?;
         validate_datastore(&datastore)?;
@@ -204,6 +270,7 @@ impl ChannelClient {
             accepted,
             datastore,
             refresh_lease: tokio::sync::Mutex::new(()),
+            clock,
             _datastore_lease: datastore_lease,
         })
     }
@@ -212,7 +279,7 @@ impl ChannelClient {
     pub async fn refresh(&self, host: System) -> Result<RefreshOutcome, ChannelError> {
         self.refresh_with_transport(
             host,
-            Timestamp::now(),
+            self.clock.now(),
             DefaultTransport::new_with_http_settings(
                 HttpTransportBuilder::new()
                     .connect_timeout(Duration::from_secs(10))
@@ -236,7 +303,7 @@ impl ChannelClient {
     ) -> Result<ChannelRefresh<T>, ChannelError> {
         self.refresh_with_index_and_transport(
             host,
-            Timestamp::now(),
+            self.clock.now(),
             DefaultTransport::new_with_http_settings(
                 HttpTransportBuilder::new()
                     .connect_timeout(Duration::from_secs(10))
@@ -261,7 +328,7 @@ impl ChannelClient {
     ) -> Result<ChannelRefresh<T>, ChannelError> {
         self.refresh_with_index_and_transport(
             host,
-            Timestamp::now(),
+            self.clock.now(),
             DefaultTransport::new_with_http_settings(
                 HttpTransportBuilder::new()
                     .connect_timeout(Duration::from_secs(10))

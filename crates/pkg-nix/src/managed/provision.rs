@@ -16,7 +16,9 @@ use tempfile::TempPath;
 use url::Url;
 
 use super::detect::{DetectionDisposition, DetectionReport, FindingKind, detect_unmanaged_nix};
-use super::installer_bundle::{DatastoreOwner, VerifiedRuntimeBundle, load_installer_bundle};
+use super::installer_bundle::{
+    BundleEnvironment, DatastoreOwner, VerifiedRuntimeBundle, load_installer_bundle,
+};
 use super::ownership::{
     ManagedGroupBindings, OwnershipExpectation, decode_ownership_asset_manifest,
     verify_ownership_receipt_against_manifest, verify_with_owner_uid,
@@ -558,8 +560,11 @@ async fn load_authenticated_installer_bundle_with_owner(
         trusted_root,
         request.repository,
         request.datastore,
-        request.system,
-        datastore_owner,
+        BundleEnvironment {
+            host: request.system,
+            datastore_owner,
+            clock: Arc::new(pkg_core::SystemClock),
+        },
     )
     .await
     .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;

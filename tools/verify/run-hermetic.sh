@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# DN-1 task 1.5: hermetic workspace test run.
+#
+# The wrapper does three things:
+#
+# 1. Ambient-time audit. It scans every product crate's production source for
+#    ALL wall-clock families (SystemTime, jiff Timestamp, time, chrono). A hit
+#    is allowed only at the one seam implementation (pkg-core/src/clock.rs) or
+#    at a record-only site from the grounding audit of 2026-09-03. Any other
+#    hit fails the run, so a new decision site cannot hide from the audit.
+#    (tools/ is release authoring, not product runtime; it is out of scope.)
+# 2. Hermetic tripwire. It exports PKG_HERMETIC=1, which makes every ambient
+#    SystemClock read panic (pkg_core::SystemClock). Tests that reach a
+#    freshness decision must inject a fixed clock.
+# 3. Network denial. Tests run with networking disabled: `unshare -n` on
+#    Linux, `sandbox-exec` with a deny-network profile on macOS. Set
+#    STRICT=1 to fail when no wrapper is available (macOS CI sets this).
+#
+# Usage: tools/verify/run-hermetic.sh [-- test-args...]
+#        Everything after `--` is passed to cargo test.
+#        AUDIT_ONLY=1 runs only the static ambient-time audit (the fast
+#        ci-fast gate); no tests execute and no network denial is needed.
+
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+
+FAMILIES=(
+	'SystemTime::now('
+	'Timestamp::now('
+	'Zoned::now('
+	'Utc::now('
+	'OffsetDateTime::now_utc('
+)
+
+# Sanctioned ambient reads, as "path family" pairs (design.md, Amendment 2):
+# - pkg-core/src/clock.rs is the one seam implementation; it owns the reads.
+# - The record-only sites decide nothing and stay ambient:
+#     pkg-cli/src/commands/local.rs      CLI lease identities and gc stamps
+#     pkg-cli/src/log.rs                 log-row timestamps
+#     pkg-installer/src/broker.rs        approval journal timestamp
+#     pkg-installer/src/production_repair.rs  repair report timestamp
+ALLOWED=(
+	'crates/pkg-core/src/clock.rs SystemTime::now('
+	'crates/pkg-core/src/clock.rs Timestamp::now('
+	'crates/pkg-cli/src/commands/local.rs SystemTime::now('
+	'crates/pkg-cli/src/log.rs SystemTime::now('
+	'crates/pkg-installer/src/broker.rs SystemTime::now('
+	'crates/pkg-installer/src/production_repair.rs SystemTime::now('
+)
+
+echo "==> ambient-time audit (all wall-clock families)"
+violations=0
+for family in "${FAMILIES[@]}"; do
+	while IFS= read -r hit; do
+		[ -z "$hit" ] && continue
+		path="${hit%%:*}"
+		allowed=""
+		for entry in "${ALLOWED[@]}"; do
+			if [ "$entry" = "$path $family" ]; then
+				allowed=1
+				break
+			fi
+		done
+		if [ -z "$allowed" ]; then
+			echo "AMBIENT-TIME VIOLATION ($family): $hit" >&2
+			violations=1
+		fi
+	done < <(
+		grep -RIFn "$family" crates --include='*.rs' 2>/dev/null \
+			| grep -v '/tests/' | grep -v 'tests\.rs$' \
+			| grep -v 'test_support' | grep -v '/pkg-testkit/' \
+			|| true
+	)
+done
+
+if [ "$violations" -ne 0 ]; then
+	echo "==> ambient-time audit FAILED" >&2
+	echo "    route the read through pkg_core::Clock, or record the" >&2
+	echo "    record-only site in ALLOWED with the owner's justification." >&2
+	exit 1
+fi
+echo "    clean"
+
+if [ "${AUDIT_ONLY:-0}" = "1" ]; then
+	echo "==> audit-only mode: skipping tripwire and test run"
+	exit 0
+fi
+
+export PKG_HERMETIC=1
+export CARGO_NET_OFFLINE=1
+
+cargo_args=("--workspace" "--locked")
+if [ "${1:-}" = "--" ]; then
+	shift
+	cargo_args+=("$@")
+fi
+
+cargo_bin="$(command -v cargo)"
+
+run_wrapped() {
+	# $1 = label, rest = command
+	local label="$1"
+	shift
+	echo "==> network denial: $label"
+	"$@"
+}
+
+case "$(uname -s)" in
+Linux)
+	network_mode="none (unshare unavailable)"
+	if ! command -v unshare >/dev/null 2>&1; then
+		echo "error: unshare is unavailable; cannot deny networking" >&2
+		[ "${STRICT:-0}" = "1" ] && exit 1
+		echo "warning: running WITHOUT network denial (set STRICT=1 in CI)" >&2
+	else
+		# `-r -n`: user namespace with an isolated loopback-only network.
+		# Loopback stays up because broker and channel tests bind it.
+		network_mode="unshare -rn"
+		run_wrapped "$network_mode" unshare -rn "$cargo_bin" test "${cargo_args[@]}"
+	fi
+	;;
+Darwin)
+	profile="$(mktemp "${TMPDIR:-/tmp}/pkg-hermetic.XXXXXX.sb")"
+	trap 'rm -f "$profile"' EXIT
+	cat >"$profile" <<'EOF'
+(version 1)
+(deny network*)
+(allow network-bind (local ip "*:*"))
+(allow network-outbound (remote unix-socket))
+(allow network-outbound (remote tcp4 "localhost:*"))
+(allow network-outbound (remote tcp6 "localhost:*"))
+EOF
+	network_mode="sandbox-exec"
+	# Newer macOS builds refuse every sandbox-exec profile, so probe
+	# before relying on it. STRICT=1 (macOS CI) requires a working
+	# wrapper; a developer laptop gets a loud unwrapped fallback.
+	if command -v sandbox-exec >/dev/null 2>&1 \
+		&& sandbox-exec -f "$profile" /usr/bin/true 2>/dev/null; then
+		# Loopback stays reachable for local test servers; every remote
+		# socket is denied. sandbox-exec prints a deprecation notice on
+		# stderr; that is expected and not a failure.
+		run_wrapped "$network_mode (remote network denied)" \
+			sandbox-exec -f "$profile" "$cargo_bin" test "${cargo_args[@]}"
+	else
+		network_mode="none (sandbox-exec refused by this OS build)"
+		echo "error: sandbox-exec cannot run on this host; cannot deny networking" >&2
+		if [ "${STRICT:-0}" = "1" ]; then
+			exit 1
+		fi
+		echo "warning: running WITHOUT network denial (set STRICT=1 in CI)" >&2
+		run_wrapped "none" "$cargo_bin" test "${cargo_args[@]}"
+	fi
+	;;
+*)
+	echo "error: unsupported platform $(uname -s)" >&2
+	exit 1
+	;;
+esac
+
+echo "==> hermetic run passed: ambient-time audit clean, PKG_HERMETIC armed"
+echo "    network denial: $network_mode"

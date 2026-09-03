@@ -33,6 +33,32 @@ async fn descriptor_bytes(repository: &Repository) -> Vec<u8> {
     IntoVec::into_vec(stream).await.unwrap()
 }
 
+/// Test-only frozen clock. `pkg-channel` sits below `pkg-testkit` in the
+/// dependency order, so the double is defined locally instead of shared.
+struct FrozenClock(std::sync::Mutex<Timestamp>);
+
+impl FrozenClock {
+    fn frozen_at(instant: Timestamp) -> Self {
+        Self(std::sync::Mutex::new(instant))
+    }
+
+    fn freeze_at(&self, instant: Timestamp) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = instant;
+    }
+}
+
+impl Clock for FrozenClock {
+    fn now(&self) -> Timestamp {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 #[tokio::test]
 async fn host_index_is_returned_only_from_the_authenticated_repository_view() {
     let temp = TempDir::new().unwrap();
@@ -76,6 +102,9 @@ async fn refresh_bundle_keeps_descriptor_and_host_index_in_one_tuf_view() {
         datastore: datastore.path().to_path_buf(),
         accepted: AcceptedChannelStore::new(datastore.path()),
         refresh_lease: tokio::sync::Mutex::new(()),
+        clock: std::sync::Arc::new(FrozenClock::frozen_at(
+            "2026-08-09T00:00:00Z".parse().unwrap(),
+        )),
         _datastore_lease: lease,
     };
     client.accepted.initialize(None).unwrap();
@@ -151,6 +180,90 @@ async fn refresh_bundle_keeps_descriptor_and_host_index_in_one_tuf_view() {
             .await,
         Err(ChannelError::SequenceRollback)
     ));
+}
+
+/// The fixture descriptor expires at `2036-04-01T00:00:00Z`.
+#[tokio::test]
+async fn descriptor_freshness_refuses_the_exact_expiry_instant() {
+    let temp = TempDir::new().unwrap();
+    let repository = fixture_repository(&temp.path().to_path_buf()).await;
+    let bytes = descriptor_bytes(&repository).await;
+
+    // One instant before expiry the descriptor is still fresh.
+    let fresh = validate_descriptor(
+        &bytes,
+        &repository,
+        System::Aarch64Darwin,
+        None,
+        "2036-03-31T23:59:59Z".parse().unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(fresh, RefreshOutcome::Updated(_)));
+
+    // At the exact expiry instant the descriptor is expired, so a
+    // freeze attack cannot replay a stale descriptor across the line.
+    assert!(matches!(
+        validate_descriptor(
+            &bytes,
+            &repository,
+            System::Aarch64Darwin,
+            None,
+            "2036-04-01T00:00:00Z".parse().unwrap(),
+        ),
+        Err(ChannelError::ExpiredDescriptor)
+    ));
+}
+
+#[tokio::test]
+async fn refresh_reads_time_only_through_the_injected_clock() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/channel-v1")
+        .canonicalize()
+        .unwrap();
+    let temp = TempDir::new().unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        temp.path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
+    let clock = std::sync::Arc::new(FrozenClock::frozen_at(
+        "2026-08-09T00:00:00Z".parse().unwrap(),
+    ));
+    // Built through the struct literal because the production constructor
+    // admits only pinned HTTPS origins; the fixture repository is local.
+    let lease = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(temp.path().join("pkg-channel.lock"))
+        .unwrap();
+    let client = ChannelClient {
+        trusted_root: TrustedRoot::from_embedded(ROOT).unwrap(),
+        metadata_url: Url::from_directory_path(fixture.join("metadata")).unwrap(),
+        targets_url: Url::from_directory_path(fixture.join("targets")).unwrap(),
+        datastore: temp.path().to_path_buf(),
+        accepted: AcceptedChannelStore::new(temp.path()),
+        refresh_lease: tokio::sync::Mutex::new(()),
+        clock: clock.clone(),
+        _datastore_lease: lease,
+    };
+    client.accepted.initialize(None).unwrap();
+
+    let first = client.refresh(System::Aarch64Darwin).await.unwrap();
+    assert!(matches!(first, RefreshOutcome::Updated(_)));
+    let second = client.refresh(System::Aarch64Darwin).await.unwrap();
+    assert!(matches!(second, RefreshOutcome::Unchanged(_)));
+
+    // Frozen at the exact expiry instant, the same signed descriptor is
+    // refused and the accepted identity survives the refused refresh.
+    clock.freeze_at("2036-04-01T00:00:00Z".parse().unwrap());
+    assert!(matches!(
+        client.refresh(System::Aarch64Darwin).await,
+        Err(ChannelError::ExpiredDescriptor)
+    ));
+    assert!(client.accepted.load().unwrap().is_some());
 }
 
 #[tokio::test]
