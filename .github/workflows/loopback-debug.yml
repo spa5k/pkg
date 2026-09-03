@@ -1,0 +1,31 @@
+name: DN-1 loopback debug
+on: workflow_dispatch
+permissions: { contents: read }
+jobs:
+  dbg:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with: { persist-credentials: false }
+      - name: Reproduce the loopback bootstrap and dump all state
+        shell: bash
+        run: |
+          set -x
+          python3 --version
+          which python3 openssl
+          openssl version
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate || true
+          python3 - <<'PY'
+          import sys, pathlib
+          sys.path.insert(0, "tools/release")
+          from test_serve_pair_loopback import pair
+          pair(pathlib.Path("/tmp/dbg/staging"))
+          PY
+          python3 tools/release/serve_pair_loopback.py bootstrap /tmp/dbg/staging /tmp/dbg/channel /tmp/dbg/state 8444; ec=$?
+          echo "bootstrap exit: $ec"
+          echo "--- state dir:"; ls -la /tmp/dbg/state 2>/dev/null
+          echo "--- http.log:"; cat /tmp/dbg/state/http.log 2>/dev/null
+          echo "--- probe:"
+          curl -vk --cacert /tmp/dbg/state/ca.pem https://127.0.0.1:8444/proof-pair.json 2>&1 | tail -12 || true
+          exit 0
