@@ -171,6 +171,8 @@ jobs:
           set -euo pipefail
           test "$(uname -m)" = arm64
           test "$(git -C proof-source rev-parse HEAD)" = "$GITHUB_SHA"
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off 2>/dev/null || true
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null || true
           python3 -m unittest proof-source/tests/macos-clean-host/test_workflow.py
           python3 -m unittest proof-source/tests/macos-clean-host/test_repeat_workflow.py
           python3 -m unittest proof-source/tools/release/test_serve_pair_loopback.py
@@ -467,7 +469,7 @@ jobs:
               require(total == int(os.environ[f"PKG_PROOF_{name.upper().replace('-', '_')}_TOTAL_BYTES"]),
                       "proof channel total bytes mismatch")
               canonical = "".join(
-                  "\t".join(row[1:]) + "\n"
+                  f"{row[1]}\t{row[2]}\t{row[3]}\n"
                   for row in rows if row[0] == name
               ).encode()
               require(hashlib.sha256(canonical).hexdigest()
@@ -1018,7 +1020,7 @@ jobs:
               require(total == int(os.environ[f"PKG_PROOF_{name.upper().replace('-', '_')}_TOTAL_BYTES"]),
                       "proof channel total bytes mismatch")
               canonical = "".join(
-                  "\t".join(row[1:]) + "\n"
+                  f"{row[1]}\t{row[2]}\t{row[3]}\n"
                   for row in rows if row[0] == name
               ).encode()
               require(hashlib.sha256(canonical).hexdigest()

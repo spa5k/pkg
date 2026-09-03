@@ -136,7 +136,10 @@ def validate_pair(root: Path) -> dict[str, tuple[str, int]]:
 
     records = {"proof-pair.json": (hashlib.sha256(descriptor_raw).hexdigest(), len(descriptor_raw))}
     trusted_root = None
-    for channel, name, version in zip(channels, ("n", "n-plus-1"), (1, 2), strict=True):
+    channels = list(channels)
+    if len(channels) != 2:
+        raise fail("proof pair must bind exactly two channels")
+    for channel, name, version in zip(channels, ("n", "n-plus-1"), (1, 2)):
         expected_keys = {
             "name", "releaseId", "manifestSchemaVersion", "channelSequence", "timestampVersion",
             "trustedRootSha256", "inventory", "inventorySha256", "inventoryLength",
