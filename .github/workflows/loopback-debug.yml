@@ -23,7 +23,7 @@ jobs:
           records = spl.validate_pair(staging)
           print("records:", len(records))
           print("== certs")
-          state = pathlib.Path("/tmp/dbg/state2"); state.mkdir(parents=True, exist_ok=True)
+          state = pathlib.Path("/tmp/dbg/state3"); state.mkdir(mode=0o700, parents=True, exist_ok=True)
           spl.generate_certificate_material(state)
           print("cert files:", sorted(p.name for p in state.iterdir()))
           print("== spawn _serve")
