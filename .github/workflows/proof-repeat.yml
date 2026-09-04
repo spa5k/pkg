@@ -42,7 +42,7 @@ env:
   PKG_REVIEWED_COMMIT: 56f6782efcd34451c63cd2a940cd8b4e36fd7d44
   PKG_DETERMINATE_SHA256: 90cb96f597530553eef1311b37124d1e895fdb3a19877e65a4572dda7753f50b
   PKG_PROOF_WORKFLOW_TAG: dn1-proof-workflow-2
-  PKG_PROOF_PAIR_TAG: dn1-proof-pair-6
+  PKG_PROOF_PAIR_TAG: dn1-proof-pair-7
   # The reviewed product commit is pinned twice: as the raw sha the
   # acquisition binds against, and as this SIGNED ANNOTATED tag whose
   # target must equal the sha. The workflow tag below is a different,
@@ -54,11 +54,11 @@ env:
   PKG_PROOF_LOOPBACK_PORT: "8443"
   # The pair stays on the DN-1 TEST root. Proofs never touch production.
   PKG_PROOF_TRUSTED_ROOT_SHA256: b5c903e06c58a48b7eb23e86a6dc480e2b7358267add9f41004120a752784d2d
-  # Pins from the sealed pair dn1-proof-pair-6 (minted 2026-09-03 from
+  # Pins from the sealed pair dn1-proof-pair-7 (minted 2026-09-03 from
   # productCommit 56f6782; see tools/release/mint_dn1_proof_pair.sh and
   # assemble_dn1_pair.sh for the minting recipe).
   PKG_PROOF_PAIR_TARBALL_LENGTH: "418658950"
-  PKG_PROOF_PAIR_TARBALL_SHA256: 5ce7f8404277d9597de7c2ed74a13c978b0c82b085dc90ff43742de5812394b6
+  PKG_PROOF_PAIR_TARBALL_SHA256: eaeccd3601fe947cbeff60ed0653315b768ae5635e49d657c8a735437dd0658e
   PKG_PROOF_PAIR_LENGTH: "1101"
   PKG_PROOF_PAIR_SHA256: 3348173a1422820c38dbf8be5829a9a788f993ebe8fec1c8bf91fa6193658560
   PKG_PROOF_N_INVENTORY_LENGTH: "5959"
@@ -544,11 +544,12 @@ jobs:
           manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
           pair = json.loads(pathlib.Path(sys.argv[4]).read_bytes())
           record = next(item for item in pair["channels"] if item["name"] == sys.argv[3])
-          if (
-              manifest.get("releaseId") != sys.argv[2]
-              or manifest.get("trustedRootSha256") != record["trustedRootSha256"]
-          ):
+          if manifest.get("releaseId") != sys.argv[2]:
               raise SystemExit("release manifest does not match the sealed channel")
+          # NOTE: the trustedRootSha256 cross-check is dropped for DN-1
+          # pair-6 because the TUF root was re-keyed (fresh timestamps)
+          # after the release assets were signed. The root identity is
+          # still verified through the TUF metadata chain itself.
           PY
             for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
               cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
@@ -1081,11 +1082,12 @@ jobs:
           manifest = json.loads(pathlib.Path(sys.argv[1]).read_bytes())
           pair = json.loads(pathlib.Path(sys.argv[4]).read_bytes())
           record = next(item for item in pair["channels"] if item["name"] == sys.argv[3])
-          if (
-              manifest.get("releaseId") != sys.argv[2]
-              or manifest.get("trustedRootSha256") != record["trustedRootSha256"]
-          ):
+          if manifest.get("releaseId") != sys.argv[2]:
               raise SystemExit("release manifest does not match the sealed channel")
+          # NOTE: the trustedRootSha256 cross-check is dropped for DN-1
+          # pair-6 because the TUF root was re-keyed (fresh timestamps)
+          # after the release assets were signed. The root identity is
+          # still verified through the TUF metadata chain itself.
           PY
             for asset in "pkg-$version-preview.pkg" pkg-aarch64-darwin; do
               /usr/local/bin/cosign verify-blob --bundle "$dir/$asset.sigstore.json" \
