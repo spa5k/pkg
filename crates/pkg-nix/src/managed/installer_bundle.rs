@@ -282,7 +282,7 @@ pub(super) async fn load_installer_bundle(
     } else {
         return Err(ChannelError::InstallerBundleUnavailable);
     }
-    .map_err(|_| ChannelError::InstallerBundleUnavailable)?;
+    .map_err(|e| { eprintln!("debug: tough RepositoryLoader.load() failed: {e:?}"); ChannelError::InstallerBundleUnavailable })?;
     handoff_datastore_files(datastore, datastore_owner)?;
     load_verified_repository(repository, accepted, datastore_lease, host, clock.now()).await
 }

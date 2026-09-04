@@ -567,8 +567,9 @@ async fn load_authenticated_installer_bundle_with_owner(
         },
     )
     .await
-    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
-    let installer_payloads = load_authenticated_installer_payloads(&source, source.system())?;
+    .map_err(|e| { eprintln!("debug: load_installer_bundle failed: {e:?}"); ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput) })?;
+    let installer_payloads = load_authenticated_installer_payloads(&source, source.system())
+        .map_err(|e| { eprintln!("debug: load_payloads failed: {e:?}"); e })?;
     let managed_nix_config = AuthenticatedManagedNixConfig {
         system: source.system(),
         contents: render_managed_build_nix_conf(
