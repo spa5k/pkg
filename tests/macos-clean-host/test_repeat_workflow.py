@@ -69,7 +69,7 @@ class RepeatWorkflowTests(unittest.TestCase):
             "gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_REVIEWED_TAG\"",
             validate,
         )
-        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-7", REPEAT)
+        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-8", REPEAT)
         self.assertIn("PKG_PROOF_PAIR_TARBALL: dn1-proof-pair.tar.gz", REPEAT)
         self.assertIn(
             "PKG_REVIEWED_COMMIT: 56f6782efcd34451c63cd2a940cd8b4e36fd7d44",
@@ -80,11 +80,11 @@ class RepeatWorkflowTests(unittest.TestCase):
         self.assertNotIn('test "$FROM_RELEASE" = v0.1.0-alpha.24', REPEAT)
         self.assertNotIn('test "$TO_RELEASE" = v0.1.0-alpha.25', REPEAT)
 
-    def test_pair_pins_bind_the_sealed_dn1_proof_pair_7(self) -> None:
+    def test_pair_pins_bind_the_sealed_dn1_proof_pair_8(self) -> None:
         self.assertNotIn("PENDING-DN1-MINT", REPEAT)
         minted = {
             "PKG_PROOF_PAIR_TARBALL_SHA256":
-                "eaeccd3601fe947cbeff60ed0653315b768ae5635e49d657c8a735437dd0658e",
+                "4028fda9c95c0f3bab97b86af158b7491f4c863ae9a3a891a8afe974e7e997a8",
             "PKG_PROOF_PAIR_SHA256":
                 "3348173a1422820c38dbf8be5829a9a788f993ebe8fec1c8bf91fa6193658560",
             "PKG_PROOF_N_INVENTORY_SHA256":
