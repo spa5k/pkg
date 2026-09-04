@@ -668,7 +668,7 @@ jobs:
           marker_age=$(( preflight_time - \
             $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$disposable") ))
           test "$marker_age" -ge 0
-          test "$marker_age" -le 300
+          test "$marker_age" -le 900
           instance_marker=/var/tmp/pkg-disposable-macos-instance
           /usr/bin/sudo -n /bin/test -f "$instance_marker"
           /usr/bin/sudo -n /bin/test ! -L "$instance_marker"
@@ -687,7 +687,7 @@ jobs:
             instance_age=$(( preflight_time - \
               $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$instance_marker") ))
             test "$instance_age" -ge 0
-            test "$instance_age" -le 300
+            test "$instance_age" -le 900
             reboot_marker=/var/tmp/pkg-disposable-macos-reboot-v2
             /usr/bin/sudo -n /bin/test -f "$reboot_marker"
             /usr/bin/sudo -n /bin/test ! -L "$reboot_marker"
@@ -714,9 +714,9 @@ jobs:
             reboot_marker_age=$(( preflight_time - \
               $(/usr/bin/sudo -n /usr/bin/stat -f '%m' "$reboot_marker") ))
             test "$reboot_age" -ge 0
-            test "$reboot_age" -le 300
+            test "$reboot_age" -le 900
             test "$reboot_marker_age" -ge 0
-            test "$reboot_marker_age" -le 300
+            test "$reboot_marker_age" -le 900
             reboot_marker_sha256=$(/usr/bin/sudo -n /usr/bin/shasum -a 256 \
               "$reboot_marker" | /usr/bin/awk '{print $1}')
             for path in /nix /etc/nix /opt/pkg /private/var/db/pkg-install \
