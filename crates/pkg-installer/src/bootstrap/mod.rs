@@ -275,7 +275,8 @@ pub fn install_macos_from_bundle<'a>(
         return Err(MacOsError::backend_failure());
     }
     backend.preflight_privilege()?;
-    let bundle = load_macos_bundle_for_recovery(trusted_root.clone(), request)?;
+    let bundle = load_macos_bundle_for_recovery(trusted_root.clone(), request)
+        .map_err(|e| { eprintln!("debug: load_bundle failed: {e:?}"); e })?;
     backend.bind_authenticated_installer_payloads(bundle.installer_payloads())?;
     backend.bind_authenticated_nix_config(bundle.managed_nix_config())?;
     let release_identity_digest = bundle.release_identity_digest();
@@ -288,9 +289,10 @@ pub fn install_macos_from_bundle<'a>(
         request,
         backend,
     )?;
-    backend.preflight_clean_host(system)?;
+    backend.preflight_clean_host(system)
+        .map_err(|e| { eprintln!("debug: preflight_clean_host failed: {e:?}"); e })?;
     verify_provision_workspace_absent(request.scratch_parent)
-        .map_err(|_| MacOsError::backend_failure())?;
+        .map_err(|e| { eprintln!("debug: verify_provision_workspace_absent failed: {e:?}"); MacOsError::backend_failure() })?;
     let (storage, journal) = if let Some(recovered) = recovery {
         recovered
     } else {

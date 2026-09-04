@@ -508,8 +508,9 @@ pub(super) fn load_macos_bundle_for_recovery(
         system: request.system,
         groups: request.groups,
     };
+    eprintln!("debug: auth_datastore={:?} calling load_authenticated_installer_bundle_blocking", auth_datastore);
     let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request)
-        .map_err(|_| MacOsError::backend_failure());
+        .map_err(|e| { eprintln!("debug: load_authenticated_installer_bundle_blocking failed: {e:?}"); MacOsError::backend_failure() });
     remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
     result
 }
@@ -521,13 +522,13 @@ pub(super) fn prepare_macos_auth_datastore() -> Result<PathBuf, MacOsError> {
         return Err(MacOsError::backend_failure());
     }
     let root = PathBuf::from(MACOS_AUTH_DATASTORE);
-    prepare_private_directory_at(&root, uid, gid).map_err(|_| MacOsError::backend_failure())?;
+    prepare_private_directory_at(&root, uid, gid).map_err(|e| { eprintln!("debug: prepare_private_directory_at failed: {e:?}"); MacOsError::backend_failure() })?;
     remove_legacy_linux_auth_datastore_files(&root, uid, gid)
-        .map_err(|_| MacOsError::backend_failure())?;
+        .map_err(|e| { eprintln!("debug: remove_legacy failed: {e:?}"); MacOsError::backend_failure() })?;
     remove_stale_linux_auth_datastores(&root, uid, gid)
-        .map_err(|_| MacOsError::backend_failure())?;
+        .map_err(|e| { eprintln!("debug: remove_stale failed: {e:?}"); MacOsError::backend_failure() })?;
     let path = root.join(std::process::id().to_string());
-    prepare_linux_auth_datastore_at(&path, uid, gid).map_err(|_| MacOsError::backend_failure())?;
+    prepare_linux_auth_datastore_at(&path, uid, gid).map_err(|e| { eprintln!("debug: prepare_at failed: {e:?}"); MacOsError::backend_failure() })?;
     Ok(path)
 }
 
