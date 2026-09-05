@@ -95,25 +95,37 @@ pub async fn refresh_timestamp(
     timestamp_keys: &[Box<dyn KeySource>],
 ) -> Result<SignedTimestampRefresh, SignError> {
     if !valid_atom(release_id) {
-        return Err(SignError::Filesystem);
+        return Err(SignError::Validation(ValidationError::InvalidPolicy));
     }
     let now = WallClock::now();
     if expires <= now || expires > now + jiff::SignedDuration::from_hours(48) {
-        return Err(SignError::Filesystem);
+        return Err(SignError::Validation(ValidationError::InvalidPolicy));
     }
     let root_bytes = safe_read(root_path)?;
     let snapshot_bytes = safe_read(snapshot_path)?;
     let root: Signed<Root> =
-        serde_json::from_slice(&root_bytes).map_err(|_| SignError::Filesystem)?;
-    root.signed.verify_role(&root)?;
+        serde_json::from_slice(&root_bytes).map_err(|source| SignError::RootUnreadable {
+            source: Box::new(source),
+        })?;
+    root.signed
+        .verify_role(&root)
+        .map_err(|source| SignError::RootUnreadable {
+            source: Box::new(source),
+        })?;
     if root.signed.expires <= expires {
-        return Err(SignError::Filesystem);
+        return Err(SignError::RootPolicy);
     }
     let snapshot: Signed<Snapshot> =
-        serde_json::from_slice(&snapshot_bytes).map_err(|_| SignError::Filesystem)?;
-    root.signed.verify_role(&snapshot)?;
+        serde_json::from_slice(&snapshot_bytes).map_err(|source| SignError::RootUnreadable {
+            source: Box::new(source),
+        })?;
+    root.signed
+        .verify_role(&snapshot)
+        .map_err(|source| SignError::RootUnreadable {
+            source: Box::new(source),
+        })?;
     if snapshot.signed.expires <= expires {
-        return Err(SignError::Filesystem);
+        return Err(SignError::RootPolicy);
     }
     let snapshot_digest = hex::encode(digest(&SHA256, &snapshot_bytes).as_ref());
     let trusted_root_sha256 = hex::encode(digest(&SHA256, &root_bytes).as_ref());
@@ -135,9 +147,11 @@ pub async fn refresh_timestamp(
         Metafile {
             length: Some(snapshot_bytes.len() as u64),
             hashes: Some(Hashes {
-                sha256: Decoded::<Hex>::from(
-                    hex::decode(&snapshot_digest).map_err(|_| SignError::Filesystem)?,
-                ),
+                sha256: Decoded::<Hex>::from(hex::decode(&snapshot_digest).map_err(|source| {
+                    SignError::RootUnreadable {
+                        source: Box::new(source),
+                    }
+                })?),
                 _extra: HashMap::new(),
             }),
             version: snapshot.signed.version,
@@ -151,7 +165,10 @@ pub async fn refresh_timestamp(
         &SystemRandom::new(),
     )
     .await?;
-    let temporary = tempfile::tempdir().map_err(|_| SignError::Filesystem)?;
+    let temporary = tempfile::tempdir().map_err(|source| SignError::Filesystem {
+        source,
+        path: std::env::temp_dir(),
+    })?;
     signed.write(temporary.path(), false).await?;
     let key_ids = public_key_ids(timestamp_keys).await?;
     let signed_at = WallClock::now().to_string();
@@ -167,7 +184,10 @@ pub async fn refresh_timestamp(
             signed_at: &signed_at,
         },
     )
-    .map_err(|_| SignError::Filesystem)?;
+    .map_err(|source| SignError::Filesystem {
+        source,
+        path: audit_path.clone(),
+    })?;
     let timestamp_path = temporary.path().join("timestamp.json");
     let timestamp_object = PublicationObject::from_file(
         &format!(
@@ -196,12 +216,23 @@ pub async fn refresh_timestamp(
 }
 
 fn safe_read(path: &Path) -> Result<Vec<u8>, SignError> {
-    let metadata = fs::symlink_metadata(path).map_err(|_| SignError::Filesystem)?;
+    let metadata = fs::symlink_metadata(path).map_err(|source| SignError::Filesystem {
+        source,
+        path: path.to_owned(),
+    })?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(SignError::Filesystem);
+        return Err(SignError::RootNotFile(path.to_owned()));
     }
-    fs::read(fs::canonicalize(path).map_err(|_| SignError::Filesystem)?)
-        .map_err(|_| SignError::Filesystem)
+    fs::read(
+        fs::canonicalize(path).map_err(|source| SignError::Filesystem {
+            source,
+            path: path.to_owned(),
+        })?,
+    )
+    .map_err(|source| SignError::Filesystem {
+        source,
+        path: path.to_owned(),
+    })
 }
 
 async fn public_key_ids(keys: &[Box<dyn KeySource>]) -> Result<Vec<String>, SignError> {

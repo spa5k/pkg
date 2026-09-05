@@ -61,8 +61,35 @@ impl SignedRelease {
 /// TUF signing or immutable-output failure.
 #[derive(Debug)]
 pub enum SignError {
-    /// A filesystem boundary was unsafe or unavailable.
-    Filesystem,
+    /// A filesystem operation failed at the given path.
+    Filesystem {
+        /// The io failure that occurred.
+        source: std::io::Error,
+        /// The path where the failure occurred.
+        path: PathBuf,
+    },
+    /// A trusted metadata path is not a regular file or is a symlink.
+    RootNotFile(PathBuf),
+    /// The release output path already exists.
+    OutputExists(PathBuf),
+    /// The root bytes do not match the release's trusted root digest.
+    RootDigestMismatch {
+        /// Digest pinned by the release manifest.
+        expected: String,
+        /// Digest computed from the root bytes read.
+        actual: String,
+    },
+    /// The trusted root or role metadata could not be parsed or verified.
+    RootUnreadable {
+        /// The parse or verification failure.
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+    /// Trusted metadata does not satisfy signing policy.
+    RootPolicy,
+    /// A repository directory URL could not be built.
+    InvalidUrl,
+    /// A TUF target name was rejected.
+    TargetName(String),
     /// TUF refused the signed root, target, keys, or metadata policy.
     Tuf(Box<tough::error::Error>),
     /// A source could not be represented as a TUF target.
@@ -78,7 +105,32 @@ pub enum SignError {
 impl fmt::Display for SignError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Filesystem => formatter.write_str("release output boundary is unavailable"),
+            Self::Filesystem { source, path } => write!(
+                formatter,
+                "release output boundary is unavailable: {}: {source}",
+                path.display()
+            ),
+            Self::RootNotFile(path) => write!(
+                formatter,
+                "trusted metadata path is not a regular file: {}",
+                path.display()
+            ),
+            Self::OutputExists(path) => write!(
+                formatter,
+                "release output already exists: {}",
+                path.display()
+            ),
+            Self::RootDigestMismatch { expected, actual } => write!(
+                formatter,
+                "trusted root digest mismatch: expected {expected}, found {actual}"
+            ),
+            Self::RootUnreadable { source } => write!(
+                formatter,
+                "trusted root or role metadata is unreadable: {source}"
+            ),
+            Self::RootPolicy => formatter.write_str("trusted metadata fails signing policy"),
+            Self::InvalidUrl => formatter.write_str("repository directory URL is invalid"),
+            Self::TargetName(name) => write!(formatter, "invalid TUF target name: {name}"),
             Self::Tuf(_) => formatter.write_str("TUF signing failed"),
             Self::Target(_) => formatter.write_str("TUF target construction failed"),
             Self::Validation(_) => formatter.write_str("release artifacts changed before signing"),
@@ -127,32 +179,64 @@ pub async fn sign_channel(
     release.revalidate_all()?;
     validate_metadata_policy(&release, policy)?;
     let signing_actor = release.signing_actor()?.to_owned();
-    let root_metadata = fs::symlink_metadata(root_path).map_err(|_| SignError::Filesystem)?;
-    if !root_metadata.is_file() || root_metadata.file_type().is_symlink() || output.exists() {
-        return Err(SignError::Filesystem);
+    let root_metadata =
+        fs::symlink_metadata(root_path).map_err(|source| SignError::Filesystem {
+            source,
+            path: root_path.to_owned(),
+        })?;
+    if !root_metadata.is_file() || root_metadata.file_type().is_symlink() {
+        return Err(SignError::RootNotFile(root_path.to_owned()));
+    }
+    if output.exists() {
+        return Err(SignError::OutputExists(output.to_owned()));
     }
     let output = absolute_output_path(output)?;
-    let root_path = fs::canonicalize(root_path).map_err(|_| SignError::Filesystem)?;
-    let root_bytes = fs::read(&root_path).map_err(|_| SignError::Filesystem)?;
-    if hex::encode(Sha256::digest(&root_bytes)) != release.trusted_root_sha256() {
-        return Err(SignError::Filesystem);
+    let root_path = fs::canonicalize(root_path).map_err(|source| SignError::Filesystem {
+        source,
+        path: root_path.to_owned(),
+    })?;
+    let root_bytes = fs::read(&root_path).map_err(|source| SignError::Filesystem {
+        source,
+        path: root_path.clone(),
+    })?;
+    let actual_root_digest = hex::encode(Sha256::digest(&root_bytes));
+    if actual_root_digest != release.trusted_root_sha256() {
+        return Err(SignError::RootDigestMismatch {
+            expected: release.trusted_root_sha256().to_owned(),
+            actual: actual_root_digest,
+        });
     }
     let root: Signed<Root> =
-        serde_json::from_slice(&root_bytes).map_err(|_| SignError::Filesystem)?;
-    root.signed.verify_role(&root)?;
+        serde_json::from_slice(&root_bytes).map_err(|source| SignError::RootUnreadable {
+            source: Box::new(source),
+        })?;
+    root.signed
+        .verify_role(&root)
+        .map_err(|source| SignError::RootUnreadable {
+            source: Box::new(source),
+        })?;
     if !root.signed.consistent_snapshot || root.signed.expires <= policy.targets_expires {
-        return Err(SignError::Filesystem);
+        return Err(SignError::RootPolicy);
     }
     let root_version = root.signed.version.get();
     let metadata_dir = output.join("metadata");
     let targets_dir = output.join("targets");
-    fs::create_dir(&output).map_err(|_| SignError::Filesystem)?;
+    fs::create_dir(&output).map_err(|source| SignError::Filesystem {
+        source,
+        path: output.clone(),
+    })?;
     let mut output_guard = OutputGuard {
         path: &output,
         committed: false,
     };
-    fs::create_dir(&metadata_dir).map_err(|_| SignError::Filesystem)?;
-    fs::create_dir(&targets_dir).map_err(|_| SignError::Filesystem)?;
+    fs::create_dir(&metadata_dir).map_err(|source| SignError::Filesystem {
+        source,
+        path: metadata_dir.clone(),
+    })?;
+    fs::create_dir(&targets_dir).map_err(|source| SignError::Filesystem {
+        source,
+        path: targets_dir.clone(),
+    })?;
 
     let mut key_ids = Vec::new();
     for source in online_keys {
@@ -177,14 +261,16 @@ pub async fn sign_channel(
         .timestamp_version(policy.timestamp_version)
         .timestamp_expires(policy.timestamp_expires);
     for (name, _, digest, length) in release.tuf_targets() {
-        let target_name = TargetName::new(name).map_err(|_| SignError::Filesystem)?;
+        let target_name =
+            TargetName::new(name).map_err(|_| SignError::TargetName(name.to_owned()))?;
         let target = target_from_manifest(digest, length)?;
         editor.add_target(target_name, target)?;
     }
     let signed = editor.sign(online_keys).await?;
     signed.write(&metadata_dir).await?;
     for (name, source, _, _) in release.tuf_targets() {
-        let target_name = TargetName::new(name).map_err(|_| SignError::Filesystem)?;
+        let target_name =
+            TargetName::new(name).map_err(|_| SignError::TargetName(name.to_owned()))?;
         signed
             .copy_target(&source, &targets_dir, PathExists::Fail, Some(&target_name))
             .await?;
@@ -193,7 +279,10 @@ pub async fn sign_channel(
         output.join("release-manifest.json"),
         release.canonical_manifest(),
     )
-    .map_err(|_| SignError::Filesystem)?;
+    .map_err(|source| SignError::Filesystem {
+        source,
+        path: output.join("release-manifest.json"),
+    })?;
     let signed_at = Timestamp::now().to_string();
     write_audit_log(
         &output.join("signing-audit.ndjson"),
@@ -206,7 +295,10 @@ pub async fn sign_channel(
             signed_at: &signed_at,
         },
     )
-    .map_err(|_| SignError::Filesystem)?;
+    .map_err(|source| SignError::Filesystem {
+        source,
+        path: output.join("signing-audit.ndjson"),
+    })?;
     verify_repository(&root_bytes, &release, &metadata_dir, &targets_dir).await?;
     let objects = crate::publish::seal_objects(&release, &output, root_version)
         .map_err(SignError::Publication)?;
@@ -215,13 +307,18 @@ pub async fn sign_channel(
 }
 
 fn absolute_output_path(output: &Path) -> Result<PathBuf, SignError> {
-    let name = output.file_name().ok_or(SignError::Filesystem)?;
+    let name = output
+        .file_name()
+        .ok_or(SignError::Validation(ValidationError::InvalidPath))?;
     let parent = output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     Ok(fs::canonicalize(parent)
-        .map_err(|_| SignError::Filesystem)?
+        .map_err(|source| SignError::Filesystem {
+            source,
+            path: parent.to_owned(),
+        })?
         .join(name))
 }
 
@@ -235,11 +332,14 @@ async fn verify_repository(
     metadata: &Path,
     targets: &Path,
 ) -> Result<(), SignError> {
-    let datastore = tempfile::tempdir().map_err(|_| SignError::Filesystem)?;
+    let datastore = tempfile::tempdir().map_err(|source| SignError::Filesystem {
+        source,
+        path: std::env::temp_dir(),
+    })?;
     let repository = RepositoryLoader::new(
         &root,
-        Url::from_directory_path(metadata).map_err(|()| SignError::Filesystem)?,
-        Url::from_directory_path(targets).map_err(|()| SignError::Filesystem)?,
+        Url::from_directory_path(metadata).map_err(|()| SignError::InvalidUrl)?,
+        Url::from_directory_path(targets).map_err(|()| SignError::InvalidUrl)?,
     )
     .transport(FilesystemTransport)
     .expiration_enforcement(ExpirationEnforcement::Safe)
@@ -247,18 +347,19 @@ async fn verify_repository(
     .load()
     .await?;
     for (name, _, _, _) in release.tuf_targets() {
-        let target = TargetName::new(name).map_err(|_| SignError::Filesystem)?;
+        let target = TargetName::new(name).map_err(|_| SignError::TargetName(name.to_owned()))?;
         let stream = repository
             .read_target(&target)
             .await?
-            .ok_or(SignError::Filesystem)?;
+            .ok_or(SignError::Validation(ValidationError::ArtifactMismatch))?;
         IntoVec::<tough::error::Error>::into_vec(stream).await?;
     }
     Ok(())
 }
 
 fn target_from_manifest(digest: &str, length: u64) -> Result<Target, SignError> {
-    let digest = hex::decode(digest).map_err(|_| SignError::Filesystem)?;
+    let digest =
+        hex::decode(digest).map_err(|_| SignError::Validation(ValidationError::InvalidManifest))?;
     Ok(Target {
         length,
         hashes: Hashes {
@@ -287,7 +388,7 @@ fn validate_metadata_policy(
         || policy.targets_expires < policy.snapshot_expires
         || policy.targets_expires > max_targets
     {
-        return Err(SignError::Filesystem);
+        return Err(SignError::Validation(ValidationError::InvalidPolicy));
     }
     Ok(())
 }
@@ -331,7 +432,7 @@ mod tests {
     };
     use url::Url;
 
-    use super::{MetadataPolicy, absolute_output_path, sign_channel};
+    use super::{MetadataPolicy, SignError, absolute_output_path, sign_channel};
     use crate::{
         Approval, DurableRelease, ReleaseAuthority, ReleaseAuthorization, ReleaseManifest,
         TimestampAuthority, TimestampAuthorization, ValidationError, refresh_timestamp,
@@ -1096,7 +1197,7 @@ mod tests {
             .await,
         )
         .expect("short root fixture");
-        assert!(
+        assert!(matches!(
             refresh_timestamp(
                 "v0.1.0",
                 &short_root_path,
@@ -1106,9 +1207,9 @@ mod tests {
                 &timestamp_authority,
                 &timestamp_keys,
             )
-            .await
-            .is_err()
-        );
+            .await,
+            Err(SignError::RootPolicy)
+        ));
 
         fs::write(
             artifact_root.join("cli/pkg-aarch64-darwin"),
@@ -1210,11 +1311,50 @@ mod tests {
             snapshot_expires: now + jiff::SignedDuration::from_hours(24),
             timestamp_expires: now + jiff::SignedDuration::from_hours(12),
         };
-        assert!(
-            sign_channel(release, &root_path, &[], policy, &output,)
-                .await
-                .is_err()
+        assert!(matches!(
+            sign_channel(release, &root_path, &[], policy, &output,).await,
+            Err(SignError::OutputExists(_))
+        ));
+        let release = release_fixture_with_root(&artifacts, &root_digest);
+        let directory_root_output = temporary.path().join("directory-root-output");
+        assert!(matches!(
+            sign_channel(release, &artifacts, &[], policy, &directory_root_output).await,
+            Err(SignError::RootNotFile(_))
+        ));
+        let wrong_root_path = temporary.path().join("wrong-root.json");
+        fs::write(&wrong_root_path, b"not a signed root\n").expect("wrong root fixture");
+        let release = release_fixture_with_root(&artifacts, &root_digest);
+        let digest_mismatch_output = temporary.path().join("digest-mismatch-output");
+        assert!(matches!(
+            sign_channel(
+                release,
+                &wrong_root_path,
+                &[],
+                policy,
+                &digest_mismatch_output
+            )
+            .await,
+            Err(SignError::RootDigestMismatch { .. })
+        ));
+        let unreadable_root_path = temporary.path().join("unreadable-root.json");
+        let unreadable_root_bytes = b"still not json\n";
+        fs::write(&unreadable_root_path, unreadable_root_bytes).expect("unreadable root fixture");
+        let release = release_fixture_with_root(
+            &artifacts,
+            &hex::encode(Sha256::digest(unreadable_root_bytes)),
         );
+        let unreadable_root_output = temporary.path().join("unreadable-root-output");
+        assert!(matches!(
+            sign_channel(
+                release,
+                &unreadable_root_path,
+                &[],
+                policy,
+                &unreadable_root_output
+            )
+            .await,
+            Err(SignError::RootUnreadable { .. })
+        ));
         let fresh = temporary.path().join("fresh");
         let release = release_fixture_with_root(&artifacts, &root_digest);
         assert!(
