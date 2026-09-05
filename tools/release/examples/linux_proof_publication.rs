@@ -870,6 +870,11 @@ async fn main() -> Result<(), AnyError> {
 
     let artifacts = tempfile::tempdir()?;
     let artifact_root = artifacts.path();
+    for p in [runtimes.join("aarch64-darwin.tar.xz"), runtimes.join("x86_64-linux.tar.xz")] {
+        if !p.exists() {
+            return Err(format!("runtime tarball missing: {}", p.display()).into());
+        }
+    }
     let determinate =
         prepare_determinate_inventory(artifact_root, &x86_64_input.join("determinate"))?;
     let now = Timestamp::now();
@@ -1036,7 +1041,12 @@ async fn main() -> Result<(), AnyError> {
             timestamp_version: NonZeroU64::new(sequence).expect("nonzero timestamp version"),
             targets_expires: now + jiff::SignedDuration::from_hours(24 * 30),
             snapshot_expires: now + jiff::SignedDuration::from_hours(24 * 7),
-            timestamp_expires: now + jiff::SignedDuration::from_hours(24),
+            timestamp_expires: now + jiff::SignedDuration::from_hours(
+                std::env::var("PKG_TIMESTAMP_TTL_HOURS")
+                    .ok()
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(24),
+            ),
         },
         &output,
     )

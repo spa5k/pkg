@@ -125,3 +125,49 @@ The Linux leg needs nothing new: `Dockerfile.stage` already bakes
   build commit — cbd3494 was the DN-16 tree, wrong for this pair).
 - Verified locally: bundle layout extraction (workflow's own algorithm),
   every inventory digest against the extracted tree, 15 structural tests.
+
+## Session 2 (2026-09-04/05) — TUF expiry diagnosis and pipeline rebuild
+
+### Root causes found
+
+1. **TUF timestamp expiry (the primary blocker)**: The `--publish-dn16` tool sets a
+   24-hour timestamp expiry (designed for Linux proofs that run in minutes). The
+   macOS lifecycle proof spans hours with reboots; by the next day every install
+   fails with `ExpiredMetadata(Timestamp)` mapped through four layers of generic
+   error codes to the unhelpful `pkg installation failed`.
+2. **Root keys are ephemeral by design**: The `--prepare` tool generates root keys,
+   signs root.json, then discards the private keys. Only online keys are persisted.
+   Once the timestamps expire, the only recovery is a complete re-key.
+3. **MacOS temp directory saturation**: After hours of failed runs, `/tmp` had
+   hundreds of entries. The tough library's `tempfile::tempdir()` fails silently,
+   surfacing as another opaque `Filesystem` error. Fixed by setting a clean TMPDIR.
+
+### Fixes landed
+
+- `PKG_TIMESTAMP_TTL_HOURS` env var on the publication tool (default 24, set 168
+  for macOS proofs)
+- `tools/release/build_proof_pair.sh`: single-entry-point pair builder (correct
+  build order: build → prepare manifest → draft → sign → download sigstore →
+  seal → publish channels → bind pair → tarball → pins)
+- Debug instrumentation in pkg-install pinpointing the exact failure layer
+- Nine infrastructure fixes: harness split (hosted macOS can't accept loopback
+  connections), Python 3.9 compatibility, tar member modes, tab-separated
+  evidence, derive-the-dispatch-tag check, ancestor directory rule, marker
+  windows widened to 900s, CA teardown by SHA-1, reboot marker newline
+
+### Remaining blocker
+
+The `--publish-dn16` tool's `sign_channel` function returns `SignError::Filesystem`
+("release output boundary is unavailable") on the second channel publication
+despite all verifiable preconditions passing (root hash matches, output doesn't
+exist, consistent_snapshot=true, root not expired). The error chain terminates
+without revealing the underlying io path. Needs investigation with the tough
+crate source (v0.24.0) — likely in the `RepositoryLoader` or `FilesystemTransport`
+during post-signing verification.
+
+### Proven working
+
+Dispatch 34 (run 33826143490) passed the complete prepare phase on real Apple
+Silicon: validate → harness → acquire → VM preflight → loopback TLS → CA trust →
+prove.sh full lifecycle (fresh install → no-op → repair → package ops → offline
+N+1 upgrade) — all 34 cases green.
