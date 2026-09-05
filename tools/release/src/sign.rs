@@ -377,7 +377,10 @@ fn validate_metadata_policy(
 ) -> Result<(), SignError> {
     let sequence = release.channel_sequence();
     let now = Timestamp::now();
-    let max_timestamp = now + jiff::SignedDuration::from_hours(48);
+    // Timestamp validity may reach 7 days: macOS lifecycle proofs span days and the
+    // channel policy sets 7 days with a 1 h CDN TTL. The former 48 h cap rejected
+    // every long-TTL proof mint (see the sign and release simplification plan, P0).
+    let max_timestamp = now + jiff::SignedDuration::from_hours(24 * 7);
     let max_targets = now + jiff::SignedDuration::from_hours(24 * 90);
     if policy.targets_version.get() != sequence
         || policy.snapshot_version.get() != sequence
