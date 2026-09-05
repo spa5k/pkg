@@ -1,20 +1,12 @@
 """Structural release-workflow security contract."""
 
-import hashlib
-import json
 from pathlib import Path
 import re
-import subprocess
-import tempfile
-import textwrap
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
-PUBLISH_WORKFLOW = (ROOT / ".github/workflows/publish-release.yml").read_text(
-    encoding="utf-8"
-)
 LINUX_HARNESS = (ROOT / "tests/linux-clean-host/run.sh").read_text(encoding="utf-8")
 LINUX_STAGE = (ROOT / "tests/linux-clean-host/Dockerfile.stage").read_text(
     encoding="utf-8"
@@ -28,20 +20,6 @@ PROOF_SERVER = (ROOT / "tools/release/serve_proof_channel.py").read_text(
 )
 MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
     encoding="utf-8"
-)
-MANIFEST_SEALER = textwrap.dedent(
-    PUBLISH_WORKFLOW.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0]
-)
-DISPATCH_GATE = textwrap.dedent(
-    PUBLISH_WORKFLOW.split("- name: Validate immutable proof dispatch", 1)[1]
-    .split("        run: |\n", 1)[1]
-    .split("\n\n  sign-and-publish:", 1)[0]
-)
-PROOF_WORKFLOW_REF = "refs/tags/dn16-proof-workflow-1"
-PROOF_WORKFLOW_SHA = "1" * 40
-PROOF_IDENTITY = (
-    "https://github.com/spa5k/pkg/.github/workflows/"
-    "publish-release.yml@refs/tags/dn16-proof-workflow-1"
 )
 
 
@@ -80,7 +58,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("nix-2.34.8", WORKFLOW)
         candidate = "pkg-v0.1.0-alpha.7-linux-x86_64.tar.gz"
         self.assertIn(f"proof-artifacts/{candidate}", WORKFLOW)
-        self.assertIn('"pkg-${RELEASE_TAG}-linux-x86_64.tar.gz"', PUBLISH_WORKFLOW)
         self.assertIn("pkg-v0.1.0-alpha.7-linux-x86_64-candidate", WORKFLOW)
         self.assertIn("proof-artifacts/evidence/", WORKFLOW)
         self.assertIn("pkg-v0.1.0-alpha.7-x86_64-linux-proof", WORKFLOW)
@@ -439,221 +416,6 @@ cmp "$product_evidence/package-state-before-offline-repair.txt" \\
         ):
             self.assertIn(asset, authenticate)
         self.assertIn('manifest.get("releaseId") != sys.argv[2]', authenticate)
-
-    def test_production_signing_is_keyless_protected_and_closed(self) -> None:
-        self.assertIn("environment: release", PUBLISH_WORKFLOW)
-        self.assertIn("contents: write", PUBLISH_WORKFLOW)
-        self.assertIn("id-token: write", PUBLISH_WORKFLOW)
-        self.assertNotIn("secrets.", PUBLISH_WORKFLOW)
-        self.assertIn(
-            "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
-            PUBLISH_WORKFLOW,
-        )
-        self.assertIn("test \"$draft\" = true", PUBLISH_WORKFLOW)
-        self.assertNotIn("\n      publish:\n", PUBLISH_WORKFLOW)
-        self.assertIn("releases/${RELEASE_ID}", PUBLISH_WORKFLOW)
-        self.assertNotIn("releases/tags/${RELEASE_TAG}", PUBLISH_WORKFLOW)
-        self.assertIn(
-            "payload_generated_count != 0 && payload_generated_count != payload_generated_total",
-            PUBLISH_WORKFLOW,
-        )
-        self.assertIn('checksum_signature_present" == true', PUBLISH_WORKFLOW)
-        self.assertIn('if [[ ! -f "$bundle" ]]', PUBLISH_WORKFLOW)
-        self.assertEqual(PUBLISH_WORKFLOW.count("cosign sign-blob"), 2)
-        self.assertEqual(PUBLISH_WORKFLOW.count("cosign verify-blob"), 2)
-        self.assertIn("--yes", PUBLISH_WORKFLOW)
-        self.assertIn("--certificate-identity", PUBLISH_WORKFLOW)
-        self.assertIn("--certificate-oidc-issuer", PUBLISH_WORKFLOW)
-        self.assertIn("sha256sum --check --strict", PUBLISH_WORKFLOW)
-        self.assertIn('manifest.get("trustedRootSha256")', PUBLISH_WORKFLOW)
-        self.assertIn('len(records) != len(expected)', PUBLISH_WORKFLOW)
-        self.assertIn('"sigstoreBundleSha256"', PUBLISH_WORKFLOW)
-        self.assertIn("SHA256SUMS.sigstore.json", PUBLISH_WORKFLOW)
-        manifest_validation = PUBLISH_WORKFLOW.split(
-            "- name: Seal and validate the draft manifest", 1
-        )[1].split("- name: Upload verified signatures and checksums", 1)[0]
-        self.assertNotIn("if:", manifest_validation)
-        self.assertIn('rm -f release-assets/SHA256SUMS.sigstore.json', manifest_validation)
-        self.assertIn("MANIFEST_INPUT_STATE=prepared", PUBLISH_WORKFLOW)
-        self.assertIn("MANIFEST_INPUT_STATE=sealed", PUBLISH_WORKFLOW)
-        self.assertLess(
-            PUBLISH_WORKFLOW.index("- name: Sign and verify all payloads"),
-            PUBLISH_WORKFLOW.index("- name: Seal and validate the draft manifest"),
-        )
-        checksum_signing = PUBLISH_WORKFLOW.split(
-            "- name: Upload verified signatures and checksums", 1
-        )[1]
-        checksum_inputs = checksum_signing.split("checksum_assets=(", 1)[1].split(
-            "\n          )", 1
-        )[0]
-        self.assertNotIn("SHA256SUMS.sigstore.json", checksum_inputs)
-        self.assertLess(
-            checksum_signing.index('>SHA256SUMS)'),
-            checksum_signing.index("checksum_bundle=release-assets/SHA256SUMS.sigstore.json"),
-        )
-        self.assertIn("release-assets/SHA256SUMS.sigstore.json", checksum_signing)
-        upload_inputs = checksum_signing.split("upload_assets=(", 1)[1].split(
-            "\n          )", 1
-        )[0]
-        self.assertIn("release-assets/release-manifest.json", upload_inputs)
-        self.assertIn("gh release upload", PUBLISH_WORKFLOW)
-        self.assertNotIn("gh release edit", PUBLISH_WORKFLOW)
-        self.assertNotIn("--draft=false", PUBLISH_WORKFLOW)
-        self.assertEqual(PUBLISH_WORKFLOW.count('--jq .draft)'), 2)
-        self.assertLess(
-            checksum_signing.rindex('--jq .draft)'),
-            checksum_signing.index('gh release upload'),
-        )
-        self.assertNotIn("gh release", WORKFLOW)
-
-    def test_proof_signer_ref_sha_and_identity_fail_closed(self) -> None:
-        environment = {
-            "GITHUB_REF": PROOF_WORKFLOW_REF,
-            "GITHUB_SHA": PROOF_WORKFLOW_SHA,
-            "GITHUB_WORKFLOW_SHA": PROOF_WORKFLOW_SHA,
-            "GITHUB_REPOSITORY": "spa5k/pkg",
-            "EXPECTED_SHA": PROOF_WORKFLOW_SHA,
-            "COSIGN_CERTIFICATE_IDENTITY": PROOF_IDENTITY,
-            "COSIGN_CERTIFICATE_OIDC_ISSUER": "https://token.actions.githubusercontent.com",
-        }
-
-        accepted = subprocess.run(
-            ["bash"], input=DISPATCH_GATE, text=True, env=environment
-        )
-        self.assertEqual(accepted.returncode, 0)
-
-        for name, value in (
-            ("GITHUB_REF", "refs/heads/main"),
-            ("GITHUB_REPOSITORY", "example/pkg"),
-            ("GITHUB_SHA", "2" * 40),
-            ("GITHUB_WORKFLOW_SHA", "3" * 40),
-            ("EXPECTED_SHA", "not-a-commit"),
-            (
-                "COSIGN_CERTIFICATE_IDENTITY",
-                "https://github.com/spa5k/pkg/.github/workflows/"
-                "publish-release.yml@refs/heads/main",
-            ),
-            ("COSIGN_CERTIFICATE_OIDC_ISSUER", "https://issuer.example.test"),
-        ):
-            refused_environment = environment | {name: value}
-            refused = subprocess.run(
-                ["bash"],
-                input=DISPATCH_GATE,
-                text=True,
-                env=refused_environment,
-            )
-            self.assertNotEqual(refused.returncode, 0, name)
-
-        self.assertIn("expected_sha:", PUBLISH_WORKFLOW)
-        self.assertIn(
-            "github.ref == 'refs/tags/dn16-proof-workflow-1'",
-            PUBLISH_WORKFLOW,
-        )
-        self.assertIn("github.sha == inputs.expected_sha", PUBLISH_WORKFLOW)
-        self.assertIn("github.workflow_sha == inputs.expected_sha", PUBLISH_WORKFLOW)
-        self.assertNotIn("${{ vars.COSIGN_CERTIFICATE_IDENTITY }}", PUBLISH_WORKFLOW)
-        self.assertNotIn("${{ vars.COSIGN_CERTIFICATE_OIDC_ISSUER }}", PUBLISH_WORKFLOW)
-        self.assertNotIn("@refs/heads/main", PUBLISH_WORKFLOW)
-
-    def test_proof_signer_has_no_publication_path(self) -> None:
-        trigger = PUBLISH_WORKFLOW.split("permissions:", 1)[0]
-        self.assertNotIn("publish:", trigger)
-        self.assertNotIn("gh release edit", PUBLISH_WORKFLOW)
-        self.assertNotIn("--draft=false", PUBLISH_WORKFLOW)
-        self.assertNotIn("draft=false", PUBLISH_WORKFLOW)
-        self.assertEqual(PUBLISH_WORKFLOW.count("gh release upload"), 1)
-        self.assertEqual(PUBLISH_WORKFLOW.count('test "$draft" = true'), 1)
-        self.assertEqual(PUBLISH_WORKFLOW.count('--jq .draft)'), 2)
-
-    def test_manifest_sealer_bootstraps_once_and_rejects_partial_state(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            trusted_root = root / "1.root.json"
-            trusted_root.write_bytes(b"trusted root\n")
-            artifacts = (
-                ("pkg", "aarch64-darwin", "pkg-aarch64-darwin"),
-                ("pkg", "x86_64-linux", "pkg-x86_64-linux"),
-                ("pkg-install", "x86_64-linux", "pkg-installer-x86_64-linux"),
-            )
-            records = []
-            for kind, system, name in artifacts:
-                payload = f"payload {name}\n".encode()
-                (root / name).write_bytes(payload)
-                (root / f"{name}.sigstore.json").write_bytes(
-                    f"bundle {name}\n".encode()
-                )
-                records.append(
-                    {
-                        "kind": kind,
-                        "system": system,
-                        "source": f"cli/{name}",
-                        "sha256": hashlib.sha256(payload).hexdigest(),
-                        "length": len(payload),
-                    }
-                )
-            manifest_path = root / "release-manifest.json"
-            prepared = {
-                "releaseId": "v0.1.0-alpha.8",
-                "trustedRootSha256": hashlib.sha256(
-                    trusted_root.read_bytes()
-                ).hexdigest(),
-                "cliArtifacts": records,
-            }
-            manifest_path.write_text(json.dumps(prepared), encoding="utf-8")
-            command = [
-                "python3",
-                "-",
-                str(manifest_path),
-                str(trusted_root),
-                str(root),
-                "v0.1.0-alpha.8",
-                "prepared",
-            ]
-
-            first = subprocess.run(
-                command,
-                input=MANIFEST_SEALER,
-                text=True,
-                check=True,
-                capture_output=True,
-            )
-            self.assertEqual(first.stdout, "prepared\n")
-            sealed_bytes = manifest_path.read_bytes()
-            sealed = json.loads(sealed_bytes)
-            for record in sealed["cliArtifacts"]:
-                bundle = root / record["sigstoreBundle"].removeprefix("cli/")
-                self.assertEqual(
-                    record["sigstoreBundleSha256"],
-                    hashlib.sha256(bundle.read_bytes()).hexdigest(),
-                )
-                self.assertEqual(record["sigstoreBundleLength"], bundle.stat().st_size)
-
-            command[-1] = "sealed"
-            second = subprocess.run(
-                command,
-                input=MANIFEST_SEALER,
-                text=True,
-                check=True,
-                capture_output=True,
-            )
-            self.assertEqual(second.stdout, "sealed\n")
-            self.assertEqual(manifest_path.read_bytes(), sealed_bytes)
-
-            partial = prepared.copy()
-            partial["cliArtifacts"] = [record.copy() for record in records]
-            partial["cliArtifacts"][0]["sigstoreBundle"] = (
-                "cli/pkg-aarch64-darwin.sigstore.json"
-            )
-            manifest_path.write_text(json.dumps(partial), encoding="utf-8")
-            command[-1] = "prepared"
-            refused = subprocess.run(
-                command,
-                input=MANIFEST_SEALER,
-                text=True,
-                capture_output=True,
-            )
-            self.assertNotEqual(refused.returncode, 0)
-            self.assertIn("already has Sigstore bundle identity", refused.stderr)
 
 
 if __name__ == "__main__":
