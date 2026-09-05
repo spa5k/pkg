@@ -307,12 +307,23 @@ mod tests {
     fn request(server: &FixtureHttpServer, path: &str) -> io::Result<Vec<u8>> {
         let mut stream = TcpStream::connect(server.address)?;
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
-        write!(
+        // The DropConnection fault can reset the socket before this write lands.
+        // A broken pipe here is an expected transcript outcome, not a failure.
+        if let Err(error) = write!(
             stream,
             "GET {path} HTTP/1.1\r\nHost: fixture\r\nConnection: close\r\n\r\n"
-        )?;
+        ) && error.kind() != io::ErrorKind::BrokenPipe
+        {
+            return Err(error);
+        }
         let mut response = Vec::new();
-        stream.read_to_end(&mut response)?;
+        // A reset connection can also fail the read with ConnectionReset.
+        // Keep the bytes that arrived; the drop transcript reads as empty.
+        if let Err(error) = stream.read_to_end(&mut response)
+            && error.kind() != io::ErrorKind::ConnectionReset
+        {
+            return Err(error);
+        }
         Ok(response)
     }
 
