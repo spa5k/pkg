@@ -149,7 +149,7 @@ The Linux leg needs nothing new: `Dockerfile.stage` already bakes
 - `tools/release/build_proof_pair.sh`: single-entry-point pair builder (correct
   build order: build → prepare manifest → draft → sign → download sigstore →
   seal → publish channels → bind pair → tarball → pins)
-- Debug instrumentation in pkg-install pinpointing the exact failure layer
+- Debug instrumentation in pkg-install pinpointed the exact failure layer. It was removed before merge: the prints were ungated (print_stderr is denied by the strict gate) and no sealed pair ever carried them. The commit is retained in history for cherry-picking into a future diagnostic build.
 - Nine infrastructure fixes: harness split (hosted macOS can't accept loopback
   connections), Python 3.9 compatibility, tar member modes, tab-separated
   evidence, derive-the-dispatch-tag check, ancestor directory rule, marker

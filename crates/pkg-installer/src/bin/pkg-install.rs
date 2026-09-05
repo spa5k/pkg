@@ -31,9 +31,6 @@ fn main() -> ExitCode {
         }
         Err(error) => {
             eprintln!("{error}");
-            if std::env::var_os("PKG_INSTALL_DEBUG").is_some() {
-                eprintln!("debug: error={error:?}");
-            }
             ExitCode::FAILURE
         }
     }
@@ -52,7 +49,7 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
         if matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
             (
                 ManagedGroupBindings::new(333, 350)
-                    .map_err(|e| { eprintln!("debug: group-bindings failed: {e:?}"); PublicInstallError::InstallFailed })?,
+                    .map_err(|_| PublicInstallError::InstallFailed)?,
                 MACOS_CHANNEL_DATASTORE,
                 MACOS_SCRATCH_PARENT,
             )
@@ -81,16 +78,9 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
                 ProductionMacOsInstallBackend::new_product_repair(system, groups)
             }
         }
-        .map_err(|e| { eprintln!("debug: backend-new failed: {e:?}"); PublicInstallError::InstallFailed })?;
-        {
-            eprintln!("debug: calling install_macos_from_bundle");
-            let result = install_macos_from_bundle(system, trusted_root, &request, &mut backend);
-            match &result {
-                Ok(_) => eprintln!("debug: install_macos_from_bundle OK"),
-                Err(e) => eprintln!("debug: install_macos_from_bundle FAILED: {e:?} code={:?}", e.code()),
-            }
-            result.map_err(|_| PublicInstallError::InstallFailed)?;
-        }
+        .map_err(|_| PublicInstallError::InstallFailed)?;
+        install_macos_from_bundle(system, trusted_root, &request, &mut backend)
+            .map_err(|_| PublicInstallError::InstallFailed)?;
         Ok(match backend.install_mode() {
             pkg_installer::InstallMode::FreshInstall => InstallSuccess::Installed,
             pkg_installer::InstallMode::OfflineUpgrade => InstallSuccess::Upgraded,
