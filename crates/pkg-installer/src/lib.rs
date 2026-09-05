@@ -8,6 +8,7 @@ mod asset_presence;
 mod assets;
 mod bootstrap;
 mod broker;
+mod channel_source;
 mod determinate;
 mod determinate_handoff;
 mod helper;
@@ -60,6 +61,7 @@ pub use broker::{
     serve_broker_connection_with_build_authority, serve_broker_connection_with_nix,
     serve_broker_connection_with_nix_and_approval, serve_broker_connection_with_product_authority,
 };
+pub use channel_source::{ChannelSourceError, derive_channel_urls};
 pub use determinate_handoff::{DeterminateHandoffError, DeterminateHandoffState};
 pub use helper::{
     BrokerHelperDispatch, HelperTransportError, HelperTransportErrorCode, LinuxHelperSession,

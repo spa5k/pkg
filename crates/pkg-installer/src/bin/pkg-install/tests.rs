@@ -1,7 +1,6 @@
 //! Tests for the `pkg-install` binary.
 
 use super::*;
-
 const FIXTURE_ROOT: &str = include_str!("../../../../../fixtures/channel-v1/root.json");
 
 #[test]
@@ -45,10 +44,13 @@ fn package_boundary_and_trust_inputs_are_fixed() {
 
 #[test]
 fn invocation_requires_the_exact_product_repair_option() {
-    assert_eq!(parse_invocation([]), Ok(Invocation::InstallOrUpgrade));
+    assert_eq!(
+        parse_invocation([]),
+        Ok((Invocation::InstallOrUpgrade, None))
+    );
     assert_eq!(
         parse_invocation([OsString::from("--repair-product-assets")]),
-        Ok(Invocation::RepairProductAssets)
+        Ok((Invocation::RepairProductAssets, None))
     );
     for arguments in [
         vec![OsString::from("--repair")],
@@ -75,6 +77,72 @@ fn invocation_requires_the_exact_product_repair_option() {
         validate_invocation_system(Invocation::InstallOrUpgrade, System::X8664Darwin,),
         Err(PublicInstallError::UnsupportedSystem)
     );
+}
+
+#[test]
+fn invocation_accepts_one_optional_channel_base_url() {
+    assert_eq!(
+        parse_invocation([
+            OsString::from("--channel"),
+            OsString::from("https://channel.test/n/")
+        ]),
+        Ok((
+            Invocation::InstallOrUpgrade,
+            Some("https://channel.test/n/".to_owned())
+        ))
+    );
+    assert_eq!(
+        parse_invocation([
+            OsString::from("--channel"),
+            OsString::from("https://channel.test/n/"),
+            OsString::from("--repair-product-assets"),
+        ]),
+        Ok((
+            Invocation::RepairProductAssets,
+            Some("https://channel.test/n/".to_owned())
+        ))
+    );
+    for arguments in [
+        vec![OsString::from("--channel")],
+        vec![
+            OsString::from("--channel"),
+            OsString::from("https://a.test/n/"),
+            OsString::from("https://b.test/n/"),
+        ],
+        vec![
+            OsString::from("--channel"),
+            OsString::from("https://a.test/n/"),
+            OsString::from("--channel"),
+            OsString::from("https://b.test/n/"),
+        ],
+    ] {
+        assert_eq!(
+            parse_invocation(arguments),
+            Err(PublicInstallError::InvalidInvocation)
+        );
+    }
+}
+
+#[test]
+fn channel_urls_prefer_the_command_line_then_the_environment() {
+    assert!(matches!(
+        channel_urls(Some("http://channel.test/n/"), None),
+        Err(PublicInstallError::InvalidRelease)
+    ));
+    assert!(matches!(
+        channel_urls(Some("https://channel.test/n"), Some("https://other.test/n/")),
+        Ok((metadata, _)) if metadata.host_str() == Some("channel.test"),
+    ));
+    assert!(matches!(
+        channel_urls(None, Some("https://channel.test/n")),
+        Ok((metadata, targets))
+            if metadata.as_str() == "https://channel.test/n/metadata/"
+                && targets.as_str() == "https://channel.test/n/targets/",
+    ));
+    assert!(matches!(
+        channel_urls(None, Some("http://channel.test/n/")),
+        Err(PublicInstallError::InvalidRelease)
+    ));
 }
 
 #[test]
@@ -117,7 +185,7 @@ fn public_failures_are_short_and_do_not_expose_internal_inputs() {
     .map(|error| error.to_string());
     assert_eq!(
         messages[0],
-        "Run pkg-install without options or with --repair-product-assets."
+        "Run pkg-install without options or with --repair-product-assets. Use --channel <BASE_URL> to select the release channel."
     );
     assert_eq!(messages[1], "Run pkg-install as root.");
     assert!(messages.iter().all(|message| {
