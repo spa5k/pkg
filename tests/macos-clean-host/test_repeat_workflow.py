@@ -69,7 +69,7 @@ class RepeatWorkflowTests(unittest.TestCase):
             "gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$PKG_REVIEWED_TAG\"",
             validate,
         )
-        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-5", REPEAT)
+        self.assertIn("PKG_PROOF_PAIR_TAG: dn1-proof-pair-8", REPEAT)
         self.assertIn("PKG_PROOF_PAIR_TARBALL: dn1-proof-pair.tar.gz", REPEAT)
         self.assertIn(
             "PKG_REVIEWED_COMMIT: 56f6782efcd34451c63cd2a940cd8b4e36fd7d44",
@@ -80,26 +80,26 @@ class RepeatWorkflowTests(unittest.TestCase):
         self.assertNotIn('test "$FROM_RELEASE" = v0.1.0-alpha.24', REPEAT)
         self.assertNotIn('test "$TO_RELEASE" = v0.1.0-alpha.25', REPEAT)
 
-    def test_pair_pins_bind_the_sealed_dn1_proof_pair_5(self) -> None:
+    def test_pair_pins_bind_the_sealed_dn1_proof_pair_8(self) -> None:
         self.assertNotIn("PENDING-DN1-MINT", REPEAT)
         minted = {
             "PKG_PROOF_PAIR_TARBALL_SHA256":
-                "c38e7503bf8b760235fd2381219ed74b7d90f5e009bbeb81ad23def4c9301d8a",
+                "4028fda9c95c0f3bab97b86af158b7491f4c863ae9a3a891a8afe974e7e997a8",
             "PKG_PROOF_PAIR_SHA256":
-                "657e5a5084960014af2297c9ffaf083712a9fb8df7efc8cd68864ad3b81bdf73",
+                "3348173a1422820c38dbf8be5829a9a788f993ebe8fec1c8bf91fa6193658560",
             "PKG_PROOF_N_INVENTORY_SHA256":
-                "bfc21bcf6b0e297b153ec497fac19024c2238fac00b341f55e6ddf30ceeec76e",
+                "e7716174ab0ec84bf2fe84692edd2644229c153c1ce4eec70978445c57a5bae6",
             "PKG_PROOF_N_PLUS_1_INVENTORY_SHA256":
-                "ed33330454699630cc5d524f4d3791e967e805cb17fac80c53bcac6140734122",
+                "dda73a1a799643c7d519d102b92a0099d3971d49fa3fc37b3590e2aa5128791d",
             "PKG_PROOF_N_ROWS_SHA256":
-                "5b3d0687404773150819149d98bd09580360477cb98faa5cd7c6e7cbb32ab5ba",
+                "85ae8cdd83061b2c6e5f7353b7e6aa9e1c1e31b025bcfd468f282c640b6dde04",
             "PKG_PROOF_N_PLUS_1_ROWS_SHA256":
-                "4f9d54b9464acd88c59357d4bd987ee7dbeee890ce7fce76440504e84603cee6",
+                "4a0d6e0543982654f377b52b7d334e9d0e82e5c473d87e934ae9a236062c9804",
         }
         for name, digest in minted.items():
             self.assertIn(f"{name}: {digest}", REPEAT)
         for count, value in (
-            ("PKG_PROOF_PAIR_TARBALL_LENGTH", "418659193"),
+            ("PKG_PROOF_PAIR_TARBALL_LENGTH", "418658950"),
             ("PKG_PROOF_PAIR_LENGTH", "1101"),
             ("PKG_PROOF_N_INVENTORY_LENGTH", "5959"),
             ("PKG_PROOF_N_PLUS_1_INVENTORY_LENGTH", "5959"),
@@ -109,7 +109,7 @@ class RepeatWorkflowTests(unittest.TestCase):
             self.assertIn(f'{count}: "{value}"', REPEAT)
         self.assertIn(
             "PKG_PROOF_TRUSTED_ROOT_SHA256: "
-            "c317d2ad134e0e9efe7c0e836b9b62fa386309e78fa859a516d3ecc943168dd8",
+            "b5c903e06c58a48b7eb23e86a6dc480e2b7358267add9f41004120a752784d2d",
             REPEAT,
         )
         self.assertNotIn(
@@ -173,7 +173,7 @@ class RepeatWorkflowTests(unittest.TestCase):
 
     def test_harness_ships_the_four_file_inventory_and_the_tool_tests(self) -> None:
         payload = "./README.md ./pkg-installer-tests ./prove.sh ./serve_pair_loopback.py"
-        harness = self.job("harness", "acquire-inputs")
+        harness = self.job("harness", "harness-build") + self.job("harness-build", "acquire-inputs")
         for required in (
             "python3 -m unittest proof-source/tests/macos-clean-host/test_workflow.py",
             "python3 -m unittest proof-source/tests/macos-clean-host/test_repeat_workflow.py",
@@ -272,9 +272,9 @@ class RepeatWorkflowTests(unittest.TestCase):
 
     def test_jobs_have_the_exact_two_slot_two_phase_order(self) -> None:
         expected = (
-            ("prepare-slot-1", "resume-slot-1", "needs: [validate-dispatch, harness, acquire-inputs]"),
+            ("prepare-slot-1", "resume-slot-1", "needs: [validate-dispatch, harness, harness-build, acquire-inputs]"),
             ("resume-slot-1", "prepare-slot-2", "needs: prepare-slot-1"),
-            ("prepare-slot-2", "resume-slot-2", "needs: [resume-slot-1, harness, acquire-inputs]"),
+            ("prepare-slot-2", "resume-slot-2", "needs: [resume-slot-1, harness, harness-build, acquire-inputs]"),
             ("resume-slot-2", "aggregate", "needs: prepare-slot-2"),
         )
         for job, following, need in expected:
