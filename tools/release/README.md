@@ -73,11 +73,14 @@ The Apple Silicon directory supplies `pkg-aarch64-darwin`. The Linux directory
 supplies the other two payloads and the fixed `determinate/` inventory. The
 prepared-manifest command validates every payload and non-bundle schema-2 field.
 It refuses bundle fields and does not require bundle files. The reviewed OIDC
-release workflow in `.github/workflows/publish-release.yml` signs the payloads,
-performs the cryptographic Cosign identity and issuer verification, and seals
-the three bundle identities into the downloaded manifest. The final publication
-command requires that sealed manifest and all three real Sigstore v0.3 bundle
-files. It rejects any difference from the exact local payloads and bundles.
+release workflow `publish-release.yml`, dispatched from the pinned
+`dn16-proof-workflow-1` tag, signs the payloads, performs the cryptographic
+Cosign identity and issuer verification, and seals the three bundle
+identities into the downloaded manifest. The workflow file no longer lives
+on the main branch; GitHub resolves it from that tag for every dispatch.
+The final publication command requires that sealed manifest and all three
+real Sigstore v0.3 bundle files. It rejects any difference from the exact
+local payloads and bundles.
 
 The proof URL is an input to the two binaries. Bootstrap an empty origin first.
 The command prints its exact Quick Tunnel URL. It serves no release bytes yet:
