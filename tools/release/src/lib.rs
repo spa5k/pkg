@@ -11,6 +11,7 @@
 mod audit;
 mod manifest;
 mod publish;
+mod rel;
 mod sign;
 mod timestamp;
 
@@ -23,6 +24,9 @@ pub use manifest::{
 pub use publish::{
     ActivationStatus, DurableRelease, DurableTimestampRefresh, PublicationError, PublicationObject,
     Publisher, SealedReader, publish_release, publish_timestamp_refresh,
+};
+pub use rel::{
+    Environment, KeySet, PublishChannel, RelError, ReleaseCard, init_key_set, publish_channel,
 };
 pub use sign::{MetadataPolicy, SignError, SignedRelease, sign_channel};
 pub use timestamp::{

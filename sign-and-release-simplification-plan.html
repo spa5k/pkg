@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>One chain, one key, one command — a simpler sign and release model</title>
+  <style>
+    :root {
+      --paper: #f4f1e8;
+      --surface: #fffdf7;
+      --ink: #18231d;
+      --muted: #536158;
+      --line: #ccd2c9;
+      --ok: #087856;
+      --ok-soft: #dcefe7;
+      --warn: #9c5500;
+      --warn-soft: #f8e8cc;
+      --kill: #a63a2e;
+      --kill-soft: #f6ddd8;
+      --keep: #2259a6;
+      --keep-soft: #e1eafa;
+      --dark: #10251c;
+      --code: #e9ebe5;
+      --radius: 16px;
+      --shadow: 0 8px 26px rgb(25 45 34 / 9%);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; color: var(--ink); background: var(--paper);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      line-height: 1.55; overflow-wrap: break-word;
+    }
+    a { color: var(--keep); }
+    .wrap { width: min(1180px, calc(100% - 32px)); margin-inline: auto; }
+
+    .hero {
+      color: #f8fff9; background: var(--dark);
+      border-bottom: 6px solid var(--ok); padding: 48px 0 38px;
+    }
+    .eyebrow {
+      margin: 0 0 10px; color: #9cd8c1; font-size: .78rem;
+      font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+    }
+    h1, h2, h3 { line-height: 1.15; }
+    h1 { max-width: 900px; margin: 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.04em; }
+    h2 {
+      margin: 56px 0 18px; padding-top: 18px; border-top: 1px solid var(--line);
+      font-size: clamp(1.5rem, 3vw, 2.1rem); letter-spacing: -.025em;
+    }
+    .hero h2 { border: 0; margin-top: 0; padding-top: 0; }
+    h3 { margin: 26px 0 8px; font-size: 1.12rem; }
+    p { margin: 0 0 12px; max-width: 80ch; }
+    .lede { max-width: 780px; margin: 18px 0 0; color: #d2e1d8; font-size: 1.08rem; }
+    .meta { margin-top: 16px; color: #9cd8c1; font-size: .86rem; }
+    code {
+      background: var(--code); border: 1px solid var(--line);
+      border-radius: 6px; padding: 1px 5px; font-size: .92em;
+    }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 20px 22px; margin: 14px 0;
+    }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; }
+    .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+
+    .chip {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: .76rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .chip.ok { background: var(--ok-soft); color: var(--ok); }
+    .chip.kill { background: var(--kill-soft); color: var(--kill); }
+    .chip.keep { background: var(--keep-soft); color: var(--keep); }
+    .chip.warn { background: var(--warn-soft); color: var(--warn); }
+
+    .pw {
+      background: var(--surface); border: 1px dashed var(--keep);
+      border-left: 5px solid var(--keep); border-radius: 10px;
+      padding: 10px 16px; margin: 14px 0;
+    }
+    .pw b.t {
+      color: var(--keep); text-transform: uppercase; font-size: .74rem;
+      letter-spacing: .1em; display: block; margin-bottom: 4px;
+    }
+    .pw p { margin: 0 0 6px; }
+    .pw p:last-child { margin-bottom: 0; }
+
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; background: var(--surface); }
+    th, td {
+      border: 1px solid var(--line); padding: 8px 12px; text-align: left;
+      vertical-align: top; font-size: .94rem;
+    }
+    th { background: var(--dark); color: #f0f7f2; font-weight: 700; }
+    tr:nth-child(even) td { background: #faf8f1; }
+    td.num { text-align: right; white-space: nowrap; }
+
+    .fig {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 18px 16px 12px; margin: 18px 0;
+    }
+    .fig .cap { font-size: .82rem; color: var(--muted); margin: 8px 2px 0; }
+    .fig svg { display: block; width: 100%; height: auto; }
+
+    .road { margin: 16px 0 8px; }
+    .road .lane { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    .road .lane .lname {
+      width: 150px; flex: 0 0 150px; font-size: .8rem; font-weight: 700; text-align: right;
+    }
+    .road .bar { border-radius: 8px; padding: 8px 12px; color: #fff; font-size: .84rem; line-height: 1.3; }
+    .road .bar small { display: block; opacity: .85; font-weight: 400; }
+    .b-p0 { background: #b3541e; }
+    .b-p1 { background: var(--keep); }
+    .b-p2 { background: #1e7a8c; }
+    .b-p3 { background: var(--ok); }
+    .road .gate { color: var(--muted); font-size: .72rem; font-weight: 800; }
+
+    .flow {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch;
+      margin: 16px 0; line-height: 1.25;
+    }
+    .fbox {
+      flex: 1 1 120px; min-width: 120px; background: var(--surface);
+      border: 1px solid var(--line); border-top: 4px solid var(--keep);
+      border-radius: 10px; padding: 10px 12px; font-size: .86rem;
+    }
+    .fbox .ft { font-weight: 700; font-size: .9rem; margin-bottom: 2px; }
+    .farrow { align-self: center; color: var(--muted); font-weight: 800; padding: 0 2px; }
+
+    .callout { border-radius: 12px; padding: 14px 18px; margin: 14px 0; border: 1px solid var(--line); }
+    .callout.ok { background: var(--ok-soft); border-color: #bcd9cc; }
+    .callout.warn { background: var(--warn-soft); border-color: #e6cfa8; }
+    .callout.kill { background: var(--kill-soft); border-color: #e3b8b0; }
+    .callout b.t { text-transform: uppercase; font-size: .78rem; letter-spacing: .08em; }
+
+    ul, ol { margin: 6px 0 14px; padding-left: 22px; }
+    li { margin: 4px 0; max-width: 78ch; }
+    .small { font-size: .88rem; color: var(--muted); }
+    .verdict {
+      display: inline-block; background: var(--ok); color: #fff;
+      font-weight: 800; padding: 2px 10px; border-radius: 8px; font-size: .84rem;
+    }
+    @media print {
+      body { background: #fff; }
+      .card, table, .fig { box-shadow: none; break-inside: avoid; }
+      .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Plan artifact · proposal for discussion</p>
+    <h1>One chain, one key, one command</h1>
+    <p class="lede">
+      A simpler sign and release model for <code>pkg</code>. The current model proved the product.
+      It is too heavy for personal testing, for alpha releases, and for the production trust
+      ceremony. This plan cuts the moving parts and keeps the security that matters — and it
+      releases from your laptop <i>or</i> from GitHub CI, so no release ever depends on one device.
+    </p>
+    <p class="meta">Date: 2026-09-06 &nbsp;·&nbsp; Status: proposal for review &nbsp;·&nbsp; Owner: Kamran &nbsp;·&nbsp; Companion artifact: architecture-report.html</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+<h2>0. The plan in plain words</h2>
+
+<p>This page is technical. This section is not. If you read only one section, read this one.</p>
+
+<div class="pw">
+  <b class="t">What the product needs, in plain words</b>
+  <p>
+    When <code>pkg</code> installs or updates, it downloads files and must be sure they are the
+    files you published. The method is like a <b>sealed catalog with a signature</b>: every file
+    has a fingerprint (a SHA-256 digest), the fingerprints are written in a signed list
+    (TUF metadata), and the machine checks the signature and the fingerprints before it installs
+    anything.
+  </p>
+  <p>
+    This is a good method. We keep it. The problem is everything <i>around</i> the method: the
+    way the list is signed, the way the files are shipped, and the way a test run is prepared.
+  </p>
+</div>
+
+<div class="pw">
+  <b class="t">The five annoyances, in plain words</b>
+  <ol style="margin:4px 0 2px">
+    <li><b>The delivery address is printed on the can.</b> Every binary has the channel URL baked
+        in at build time. Move the channel and you must rebuild, re-sign, and re-publish
+        everything. This is why a dead test URL forced new releases, and why the proof needs a
+        private loopback server with its own certificate authority.</li>
+    <li><b>The signing keys are born new every time.</b> Each proof pair mints a fresh root key,
+        signs once, and throws the key away. One small expiry (a 24-hour stamp) then forces a
+        whole new key set. Keys should live for years, like a passport — not like a bus ticket.</li>
+    <li><b>Two locks on one door.</b> The files are authenticated twice: once by TUF, once by
+        cosign/sigstore. Two stacks means two identities, two tag rules, and double the failure
+        modes — for the same security result.</li>
+    <li><b>The test needs a private cinema.</b> To test the product you must recreate a fake
+        channel inside a VM, with a self-made certificate, instead of pointing at a real shelf
+        over HTTPS. That is the loopback server, the CA, and the keychain trust steps.</li>
+    <li><b>Numbers are copied by hand.</b> A proof dispatch needs 154 pin values copied from the
+        mint into the workflow. Every new pair repeats the copying.</li>
+  </ol>
+</div>
+
+<div class="pw">
+  <b class="t">The fix, in plain words</b>
+  <p>
+    Sign with <b>one key set per environment</b> that lives for years. Print the address on a
+    <b>label, not on the can</b> — the product keeps the trusted key inside but takes the channel
+    address at run time, over HTTPS only. Then <b>one command</b> does the whole publish and
+    prints a small "release card" with all the numbers, so nothing is copied by hand.
+  </p>
+  <p>
+    <b>You can run that one command in two places.</b> On your laptop for quick work, or in GitHub
+    CI for alpha, beta, and production releases — and even per pull request. The key is one
+    encrypted file that lives in your secret store <i>and</i> on your machine. Your laptop is a
+    convenience, not a requirement. If it dies, or you switch devices, releases continue from
+    GitHub the same day.
+  </p>
+  <p>
+    <b>One rule stays everywhere:</b> every publish waits for your explicit approval — PR, alpha,
+    beta, and production alike. A release is a deliberate act, never an automatic one.
+  </p>
+</div>
+
+<figure class="fig">
+  <svg viewBox="0 0 1120 700" role="img" aria-label="Today versus after: one release">
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#536158"/>
+      </marker>
+    </defs>
+
+    <text x="20" y="34" font-size="19" font-weight="800" fill="#a63a2e">TODAY — one release needs ten stations</text>
+    <text x="20" y="54" font-size="14" fill="#536158">Most stations exist for the proof, not for the product. A defect at any station restarts the chain.</text>
+
+    <!-- row 1: steps 1..5 -->
+    <g font-size="13.5" fill="#18231d">
+      <g>
+        <rect x="20"  y="76" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="34" y="100" font-weight="700">1 · Build ×2</text>
+        <text x="34" y="120" fill="#536158">URL + root baked into</text>
+        <text x="34" y="134" fill="#536158">every binary</text>
+      </g>
+      <g>
+        <rect x="244" y="76" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="258" y="100" font-weight="700">2 · Draft ×2</text>
+        <text x="258" y="120" fill="#536158">19 assets staged in a</text>
+        <text x="258" y="134" fill="#536158">GitHub draft, by hand</text>
+      </g>
+      <g>
+        <rect x="468" y="76" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="482" y="100" font-weight="700">3 · Cosign sign ×2</text>
+        <text x="482" y="120" fill="#536158">signer pinned to a</text>
+        <text x="482" y="134" fill="#536158">workflow tag + approval</text>
+      </g>
+      <g>
+        <rect x="692" y="76" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="706" y="100" font-weight="700">4 · TUF publish ×2</text>
+        <text x="706" y="120" fill="#536158">ephemeral root per</text>
+        <text x="706" y="134" fill="#536158">mint, channels N, N+1</text>
+      </g>
+      <g>
+        <rect x="916" y="76" width="184" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="930" y="100" font-weight="700">5 · Bind pair</text>
+        <text x="930" y="120" fill="#536158">sealed pair, inventory,</text>
+        <text x="930" y="134" fill="#536158">tarball, new tag</text>
+      </g>
+    </g>
+    <path d="M214 107 H240" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M438 107 H464" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M662 107 H688" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M886 107 H912" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+
+    <!-- snake down -->
+    <path d="M1008 138 V196 H560" stroke="#536158" stroke-width="2" fill="none"/>
+    <path d="M560 196 V210" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+
+    <!-- row 2: steps 6..10 -->
+    <g font-size="13.5" fill="#18231d">
+      <g>
+        <rect x="20" y="214" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="34" y="238" font-weight="700">6 · Fill pins</text>
+        <text x="34" y="258" fill="#536158">154 pin references in</text>
+        <text x="34" y="272" fill="#536158">the workflow, by hand</text>
+      </g>
+      <g>
+        <rect x="244" y="214" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="258" y="238" font-weight="700">7 · Dispatch gates</text>
+        <text x="258" y="258" fill="#536158">workflow identity pinned</text>
+        <text x="258" y="272" fill="#536158">to a tag per change</text>
+      </g>
+      <g>
+        <rect x="468" y="214" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="482" y="238" font-weight="700">8 · Private channel</text>
+        <text x="482" y="258" fill="#536158">loopback TLS server +</text>
+        <text x="482" y="272" fill="#536158">per-run CA in each VM</text>
+      </g>
+      <g>
+        <rect x="692" y="214" width="192" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="706" y="238" font-weight="700">9 · Two slots</text>
+        <text x="706" y="258" fill="#536158">prepare, operator reboot,</text>
+        <text x="706" y="272" fill="#536158">resume — on two VMs</text>
+      </g>
+      <g>
+        <rect x="916" y="214" width="184" height="62" rx="10" fill="#f6ddd8" stroke="#a63a2e"/>
+        <text x="930" y="238" font-weight="700">10 · Verdict</text>
+        <text x="930" y="258" fill="#536158">aggregate, compare,</text>
+        <text x="930" y="272" fill="#536158">archive evidence</text>
+      </g>
+    </g>
+    <path d="M214 245 H240" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M438 245 H464" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M662 245 H688" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M886 245 H912" stroke="#536158" stroke-width="2" marker-end="url(#ah)"/>
+
+    <!-- divider -->
+    <line x1="20" y1="320" x2="1100" y2="320" stroke="#ccd2c9" stroke-width="2" stroke-dasharray="6 6"/>
+
+    <text x="20" y="358" font-size="19" font-weight="800" fill="#087856">AFTER — one release needs four stations</text>
+    <text x="20" y="378" font-size="14" fill="#536158">One key set per environment. One command prints the release card. The proof uses the real HTTPS channel.</text>
+
+    <g font-size="13.5" fill="#18231d">
+      <g>
+        <rect x="20" y="400" width="250" height="78" rx="10" fill="#dcefe7" stroke="#087856"/>
+        <text x="36" y="424" font-weight="700">1 · Build once</text>
+        <text x="36" y="444" fill="#536158">Trusted root embedded.</text>
+        <text x="36" y="458" fill="#536158">No channel URL. Version is</text>
+        <text x="36" y="472" fill="#536158">the only per-release input.</text>
+      </g>
+      <g>
+        <rect x="302" y="400" width="250" height="78" rx="10" fill="#dcefe7" stroke="#087856"/>
+        <text x="318" y="424" font-weight="700">2 · pkg-rel publish</text>
+        <text x="318" y="444" fill="#536158">One command. Runs on your</text>
+        <text x="318" y="458" fill="#536158">laptop or in GitHub CI —</text>
+        <text x="318" y="472" fill="#536158">same key, same result</text>
+      </g>
+      <g>
+        <rect x="584" y="400" width="250" height="78" rx="10" fill="#dcefe7" stroke="#087856"/>
+        <text x="600" y="424" font-weight="700">3 · HTTPS channel</text>
+        <text x="600" y="444" fill="#536158">Immutable objects on</text>
+        <text x="600" y="458" fill="#536158">channel.kelv.dev. CDN TTL</text>
+        <text x="600" y="472" fill="#536158">1 h. No server process.</text>
+      </g>
+      <g>
+        <rect x="866" y="400" width="234" height="78" rx="10" fill="#dcefe7" stroke="#087856"/>
+        <text x="882" y="424" font-weight="700">4 · Install &amp; test</text>
+        <text x="882" y="444" fill="#536158">Smoke test per release.</text>
+        <text x="882" y="458" fill="#536158">Two-slot proof per</text>
+        <text x="882" y="472" fill="#536158">milestone only.</text>
+      </g>
+    </g>
+    <path d="M272 439 H298" stroke="#087856" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M554 439 H580" stroke="#087856" stroke-width="2" marker-end="url(#ah)"/>
+    <path d="M836 439 H862" stroke="#087856" stroke-width="2" marker-end="url(#ah)"/>
+
+    <!-- bottom summary chips -->
+    <g font-size="13.5">
+      <rect x="20" y="520" width="330" height="54" rx="10" fill="#fffdf7" stroke="#ccd2c9"/>
+      <text x="34" y="544" font-weight="700" fill="#a63a2e">10 stations, hand pins,</text>
+      <text x="34" y="562" fill="#536158">re-mint after every defect</text>
+      <rect x="386" y="520" width="330" height="54" rx="10" fill="#fffdf7" stroke="#ccd2c9"/>
+      <text x="400" y="544" font-weight="700" fill="#087856">4 stations, one command,</text>
+      <text x="400" y="562" fill="#536158">laptop or GitHub CI</text>
+    </g>
+  </svg>
+  <figcaption class="cap"><b>Figure 1.</b> The same release, two ways. Red stations disappear in the
+    target model; green stations are the whole pipeline.</figcaption>
+</figure>
+
+<h2>1. Summary</h2>
+
+<div class="card">
+  <p><b>The verdict in six lines.</b></p>
+  <ol>
+    <li><b>One trust chain.</b> TUF metadata authenticates every artifact. The cosign / sigstore /
+        GitHub-draft signer stack is deleted. It is a second signature stack for the same bytes.</li>
+    <li><b>Long-lived keys.</b> One root and one online key per environment, created once,
+        kept encrypted, rotated rarely. The ephemeral-root re-key cycle is deleted.</li>
+    <li><b>Channel is runtime, not baked.</b> The product embeds the trusted root only. The channel
+        URL is a validated runtime input. One build serves dev, proof, alpha, beta, and production
+        channels.</li>
+    <li><b>One command, two homes.</b> <code>pkg-rel publish</code> builds, signs, uploads, and
+        prints a release card. Run it on your laptop for quick work, or from GitHub CI for alpha,
+        beta, production, and per-PR releases. The encrypted key lives in both places.</li>
+    <li><b>Real HTTPS host.</b> Channels live on static object storage under <code>kelv.dev</code>.
+        The in-VM loopback server, per-run CA, and keychain trust disappear.</li>
+    <li><b>Ceremony fits the threat model.</b> One maintainer. Encrypted keys, recorded steps, and
+        OS notarization. Not a 3-of-5 KMS ceremony. See section 6.</li>
+  </ol>
+</div>
+
+<div class="callout ok">
+  <b class="t">What does not change</b>
+  <p style="margin:6px 0 0">
+    The product TUF client, expiry enforcement, monotonic version checks, Base Nix Handoff, package
+    lifecycle, and the two-slot lifecycle proof for milestones. This plan changes release
+    tooling and key handling, not product trust behavior.
+  </p>
+</div>
+
+<h2>2. Why the current model is heavy</h2>
+
+<p>The current model is measured below. One mint of one proof pair crossed the ten-station chain
+   in Figure 1.</p>
+
+<table>
+  <tr><th>Measurement</th><th class="num">Value</th><th>What it means</th></tr>
+  <tr><td>Proof campaign, 72 hours</td><td class="num">40+ dispatches</td><td>Most runs failed on harness or tooling, not on product behavior</td></tr>
+  <tr><td>Workflow identity tags</td><td class="num">19 (dn1) + 25 (dn16)</td><td>Every harness change needs a new tag because the signer and the harness are pinned to tags</td></tr>
+  <tr><td>Pair tags / alpha releases</td><td class="num">8 / 33</td><td>Each defect or expiry = new release pair = full re-mint</td></tr>
+  <tr><td><code>proof-repeat.yml</code></td><td class="num">1,446 lines</td><td>154 pin references; the acquisition, CA, and loopback phases are proof-only machinery</td></tr>
+  <tr><td>Mint tool (example binary)</td><td class="num">1,350 lines</td><td>Prepare, publish, bind, seal, audit in one offline file</td></tr>
+  <tr><td>Signer workflow</td><td class="num">438 lines</td><td>Cosign keyless identity pinned to <code>publish-release.yml@refs/tags/…</code></td></tr>
+  <tr><td>VM harness <code>prove.sh</code></td><td class="num">1,374 lines</td><td>Lifecycle logic is real; CA, loopback, and acquisition phases are proof-only</td></tr>
+  <tr><td>Loopback channel server</td><td class="num">550 lines</td><td>Exists only because the channel URL is baked into binaries</td></tr>
+  <tr><td>One expiry incident</td><td class="num">≈ 1 day</td><td>24 h TUF timestamp expired; recovery = full re-key because roots are ephemeral</td></tr>
+</table>
+
+<h2>3. Root causes</h2>
+
+<div class="grid2">
+  <div class="card">
+    <h3>D1 — The URL is baked at compile time</h3>
+    <p>The product embeds root JSON, metadata URL, and targets URL in the binary. Every channel
+       change requires a rebuild and the full sign chain. This single decision caused the dead
+       tunnel URL, the loopback server, the per-run CA, and most re-mints.</p>
+  </div>
+  <div class="card">
+    <h3>D2 — Roots are ephemeral</h3>
+    <p><code>--prepare</code> creates a root, signs it, and discards the private key. Any expiry or
+       mistake forces a complete re-key. TUF roots are designed to live for years.</p>
+  </div>
+  <div class="card">
+    <h3>D3 — Two trust stacks</h3>
+    <p>Cosign/sigstore authenticates release assets. TUF authenticates the same bytes on the
+       channel. Each stack has its own identity rules, tags, and failure modes.</p>
+  </div>
+  <div class="card">
+    <h3>D4 — Identity pinned to tags</h3>
+    <p>The cosign signer identity and the proof harness are pinned to workflow tags. A workflow
+       edit forces a new tag. Tags multiplied because the harness changed daily.</p>
+  </div>
+  <div class="card">
+    <h3>D5 — Proof formats, not product formats</h3>
+    <p>Sealed pairs, inventories, bundle tarballs, and the 154-pin block exist only for the proof.
+       They duplicate what a signed channel already proves.</p>
+  </div>
+  <div class="card">
+    <h3>D6 — Opaque errors</h3>
+    <p><code>SignError::Filesystem</code> is one variant for about twenty failure classes. Every
+       <code>map_err(|_| …)</code> discards the real cause. The 24 h expiry cost a day to find.</p>
+  </div>
+</div>
+
+<h2>4. Principles</h2>
+
+<div class="card">
+  <ol>
+    <li><b>P1 — One chain.</b> Every artifact has exactly one authenticating path in its environment.</li>
+    <li><b>P2 — Long-lived identity.</b> Keys outlive releases. Rotation is a rare, recorded procedure.</li>
+    <li><b>P3 — Channel ≠ build.</b> Builds carry the trust anchor. Channels carry content. The two
+        change at different rates and must not be coupled.</li>
+    <li><b>P4 — One command per operation.</b> Any action a human repeats is one command with one
+        printed result. No hand-copied pins, digests, or approval round-trips.</li>
+    <li><b>P5 — No device is the source of truth.</b> A release must be possible without any one
+        laptop. The command runs locally or in CI; the key is one encrypted file available in both
+        places. <i>(new)</i></li>
+    <li><b>P6 — Ceremony fits the threat model.</b> Single maintainer = encrypted keys and
+        recorded steps. KMS and threshold keys only when a second independent party exists.</li>
+    <li><b>P7 — The proof uses the product pipeline.</b> Harness-only machinery is limited to the
+        harness. Proof inputs are ordinary channel content.</li>
+  </ol>
+</div>
+
+<h2>5. Target architecture</h2>
+
+<div class="pw">
+  <b class="t">In plain words</b>
+  <p>
+    Think of a <b>shop shelf</b> (the HTTPS channel), a <b>signed price list</b> (TUF metadata),
+    and a <b>stamp</b> (the key). The product carries the stamp in its pocket and reads the shelf.
+    Today the shelf address is printed on the product itself, the stamp is re-made for every
+    delivery, and a second stamp exists for no extra safety. We keep one stamp per environment and
+    let the shopper be told the shelf address at the door.
+  </p>
+  <p>
+    One shelf has several aisles: <b>pull request, alpha, beta, production</b>. The stamp decides
+    which aisle a build may enter. Publishing is one action — done from your laptop or from GitHub.
+  </p>
+</div>
+
+<h3>5.1 Trust model</h3>
+
+<figure class="fig">
+  <svg viewBox="0 0 1120 470" role="img" aria-label="The one trust chain">
+    <defs>
+      <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#536158"/>
+      </marker>
+    </defs>
+
+    <text x="40"  y="40" font-size="15" font-weight="800" fill="#18231d">KEYS (kept safe)</text>
+    <text x="440" y="40" font-size="15" font-weight="800" fill="#18231d">SIGNED LISTS (on the channel)</text>
+    <text x="840" y="40" font-size="15" font-weight="800" fill="#18231d">BYTES (on the channel)</text>
+
+    <!-- keys lane -->
+    <rect x="40" y="70" width="300" height="76" rx="12" fill="#fffdf7" stroke="#2259a6" stroke-width="2"/>
+    <text x="58" y="98" font-size="14.5" font-weight="700" fill="#2259a6">Root key — offline only</text>
+    <text x="58" y="118" font-size="13" fill="#536158">Created once per environment. Encrypted,</text>
+    <text x="58" y="134" font-size="13" fill="#536158">two copies. Never enters CI. 3-year root.</text>
+
+    <rect x="40" y="176" width="300" height="76" rx="12" fill="#fffdf7" stroke="#2259a6" stroke-width="2"/>
+    <text x="58" y="204" font-size="14.5" font-weight="700" fill="#2259a6">Online key — one</text>
+    <text x="58" y="224" font-size="13" fill="#536158">ed25519, age-encrypted. On the machine,</text>
+    <text x="58" y="240" font-size="13" fill="#536158">in CI secrets, USB stick, Bitwarden.</text>
+
+    <!-- metadata lane -->
+    <rect x="440" y="70" width="300" height="76" rx="12" fill="#dcefe7" stroke="#087856" stroke-width="2"/>
+    <text x="458" y="98" font-size="14.5" font-weight="700" fill="#087856">root.json</text>
+    <text x="458" y="118" font-size="13" fill="#536158">Signed once, offline, at key creation.</text>
+    <text x="458" y="134" font-size="13" fill="#536158">Embedded into every binary at build.</text>
+
+    <rect x="440" y="176" width="300" height="116" rx="12" fill="#dcefe7" stroke="#087856" stroke-width="2"/>
+    <text x="458" y="200" font-size="14.5" font-weight="700" fill="#087856">timestamp · snapshot · targets</text>
+    <text x="458" y="220" font-size="13" fill="#536158">Signed by the online key at each publish.</text>
+    <text x="458" y="240" font-size="13" fill="#536158">targets lists every file with its</text>
+    <text x="458" y="256" font-size="13" fill="#536158">fingerprint (SHA-256 digest). Freshness</text>
+    <text x="458" y="272" font-size="13" fill="#536158">windows: 7 d / 14 d / 60 d.</text>
+
+    <!-- bytes lane -->
+    <rect x="840" y="70" width="240" height="76" rx="12" fill="#fffdf7" stroke="#18231d" stroke-width="2"/>
+    <text x="858" y="98" font-size="14.5" font-weight="700">Installer binaries</text>
+    <text x="858" y="118" font-size="13" fill="#536158">pkg, broker, root helper,</text>
+    <text x="858" y="134" font-size="13" fill="#536158">installer, release index</text>
+
+    <rect x="840" y="176" width="240" height="76" rx="12" fill="#fffdf7" stroke="#18231d" stroke-width="2"/>
+    <text x="858" y="204" font-size="14.5" font-weight="700">macOS package</text>
+    <text x="858" y="224" font-size="13" fill="#536158">Developer ID + notarization</text>
+    <text x="858" y="240" font-size="13" fill="#536158">(beta/prod), ad-hoc (test)</text>
+
+    <!-- arrows -->
+    <path d="M340 108 H430" stroke="#536158" stroke-width="2" marker-end="url(#ah2)"/>
+    <path d="M340 214 H430" stroke="#536158" stroke-width="2" marker-end="url(#ah2)"/>
+    <path d="M740 234 H830" stroke="#536158" stroke-width="2" marker-end="url(#ah2)"/>
+    <path d="M740 108 H830" stroke="#536158" stroke-width="2" marker-end="url(#ah2)"/>
+    <text x="348" y="86"  font-size="12" fill="#536158">signs once, offline</text>
+    <text x="348" y="238" font-size="12" fill="#536158">signs each publish</text>
+    <text x="750" y="96"  font-size="12" fill="#536158">embedded at build</text>
+    <text x="752" y="258" font-size="12" fill="#536158">fingerprints</text>
+
+    <!-- client check -->
+    <rect x="160" y="330" width="800" height="86" rx="14" fill="#10251c"/>
+    <text x="560" y="358" font-size="15" font-weight="800" fill="#9cd8c1" text-anchor="middle">WHAT pkg CHECKS BEFORE IT INSTALLS</text>
+    <text x="270" y="386" font-size="13.5" fill="#f0f7f2">1 · list signature valid against the embedded root?</text>
+    <text x="560" y="386" font-size="13.5" fill="#f0f7f2">2 · list fresh (not expired)?</text>
+    <text x="270" y="406" font-size="13.5" fill="#f0f7f2">3 · file fingerprint matches the list?</text>
+    <text x="560" y="406" font-size="13.5" fill="#f0f7f2">4 · version newer than the installed one?</text>
+  </svg>
+  <figcaption class="cap"><b>Figure 2.</b> The one trust chain. Two keys sign two kinds of lists; the
+    lists authenticate all bytes. The root key never enters CI; the online key exists in two places.</figcaption>
+</figure>
+
+<table>
+  <tr><th>Item</th><th>Current</th><th>Target</th></tr>
+  <tr><td>Artifact authentication</td><td>TUF + cosign/sigstore</td><td>TUF only</td></tr>
+  <tr><td>Root key</td><td>Ephemeral, re-minted per pair</td><td>One per environment, 3-year expiry, offline, never in CI</td></tr>
+  <tr><td>Online keys</td><td>3 local files, one per role, sometimes committed</td><td>One ed25519 key per environment, age-encrypted, in CI secrets and on the machine</td></tr>
+  <tr><td>Key threshold</td><td>1-of-1 (implicit)</td><td>1-of-1. Documented as a decision, not an accident</td></tr>
+  <tr><td>Signer location</td><td>CI workflow + tag identity + env approval</td><td><code>pkg-rel publish</code> — on the laptop or in a thin CI wrapper. Same command, same key</td></tr>
+  <tr><td>CI identity</td><td>Workflow tag per change</td><td>GitHub Environment (stable), not a tag. OIDC for storage access only</td></tr>
+  <tr><td>Bootstrap trust</td><td>Root JSON baked at compile time</td><td>Unchanged. Root JSON baked. URL at run time</td></tr>
+  <tr><td>macOS package</td><td>Ad-hoc signed</td><td>Ad-hoc (PR/alpha) · Developer ID + notarization + staple (beta/prod)</td></tr>
+</table>
+
+<h3>5.2 Channels and stages</h3>
+
+<p>Two trust environments, several aisles per environment. A channel is a path on the host plus a
+   root. Nothing else differs between stages — the same publish command, the same product build.</p>
+
+<table>
+  <tr><th>Lane</th><th>Purpose</th><th>Root</th><th>Signer</th><th>Approval</th><th>macOS package</th><th>Install from</th></tr>
+  <tr>
+    <td><b>PR</b></td>
+    <td>Install a pull-request build on any device</td>
+    <td>test</td>
+    <td>CI, test key</td>
+    <td>maintainer approval (required reviewer)</td>
+    <td>ad-hoc</td>
+    <td><code>channel.kelv.dev/pr/&lt;n&gt;/</code></td>
+  </tr>
+  <tr>
+    <td><b>alpha</b></td>
+    <td>Main-branch builds for testers</td>
+    <td>test</td>
+    <td>CI or laptop</td>
+    <td>maintainer approval</td>
+    <td>ad-hoc</td>
+    <td><code>channel.kelv.dev/alpha/</code></td>
+  </tr>
+  <tr>
+    <td><b>beta</b></td>
+    <td>Release candidates of the production build</td>
+    <td>prod</td>
+    <td>CI (prod key)</td>
+    <td>environment gate</td>
+    <td>notarized</td>
+    <td><code>channel.kelv.dev/beta/</code></td>
+  </tr>
+  <tr>
+    <td><b>prod</b></td>
+    <td>Public release</td>
+    <td>prod</td>
+    <td>CI (prod key)</td>
+    <td>environment gate + record</td>
+    <td>notarized + stapled</td>
+    <td><code>channel.kelv.dev/prod/</code></td>
+  </tr>
+  <tr>
+    <td><b>smoke (local)</b></td>
+    <td>Personal install/update/repair loop</td>
+    <td>test</td>
+    <td>laptop</td>
+    <td>none — local only</td>
+    <td>ad-hoc</td>
+    <td>local directory or alpha</td>
+  </tr>
+</table>
+
+<p><b>One rule for every lane:</b> a publish happens only after the maintainer approves it.
+   GitHub Environments provide the gate (required reviewer). Nothing publishes by itself —
+   not a PR, not an alpha, not an automatic job. The cost is one approval click per publish.
+   The local smoke lane needs no gate because it touches only the local machine.</p>
+
+<div class="pw">
+  <b class="t">Device change, in plain words</b>
+  <p>
+    Your laptop is a convenience, not a requirement. The encrypted online key has four copies:
+    your machine, the GitHub secret store, a USB stick, and Bitwarden. To release, you press
+    "Run workflow" on GitHub and choose the lane — even with no laptop at all. To work locally
+    again on a new machine, restore the key file from the USB stick or Bitwarden and the same
+    command works. The root key never travels: it is only needed at key creation and rotation,
+    which happen once a year at most.
+  </p>
+</div>
+
+<div class="callout warn">
+  <b class="t">The trade we accept, stated plainly</b>
+  <p style="margin:6px 0 0">
+    A copy of the test online key and the production online key lives in GitHub secrets. GitHub
+    becomes a possible theft target for the <i>online</i> key. This is survivable: an online-key
+    leak means re-key and re-publish under root v2 — no product rebuild, no user action. The root
+    key, whose loss is the serious event, never enters CI. This is the standard single-maintainer
+    trade, and it is what makes device-independent releases possible.
+  </p>
+</div>
+
+<h3>5.3 Channel layout</h3>
+<p>One static host. One directory per environment root. Each publish writes immutable versioned
+   files and advances <code>timestamp.json</code>.</p>
+<pre style="background:var(--dark);color:#d8e6dd;padding:14px 16px;border-radius:12px;overflow:auto;font-size:.86rem">
+channel.kelv.dev
+  /pr/&lt;n&gt;/         metadata/ 1.root.json 1.targets.json …  targets/ …   (root T)
+  /alpha/            metadata/ 1.root.json 1.targets.json …  targets/ …   (root T)
+  /proof-n/          metadata/ 1.root.json 1.targets.json …  targets/ …   (root T)  ← milestone proof
+  /proof-n-plus-1/   metadata/ 1.root.json 1.targets.json …  targets/ …   (root T)
+  /beta/             metadata/ 1.root.json 1.targets.json …  targets/ …   (root P)
+  /prod/             metadata/ 1.root.json 1.targets.json …  targets/ …   (root P)
+  install.sh         rendered per release, pins version + SHA-256 of the installer
+</pre>
+<table>
+  <tr><th>Policy</th><th class="num">Value</th><th>Why</th></tr>
+  <tr><td>CDN TTL</td><td class="num">1 h</td><td>Rollback and update latency</td></tr>
+  <tr><td>timestamp expiry</td><td class="num">7 days</td><td>Must exceed CDN TTL; checked every product run</td></tr>
+  <tr><td>snapshot expiry</td><td class="num">14 days</td><td>Consistency layer</td></tr>
+  <tr><td>targets expiry</td><td class="num">60 days</td><td>Fresh-install window; releases refresh it</td></tr>
+  <tr><td>root expiry</td><td class="num">3 years</td><td>Rotation escrow signed at creation</td></tr>
+</table>
+<p class="small">One constant module holds these values. The release card prints them. No
+   environment variable can silently change production policy.</p>
+
+<h3>5.4 Runtime channel URL</h3>
+<div class="card">
+  <p>The installer and the broker accept a channel URL from a root-owned source at run time:
+     <code>pkg-install --channel https://…</code> or the service environment file. The existing
+     HTTPS-only validator rejects everything else. The embedded root authenticates all content,
+     so the URL choice is a delivery detail, not a trust decision.</p>
+  <p><b>Result:</b> the alpha, dev, proof, and production binaries are the same build. The loopback
+     server, per-run CA, keychain trust, and URL rebuilds disappear. A PR build and a production
+     build differ only in the aisle (URL) they point at and the root they trust.</p>
+</div>
+
+<h3>5.5 Release card</h3>
+<p>The publisher prints one JSON card per publish. It replaces the sealed pair, the inventories,
+   the bundle tarball, and the 154-pin block.</p>
+<pre style="background:var(--dark);color:#d8e6dd;padding:14px 16px;border-radius:12px;overflow:auto;font-size:.86rem">
+{
+  "schema": 1,
+  "environment": "test",
+  "lane": "alpha",
+  "root_sha256": "…",
+  "key_id": "…",
+  "product_commit": "…",
+  "channel_n":      { "url": "https://channel.kelv.dev/proof-n/",        "targets_sha256": "…" },
+  "channel_n_plus": { "url": "https://channel.kelv.dev/proof-n-plus-1/", "targets_sha256": "…" },
+  "installer": { "name": "pkg-aarch64-darwin", "sha256": "…", "length": … },
+  "pkg_macos": { "name": "pkg-…-preview.pkg",  "sha256": "…", "length": … },
+  "policy": { "timestamp_hours": 168, "snapshot_hours": 336, "targets_hours": 1440 }
+}
+</pre>
+<p>The proof workflow takes five inputs: the card, its SHA-256, the environment, and the
+   destructive confirmation. The card is the pin. Drift is impossible because the publisher emits
+   it. For PR and alpha lanes the card is printed into the run summary and posted on the PR.</p>
+
+<div class="pw">
+  <b class="t">In plain words</b>
+  <p>
+    Today the numbers travel by hand from the mint to the test script — 154 of them. In the target
+    model the publish command prints one small card with the ten numbers that matter. The test
+    script reads the card. If the card is wrong, the test refuses to start.
+  </p>
+</div>
+
+<h3>5.6 Why TUF only — the honest trade with sigstore</h3>
+
+<div class="pw">
+  <b class="t">What each system gives you, in plain words</b>
+  <p>
+    Both systems answer one question: <i>did these files really come from the maintainer, and
+    were they changed?</i> They answer it differently.
+  </p>
+  <p>
+    <b>TUF</b> is a <b>stamp you own</b>. The signing key is yours. Your product checks the stamp,
+    the freshness, and the file fingerprints itself, at every update, with no third party in the
+    path. It protects the machine even when the download server is evil. The cost: you must
+    protect the stamp — that is the key custody in section 6.
+  </p>
+  <p>
+    <b>Sigstore (cosign, keyless)</b> is a <b>borrowed stamp with a receipt</b>. GitHub CI asks a
+    public notary for a short-lived certificate that says "this file came from the pkg
+    repository's release workflow". The receipt is stored in a public log that anyone can audit.
+    Benefits: there is no key for you to protect or leak, and outsiders can verify a release
+    without trusting you or your channel.
+  </p>
+  <p>
+    <b>The honest trade:</b> the product never checks sigstore — it checks TUF. Sigstore serves
+    human auditors, not the app. In this campaign it also caused the tag-pinned identity and the
+    per-release approval dance, because the borrowed stamp must be tied to a specific workflow
+    identity. Keeping it means two systems, two identities, and the audit log — for a benefit the
+    product itself never reads.
+  </p>
+  <p>
+    <b>Recommendation:</b> TUF only, now. Add sigstore back later, without migration pain, only
+    if one of these becomes true: outsiders must audit releases without trusting you, or a second
+    maintainer joins, or a compliance requirement appears.
+  </p>
+</div>
+
+<h2>6. Production trust and release — the best way for this product</h2>
+
+<div class="pw">
+  <b class="t">In plain words</b>
+  <p>
+    For one person running one product, the right amount of ceremony is: <b>keys that are hard to
+    steal, steps that are written down, and the checks the operating system forces.</b> A bank-vault
+    ceremony with five keys and hardware tokens protects against a team of insiders. You do not
+    have a team of insiders. Spend the effort on key custody, on a CI path that works without your
+    laptop, and on Apple's notarization, which is not optional.
+  </p>
+</div>
+
+<div class="callout ok">
+  <b class="t">Adopt now</b>
+  <ul>
+    <li><b>One offline root key per environment.</b> Generate on a machine that never touches the
+        network (a booted USB laptop is enough). Encrypt with age or GPG. Two encrypted copies on
+        two media. The passphrase goes to a password manager, not to a file. It never enters CI.</li>
+    <li><b>One online key per environment, with four copies.</b> ed25519, age-encrypted. One copy
+        on the machine, one base64 copy in GitHub secrets with the passphrase in a second secret,
+        one encrypted copy on a USB stick, and the passphrase in Bitwarden. A leaked online key
+        means re-key and re-publish, which the runbook records. A lost laptop changes nothing.</li>
+    <li><b>Release from CI, not only from the laptop.</b> A thin <code>release.yml</code> wrapper
+        calls the same <code>pkg-rel publish</code> with the key injected from secrets. Stages map
+        to GitHub Environments with protection rules: every lane waits for the maintainer's
+        manual approval (required reviewer). A stable environment identity replaces the
+        per-change workflow tags.</li>
+    <li><b>macOS Developer ID is mandatory, not optional.</b> Gatekeeper will not accept an
+        unsigned product for real users. <code>productsign</code> + <code>notarytool</code> +
+        staple runs inside the publish command for beta and prod lanes. Enrollment is the long
+        pole — start it now.</li>
+    <li><b>Static HTTPS hosting with immutable objects.</b> No server process. Rollback = upload
+        the prior snapshot files. Versioned object names make this safe. The CI accesses storage
+        with OIDC-federated credentials tied to the environment, so no long-lived cloud key sits
+        in secrets either.</li>
+    <li><b>Rotation escrow at root creation.</b> Sign root v2 with root v1 on day one and store it
+        offline. Losing the root key becomes a non-event.</li>
+    <li><b>A two-page runbook.</b> Key custody, publish steps, the device-change procedure,
+        rotation, compromise response, rollback. Written when the ceremony runs, not after.</li>
+  </ul>
+</div>
+
+<div class="callout kill">
+  <b class="t">Skip for now — with triggers</b>
+  <table style="margin:8px 0 0;background:transparent">
+    <tr><th>Ceremony</th><th>Why it is skipped</th><th>Trigger to revisit</th></tr>
+    <tr><td>3-of-5 online keys</td><td>Threshold protects against one compromised secret. One
+        maintainer holds all secrets anyway.</td><td>A second independent operator or funding</td></tr>
+    <tr><td>KMS / HSM</td><td>Cost and ops for a single maintainer. Encryption at rest plus
+        recorded custody gives the same practical safety.</td><td>Compliance, growth, audit</td></tr>
+    <tr><td>Sigstore keyless in CI</td><td>The TUF chain already authenticates channel bytes.
+        TLS plus the SHA-256 pin authenticates the installer bootstrap.</td><td>Public
+        transparency log requirements</td></tr>
+    <tr><td>Per-tag signer identity</td><td>A stable GitHub Environment identity replaces it.
+        Local signing removes the coupling entirely.</td><td>Multiple committers</td></tr>
+    <tr><td>DNSSEC / air-gapped ritual</td><td>Cheap to add later. Not the current risk.</td>
+        <td>Hosting lands; one toggle</td></tr>
+  </table>
+</div>
+
+<div class="callout warn">
+  <b class="t">Compromise response — one paragraph of the runbook</b>
+  <p style="margin:6px 0 0">If the online key leaks: revoke it in a new root (root v2), re-publish
+     the last good snapshot under the new key, bump every expiry, and force clients to refresh by
+     publishing a new targets file. If the root key leaks: the product must re-bake the root at the
+     next release; old clients expire out of the root window. If the channel host is defaced:
+     clients reject bad signatures; republish the last good immutable snapshot and check the
+     timestamp version monotonicity in the datastore. If a laptop dies: nothing to do — the CI lane
+     keeps releasing, and the key file restores from the password manager onto the next machine.</p>
+</div>
+
+<h2>7. Fate of every current part</h2>
+
+<table>
+  <tr><th>Part</th><th>Size</th><th>Fate</th><th>Replacement</th></tr>
+  <tr><td><code>publish-release.yml</code> (cosign signer)</td><td>438 ln</td><td><span class="chip kill">delete</span></td><td><code>pkg-rel publish</code> in a thin CI wrapper</td></tr>
+  <tr><td>sigstore bundles + SHA256SUMS assets</td><td>9 per release</td><td><span class="chip kill">delete</span></td><td>TUF target digests</td></tr>
+  <tr><td>Ephemeral <code>--prepare</code> root re-key</td><td>—</td><td><span class="chip kill">delete</span></td><td>One <code>pkg-rel key init --env</code> per environment</td></tr>
+  <tr><td>Sealed pair + inventories + bundle tag</td><td>—</td><td><span class="chip kill">delete</span></td><td>Release card + two channel dirs</td></tr>
+  <tr><td><code>serve_pair_loopback.py</code> + CA + keychain trust</td><td>550 ln</td><td><span class="chip kill">delete</span></td><td>Real HTTPS channel host</td></tr>
+  <tr><td>154-pin env block in the workflow</td><td>—</td><td><span class="chip kill">delete</span></td><td>One card input + its SHA-256</td></tr>
+  <tr><td>Workflow identity tags per harness change</td><td>19 + 25</td><td><span class="chip kill">delete</span></td><td>Stable GitHub Environment identity; harness from a reviewed commit SHA</td></tr>
+  <tr><td><code>signing-state/</code> committed keys</td><td>5 files</td><td><span class="chip kill">delete</span></td><td>Encrypted keys in CI secrets + <code>~/.config/pkg-rel/</code></td></tr>
+  <tr><td>Compile-time channel URL</td><td>—</td><td><span class="chip kill">delete</span></td><td>Runtime URL, HTTPS-validated, root stays baked</td></tr>
+  <tr><td><code>pkg-rel publish</code> (new)</td><td>—</td><td><span class="chip keep">add</span></td><td>Build, sign, upload, print card — laptop or CI</td></tr>
+  <tr><td><code>release.yml</code> wrapper (new)</td><td>≈ 150 ln</td><td><span class="chip keep">add</span></td><td>Dispatch lanes PR/alpha/beta/prod; environment gates; secrets → key</td></tr>
+  <tr><td><code>pkg-rel smoke</code> (new)</td><td>—</td><td><span class="chip keep">add</span></td><td>Install → update → repair → remove on one machine, minutes</td></tr>
+  <tr><td>Per-PR channel job (new)</td><td>—</td><td><span class="chip keep">add</span></td><td>Opt-in label publishes <code>/pr/&lt;n&gt;/</code>, comments the install URL</td></tr>
+  <tr><td>TUF client in the product</td><td>—</td><td><span class="chip keep">keep</span></td><td>Unchanged</td></tr>
+  <tr><td>HTTPS-only policy, expiry enforcement</td><td>—</td><td><span class="chip keep">keep</span></td><td>Unchanged</td></tr>
+  <tr><td>Two-slot macOS proof (milestones)</td><td>1,374 ln harness</td><td><span class="chip keep">keep, trimmed</span></td><td>CA and loopback phases removed; lifecycle phases stay</td></tr>
+  <tr><td>Error fidelity in <code>sign.rs</code></td><td>—</td><td><span class="chip keep">fix first</span></td><td>Keep io error sources in <code>SignError</code></td></tr>
+  <tr><td>GitHub release drafts as alpha mirror</td><td>—</td><td><span class="chip warn">simplify</span></td><td>Plain uploads from the publish command; docs move to kelv.dev</td></tr>
+</table>
+
+<h2>8. Migration phases</h2>
+
+<div class="road">
+  <div class="lane">
+    <div class="lname">Apple enrollment</div>
+    <div class="bar b-p3" style="flex:1 1 100%"><b>Developer Program + certificate — runs in parallel</b>
+      <small>Start on day one. This is the long pole; weeks of waiting, zero code.</small></div>
+  </div>
+  <div class="lane">
+    <div class="lname">P0 · Unblock</div>
+    <div class="bar b-p0" style="flex:0 0 16%"><b>≈ 1 day</b><small>error fidelity, TTL 168 h, keep the test root</small></div>
+    <span class="gate">◆</span>
+  </div>
+  <div class="lane">
+    <div class="lname">P1 · One chain</div>
+    <div class="bar b-p1" style="flex:0 0 46%"><b>≈ 4–6 days</b><small>runtime URL, one key per env, pkg-rel publish, delete cosign</small></div>
+    <span class="gate">◆</span>
+  </div>
+  <div class="lane">
+    <div class="lname">P2 · Real host</div>
+    <div class="bar b-p2" style="flex:0 0 30%"><b>≈ 2–3 days</b><small>channel.kelv.dev, CI lanes, per-PR channel, smoke, trim harness</small></div>
+    <span class="gate">◆</span>
+  </div>
+  <div class="lane">
+    <div class="lname">P3 · Production</div>
+    <div class="bar b-p3" style="flex:0 0 38%"><b>≈ 3–5 days</b><small>offline keys, notarization, beta + prod lanes, re-proof, runbook</small></div>
+  </div>
+  <p class="small" style="margin:10px 0 0">◆ = phase gate. Each phase ships, tests, and deletes on its own. Nothing waits for a later phase.</p>
+</div>
+
+<figure class="fig">
+  <svg viewBox="0 0 1120 400" role="img" aria-label="Migration phases with deliverables">
+    <text x="20" y="34" font-size="18" font-weight="800" fill="#18231d">Each phase, in one glance</text>
+
+    <g font-size="13.5">
+      <!-- P0 -->
+      <rect x="20" y="60" width="240" height="130" rx="12" fill="#f8e8cc" stroke="#9c5500" stroke-width="2"/>
+      <text x="36" y="86" font-weight="800" fill="#9c5500">P0 · Unblock — ≈ 1 day</text>
+      <text x="36" y="110" fill="#18231d">· errors name their cause</text>
+      <text x="36" y="128" fill="#18231d">· proof TTL = 168 hours</text>
+      <text x="36" y="146" fill="#18231d">· test root key kept, encrypted</text>
+      <text x="36" y="176" fill="#536158">Gate: one clean pair mints.</text>
+
+      <!-- P1 -->
+      <rect x="300" y="60" width="240" height="130" rx="12" fill="#e1eafa" stroke="#2259a6" stroke-width="2"/>
+      <text x="316" y="86" font-weight="800" fill="#2259a6">P1 · One chain — ≈ 4–6 days</text>
+      <text x="316" y="110" fill="#18231d">· channel URL at run time</text>
+      <text x="316" y="128" fill="#18231d">· one key per environment</text>
+      <text x="316" y="146" fill="#18231d">· pkg-rel publish + card</text>
+      <text x="316" y="164" fill="#18231d">· cosign stack deleted</text>
+      <text x="316" y="176" fill="#536158">Gate: alpha installs with TUF only.</text>
+
+      <!-- P2 -->
+      <rect x="580" y="60" width="240" height="130" rx="12" fill="#d4edf0" stroke="#1e7a8c" stroke-width="2"/>
+      <text x="596" y="86" font-weight="800" fill="#1e7a8c">P2 · Real host — ≈ 2–3 days</text>
+      <text x="596" y="110" fill="#18231d">· channel.kelv.dev objects</text>
+      <text x="596" y="128" fill="#18231d">· release.yml CI lanes</text>
+      <text x="596" y="146" fill="#18231d">· per-PR channel</text>
+      <text x="596" y="164" fill="#18231d">· pkg-rel smoke, harness trimmed</text>
+      <text x="596" y="176" fill="#536158">Gate: release from CI, no laptop.</text>
+
+      <!-- P3 -->
+      <rect x="860" y="60" width="240" height="130" rx="12" fill="#dcefe7" stroke="#087856" stroke-width="2"/>
+      <text x="876" y="86" font-weight="800" fill="#087856">P3 · Production — ≈ 3–5 days</text>
+      <text x="876" y="110" fill="#18231d">· offline key ceremony</text>
+      <text x="876" y="128" fill="#18231d">· Developer ID + notarize</text>
+      <text x="876" y="146" fill="#18231d">· beta + prod lanes live</text>
+      <text x="876" y="164" fill="#18231d">· re-proof, runbook</text>
+      <text x="876" y="176" fill="#536158">Gate: clean-Mac install, proof green.</text>
+    </g>
+
+    <!-- parallel arrow -->
+    <line x1="20" y1="240" x2="1100" y2="240" stroke="#9c5500" stroke-width="3"/>
+    <path d="M1090 232 L1100 240 L1090 248" fill="#9c5500"/>
+    <text x="36" y="266" font-size="14.5" font-weight="700" fill="#9c5500">Apple Developer enrollment — starts now, runs under every phase</text>
+    <text x="36" y="288" font-size="13" fill="#536158">Enrollment and certificate provisioning take weeks. They need no code. Begin them today, in parallel with P0.</text>
+  </svg>
+  <figcaption class="cap"><b>Figure 3.</b> The migration at a glance. Every phase ends with a gate
+    and ships independently.</figcaption>
+</figure>
+
+<h3>P0 — Unblock the campaign (≈ 1 day)</h3>
+<ul>
+  <li>Fix <code>SignError</code> to carry the underlying io error and the failing path.</li>
+  <li>Default <code>PKG_TIMESTAMP_TTL_HOURS</code> to 168 for proof mints.</li>
+  <li>Persist the campaign test root key (age-encrypted) so expiry stops forcing re-keys.</li>
+  <li><b>Gate:</b> one fresh pair mints with the long TTL; the second-channel failure either
+      reproduces with a named error or disappears.</li>
+  <li><i>Parallel:</i> start Apple Developer enrollment now — it is the long pole.</li>
+</ul>
+
+<h3>P1 — Collapse the trust stack (≈ 4–6 days)</h3>
+<ul>
+  <li>Product: channel URL becomes a runtime input; root stays baked; HTTPS validation unchanged.</li>
+  <li>Tooling: <code>pkg-rel publish</code> replaces prepare/publish/bind and the draft+cosign flow.
+      It runs identically on the laptop and in CI — one code path, key injected from the
+      environment.</li>
+  <li>Keys: <code>pkg-rel key init</code> per environment; long-lived; encrypted; one copy in CI
+      secrets, one on the machine; never in git.</li>
+  <li>Delete <code>publish-release.yml</code>, sigstore assets, ephemeral re-key paths, committed
+      <code>signing-state/</code>.</li>
+  <li><b>Gate:</b> alpha release installs and updates through the TUF chain with no cosign step,
+      from the laptop path.</li>
+</ul>
+
+<h3>P2 — Real hosting, CI lanes, fast loops (≈ 2–3 days)</h3>
+<ul>
+  <li>Stand up <code>channel.kelv.dev</code> static objects for the test environment.</li>
+  <li>Add <code>release.yml</code>: dispatch lanes for PR (opt-in label), alpha, and proof pairs.
+      Secrets hold the encrypted test key; every lane requires the maintainer's approval.</li>
+  <li><code>install.sh</code> generator renders the stable URL from the release card.</li>
+  <li><code>pkg-rel smoke</code>: personal install → update → repair → remove in minutes.</li>
+  <li>Trim <code>prove.sh</code> and the workflow: drop loopback, CA, tarball, and pin phases.</li>
+  <li><b>Gate:</b> one alpha release and one per-PR build published from CI with no laptop
+      involved; personal smoke test is three commands.</li>
+</ul>
+
+<h3>P3 — Production ceremony, scaled (≈ 3–5 days + enrollment)</h3>
+<ul>
+  <li>One-time offline ceremony: root T and root P keys, rotation escrow, custody record. Root P
+      never enters CI.</li>
+  <li>Developer ID cert in the secret store; notarization runs inside
+      <code>pkg-rel publish --lane beta|prod</code>.</li>
+  <li>Beta and prod lanes enabled with environment gates; first production channel publish,
+      signed package, <code>kelv.dev/install.sh</code>.</li>
+  <li>One milestone re-proof against the production channel; evidence archived.</li>
+  <li>Two-page ops runbook incl. device-change procedure; docs and README point at kelv.dev;
+      proof-grade URLs retired.</li>
+  <li><b>Gate:</b> clean-Mac install of the notarized package; repeat-run proof green; runbook
+      review; a release done end-to-end from a fresh laptop with only the key file restored.</li>
+</ul>
+
+<h2>9. Decisions to ratify</h2>
+<table>
+  <tr><th>#</th><th>Decision</th><th>Current</th><th>Proposed</th><th>Recommendation</th></tr>
+  <tr><td>1</td><td>Artifact trust stack</td><td>TUF + cosign</td><td>TUF only</td><td><span class="verdict">TUF only</span></td></tr>
+  <tr><td>2</td><td>Root lifetime</td><td>Ephemeral per mint</td><td>Long-lived per environment</td><td><span class="verdict">Long-lived</span></td></tr>
+  <tr><td>3</td><td>Release path</td><td>Laptop-only ceremony</td><td>One command: laptop <b>and</b> GitHub CI (PR/alpha/beta/prod)</td><td><span class="verdict">Both lanes</span></td></tr>
+  <tr><td>4</td><td>Online key threshold</td><td>1-of-1</td><td>1-of-1, documented; key in CI secrets + machine</td><td><span class="verdict">1-of-1</span></td></tr>
+  <tr><td>5</td><td>Channel host</td><td>GitHub tags + loopback</td><td>Static HTTPS on kelv.dev</td><td><span class="verdict">kelv.dev</span></td></tr>
+  <tr><td>6</td><td>Channel URL binding</td><td>Baked at compile time</td><td>Runtime, HTTPS-validated</td><td><span class="verdict">Runtime</span></td></tr>
+  <tr><td>7</td><td>Stages</td><td>Alpha only, one channel</td><td>Lanes: PR / alpha (root T) · beta / prod (root P)</td><td><span class="verdict">Two roots, four lanes</span></td></tr>
+  <tr><td>8</td><td>Proof inputs</td><td>Sealed pair + 154 pins</td><td>Release card + digests</td><td><span class="verdict">Card</span></td></tr>
+  <tr><td>9</td><td>Harness identity</td><td>Workflow tags</td><td>Reviewed commit SHA; stable Environment identity</td><td><span class="verdict">Commit SHA</span></td></tr>
+  <tr><td>10</td><td>Proof cadence</td><td>Every pair, two slots</td><td>Smoke per release · big exam before each production release and before the first beta</td><td><span class="verdict">Split cadence</span></td></tr>
+  <tr><td>11</td><td>Bootstrap trust</td><td>install.sh pins SHA-256</td><td>Same, rendered from the card</td><td><span class="verdict">Keep pattern</span></td></tr>
+  <tr><td>12</td><td>Approval gates</td><td>Env approval on signed releases only</td><td>Maintainer approval on every lane: PR, alpha, beta, prod</td><td><span class="verdict">All manual</span></td></tr>
+  <tr><td>13</td><td>Key custody</td><td>Local files, once committed</td><td>Machine + GitHub secrets + USB stick + Bitwarden passphrase</td><td><span class="verdict">Four copies</span></td></tr>
+</table>
+
+<h2>10. Open questions for the discussion</h2>
+<ol>
+  <li>Is TUF-only acceptable, or does the sigstore log have value you want to keep?</li>
+  <li>Do you accept the runtime channel URL change in the product? It is the biggest single
+      simplification and touches the installer and the broker service.</li>
+  <li>Which lanes need a manual approval gate? Proposal: beta and prod yes; alpha and PR no.</li>
+  <li>Confirm TUF-only (see 5.6 for the honest trade with sigstore).</li>
+  <li>Confirm the big-exam cadence: full two-slot proof before every production release and
+      before the first beta; smoke test after every release; no exam for PR/alpha.</li>
+</ol>
+
+<p class="small">Decisions recorded from the 2026-09-06 discussion: runtime channel URL accepted (Q2) ·
+   manual approval on every lane (Q3) · per-PR opt-in, label + approval only (Q4) · key copies:
+   machine, GitHub secrets, USB stick, Bitwarden (Q6).</p>
+
+<p class="small" style="margin-top:40px">Artifact: sign-and-release-simplification-plan.html · pkg · 2026-09-06 · proposal for review, not yet a decision</p>
+
+</div>
+</body>
+</html>

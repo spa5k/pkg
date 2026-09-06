@@ -7,8 +7,8 @@ use pkg_channel::{TrustedRoot, validate_https_repository_url};
 use pkg_core::System;
 use pkg_installer::{
     InstallError, InstallErrorCode, InstallMode, LinuxInstallBackend,
-    ProductionLinuxInstallBackend, ProductionMacOsInstallBackend, install_linux_from_bundle,
-    install_macos_from_bundle, plan_linux_group_bindings,
+    ProductionLinuxInstallBackend, ProductionMacOsInstallBackend, derive_channel_urls,
+    install_linux_from_bundle, install_macos_from_bundle, plan_linux_group_bindings,
 };
 use pkg_nix::{InstallerProvisionRequest, InstallerRepository, ManagedGroupBindings};
 use url::Url;
@@ -16,6 +16,7 @@ use url::Url;
 const RELEASE_TUF_ROOT_JSON: Option<&str> = option_env!("PKG_RELEASE_TUF_ROOT_JSON");
 const RELEASE_METADATA_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_METADATA_URL");
 const RELEASE_TARGETS_URL: Option<&str> = option_env!("PKG_RELEASE_CHANNEL_TARGETS_URL");
+const CHANNEL_URL_VARIABLE: &str = "PKG_CHANNEL_URL";
 const LINUX_CHANNEL_DATASTORE: &str = "/var/lib/pkg/broker-home/channel";
 const LINUX_SCRATCH_PARENT: &str = "/var/lib/pkg/helper-home/tmp";
 const MACOS_CHANNEL_DATASTORE: &str = "/Library/Application Support/pkg/broker-home/channel";
@@ -37,14 +38,20 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<InstallSuccess, PublicInstallError> {
-    let invocation = parse_invocation(std::env::args_os().skip(1))?;
+    let (invocation, channel_base) = parse_invocation(std::env::args_os().skip(1))?;
     if !Uid::effective().is_root() {
         return Err(PublicInstallError::RootRequired);
     }
     let system = host_system().ok_or(PublicInstallError::UnsupportedSystem)?;
     validate_invocation_system(invocation, system)?;
     let trusted_root = trusted_root(RELEASE_TUF_ROOT_JSON)?;
-    let (metadata_url, targets_url) = release_urls(RELEASE_METADATA_URL, RELEASE_TARGETS_URL)?;
+    let environment = match std::env::var(CHANNEL_URL_VARIABLE) {
+        Ok(base) => Some(base),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => return Err(PublicInstallError::InvalidRelease),
+    };
+    let (metadata_url, targets_url) =
+        channel_urls(channel_base.as_deref(), environment.as_deref())?;
     let (groups, channel_datastore, scratch_parent) =
         if matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
             (
@@ -154,13 +161,37 @@ enum Invocation {
 
 fn parse_invocation(
     arguments: impl IntoIterator<Item = OsString>,
-) -> Result<Invocation, PublicInstallError> {
-    let arguments = arguments.into_iter().collect::<Vec<_>>();
-    match arguments.as_slice() {
-        [] => Ok(Invocation::InstallOrUpgrade),
-        [argument] if argument == "--repair-product-assets" => Ok(Invocation::RepairProductAssets),
-        _ => Err(PublicInstallError::InvalidInvocation),
+) -> Result<(Invocation, Option<String>), PublicInstallError> {
+    let mut invocation = Invocation::InstallOrUpgrade;
+    let mut channel = None;
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
+        let Some(text) = argument.to_str() else {
+            return Err(PublicInstallError::InvalidInvocation);
+        };
+        match text {
+            "--repair-product-assets" => {
+                if invocation == Invocation::RepairProductAssets {
+                    return Err(PublicInstallError::InvalidInvocation);
+                }
+                invocation = Invocation::RepairProductAssets;
+            }
+            "--channel" => {
+                if channel.is_some() {
+                    return Err(PublicInstallError::InvalidInvocation);
+                }
+                let Some(value) = arguments.next() else {
+                    return Err(PublicInstallError::InvalidInvocation);
+                };
+                let Some(value) = value.to_str() else {
+                    return Err(PublicInstallError::InvalidInvocation);
+                };
+                channel = Some(value.to_owned());
+            }
+            _ => return Err(PublicInstallError::InvalidInvocation),
+        }
     }
+    Ok((invocation, channel))
 }
 
 const fn validate_invocation_system(
@@ -203,6 +234,16 @@ fn release_urls(
     Ok((metadata, targets))
 }
 
+fn channel_urls(
+    command_line: Option<&str>,
+    environment: Option<&str>,
+) -> Result<(Url, Url), PublicInstallError> {
+    if let Some(base) = command_line.or(environment) {
+        return derive_channel_urls(base).map_err(|_| PublicInstallError::InvalidRelease);
+    }
+    release_urls(RELEASE_METADATA_URL, RELEASE_TARGETS_URL)
+}
+
 fn host_system() -> Option<System> {
     match (std::env::consts::ARCH, std::env::consts::OS) {
         ("x86_64", "linux") => Some(System::X8664Linux),
@@ -230,7 +271,7 @@ impl fmt::Display for PublicInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::InvalidInvocation => {
-                "Run pkg-install without options or with --repair-product-assets."
+                "Run pkg-install without options or with --repair-product-assets. Use --channel <BASE_URL> to select the release channel."
             }
             Self::RootRequired => "Run pkg-install as root.",
             Self::UnsupportedSystem => "This pkg installer does not support this system.",

@@ -1046,10 +1046,12 @@ async fn main() -> Result<(), AnyError> {
             snapshot_expires: now + jiff::SignedDuration::from_hours(24 * 7),
             timestamp_expires: now
                 + jiff::SignedDuration::from_hours(
+                    // macOS lifecycle proofs span days; a 24 h timestamp caused
+                    // the expiry incident of 2026-09-04.
                     std::env::var("PKG_TIMESTAMP_TTL_HOURS")
                         .ok()
                         .and_then(|v| v.parse::<i64>().ok())
-                        .unwrap_or(24),
+                        .unwrap_or(168),
                 ),
         },
         &output,
