@@ -131,16 +131,41 @@ impl fmt::Display for SignError {
             Self::RootPolicy => formatter.write_str("trusted metadata fails signing policy"),
             Self::InvalidUrl => formatter.write_str("repository directory URL is invalid"),
             Self::TargetName(name) => write!(formatter, "invalid TUF target name: {name}"),
-            Self::Tuf(_) => formatter.write_str("TUF signing failed"),
-            Self::Target(_) => formatter.write_str("TUF target construction failed"),
-            Self::Validation(_) => formatter.write_str("release artifacts changed before signing"),
+            Self::Tuf(source) => write!(formatter, "TUF signing failed: {source}"),
+            Self::Target(source) => write!(formatter, "TUF target construction failed: {source}"),
+            Self::Validation(source) => {
+                write!(
+                    formatter,
+                    "release artifacts changed before signing: {source}"
+                )
+            }
             Self::KeySource => formatter.write_str("online signing key source failed"),
-            Self::Publication(_) => formatter.write_str("release publication sealing failed"),
+            Self::Publication(source) => {
+                write!(formatter, "release publication sealing failed: {source}")
+            }
         }
     }
 }
 
-impl std::error::Error for SignError {}
+impl std::error::Error for SignError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Filesystem { source, .. } => Some(source),
+            Self::RootUnreadable { source } => Some(source.as_ref()),
+            Self::Tuf(source) => Some(source.as_ref()),
+            Self::Target(source) => Some(source.as_ref()),
+            Self::Validation(source) => Some(source),
+            Self::Publication(source) => Some(source),
+            Self::RootNotFile(_)
+            | Self::OutputExists(_)
+            | Self::RootDigestMismatch { .. }
+            | Self::RootPolicy
+            | Self::InvalidUrl
+            | Self::TargetName(_)
+            | Self::KeySource => None,
+        }
+    }
+}
 
 impl From<tough::error::Error> for SignError {
     fn from(error: tough::error::Error) -> Self {
@@ -416,7 +441,7 @@ mod tests {
     use std::fs;
     use std::io::Read;
     use std::num::NonZeroU64;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use async_trait::async_trait;
     use aws_lc_rs::rand::SystemRandom;
@@ -443,6 +468,30 @@ mod tests {
 
     struct TestAuthority;
     struct TestAuthorization;
+
+    #[test]
+    fn sign_error_names_its_inner_causes() {
+        let error = SignError::Filesystem {
+            source: std::io::Error::other("disk gone"),
+            path: PathBuf::from("/tmp/channel-out"),
+        };
+        let rendered = error.to_string();
+        assert!(rendered.contains("/tmp/channel-out"), "{rendered}");
+        assert!(rendered.contains("disk gone"), "{rendered}");
+        assert!(error.source().is_some());
+
+        let error = SignError::Validation(super::ValidationError::InvalidPolicy);
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("release policy or approvals are invalid"),
+            "{rendered}"
+        );
+        assert!(error.source().is_some());
+
+        let error = SignError::RootNotFile(PathBuf::from("/tmp/root.json"));
+        assert!(error.to_string().contains("/tmp/root.json"));
+        assert!(error.source().is_none());
+    }
 
     #[test]
     fn relative_output_path_is_made_absolute() {

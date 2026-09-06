@@ -98,7 +98,9 @@ pub async fn refresh_timestamp(
         return Err(SignError::Validation(ValidationError::InvalidPolicy));
     }
     let now = WallClock::now();
-    if expires <= now || expires > now + jiff::SignedDuration::from_hours(48) {
+    // Same 7-day ceiling as validate_metadata_policy in sign.rs: macOS lifecycle
+    // channels carry 168-hour timestamps and must stay refreshable.
+    if expires <= now || expires > now + jiff::SignedDuration::from_hours(24 * 7) {
         return Err(SignError::Validation(ValidationError::InvalidPolicy));
     }
     let root_bytes = safe_read(root_path)?;
