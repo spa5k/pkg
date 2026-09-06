@@ -3,28 +3,34 @@
 #[allow(clippy::print_stdout, reason = "the broker never prints to stdout")]
 #[allow(clippy::print_stderr, reason = "the broker only failure output")]
 fn main() {
-    if !run() {
+    if let Err(error) = run_with_reason() {
+        eprintln!("broker failure: code={:?}", error.code());
         eprintln!("managed package service failed");
         std::process::exit(1);
     }
 }
 
-fn run() -> bool {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_with_reason() -> Result<(), pkg_installer::ServiceError> {
     #[cfg(target_os = "linux")]
     {
-        std::env::args_os().count() == 1
-            && pkg_installer::run_linux_broker_from_activation().is_ok()
+        return pkg_installer::run_linux_broker_from_activation();
     }
     #[cfg(target_os = "macos")]
     {
         let arguments = std::env::args_os().collect::<Vec<_>>();
-        requested_macos_mode(&arguments) && pkg_installer::run_macos_broker().is_ok()
+        if !requested_macos_mode(&arguments) {
+            eprintln!("broker failure: code=Arguments");
+            std::process::exit(1);
+        }
+        pkg_installer::run_macos_broker()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        let _ = std::env::args_os();
-        false
-    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn run() -> bool {
+    let _ = std::env::args_os();
+    false
 }
 
 #[cfg(target_os = "macos")]

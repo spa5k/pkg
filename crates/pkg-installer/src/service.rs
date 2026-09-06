@@ -202,21 +202,31 @@ fn run_broker_listener(
     home: &Path,
     log: &Path,
 ) -> Result<(), ServiceError> {
-    let broker = InProcessBroker::new()
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
-    let approval_audit = BrokerApprovalAudit::open(log, expected_uid)
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let repair_journals = BrokerRepairJournals::open(log, expected_uid)
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let broker = InProcessBroker::new().map_err(|error| {
+        eprintln!("broker startup: phase=in-process-broker detail={error:?}");
+        ServiceError::new(ServiceErrorCode::InitializationFailed)
+    })?;
+    let approval_audit = BrokerApprovalAudit::open(log, expected_uid).map_err(|error| {
+        eprintln!("broker startup: phase=approval-audit detail={error:?}");
+        ServiceError::new(ServiceErrorCode::InvalidRuntime)
+    })?;
+    let repair_journals = BrokerRepairJournals::open(log, expected_uid).map_err(|error| {
+        eprintln!("broker startup: phase=repair-journals detail={error:?}");
+        ServiceError::new(ServiceErrorCode::InvalidRuntime)
+    })?;
     #[cfg(target_os = "linux")]
     let adapter = Arc::new(
-        RealNixAdapter::new_standard_determinate(home)
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+        RealNixAdapter::new_standard_determinate(home).map_err(|error| {
+            eprintln!("broker startup: phase=nix-adapter detail={error:?}");
+            ServiceError::new(ServiceErrorCode::InvalidRuntime)
+        })?,
     );
     #[cfg(target_os = "macos")]
     let adapter = Arc::new(
-        RealNixAdapter::new_standard_determinate(home)
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+        RealNixAdapter::new_standard_determinate(home).map_err(|error| {
+            eprintln!("broker startup: phase=nix-adapter detail={error:?}");
+            ServiceError::new(ServiceErrorCode::InvalidRuntime)
+        })?,
     );
     let planning_adapter: Arc<dyn BuildPlanningAdapter> =
         Arc::clone(&adapter) as Arc<dyn BuildPlanningAdapter>;
@@ -226,14 +236,19 @@ fn run_broker_listener(
         .enable_all()
         .build()
         .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let channel = production_channel(&home.join("channel"))?;
+    let channel = production_channel(&home.join("channel")).inspect_err(|error| {
+        eprintln!("broker startup: phase=production-channel detail={error:?}");
+    })?;
     let authority_service = Arc::new(
         runtime
             .block_on(AuthenticatedBuildAuthorityService::bootstrap(
                 channel,
                 planning_adapter,
             ))
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+            .map_err(|error| {
+                eprintln!("broker startup: phase=authority-bootstrap detail={error:?}");
+                ServiceError::new(ServiceErrorCode::InvalidRuntime)
+            })?,
     );
     let authority = authority_service.authority();
     let refresh = Arc::new(ProductionChannelRefresh {
