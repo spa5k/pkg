@@ -76,8 +76,10 @@ It refuses bundle fields and does not require bundle files. The reviewed OIDC
 release workflow `publish-release.yml`, dispatched from the pinned
 `dn16-proof-workflow-1` tag, signs the payloads, performs the cryptographic
 Cosign identity and issuer verification, and seals the three bundle
-identities into the downloaded manifest. The workflow file no longer lives
-on the main branch; GitHub resolves it from that tag for every dispatch.
+identities into the downloaded manifest. GitHub requires the workflow file to
+exist on the default branch for `workflow_dispatch`, so the file stays on
+`main` until the P2 release lane (`pkg-rel publish` + `release.yml`) replaces
+it; it is then deleted together with the rest of the cosign stack.
 The final publication command requires that sealed manifest and all three
 real Sigstore v0.3 bundle files. It rejects any difference from the exact
 local payloads and bundles.
