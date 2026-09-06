@@ -164,6 +164,28 @@ impl Operation {
             ],
         }
     }
+
+    /// Install arguments plus an optional root-supplied extra-conf value.
+    ///
+    /// `PKG_DETERMINATE_EXTRA_CONF` exists for constrained hosts only: an
+    /// emulated container cannot load the seccomp build sandbox, so an
+    /// operator may pass for example `sandbox=false` through the vendor's
+    /// documented `--extra-conf` flag. The default contract is unchanged;
+    /// without the variable the argument list is exactly the frozen one.
+    fn install_arguments() -> Vec<std::ffi::OsString> {
+        let mut arguments: Vec<std::ffi::OsString> = Self::Install
+            .arguments()
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect();
+        if let Some(extra) = std::env::var_os("PKG_DETERMINATE_EXTRA_CONF")
+            && !extra.is_empty()
+        {
+            arguments.push("--extra-conf".into());
+            arguments.push(extra);
+        }
+        arguments
+    }
 }
 
 struct ProcessSettings<'a> {
@@ -263,7 +285,14 @@ fn run_with_process(
         .env("PATH", settings.path)
         .env("TMPDIR", settings.tmpdir)
         .env("DETSYS_IDS_TELEMETRY", "disabled")
-        .args(operation.arguments())
+        .args(match operation {
+            Operation::Install => Operation::install_arguments(),
+            Operation::Uninstall => operation
+                .arguments()
+                .iter()
+                .map(std::ffi::OsString::from)
+                .collect(),
+        })
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
