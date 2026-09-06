@@ -266,6 +266,9 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             if !determinate_succeeded(outcome) {
                 return Err(BundleProvisionError::RollbackIncomplete);
             }
+            handoff
+                .enforce_receipt_privacy()
+                .map_err(|_| BundleProvisionError::RollbackIncomplete)?;
             return Ok(BootstrapOutcome::DeterminatePending {
                 bundle: Box::new(bundle),
                 handoff: Box::new(handoff),

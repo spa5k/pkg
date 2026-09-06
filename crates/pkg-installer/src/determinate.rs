@@ -208,6 +208,21 @@ impl CapturedOutcome {
             return;
         }
         let _ = writeln!(writer, "determinate installer outcome: {}", self.public);
+        // Captured vendor output stays private by default (it may hold host
+        // data). An operator diagnosing a failure opts in explicitly.
+        if std::env::var_os("PKG_INSTALL_DEBUG").is_none() {
+            return;
+        }
+        let stdout = String::from_utf8_lossy(&self.stdout);
+        if !stdout.trim().is_empty() {
+            let _ = writeln!(writer, "determinate installer stdout (bounded):");
+            let _ = writeln!(writer, "{stdout}");
+        }
+        let stderr = String::from_utf8_lossy(&self.stderr);
+        if !stderr.trim().is_empty() {
+            let _ = writeln!(writer, "determinate installer stderr (bounded):");
+            let _ = writeln!(writer, "{stderr}");
+        }
     }
 }
 

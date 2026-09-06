@@ -239,6 +239,29 @@ impl DeterminateHandoff {
         self.persist_locked(Record::Accepted { installer, receipt }, false)
     }
 
+    /// Enforces the platform receipt mode after a successful vendor install.
+    ///
+    /// The vendor creates the receipt with the caller's default umask, so a
+    /// 022 shell yields 0644 while the proof harness's 077 yields the required
+    /// 0600. The install outcome must not depend on the caller's shell; this
+    /// normalizes the one boundary file whose mode the handoff verifies.
+    pub fn enforce_receipt_privacy(&self) -> Result<(), DeterminateHandoffError> {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = std::fs::metadata(&self.receipt)
+            .map_err(|_| DeterminateHandoffError::InvalidReceipt)?;
+        if !metadata.is_file() {
+            return Err(DeterminateHandoffError::InvalidReceipt);
+        }
+        if metadata.permissions().mode() & 0o777 != self.receipt_mode {
+            std::fs::set_permissions(
+                &self.receipt,
+                std::fs::Permissions::from_mode(self.receipt_mode),
+            )
+            .map_err(|_| DeterminateHandoffError::InvalidReceipt)?;
+        }
+        Ok(())
+    }
+
     /// Revalidates and consumes Accepted state while the stable operation lock is held,
     /// then invokes the terminal vendor `exec` boundary.
     pub(crate) fn run_terminal_uninstall<F, E>(&self, exec: F) -> Result<(), TerminalUninstallError>
