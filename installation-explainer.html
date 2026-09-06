@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>How installation works — the channel, the installer, and Determinate Nix inside</title>
+  <style>
+    :root {
+      --paper: #f4f1e8;
+      --surface: #fffdf7;
+      --ink: #18231d;
+      --muted: #536158;
+      --line: #ccd2c9;
+      --ok: #087856;
+      --ok-soft: #dcefe7;
+      --warn: #9c5500;
+      --warn-soft: #f8e8cc;
+      --kill: #a63a2e;
+      --kill-soft: #f6ddd8;
+      --keep: #2259a6;
+      --keep-soft: #e1eafa;
+      --dark: #10251c;
+      --code: #e9ebe5;
+      --radius: 16px;
+      --shadow: 0 8px 26px rgb(25 45 34 / 9%);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; color: var(--ink); background: var(--paper);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      line-height: 1.55; overflow-wrap: break-word;
+    }
+    a { color: var(--keep); }
+    .wrap { width: min(1180px, calc(100% - 32px)); margin-inline: auto; }
+    .hero {
+      color: #f8fff9; background: var(--dark);
+      border-bottom: 6px solid var(--ok); padding: 48px 0 38px;
+    }
+    .eyebrow {
+      margin: 0 0 10px; color: #9cd8c1; font-size: .78rem;
+      font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+    }
+    h1, h2, h3 { line-height: 1.15; }
+    h1 { max-width: 900px; margin: 0; font-size: clamp(2rem, 5vw, 3.4rem); letter-spacing: -.04em; }
+    h2 {
+      margin: 56px 0 18px; padding-top: 18px; border-top: 1px solid var(--line);
+      font-size: clamp(1.5rem, 3vw, 2.1rem); letter-spacing: -.025em;
+    }
+    h3 { margin: 26px 0 8px; font-size: 1.12rem; }
+    p { margin: 0 0 12px; max-width: 82ch; }
+    .lede { max-width: 800px; margin: 18px 0 0; color: #d2e1d8; font-size: 1.08rem; }
+    .meta { margin-top: 16px; color: #9cd8c1; font-size: .86rem; }
+    code {
+      background: var(--code); border: 1px solid var(--line);
+      border-radius: 6px; padding: 1px 5px; font-size: .92em;
+    }
+    .card {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 20px 22px; margin: 14px 0;
+    }
+    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+    .chip {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: .76rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .chip.ok { background: var(--ok-soft); color: var(--ok); }
+    .chip.kill { background: var(--kill-soft); color: var(--kill); }
+    .chip.keep { background: var(--keep-soft); color: var(--keep); }
+    .chip.warn { background: var(--warn-soft); color: var(--warn); }
+    .pw {
+      background: var(--surface); border: 1px dashed var(--keep);
+      border-left: 5px solid var(--keep); border-radius: 10px;
+      padding: 10px 16px; margin: 14px 0;
+    }
+    .pw b.t {
+      color: var(--keep); text-transform: uppercase; font-size: .74rem;
+      letter-spacing: .1em; display: block; margin-bottom: 4px;
+    }
+    .pw p { margin: 0 0 6px; }
+    .pw p:last-child { margin-bottom: 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; background: var(--surface); }
+    th, td {
+      border: 1px solid var(--line); padding: 8px 12px; text-align: left;
+      vertical-align: top; font-size: .93rem;
+    }
+    th { background: var(--dark); color: #f0f7f2; font-weight: 700; }
+    tr:nth-child(even) td { background: #faf8f1; }
+    pre {
+      background: var(--dark); color: #d8e6dd; padding: 14px 16px;
+      border-radius: 12px; overflow: auto; font-size: .86rem; margin: 12px 0;
+    }
+    .fig {
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 18px 16px 12px; margin: 18px 0;
+    }
+    .fig .cap { font-size: .82rem; color: var(--muted); margin: 8px 2px 0; }
+    .fig svg { display: block; width: 100%; height: auto; }
+    .callout { border-radius: 12px; padding: 14px 18px; margin: 14px 0; border: 1px solid var(--line); }
+    .callout.ok { background: var(--ok-soft); border-color: #bcd9cc; }
+    .callout.warn { background: var(--warn-soft); border-color: #e6cfa8; }
+    .callout.kill { background: var(--kill-soft); border-color: #e3b8b0; }
+    .callout b.t { text-transform: uppercase; font-size: .78rem; letter-spacing: .08em; }
+    ul, ol { margin: 6px 0 14px; padding-left: 22px; }
+    li { margin: 4px 0; max-width: 80ch; }
+    .small { font-size: .88rem; color: var(--muted); }
+    @media print {
+      body { background: #fff; }
+      .card, table, .fig, pre { box-shadow: none; break-inside: avoid; }
+      .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Explainer artifact · companion to the sign and release plan</p>
+    <h1>How installation works</h1>
+    <p class="lede">
+      One document for the whole install story: the command each audience runs, what the
+      installer does phase by phase, how Determinate Nix works inside it, every configuration
+      option, and what happens when something fails.
+    </p>
+    <p class="meta">Date: 2026-09-06 &nbsp;·&nbsp; Status: current behavior + ratified-direction items marked &nbsp;·&nbsp; Companion: sign-and-release-simplification-plan.html</p>
+  </div>
+</div>
+
+<div class="wrap">
+
+<h2>0. The whole story in plain words</h2>
+
+<div class="pw">
+  <b class="t">What installing pkg means</b>
+  <p>
+    <code>pkg</code> is a package manager that runs on top of Nix. When you install it, two
+    things land on the machine: a <b>Base Nix</b> (the Nix daemon and store, installed and owned
+    by the Determinate installer), and the <b>product</b> (the <code>pkg</code> CLI, a broker, a
+    root helper, and their services — owned by pkg itself).
+  </p>
+  <p>
+    Everything the installer needs comes from one place: a <b>signed channel</b> — an HTTPS
+    directory of artifacts whose fingerprints are listed in signed TUF metadata. The installer
+    carries the trust anchor (a root key) baked inside itself, fetches the channel, verifies
+    every byte, installs Base Nix through the pinned Determinate installer, then installs the
+    product on top.
+  </p>
+</div>
+
+<div class="fig">
+  <svg viewBox="0 0 1120 380" role="img" aria-label="Big picture: channel, installer, base nix, product">
+    <defs>
+      <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#536158"/>
+      </marker>
+    </defs>
+    <g font-size="13.5">
+      <rect x="20" y="60" width="250" height="120" rx="12" fill="#e1eafa" stroke="#2259a6" stroke-width="2"/>
+      <text x="38" y="88" font-weight="800" fill="#2259a6">SIGNED CHANNEL (HTTPS)</text>
+      <text x="38" y="112" fill="#18231d">metadata/ — signed lists</text>
+      <text x="38" y="130" fill="#18231d">targets/ — every artifact</text>
+      <text x="38" y="148" fill="#536158">install.sh — digest-pinned entry</text>
+      <text x="38" y="166" fill="#536158">one lane per audience</text>
+
+      <rect x="330" y="60" width="250" height="120" rx="12" fill="#fffdf7" stroke="#18231d" stroke-width="2"/>
+      <text x="348" y="88" font-weight="800" fill="#18231d">pkg-install</text>
+      <text x="348" y="112" fill="#536158">verifies everything (TUF)</text>
+      <text x="348" y="130" fill="#536158">preflight: is this host clean?</text>
+      <text x="348" y="148" fill="#536158">drives Base Nix handoff</text>
+      <text x="348" y="166" fill="#536158">installs product assets</text>
+
+      <rect x="640" y="20" width="220" height="110" rx="12" fill="#dcefe7" stroke="#087856" stroke-width="2"/>
+      <text x="658" y="48" font-weight="800" fill="#087856">BASE NIX — Determinate</text>
+      <text x="658" y="72" fill="#18231d">nix-installer 3.22.1 (pinned)</text>
+      <text x="658" y="90" fill="#536158">/nix, daemon, build users</text>
+      <text x="658" y="108" fill="#536158">receipt at /nix/receipt.json</text>
+
+      <rect x="640" y="160" width="220" height="110" rx="12" fill="#fffdf7" stroke="#18231d" stroke-width="2"/>
+      <text x="658" y="188" font-weight="800" fill="#18231d">PRODUCT — pkg</text>
+      <text x="658" y="212" fill="#536158">pkg CLI, broker, root helper</text>
+      <text x="658" y="230" fill="#536158">services, package state</text>
+      <text x="658" y="248" fill="#536158">generations, GC, repair</text>
+
+      <rect x="910" y="90" width="190" height="110" rx="12" fill="#f8e8cc" stroke="#9c5500" stroke-width="2"/>
+      <text x="928" y="118" font-weight="800" fill="#9c5500">YOUR PACKAGES</text>
+      <text x="928" y="142" fill="#536158">pkg install hello</text>
+      <text x="928" y="160" fill="#536158">pkg update / remove</text>
+      <text x="928" y="178" fill="#536158">per-user environments</text>
+
+      <path d="M272 120 H326" stroke="#536158" stroke-width="2" marker-end="url(#a1)"/>
+      <path d="M582 100 H636" stroke="#536158" stroke-width="2" marker-end="url(#a1)"/>
+      <path d="M582 150 H636" stroke="#536158" stroke-width="2" marker-end="url(#a1)"/>
+      <path d="M862 145 H906" stroke="#536158" stroke-width="2" marker-end="url(#a1)"/>
+      <text x="20" y="316" font-size="15" font-weight="800" fill="#18231d">Trust flows left to right:</text>
+      <text x="20" y="340" fill="#536158">the channel is authenticated by the baked root; Base Nix and the product are authenticated by the channel; your packages are built by Base Nix.</text>
+    </g>
+  </svg>
+  <figcaption class="cap"><b>Figure 1.</b> The four layers. Determinate owns the Base Nix layer; pkg owns everything above it.</figcaption>
+</div>
+
+<h2>1. One command per audience</h2>
+
+<table>
+  <tr><th>Audience</th><th>Command</th><th>Channel</th><th>Trust root</th><th>Status</th></tr>
+  <tr>
+    <td><b>Alpha user</b></td>
+    <td><code>curl -fsSL https://channel.kelv.dev/alpha/install.sh | sh</code></td>
+    <td><code>/alpha/</code></td>
+    <td>baked into the shipped installer</td>
+    <td><span class="chip keep">planned (P2)</span></td>
+  </tr>
+  <tr>
+    <td><b>PR tester</b></td>
+    <td>same shape, URL posted as a PR comment by CI</td>
+    <td><code>/pr/&lt;n&gt;/</code></td>
+    <td>baked (test root)</td>
+    <td><span class="chip keep">planned (P2)</span></td>
+  </tr>
+  <tr>
+    <td><b>Developer, local build</b></td>
+    <td><code>just dev-install</code> — build, publish to the test channel, install into a VM or container</td>
+    <td>test channel or local</td>
+    <td><code>--trust-root &lt;file&gt;</code>, allowed only on unbaked dev builds</td>
+    <td><span class="chip warn">proposed</span></td>
+  </tr>
+  <tr>
+    <td><b>Constrained host</b> (emulated container)</td>
+    <td>same command, plus the printed hint:</td>
+    <td colspan="2"><code>PKG_DETERMINATE_EXTRA_CONF='filter-syscalls = false'</code></td>
+    <td><span class="chip ok">exists (PR #16)</span></td>
+  </tr>
+</table>
+
+<div class="pw">
+  <b class="t">The rule for users</b>
+  <p>
+    A user never types a flag, a URL, or an environment variable. Those exist for the
+    maintainer, the CI, and constrained hosts only. If an alpha install ever requires a user to
+    set an env var, the design has failed.
+  </p>
+</div>
+
+<h2>2. What the installer does, phase by phase</h2>
+
+<div class="fig">
+  <svg viewBox="0 0 1120 560" role="img" aria-label="Install phases with failure points">
+    <defs>
+      <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#536158"/>
+      </marker>
+    </defs>
+    <g font-size="13.5">
+      <text x="20" y="34" font-size="16" font-weight="800" fill="#18231d">Fresh install — eight phases, each can fail with a named cause</text>
+
+      <rect x="20"  y="60" width="196" height="92" rx="10" fill="#dcefe7" stroke="#087856"/>
+      <text x="36" y="86" font-weight="700">1 · fetch entry</text>
+      <text x="36" y="106" fill="#536158">install.sh pins the</text>
+      <text x="36" y="122" fill="#536158">installer digest; TLS</text>
+      <text x="36" y="138" fill="#536158">+ SHA-256 check</text>
+
+      <rect x="252" y="60" width="196" height="92" rx="10" fill="#dcefe7" stroke="#087856"/>
+      <text x="268" y="86" font-weight="700">2 · preflight</text>
+      <text x="268" y="106" fill="#536158">root? supported system?</text>
+      <text x="268" y="122" fill="#536158">clean-host classification</text>
+      <text x="268" y="138" fill="#536158">(doctor lists findings)</text>
+
+      <rect x="484" y="60" width="196" height="92" rx="10" fill="#dcefe7" stroke="#087856"/>
+      <text x="500" y="86" font-weight="700">3 · channel acquire</text>
+      <text x="500" y="106" fill="#536158">fetch metadata over HTTPS</text>
+      <text x="500" y="122" fill="#536158">verify vs baked root</text>
+      <text x="500" y="138" fill="#536158">accept into datastore</text>
+
+      <rect x="716" y="60" width="196" height="92" rx="10" fill="#dcefe7" stroke="#087856"/>
+      <text x="732" y="86" font-weight="700">4 · handoff: Started</text>
+      <text x="732" y="106" fill="#536158">persist Started durably</text>
+      <text x="732" y="122" fill="#536158">before the vendor starts</text>
+      <text x="732" y="138" fill="#536158">= Unknown if lost</text>
+
+      <rect x="20" y="200" width="280" height="108" rx="10" fill="#f6ddd8" stroke="#a63a2e" stroke-width="2"/>
+      <text x="36" y="226" font-weight="700" fill="#a63a2e">5 · vendor install (Determinate)</text>
+      <text x="36" y="248" fill="#18231d">one start · fixed args · supervised</text>
+      <text x="36" y="266" fill="#536158">bounded stdout/stderr drain</text>
+      <text x="36" y="284" fill="#536158">no cancel, no timeout after start</text>
+      <text x="36" y="302" fill="#536158">(stderr now printed on failure)</text>
+
+      <rect x="340" y="200" width="280" height="108" rx="10" fill="#dcefe7" stroke="#087856"/>
+      <text x="356" y="226" font-weight="700">6 · validate + accept</text>
+      <text x="356" y="248" fill="#18231d">exit 0 AND installed-state checks:</text>
+      <text x="356" y="266" fill="#536158">/nix/nix-installer + receipt valid</text>
+      <text x="356" y="284" fill="#536158">then handoff becomes Accepted</text>
+      <text x="356" y="302" fill="#536158">(exit 0 alone is not proof)</text>
+
+      <rect x="660" y="200" width="280" height="108" rx="10" fill="#dcefe7" stroke="#087856"/>
+      <text x="676" y="226" font-weight="700">7 · product assets</text>
+      <text x="676" y="248" fill="#536158">users, groups, broker + helper</text>
+      <text x="676" y="266" fill="#536158">services enabled + started</text>
+      <text x="676" y="284" fill="#536158">CLI on PATH, journal committed</text>
+      <text x="676" y="302" fill="#536158">(fresh install alone activates)</text>
+
+      <rect x="340" y="360" width="600" height="86" rx="10" fill="#e1eafa" stroke="#2259a6"/>
+      <text x="356" y="386" font-weight="700" fill="#2259a6">8 · ready</text>
+      <text x="356" y="408" fill="#536158">pkg doctor green · pkg install hello works</text>
+      <text x="356" y="426" fill="#536158">services under systemd (Linux) / launchd (macOS)</text>
+
+      <path d="M216 106 H248" stroke="#536158" stroke-width="2" marker-end="url(#a2)"/>
+      <path d="M448 106 H480" stroke="#536158" stroke-width="2" marker-end="url(#a2)"/>
+      <path d="M680 106 H712" stroke="#536158" stroke-width="2" marker-end="url(#a2)"/>
+      <path d="M814 152 V196" stroke="#536158" stroke-width="2" marker-end="url(#a2)"/>
+      <path d="M660 254 H624" stroke="#536158" stroke-width="2" marker-end="url(#a2)"/>
+      <path d="M340 254 H304" stroke="#536158" stroke-width="2" marker-end="url(#a2)"/>
+      <path d="M800 254 H656 V308 H640" stroke="#536158" stroke-width="2" fill="none"/>
+      <path d="M640 402 H336 V356" stroke="#536158" stroke-width="2" fill="none" marker-end="url(#a2)"/>
+
+      <rect x="20" y="360" width="280" height="86" rx="10" fill="#fffdf7" stroke="#ccd2c9"/>
+      <text x="36" y="386" font-weight="700" fill="#9c5500">On any failure:</text>
+      <text x="36" y="408" fill="#536158">phase + stable code + vendor stderr,</text>
+      <text x="36" y="426" fill="#536158">then --reset-failed (proposed) cleans</text>
+      <text x="36" y="444" fill="#536158">product state for a clean retry.</text>
+    </g>
+  </svg>
+  <figcaption class="cap"><b>Figure 2.</b> The install pipeline. Phase 5 is owned by Determinate; every other phase is owned by pkg.</figcaption>
+</div>
+
+<h3>2.1 The three Linux install modes</h3>
+<table>
+  <tr><th>Mode</th><th>When</th><th>Services</th><th>What changes</th></tr>
+  <tr>
+    <td><b>Fresh Install</b></td>
+    <td>clean host, no previous pkg</td>
+    <td>activated by the installer</td>
+    <td>Base Nix + all product assets; the only mode that starts services</td>
+  </tr>
+  <tr>
+    <td><b>Offline Upgrade</b> (N → N+1)</td>
+    <td>existing install, new release</td>
+    <td>must already be inactive + disabled</td>
+    <td>product files only; systemd is queried, never commanded; operator activates after</td>
+  </tr>
+  <tr>
+    <td><b>Offline Repair</b></td>
+    <td>damaged same-release files</td>
+    <td>must already be inactive + disabled</td>
+    <td>rolls damaged files forward to the authenticated same-release bytes</td>
+  </tr>
+</table>
+<p class="small">
+Offline modes exist so an upgrade or repair can never run a changed binary inside a live
+service. macOS adds a store-preserving uninstall path and a terminal vendor uninstall; see
+section 3.4.
+</p>
+
+<h2>3. Determinate Nix inside pkg</h2>
+
+<h3>3.1 Who owns what</h3>
+<table>
+  <tr><th>Layer</th><th>Owner</th><th>Contents</th><th>pkg may touch it?</th></tr>
+  <tr><td>Base Nix install, update, repair, uninstall</td><td><b>Determinate</b></td><td>/nix, daemon, build users, receipt</td><td>only through the vendor executable</td></tr>
+  <tr><td>Base Nix service setup and initialization</td><td><b>Determinate</b></td><td>daemon units, initial store</td><td>no</td></tr>
+  <tr><td>Vendor residue after uninstall</td><td><b>Determinate</b></td><td>accepted alpha limit</td><td>no — reported, never cleaned</td></tr>
+  <tr><td>Package lifecycle</td><td><b>pkg</b></td><td>selection, builds, state, generations, activation, roots, GC, package repair</td><td>—</td></tr>
+  <tr><td>Product assets</td><td><b>pkg</b></td><td>CLI, broker, root helper, services, policy</td><td>—</td></tr>
+</table>
+
+<div class="pw">
+  <b class="t">In plain words</b>
+  <p>
+    pkg never builds a second Nix installer and never repairs the vendor's half of the world.
+    If the vendor has no supported operation for something, pkg reports it as unsupported. One
+    lifecycle engine per layer — that is the whole design.
+  </p>
+</div>
+
+<h3>3.2 The Base Nix handoff — the safety core</h3>
+
+<div class="fig">
+  <svg viewBox="0 0 1120 330" role="img" aria-label="Handoff state machine">
+    <defs>
+      <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#536158"/>
+      </marker>
+    </defs>
+    <g font-size="13.5">
+      <rect x="30" y="60" width="220" height="80" rx="12" fill="#fffdf7" stroke="#18231d" stroke-width="2"/>
+      <text x="48" y="90" font-weight="800">NotStarted</text>
+      <text x="48" y="112" fill="#536158">no handoff file yet</text>
+
+      <rect x="340" y="60" width="260" height="80" rx="12" fill="#f8e8cc" stroke="#9c5500" stroke-width="2"/>
+      <text x="358" y="90" font-weight="800" fill="#9c5500">Started</text>
+      <text x="358" y="112" fill="#536158">written before the vendor runs;</text>
+      <text x="358" y="128" fill="#536158">if it survives a failure → Unknown</text>
+
+      <rect x="700" y="60" width="260" height="80" rx="12" fill="#dcefe7" stroke="#087856" stroke-width="2"/>
+      <text x="718" y="90" font-weight="800" fill="#087856">Accepted</text>
+      <text x="718" y="112" fill="#536158">exit 0 + validated /nix/nix-installer</text>
+      <text x="718" y="128" fill="#536158">+ valid opaque receipt</text>
+
+      <rect x="340" y="200" width="620" height="90" rx="12" fill="#f6ddd8" stroke="#a63a2e" stroke-width="2"/>
+      <text x="358" y="228" font-weight="800" fill="#a63a2e">Unknown Base Nix Outcome</text>
+      <text x="358" y="250" fill="#18231d">a persisted Started with no accepted result — pkg refuses: no retry, no resume,</text>
+      <text x="358" y="268" fill="#18231d">no adoption, no reconstruction. Recovery = vendor uninstall or reinstall (alpha).</text>
+
+      <path d="M250 100 H336" stroke="#536158" stroke-width="2" marker-end="url(#a3)"/>
+      <text x="256" y="88" font-size="12" fill="#536158">write durably</text>
+      <path d="M600 100 H696" stroke="#087856" stroke-width="2" marker-end="url(#a3)"/>
+      <text x="606" y="88" font-size="12" fill="#087856">validate</text>
+      <path d="M470 140 V196" stroke="#a63a2e" stroke-width="2" marker-end="url(#a3)"/>
+      <text x="480" y="176" font-size="12" fill="#a63a2e">survives any failure</text>
+    </g>
+  </svg>
+  <figcaption class="cap"><b>Figure 3.</b> The handoff state machine. Persisted <code>Started</code> after any failure is an Unknown Outcome and fails closed — this is deliberate.</figcaption>
+</div>
+
+<div class="pw">
+  <b class="t">Why so strict, in plain words</b>
+  <p>
+    Once the vendor installer is running, the pinned version gives pkg no safe way to cancel,
+    signal, time out, or watch it die. Vendor output is diagnostic, not a protocol. So pkg
+    writes <code>Started</code> to disk first, starts the vendor exactly once, and waits. If the
+    machine or the vendor dies mid-way, nobody can prove what state Base Nix is in — so pkg
+    refuses to guess. Exit 0 alone is not proof either; only exit 0 <i>plus</i> finding the
+    installed executable and a valid receipt becomes <code>Accepted</code>.
+  </p>
+</div>
+
+<h3>3.3 How the vendor is invoked</h3>
+<pre>
+/nix/nix-installer (from the channel, digest-pinned, exec bit forced, absolute path)
+  --diagnostic-endpoint &lt;pinned&gt; install --determinate --no-confirm --no-modify-profile
+  [--extra-conf &lt;value&gt;]        ← only when PKG_DETERMINATE_EXTRA_CONF is set (PR #16)
+
+environment: scrubbed to HOME, PATH, TMPDIR (private, 0700), telemetry disabled
+supervision: one supervisor drains bounded stdout+stderr, waits, reaps
+             no second start, no signals, no hard timeout — ever
+uninstall:    exec /nix/nix-installer uninstall --no-confirm /nix/receipt.json
+              (product cleanup finished and handoff consumed first; plain output only)
+</pre>
+<p class="small">
+Constrained hosts (emulated x86_64 containers) cannot load the seccomp syscall filter that
+Determinate Nix enables by default. The remedy is one environment variable, and the installer
+prints the hint when the vendor fails that way:
+<code>PKG_DETERMINATE_EXTRA_CONF='filter-syscalls = false'</code>. Note the spaces — the vendor
+rejects <code>sandbox=false</code> without them.
+</p>
+
+<h3>3.4 What uninstall does</h3>
+<ol>
+  <li>Refuses structured output modes on a live uninstall (plain terminal only).</li>
+  <li>Finishes and verifies every product-owned cleanup action first.</li>
+  <li>Under the stable lock: revalidates the exact <code>/nix/nix-installer</code> and the opaque
+      <code>/nix/receipt.json</code>.</li>
+  <li>Consumes the Accepted handoff, then <code>exec</code>s the vendor uninstaller as the very
+      last action.</li>
+  <li>Vendor-owned residue is reported and left alone — accepted alpha limit.</li>
+</ol>
+
+<h2>4. Every configuration option</h2>
+
+<h3>4.1 Baked at build time (release builds)</h3>
+<table>
+  <tr><th>Variable</th><th>Meaning</th><th>Notes</th></tr>
+  <tr><td><code>PKG_RELEASE_TUF_ROOT_JSON</code></td><td>trusted root, embedded in the binary</td><td>changes ~yearly; the trust anchor</td></tr>
+  <tr><td><code>PKG_RELEASE_CHANNEL_METADATA_URL</code></td><td>default channel metadata URL</td><td>overridable at run time</td></tr>
+  <tr><td><code>PKG_RELEASE_CHANNEL_TARGETS_URL</code></td><td>default channel targets URL</td><td>overridable at run time</td></tr>
+</table>
+
+<h3>4.2 Runtime — pkg-install</h3>
+<table>
+  <tr><th>Option</th><th>Effect</th><th>Priority / status</th></tr>
+  <tr><td><code>--channel &lt;BASE_URL&gt;</code></td><td>channel base; metadata = base + <code>metadata/</code>, targets = base + <code>targets/</code>; HTTPS only</td><td>flag &gt; env &gt; baked · <span class="chip ok">exists</span></td></tr>
+  <tr><td><code>PKG_CHANNEL_URL</code></td><td>same, from the environment</td><td><span class="chip ok">exists</span></td></tr>
+  <tr><td><code>--repair-product-assets</code></td><td>Offline Repair mode (same release, files only)</td><td><span class="chip ok">exists</span></td></tr>
+  <tr><td><code>--trust-root &lt;file&gt;</code></td><td>root for dev builds without a baked root; refused by release builds</td><td><span class="chip warn">proposed</span></td></tr>
+  <tr><td><code>PKG_DETERMINATE_EXTRA_CONF</code></td><td>appended as one <code>--extra-conf</code> to the vendor install (e.g. <code>filter-syscalls = false</code>)</td><td>root-only · <span class="chip ok">exists (PR #16)</span></td></tr>
+  <tr><td><code>--doctor</code></td><td>print the full clean-host findings with exact paths, then exit</td><td><span class="chip warn">proposed</span></td></tr>
+  <tr><td><code>--reset-failed</code></td><td>after a failed fresh install: remove product-owned state, run the vendor uninstaller if a receipt exists, re-verify clean; refuses on any accepted or committed install</td><td><span class="chip warn">proposed</span></td></tr>
+</table>
+
+<h3>4.3 Channel freshness policy (constants, printed on the release card)</h3>
+<table>
+  <tr><th>Metadata</th><th class="num">Validity</th><th>Why</th></tr>
+  <tr><td>timestamp</td><td class="num">7 days</td><td>must exceed the 1 h CDN TTL; checked on every product run</td></tr>
+  <tr><td>snapshot</td><td class="num">14 days</td><td>consistency layer</td></tr>
+  <tr><td>targets</td><td class="num">60 days</td><td>fresh-install window; each release refreshes it</td></tr>
+  <tr><td>root</td><td class="num">3 years</td><td>rotation escrow signed at creation</td></tr>
+</table>
+
+<h3>4.4 The Nix daemon configuration</h3>
+<p>
+The daemon's <code>nix.conf</code> is rendered from authenticated channel inputs (the managed
+build configuration), not edited by hand. pkg is the one writer. Local administrators may still
+change machine-wide Nix directly — that is allowed, not a security boundary — but
+<code>pkg doctor</code> detects important changes and fails closed where ownership is unclear.
+Raw Nix can coexist on the machine; pkg keeps it out of the normal user experience.
+</p>
+
+<h3>4.5 State on disk — who owns what, who cleans it</h3>
+<table>
+  <tr><th>Path (Linux)</th><th>Owner</th><th>Cleaned by</th></tr>
+  <tr><td><code>/nix</code>, <code>/nix/receipt.json</code>, daemon units, build users</td><td>vendor</td><td>vendor uninstaller only</td></tr>
+  <tr><td><code>/etc/nix</code></td><td>vendor writes · pkg renders</td><td>vendor uninstaller</td></tr>
+  <tr><td><code>/var/lib/pkg-install/determinate-handoff-v1.json</code></td><td>pkg</td><td>handoff consumption / reset <span class="chip warn">proposed</span></td></tr>
+  <tr><td><code>/run/pkg-install-handoff.lock</code></td><td>pkg</td><td>volatile (gone on boot)</td></tr>
+  <tr><td><code>/var/lib/pkg-install-journal/</code> (install journal)</td><td>pkg</td><td>committed on success · <code>--reset-failed</code> <span class="chip warn">proposed</span></td></tr>
+  <tr><td><code>/var/lib/pkg/</code> (broker home, channel datastore, package state)</td><td>pkg</td><td>product uninstall</td></tr>
+  <tr><td><code>~/.nix-profile</code>, <code>~/.nix-defexpr</code>, <code>~/.nix-channels</code></td><td>user</td><td>user / vendor uninstaller</td></tr>
+</table>
+<p class="small">macOS equivalents: <code>/private/var/db/pkg-install/…</code> for handoff and journal,
+<code>/Library/Application Support/pkg/…</code> for product state.</p>
+
+<h2>5. When it fails — and what you will see</h2>
+
+<div class="callout ok">
+  <b class="t">The new failure contract (landing now)</b>
+  <p style="margin:6px 0 0">
+    Every failure prints three things: the <b>phase</b>, a <b>stable code</b>, and — for vendor
+    failures — the vendor's own stdout/stderr, bounded. Tonight's debugging turned every mystery
+    into a one-line answer once these existed. The temporary DIAG prints used to find them get
+    stripped; the reporting stays.
+  </p>
+</div>
+
+<table>
+  <tr><th>You see</th><th>It means</th><th>Remedy</th></tr>
+  <tr><td><code>code=BackendFailure</code> at preflight</td><td>host is not clean</td><td><code>pkg-install --doctor</code> lists the exact findings and paths</td></tr>
+  <tr><td>vendor stderr shows <code>unable to load seccomp BPF</code></td><td>emulated container</td><td>retry with <code>PKG_DETERMINATE_EXTRA_CONF='filter-syscalls = false'</code></td></tr>
+  <tr><td><code>illegal configuration line</code> from the vendor</td><td>extra-conf value missing spaces</td><td>use <code>key = value</code> with spaces around <code>=</code></td></tr>
+  <tr><td><code>code=RollbackIncomplete</code></td><td>a failed install could not fully revert</td><td><code>--reset-failed</code> (proposed) — today: doctor output + manual clean of the listed paths</td></tr>
+  <tr><td>Unknown Base Nix Outcome on retry</td><td>persisted Started survived a crash</td><td>vendor uninstall or reinstall; alpha recovery is deliberately unsupported</td></tr>
+  <tr><td>offline mode refused with services active</td><td>upgrade/repair requires inactive units</td><td>stop + disable the fixed units, retry, activate after</td></tr>
+</table>
+
+<h2>6. Where each build flavor comes from</h2>
+<table>
+  <tr><th>Flavor</th><th>Built by</th><th>Published to</th><th>Installs with</th></tr>
+  <tr><td>alpha (main)</td><td>CI, native runners per target</td><td><code>channel.kelv.dev/alpha/</code></td><td>install.sh one-liner</td></tr>
+  <tr><td>PR build</td><td>CI, label-triggered</td><td><code>channel.kelv.dev/pr/&lt;n&gt;/</code></td><td>one-liner in the PR comment</td></tr>
+  <tr><td>local build</td><td>your machine</td><td>test channel or local dir</td><td><code>just dev-install</code> + <code>--trust-root</code></td></tr>
+  <tr><td>proof pair (N / N+1)</td><td>CI or local mint</td><td>test channel paths</td><td>two install states for the lifecycle proof</td></tr>
+</table>
+
+<h2>7. Decisions still open</h2>
+<ol>
+  <li>Dev trust: allow <code>--trust-root</code> on unbaked builds only?</li>
+  <li>Reset: auto-clean product state when a fresh install fails, or manual <code>--reset-failed</code> only?</li>
+  <li>Hosting: stand up <code>channel.kelv.dev</code> on Cloudflare R2 now, replacing the loopback channel?</li>
+  <li>CI lanes: alpha lane on main push first, or PR lane first?</li>
+</ol>
+
+<p class="small" style="margin-top:40px">Artifact: installation-explainer.html · pkg · 2026-09-06 · current behavior + marked proposals · companions: sign-and-release-simplification-plan.html, architecture-report.html</p>
+
+</div>
+</body>
+</html>
