@@ -235,6 +235,22 @@ fn accept_bounded(listener: &TcpListener) -> Result<TcpStream, HttpFixtureError>
                 }
                 thread::sleep(ACCEPT_POLL);
             }
+            // Transient resource errors must not kill the worker: a dead
+            // worker closes the listener and every client then reads an
+            // instant reset (observed on shared macOS CI runners). The errno
+            // spellings differ between macOS and Linux, so match both sets.
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(24) | Some(23) | Some(55) | Some(53)   // macOS: EMFILE, ENFILE, ENOBUFS, ECONNABORTED
+                        | Some(105) | Some(103) // Linux: ENOBUFS, ECONNABORTED
+                ) =>
+            {
+                if started.elapsed() >= ACCEPT_TIMEOUT {
+                    return Err(error.into());
+                }
+                thread::sleep(ACCEPT_POLL);
+            }
             Err(error) => return Err(error.into()),
         }
     }
