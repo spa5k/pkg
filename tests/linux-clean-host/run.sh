@@ -930,7 +930,8 @@ if drift_output=$(docker exec "$container" "$shipping_installer" 2>&1); then
     echo "Ownership drift was accepted." >&2
     exit 1
 fi
-test "$drift_output" = "pkg installation failed."
+# Diagnostics before the public line are allowed; see the foreign-Nix stage.
+printf '%s\n' "$drift_output" | grep -Fx "pkg installation failed."
 test "$(docker exec "$container" stat -c %a /opt/pkg/bin/pkg-nix-broker)" = 777
 stop_container
 
