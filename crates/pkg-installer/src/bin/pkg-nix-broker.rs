@@ -14,7 +14,7 @@ fn main() {
 fn run_with_reason() -> Result<(), pkg_installer::ServiceError> {
     #[cfg(target_os = "linux")]
     {
-        return pkg_installer::run_linux_broker_from_activation();
+        pkg_installer::run_linux_broker_from_activation()
     }
     #[cfg(target_os = "macos")]
     {
