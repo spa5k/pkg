@@ -467,6 +467,14 @@ pub fn verify_linux_install_absent() -> Result<(), UninstallError> {
     for path in PRODUCT_RESIDUE_ROOTS {
         verify_fixed_path_absent(Path::new(path))?;
     }
+    // The installer's root-context nix adapter caches metadata under
+    // /var/lib/pkg-install/.cache. That cache is a product side effect;
+    // remove it before the absence check or every uninstall after an
+    // install that validated base nix reports residue.
+    let nix_cache = Path::new("/var/lib/pkg-install/.cache");
+    if nix_cache.exists() {
+        std::fs::remove_dir_all(nix_cache).map_err(|_| UninstallError::backend_failure())?;
+    }
     verify_fixed_path_absent(Path::new("/var/lib/pkg-install"))?;
     verify_fixed_path_absent(Path::new("/run/pkg-install-auth"))
 }
