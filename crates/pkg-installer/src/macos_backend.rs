@@ -20,7 +20,9 @@ use crate::{
     macos_product_install_assets,
 };
 
-const BROKER_HOME: &str = "/Library/Application Support/pkg/broker-home";
+/// The installer's own nix cache home; see the Linux counterpart for why the
+/// root-context adapter must never use the broker home.
+const INSTALLER_NIX_HOME: &str = "/private/var/db/pkg-install-tmp";
 const CODESIGN: &str = "/usr/bin/codesign";
 const XCRUN: &str = "/usr/bin/xcrun";
 
@@ -496,7 +498,7 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn check_managed_daemon(&mut self) -> Result<(), MacOsError> {
-        let adapter = RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
+        let adapter = RealNixAdapter::new_standard_determinate(Path::new(INSTALLER_NIX_HOME))
             .map_err(|_| MacOsError::backend_failure())?;
         adapter
             .wait_for_managed_store()
