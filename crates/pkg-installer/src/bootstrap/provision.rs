@@ -278,6 +278,7 @@ impl BundleProvisioner for AuthenticatedProvisioner {
                     .map_err(|_| BundleProvisionError::Failed)
             })?;
             if !determinate_succeeded(outcome) {
+                eprintln!("determinate installer outcome: {outcome}");
                 return Err(BundleProvisionError::RollbackIncomplete);
             }
             return accept_verified_determinate(handoff, bundle);
