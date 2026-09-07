@@ -367,9 +367,6 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         }
         RealNixAdapter::new_standard_determinate(Path::new(INSTALLER_NIX_HOME))
             .and_then(|adapter| adapter.ping_managed_store())
-            .inspect_err(|error| {
-                eprintln!("backend failure detail: phase=check-managed-daemon {error:?}")
-            })
             .map_err(|_| InstallError::backend_failure())?;
         crate::broker::probe_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))
             .map_err(|_| InstallError::backend_failure())?;

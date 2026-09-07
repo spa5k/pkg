@@ -487,7 +487,7 @@ pub fn install_linux_journaled_preflighted(
     let mut mutations = Vec::new();
     let mut created_artifacts = 0_usize;
     let mut existing = 0_usize;
-    let result: Result<LinuxInstallReport, InstallError> = (|| {
+    let result = (|| {
         for asset in linux_product_mutation_assets().filter(|asset| {
             asset.kind() != LinuxAssetKind::File && !is_linux_product_gcroots_asset(*asset)
         }) {
@@ -557,12 +557,6 @@ pub fn install_linux_journaled_preflighted(
         })
     })();
 
-    if let Err(error) = &result {
-        eprintln!(
-            "install failure detail before rollback: code={:?}",
-            error.code()
-        );
-    }
     if result.is_err() {
         let mut rollback_incomplete = false;
         let mut services_changed = false;
