@@ -15,7 +15,11 @@ use pkg_nix::{
 };
 use std::{env, fmt, io, io::Write, path::Path};
 
-const BROKER_HOME: &str = "/var/lib/pkg/broker-home";
+/// The installer's own nix cache home. The installer runs as root, so nix
+/// cache directories created under it are root-owned. Pointing root-context
+/// adapter calls at the broker home instead leaves a root-owned .cache
+/// inside it, and the unprivileged broker can never fetch again.
+const INSTALLER_NIX_HOME: &str = "/var/lib/pkg-install";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinuxServiceFailure {
@@ -361,7 +365,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
         {
             return Ok(false);
         }
-        RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
+        RealNixAdapter::new_standard_determinate(Path::new(INSTALLER_NIX_HOME))
             .and_then(|adapter| adapter.ping_managed_store())
             .map_err(|_| InstallError::backend_failure())?;
         crate::broker::probe_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))
@@ -626,7 +630,11 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn validate_base_nix(&mut self) -> Result<(), InstallError> {
-        let adapter = RealNixAdapter::new_standard_determinate(Path::new(BROKER_HOME))
+        let adapter = RealNixAdapter::new_standard_determinate(Path::new(INSTALLER_NIX_HOME))
+            .map_err(|error| {
+                eprintln!("backend failure detail: phase=validate-base-nix-adapter {error:?}");
+                InstallError::backend_failure()
+            })
             .map_err(|_| InstallError::backend_failure())?;
         validate_base_nix_readiness(
             self.existing_managed_install,

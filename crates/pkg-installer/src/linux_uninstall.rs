@@ -293,6 +293,13 @@ impl ProductionRuntime {
         for path in PRODUCT_RESIDUE_ROOTS {
             verify_fixed_path_absent(Path::new(path))?;
         }
+        // The installer's root-context nix adapter caches metadata under
+        // /var/lib/pkg-install/.cache. That cache is a product side effect;
+        // remove it so the final product-state directory can be cleaned.
+        let nix_cache = Path::new("/var/lib/pkg-install/.cache");
+        if nix_cache.exists() {
+            std::fs::remove_dir_all(nix_cache).map_err(|_| UninstallError::backend_failure())?;
+        }
         self.product_cleanup_verified = true;
         Ok(())
     }

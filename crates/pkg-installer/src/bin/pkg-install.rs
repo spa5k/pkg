@@ -85,9 +85,16 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
                 ProductionMacOsInstallBackend::new_product_repair(system, groups)
             }
         }
-        .map_err(|_| PublicInstallError::InstallFailed)?;
-        install_macos_from_bundle(system, trusted_root, &request, &mut backend)
-            .map_err(|_| PublicInstallError::InstallFailed)?;
+        .map_err(|error| {
+            report_backend_error("macos-backend-new", &error);
+            PublicInstallError::InstallFailed
+        })?;
+        install_macos_from_bundle(system, trusted_root, &request, &mut backend).map_err(
+            |error| {
+                report_backend_error("macos-install", &error);
+                PublicInstallError::InstallFailed
+            },
+        )?;
         Ok(match backend.install_mode() {
             pkg_installer::InstallMode::FreshInstall => InstallSuccess::Installed,
             pkg_installer::InstallMode::OfflineUpgrade => InstallSuccess::Upgraded,
@@ -100,9 +107,16 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
                 ProductionLinuxInstallBackend::new_product_repair(system, groups)
             }
         }
-        .map_err(|_| PublicInstallError::InstallFailed)?;
-        install_linux_from_bundle(system, trusted_root, &request, &mut backend)
-            .map_err(public_install_error)?;
+        .map_err(|error| {
+            report_backend_error("linux-backend-new", &error);
+            PublicInstallError::InstallFailed
+        })?;
+        install_linux_from_bundle(system, trusted_root, &request, &mut backend).map_err(
+            |error| {
+                report_install_error(error);
+                public_install_error(error)
+            },
+        )?;
         Ok(match invocation {
             Invocation::RepairProductAssets => InstallSuccess::Repaired,
             Invocation::InstallOrUpgrade
@@ -134,6 +148,16 @@ impl InstallSuccess {
 
 const fn public_install_error(error: InstallError) -> PublicInstallError {
     public_install_error_code(error.code())
+}
+
+/// Prints the failing phase and its stable code so an operator can act.
+/// The public message stays redacted; this line is the diagnosis.
+fn report_install_error(error: InstallError) {
+    eprintln!("install failure: code={:?}", error.code());
+}
+
+fn report_backend_error<E: std::fmt::Debug>(phase: &str, error: &E) {
+    eprintln!("install failure: phase={phase} detail={error:?}");
 }
 
 const fn public_install_error_code(code: InstallErrorCode) -> PublicInstallError {

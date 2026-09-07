@@ -901,7 +901,10 @@ if foreign_output=$(docker exec "$container" "$shipping_installer" 2>&1); then
     echo "Foreign Nix was accepted." >&2
     exit 1
 fi
-test "$foreign_output" = "pkg installation failed."
+# The installer names the failing phase and code before the public line; the
+# refusal contract is the public line plus a nonzero exit, in any order of
+# preceding diagnostics.
+printf '%s\n' "$foreign_output" | grep -Fx "pkg installation failed."
 docker exec "$container" sh -eu -c '
     grep -Fx foreign /nix/foreign
     test ! -e /opt/pkg
@@ -927,7 +930,8 @@ if drift_output=$(docker exec "$container" "$shipping_installer" 2>&1); then
     echo "Ownership drift was accepted." >&2
     exit 1
 fi
-test "$drift_output" = "pkg installation failed."
+# Diagnostics before the public line are allowed; see the foreign-Nix stage.
+printf '%s\n' "$drift_output" | grep -Fx "pkg installation failed."
 test "$(docker exec "$container" stat -c %a /opt/pkg/bin/pkg-nix-broker)" = 777
 stop_container
 
