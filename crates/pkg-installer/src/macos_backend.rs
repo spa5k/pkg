@@ -22,7 +22,7 @@ use crate::{
 
 /// The installer's own nix cache home; see the Linux counterpart for why the
 /// root-context adapter must never use the broker home.
-const INSTALLER_NIX_HOME: &str = "/private/var/db/pkg-install-tmp";
+const INSTALLER_NIX_HOME: &str = "/private/var/db/pkg-install";
 const CODESIGN: &str = "/usr/bin/codesign";
 const XCRUN: &str = "/usr/bin/xcrun";
 

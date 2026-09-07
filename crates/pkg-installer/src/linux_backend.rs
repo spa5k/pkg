@@ -19,7 +19,7 @@ use std::{env, fmt, io, io::Write, path::Path};
 /// cache directories created under it are root-owned. Pointing root-context
 /// adapter calls at the broker home instead leaves a root-owned .cache
 /// inside it, and the unprivileged broker can never fetch again.
-const INSTALLER_NIX_HOME: &str = "/var/lib/pkg-install/tmp";
+const INSTALLER_NIX_HOME: &str = "/var/lib/pkg-install";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinuxServiceFailure {
