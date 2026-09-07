@@ -157,6 +157,20 @@ impl AuthenticatedProvisioner {
     }
 }
 
+/// Accepts a successful vendor outcome and returns the pending handoff.
+fn accept_verified_determinate(
+    handoff: DeterminateHandoff,
+    bundle: AuthenticatedInstallerBundle,
+) -> Result<BootstrapOutcome, BundleProvisionError> {
+    handoff
+        .enforce_receipt_privacy()
+        .map_err(|_| BundleProvisionError::RollbackIncomplete)?;
+    Ok(BootstrapOutcome::DeterminatePending {
+        bundle: Box::new(bundle),
+        handoff: Box::new(handoff),
+    })
+}
+
 impl BundleProvisioner for AuthenticatedProvisioner {
     fn reuse_existing(&mut self) -> Result<bool, BundleProvisionError> {
         self.trusted_root = None;
@@ -266,13 +280,7 @@ impl BundleProvisioner for AuthenticatedProvisioner {
             if !determinate_succeeded(outcome) {
                 return Err(BundleProvisionError::RollbackIncomplete);
             }
-            handoff
-                .enforce_receipt_privacy()
-                .map_err(|_| BundleProvisionError::RollbackIncomplete)?;
-            return Ok(BootstrapOutcome::DeterminatePending {
-                bundle: Box::new(bundle),
-                handoff: Box::new(handoff),
-            });
+            return accept_verified_determinate(handoff, bundle);
         }
         // Only the three supported systems reach the Determinate path above.
         // Every other system is unsupported and must fail closed.
