@@ -5,6 +5,36 @@ script_dir=$(/usr/bin/dirname "$0")
 case "$script_dir" in /*) ;; *) exit 1 ;; esac
 
 /usr/bin/codesign --verify --strict --verbose=2 "$script_dir/pkg-install"
-exec /usr/bin/env -i \
-    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-    "$script_dir/pkg-install"
+
+# PackageKit runs scripts in a protected filesystem view. Run the real
+# installer as a system launchd job so the vendor installer can update
+# /etc/fstab and mount /nix outside that view.
+work=$(/usr/bin/mktemp -d /private/tmp/pkg-install-pkg.XXXXXX)
+trap '/bin/rm -rf "$work"' EXIT HUP INT TERM
+status="$work/status"
+output="$work/output"
+label="com.pkg.install.$$"
+
+/bin/rm -f "$status" "$output"
+if ! /bin/launchctl submit -l "$label" -o "$output" -e "$output" -- \
+    /bin/sh -c '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root "$1"; code=$?; echo "$code" > "$2"' \
+    pkg-install-worker "$script_dir/pkg-install" "$status"; then
+    /bin/cat "$output" 2>/dev/null || true
+    exit 1
+fi
+
+attempts=0
+while [ ! -f "$status" ]; do
+    /bin/sleep 1
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 1800 ]; then
+        /bin/launchctl remove "$label" 2>/dev/null || true
+        /bin/cat "$output" 2>/dev/null || true
+        exit 1
+    fi
+done
+
+code=$(/bin/cat "$status")
+/bin/launchctl remove "$label" 2>/dev/null || true
+/bin/cat "$output" 2>/dev/null || true
+exit "$code"

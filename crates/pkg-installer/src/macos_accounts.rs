@@ -350,7 +350,7 @@ impl MacOsAccountManager {
                     create_field(&path, key, &value)?;
                 }
                 let group_path = format!("/Groups/{group}");
-                run_status(&[".", "-append", &group_path, "GroupMembership", name])
+                create_field(&group_path, "GroupMembership", name)
             }
         }
     }
