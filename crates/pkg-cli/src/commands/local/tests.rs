@@ -22,11 +22,12 @@ use crate::ux::OutputMode;
 use pkg_core::state::{body_digest, canonical_digest};
 use pkg_core::{AttributePath, ChannelSequence, NixpkgsRevision, PackageVersion};
 use pkg_nix::{
-    BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus, CatalogInfoLookup,
-    CatalogInfoReport, CatalogPackageInfo, CatalogPackageSummary, CatalogSearchReport,
-    ChannelRefreshReport, CliBrokerRequest, CliBrokerResponse, InProcessBroker,
-    InProcessCallerPeer, InProcessHelper, InProcessPeer, MaintenanceErrorCode, ProductFrameCodec,
-    RepairGenerationReport, RepairGenerationStatus, StorePath,
+    BuildOutput, BuildOutputProvenance, BuildPreview, BuildReport, BuildStatus,
+    CacheInstallErrorCode, CatalogInfoLookup, CatalogInfoReport, CatalogPackageInfo,
+    CatalogPackageSummary, CatalogSearchReport, ChannelRefreshReport, CliBrokerRequest,
+    CliBrokerResponse, InProcessBroker, InProcessCallerPeer, InProcessHelper, InProcessPeer,
+    MaintenanceErrorCode, ProductFrameCodec, RepairGenerationReport, RepairGenerationStatus,
+    StorePath,
 };
 use pkg_pipeline::{CandidateGeneration, PreparedGeneration};
 use pkg_store::inspect_staged_activation;
@@ -1321,13 +1322,61 @@ fn install_success_output_matches_the_v1_golden() {
         &install_evidence("cacheSigned"),
     )
     .unwrap();
-    assert_eq!(result.summary(), "Installed 1 package(s) as gen-0001.");
+    assert_eq!(
+        result.summary(),
+        "Installed 1 package(s) from the trusted cache as gen-0001."
+    );
 
     let mut output = Vec::new();
     write_success(&mut output, OutputMode::Json, "install", &result).unwrap();
     assert_eq!(
         String::from_utf8(output).unwrap(),
         include_str!("../../../../../fixtures/cli-v1/install-success.json")
+    );
+}
+
+#[test]
+fn install_success_names_a_local_build_in_the_human_result() {
+    let result = install_result(
+        "op_fixture",
+        "gen-0001",
+        None,
+        &install_evidence("localBuild"),
+    )
+    .unwrap();
+    assert_eq!(
+        result.summary(),
+        "Installed 1 package(s) using a local build as gen-0001."
+    );
+}
+
+#[test]
+fn install_failures_name_the_failed_step_and_next_action() {
+    let build = install_broker_error_fields(BrokerClientErrorCode::BuildRefused, None);
+    assert_eq!(build.0, ExitCode::BuildFailed);
+    assert_eq!(build.1, "the local build failed");
+    assert_eq!(
+        build.2,
+        "run `pkg doctor`, then retry the package operation"
+    );
+
+    let download = install_broker_error_fields(
+        BrokerClientErrorCode::InstallAcquisitionRefused,
+        Some(CacheInstallErrorCode::AcquisitionFailed),
+    );
+    assert_eq!(download.0, ExitCode::AcquireNetwork);
+    assert_eq!(download.1, "the trusted package download failed");
+    assert_eq!(
+        download.2,
+        "check network access, then retry the package operation"
+    );
+
+    let activation = install_broker_error_fields(BrokerClientErrorCode::BuildRootRefused, None);
+    assert_eq!(activation.0, ExitCode::Permission);
+    assert_eq!(activation.1, "the built package could not be activated");
+    assert_eq!(
+        activation.2,
+        "run `pkg doctor`, then retry the package operation"
     );
 }
 

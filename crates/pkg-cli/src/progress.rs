@@ -272,29 +272,27 @@ impl PublicEvent {
     /// Render one stable line for the human progress stream.
     pub fn write_human(&self, mut writer: impl Write) -> io::Result<()> {
         match &self.0 {
-            EventKind::Phase(event) => writeln!(writer, "{}: {}", event.phase, event.status),
-            EventKind::DownloadStarted(event) => writeln!(
-                writer,
-                "Downloading {} ({} bytes)",
-                event.selector, event.bytes
-            ),
-            EventKind::DownloadProgress(event) => writeln!(
-                writer,
-                "Downloading {}: {}/{} bytes",
-                event.selector, event.done, event.total
-            ),
-            EventKind::BuildStarted(event) => writeln!(
-                writer,
-                "Building {} {} ({})",
-                event.package_name, event.version, event.selector
-            ),
-            EventKind::BuildProgress(event) => {
+            EventKind::Phase(event) => writeln!(writer, "{}", human_phase(event)),
+            EventKind::DownloadStarted(event) => {
+                writeln!(writer, "Downloading {}...", event.selector)
+            }
+            EventKind::DownloadProgress(event) => {
                 writeln!(
                     writer,
-                    "Building {}: {:.0}%",
+                    "Downloading {}: {}%",
                     event.selector,
-                    event.pct * 100.0
+                    percent(event.done, event.total)
                 )
+            }
+            EventKind::BuildStarted(event) => {
+                writeln!(
+                    writer,
+                    "Building {} {}...",
+                    event.package_name, event.version
+                )
+            }
+            EventKind::BuildProgress(event) => {
+                writeln!(writer, "Building: {:.0}%", event.pct * 100.0)
             }
             EventKind::Collision(event) => writeln!(
                 writer,
@@ -303,10 +301,34 @@ impl PublicEvent {
                 event.selectors.join(", ")
             ),
             EventKind::Committed(event) => {
-                writeln!(writer, "Committed {}", event.generation_id)
+                writeln!(writer, "Activated generation {}", event.generation_id)
             }
         }
     }
+}
+
+fn human_phase(event: &PhaseEvent) -> &'static str {
+    match (event.phase.as_str(), event.status.as_str()) {
+        ("acquire", "started") => "Checking for a trusted download...",
+        ("acquire", "completed") => "Package source ready.",
+        ("build", "started") => "Preparing a local build...",
+        ("build", "completed") => "Local build complete.",
+        ("stage", "started") => "Preparing package state...",
+        ("stage", "completed") => "Package state ready.",
+        ("activate", "started") => "Activating packages...",
+        ("activate", "completed") => "Packages activated.",
+        _ => "Working...",
+    }
+}
+
+fn percent(done: u64, total: u64) -> u64 {
+    if total == 0 {
+        return 0;
+    }
+    done.saturating_mul(100)
+        .checked_div(total)
+        .unwrap_or(0)
+        .min(100)
 }
 
 fn product_text(field: &'static str, value: &str) -> Result<String, ProgressError> {
@@ -396,6 +418,38 @@ mod tests {
         assert_eq!(
             PublicEvent::collision("op_1", "bin/x", ["a", "a"]),
             Err(ProgressError::InvalidSelectors)
+        );
+    }
+
+    #[test]
+    fn human_progress_uses_product_language() {
+        let events = [
+            PublicEvent::phase("op_1", "acquire", "started").unwrap(),
+            PublicEvent::build_started("op_1", "sel_1", "hello", "1.0").unwrap(),
+            PublicEvent::build_progress("op_1", "sel_1", 0.5).unwrap(),
+            PublicEvent::committed("op_1", "gen-1").unwrap(),
+        ];
+        let mut rendered = Vec::new();
+        for event in events {
+            event.write_human(&mut rendered).unwrap();
+        }
+        let rendered = String::from_utf8(rendered).unwrap();
+        assert_eq!(
+            rendered,
+            "Checking for a trusted download...\nBuilding hello 1.0...\nBuilding: 50%\nActivated generation gen-1\n"
+        );
+        assert!(!rendered.contains("sel_1"));
+        assert!(!rendered.contains("acquire:"));
+    }
+
+    #[test]
+    fn download_progress_uses_percent_not_raw_byte_counts() {
+        let event = PublicEvent::download_progress("op_1", "hello", 25, 100).unwrap();
+        let mut rendered = Vec::new();
+        event.write_human(&mut rendered).unwrap();
+        assert_eq!(
+            String::from_utf8(rendered).unwrap(),
+            "Downloading hello: 25%\n"
         );
     }
 }

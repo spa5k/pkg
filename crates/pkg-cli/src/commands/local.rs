@@ -33,12 +33,13 @@ use pkg_core::{
     SourceRevision, VersionPreference, advance_channel,
 };
 use pkg_nix::{
-    ApprovalSource, BrokerOperationKind, BuildPreview, CacheInstallErrorCode, CacheInstallOutcome,
-    CatalogInfoRequest, CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest,
-    GenerationId, GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter,
-    MaintenanceError, OperationHandle, OperationStatus, RemoveRootSetRequest,
-    RepairGenerationRequest, RepairGenerationStatus, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
+    ApprovalSource, BrokerOperationKind, BuildOutputProvenance, BuildPreview,
+    CacheInstallErrorCode, CacheInstallOutcome, CatalogInfoRequest, CatalogSearchRequest,
+    ChannelRefreshMode, ChannelRefreshReport, Digest, GenerationId,
+    GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter, MaintenanceError,
+    OperationHandle, OperationStatus, RemoveRootSetRequest, RepairGenerationRequest,
+    RepairGenerationStatus, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
+    RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
@@ -2148,8 +2149,9 @@ fn install_result(
         .collect::<Vec<_>>();
     CommandResult::new(
         format!(
-            "Installed {} package(s) as {generation_id}.",
-            evidence.targets().len()
+            "Installed {} package(s) {} as {generation_id}.",
+            evidence.targets().len(),
+            install_provenance(evidence)
         ),
         Map::from_iter([
             ("opId".into(), json!(op_id)),
@@ -2167,6 +2169,27 @@ fn install_result(
     .map_err(|_| install_commit_failed())
 }
 
+fn install_provenance(evidence: &InstallEvidence) -> &'static str {
+    let mut cache = false;
+    let mut build = false;
+    for output in evidence
+        .targets()
+        .iter()
+        .flat_map(pkg_nix::InstallTargetEvidence::acquired)
+    {
+        match output.provenance() {
+            BuildOutputProvenance::CacheSigned => cache = true,
+            BuildOutputProvenance::LocalBuild => build = true,
+        }
+    }
+    match (cache, build) {
+        (true, true) => "using the trusted cache and local builds",
+        (true, false) => "from the trusted cache",
+        (false, true) => "using a local build",
+        (false, false) => "from a verified source",
+    }
+}
+
 fn invalid_install_selector() -> CommandError {
     CommandError::new(
         ExitCode::Usage,
@@ -2176,24 +2199,64 @@ fn invalid_install_selector() -> CommandError {
 }
 
 fn install_broker_error(error: BrokerClientError) -> CommandError {
-    let exit = match error.code() {
-        BrokerClientErrorCode::InstallAcquisitionRefused => match error.cache_install_code() {
-            Some(CacheInstallErrorCode::InvalidIntent) => ExitCode::ResolveFailed,
-            Some(CacheInstallErrorCode::AcquisitionFailed) => ExitCode::AcquireNetwork,
-            Some(CacheInstallErrorCode::Cancelled) => ExitCode::Cancelled,
-            Some(CacheInstallErrorCode::AuthorityUnavailable) | None => ExitCode::EngineUnavailable,
+    let (exit, message, hint) =
+        install_broker_error_fields(error.code(), error.cache_install_code());
+    CommandError::new(exit, message, hint)
+}
+
+const fn install_broker_error_fields(
+    code: BrokerClientErrorCode,
+    cache_code: Option<CacheInstallErrorCode>,
+) -> (ExitCode, &'static str, &'static str) {
+    match code {
+        BrokerClientErrorCode::InstallAcquisitionRefused => match cache_code {
+            Some(CacheInstallErrorCode::InvalidIntent) => (
+                ExitCode::ResolveFailed,
+                "the package request was refused",
+                "check the package name, then retry the package operation",
+            ),
+            Some(CacheInstallErrorCode::AcquisitionFailed) => (
+                ExitCode::AcquireNetwork,
+                "the trusted package download failed",
+                "check network access, then retry the package operation",
+            ),
+            Some(CacheInstallErrorCode::Cancelled) => (
+                ExitCode::Cancelled,
+                "the package operation was cancelled",
+                "run the package operation again when ready",
+            ),
+            Some(CacheInstallErrorCode::AuthorityUnavailable) | None => (
+                ExitCode::EngineUnavailable,
+                "the trusted package service is unavailable",
+                "run `pkg doctor`, then retry the package operation",
+            ),
         },
-        BrokerClientErrorCode::BuildRefused => ExitCode::BuildFailed,
-        BrokerClientErrorCode::BuildPreparationRefused => ExitCode::EngineUnavailable,
-        BrokerClientErrorCode::BuildRootRefused => ExitCode::Permission,
-        BrokerClientErrorCode::GenerationRootAttestationRefused => ExitCode::StateCorrupt,
-        _ => ExitCode::EngineUnavailable,
-    };
-    CommandError::new(
-        exit,
-        "the managed install transaction was refused",
-        "run `pkg doctor`, then retry the install",
-    )
+        BrokerClientErrorCode::BuildRefused => (
+            ExitCode::BuildFailed,
+            "the local build failed",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+        BrokerClientErrorCode::BuildPreparationRefused => (
+            ExitCode::EngineUnavailable,
+            "the local build could not be prepared",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+        BrokerClientErrorCode::BuildRootRefused => (
+            ExitCode::Permission,
+            "the built package could not be activated",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+        BrokerClientErrorCode::GenerationRootAttestationRefused => (
+            ExitCode::StateCorrupt,
+            "installed package roots could not be verified",
+            "run `pkg doctor` before retrying the package operation",
+        ),
+        _ => (
+            ExitCode::EngineUnavailable,
+            "the managed package service refused the operation",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+    }
 }
 
 fn map_install_generation_error(error: &InstallGenerationError) -> CommandError {
