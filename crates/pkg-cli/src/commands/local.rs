@@ -1821,15 +1821,60 @@ fn format_build_preview(preview: &BuildPreview) -> Result<String, CommandError> 
     let value = preview
         .to_json_value()
         .map_err(|_| install_commit_failed())?;
-    let purpose = value
-        .get("purpose")
-        .and_then(Value::as_str)
-        .unwrap_or("build");
-    let heading = if purpose == "repair" {
+    let heading = if value.get("purpose").and_then(Value::as_str) == Some("repair") {
         "Local repair build required."
     } else {
         "Local build required."
     };
+    let mut lines = vec![heading.to_owned(), "".to_owned(), "Packages:".to_owned()];
+    for target in build_preview_targets(&value)? {
+        lines.push(format_build_target(target)?);
+    }
+    lines.extend(build_preview_details(&value));
+    Ok(lines.join("\n"))
+}
+
+fn build_preview_targets(value: &Value) -> Result<Vec<&Value>, CommandError> {
+    let targets = value
+        .get("targets")
+        .and_then(Value::as_array)
+        .ok_or_else(install_commit_failed)?;
+    let builds = targets
+        .iter()
+        .filter(|target| target.get("localBuildRequired").and_then(Value::as_bool) == Some(true))
+        .collect::<Vec<_>>();
+    let selected = if builds.is_empty() {
+        targets.iter().collect()
+    } else {
+        builds
+    };
+    (!selected.is_empty())
+        .then_some(selected)
+        .ok_or_else(install_commit_failed)
+}
+
+fn format_build_target(target: &Value) -> Result<String, CommandError> {
+    let package = target
+        .get("packageName")
+        .and_then(Value::as_str)
+        .ok_or_else(install_commit_failed)?;
+    let version = target
+        .get("version")
+        .and_then(Value::as_str)
+        .ok_or_else(install_commit_failed)?;
+    let outputs = target
+        .get("outputsToInstall")
+        .and_then(Value::as_array)
+        .ok_or_else(install_commit_failed)?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    (!outputs.is_empty())
+        .then(|| format!("  {package} {version} ({})", outputs.join(", ")))
+        .ok_or_else(install_commit_failed)
+}
+
+fn build_preview_details(value: &Value) -> Vec<String> {
     let platform = value
         .get("platform")
         .and_then(Value::as_object)
@@ -1841,87 +1886,41 @@ fn format_build_preview(preview: &BuildPreview) -> Result<String, CommandError> 
             ))
         })
         .unwrap_or_else(|| "supported target".to_owned());
-    let targets = value
-        .get("targets")
-        .and_then(Value::as_array)
-        .ok_or_else(install_commit_failed)?;
-    let build_targets = targets
-        .iter()
-        .filter(|target| {
-            target
-                .get("localBuildRequired")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
-    let targets = if build_targets.is_empty() {
-        targets.iter().collect::<Vec<_>>()
-    } else {
-        build_targets
-    };
-    if targets.is_empty() {
-        return Err(install_commit_failed());
-    }
-
-    let mut lines = vec![heading.to_owned(), "".to_owned(), "Packages:".to_owned()];
-    for target in targets {
-        let package = target
-            .get("packageName")
-            .and_then(Value::as_str)
-            .ok_or_else(install_commit_failed)?;
-        let version = target
-            .get("version")
-            .and_then(Value::as_str)
-            .ok_or_else(install_commit_failed)?;
-        let outputs = target
-            .get("outputsToInstall")
-            .and_then(Value::as_array)
-            .ok_or_else(install_commit_failed)?
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>();
-        if outputs.is_empty() {
-            return Err(install_commit_failed());
-        }
-        lines.push(format!("  {package} {version} ({})", outputs.join(", ")));
-    }
-
-    lines.push(String::new());
-    lines.push(format!("Target: {platform}"));
-    lines.push(format!(
-        "Isolation: {}",
-        value
-            .get("readiness")
-            .and_then(Value::as_object)
-            .and_then(|readiness| readiness.get("resourceBoundary"))
-            .and_then(Value::as_object)
-            .and_then(|boundary| boundary.get("isolation"))
-            .and_then(Value::as_str)
-            .unwrap_or("sandbox")
-    ));
-    if let Some(minutes) = value
+    let isolation = value
+        .get("readiness")
+        .and_then(Value::as_object)
+        .and_then(|readiness| readiness.get("resourceBoundary"))
+        .and_then(Value::as_object)
+        .and_then(|boundary| boundary.get("isolation"))
+        .and_then(Value::as_str)
+        .unwrap_or("sandbox");
+    let time = value
         .get("estimates")
         .and_then(Value::as_object)
         .and_then(|estimates| estimates.get("approxBuildMinutes"))
         .and_then(Value::as_str)
-    {
-        lines.push(format!("Time estimate: about {minutes}"));
-    } else {
-        lines.push("Time estimate: unknown".to_owned());
-    }
-    if let Some(bytes) = value
+        .map_or_else(
+            || "Time estimate: unknown".to_owned(),
+            |minutes| format!("Time estimate: about {minutes}"),
+        );
+    let disk = value
         .get("estimates")
         .and_then(Value::as_object)
         .and_then(|estimates| estimates.get("approxNewDiskBytes"))
         .and_then(Value::as_u64)
-    {
-        lines.push(format!("New disk estimate: about {}", format_bytes(bytes)));
-    } else {
-        lines.push("New disk estimate: unknown".to_owned());
-    }
-    lines.push(String::new());
-    lines.push("The build is sandboxed. Estimates are approximate.".to_owned());
-    Ok(lines.join("\n"))
+        .map_or_else(
+            || "New disk estimate: unknown".to_owned(),
+            |bytes| format!("New disk estimate: about {}", format_bytes(bytes)),
+        );
+    vec![
+        String::new(),
+        format!("Target: {platform}"),
+        format!("Isolation: {isolation}"),
+        time,
+        disk,
+        String::new(),
+        "The build is sandboxed. Estimates are approximate.".to_owned(),
+    ]
 }
 
 fn format_bytes(bytes: u64) -> String {
