@@ -1321,13 +1321,31 @@ fn install_success_output_matches_the_v1_golden() {
         &install_evidence("cacheSigned"),
     )
     .unwrap();
-    assert_eq!(result.summary(), "Installed 1 package(s) as gen-0001.");
+    assert_eq!(
+        result.summary(),
+        "Installed 1 package(s) from the trusted cache as gen-0001."
+    );
 
     let mut output = Vec::new();
     write_success(&mut output, OutputMode::Json, "install", &result).unwrap();
     assert_eq!(
         String::from_utf8(output).unwrap(),
         include_str!("../../../../../fixtures/cli-v1/install-success.json")
+    );
+}
+
+#[test]
+fn install_success_names_a_local_build_in_the_human_result() {
+    let result = install_result(
+        "op_fixture",
+        "gen-0001",
+        None,
+        &install_evidence("localBuild"),
+    )
+    .unwrap();
+    assert_eq!(
+        result.summary(),
+        "Installed 1 package(s) using a local build as gen-0001."
     );
 }
 
