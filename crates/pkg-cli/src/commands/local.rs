@@ -33,12 +33,13 @@ use pkg_core::{
     SourceRevision, VersionPreference, advance_channel,
 };
 use pkg_nix::{
-    ApprovalSource, BrokerOperationKind, BuildPreview, CacheInstallErrorCode, CacheInstallOutcome,
-    CatalogInfoRequest, CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest,
-    GenerationId, GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter,
-    MaintenanceError, OperationHandle, OperationStatus, RemoveRootSetRequest,
-    RepairGenerationRequest, RepairGenerationStatus, RepairStorePathsReport,
-    RepairStorePathsRequest, RootSet, RootSetAttestationRequest, RootSetReport,
+    ApprovalSource, BrokerOperationKind, BuildOutputProvenance, BuildPreview,
+    CacheInstallErrorCode, CacheInstallOutcome, CatalogInfoRequest, CatalogSearchRequest,
+    ChannelRefreshMode, ChannelRefreshReport, Digest, GenerationId,
+    GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter, MaintenanceError,
+    OperationHandle, OperationStatus, RemoveRootSetRequest, RepairGenerationRequest,
+    RepairGenerationStatus, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
+    RootSetAttestationRequest, RootSetReport,
 };
 use pkg_pipeline::{
     CommitError, InstallGenerationError, InstallGenerationMetadata, InstallStateError,
@@ -2148,8 +2149,9 @@ fn install_result(
         .collect::<Vec<_>>();
     CommandResult::new(
         format!(
-            "Installed {} package(s) as {generation_id}.",
-            evidence.targets().len()
+            "Installed {} package(s) {} as {generation_id}.",
+            evidence.targets().len(),
+            install_provenance(evidence)
         ),
         Map::from_iter([
             ("opId".into(), json!(op_id)),
@@ -2165,6 +2167,27 @@ fn install_result(
         Vec::new(),
     )
     .map_err(|_| install_commit_failed())
+}
+
+fn install_provenance(evidence: &InstallEvidence) -> &'static str {
+    let mut cache = false;
+    let mut build = false;
+    for output in evidence
+        .targets()
+        .iter()
+        .flat_map(pkg_nix::InstallTargetEvidence::acquired)
+    {
+        match output.provenance() {
+            BuildOutputProvenance::CacheSigned => cache = true,
+            BuildOutputProvenance::LocalBuild => build = true,
+        }
+    }
+    match (cache, build) {
+        (true, true) => "using the trusted cache and local builds",
+        (true, false) => "from the trusted cache",
+        (false, true) => "using a local build",
+        (false, false) => "from a verified source",
+    }
 }
 
 fn invalid_install_selector() -> CommandError {
