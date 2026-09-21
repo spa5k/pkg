@@ -1810,14 +1810,133 @@ fn emit_phase(
 }
 
 fn render_build_preview(preview: &pkg_nix::BuildPreview) -> Result<(), CommandError> {
+    let rendered = format_build_preview(preview)?;
+    let mut stderr = io::stderr();
+    writeln!(stderr, "{rendered}")
+        .and_then(|()| stderr.flush())
+        .map_err(|_| confirmation_required())
+}
+
+fn format_build_preview(preview: &BuildPreview) -> Result<String, CommandError> {
     let value = preview
         .to_json_value()
         .map_err(|_| install_commit_failed())?;
-    let rendered = serde_json::to_string_pretty(&value).map_err(|_| install_commit_failed())?;
-    let mut stderr = io::stderr();
-    writeln!(stderr, "Local build required:\n{rendered}")
-        .and_then(|()| stderr.flush())
-        .map_err(|_| confirmation_required())
+    let purpose = value
+        .get("purpose")
+        .and_then(Value::as_str)
+        .unwrap_or("build");
+    let heading = if purpose == "repair" {
+        "Local repair build required."
+    } else {
+        "Local build required."
+    };
+    let platform = value
+        .get("platform")
+        .and_then(Value::as_object)
+        .and_then(|platform| {
+            Some(format!(
+                "{} {}",
+                platform.get("os")?.as_str()?,
+                platform.get("arch")?.as_str()?
+            ))
+        })
+        .unwrap_or_else(|| "supported target".to_owned());
+    let targets = value
+        .get("targets")
+        .and_then(Value::as_array)
+        .ok_or_else(install_commit_failed)?;
+    let build_targets = targets
+        .iter()
+        .filter(|target| {
+            target
+                .get("localBuildRequired")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    let targets = if build_targets.is_empty() {
+        targets.iter().collect::<Vec<_>>()
+    } else {
+        build_targets
+    };
+    if targets.is_empty() {
+        return Err(install_commit_failed());
+    }
+
+    let mut lines = vec![heading.to_owned(), "".to_owned(), "Packages:".to_owned()];
+    for target in targets {
+        let package = target
+            .get("packageName")
+            .and_then(Value::as_str)
+            .ok_or_else(install_commit_failed)?;
+        let version = target
+            .get("version")
+            .and_then(Value::as_str)
+            .ok_or_else(install_commit_failed)?;
+        let outputs = target
+            .get("outputsToInstall")
+            .and_then(Value::as_array)
+            .ok_or_else(install_commit_failed)?
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        if outputs.is_empty() {
+            return Err(install_commit_failed());
+        }
+        lines.push(format!("  {package} {version} ({})", outputs.join(", ")));
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Target: {platform}"));
+    lines.push(format!(
+        "Isolation: {}",
+        value
+            .get("readiness")
+            .and_then(Value::as_object)
+            .and_then(|readiness| readiness.get("resourceBoundary"))
+            .and_then(Value::as_object)
+            .and_then(|boundary| boundary.get("isolation"))
+            .and_then(Value::as_str)
+            .unwrap_or("sandbox")
+    ));
+    if let Some(minutes) = value
+        .get("estimates")
+        .and_then(Value::as_object)
+        .and_then(|estimates| estimates.get("approxBuildMinutes"))
+        .and_then(Value::as_str)
+    {
+        lines.push(format!("Time estimate: about {minutes}"));
+    } else {
+        lines.push("Time estimate: unknown".to_owned());
+    }
+    if let Some(bytes) = value
+        .get("estimates")
+        .and_then(Value::as_object)
+        .and_then(|estimates| estimates.get("approxNewDiskBytes"))
+        .and_then(Value::as_u64)
+    {
+        lines.push(format!("New disk estimate: about {}", format_bytes(bytes)));
+    } else {
+        lines.push("New disk estimate: unknown".to_owned());
+    }
+    lines.push(String::new());
+    lines.push("The build is sandboxed. Estimates are approximate.".to_owned());
+    Ok(lines.join("\n"))
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 fn preview_install(

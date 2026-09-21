@@ -1283,6 +1283,36 @@ fn no_build_stops_after_cache_miss_without_opening_build_authority() {
 }
 
 #[test]
+fn human_build_preview_explains_the_decision_without_private_nix_details() {
+    let rendered = format_build_preview(&build_preview()).unwrap();
+
+    assert_eq!(
+        rendered,
+        "Local build required.\n\nPackages:\n  hello 1.0 (out)\n\nTarget: linux x86_64\nIsolation: sandbox\nTime estimate: unknown\nNew disk estimate: about 1.0 GiB\n\nThe build is sandboxed. Estimates are approximate."
+    );
+    for private in [
+        "/nix/",
+        ".drv",
+        "sha256:",
+        "policyVersion",
+        "unknownLocalOutputs",
+    ] {
+        assert!(
+            !rendered.contains(private),
+            "unexpected private detail: {private}"
+        );
+    }
+}
+
+#[test]
+fn byte_estimates_use_small_human_units() {
+    assert_eq!(format_bytes(512), "512 B");
+    assert_eq!(format_bytes(1024), "1.0 KiB");
+    assert_eq!(format_bytes(1024 * 1024), "1.0 MiB");
+    assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 GiB");
+}
+
+#[test]
 fn install_success_output_matches_the_v1_golden() {
     let result = install_result(
         "op_fixture",
