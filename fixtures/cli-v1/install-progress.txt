@@ -1,7 +1,7 @@
-acquire: started
-acquire: completed
-stage: started
-stage: completed
-activate: started
-activate: completed
-Committed gen-0001
+Checking for a trusted download...
+Package source ready.
+Preparing package state...
+Package state ready.
+Activating packages...
+Packages activated.
+Activated generation gen-0001
