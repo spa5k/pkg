@@ -14,11 +14,37 @@ trap '/bin/rm -rf "$work"' EXIT HUP INT TERM
 status="$work/status"
 output="$work/output"
 label="com.pkg.install.$$"
+worker="$work/worker"
+plist="$work/job.plist"
+
+/bin/cat > "$worker" <<EOF
+#!/bin/sh
+/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root "$script_dir/pkg-install"
+code=\$?
+/bin/echo "\$code" > "$status"
+exit "\$code"
+EOF
+/bin/chmod 700 "$worker"
+
+/bin/cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+  <key>ProgramArguments</key>
+  <array><string>$worker</string></array>
+  <key>StandardOutPath</key>
+  <string>$output</string>
+  <key>StandardErrorPath</key>
+  <string>$output</string>
+</dict>
+</plist>
+EOF
 
 /bin/rm -f "$status" "$output"
-if ! /bin/launchctl submit -l "$label" -o "$output" -e "$output" -- \
-    /bin/sh -c '/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root "$1"; code=$?; echo "$code" > "$2"' \
-    pkg-install-worker "$script_dir/pkg-install" "$status"; then
+if ! /bin/launchctl bootstrap system "$plist"; then
     /bin/cat "$output" 2>/dev/null || true
     exit 1
 fi
@@ -28,13 +54,13 @@ while [ ! -f "$status" ]; do
     /bin/sleep 1
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 1800 ]; then
-        /bin/launchctl remove "$label" 2>/dev/null || true
+        /bin/launchctl bootout system/"$label" 2>/dev/null || true
         /bin/cat "$output" 2>/dev/null || true
         exit 1
     fi
 done
 
 code=$(/bin/cat "$status")
-/bin/launchctl remove "$label" 2>/dev/null || true
+/bin/launchctl bootout system/"$label" 2>/dev/null || true
 /bin/cat "$output" 2>/dev/null || true
 exit "$code"
