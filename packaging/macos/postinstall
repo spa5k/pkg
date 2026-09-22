@@ -48,6 +48,11 @@ if ! /bin/launchctl bootstrap system "$plist"; then
     /bin/cat "$output" 2>/dev/null || true
     exit 1
 fi
+if ! /bin/launchctl kickstart system/"$label"; then
+    /bin/launchctl bootout system/"$label" 2>/dev/null || true
+    /bin/cat "$output" 2>/dev/null || true
+    exit 1
+fi
 
 attempts=0
 while [ ! -f "$status" ]; do
