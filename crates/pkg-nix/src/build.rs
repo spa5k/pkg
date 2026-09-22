@@ -31,6 +31,7 @@ const MAX_PREVIEW_ITEMS: usize = 4096;
 const LINUX_RESOURCE_NOTICE: &str = "Builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.";
 const LINUX_REPAIR_RESOURCE_NOTICE: &str = "Repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits.";
 const MACOS_RESOURCE_NOTICE: &str = "macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.";
+const MACOS_REPAIR_RESOURCE_NOTICE: &str = "macOS repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits.";
 const BUILD_USERS_GROUP: &str = "nixbld";
 const MAX_JOBS: u32 = 1;
 const CORES_HINT: u32 = 0;
@@ -1937,7 +1938,8 @@ fn resource_notice(os: &str, purpose: BuildPurpose) -> Option<&'static str> {
     match (os, purpose) {
         ("linux", BuildPurpose::Build) => Some(LINUX_RESOURCE_NOTICE),
         ("linux", BuildPurpose::Repair) => Some(LINUX_REPAIR_RESOURCE_NOTICE),
-        ("macos", BuildPurpose::Build | BuildPurpose::Repair) => Some(MACOS_RESOURCE_NOTICE),
+        ("macos", BuildPurpose::Build) => Some(MACOS_RESOURCE_NOTICE),
+        ("macos", BuildPurpose::Repair) => Some(MACOS_REPAIR_RESOURCE_NOTICE),
         _ => None,
     }
 }
@@ -3345,6 +3347,11 @@ mod tests {
             MACOS_RESOURCE_NOTICE
         );
         assert!(BuildPreview::from_json_bytes(&macos.to_json_bytes().unwrap()).is_ok());
+        let mut repair = macos.clone();
+        repair.purpose = BuildPurpose::Repair;
+        assert!(BuildPreview::from_json_bytes(&repair.to_json_bytes().unwrap()).is_err());
+        repair.readiness.resource_boundary.notice = MACOS_REPAIR_RESOURCE_NOTICE.to_owned();
+        assert!(BuildPreview::from_json_bytes(&repair.to_json_bytes().unwrap()).is_ok());
         let mut wrong_macos = macos;
         wrong_macos.readiness.resource_boundary.notice = LINUX_RESOURCE_NOTICE.to_owned();
         assert!(BuildPreview::from_json_bytes(&wrong_macos.to_json_bytes().unwrap()).is_err());
