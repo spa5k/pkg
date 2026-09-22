@@ -6,56 +6,14 @@ case "$script_dir" in /*) ;; *) exit 1 ;; esac
 
 /usr/bin/codesign --verify --strict --verbose=2 "$script_dir/pkg-install"
 
-# PackageKit runs scripts in a protected filesystem view. Queue the real
-# installer as a system launchd job and exit first. The worker waits briefly
-# so PackageKit can remove that view before the vendor installer updates
-# /etc/fstab and mounts /nix.
-work=$(/usr/bin/mktemp -d /private/var/db/pkg-install-background.XXXXXX)
-/bin/chmod 700 "$work"
-status="$work/status"
-output="$work/output"
-label="com.pkg.install.$$"
-payload="$work/pkg-install"
-worker="$work/worker"
-plist="$work/job.plist"
-
-/bin/cp "$script_dir/pkg-install" "$payload"
-/bin/chmod 755 "$payload"
-/usr/bin/codesign --verify --strict --verbose=2 "$payload"
-
-/bin/cat > "$worker" <<EOF
-#!/bin/sh
-/bin/sleep 10
-/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root PKG_INSTALL_DEBUG=1 "$payload"
-code=\$?
-/bin/echo "\$code" > "$status"
-exit "\$code"
-EOF
-/bin/chmod 700 "$worker"
-
-/bin/cat > "$plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>$label</string>
-  <key>ProgramArguments</key>
-  <array><string>$worker</string></array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>$output</string>
-  <key>StandardErrorPath</key>
-  <string>$output</string>
-</dict>
-</plist>
-EOF
-
-if ! /bin/launchctl bootstrap system "$plist"; then
-    /bin/cat "$output" 2>/dev/null || true
-    /bin/rm -rf "$work"
-    exit 1
+# A background launchd job loses the interactive user's TCC authorization.
+# Keep the real exit status: PackageKit must not report success before setup.
+if /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root \
+    PKG_INSTALL_DEBUG=1 "$script_dir/pkg-install"; then
+    exit 0
+else
+    code=$?
+    echo "pkg setup failed (exit $code). See /var/log/install.log." >&2
+    echo "If macOS denied system configuration access, use install-preview.sh from a terminal." >&2
+    exit "$code"
 fi
-/bin/echo "pkg installation queued: label=$label log=$output"
-exit 0
