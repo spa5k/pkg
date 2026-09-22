@@ -1,6 +1,6 @@
 //! Broker-private binary-cache classification for local-build planning.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
 
 use pkg_core::state::{Digest, canonical_digest};
@@ -18,6 +18,7 @@ const MAX_CACHE_PATHS: usize = 16_384;
 pub struct BuildCacheSubject {
     derivation: DerivationPath,
     outputs: Vec<StorePath>,
+    input_outputs: Vec<StorePath>,
 }
 
 impl BuildCacheSubject {
@@ -36,7 +37,24 @@ impl BuildCacheSubject {
         Ok(Self {
             derivation,
             outputs,
+            input_outputs: Vec::new(),
         })
+    }
+
+    /// Binds only the dependency outputs requested by this derivation.
+    ///
+    /// # Errors
+    /// Returns `InvalidSubject` for duplicate or oversized input lists.
+    pub fn with_input_outputs(
+        mut self,
+        mut inputs: Vec<StorePath>,
+    ) -> Result<Self, BuildCacheError> {
+        inputs.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        if inputs.len() > MAX_CACHE_PATHS || inputs.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidSubject));
+        }
+        self.input_outputs = inputs;
+        Ok(self)
     }
 }
 
@@ -208,7 +226,7 @@ impl BuildCacheEvidence {
     #[must_use]
     pub fn matches_subjects(&self, subjects: &[BuildCacheSubject]) -> bool {
         normalized_subjects(subjects)
-            .and_then(|owners| subjects_digest(&owners))
+            .and_then(|_| subjects_digest(subjects))
             .is_ok_and(|digest| digest == self.subjects_digest)
     }
 
@@ -271,14 +289,7 @@ struct ClassificationIdentity<'a> {
     present: bool,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SubjectIdentity<'a> {
-    path: &'a str,
-    derivations: Vec<&'a str>,
-}
-
-/// Classifies the union of evaluated output paths without realization.
+/// Checks required dependency outputs, stopping at available cached closures.
 pub fn classify_build_cache(
     targets: &[BuildCacheTarget],
     probe: &dyn BuildCacheProbe,
@@ -291,87 +302,45 @@ pub fn classify_build_cache(
         .flat_map(|target| target.subjects.iter().cloned())
         .collect::<Vec<_>>();
     let owners = normalized_subjects(&subjects)?;
-    let subjects_digest = subjects_digest(&owners)?;
-    let selected = select_target_outputs(targets, &owners)?;
-    let by_root = collect_download_closures(probe, &selected)?;
+    let subjects_digest = subjects_digest(&subjects)?;
+    let by_derivation = subjects
+        .iter()
+        .map(|subject| (subject.derivation.as_str(), subject))
+        .collect::<BTreeMap<_, _>>();
+    let mut pending = select_target_outputs(targets, &owners)?;
     let mut classified = BTreeMap::new();
-    let mut missing_targets = BTreeSet::new();
-    for (root, closure) in &by_root {
-        let target_index = selected[root].1;
-        for observation in &closure.paths {
-            match observation.status {
-                CachePathStatus::Hit {
-                    download_bytes,
-                    nar_bytes,
-                } => {
-                    insert_classification(
-                        &mut classified,
-                        observation.path.clone(),
-                        CachePathStatus::Hit {
-                            download_bytes,
-                            nar_bytes,
-                        },
-                    )?;
-                }
-                CachePathStatus::Miss => {
-                    missing_targets.insert(target_index);
-                }
-            }
-        }
-    }
-    if missing_targets.is_empty() {
-        return Ok(BuildCacheEvidence {
-            subjects_digest,
-            classification: cache_classification(&classified)?,
-            missing_derivations: Vec::new(),
-        });
-    }
-
-    let impacted_derivations = missing_targets
-        .iter()
-        .flat_map(|index| targets[*index].subjects.iter())
-        .map(|subject| subject.derivation.as_str().to_owned())
-        .collect::<BTreeSet<_>>();
-    let paths = owners
-        .values()
-        .filter(|(_, derivations)| {
-            derivations
-                .iter()
-                .any(|derivation| impacted_derivations.contains(derivation.as_str()))
-        })
-        .map(|(path, _)| path.clone())
-        .collect::<Vec<_>>();
-    let observations = probe.inspect(&paths)?;
-    if observations.len() != paths.len() {
-        return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-    }
-
-    let expected = paths
-        .iter()
-        .map(|path| path.as_str().to_owned())
-        .collect::<BTreeSet<_>>();
-    let mut observed = BTreeSet::new();
     let mut missing_derivations = BTreeMap::new();
-    for observation in observations {
-        let key = observation.path.as_str().to_owned();
-        if !expected.contains(&key) || !observed.insert(key.clone()) {
-            return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-        }
-        if observation.status == CachePathStatus::Miss {
-            for derivation in &owners[&key].1 {
-                if impacted_derivations.contains(derivation.as_str()) {
-                    missing_derivations
-                        .entry(derivation.as_str().to_owned())
-                        .or_insert_with(|| derivation.clone());
+    while !pending.is_empty() {
+        let batch = std::mem::take(&mut pending);
+        for closure in collect_download_closures(probe, &batch)?.into_values() {
+            if closure
+                .paths
+                .iter()
+                .any(|path| path.status == CachePathStatus::Miss)
+            {
+                insert_classification(
+                    &mut classified,
+                    closure.root.clone(),
+                    CachePathStatus::Miss,
+                )?;
+                for derivation in &owners[closure.root.as_str()].1 {
+                    if missing_derivations
+                        .insert(derivation.as_str().to_owned(), derivation.clone())
+                        .is_none()
+                    {
+                        for input in &by_derivation[derivation.as_str()].input_outputs {
+                            pending.insert(input.as_str().to_owned(), input.clone());
+                        }
+                    }
+                }
+            } else {
+                for observation in closure.paths {
+                    insert_classification(&mut classified, observation.path, observation.status)?;
                 }
             }
         }
-        insert_classification(&mut classified, observation.path, observation.status)?;
+        pending.retain(|path, _| !classified.contains_key(path));
     }
-    if observed != expected {
-        return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-    }
-
     Ok(BuildCacheEvidence {
         subjects_digest,
         classification: cache_classification(&classified)?,
@@ -400,14 +369,12 @@ fn insert_classification(
 fn select_target_outputs(
     targets: &[BuildCacheTarget],
     owners: &DerivationOwnerMap,
-) -> Result<BTreeMap<String, (StorePath, usize)>, BuildCacheError> {
+) -> Result<BTreeMap<String, StorePath>, BuildCacheError> {
     let mut selected = BTreeMap::new();
-    for (target_index, target) in targets.iter().enumerate() {
+    for target in targets {
         for path in &target.selected_outputs {
             let key = path.as_str().to_owned();
-            if !owners.contains_key(&key)
-                || selected.insert(key, (path.clone(), target_index)).is_some()
-            {
+            if !owners.contains_key(&key) || selected.insert(key, path.clone()).is_some() {
                 return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidSubject));
             }
         }
@@ -421,12 +388,9 @@ fn select_target_outputs(
 /// Collects and validates the download closures for the selected outputs.
 fn collect_download_closures(
     probe: &dyn BuildCacheProbe,
-    selected: &BTreeMap<String, (StorePath, usize)>,
+    selected: &BTreeMap<String, StorePath>,
 ) -> Result<BTreeMap<String, CacheDownloadClosure>, BuildCacheError> {
-    let selected_paths = selected
-        .values()
-        .map(|(path, _)| path.clone())
-        .collect::<Vec<_>>();
+    let selected_paths = selected.values().cloned().collect::<Vec<_>>();
     let closures = probe.inspect_download_closures(&selected_paths)?;
     if closures.len() != selected.len() {
         return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
@@ -487,7 +451,14 @@ fn normalized_subjects(
         return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidSubject));
     }
     let mut owners = BTreeMap::<String, (StorePath, Vec<DerivationPath>)>::new();
+    let mut derivations_by_name = BTreeMap::new();
     for subject in subjects {
+        if derivations_by_name
+            .insert(subject.derivation.as_str(), subject)
+            .is_some_and(|previous| previous != subject)
+        {
+            return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidSubject));
+        }
         for path in &subject.outputs {
             let (_, derivations) = owners
                 .entry(path.as_str().to_owned())
@@ -501,17 +472,37 @@ fn normalized_subjects(
     if owners.is_empty() || owners.len() > MAX_CACHE_PATHS {
         return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidSubject));
     }
+    if subjects
+        .iter()
+        .flat_map(|subject| &subject.input_outputs)
+        .any(|input| !owners.contains_key(input.as_str()))
+    {
+        return Err(BuildCacheError::new(BuildCacheErrorCode::InvalidSubject));
+    }
     Ok(owners)
 }
 
-fn subjects_digest(owners: &DerivationOwnerMap) -> Result<Digest, BuildCacheError> {
-    let identity = owners
-        .values()
-        .map(|(path, derivations)| SubjectIdentity {
-            path: path.as_str(),
-            derivations: derivations.iter().map(DerivationPath::as_str).collect(),
+fn subjects_digest(subjects: &[BuildCacheSubject]) -> Result<Digest, BuildCacheError> {
+    let identity = subjects
+        .iter()
+        .map(|subject| {
+            (
+                subject.derivation.as_str(),
+                (
+                    subject
+                        .outputs
+                        .iter()
+                        .map(StorePath::as_str)
+                        .collect::<Vec<_>>(),
+                    subject
+                        .input_outputs
+                        .iter()
+                        .map(StorePath::as_str)
+                        .collect::<Vec<_>>(),
+                ),
+            )
         })
-        .collect::<Vec<_>>();
+        .collect::<BTreeMap<_, _>>();
     canonical_digest(&identity).map_err(|_| invalid_evidence())
 }
 
@@ -562,7 +553,10 @@ mod tests {
     #[test]
     fn classification_is_exact_sorted_and_missing_derivations_are_private() {
         let subjects = vec![
-            BuildCacheSubject::new(drv("root"), vec![path("root")]).unwrap(),
+            BuildCacheSubject::new(drv("root"), vec![path("root")])
+                .unwrap()
+                .with_input_outputs(vec![path("dep")])
+                .unwrap(),
             BuildCacheSubject::new(drv("dep"), vec![path("dep")]).unwrap(),
         ];
         let first = classify_build_cache(
@@ -588,6 +582,42 @@ mod tests {
         ]));
         let (_, missing) = first.into_parts();
         assert_eq!(missing, vec![drv("root")]);
+    }
+
+    #[test]
+    fn missing_package_stops_at_cached_compiler_and_ignores_unrequested_outputs() {
+        let subjects = vec![
+            BuildCacheSubject::new(drv("root"), vec![path("root")])
+                .unwrap()
+                .with_input_outputs(vec![path("compiler"), path("source")])
+                .unwrap(),
+            BuildCacheSubject::new(
+                drv("compiler"),
+                vec![path("compiler"), path("compiler-doc")],
+            )
+            .unwrap()
+            .with_input_outputs(vec![path("bootstrap")])
+            .unwrap(),
+            BuildCacheSubject::new(drv("bootstrap"), vec![path("bootstrap")]).unwrap(),
+            BuildCacheSubject::new(drv("source"), vec![path("source")]).unwrap(),
+        ];
+        let evidence = classify_build_cache(
+            &[target(subjects.clone(), vec![path("root")])],
+            &Probe(vec![
+                CachePathObservation::miss(path("root")),
+                CachePathObservation::hit(path("compiler"), 10, 20),
+                CachePathObservation::miss(path("source")),
+            ]),
+        )
+        .unwrap();
+        assert!(evidence.matches_subjects(&subjects));
+        let mut changed = subjects;
+        changed[0] = changed[0]
+            .clone()
+            .with_input_outputs(vec![path("compiler")])
+            .unwrap();
+        assert!(!evidence.matches_subjects(&changed));
+        assert_eq!(evidence.into_parts().1, vec![drv("root"), drv("source")]);
     }
 
     #[test]

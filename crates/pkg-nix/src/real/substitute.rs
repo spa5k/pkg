@@ -405,14 +405,17 @@ pub(super) fn normalize_derivation(
             .map(|(name, path, _)| (name, path))
             .collect::<BTreeMap<_, _>>();
         let document = serde_json::to_vec(item).map_err(|_| malformed())?;
-        derivations.push(EvaluatedDerivation::new(
-            derivation_path(raw_path)?,
-            item.name.clone(),
-            system,
-            outputs,
-            body_digest(&document),
-            fixed_output,
-        )?);
+        derivations.push(
+            EvaluatedDerivation::new(
+                derivation_path(raw_path)?,
+                item.name.clone(),
+                system,
+                outputs,
+                body_digest(&document),
+                fixed_output,
+            )?
+            .with_input_outputs(derivation_input_outputs(item, &raw.derivations)?)?,
+        );
     }
     let closure = serde_json::to_vec(&raw.derivations).map_err(|_| malformed())?;
     let pname = string_attr("pname")?
@@ -430,6 +433,37 @@ pub(super) fn normalize_derivation(
         pname,
         pkg_core::PackageVersion::new(version),
     )
+}
+
+fn derivation_input_outputs(
+    derivation: &RawDerivation,
+    closure: &BTreeMap<String, RawDerivation>,
+) -> Result<Vec<StorePath>, NixAdapterError> {
+    let mut paths = BTreeMap::new();
+    for (name, input) in &derivation.inputs.drvs {
+        let dependency = closure.get(name).ok_or(NixAdapterError::OperationFailed)?;
+        let outputs = match input {
+            RawInputDerivation::Outputs(outputs) => outputs,
+            RawInputDerivation::Dynamic(input) if input.dynamic_outputs.is_empty() => {
+                &input.outputs
+            }
+            RawInputDerivation::Dynamic(_) => return Err(NixAdapterError::OperationFailed),
+        };
+        for output in outputs {
+            let value = dependency
+                .outputs
+                .get(output)
+                .ok_or(NixAdapterError::OperationFailed)?;
+            let path = value
+                .path
+                .as_deref()
+                .or_else(|| dependency.env.get(output).map(String::as_str))
+                .ok_or(NixAdapterError::OperationFailed)?;
+            let path = store_path(path)?;
+            paths.insert(path.as_str().to_owned(), path);
+        }
+    }
+    Ok(paths.into_values().collect())
 }
 
 pub(super) fn validate_derivation_output(

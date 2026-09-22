@@ -575,6 +575,29 @@ fn derivation_plan_report_round_trip() {
 }
 
 #[test]
+fn derivation_plan_rejects_missing_unknown_and_duplicate_input_edges() {
+    let codec = JsonCodec::production();
+    let encoded = realization_fixture().encode().unwrap();
+    let original: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    for inputs in [
+        None,
+        Some(serde_json::json!([store_path("unknown").as_str()])),
+        Some(serde_json::json!([
+            store_path("hello-1.0").as_str(),
+            store_path("hello-1.0").as_str()
+        ])),
+    ] {
+        let mut wire = original.clone();
+        let derivation = wire["derivations"][0].as_object_mut().unwrap();
+        derivation.remove("inputOutputs");
+        if let Some(inputs) = inputs {
+            derivation.insert("inputOutputs".into(), inputs);
+        }
+        assert!(DerivationPlanReport::decode(&codec, &serde_json::to_vec(&wire).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn path_info_report_round_trip() {
     let c = JsonCodec::production();
     let p = path_info_fixture();
@@ -1350,7 +1373,7 @@ fn decode_rejects_duplicate_realization_output_keys() {
     let p = format!("/nix/store/{STORE_HASH}-hello-1.0");
     let d = format!("/nix/store/{STORE_HASH}-hello-1.0.drv");
     let bad = format!(
-        r#"{{"schemaVersion":1,"jsonVersion":4,"root":"{d}","outputsToInstall":["out"],"derivations":[{{"derivation":"{d}","name":"hello-1.0","system":"x86_64-linux","outputs":{{"out":"{p}","out":"{p}"}},"documentDigest":"sha256-0101010101010101010101010101010101010101010101010101010101010101","fixedOutput":false}}],"closureDigest":"sha256-0202020202020202020202020202020202020202020202020202020202020202","pname":"hello","version":"1.0"}}"#
+        r#"{{"schemaVersion":1,"jsonVersion":4,"root":"{d}","outputsToInstall":["out"],"derivations":[{{"derivation":"{d}","name":"hello-1.0","system":"x86_64-linux","outputs":{{"out":"{p}","out":"{p}"}},"inputOutputs":[],"documentDigest":"sha256-0101010101010101010101010101010101010101010101010101010101010101","fixedOutput":false}}],"closureDigest":"sha256-0202020202020202020202020202020202020202020202020202020202020202","pname":"hello","version":"1.0"}}"#
     );
     let err = decode_err!(c, DerivationPlanReport, bad.as_bytes());
     assert_eq!(err.code(), NixAdapterErrorCode::MalformedPayload);

@@ -952,8 +952,16 @@ fn nixpkgs_metadata_runner_failure_is_closed() {
 #[test]
 fn derivation_v4_normalizes_relative_paths_and_closed_fields()
 -> Result<(), Box<dyn std::error::Error>> {
-    let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/nix/store/11111111111111111111111111111111-bash","env":{"dev":"/nix/store/44444444444444444444444444444444-demo-dev","out":"/nix/store/22222222222222222222222222222222-demo","outputs":"dev","pname":"legacy","version":"0.9"},"inputs":{"drvs":{"33333333333333333333333333333333-dep.drv":["out"]},"srcs":[]},"name":"demo-1.0","outputs":{"dev":{"path":"44444444444444444444444444444444-demo-dev"},"out":{"path":"22222222222222222222222222222222-demo"}},"structuredAttrs":{"__structuredAttrs":true,"meta":{"outputsToInstall":["out"]},"outputs":["dev","out"],"pname":"demo","version":"1.0"},"system":"aarch64-linux","version":4}}}"#;
-    let executor = Scripted::new(vec![success(raw.as_slice()), success(raw.as_slice())]);
+    let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/nix/store/11111111111111111111111111111111-bash","env":{"dev":"/nix/store/44444444444444444444444444444444-demo-dev","out":"/nix/store/22222222222222222222222222222222-demo","outputs":"dev","pname":"legacy","version":"0.9"},"inputs":{"drvs":{"33333333333333333333333333333333-dep.drv":["out"]},"srcs":[]},"name":"demo-1.0","outputs":{"dev":{"path":"44444444444444444444444444444444-demo-dev"},"out":{"path":"22222222222222222222222222222222-demo"}},"structuredAttrs":{"__structuredAttrs":true,"meta":{"outputsToInstall":["out"]},"outputs":["dev","out"],"pname":"demo","version":"1.0"},"system":"aarch64-linux","version":4},"33333333333333333333333333333333-dep.drv":{"args":[],"builder":"/bin/sh","env":{},"inputs":{"drvs":{},"srcs":[]},"name":"dep","outputs":{"out":{"path":"55555555555555555555555555555555-dep"},"doc":{"path":"66666666666666666666666666666666-dep-doc"}},"system":"aarch64-linux","version":4}}}"#;
+    let mut selected: serde_json::Value = serde_json::from_slice(raw)?;
+    selected["derivations"]
+        .as_object_mut()
+        .unwrap()
+        .remove("33333333333333333333333333333333-dep.drv");
+    let executor = Scripted::new(vec![
+        success(serde_json::to_vec(&selected)?),
+        success(raw.as_slice()),
+    ]);
     let calls = Arc::clone(&executor.calls);
     let adapter = RealNixAdapter::scripted(executor);
     let request = EvaluateDerivationRequest::new(
@@ -969,6 +977,22 @@ fn derivation_v4_normalizes_relative_paths_and_closed_fields()
     assert_eq!(report.version().as_str(), "1.0");
     assert_eq!(report.outputs_to_install().len(), 1);
     assert_eq!(report.outputs_to_install()[0].as_str(), "out");
+    let root = report
+        .derivations()
+        .iter()
+        .find(|item| item.derivation() == report.root())
+        .unwrap();
+    assert_eq!(
+        root.input_outputs(),
+        &[StorePath::new(
+            "/nix/store/55555555555555555555555555555555-dep"
+        )?]
+    );
+    assert_eq!(
+        DerivationPlanReport::decode(&crate::JsonCodec::production(), &report.encode()?)?,
+        report
+    );
+
     let calls = calls.lock().map_err(|_| "poisoned call log")?;
     assert_eq!(calls.len(), 2);
     for call in calls.iter() {

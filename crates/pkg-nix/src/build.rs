@@ -799,6 +799,14 @@ impl BuildPlan {
         let mut expected_outputs = BTreeSet::new();
         let mut cache_inputs = BTreeMap::new();
         for target in &targets {
+            let required_inputs = target
+                .plan
+                .derivations()
+                .iter()
+                .filter(|item| missing_derivation_names.contains(item.derivation().as_str()))
+                .flat_map(crate::EvaluatedDerivation::input_outputs)
+                .map(StorePath::as_str)
+                .collect::<BTreeSet<_>>();
             let source_matches = match &target.source_revision {
                 SourceRevision::CurrentChannel => true,
                 SourceRevision::PinnedChannel(sequence) => *sequence == channel_seq,
@@ -832,10 +840,15 @@ impl BuildPlan {
                     return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
                 }
                 if !missing_derivation_names.contains(derivation.derivation().as_str()) {
-                    for path in derivation.outputs().values() {
-                        cache_inputs
-                            .entry(path.as_str().to_owned())
-                            .or_insert_with(|| path.clone());
+                    for (name, path) in derivation.outputs() {
+                        if required_inputs.contains(path.as_str())
+                            || (derivation.derivation() == target.plan.root()
+                                && target.plan.outputs_to_install().contains(name))
+                        {
+                            cache_inputs
+                                .entry(path.as_str().to_owned())
+                                .or_insert_with(|| path.clone());
+                        }
                     }
                 }
             }
@@ -2989,12 +3002,20 @@ mod tests {
             Digest::from_bytes([document_byte; 32]),
             false,
         )
+        .unwrap()
+        .with_input_outputs(vec![dependency_output()])
         .unwrap();
         let dependency = EvaluatedDerivation::new(
             dependency_derivation(),
             "dependency-1.0".to_owned(),
             system,
-            BTreeMap::from([(OutputName::new("out").unwrap(), dependency_output())]),
+            BTreeMap::from([
+                (OutputName::new("out").unwrap(), dependency_output()),
+                (
+                    OutputName::new("doc").unwrap(),
+                    StorePath::new(&format!("/nix/store/{STORE_HASH}-unused-doc")).unwrap(),
+                ),
+            ]),
             Digest::from_bytes([document_byte.wrapping_add(2); 32]),
             false,
         )
