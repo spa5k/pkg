@@ -19,7 +19,7 @@ plist="$work/job.plist"
 
 /bin/cat > "$worker" <<EOF
 #!/bin/sh
-/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root "$script_dir/pkg-install"
+/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root PKG_INSTALL_DEBUG=1 "$script_dir/pkg-install"
 code=\$?
 /bin/echo "\$code" > "$status"
 exit "\$code"
