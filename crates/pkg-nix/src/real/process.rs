@@ -472,6 +472,27 @@ pub(super) fn root_store_args() -> Vec<OsString> {
     args
 }
 
+pub(super) fn sandboxed_build_args() -> Vec<OsString> {
+    let mut args = base_args();
+    // The standard macOS vendor configuration does not enable the sandbox.
+    // Fix these options at the root execution boundary for every pkg build.
+    args.extend(os_args([
+        "--option",
+        "sandbox",
+        "true",
+        "--option",
+        "sandbox-fallback",
+        "false",
+        "--option",
+        "build-users-group",
+        "nixbld",
+        "--option",
+        "builders",
+        "",
+    ]));
+    args
+}
+
 pub(super) fn os_args<const N: usize>(values: [&str; N]) -> Vec<OsString> {
     values.into_iter().map(OsString::from).collect()
 }

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt;
+use std::io::Write;
 use std::sync::Arc;
 
 use pkg_channel::VerifiedChannel;
@@ -127,7 +128,7 @@ impl AuthenticatedBuildIntent {
             readiness,
             host_cores,
         )
-        .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::PlanRejected))
+        .map_err(BuildIntentError::plan)
     }
 }
 
@@ -170,6 +171,14 @@ impl BuildIntentError {
             code: BuildIntentErrorCode::CacheClassificationFailed,
             cache_code: Some(error.code()),
         }
+    }
+
+    fn plan(error: crate::LocalBuildPlanError) -> Self {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "pkg broker build plan refused: {error:?}"
+        );
+        Self::new(BuildIntentErrorCode::PlanRejected)
     }
 
     /// Returns the stable private replanning failure category.
@@ -288,10 +297,13 @@ impl AuthenticatedBuildReplanner {
 
     /// Produces the initial private plan used for the public preview.
     pub fn initial_plan(&self) -> Result<BuildPlan, BuildIntentError> {
-        let facts = self
-            .host
-            .observe()
-            .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::PlanRejected))?;
+        let facts = self.host.observe().map_err(|_| {
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "pkg broker build planning refused: stage=host_readiness"
+            );
+            BuildIntentError::new(BuildIntentErrorCode::PlanRejected)
+        })?;
         self.intent.plan(
             self.adapter.as_ref(),
             facts.system,

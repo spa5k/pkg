@@ -74,6 +74,49 @@ fn failure(code: i32) -> CommandOutcome {
 }
 
 #[test]
+fn install_and_repair_builds_enforce_local_sandbox_options()
+-> Result<(), Box<dyn std::error::Error>> {
+    let request = BuildRequest::new(
+        vec![crate::DerivedOutputTarget::all(DerivationPath::from_str(
+            "/nix/store/22222222222222222222222222222222-demo.drv",
+        )?)],
+        System::Aarch64Darwin,
+        crate::BuildApprovalReceipt::new(
+            crate::OperationId::new("op-build-options")?,
+            body_digest(b"approved plan"),
+            PolicyVersion::from_u64(1).ok_or("policy")?,
+        ),
+    )?;
+    let build = Scripted::new(vec![failure(1)]);
+    let build_calls = Arc::clone(&build.calls);
+    assert!(RealNixAdapter::scripted(build).build(&request).is_err());
+    let repair = Scripted::new(vec![failure(1)]);
+    let repair_calls = Arc::clone(&repair.calls);
+    assert!(
+        RootNixRepairExecutor::scripted(repair)
+            .execute(&repair_scope(RepairMode::Build)?)
+            .is_err()
+    );
+    for calls in [build_calls, repair_calls] {
+        let calls = calls.lock().map_err(|_| "poisoned call log")?;
+        assert_eq!(calls.len(), 1);
+        for (key, value) in [
+            ("sandbox", "true"),
+            ("sandbox-fallback", "false"),
+            ("build-users-group", "nixbld"),
+            ("builders", ""),
+        ] {
+            assert!(
+                calls[0]
+                    .windows(3)
+                    .any(|args| args == os_args(["--option", key, value]))
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn absolute_root_operation_deadline_clamps_all_executor_timeouts() {
     let deadline = Instant::now().checked_add(Duration::from_mins(1)).unwrap();
     for local_limit in [SHORT_TIMEOUT, BUILD_TIMEOUT, GC_TIMEOUT] {

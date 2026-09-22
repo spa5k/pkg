@@ -1,6 +1,6 @@
 //! Broker-private production assembly of authenticated local-build authority.
 
-use std::{error::Error, fmt, sync::Arc};
+use std::{error::Error, fmt, io::Write, sync::Arc};
 
 use pkg_channel::VerifiedChannel;
 use pkg_core::PackageSelector;
@@ -54,9 +54,13 @@ impl AuthenticatedBuildPreparation {
         )
         .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::IntentRefused))?;
         let replanner = Arc::new(AuthenticatedBuildReplanner::new(intent, adapter, host));
-        let initial_plan = replanner
-            .initial_plan()
-            .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused))?;
+        let initial_plan = replanner.initial_plan().map_err(|error| {
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "pkg broker build preparation refused: {error:?}"
+            );
+            BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused)
+        })?;
         let estimates = initial_plan
             .bootstrap_estimates()
             .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused))?;

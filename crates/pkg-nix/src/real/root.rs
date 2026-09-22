@@ -233,7 +233,8 @@ impl VerifiedRepairExecutor for RootNixRepairExecutor {
             .ok_or_else(MaintenanceError::backend_failure)?;
         let mut outcomes = Vec::with_capacity(scope.paths().len());
         for path in scope.paths() {
-            let mut repair = root_store_args();
+            let mut repair = sandboxed_build_args();
+            repair.extend(os_args(["--store", "local"]));
             repair.extend(os_args([
                 "--option",
                 "max-jobs",
@@ -241,9 +242,6 @@ impl VerifiedRepairExecutor for RootNixRepairExecutor {
                     RepairMode::CacheOnly => "0",
                     RepairMode::Build => "1",
                 },
-                "--option",
-                "builders",
-                "",
                 "store",
                 "repair",
             ]));

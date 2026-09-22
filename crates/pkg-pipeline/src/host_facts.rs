@@ -42,11 +42,11 @@ impl ProductionBuildHostFactsProbe {
     /// Binds the fixed-path observer to the authenticated platform host contract.
     pub fn from_verified_channel(channel: &VerifiedChannel) -> Result<Self, BuildHostFactsError> {
         let system = production_native_system()?;
-        let expected_config = if matches!(system, System::X8664Linux | System::Aarch64Linux) {
-            String::new()
-        } else {
+        let expected_config = if system == System::X8664Darwin {
             render_managed_build_nix_conf(system, channel.descriptor().cache())
                 .map_err(|_| BuildHostFactsError)?
+        } else {
+            String::new()
         };
         Ok(Self {
             system,
@@ -142,10 +142,10 @@ impl HostSource for ProductionHostSource {
 
 #[cfg(test)]
 fn observe(source: &dyn HostSource, system: System) -> Result<BuildHostFacts, BuildHostFactsError> {
-    if matches!(system, System::X8664Linux | System::Aarch64Linux) {
-        observe_bound(source, system, "")
-    } else {
+    if system == System::X8664Darwin {
         observe_bound(source, system, &source.managed_config()?)
+    } else {
+        observe_bound(source, system, "")
     }
 }
 
@@ -155,7 +155,9 @@ fn observe_bound(
     expected_config: &str,
 ) -> Result<BuildHostFacts, BuildHostFactsError> {
     let linux = matches!(system, System::X8664Linux | System::Aarch64Linux);
-    if !linux {
+    // Standard Determinate builds enforce sandbox settings per operation in
+    // the root executor; they do not use the retired product nix.conf.
+    if system == System::X8664Darwin {
         let actual_config = source.managed_config()?;
         if actual_config != expected_config {
             return Err(BuildHostFactsError);

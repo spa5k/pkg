@@ -112,7 +112,8 @@ impl RealNixAdapter {
 
     /// Constructs an adapter for the fixed standard Determinate Nix profile.
     ///
-    /// This mode uses the vendor configuration unchanged. It accepts no
+    /// This mode keeps vendor configuration files unchanged and enforces
+    /// local sandbox options on build operations. It accepts no
     /// caller-selected executable, Nix configuration, daemon socket, state
     /// directory, or remote.
     pub fn new_standard_determinate(private_home: &Path) -> Result<Self, NixAdapterError> {
@@ -541,7 +542,7 @@ impl RealNixAdapter {
         cancelled: &dyn Fn() -> bool,
         progress: &mut dyn FnMut(BuildProgressEstimate) -> Result<(), NixAdapterError>,
     ) -> Result<BuildReport, NixAdapterError> {
-        let mut args = base_args();
+        let mut args = sandboxed_build_args();
         args.extend(os_args([
             "--log-format",
             "internal-json",
