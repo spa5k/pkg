@@ -15,13 +15,18 @@ work=$(/usr/bin/mktemp -d /private/var/db/pkg-install-background.XXXXXX)
 status="$work/status"
 output="$work/output"
 label="com.pkg.install.$$"
+payload="$work/pkg-install"
 worker="$work/worker"
 plist="$work/job.plist"
+
+/bin/cp "$script_dir/pkg-install" "$payload"
+/bin/chmod 755 "$payload"
+/usr/bin/codesign --verify --strict --verbose=2 "$payload"
 
 /bin/cat > "$worker" <<EOF
 #!/bin/sh
 /bin/sleep 10
-/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root PKG_INSTALL_DEBUG=1 "$script_dir/pkg-install"
+/usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root PKG_INSTALL_DEBUG=1 "$payload"
 code=\$?
 /bin/echo "\$code" > "$status"
 exit "\$code"
