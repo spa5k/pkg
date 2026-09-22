@@ -201,7 +201,11 @@ fn repair_executors_keep_standard_determinate_and_managed_environments_distinct(
     );
     assert_eq!(
         standard_environment.get("TMPDIR"),
-        Some(&home.join("tmp").display().to_string())
+        Some(&if cfg!(target_os = "macos") {
+            "/private/tmp".to_owned()
+        } else {
+            home.join("tmp").display().to_string()
+        })
     );
     assert_eq!(
         standard_environment.get("NIX_USER_CONF_FILES"),
