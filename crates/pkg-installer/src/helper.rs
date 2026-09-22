@@ -113,7 +113,10 @@ pub trait BrokerHelperDispatch: Send + Sync {
 #[derive(Debug)]
 enum RootNixState {
     Inactive,
-    #[allow(dead_code, reason = "DN09 keeps production activation closed")]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(dead_code, reason = "Linux uses the daemon directly")
+    )]
     Standard(RealNixAdapter),
 }
 
@@ -173,6 +176,12 @@ impl fmt::Debug for LinuxHelperSession {
 }
 
 impl LinuxHelperSession {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn with_standard_nix(mut self, adapter: RealNixAdapter) -> Self {
+        self.nix = RootNixState::Standard(adapter);
+        self
+    }
+
     /// Binds an authenticated PR-39 helper session to the real root filesystem.
     #[must_use]
     pub fn new(authenticated: AuthenticatedHelper, roots: LinuxRootSetStore) -> Self {
@@ -453,7 +462,17 @@ fn adapter_result<T>(
     result: Result<T, NixAdapterError>,
     success: fn(T) -> RootNixResponse,
 ) -> RootNixResponse {
-    result.map_or_else(|error| adapter_failure(operation, &error), success)
+    result.map_or_else(
+        |error| {
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "pkg root Nix operation refused: operation={operation:?} code={:?}",
+                error.code()
+            );
+            adapter_failure(operation, &error)
+        },
+        success,
+    )
 }
 
 fn cache_result<T>(
@@ -963,6 +982,49 @@ mod tests {
                 operation: RootNixOperation::Version,
                 failure: RootNixFailure::Inactive,
             }))
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn activated_macos_runtime_dispatches_and_keeps_operation_deadlines()
+    -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new()?;
+        let home = Scratch::new()?;
+        std::fs::create_dir(home.0.join("tmp"))?;
+        std::fs::set_permissions(home.0.join("tmp"), std::fs::Permissions::from_mode(0o700))?;
+        let binary = home.0.join("nix");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\nprintf '%s (Nix) 2.34.8\\n' \"${0##*/}\"\n",
+        )?;
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::copy(&binary, home.0.join("nix-store"))?;
+        let adapter = RealNixAdapter::new(&binary, &home.0)?;
+        let uid = Uid::current().as_raw();
+        let helper = InProcessHelper::new(uid)?;
+        let session = LinuxHelperSession::new(
+            helper.connect(InProcessPeer::authenticated_uid(uid))?,
+            LinuxRootSetStore::new_at(scratch.0.clone(), uid)?,
+        )
+        .with_standard_nix(adapter);
+        assert!(matches!(
+            session.dispatch(BrokerHelperRequest::RootNix(RootNixRequest::Version))?,
+            BrokerHelperResponse::RootNix(response)
+                if matches!(response.as_ref(), RootNixResponse::Version(_))
+        ));
+        assert_eq!(
+            session.dispatch_build(
+                &build_request()?,
+                Instant::now(),
+                &AtomicBool::new(false),
+                &mut |_| Ok(())
+            ),
+            root_nix_failure(
+                RootNixOperation::Build,
+                RootNixFailure::Adapter(pkg_nix::NixAdapterErrorCode::Timeout)
+            )
         );
         Ok(())
     }

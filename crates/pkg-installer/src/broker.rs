@@ -525,6 +525,13 @@ impl BuildAuthorityDispatch for AuthenticatedBuildAuthority {
                 adapter.as_ref(),
                 &mut |estimate| progress(estimate).map_err(|()| NixAdapterError::OperationFailed),
             )
+            .inspect_err(|error| {
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "pkg broker build execution refused: {:?}",
+                    error.code()
+                );
+            })
             .map_err(pkg_nix::BrokerError::code)
     }
 }

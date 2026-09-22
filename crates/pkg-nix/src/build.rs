@@ -2798,7 +2798,13 @@ impl LocalBuildEngine {
         let substitutions = runtime
             .adapter
             .substitute_many(&current.execution.cache_inputs)
-            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            .map_err(|error| {
+                eprintln!(
+                    "pkg build failed: stage=cache_inputs code={:?}",
+                    error.code()
+                );
+                BuildEngineError::new(BuildEngineErrorCode::BuildFailed)
+            })?;
         if substitutions.len() != current.execution.cache_inputs.len() {
             return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
         }
@@ -2825,7 +2831,10 @@ impl LocalBuildEngine {
         let report = runtime
             .adapter
             .build_with_progress(&request, runtime.progress)
-            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            .map_err(|error| {
+                eprintln!("pkg build failed: stage=execute code={:?}", error.code());
+                BuildEngineError::new(BuildEngineErrorCode::BuildFailed)
+            })?;
         if report.status() == BuildStatus::AcquireNoBinary {
             return Err(BuildEngineError::new(BuildEngineErrorCode::AcquireNoBinary));
         }
