@@ -212,6 +212,7 @@ fn validate_script(script: &[HttpExchange]) -> Result<(), HttpFixtureError> {
 fn serve(listener: &TcpListener, script: Vec<HttpExchange>) -> Result<(), HttpFixtureError> {
     for exchange in script {
         let mut stream = accept_bounded(listener)?;
+        stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
         stream.set_write_timeout(Some(IO_TIMEOUT))?;
         let (method, path) = read_request_line(&mut stream)?;
@@ -325,6 +326,9 @@ mod tests {
 
     fn request(server: &FixtureHttpServer, path: &str) -> io::Result<Vec<u8>> {
         let mut stream = TcpStream::connect(server.address)?;
+        // Let the server accept before the request arrives. Accepted sockets
+        // inherit nonblocking mode on macOS and must be reset before reading.
+        thread::sleep(Duration::from_millis(20));
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
         // The DropConnection fault can reset the socket before this write lands.
         // A broken pipe here is an expected transcript outcome, not a failure.
@@ -349,24 +353,6 @@ mod tests {
     #[test]
     fn exact_transcript_serves_drop_and_truncate_faults() -> Result<(), Box<dyn std::error::Error>>
     {
-        // Shared macOS CI runners intermittently reset the first loopback
-        // exchange (observed 2026-09-05/06 on two lanes; not reproducible
-        // locally in 100 runs). Every attempt must satisfy every assertion;
-        // only transport-level failures retry on a fresh server.
-        let mut last_error: Option<Box<dyn std::error::Error>> = None;
-        for attempt in 1..=3_u8 {
-            match transcript_once() {
-                Ok(()) => return Ok(()),
-                Err(error) => {
-                    eprintln!("transcript attempt {attempt} failed: {error}");
-                    last_error = Some(error);
-                }
-            }
-        }
-        Err(last_error.expect("at least one attempt ran"))
-    }
-
-    fn transcript_once() -> Result<(), Box<dyn std::error::Error>> {
         let complete = FixtureResponse::new(200, "application/json", b"{\"ok\":true}".to_vec())?;
         let truncated =
             FixtureResponse::new(200, "application/octet-stream", b"complete-body".to_vec())?;
