@@ -6,11 +6,12 @@ case "$script_dir" in /*) ;; *) exit 1 ;; esac
 
 /usr/bin/codesign --verify --strict --verbose=2 "$script_dir/pkg-install"
 
-# PackageKit runs scripts in a protected filesystem view. Run the real
-# installer as a system launchd job so the vendor installer can update
-# /etc/fstab and mount /nix outside that view.
-work=$(/usr/bin/mktemp -d /private/tmp/pkg-install-pkg.XXXXXX)
-trap '/bin/rm -rf "$work"' EXIT HUP INT TERM
+# PackageKit runs scripts in a protected filesystem view. Queue the real
+# installer as a system launchd job and exit first. The worker waits briefly
+# so PackageKit can remove that view before the vendor installer updates
+# /etc/fstab and mounts /nix.
+work=$(/usr/bin/mktemp -d /private/var/db/pkg-install-background.XXXXXX)
+/bin/chmod 700 "$work"
 status="$work/status"
 output="$work/output"
 label="com.pkg.install.$$"
@@ -19,6 +20,7 @@ plist="$work/job.plist"
 
 /bin/cat > "$worker" <<EOF
 #!/bin/sh
+/bin/sleep 10
 /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/var/root PKG_INSTALL_DEBUG=1 "$script_dir/pkg-install"
 code=\$?
 /bin/echo "\$code" > "$status"
@@ -35,6 +37,8 @@ EOF
   <string>$label</string>
   <key>ProgramArguments</key>
   <array><string>$worker</string></array>
+  <key>RunAtLoad</key>
+  <true/>
   <key>StandardOutPath</key>
   <string>$output</string>
   <key>StandardErrorPath</key>
@@ -43,29 +47,10 @@ EOF
 </plist>
 EOF
 
-/bin/rm -f "$status" "$output"
 if ! /bin/launchctl bootstrap system "$plist"; then
     /bin/cat "$output" 2>/dev/null || true
+    /bin/rm -rf "$work"
     exit 1
 fi
-if ! /bin/launchctl kickstart system/"$label"; then
-    /bin/launchctl bootout system/"$label" 2>/dev/null || true
-    /bin/cat "$output" 2>/dev/null || true
-    exit 1
-fi
-
-attempts=0
-while [ ! -f "$status" ]; do
-    /bin/sleep 1
-    attempts=$((attempts + 1))
-    if [ "$attempts" -ge 1800 ]; then
-        /bin/launchctl bootout system/"$label" 2>/dev/null || true
-        /bin/cat "$output" 2>/dev/null || true
-        exit 1
-    fi
-done
-
-code=$(/bin/cat "$status")
-/bin/launchctl bootout system/"$label" 2>/dev/null || true
-/bin/cat "$output" 2>/dev/null || true
-exit "$code"
+/bin/echo "pkg installation queued: label=$label log=$output"
+exit 0
