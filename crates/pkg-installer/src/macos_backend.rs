@@ -498,11 +498,20 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn check_managed_daemon(&mut self) -> Result<(), MacOsError> {
+        crate::bootstrap::prepare_private_nix_home_at(Path::new(INSTALLER_NIX_HOME), 0, 0)
+            .map_err(|error| {
+                eprintln!("macos daemon check: prepare private home failed: {error:?}");
+                MacOsError::backend_failure()
+            })?;
         let adapter = RealNixAdapter::new_standard_determinate(Path::new(INSTALLER_NIX_HOME))
-            .map_err(|_| MacOsError::backend_failure())?;
-        adapter
-            .wait_for_managed_store()
-            .map_err(|_| MacOsError::backend_failure())
+            .map_err(|error| {
+                eprintln!("macos daemon check: adapter initialization failed: {error:?}");
+                MacOsError::backend_failure()
+            })?;
+        adapter.wait_for_managed_store().map_err(|error| {
+            eprintln!("macos daemon check: store probe failed: {error:?}");
+            MacOsError::backend_failure()
+        })
     }
 
     fn observe_build_readiness(

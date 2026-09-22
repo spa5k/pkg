@@ -148,6 +148,20 @@ pub(super) fn prepare_private_directory_at(
     Ok(())
 }
 
+/// Prepares the private HOME and TMPDIR required by the installer's Nix adapter.
+///
+/// # Errors
+///
+/// Rejects unsafe existing paths, wrong ownership, or directory creation failure.
+pub fn prepare_private_nix_home_at(
+    path: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    prepare_private_directory_at(path, expected_user, expected_group)?;
+    prepare_private_directory_at(&path.join("tmp"), expected_user, expected_group)
+}
+
 /// Prepares the vendor temp directory used as `TMPDIR` for the Determinate
 /// installer on macOS. Unlike the private install-state directory, the vendor
 /// temp directory must let the vendor's unprivileged Nix build users traverse

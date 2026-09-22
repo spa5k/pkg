@@ -21,6 +21,32 @@ const SUPERVISOR_LOSS_ROOT_ENV: &str = "PKG_TEST_DN15_SUPERVISOR_LOSS_ROOT";
 const SUPERVISOR_LOSS_EXECUTABLE_ENV: &str = "PKG_TEST_DN15_SUPERVISOR_LOSS_EXECUTABLE";
 
 #[test]
+fn installer_nix_home_creates_private_tmp_and_rejects_unsafe_reuse()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let home = temporary.path().join("home");
+    let uid = nix::unistd::Uid::effective().as_raw();
+    let gid = nix::unistd::Gid::effective().as_raw();
+    prepare_private_directory_at(&home, uid, gid)?;
+    let binary = temporary.path().join("nix");
+    fs::write(&binary, [])?;
+    fs::write(temporary.path().join("nix-store"), [])?;
+    assert!(pkg_nix::RealNixAdapter::new(&binary, &home).is_err());
+    prepare_private_nix_home_at(&home, uid, gid)?;
+    assert!(pkg_nix::RealNixAdapter::new(&binary, &home).is_ok());
+    prepare_private_nix_home_at(&home, uid, gid)?;
+    assert_eq!(fs::metadata(&home)?.permissions().mode() & 0o777, 0o700);
+    let tmp = home.join("tmp");
+    assert_eq!(fs::metadata(&tmp)?.permissions().mode() & 0o777, 0o700);
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o777))?;
+    assert!(prepare_private_nix_home_at(&home, uid, gid).is_err());
+    fs::remove_dir(&tmp)?;
+    symlink(temporary.path(), &tmp)?;
+    assert!(prepare_private_nix_home_at(&home, uid, gid).is_err());
+    Ok(())
+}
+
+#[test]
 fn linux_recovery_context_binds_installation_and_scratch_paths()
 -> Result<(), Box<dyn std::error::Error>> {
     let digest = Digest::from_bytes([0x90; 32]);

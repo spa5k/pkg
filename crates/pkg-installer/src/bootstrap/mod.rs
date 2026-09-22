@@ -8,6 +8,7 @@ mod recovery;
 mod tests;
 use backend::install_macos_with_provisioner_journaled;
 use provision::AuthenticatedProvisioner;
+pub use recovery::prepare_private_nix_home_at;
 pub use recovery::validate_linux_auth_datastore_file;
 use recovery::{
     LinuxJournalLocation, continue_linux_bundle_install, load_linux_bundle_for_recovery,

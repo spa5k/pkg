@@ -530,7 +530,7 @@ pub fn install_macos(
     system: System,
     backend: &mut dyn MacOsInstallBackend,
 ) -> Result<MacOsInstallReport, MacOsError> {
-    preflight_macos(system, backend)?;
+    install_step("preflight", || preflight_macos(system, backend))?;
     let mut mutations = Vec::new();
     let mut created = 0_usize;
     let mut existing = 0_usize;
@@ -541,13 +541,15 @@ pub fn install_macos(
             record_asset_result(backend, asset, &mut mutations, &mut created, &mut existing)?;
         }
         mutations.push(InstallMutation::Runtime);
-        if !backend.provision_managed_runtime()? {
+        if !install_step("provision-runtime", || backend.provision_managed_runtime())? {
             let _ = mutations.pop();
         }
-        backend
-            .check_managed_daemon()
-            .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))?;
-        backend.accept_base_nix_handoff()?;
+        install_step("check-base-nix", || {
+            backend
+                .check_managed_daemon()
+                .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))
+        })?;
+        install_step("accept-base-nix", || backend.accept_base_nix_handoff())?;
         let nix_root = macos_product_install_assets()
             .find(|asset| asset.id == "nix-root")
             .ok_or_else(MacOsError::backend_failure)?;
@@ -562,15 +564,13 @@ pub fn install_macos(
             .filter(|asset| asset.kind == MacOsAssetKind::File && asset.id != "uninstall-manifest")
         {
             mutations.push(InstallMutation::Asset(asset));
-            let was_created = match asset.id {
+            let was_created = install_step(asset.id, || match asset.id {
                 "helper-plist" => {
-                    backend.install_launchd_plist(asset, MacOsLaunchdAssets::ROOT_HELPER)?
+                    backend.install_launchd_plist(asset, MacOsLaunchdAssets::ROOT_HELPER)
                 }
-                "broker-plist" => {
-                    backend.install_launchd_plist(asset, MacOsLaunchdAssets::BROKER)?
-                }
-                _ => backend.ensure_asset(asset)?,
-            };
+                "broker-plist" => backend.install_launchd_plist(asset, MacOsLaunchdAssets::BROKER),
+                _ => backend.ensure_asset(asset),
+            })?;
             if was_created {
                 created = created.saturating_add(1);
             } else {
@@ -578,28 +578,36 @@ pub fn install_macos(
                 existing = existing.saturating_add(1);
             }
         }
-        backend
-            .verify_installed_code()
-            .map_err(|_| MacOsError::new(MacOsErrorCode::CodeSignatureInvalid))?;
+        install_step("verify-code", || {
+            backend
+                .verify_installed_code()
+                .map_err(|_| MacOsError::new(MacOsErrorCode::CodeSignatureInvalid))
+        })?;
         mutations.push(InstallMutation::Services);
-        if !backend
-            .activate_services()
-            .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))?
-        {
+        if !install_step("activate-services", || {
+            backend
+                .activate_services()
+                .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))
+        })? {
             let _ = mutations.pop();
         }
-        backend
-            .check_managed_daemon()
-            .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))?;
-        let receipt_presence = backend.classify_ownership_receipt()?;
+        install_step("check-services", || {
+            backend
+                .check_managed_daemon()
+                .map_err(|_| MacOsError::new(MacOsErrorCode::ServiceUnhealthy))
+        })?;
+        let receipt_presence =
+            install_step("classify-receipt", || backend.classify_ownership_receipt())?;
         if receipt_presence == AssetPresence::Absent
             || backend.install_mode() == crate::InstallMode::OfflineUpgrade
         {
             mutations.push(InstallMutation::OwnershipReceipt);
         }
-        let receipt_created = backend
-            .publish_ownership_receipt()
-            .map_err(|_| MacOsError::new(MacOsErrorCode::ReceiptFailure))?;
+        let receipt_created = install_step("publish-receipt", || {
+            backend
+                .publish_ownership_receipt()
+                .map_err(|_| MacOsError::new(MacOsErrorCode::ReceiptFailure))
+        })?;
         let expected_receipt_change = match backend.install_mode() {
             crate::InstallMode::FreshInstall => receipt_presence == AssetPresence::Absent,
             crate::InstallMode::OfflineUpgrade => true,
@@ -614,7 +622,8 @@ pub fn install_macos(
         })
     })();
 
-    if result.is_err() {
+    if let Err(error) = &result {
+        eprintln!("macos install failed before rollback: {error:?}");
         let mut rollback_incomplete = false;
         for mutation in mutations.into_iter().rev() {
             let rollback = match mutation {
@@ -623,7 +632,8 @@ pub fn install_macos(
                 InstallMutation::Services => backend.rollback_services(),
                 InstallMutation::OwnershipReceipt => backend.recover_ownership_receipt(),
             };
-            if rollback.is_err() {
+            if let Err(error) = rollback {
+                eprintln!("macos rollback failed: mutation={mutation:?} error={error:?}");
                 rollback_incomplete = true;
             }
         }
@@ -632,6 +642,16 @@ pub fn install_macos(
         }
     }
     result
+}
+
+fn install_step<T>(
+    step: &'static str,
+    operation: impl FnOnce() -> Result<T, MacOsError>,
+) -> Result<T, MacOsError> {
+    eprintln!("macos install: step={step}");
+    operation().inspect_err(|error| {
+        eprintln!("macos install step failed: step={step} error={error:?}");
+    })
 }
 
 /// Reverts one interrupted authenticated macOS installation from durable state.
@@ -745,7 +765,7 @@ pub(super) fn record_asset_result(
     existing: &mut usize,
 ) -> Result<(), MacOsError> {
     mutations.push(InstallMutation::Asset(asset));
-    if backend.ensure_asset(asset)? {
+    if install_step(asset.id, || backend.ensure_asset(asset))? {
         *created = created.saturating_add(1);
     } else {
         let _ = mutations.pop();
