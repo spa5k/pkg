@@ -55,7 +55,7 @@ pub enum DeterminateHandoffState {
     NotStarted,
     /// The vendor process started; its outcome is unknown.
     Started,
-    /// The vendor process exited 0 and installed state validated.
+    /// Vendor installation completed and installed state validated.
     Accepted,
 }
 
@@ -74,6 +74,8 @@ pub enum DeterminateHandoffError {
     IdentityMismatch,
     /// The requested state transition is not allowed.
     InvalidTransition,
+    /// The standard Nix daemon did not pass the installed-state check.
+    InstalledStateUnhealthy,
     /// The handoff could not be persisted.
     PersistenceFailed,
     /// A failed clear could not be restored.
@@ -96,6 +98,7 @@ impl fmt::Display for DeterminateHandoffError {
             Self::InvalidInstaller => "invalid installed Determinate installer identity",
             Self::IdentityMismatch => "accepted Determinate identity changed",
             Self::InvalidTransition => "invalid Determinate handoff transition",
+            Self::InstalledStateUnhealthy => "installed Determinate Nix is not healthy",
             Self::PersistenceFailed => "could not persist Determinate handoff state",
             Self::ClearAndRestoreFailed => "could not clear or restore Determinate handoff state",
         })
@@ -239,6 +242,46 @@ impl DeterminateHandoff {
         self.persist_locked(Record::Accepted { installer, receipt }, false)
     }
 
+    /// Explicit recovery only: accept a completed pinned macOS receipt after a
+    /// fresh daemon probe. Never restart the vendor or accept a partial receipt.
+    pub fn resume_completed_macos_install(
+        &self,
+        probe: impl FnOnce() -> bool,
+    ) -> Result<(), DeterminateHandoffError> {
+        let _lock = self.lock_operation()?;
+        if self.load_locked()? != Some(Record::Started) {
+            return Err(DeterminateHandoffError::InvalidTransition);
+        }
+        let (installer, receipt) = self.observe_vendor_identity()?;
+        let (mut file, _) = open_regular(
+            &self.receipt,
+            &self.trust_root,
+            self.owner,
+            self.group,
+            self.receipt_mode,
+            MAX_RECEIPT_BYTES,
+            DeterminateHandoffError::InvalidReceipt,
+        )?;
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(MAX_RECEIPT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| DeterminateHandoffError::InvalidReceipt)?;
+        if bytes.len() as u64 != receipt.length
+            || Digest::from_bytes(Sha256::digest(&bytes).into()) != receipt.sha256
+            || !completed_macos_receipt(&bytes)
+        {
+            return Err(DeterminateHandoffError::InvalidReceipt);
+        }
+        if !probe() {
+            return Err(DeterminateHandoffError::InstalledStateUnhealthy);
+        }
+        if self.observe_vendor_identity()? != (installer, receipt) {
+            return Err(DeterminateHandoffError::IdentityMismatch);
+        }
+        self.persist_locked(Record::Accepted { installer, receipt }, false)
+    }
+
     /// Enforces the platform receipt mode after a successful vendor install.
     ///
     /// The vendor creates the receipt with the caller's default umask, so a
@@ -334,6 +377,7 @@ impl DeterminateHandoff {
             .parent()
             .ok_or(DeterminateHandoffError::PersistenceFailed)?;
         if parent != self.trust_root {
+            self.remove_probe_cache(parent)?;
             let temporary_directory = parent.join("tmp");
             match fs::remove_dir(&temporary_directory) {
                 Ok(()) => {}
@@ -366,6 +410,25 @@ impl DeterminateHandoff {
                 .map_err(|_| DeterminateHandoffError::PersistenceFailed)?;
         }
         Ok(())
+    }
+
+    fn remove_probe_cache(&self, parent: &Path) -> Result<(), DeterminateHandoffError> {
+        // The daemon probe creates a Nix cache in this private HOME.
+        // Remove only that owned tree before removing the handoff directory.
+        let cache = Path::new("/")
+            .join(
+                parent
+                    .strip_prefix(&self.trust_root)
+                    .map_err(|_| DeterminateHandoffError::PersistenceFailed)?,
+            )
+            .join(".cache");
+        crate::linux_user_cleanup::remove_owned_tree(
+            &self.trust_root,
+            &cache,
+            self.owner,
+            self.owner,
+        )
+        .map_err(|_| DeterminateHandoffError::PersistenceFailed)
     }
 
     #[cfg(test)]
@@ -634,6 +697,39 @@ fn pinned_installer_identity() -> Result<FileIdentity, DeterminateHandoffError> 
 )))]
 fn pinned_installer_identity() -> Result<FileIdentity, DeterminateHandoffError> {
     Err(DeterminateHandoffError::UnsupportedSystem)
+}
+
+const MACOS_RECEIPT_ACTIONS: [&str; 9] = [
+    "provision_determinate_nixd",
+    "create_determinate_nix_volume",
+    "provision_nix",
+    "create_users_and_group",
+    "set_tmutil_exclusions",
+    "configure_nix",
+    "configure_remote_building",
+    "configure_determinate_nixd_init_service",
+    "remove_directory",
+];
+
+fn completed_macos_receipt(bytes: &[u8]) -> bool {
+    let Ok(receipt) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return false;
+    };
+    let Some(actions) = receipt["actions"].as_array() else {
+        return false;
+    };
+    // Vendor parent actions are authoritative: a completed APFS action can
+    // retain a best-effort unmount child in Progress after ignoring its error.
+    receipt["version"] == "3.22.1"
+        && receipt["planner"]["planner"] == "macos"
+        && receipt["planner"]["settings"]["determinate_nix"] == true
+        && actions.len() == MACOS_RECEIPT_ACTIONS.len()
+        && actions
+            .iter()
+            .zip(MACOS_RECEIPT_ACTIONS)
+            .all(|(action, name)| {
+                action["state"] == "Completed" && action["action"]["action_name"] == name
+            })
 }
 
 fn encode(record: &Record) -> Result<Vec<u8>, DeterminateHandoffError> {
@@ -1086,6 +1182,117 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         }
     }
 
+    fn completed_macos_receipt_fixture() -> serde_json::Value {
+        serde_json::json!({
+            "version": "3.22.1",
+            "planner": {"planner": "macos", "settings": {"determinate_nix": true}},
+            "actions": MACOS_RECEIPT_ACTIONS.map(|name| serde_json::json!({
+                "state": "Completed", "action": {"action_name": name}
+            }))
+        })
+    }
+
+    #[test]
+    fn explicit_macos_resume_requires_complete_receipt_and_live_proof() {
+        let complete = completed_macos_receipt_fixture();
+        for (pointer, value) in [
+            ("/version", serde_json::json!("0.0.0")),
+            ("/planner/planner", serde_json::json!("linux")),
+            (
+                "/planner/settings/determinate_nix",
+                serde_json::json!(false),
+            ),
+            ("/actions/0/state", serde_json::json!("Uncompleted")),
+            (
+                "/actions/0/action/action_name",
+                serde_json::json!("unknown"),
+            ),
+            ("/actions", serde_json::json!([])),
+        ] {
+            let fixture = fixture(0o644);
+            let mut receipt = complete.clone();
+            *receipt.pointer_mut(pointer).unwrap() = value;
+            write_mode(
+                &fixture.handoff.receipt,
+                &serde_json::to_vec(&receipt).unwrap(),
+                0o644,
+            );
+            fixture.handoff.record_started().unwrap();
+            let mut probed = false;
+            assert_eq!(
+                fixture.handoff.resume_completed_macos_install(|| {
+                    probed = true;
+                    true
+                }),
+                Err(DeterminateHandoffError::InvalidReceipt)
+            );
+            assert!(!probed);
+            assert_eq!(
+                fixture.handoff.state().unwrap(),
+                DeterminateHandoffState::Started
+            );
+        }
+        let fixture = fixture(0o644);
+        write_mode(
+            &fixture.handoff.receipt,
+            &serde_json::to_vec(&complete).unwrap(),
+            0o644,
+        );
+        fixture.handoff.record_started().unwrap();
+        assert_eq!(
+            fixture.handoff.resume_completed_macos_install(|| false),
+            Err(DeterminateHandoffError::InstalledStateUnhealthy)
+        );
+        assert_eq!(
+            fixture.handoff.state().unwrap(),
+            DeterminateHandoffState::Started
+        );
+        fixture
+            .handoff
+            .resume_completed_macos_install(|| true)
+            .unwrap();
+        assert_eq!(
+            fixture.handoff.state().unwrap(),
+            DeterminateHandoffState::Accepted
+        );
+        assert!(fixture.unrelated.exists());
+    }
+
+    #[test]
+    fn macos_resume_allows_best_effort_unmount_but_rejects_receipt_changes() {
+        let fixture = fixture(0o644);
+        let mut receipt = completed_macos_receipt_fixture();
+        receipt["actions"][1]["action"]["unmount_volume"] = serde_json::json!({
+            "state": "Progress", "action": {"action_name": "unmount_apfs_volume"}
+        });
+        write_mode(
+            &fixture.handoff.receipt,
+            &serde_json::to_vec(&receipt).unwrap(),
+            0o644,
+        );
+        fixture.handoff.record_started().unwrap();
+        assert_eq!(
+            fixture.handoff.resume_completed_macos_install(|| false),
+            Err(DeterminateHandoffError::InstalledStateUnhealthy)
+        );
+        write_mode(
+            &fixture.handoff.receipt,
+            &serde_json::to_vec(&receipt).unwrap(),
+            0o644,
+        );
+        assert_eq!(
+            fixture.handoff.resume_completed_macos_install(|| {
+                fs::write(&fixture.handoff.receipt, b"changed during probe").unwrap();
+                true
+            }),
+            Err(DeterminateHandoffError::IdentityMismatch)
+        );
+        assert_eq!(
+            fixture.handoff.state().unwrap(),
+            DeterminateHandoffState::Started
+        );
+    }
+
     fn production_parent_fixture(receipt_mode: u32) -> Fixture {
         production_parent_fixture_with_installer(receipt_mode, INSTALLER_BYTES)
     }
@@ -1226,6 +1433,28 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
         assert_eq!(parent.mode() & 0o7777, 0o700);
         assert_eq!(parent.uid(), fixture.handoff.owner);
         assert_eq!(parent.gid(), fixture.handoff.group);
+    }
+
+    #[test]
+    fn terminal_uninstall_clears_probe_cache_without_following_links() {
+        let fixture = production_parent_fixture(0o600);
+        let cache = fixture.handoff.handoff.parent().unwrap().join(".cache/nix");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("settings.dat"), b"cache").unwrap();
+        std::os::unix::fs::symlink(&fixture.unrelated, cache.join("outside")).unwrap();
+        fixture.handoff.record_started().unwrap();
+        fixture
+            .handoff
+            .accept_after_installed_state_proof()
+            .unwrap();
+        let consumed = fixture.handoff.consume_for_terminal_uninstall().unwrap();
+        assert!(!fixture.handoff.handoff.parent().unwrap().exists());
+        assert_eq!(fs::read(&fixture.unrelated).unwrap(), b"never delete this");
+        consumed.restore().unwrap();
+        assert_eq!(
+            fixture.handoff.state().unwrap(),
+            DeterminateHandoffState::Accepted
+        );
     }
 
     #[test]

@@ -289,7 +289,9 @@ pub fn install_macos_from_bundle<'a>(
         request,
         backend,
     )?;
-    backend.preflight_clean_host(system)?;
+    backend.preflight_clean_host(system).inspect_err(|error| {
+        eprintln!("macos host preflight failed: {error:?}");
+    })?;
     verify_provision_workspace_absent(request.scratch_parent)
         .map_err(|_| MacOsError::backend_failure())?;
     let (storage, journal) = if let Some(recovered) = recovery {

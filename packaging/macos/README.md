@@ -32,6 +32,17 @@ checks the embedded executable signature, and runs it with `sudo` in the foregro
 It prints the log path and returns the actual setup status. It does not run the
 package's scripts or reset an incomplete installation.
 
+If Nix completed but pkg stopped before accepting it, use the same release channel
+with an installer that supports explicit recovery:
+
+```sh
+bash packaging/macos/install-preview.sh /absolute/path/to/preview.pkg EXPECTED_SHA256 --resume
+```
+
+Recovery requires a matching pending pkg journal, the pinned vendor executable,
+a complete macOS vendor receipt, and a successful daemon check. It keeps the Nix
+store and continues product setup. A partial or changed vendor receipt is refused.
+
 On macOS, administrator privileges do not grant access to all system configuration
 files. Allow the system configuration prompt if macOS shows it. If macOS denies
 access, allow the terminal in System Settings > Privacy & Security > Full Disk

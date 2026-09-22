@@ -52,8 +52,29 @@ fn invocation_requires_the_exact_product_repair_option() {
         parse_invocation([OsString::from("--repair-product-assets")]),
         Ok((Invocation::RepairProductAssets, None))
     );
+    assert_eq!(
+        parse_invocation([OsString::from("--resume")]),
+        Ok((Invocation::ResumeBaseNix, None))
+    );
+    assert_eq!(
+        validate_invocation_system(Invocation::ResumeBaseNix, System::Aarch64Darwin),
+        Ok(())
+    );
+    assert_eq!(
+        validate_invocation_system(Invocation::ResumeBaseNix, System::Aarch64Linux),
+        Err(PublicInstallError::UnsupportedSystem)
+    );
     for arguments in [
         vec![OsString::from("--repair")],
+        vec![OsString::from("--resume"), OsString::from("--resume")],
+        vec![
+            OsString::from("--resume"),
+            OsString::from("--repair-product-assets"),
+        ],
+        vec![
+            OsString::from("--repair-product-assets"),
+            OsString::from("--resume"),
+        ],
         vec![OsString::from("--repair-product-assets=yes")],
         vec![
             OsString::from("--repair-product-assets"),
@@ -185,7 +206,7 @@ fn public_failures_are_short_and_do_not_expose_internal_inputs() {
     .map(|error| error.to_string());
     assert_eq!(
         messages[0],
-        "Run pkg-install without options or with --repair-product-assets. Use --channel <BASE_URL> to select the release channel."
+        "Run pkg-install without options, with --repair-product-assets, or with --resume on macOS. Use --channel <BASE_URL> to select the release channel."
     );
     assert_eq!(messages[1], "Run pkg-install as root.");
     assert!(messages.iter().all(|message| {

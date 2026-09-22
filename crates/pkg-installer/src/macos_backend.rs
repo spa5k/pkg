@@ -70,6 +70,7 @@ pub struct ProductionMacOsInstallBackend {
     authenticated_recovery: bool,
     store_created: bool,
     requested_repair: bool,
+    requested_resume: bool,
     mode: InstallMode,
     prior_manifest: Option<UninstallManifest>,
 }
@@ -94,6 +95,7 @@ impl ProductionMacOsInstallBackend {
             authenticated_recovery: false,
             store_created: false,
             requested_repair: false,
+            requested_resume: false,
             mode: InstallMode::FreshInstall,
             prior_manifest: None,
         })
@@ -111,6 +113,35 @@ impl ProductionMacOsInstallBackend {
         let mut backend = Self::new(system, groups)?;
         backend.requested_repair = true;
         Ok(backend)
+    }
+
+    /// Creates the backend for an explicit recovery of completed Base Nix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsupported system or invalid group bindings.
+    pub fn new_resume(system: System, groups: ManagedGroupBindings) -> Result<Self, MacOsError> {
+        let mut backend = Self::new(system, groups)?;
+        backend.requested_resume = true;
+        Ok(backend)
+    }
+
+    fn resume_base_nix(&mut self) -> Result<(), MacOsError> {
+        let handoff =
+            DeterminateHandoff::production().map_err(|_| MacOsError::backend_failure())?;
+        let result = match handoff.state().map_err(|_| MacOsError::backend_failure())? {
+            DeterminateHandoffState::Started => {
+                handoff.resume_completed_macos_install(|| self.check_managed_daemon().is_ok())
+            }
+            DeterminateHandoffState::Accepted => return self.check_managed_daemon(),
+            DeterminateHandoffState::NotStarted => return Err(MacOsError::backend_failure()),
+        };
+        result.map_err(|error| {
+            eprintln!("macos Base Nix resume failed: {error:?}");
+            MacOsError::backend_failure()
+        })?;
+        eprintln!("macos Base Nix resume: completed receipt and daemon verified");
+        Ok(())
     }
 
     /// The classified install mode for this attempt.
@@ -135,7 +166,12 @@ impl ProductionMacOsInstallBackend {
             .find(|asset| asset.id() == "uninstall-manifest")
             .ok_or_else(MacOsError::backend_failure)?;
         match std::fs::symlink_metadata(receipt.path_or_name()) {
-            Ok(_) => self.assets.installed_uninstall_manifest(),
+            Ok(_) => self
+                .assets
+                .installed_uninstall_manifest()
+                .inspect_err(|error| {
+                    eprintln!("macos installed product receipt validation failed: {error:?}");
+                }),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(_) => Err(MacOsError::backend_failure()),
         }
@@ -146,8 +182,16 @@ impl ProductionMacOsInstallBackend {
         manifest: Option<UninstallManifest>,
     ) -> Result<(), MacOsError> {
         if let Some(manifest) = manifest.as_ref() {
-            self.assets.bind_uninstall_manifest(manifest)?;
-            self.assets.bind_prior_asset_states(manifest)?;
+            self.assets
+                .bind_uninstall_manifest(manifest)
+                .inspect_err(|error| {
+                    eprintln!("macos prior receipt binding failed: {error:?}");
+                })?;
+            self.assets
+                .bind_prior_asset_states(manifest)
+                .inspect_err(|error| {
+                    eprintln!("macos prior asset binding failed: {error:?}");
+                })?;
         }
         self.prior_manifest = manifest;
         Ok(())
@@ -239,6 +283,15 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
         if (mode == InstallMode::OfflineRepair) != self.requested_repair {
             return Err(MacOsError::backend_failure());
         }
+        if self.requested_resume {
+            if mode != InstallMode::FreshInstall {
+                return Err(MacOsError::backend_failure());
+            }
+            self.resume_base_nix()?;
+        }
+        // Rollback may already have removed the broker account. Filesystem
+        // recovery still verifies the fixed macOS UID/GID without recreating it.
+        self.assets.bind_filesystem_after_broker_removal()?;
         self.mode = mode;
         if mode != InstallMode::FreshInstall {
             MacOsLaunchdManager::require_offline()?;
@@ -256,6 +309,10 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
     }
 
     fn preflight_clean_host(&mut self, system: System) -> Result<(), MacOsError> {
+        if self.requested_resume && !self.authenticated_recovery {
+            eprintln!("macos Base Nix resume requires a matching pending install journal");
+            return Err(MacOsError::backend_failure());
+        }
         if system != self.system
             || !self.assets.authenticated_inputs_bound(system)
             || !Uid::effective().is_root()

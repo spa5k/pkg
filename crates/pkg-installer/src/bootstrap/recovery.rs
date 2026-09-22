@@ -522,8 +522,12 @@ pub(super) fn load_macos_bundle_for_recovery(
         system: request.system,
         groups: request.groups,
     };
-    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request)
-        .map_err(|_| MacOsError::backend_failure());
+    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request).map_err(
+        |error| {
+            eprintln!("macos release authentication failed: {error:?}");
+            MacOsError::backend_failure()
+        },
+    );
     remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
     result
 }
