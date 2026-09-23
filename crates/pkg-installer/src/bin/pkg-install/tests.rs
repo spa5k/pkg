@@ -64,6 +64,25 @@ fn invocation_requires_the_exact_product_repair_option() {
         validate_invocation_system(Invocation::ResumeBaseNix, System::Aarch64Linux),
         Err(PublicInstallError::UnsupportedSystem)
     );
+    assert_eq!(
+        parse_invocation([OsString::from("--leave-services-offline")]),
+        Ok((Invocation::LeaveServicesOffline, None))
+    );
+    for option in [
+        "--resume",
+        "--repair-product-assets",
+        "--leave-services-offline",
+    ] {
+        for args in [
+            [option, "--leave-services-offline"],
+            ["--leave-services-offline", option],
+        ] {
+            assert_eq!(
+                parse_invocation(args.map(OsString::from)),
+                Err(PublicInstallError::InvalidInvocation)
+            );
+        }
+    }
     for arguments in [
         vec![OsString::from("--repair")],
         vec![OsString::from("--resume"), OsString::from("--resume")],
@@ -169,6 +188,12 @@ fn channel_urls_prefer_the_command_line_then_the_environment() {
 #[test]
 fn public_results_keep_distinct_safe_operator_actions() {
     assert_eq!(InstallSuccess::Installed.message(), "pkg is installed.");
+    assert!(InstallSuccess::Ready.message().contains("ready"));
+    assert!(
+        PublicInstallError::ServicesNotReady
+            .to_string()
+            .contains("Run this installer again")
+    );
     assert!(InstallSuccess::Upgraded.message().contains("upgraded"));
     assert!(InstallSuccess::Repaired.message().contains("repaired"));
     for (code, expected) in [
@@ -206,7 +231,7 @@ fn public_failures_are_short_and_do_not_expose_internal_inputs() {
     .map(|error| error.to_string());
     assert_eq!(
         messages[0],
-        "Run pkg-install without options, with --repair-product-assets, or with --resume on macOS. Use --channel <BASE_URL> to select the release channel."
+        "Run pkg-install without options. Use --leave-services-offline for a manual upgrade, --repair-product-assets for repair, or --resume for macOS recovery. Use --channel <BASE_URL> to select the release channel."
     );
     assert_eq!(messages[1], "Run pkg-install as root.");
     assert!(messages.iter().all(|message| {

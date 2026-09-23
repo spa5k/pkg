@@ -132,6 +132,16 @@ impl MacOsFilesystemManager {
             .map_err(|_| MacOsError::backend_failure())
     }
 
+    pub(crate) fn verify_asset_digest(
+        &self,
+        asset: MacOsInstallAsset,
+        digest: Digest,
+    ) -> Result<(), MacOsError> {
+        self.inner
+            .verify_asset_digest(map(asset)?, digest)
+            .map_err(|_| MacOsError::backend_failure())
+    }
+
     pub(crate) fn verify_repair_target(&self, asset: MacOsInstallAsset) -> Result<(), MacOsError> {
         self.inner
             .verify_repair_target(map(asset)?)

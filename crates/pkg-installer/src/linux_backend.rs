@@ -107,6 +107,7 @@ pub struct ProductionLinuxInstallBackend {
     mode: crate::InstallMode,
     existing_managed_install: bool,
     recovered_fresh_install: bool,
+    manage_upgrade_services: bool,
     #[cfg(test)]
     preflight_fixture: Option<ProductionPreflightFixture>,
 }
@@ -148,6 +149,69 @@ impl ProductionLinuxInstallBackend {
         Self::with_product_asset_intent(system, groups, LinuxProductAssetIntent::Repair)
     }
 
+    /// Let the installer stop verified services for an upgrade and restart them afterward.
+    pub const fn manage_upgrade_services(&mut self) {
+        self.manage_upgrade_services = true;
+    }
+
+    /// Start the verified service set after the file transaction has committed.
+    ///
+    /// # Errors
+    /// Returns an error if the new files or running services cannot be verified.
+    pub fn finish_upgrade_services(&mut self) -> Result<(), InstallError> {
+        if !self.manage_upgrade_services {
+            return Ok(());
+        }
+        if self.mode == crate::InstallMode::FreshInstall {
+            return crate::broker::wait_for_broker_readiness(Path::new(
+                crate::service::LINUX_BROKER_SOCKET,
+            ))
+            .map_err(|_| InstallError::backend_failure());
+        }
+        eprintln!("Starting pkg services...");
+        let (assets, services) = (&mut self.assets, &mut self.services);
+        services
+            .activate_fresh(|| assets.verify_service_runtime_assets().is_ok())
+            .map_err(|_| InstallError::backend_failure())?;
+        services
+            .verify_active()
+            .map_err(|_| InstallError::backend_failure())?;
+        crate::broker::wait_for_broker_readiness(Path::new(crate::service::LINUX_BROKER_SOCKET))
+            .map_err(|_| InstallError::backend_failure())?;
+        services.commit_activation();
+        Ok(())
+    }
+
+    fn prepare_existing_install(&mut self) -> Result<(), InstallError> {
+        self.existing_managed_install = true;
+        self.mode = if self.recovered_fresh_install {
+            crate::InstallMode::FreshInstall
+        } else {
+            crate::InstallMode::OfflineUpgrade
+        };
+        self.recovered_fresh_install = false;
+        self.assets
+            .set_intent(LinuxProductAssetIntent::InstallOrUpgrade);
+        if self.mode == crate::InstallMode::OfflineUpgrade {
+            self.assets.preflight_existing_non_files()?;
+            self.stop_upgrade_services()?;
+            self.preflight_product_mutation()?;
+        }
+        Ok(())
+    }
+
+    fn stop_upgrade_services(&mut self) -> Result<(), InstallError> {
+        if self.manage_upgrade_services && self.services.require_offline().is_err() {
+            eprintln!("Checking installed service files...");
+            let (assets, services) = (&mut self.assets, &mut self.services);
+            services
+                .deactivate_for_uninstall(|| assets.verify_recorded_service_assets().is_ok())
+                .map_err(|_| InstallError::offline_services_required())?;
+            eprintln!("Pkg services are stopped. Updating pkg...");
+        }
+        Ok(())
+    }
+
     fn with_product_asset_intent(
         system: System,
         groups: ManagedGroupBindings,
@@ -170,6 +234,7 @@ impl ProductionLinuxInstallBackend {
             },
             existing_managed_install: false,
             recovered_fresh_install: false,
+            manage_upgrade_services: false,
             #[cfg(test)]
             preflight_fixture: None,
         })
@@ -230,6 +295,7 @@ impl ProductionLinuxInstallBackend {
                 },
                 existing_managed_install: false,
                 recovered_fresh_install: false,
+                manage_upgrade_services: false,
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
                     handoff_snapshots,
@@ -260,6 +326,7 @@ impl ProductionLinuxInstallBackend {
                 mode: crate::InstallMode::FreshInstall,
                 existing_managed_install: false,
                 recovered_fresh_install: false,
+                manage_upgrade_services: false,
                 preflight_fixture: Some(ProductionPreflightFixture {
                     effective_ids: (0, 0),
                     handoff_snapshots: std::rc::Rc::new(std::cell::RefCell::new(vec![
@@ -358,12 +425,14 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             self.assets.authenticated_inputs_bound(self.system),
             self.release_identity.is_some(),
         )? || !self.assets.classify_exact_release()?
-            || !self
-                .services
-                .classify_exact_activation()
-                .map_err(|_| InstallError::backend_failure())?
         {
             return Ok(false);
+        }
+        match self.services.classify_exact_activation() {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            Err(_) if self.manage_upgrade_services => return Ok(false),
+            Err(_) => return Err(InstallError::backend_failure()),
         }
         RealNixAdapter::new_standard_determinate(Path::new(INSTALLER_NIX_HOME))
             .and_then(|adapter| adapter.ping_managed_store())
@@ -516,19 +585,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
             return Ok(());
         }
         if validate_determinate_handoff_preflight(state)? {
-            self.existing_managed_install = true;
-            self.mode = if self.recovered_fresh_install {
-                crate::InstallMode::FreshInstall
-            } else {
-                crate::InstallMode::OfflineUpgrade
-            };
-            self.recovered_fresh_install = false;
-            self.assets
-                .set_intent(LinuxProductAssetIntent::InstallOrUpgrade);
-            if self.mode == crate::InstallMode::OfflineUpgrade {
-                self.assets.preflight_existing_non_files()?;
-                self.preflight_product_mutation()?;
-            }
+            self.prepare_existing_install()?;
             return Ok(());
         }
         let report = detect_unmanaged_nix(Path::new("/"), system, &path_entries, &environment_keys);

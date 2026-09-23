@@ -1222,7 +1222,7 @@ pass native representative-package-state
 echo "+ authenticated staged channel upgrade from N to N+1"
 stop_product
 persist_prepare_state
-capture staged-channel-upgrade /usr/bin/sudo "$to_installer"
+capture staged-channel-upgrade /usr/bin/sudo "$to_installer" --leave-services-offline
 /usr/bin/grep -Fx 'pkg product files are upgraded. Product services remain offline.' \
     "$evidence/staged-channel-upgrade.log" >/dev/null \
     || fail "the staged N+1 upgrade did not remain offline"

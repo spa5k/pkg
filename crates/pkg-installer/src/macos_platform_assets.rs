@@ -418,6 +418,28 @@ impl MacOsPlatformAssetManager {
         Ok(())
     }
 
+    pub(crate) fn verify_recorded_service_assets(
+        &mut self,
+        manifest: &UninstallManifest,
+    ) -> Result<(), MacOsError> {
+        for asset in macos_product_install_assets().filter(|asset| {
+            matches!(
+                asset.id(),
+                "helper-binary" | "broker-binary" | "helper-plist" | "broker-plist"
+            )
+        }) {
+            let digest = manifest
+                .assets()
+                .iter()
+                .find(|record| record.id() == asset.id())
+                .and_then(RecordedAsset::content_digest)
+                .ok_or_else(MacOsError::backend_failure)?;
+            self.ensure_filesystem()?
+                .verify_asset_digest(asset, digest)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn remove_uninstall_asset(
         &mut self,
         asset: MacOsInstallAsset,
@@ -556,6 +578,60 @@ mod tests {
         repeated.bind_prior_asset_states(&original)?;
         assert!(!repeated.publish_uninstall_manifest()?);
         assert_eq!(fs::read(&receipt)?, bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn service_stop_refuses_changed_files() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        let mut manager = manager(
+            temporary.path(),
+            ManagedGroupBindings::new(333, 350)?,
+            Digest::from_bytes([0x31; 32]),
+        )?;
+        for path in [
+            "opt",
+            "opt/pkg",
+            "opt/pkg/bin",
+            "Library",
+            "Library/LaunchDaemons",
+        ] {
+            let directory = temporary.path().join(path);
+            fs::create_dir(&directory)?;
+            fs::set_permissions(
+                directory,
+                fs::Permissions::from_mode(if path == "opt/pkg/bin" { 0o750 } else { 0o755 }),
+            )?;
+        }
+        let manifest = manager
+            .expected_product_manifest(System::Aarch64Darwin, Digest::from_bytes([0x21; 32]))?;
+        let services: Vec<_> = macos_product_install_assets()
+            .filter(|asset| {
+                matches!(
+                    asset.id(),
+                    "helper-binary" | "broker-binary" | "helper-plist" | "broker-plist"
+                )
+            })
+            .collect();
+        for asset in &services {
+            manager
+                .ensure_asset(*asset)
+                .map_err(|error| std::io::Error::other(format!("{}: {error:?}", asset.id())))?;
+        }
+        manager.verify_recorded_service_assets(&manifest)?;
+        for asset in services {
+            let path = temporary
+                .path()
+                .join(asset.path_or_name().trim_start_matches('/'));
+            let original = fs::read(&path)?;
+            fs::write(&path, b"changed")?;
+            assert!(
+                manager.verify_recorded_service_assets(&manifest).is_err(),
+                "{}",
+                asset.id()
+            );
+            fs::write(&path, original)?;
+        }
         Ok(())
     }
 
