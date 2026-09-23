@@ -1852,6 +1852,7 @@ fn public_flake_evaluation_pins_root_inputs_and_configuration()
             .windows(2)
             .find(|pair| pair[0] == "--reference-lock-file")
             .unwrap();
+        assert_eq!(Path::new(&reference[1]).parent(), Some(Path::new("/tmp")));
         assert!(
             !Path::new(&reference[1]).exists(),
             "temporary lock removed after evaluation"
