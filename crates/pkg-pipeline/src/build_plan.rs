@@ -188,7 +188,10 @@ fn plan_runtime_version<'a>(
     runtime: &'a VersionInfo,
     host_system: System,
 ) -> Result<&'a NixVersion, LocalBuildPlanError> {
-    if matches!(host_system, System::X8664Linux | System::Aarch64Linux) {
+    if matches!(
+        host_system,
+        System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin
+    ) {
         if runtime.nix_version().as_str() != STANDARD_DETERMINATE_NIX_VERSION {
             return Err(LocalBuildPlanError::new(
                 LocalBuildPlanErrorCode::RuntimeMismatch,

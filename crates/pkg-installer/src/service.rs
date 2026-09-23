@@ -228,8 +228,13 @@ fn run_broker_listener(
             ServiceError::new(ServiceErrorCode::InvalidRuntime)
         })?,
     );
+    let roots = Arc::new(RootHelperClient::production());
+    #[cfg(target_os = "linux")]
     let planning_adapter: Arc<dyn BuildPlanningAdapter> =
         Arc::clone(&adapter) as Arc<dyn BuildPlanningAdapter>;
+    #[cfg(target_os = "macos")]
+    let planning_adapter: Arc<dyn BuildPlanningAdapter> =
+        Arc::clone(&roots) as Arc<dyn BuildPlanningAdapter>;
     let runtime = Builder::new_multi_thread()
         .worker_threads(1)
         .thread_name("pkg-trust-runtime")
@@ -255,7 +260,6 @@ fn run_broker_listener(
         service: Arc::clone(&authority_service),
         runtime: runtime.handle().clone(),
     });
-    let roots = Arc::new(RootHelperClient::production());
     let repair = Arc::new(ProductionRepairAuthority::new(
         Arc::clone(&adapter),
         Arc::clone(&roots),
@@ -501,18 +505,7 @@ pub fn run_macos_root_helper() -> Result<(), ServiceError> {
         identity.gid,
         &parents,
     )?;
-    let repair_executor: Arc<dyn VerifiedRepairExecutor> = Arc::new(
-        RootNixRepairExecutor::new_standard_determinate(Path::new(MACOS_HELPER_HOME))
-            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
-    );
-    let helper = InProcessHelper::with_repair_executor(identity.uid, repair_executor)
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
-    let authenticated = helper
-        .connect(InProcessPeer::authenticated_uid(identity.uid))
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
-    let roots = MacOsRootSetStore::production()
-        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
-    let session = Arc::new(MacOsHelperSession::new(authenticated, roots));
+    let session = Arc::new(macos_helper_session(identity.uid)?);
     let workers = ConnectionLimiter::new(MAX_HELPER_WORKERS);
 
     loop {
@@ -534,6 +527,24 @@ pub fn run_macos_root_helper() -> Result<(), ServiceError> {
             Err(_) => return Err(ServiceError::new(ServiceErrorCode::ListenerFailed)),
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_helper_session(broker_uid: u32) -> Result<MacOsHelperSession, ServiceError> {
+    let repair_executor: Arc<dyn VerifiedRepairExecutor> = Arc::new(
+        RootNixRepairExecutor::new_standard_determinate(Path::new(MACOS_HELPER_HOME))
+            .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?,
+    );
+    let helper = InProcessHelper::with_repair_executor(broker_uid, repair_executor)
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
+    let authenticated = helper
+        .connect(InProcessPeer::authenticated_uid(broker_uid))
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InitializationFailed))?;
+    let roots = MacOsRootSetStore::production()
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    let adapter = RealNixAdapter::new_standard_determinate(Path::new(MACOS_HELPER_HOME))
+        .map_err(|_| ServiceError::new(ServiceErrorCode::InvalidRuntime))?;
+    Ok(MacOsHelperSession::new(authenticated, roots).with_standard_nix(adapter))
 }
 
 /// Reports the macOS helper mode as unavailable on other hosts.

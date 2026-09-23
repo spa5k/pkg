@@ -189,6 +189,12 @@ impl fmt::Debug for MacOsHelperSession {
 }
 
 impl MacOsHelperSession {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn with_standard_nix(mut self, adapter: pkg_nix::RealNixAdapter) -> Self {
+        self.inner = self.inner.with_standard_nix(adapter);
+        self
+    }
+
     /// Binds authenticated capability state to the durable Darwin root store.
     #[must_use]
     pub fn new(authenticated: AuthenticatedHelper, roots: MacOsRootSetStore) -> Self {

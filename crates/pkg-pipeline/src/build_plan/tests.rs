@@ -133,7 +133,11 @@ fn complete_plan(version: &NixVersion, system: System) -> BuildPlan {
 fn complete_plan_identity_binds_the_platform_runtime_contract() {
     let policy = policy();
     let determinate = runtime(STANDARD_DETERMINATE_NIX_VERSION);
-    for system in [System::X8664Linux, System::Aarch64Linux] {
+    for system in [
+        System::X8664Linux,
+        System::Aarch64Linux,
+        System::Aarch64Darwin,
+    ] {
         assert_eq!(
             plan_runtime_version(&policy, &determinate, system)
                 .unwrap()
@@ -168,7 +172,8 @@ fn complete_plan_identity_binds_the_platform_runtime_contract() {
     );
 
     let legacy = runtime("2.34.8");
-    for system in [System::X8664Darwin, System::Aarch64Darwin] {
+    {
+        let system = System::X8664Darwin;
         assert_eq!(
             plan_runtime_version(&policy, &legacy, system)
                 .unwrap()
@@ -183,16 +188,16 @@ fn complete_plan_identity_binds_the_platform_runtime_contract() {
         );
     }
     let macos = complete_plan(
-        plan_runtime_version(&policy, &legacy, System::Aarch64Darwin).unwrap(),
+        plan_runtime_version(&policy, &determinate, System::Aarch64Darwin).unwrap(),
         System::Aarch64Darwin,
     );
-    assert_eq!(
+    assert_ne!(
         macos.digest().unwrap(),
         complete_plan(&policy.nix_runtime_version, System::Aarch64Darwin)
             .digest()
             .unwrap()
     );
-    assert_ne!(
+    assert_eq!(
         macos.digest().unwrap(),
         complete_plan(
             &NixVersion::new(STANDARD_DETERMINATE_NIX_VERSION).unwrap(),

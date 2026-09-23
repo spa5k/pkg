@@ -30,7 +30,8 @@ const MAX_TEXT: usize = 256;
 const MAX_PREVIEW_ITEMS: usize = 4096;
 const LINUX_RESOURCE_NOTICE: &str = "Builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.";
 const LINUX_REPAIR_RESOURCE_NOTICE: &str = "Repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits.";
-const MACOS_RESOURCE_NOTICE: &str = "Builds run sandboxed. The managed runtime applies no hard per-build memory/CPU/IO cap; daemon time/log ceilings and one machine-global build admission bound the operation.";
+const MACOS_RESOURCE_NOTICE: &str = "macOS builds run sandboxed. Determinate controls daemon limits and build parallelism. pkg admits one machine-global build operation and applies no hard per-build memory/CPU/IO cap.";
+const MACOS_REPAIR_RESOURCE_NOTICE: &str = "macOS repair builds run sandboxed. pkg fixes repair parallelism to one build job, admits one machine-global build operation, and applies no hard per-build memory/CPU/IO cap. Determinate controls other daemon limits.";
 const BUILD_USERS_GROUP: &str = "nixbld";
 const MAX_JOBS: u32 = 1;
 const CORES_HINT: u32 = 0;
@@ -290,7 +291,7 @@ enum BuildPurpose {
 
 impl BuildResources {
     fn for_system(system: System, purpose: BuildPurpose) -> Self {
-        let product_managed = matches!(system, System::X8664Darwin | System::Aarch64Darwin);
+        let product_managed = system == System::X8664Darwin;
         Self {
             max_jobs_per_connection: (product_managed || purpose == BuildPurpose::Repair)
                 .then_some(MAX_JOBS),
@@ -1937,7 +1938,8 @@ fn resource_notice(os: &str, purpose: BuildPurpose) -> Option<&'static str> {
     match (os, purpose) {
         ("linux", BuildPurpose::Build) => Some(LINUX_RESOURCE_NOTICE),
         ("linux", BuildPurpose::Repair) => Some(LINUX_REPAIR_RESOURCE_NOTICE),
-        ("macos", BuildPurpose::Build | BuildPurpose::Repair) => Some(MACOS_RESOURCE_NOTICE),
+        ("macos", BuildPurpose::Build) => Some(MACOS_RESOURCE_NOTICE),
+        ("macos", BuildPurpose::Repair) => Some(MACOS_REPAIR_RESOURCE_NOTICE),
         _ => None,
     }
 }
@@ -2796,7 +2798,13 @@ impl LocalBuildEngine {
         let substitutions = runtime
             .adapter
             .substitute_many(&current.execution.cache_inputs)
-            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            .map_err(|error| {
+                eprintln!(
+                    "pkg build failed: stage=cache_inputs code={:?}",
+                    error.code()
+                );
+                BuildEngineError::new(BuildEngineErrorCode::BuildFailed)
+            })?;
         if substitutions.len() != current.execution.cache_inputs.len() {
             return Err(BuildEngineError::new(BuildEngineErrorCode::BuildFailed));
         }
@@ -2823,7 +2831,10 @@ impl LocalBuildEngine {
         let report = runtime
             .adapter
             .build_with_progress(&request, runtime.progress)
-            .map_err(|_| BuildEngineError::new(BuildEngineErrorCode::BuildFailed))?;
+            .map_err(|error| {
+                eprintln!("pkg build failed: stage=execute code={:?}", error.code());
+                BuildEngineError::new(BuildEngineErrorCode::BuildFailed)
+            })?;
         if report.status() == BuildStatus::AcquireNoBinary {
             return Err(BuildEngineError::new(BuildEngineErrorCode::AcquireNoBinary));
         }
@@ -3312,18 +3323,11 @@ mod tests {
         let macos = plan(1, System::Aarch64Darwin, macos_readiness());
         assert_eq!(
             serde_json::to_value(&macos.resources).unwrap(),
-            serde_json::json!({
-                "maxJobsPerConnection": 1,
-                "machineGlobalMaxConcurrentBuildOperations": 1,
-                "coresHint": 0,
-                "maxSilentTimeSeconds": 3600,
-                "timeoutSecondsPerDerivation": 86400,
-                "maxBuildLogSizeBytes": 268435456
-            })
+            serde_json::json!({"machineGlobalMaxConcurrentBuildOperations": 1})
         );
 
         let truthful_digest = linux.digest().unwrap();
-        linux.resources = BuildResources::for_system(System::Aarch64Darwin, BuildPurpose::Build);
+        linux.resources = BuildResources::for_system(System::X8664Darwin, BuildPurpose::Build);
         assert_ne!(truthful_digest, linux.digest().unwrap());
     }
 
@@ -3352,6 +3356,11 @@ mod tests {
             MACOS_RESOURCE_NOTICE
         );
         assert!(BuildPreview::from_json_bytes(&macos.to_json_bytes().unwrap()).is_ok());
+        let mut repair = macos.clone();
+        repair.purpose = BuildPurpose::Repair;
+        assert!(BuildPreview::from_json_bytes(&repair.to_json_bytes().unwrap()).is_err());
+        repair.readiness.resource_boundary.notice = MACOS_REPAIR_RESOURCE_NOTICE.to_owned();
+        assert!(BuildPreview::from_json_bytes(&repair.to_json_bytes().unwrap()).is_ok());
         let mut wrong_macos = macos;
         wrong_macos.readiness.resource_boundary.notice = LINUX_RESOURCE_NOTICE.to_owned();
         assert!(BuildPreview::from_json_bytes(&wrong_macos.to_json_bytes().unwrap()).is_err());

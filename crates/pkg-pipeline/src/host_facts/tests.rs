@@ -82,13 +82,13 @@ fn linux_ignores_managed_config_and_requires_cgroup_availability() {
 
 #[test]
 fn authenticated_config_binding_refuses_any_byte_change() {
-    let source = source(System::Aarch64Darwin);
+    let source = source(System::X8664Darwin);
     let expected = source.config.clone();
-    assert!(observe_bound(&source, System::Aarch64Darwin, &expected).is_ok());
+    assert!(observe_bound(&source, System::X8664Darwin, &expected).is_ok());
     assert!(
         observe_bound(
             &source,
-            System::Aarch64Darwin,
+            System::X8664Darwin,
             &(expected + "connect-timeout = 11\n"),
         )
         .is_err()
@@ -96,18 +96,30 @@ fn authenticated_config_binding_refuses_any_byte_change() {
 }
 
 #[test]
-fn darwin_config_and_max_jobs_remain_exact_without_cgroup_observation() {
-    let mut bad_config = source(System::Aarch64Darwin);
+fn legacy_darwin_config_and_max_jobs_remain_exact_without_cgroup_observation() {
+    let mut bad_config = source(System::X8664Darwin);
     bad_config.config = bad_config
         .config
         .replace("sandbox = true", "sandbox = false");
-    assert!(observe(&bad_config, System::Aarch64Darwin).is_err());
+    assert!(observe(&bad_config, System::X8664Darwin).is_err());
     assert_eq!(bad_config.cgroup_calls.get(), 0);
 
-    let mut bad_jobs = source(System::Aarch64Darwin);
+    let mut bad_jobs = source(System::X8664Darwin);
     bad_jobs.config = bad_jobs.config.replace("max-jobs = 1", "max-jobs = 2");
-    assert!(observe(&bad_jobs, System::Aarch64Darwin).is_err());
+    assert!(observe(&bad_jobs, System::X8664Darwin).is_err());
     assert_eq!(bad_jobs.cgroup_calls.get(), 0);
+}
+
+#[test]
+fn standard_darwin_uses_vendor_accounts_without_retired_config_or_cgroups() {
+    let mut source = source(System::Aarch64Darwin);
+    source.config = "no product config exists".to_owned();
+    source.cgroup_ready = false;
+    assert!(observe(&source, System::Aarch64Darwin).is_ok());
+    assert_eq!(source.config_calls.get(), 0);
+    assert_eq!(source.cgroup_calls.get(), 0);
+    source.accounts.accounts.pop();
+    assert!(observe(&source, System::Aarch64Darwin).is_err());
 }
 
 #[test]
