@@ -70,6 +70,7 @@ impl ResolvedPackagePlan {
                     derivation.derivation().clone(),
                     derivation.outputs().values().cloned().collect(),
                 )
+                .and_then(|subject| subject.with_input_outputs(derivation.input_outputs().to_vec()))
                 .map_err(|_| ResolveError::new(ResolveErrorCode::InvalidSelector))
             })
             .collect()

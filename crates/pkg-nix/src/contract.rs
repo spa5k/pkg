@@ -1185,6 +1185,7 @@ pub struct EvaluatedDerivation {
     name: String,
     system: DerivationSystem,
     outputs: BTreeMap<OutputName, StorePath>,
+    input_outputs: Vec<StorePath>,
     document_digest: Digest,
     fixed_output: bool,
 }
@@ -1234,6 +1235,7 @@ impl EvaluatedDerivation {
             name,
             system: system.into(),
             outputs,
+            input_outputs: Vec::new(),
             document_digest,
             fixed_output,
         })
@@ -1258,6 +1260,33 @@ impl EvaluatedDerivation {
     #[must_use]
     pub const fn outputs(&self) -> &BTreeMap<OutputName, StorePath> {
         &self.outputs
+    }
+    /// Binds the exact dependency outputs requested by this derivation.
+    ///
+    /// # Errors
+    /// Returns a validation error for duplicate or oversized input lists.
+    pub fn with_input_outputs(
+        mut self,
+        mut inputs: Vec<StorePath>,
+    ) -> Result<Self, NixAdapterError> {
+        check_size_bounds(
+            inputs.iter().map(StorePath::as_str),
+            MAX_PATH_LIST,
+            MAX_PATH_LIST_BYTES,
+            "too many input outputs",
+        )?;
+        inputs.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        ensure_unique_strings(
+            inputs.iter().map(StorePath::as_str),
+            "duplicate input output",
+        )?;
+        self.input_outputs = inputs;
+        Ok(self)
+    }
+    /// Returns dependency outputs, excluding already-materialized source files.
+    #[must_use]
+    pub fn input_outputs(&self) -> &[StorePath] {
+        &self.input_outputs
     }
     /// Returns the digest of the canonical upstream derivation document.
     #[must_use]
@@ -1296,6 +1325,22 @@ pub struct DerivationPlanReport {
     closure_digest: Digest,
     pname: String,
     version: PackageVersion,
+}
+
+fn validate_derivation_inputs(derivations: &[EvaluatedDerivation]) -> Result<(), NixAdapterError> {
+    let outputs = derivations
+        .iter()
+        .flat_map(|item| item.outputs.values())
+        .map(StorePath::as_str)
+        .collect::<HashSet<_>>();
+    if derivations
+        .iter()
+        .flat_map(|item| &item.input_outputs)
+        .any(|path| !outputs.contains(path.as_str()))
+    {
+        return Err(invalid("input output missing from derivation closure"));
+    }
+    Ok(())
 }
 
 impl DerivationPlanReport {
@@ -1337,6 +1382,7 @@ impl DerivationPlanReport {
         {
             return Err(invalid("duplicate derivation"));
         }
+        validate_derivation_inputs(&derivations)?;
         let root_derivation = derivations
             .iter()
             .find(|item| item.derivation == root)
@@ -1420,6 +1466,8 @@ struct EvaluatedDerivationWire {
     system: String,
     #[serde(deserialize_with = "deserialize_realization_outputs")]
     outputs: BoundedUniqueStringMap,
+    #[serde(deserialize_with = "deserialize_verify_paths")]
+    input_outputs: BoundedStringSeq,
     document_digest: String,
     fixed_output: bool,
 }
@@ -1448,6 +1496,42 @@ where
     BoundedSeq::deserialize_bounded(deserializer, MAX_DERIVATIONS)
 }
 
+fn decode_evaluated_derivation(
+    item: EvaluatedDerivationWire,
+) -> Result<EvaluatedDerivation, NixAdapterError> {
+    let derivation =
+        DerivationPath::from_str(&item.derivation).map_err(|_| invalid("invalid derivation"))?;
+    let system = DerivationSystem::from_str(&item.system)?;
+    let outputs = item
+        .outputs
+        .into_inner()
+        .into_iter()
+        .map(|(name, path)| {
+            Ok((
+                OutputName::new(&name).map_err(|_| invalid("invalid output name"))?,
+                StorePath::new(&path).map_err(|_| invalid("invalid expected output path"))?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, NixAdapterError>>()?;
+    let document_digest =
+        Digest::from_str(&item.document_digest).map_err(|_| invalid("invalid document digest"))?;
+    EvaluatedDerivation::new(
+        derivation,
+        item.name,
+        system,
+        outputs,
+        document_digest,
+        item.fixed_output,
+    )?
+    .with_input_outputs(
+        item.input_outputs
+            .into_inner()
+            .into_iter()
+            .map(|path| StorePath::new(&path).map_err(|_| invalid("invalid input output")))
+            .collect::<Result<Vec<_>, _>>()?,
+    )
+}
+
 impl DerivationPlanReport {
     /// Deterministically encodes this report to JSON bytes.
     pub fn encode(&self) -> Result<Vec<u8>, NixAdapterError> {
@@ -1465,6 +1549,12 @@ impl DerivationPlanReport {
                         .collect(),
                 ),
                 document_digest: item.document_digest.to_string(),
+                input_outputs: BoundedStringSeq::from_vec(
+                    item.input_outputs
+                        .iter()
+                        .map(|p| p.as_str().to_owned())
+                        .collect(),
+                ),
                 fixed_output: item.fixed_output,
             })
             .collect();
@@ -1500,34 +1590,12 @@ impl DerivationPlanReport {
             .into_iter()
             .map(|name| OutputName::new(&name).map_err(|_| invalid("invalid output name")))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut derivations = Vec::new();
-        for item in dto.derivations.into_inner() {
-            let derivation = DerivationPath::from_str(&item.derivation)
-                .map_err(|_| invalid("invalid derivation"))?;
-            let system = DerivationSystem::from_str(&item.system)?;
-            let outputs = item
-                .outputs
-                .into_inner()
-                .into_iter()
-                .map(|(name, path)| {
-                    Ok((
-                        OutputName::new(&name).map_err(|_| invalid("invalid output name"))?,
-                        StorePath::new(&path)
-                            .map_err(|_| invalid("invalid expected output path"))?,
-                    ))
-                })
-                .collect::<Result<BTreeMap<_, _>, NixAdapterError>>()?;
-            let document_digest = Digest::from_str(&item.document_digest)
-                .map_err(|_| invalid("invalid document digest"))?;
-            derivations.push(EvaluatedDerivation::new(
-                derivation,
-                item.name,
-                system,
-                outputs,
-                document_digest,
-                item.fixed_output,
-            )?);
-        }
+        let derivations = dto
+            .derivations
+            .into_inner()
+            .into_iter()
+            .map(decode_evaluated_derivation)
+            .collect::<Result<Vec<_>, _>>()?;
         let closure_digest =
             Digest::from_str(&dto.closure_digest).map_err(|_| invalid("invalid closure digest"))?;
         Self::new(
