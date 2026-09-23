@@ -46,6 +46,19 @@ It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
 
+## Public alpha follow-up: native lifecycle regression evidence
+
+- **Identifier:** PUBLIC-04 (follow-up to DN-20).
+- **Purpose:** test the remaining public alpha lifecycle paths on native macOS,
+  including a compiled package with cold build inputs.
+- **Owns:** disposable-VM checks and the [results report](../tests/macos-clean-host/PUBLIC-04.md).
+- **Depends:** PUBLIC-02 and PUBLIC-03.
+- **Tests & gates:** fresh installation, active product upgrade, repeat/retry,
+  local compilation, package removal/rollback/repair, interrupted product
+  upgrade, guest reboot, uninstall, helper syntax, docs links, G-LINT and G-QUALITY.
+- **Rollback:** revert the test helpers and report. No runtime or schema change.
+  The checks affect only explicitly provisioned disposable VMs.
+
 ## Public alpha follow-up: setup and CLI language
 
 - **Identifier:** PUBLIC-03 (follow-up to DN-20).
