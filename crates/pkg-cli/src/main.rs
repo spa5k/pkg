@@ -38,6 +38,16 @@ fn main() -> ProcessExitCode {
                 Err(_) => ProcessExitCode::FAILURE,
             };
         }
+        Command::Shellenv => {
+            use std::io::Write as _;
+            return HostFamily::detect().map_or_else(
+                || write_state_location_error(&cli, StateLocationError::UnsupportedHost),
+                |host| match std::io::stdout().write_all(path::shell_init(host).as_bytes()) {
+                    Ok(()) => ExitCode::Ok.into(),
+                    Err(_) => ProcessExitCode::FAILURE,
+                },
+            );
+        }
         Command::Doctor(args) => return run_doctor(&cli, args),
         Command::Uninstall => return run_uninstall(&cli),
         _ => {}

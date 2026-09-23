@@ -2149,8 +2149,13 @@ fn install_result(
         .collect::<Vec<_>>();
     CommandResult::new(
         format!(
-            "Installed {} package(s) {} as {generation_id}.",
+            "Installed {} {} {}. Ready to use.",
             evidence.targets().len(),
+            if evidence.targets().len() == 1 {
+                "package"
+            } else {
+                "packages"
+            },
             install_provenance(evidence)
         ),
         Map::from_iter([

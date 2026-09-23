@@ -492,8 +492,10 @@ fn path_check(observation: &PathObservation) -> DoctorCheck {
         (None, _, _, _) => DoctorCheck::new(
             "shell.path",
             CheckStatus::Fail,
-            "the active generation bin directory is not on PATH",
-            Some("source the installer-managed pkg shell snippet"),
+            "installed package commands are not on PATH",
+            Some(
+                "run `eval \"$(pkg shellenv)\"` in Bash or zsh; add it to your shell settings for future sessions",
+            ),
         ),
         (Some(_), _, _, false) => DoctorCheck::new(
             "shell.path",

@@ -1324,7 +1324,7 @@ fn install_success_output_matches_the_v1_golden() {
     .unwrap();
     assert_eq!(
         result.summary(),
-        "Installed 1 package(s) from the trusted cache as gen-0001."
+        "Installed 1 package from the trusted cache. Ready to use."
     );
 
     let mut output = Vec::new();
@@ -1346,7 +1346,7 @@ fn install_success_names_a_local_build_in_the_human_result() {
     .unwrap();
     assert_eq!(
         result.summary(),
-        "Installed 1 package(s) using a local build as gen-0001."
+        "Installed 1 package using a local build. Ready to use."
     );
 }
 

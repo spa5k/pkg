@@ -4,32 +4,24 @@ title: pkg documentation
 
 # pkg
 
-`pkg` is a familiar package manager backed by machine-wide Base Nix. You use
-package names and ordinary commands. Raw Nix expressions, store paths, daemon
-access, and trust configuration stay outside the normal product interface.
+Find and install command-line tools with familiar package commands. pkg uses
+trusted downloads first. If a local build is needed, it shows the build plan
+and asks before it starts.
 
-The current DN-16 Linux and Apple silicon macOS source authenticates pinned
-Determinate Nix Installer 3.22.1 for Base Nix install and terminal uninstall.
-You do not install Nix first. `pkg` still owns Package Lifecycle, Package
-Repair, package policy, and product state. It does not own Base Nix update or
-repair. Intel macOS is not supported.
-
-Public alpha.7 does not contain the DN-16 macOS Determinate cutover. The DN-16
-candidate still needs its disposable native Apple silicon proof. Do not expect
-the published macOS package to have the candidate behavior in this document.
-
-The project is in technical-preview development. A published alpha installer is
-available. The checked-in installer template deliberately refuses to download
-anything until a release replaces every pinned version, URL, and SHA-256
-placeholder.
+[Alpha.46](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.46) is available
+for Apple silicon macOS and Linux x86-64 with systemd. Setup installs
+Determinate Nix for you. The macOS preview is not notarized. The release uses
+a test signing root.
 
 ## Start here
 
-- [Install safely](install.md)
-- [Everyday commands](commands.md)
-- [Troubleshooting and support](support.md)
+- [Install pkg and set up your shell](install.md)
+- [Find, install, and manage packages](commands.md)
+- [Fix a problem and collect a support report](support.md)
 - [Privacy and security](privacy.md)
 
-The [plan index](../plans/README.md) identifies the active implementation plan
-and separates it from historical design material. It also records the native
-proof that still blocks the macOS cutover.
+Package operations belong to pkg. Determinate owns the Nix installation.
+No Nix repair or update command is exposed in this alpha.
+
+The [plan index](../plans/README.md) records development work and native proof.
+Source changes are available in public downloads only after a new release.

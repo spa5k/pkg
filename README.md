@@ -1,14 +1,13 @@
 # `pkg`
 
-[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.7)
+[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.46)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 `pkg` is a package manager for Linux and macOS. It has a simple command
 interface like Homebrew and paru.
 
 Base Nix is the machine-wide package and build engine. You do not need to
-install or configure Nix first. The current DN-16 source authenticates and
-starts the pinned Determinate Nix Installer 3.22.1 executable on supported
+install or configure Nix first. pkg authenticates and starts the pinned Determinate Nix Installer 3.22.1 executable on supported
 systems.
 
 > [!WARNING]
@@ -16,55 +15,13 @@ systems.
 
 ## Install
 
-### Linux x86-64
+Use the [install guide](docs/install.md) for **Apple silicon macOS** or
+**Linux x86-64 with systemd**. It includes the fixed alpha.46 download URLs,
+checksums, shell setup, and upgrade steps.
 
-Download and read the fixed release installer. Then run it.
-
-```sh
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.7/install.sh
-less install.sh
-sh install.sh
-pkg doctor
-```
-
-The script downloads the pinned `pkg` installer, checks its SHA-256 digest, and
-then requests administrator access. The current Linux candidate authenticates
-the pinned Determinate Nix Installer 3.22.1 executable before it starts Base Nix
-installation.
-
-After the vendor installer starts, `pkg` waits for it. The current vendor
-contract has no safe cancellation, signal, hard timeout, or parent-death
-guarantee. If the result is unknown, `pkg` fails closed and does not retry.
-
-### macOS Apple silicon
-
-Download the package and its checksums. Then install it.
-
-```sh
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.7/pkg-0.1.0-alpha.7-preview.pkg
-curl -fsSLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.7/SHA256SUMS
-grep '  pkg-0.1.0-alpha.7-preview.pkg$' SHA256SUMS | shasum -a 256 --check
-sudo installer -pkg ./pkg-0.1.0-alpha.7-preview.pkg -target /
-pkg doctor
-```
-
-The macOS preview is not Developer ID signed or notarized. See the
-[install guide](docs/install.md) and the
-[latest release](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.7)
-for verification details.
-
-The package command above installs public alpha.7. Alpha.7 does not contain the
-DN-16 Determinate cutover described below. The DN-16 candidate still needs its
-disposable native Apple silicon proof.
-
-The DN-16 macOS source supports Apple silicon only. It refuses Intel macOS.
-`pkg-install` obtains and authenticates the pinned executable through the
-authenticated installer repository. It then uses that executable to install
-Base Nix. You do not need to install Nix before you install `pkg`.
-
-After the vendor installer starts, `pkg` waits for it. A stored `Started` state
-means that the Base Nix result is unknown. `pkg` fails closed. It does not start
-the vendor installer again.
+The terminal installer installs Determinate Nix for you. It saves a private
+log and waits for setup to finish. The macOS package is ad-hoc signed and is
+not notarized. This alpha uses a test signing root.
 
 ## Use `pkg`
 
@@ -126,7 +83,6 @@ a product security boundary. Local administrators can access or change Base
 Nix. `pkg doctor` checks important changes and fails closed when ownership is
 not clear.
 
-This section describes the current DN-16 source. It is not in public alpha.7.
 Linux and Apple silicon macOS use pinned Determinate Nix Installer 3.22.1 for
 Base Nix install and terminal uninstall. `pkg` does not own Base Nix update or
 repair. See the
@@ -136,15 +92,20 @@ repair. See the
 
 | Platform | Preview status |
 | --- | --- |
-| Linux x86-64 | Alpha.7 is public; newer Determinate source has passed its native proof |
-| macOS Apple silicon | Alpha.7 does not contain DN-16; the DN-16 candidate still needs disposable native proof and Apple signing |
-| macOS Intel | Not supported; the installer refuses this system |
+| Linux x86-64 | Public alpha.46; requires systemd |
+| macOS Apple silicon | Public alpha.46; ad-hoc signed, not notarized |
+| macOS Intel | Not supported |
 | Linux arm64 | Not available in this preview |
 
-The checked-in clean-host matrix covers install, cached package installation,
-one approved local build, upgrade, rollback, Package Repair, ownership drift,
-isolation, and uninstall. The Linux proof passed. The macOS Determinate cutover
-still needs its disposable Apple silicon proof.
+The native platform cutover proofs passed. Alpha.46 was checked in a macOS VM
+with a product upgrade, a cached fzf install, and a local cxx-prettyprint build.
+The latter is a header library. It is not a compiled-package or cold-cache test.
+See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.46)
+for the exact scope and known limits.
+
+The next installer source adds automatic product service updates and corrects
+an alpha.46 doctor ownership error. These changes need a new release before
+they are available in the downloads above.
 
 ## Contribute
 
