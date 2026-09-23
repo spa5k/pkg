@@ -5,7 +5,7 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.46`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.46).
+[`v0.1.0-alpha.47`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.47).
 It supports **Apple silicon macOS** and **Linux x86-64 with systemd**.
 Intel macOS and Linux arm64 are not release targets yet.
 
@@ -22,10 +22,10 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.46/pkg-0.1.0-alpha.46-preview.pkg
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.46/install-preview.sh
-printf '%s  %s\n' '4e5c624af55e11dd7213253dcec74ab7d3e0deed751e92ed4f3ebcc6a1bf19d7' 'install-preview.sh' | shasum -a 256 --check
-/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.46-preview.pkg d505459f3d65de0edc83a9459d729f31fe4d83c929d821d7d3e61f368b41800b
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.47/pkg-0.1.0-alpha.47-preview.pkg
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.47/install-preview.sh
+printf '%s  %s\n' '6b7e9346316a1cbf4c6301771897171bb1e62772a75360be79afb4ca74168735' 'install-preview.sh' | shasum -a 256 --check
+/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.47-preview.pkg 24ed075478172109d19c569f1b8548474d3d372d336f44f93d648ff1c8a1023a
 ```
 
 Allow the macOS system configuration prompt if it appears. Keep the terminal
@@ -34,50 +34,34 @@ open until setup finishes. The log path appears before setup starts.
 Add installed commands to your current shell:
 
 ```sh
-export PATH="$HOME/Library/Application Support/pkg/current/bin:$PATH"
+eval "$(pkg shellenv)"
 pkg doctor
 pkg install fzf
 fzf --version
 ```
 
-Add the same `export PATH` line to `~/.zshrc` for future zsh sessions.
+Add the same `eval "$(pkg shellenv)"` line to `~/.zshrc` for future zsh sessions.
 Use `~/.bashrc` if your interactive shell is Bash. `cxx-prettyprint` is a
 header library; it does not add a command to PATH.
 
 ### macOS product upgrade and repair
 
-Alpha.46 requires manual service control for an upgrade from an earlier
-compatible alpha. Stop the two product jobs before running the verified
-installer above. This keeps the package engine and installed packages.
+Run the same verified installer for a compatible product upgrade.
+It checks the installed service files, stops the pkg services, updates the
+product files, and starts the services again. It keeps Nix and installed packages.
+You do not need manual `launchctl` commands for a normal upgrade.
 
-```sh
-sudo launchctl bootout system/org.pkg.nix-broker
-sudo launchctl bootout system/org.pkg.root-helper
-sudo launchctl disable system/org.pkg.nix-broker
-sudo launchctl disable system/org.pkg.root-helper
-```
-
-After the installer reports a successful product upgrade:
-
-```sh
-sudo launchctl enable system/org.pkg.root-helper
-sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.root-helper.plist
-sudo launchctl enable system/org.pkg.nix-broker
-sudo launchctl bootstrap system /Library/LaunchDaemons/org.pkg.nix-broker.plist
-pkg doctor
-```
-
-The next installer source automates these steps for a normal upgrade. This is
-not yet part of the alpha.46 download. Do not use cleanup commands from older
-alpha troubleshooting sessions as an upgrade method.
+Product file repair remains an offline support operation. See the repair
+section below. Do not use cleanup commands from older alpha troubleshooting
+sessions as an upgrade method.
 
 ## Linux x86-64
 
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.46/pkg-install-x86_64-linux
-printf '%s  %s\n' 'c4d1a116488ceccfdc5fae9f9f2835e4202c0f2fb3777dc03b37b1162f4a0ee7' 'pkg-install-x86_64-linux' | sha256sum --check
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.47/pkg-install-x86_64-linux
+printf '%s  %s\n' '387037c69bbafeb0e7508e5115286bc2825af3e49191528a22b2ed60ddd5b91d' 'pkg-install-x86_64-linux' | sha256sum --check
 chmod 700 ./pkg-install-x86_64-linux
 sudo ./pkg-install-x86_64-linux
 ```
@@ -98,6 +82,10 @@ its version, URL, and checksum.
 
 ### Three Linux install modes
 
+For a normal product upgrade, run the verified installer without options.
+It checks, stops, updates, and restarts the pkg services automatically.
+It keeps Nix and installed packages.
+
 #### Fresh Install
 
 Run the verified installer without options. It installs the package engine,
@@ -105,12 +93,12 @@ installs pkg, starts services, and saves the installation record.
 
 #### Offline product upgrade
 
-The alpha.46 installer requires these steps before a compatible upgrade:
+For operator-controlled maintenance, use `--leave-services-offline`:
 
 ```sh
 sudo systemctl stop pkg-nix-broker.service pkg-root-helper.service pkg-nix-broker.socket pkg-root-helper.socket
 sudo systemctl disable pkg-nix-broker.service pkg-root-helper.service pkg-nix-broker.socket pkg-root-helper.socket
-sudo ./pkg-install-x86_64-linux
+sudo ./pkg-install-x86_64-linux --leave-services-offline
 sudo systemctl daemon-reload
 sudo systemctl enable --now pkg-root-helper.socket pkg-nix-broker.socket pkg-root-helper.service pkg-nix-broker.service
 ```
@@ -118,9 +106,7 @@ sudo systemctl enable --now pkg-root-helper.socket pkg-nix-broker.socket pkg-roo
 Run the last two commands only after the installer reports success. Product
 unit files must be unchanged and must have no drop-ins.
 
-The next installer source manages this service stop and start automatically.
-Its `--leave-services-offline` option retains manual control. This option is
-not in the published alpha.46 installer.
+Omit `--leave-services-offline` for the normal automatic upgrade.
 
 #### Offline Product Asset Repair
 
@@ -146,9 +132,9 @@ pending pkg transaction all pass validation.
 The installer waits for Determinate after it starts. Do not close the terminal
 to force a retry. A partial Nix installation needs diagnosis first.
 
-Alpha.46 has a known doctor error that can label accepted Determinate Nix as
-unmanaged. The fix is merged for the next release. Do not uninstall Nix based
-on this row alone. See [support](support.md).
+Alpha.47 fixes the false unmanaged-Nix diagnostic from alpha.46.
+If the diagnostic remains after an upgrade, keep the support report and
+installation log. See [support](support.md).
 
 ## Local candidate proof
 
@@ -163,7 +149,7 @@ Preview the operation first:
 
 ```sh
 pkg uninstall --dry-run
-pkg uninstall
+sudo pkg uninstall
 ```
 
 Use plain terminal output for live uninstall. It removes verified pkg-owned

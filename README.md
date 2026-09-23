@@ -1,6 +1,6 @@
 # `pkg`
 
-[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.46)
+[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.47)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 `pkg` is a package manager for Linux and macOS. It has a simple command
@@ -16,7 +16,7 @@ systems.
 ## Install
 
 Use the [install guide](docs/install.md) for **Apple silicon macOS** or
-**Linux x86-64 with systemd**. It includes the fixed alpha.46 download URLs,
+**Linux x86-64 with systemd**. It includes the fixed alpha.47 download URLs,
 checksums, shell setup, and upgrade steps.
 
 The terminal installer installs Determinate Nix for you. It saves a private
@@ -34,7 +34,7 @@ pkg outdated             # Find available upgrades
 pkg update               # Refresh package metadata
 pkg upgrade --all        # Upgrade all packages
 pkg history              # Show saved generations
-pkg rollback 2           # Restore generation 2
+pkg rollback             # Restore the previous package environment
 pkg repair               # Check and repair installed packages
 pkg remove ripgrep       # Remove a package
 ```
@@ -50,7 +50,7 @@ refused before any change.
 
 ```sh
 pkg uninstall --dry-run
-pkg uninstall
+sudo pkg uninstall
 ```
 
 `pkg` first removes and verifies authenticated product-owned state. It then
@@ -92,20 +92,17 @@ repair. See the
 
 | Platform | Preview status |
 | --- | --- |
-| Linux x86-64 | Public alpha.46; requires systemd |
-| macOS Apple silicon | Public alpha.46; ad-hoc signed, not notarized |
+| Linux x86-64 | Public alpha.47; requires systemd |
+| macOS Apple silicon | Public alpha.47; ad-hoc signed, not notarized |
 | macOS Intel | Not supported |
 | Linux arm64 | Not available in this preview |
 
-The native platform cutover proofs passed. Alpha.46 was checked in a macOS VM
-with a product upgrade, a cached fzf install, and a local cxx-prettyprint build.
-The latter is a header library. It is not a compiled-package or cold-cache test.
-See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.46)
-for the exact scope and known limits.
-
-The next installer source adds automatic product service updates and corrects
-an alpha.46 doctor ownership error. These changes need a new release before
-they are available in the downloads above.
+The native platform cutover proofs passed. The release includes automatic
+product service updates, the doctor ownership correction, and `pkg shellenv`.
+The [native lifecycle report](tests/macos-clean-host/PUBLIC-04.md) records the
+compiled-package, repair, reboot, and uninstall checks that support these changes.
+See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.47)
+for checks on the exact release files and known limits.
 
 ## Contribute
 

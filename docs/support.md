@@ -38,10 +38,10 @@ reopen that app. This setting does not repair an interrupted Nix installation.
 Do not delete installation records or APFS volumes to force a retry.
 
 Alpha.46 can show a false unmanaged-Nix row in `pkg doctor` after a valid
-Determinate install. The correction is merged for the next release. Retain the
+Determinate install. Alpha.47 contains the correction. Retain the
 support report instead of removing Nix based on this row alone.
 
-For more installer stage details with the next terminal wrapper, set
+For more installer stage details with the terminal wrapper, set
 `PKG_INSTALL_DEBUG=1` when you run the verified `install-preview.sh` script.
 A setup failure returns a nonzero exit code. A successful PackageKit message
 from an older background installer does not prove that setup finished.
