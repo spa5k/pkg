@@ -118,6 +118,10 @@ pub fn assemble_install_state(
             target.plan().version().clone(),
         )
         .map_err(|_| InstallStateError::InvalidRealization)?;
+        let realization = match target.selector().source_revision() {
+            pkg_core::SourceRevision::PublicFlake(lock) => realization.with_flake(lock.clone()),
+            _ => realization,
+        };
         let attribute = target
             .selector()
             .attribute()
@@ -230,6 +234,10 @@ fn lock_entry_from_evidence(
         target.package_version().clone(),
     )
     .map_err(|_| InstallStateError::InvalidRealization)?;
+    let realization = match target.source_revision() {
+        pkg_core::SourceRevision::PublicFlake(lock) => realization.with_flake(lock.clone()),
+        _ => realization,
+    };
     let provenance = if target
         .acquired()
         .iter()

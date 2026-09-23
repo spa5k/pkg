@@ -42,6 +42,9 @@ pkg remove ripgrep       # Remove a package
 `pkg` uses cached packages first. If a local build is required, `pkg` asks for
 one exact, one-time approval.
 
+Source builds also support [public flake packages](docs/commands.md#public-flake-packages-next-release).
+This feature is not in the published alpha.47 release.
+
 ## Uninstall
 
 Preview the files that `pkg` will remove. Then uninstall it. Live uninstall on
@@ -71,11 +74,13 @@ pkg package commands -> Broker -> Root Helper -> Package Lifecycle
 pkg installer -> authenticated Determinate executable -> Base Nix Lifecycle
 ```
 
-- Package metadata and release inputs are authenticated.
+- Catalog metadata and release inputs are authenticated. Public flake sources
+  are selected by the user and locked by content; they are not endorsed by pkg.
 - The installer refuses foreign or changed Nix state.
 - Privileged operations use a narrow helper interface.
-- Public commands do not accept Nix commands, expressions, installables, store
-  paths, trust roots, or arbitrary Nix options.
+- Public commands accept package names and validated public flake references.
+  They do not accept Nix commands, expressions, store paths, trust roots, or
+  arbitrary Nix options.
 - The Root Helper accepts only closed product operations.
 
 Raw Nix availability is not a security boundary. Base Nix daemon access is not

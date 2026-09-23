@@ -27,6 +27,7 @@
 
 pub mod channel;
 pub mod clock;
+pub mod flake;
 pub mod generation;
 pub mod history;
 pub mod identity;
@@ -50,6 +51,7 @@ pub use channel::{
     ChannelError, ChannelName, ChannelSequence, NixpkgsRevision, PolicyVersion, SourceRevision,
 };
 pub use clock::{Clock, SystemClock};
+pub use flake::{FlakeError, LockedFlake, PublicFlakeRef};
 pub use generation::{
     GenerationSnapshot, GenerationSnapshotError, RollbackError, RollbackPlan, RollbackTarget,
     plan_rollback,

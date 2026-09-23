@@ -377,7 +377,7 @@ impl InfoArgs {
 /// Install command arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Args)]
 pub struct InstallArgs {
-    /// Package selectors to install.
+    /// Package names or public GitHub flakes (quote github:owner/repo#package).
     #[arg(required = true, num_args = 1..)]
     packages: Vec<String>,
     /// Select explicit package outputs (comma-delimited; repeatable).

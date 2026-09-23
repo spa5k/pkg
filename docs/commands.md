@@ -24,6 +24,39 @@ Downloads from the signed binary cache are preferred. A cache miss is shown befo
 local sandboxed build runs only after explicit approval and only when platform policy permits it.
 `--dry-run` previews an operation, while `--json` and `--jsonl` provide stable machine output.
 
+## Public flake packages (next release)
+
+This is available in source builds after PUBLIC-07. Alpha.47 does not support it.
+
+```sh
+pkg install 'github:Mic92/nix-update#default'
+pkg list
+pkg upgrade 'github:Mic92/nix-update#default'
+pkg pin 'github:Mic92/nix-update#default'
+pkg unpin 'github:Mic92/nix-update#default'
+pkg remove 'github:Mic92/nix-update#default'
+pkg rollback
+```
+
+Quote the reference so the shell keeps it as one argument. A reference can
+select a branch, tag, or commit: `github:owner/repository/ref#package`.
+Without a package fragment, pkg selects the flake's default package.
+The package must support your system.
+
+Pkg saves the exact source commit, content hash, and dependency locks. An
+upgrade checks the original source again. A commit reference stays at that
+commit. Pinning keeps the installed output. Removal and rollback use the same
+commands as Nixpkgs packages.
+
+The source must be public and have complete committed dependency locks. Local
+path inputs and private credentials are not supported. Pkg uses its existing
+trusted caches and asks for build approval when needed. The source cannot add
+caches, keys, or Nix settings. Builds that require evaluation-time builds are
+not supported.
+
+Search, info, and the catalog update use Nixpkgs. `pkg outdated` reports public
+flake sources as unchecked. Use `pkg upgrade` to check and install their updates.
+
 ## Remove and upgrade packages
 
 `pkg remove fzf` removes a package from your active environment.

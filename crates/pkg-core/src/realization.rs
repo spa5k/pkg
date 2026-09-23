@@ -1,6 +1,6 @@
 //! The exact realized artifact: a realized store object — input-addressed or
 //! content-addressed — with its outputs, derivation, NAR hash, system, and
-//! Nixpkgs revision.
+//! source Git commit.
 //!
 //! Per `plans/04` §4.1 and `plans/05` §5.2, a [`Realization`] is the exact
 //! thing activated into a generation. Its canonical identity is the store path
@@ -64,7 +64,7 @@ impl std::error::Error for RealizationError {}
 ///
 /// Fields are private and represent canonical, exact data: the primary store
 /// path, its deriver, the per-output store paths, the outputs selected for
-/// installation, the target system, the pinned Nixpkgs revision, the NAR hash
+/// installation, the target system, the source Git commit, the NAR hash
 /// of the primary store path, the closure NAR size, and the display
 /// `pname`/`version`.
 ///
@@ -83,7 +83,8 @@ pub struct Realization {
     outputs: BTreeMap<OutputName, StorePath>,
     outputs_to_install: Vec<OutputName>,
     system: System,
-    nixpkgs_revision: NixpkgsRevision,
+    source_commit: NixpkgsRevision,
+    flake: Option<crate::LockedFlake>,
     nar_hash: NarHash,
     closure_nar_size: u64,
     pname: String,
@@ -110,7 +111,7 @@ impl Realization {
         outputs: BTreeMap<OutputName, StorePath>,
         outputs_to_install: Vec<OutputName>,
         system: System,
-        nixpkgs_revision: NixpkgsRevision,
+        source_commit: NixpkgsRevision,
         nar_hash: NarHash,
         closure_nar_size: u64,
         pname: String,
@@ -148,7 +149,8 @@ impl Realization {
             outputs,
             outputs_to_install,
             system,
-            nixpkgs_revision,
+            source_commit,
+            flake: None,
             nar_hash,
             closure_nar_size,
             pname,
@@ -192,10 +194,24 @@ impl Realization {
         self.system
     }
 
-    /// Returns the pinned Nixpkgs revision this was realized from.
+    /// Returns the source Git commit. For public flakes, this is the flake root commit.
     #[must_use]
-    pub const fn nixpkgs_revision(&self) -> &NixpkgsRevision {
-        &self.nixpkgs_revision
+    pub const fn source_commit(&self) -> &NixpkgsRevision {
+        &self.source_commit
+    }
+
+    /// Binds an exact public source to this realized output.
+    #[must_use]
+    pub fn with_flake(mut self, lock: crate::LockedFlake) -> Self {
+        self.source_commit = lock.revision().clone();
+        self.flake = Some(lock);
+        self
+    }
+
+    /// Returns the root and dependency locks for a public flake package.
+    #[must_use]
+    pub const fn flake(&self) -> Option<&crate::LockedFlake> {
+        self.flake.as_ref()
     }
 
     /// Returns the NAR hash (sha256 SRI) of the **primary** store path.

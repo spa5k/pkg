@@ -75,9 +75,21 @@ impl LifecycleState {
                 return Err(LifecycleError::PinMismatch);
             }
             if let SourceRevision::ExactRevision(revision) = entry.source_revision()
-                && revision != locked_entry.realization().nixpkgs_revision()
+                && revision != locked_entry.realization().source_commit()
             {
                 return Err(LifecycleError::RevisionMismatch);
+            }
+            let selected_source = entry.selector().as_str();
+            match (entry.source_revision(), locked_entry.realization().flake()) {
+                (SourceRevision::PublicFlake(wanted), Some(actual))
+                    if wanted == actual && wanted.reference().as_str() == selected_source => {}
+                (SourceRevision::PublicFlake(_), _) | (_, Some(_)) => {
+                    return Err(LifecycleError::RevisionMismatch);
+                }
+                _ if crate::PublicFlakeRef::new(entry.selector().as_str()).is_ok() => {
+                    return Err(LifecycleError::RevisionMismatch);
+                }
+                _ => {}
             }
         }
         Ok(Self { manifest, locked })

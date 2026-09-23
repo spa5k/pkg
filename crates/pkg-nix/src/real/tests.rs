@@ -1771,3 +1771,100 @@ fn recursive_verify_dimension_cannot_drop_closure_semantics()
     assert!(calls[0].iter().any(|argument| argument == "--recursive"));
     Ok(())
 }
+
+#[test]
+fn public_flake_metadata_is_locked_and_missing_root_hash_is_calculated()
+-> Result<(), Box<dyn std::error::Error>> {
+    let reference = pkg_core::PublicFlakeRef::new("github:example/tools/main#demo")?;
+    let metadata = serde_json::json!({
+        "locked": {"type":"github","owner":"example","repo":"tools","rev":"0123456789abcdef0123456789abcdef01234567"},
+        "path":"/nix/store/00000000000000000000000000000000-source",
+        "locks":{"version":7,"root":"root","nodes":{"root":{}}}
+    });
+    let executor = Scripted::new(vec![
+        success(metadata.to_string()),
+        success("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n"),
+    ]);
+    let calls = Arc::clone(&executor.calls);
+    let lock = RealNixAdapter::scripted(executor).lock_flake(&reference)?;
+    assert_eq!(lock.reference(), &reference);
+    let calls = calls.lock().unwrap();
+    assert!(calls[0].contains(&OsString::from("--no-update-lock-file")));
+    assert!(
+        calls[0]
+            .windows(3)
+            .any(|args| args == os_args(["--option", "accept-flake-config", "false"]))
+    );
+    assert!(
+        calls[1]
+            .windows(3)
+            .any(|args| args == os_args(["hash", "path", "--sri"]))
+    );
+    let mut wrong = metadata;
+    wrong["locked"]["repo"] = serde_json::json!("other");
+    let adapter = RealNixAdapter::scripted(Scripted::new(vec![success(wrong.to_string())]));
+    assert!(adapter.lock_flake(&reference).is_err());
+    Ok(())
+}
+
+#[test]
+fn public_flake_evaluation_pins_root_inputs_and_configuration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let lock = pkg_core::LockedFlake::new(
+        pkg_core::PublicFlakeRef::new("github:example/tools/main#demo")?,
+        NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567")?,
+        NarHash::new("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")?,
+        r#"{"version":7,"root":"root","nodes":{"root":{}}}"#,
+    )?;
+    let request = EvaluateDerivationRequest::for_flake(
+        lock,
+        System::Aarch64Linux,
+        OutputSelection::default_selection(),
+    )?;
+    assert_eq!(
+        EvaluateDerivationRequest::decode(&crate::JsonCodec::production(), &request.encode()?)?,
+        request
+    );
+    let raw = br#"{"version":4,"derivations":{"00000000000000000000000000000000-demo.drv":{"args":[],"builder":"/bin/sh","env":{"outputs":"out","pname":"demo","version":"1.0"},"inputs":{"drvs":{},"srcs":[]},"name":"demo-1.0","outputs":{"out":{"path":"22222222222222222222222222222222-demo"}},"system":"aarch64-linux","version":4}}}"#;
+    let executor = Scripted::new(vec![success(raw.as_slice()), success(raw.as_slice())]);
+    let calls = Arc::clone(&executor.calls);
+    let report = RealNixAdapter::scripted(executor).evaluate_derivation(&request)?;
+    assert_eq!(report.pname(), "demo");
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    for args in calls.iter() {
+        for (key, value) in [
+            ("accept-flake-config", "false"),
+            ("pure-eval", "true"),
+            ("restrict-eval", "true"),
+            ("allow-import-from-derivation", "false"),
+            ("use-registries", "false"),
+        ] {
+            assert!(
+                args.windows(3)
+                    .any(|args| args == os_args(["--option", key, value]))
+            );
+        }
+        assert!(args.contains(&"--no-update-lock-file".into()));
+        assert!(args.contains(&"--no-write-lock-file".into()));
+        assert!(args.contains(&"github:example/tools/0123456789abcdef0123456789abcdef01234567?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D#demo".into()));
+        let reference = args
+            .windows(2)
+            .find(|pair| pair[0] == "--reference-lock-file")
+            .unwrap();
+        assert!(
+            !Path::new(&reference[1]).exists(),
+            "temporary lock removed after evaluation"
+        );
+    }
+    let mut altered: serde_json::Value = serde_json::from_slice(&request.encode()?)?;
+    altered["nixpkgsRevision"] = serde_json::json!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert!(
+        EvaluateDerivationRequest::decode(
+            &crate::JsonCodec::production(),
+            &serde_json::to_vec(&altered)?
+        )
+        .is_err()
+    );
+    Ok(())
+}

@@ -979,6 +979,7 @@ pub struct EvaluateDerivationRequest {
     nixpkgs_revision: NixpkgsRevision,
     nixpkgs_nar_hash: NarHash,
     outputs: OutputSelection,
+    flake: Option<pkg_core::LockedFlake>,
 }
 
 impl EvaluateDerivationRequest {
@@ -1022,7 +1023,36 @@ impl EvaluateDerivationRequest {
             nixpkgs_revision,
             nixpkgs_nar_hash,
             outputs,
+            flake: None,
         })
+    }
+
+    /// Constructs evaluation from a broker-locked public source and dependency graph.
+    ///
+    /// # Errors
+    /// Refuses invalid source bindings or unavailable source metadata.
+    pub fn for_flake(
+        lock: pkg_core::LockedFlake,
+        system: System,
+        outputs: OutputSelection,
+    ) -> Result<Self, NixAdapterError> {
+        let mut request = Self::new(
+            lock.reference()
+                .attribute()
+                .map_err(|_| invalid("invalid flake output"))?,
+            system,
+            lock.revision().clone(),
+            lock.nar_hash().clone(),
+            outputs,
+        )?;
+        request.flake = Some(lock);
+        Ok(request)
+    }
+
+    /// Returns the exact public source, when this is a public flake evaluation.
+    #[must_use]
+    pub const fn flake(&self) -> Option<&pkg_core::LockedFlake> {
+        self.flake.as_ref()
     }
 
     /// Returns the resolved Nixpkgs attribute path.
@@ -1066,6 +1096,8 @@ struct EvaluateDerivationRequestWire {
     nixpkgs_nar_hash: String,
     #[serde(default, deserialize_with = "deserialize_eval_outputs")]
     outputs: Option<BoundedStringSeq>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flake: Option<String>,
 }
 
 impl EvaluateDerivationRequest {
@@ -1086,6 +1118,7 @@ impl EvaluateDerivationRequest {
             nixpkgs_revision: self.nixpkgs_revision.as_str().to_owned(),
             nixpkgs_nar_hash: self.nixpkgs_nar_hash.as_str().to_owned(),
             outputs,
+            flake: self.flake.as_ref().map(pkg_core::LockedFlake::to_json),
         };
         to_json(&dto)
     }
@@ -1113,13 +1146,29 @@ impl EvaluateDerivationRequest {
                 OutputSelection::explicit(built).map_err(|_| invalid("invalid output selection"))?
             }
         };
-        Self::new(
+        let mut request = Self::new(
             attribute,
             system,
             nixpkgs_revision,
             nixpkgs_nar_hash,
             outputs,
-        )
+        )?;
+        if let Some(encoded) = dto.flake {
+            let flake = pkg_core::LockedFlake::from_json(&encoded)
+                .map_err(|_| invalid("invalid flake lock"))?;
+            if flake.revision() != request.nixpkgs_revision()
+                || flake.nar_hash() != request.nixpkgs_nar_hash()
+                || flake
+                    .reference()
+                    .attribute()
+                    .map_err(|_| invalid("invalid flake output"))?
+                    != request.attribute
+            {
+                return Err(invalid("flake identity mismatch"));
+            }
+            request.flake = Some(flake);
+        }
+        Ok(request)
     }
 }
 

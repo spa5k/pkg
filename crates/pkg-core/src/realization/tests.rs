@@ -66,7 +66,7 @@ fn happy_path_accessors_and_identity() {
     assert_eq!(r.outputs().len(), 1);
     assert_eq!(r.outputs_to_install().len(), 1);
     assert_eq!(r.system(), System::X8664Linux);
-    assert_eq!(r.nixpkgs_revision().as_str(), REV);
+    assert_eq!(r.source_commit().as_str(), REV);
     assert_eq!(r.nar_hash().as_str(), NAR);
     assert_eq!(r.closure_nar_size(), 4821034);
     assert_eq!(r.pname(), "ripgrep");

@@ -132,7 +132,7 @@ pub fn snapshot(
             json!({
                 "id": manifest_entry.id().as_str(),
                 "attribute": locked.attribute().as_str(),
-                "nixpkgsRev": realization.nixpkgs_revision().as_str(),
+                "nixpkgsRev": realization.source_commit().as_str(),
                 "storePath": realization.store_path().as_str(),
                 "deriver": realization.deriver().as_str(),
                 "outputsToInstall": realization.outputs_to_install().iter().map(OutputName::as_str).collect::<Vec<_>>(),

@@ -351,6 +351,9 @@ fn percent(done: u64, total: u64) -> u64 {
 }
 
 fn product_text(field: &'static str, value: &str) -> Result<String, ProgressError> {
+    if pkg_core::PublicFlakeRef::new(value).is_ok() {
+        return Ok(value.to_owned());
+    }
     if value.is_empty()
         || value.chars().count() > MAX_PUBLIC_FIELD_CHARS
         || value.chars().any(char::is_control)

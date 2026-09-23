@@ -403,6 +403,16 @@ impl NixAdapter for RootHelperClient {
             .evaluate_derivation(request)
     }
 
+    fn lock_flake(
+        &self,
+        reference: &pkg_core::PublicFlakeRef,
+    ) -> Result<pkg_core::LockedFlake, NixAdapterError> {
+        self.source_evaluator
+            .as_ref()
+            .ok_or(NixAdapterError::Unavailable)?
+            .lock_flake(reference)
+    }
+
     fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
         match self.adapter_response(RootNixRequest::PathInfo(path.clone()))? {
             RootNixResponse::PathInfo(report) => Ok(report),

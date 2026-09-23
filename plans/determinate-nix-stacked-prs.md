@@ -46,6 +46,45 @@ It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
 
+## Public flakes: direct package installation
+
+- **Identifier:** PUBLIC-07.
+- **Purpose:** install packages from public GitHub flakes and preserve their
+  source through upgrades and generation changes.
+- **Owns:** typed public references, exact root and dependency locks, broker-only
+  source evaluation, source-bound build plans and durable state, CLI output,
+  source-preserving upgrades, and regression evidence.
+- **Depends:** PUBLIC-06 (PR #38).
+- **Tests & gates:** reference and lock validation; refusal of local/private
+  inputs and source-controlled configuration; exact lock use at evaluation and
+  build admission; mixed-source install, upgrade, pin, remove, and rollback;
+  native macOS install/build; G-LINT, G-QUALITY, hermetic tests, docs links,
+  F primary review and A security review; required Linux lifecycle CI.
+- **Rollback:** revert and ship CLI/broker/helper together. Existing Nixpkgs
+  generations remain readable. Before a downgrade, remove public flake entries
+  or restore a generation from before their installation. Keep archived flake
+  generations for a later compatible client. No vendor Nix configuration changes.
+
+The initial root syntax is `github:owner/repository[/ref][#package]`. A missing
+package fragment selects `default`. The upstream flake must have complete
+dependency locks. Locked GitHub, GitLab, HTTPS Git, and HTTPS tarball inputs
+are accepted. Local path inputs, private credentials, arbitrary URL options,
+registries, and import-from-derivation are refused. Nixpkgs remains the default
+for ordinary package names. Flake configuration cannot add caches or trust keys.
+
+An upgrade resolves the original branch, tag, or default branch again. An exact
+commit remains exact. Build preview and admission use the same saved root and
+dependency locks. Pinned packages are skipped by default. `pkg outdated` remains
+a Nixpkgs catalog check and reports public sources as unchecked. `pkg upgrade`
+checks those sources directly. Search and info remain catalog operations.
+
+The state adds exact public source data without changing existing Nixpkgs
+records. The legacy `nixpkgsRev` wire slot holds the source Git commit for both
+source kinds; public flake records also contain their complete source lock.
+The manifest, lock snapshot, and generation hashes bind that source to the
+installed outputs. Private repositories, named aliases, development shells,
+system modules, and other root URL forms remain later work.
+
 ## Public flakes: unprivileged source evaluation
 
 - **Identifier:** PUBLIC-06.

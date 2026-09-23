@@ -94,6 +94,18 @@ pub trait NixAdapter: Send + Sync {
         req: &EvaluateDerivationRequest,
     ) -> Result<DerivationPlanReport, NixAdapterError>;
 
+    /// Locks one public source without accepting source-provided Nix settings.
+    /// This capability belongs only to the unprivileged source evaluator.
+    ///
+    /// # Errors
+    /// Refuses unavailable, unlocked, or unsupported sources.
+    fn lock_flake(
+        &self,
+        _reference: &pkg_core::PublicFlakeRef,
+    ) -> Result<pkg_core::LockedFlake, NixAdapterError> {
+        Err(NixAdapterError::Unavailable)
+    }
+
     /// NAR hash, signatures, references, and NAR/closure sizes for one store
     /// path.
     fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError>;

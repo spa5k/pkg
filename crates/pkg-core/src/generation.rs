@@ -75,7 +75,7 @@ impl GenerationSnapshot {
                 .find(|output| output.id() == manifest_entry.id())
                 .ok_or(GenerationSnapshotError::OutputSetMismatch)?;
             if output.attribute() != locked_entry.attribute()
-                || output.nixpkgs_revision() != realization.nixpkgs_revision()
+                || output.source_commit() != realization.source_commit()
                 || output.store_path() != realization.store_path()
                 || output.deriver() != realization.deriver()
                 || output.outputs_to_install() != realization.outputs_to_install()
