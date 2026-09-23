@@ -1,5 +1,20 @@
 # Release service boundary
 
+## Alpha publication
+
+`alpha-release.yml` builds native Apple Silicon and x86-64 Linux binaries from
+an alpha tag. Create a draft release with the test environment's `1.root.json`,
+then dispatch `phase=build` with that file's SHA-256. The workflow embeds the
+root and `https://spa5k.github.io/pkg/alpha/`, signs each asset with GitHub OIDC,
+and uploads the files to the draft. TUF private keys remain on the release host.
+
+Stage the verified binaries and indexes with `pkg-rel publish`. Upload the
+sealed channel as `channel.tar.gz`, then dispatch `phase=deploy` with its SHA-256
+to publish it through GitHub Pages. Test that channel before publishing the
+draft. Timestamp metadata expires after seven days and requires a new signed
+publication before that deadline. The macOS preview remains ad-hoc signed and
+unnotarized; use its foreground `install-preview.sh` from an authorized terminal.
+
 This crate implements the provider-neutral, security-sensitive part of a V1
 release:
 
