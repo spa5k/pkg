@@ -1790,6 +1790,7 @@ fn public_flake_metadata_is_locked_and_missing_root_hash_is_calculated()
     assert_eq!(lock.reference(), &reference);
     let calls = calls.lock().unwrap();
     assert!(calls[0].contains(&OsString::from("--no-update-lock-file")));
+    assert!(!calls[0].contains(&OsString::from("--no-write-lock-file")));
     assert!(
         calls[0]
             .windows(3)
@@ -1846,7 +1847,7 @@ fn public_flake_evaluation_pins_root_inputs_and_configuration()
             );
         }
         assert!(args.contains(&"--no-update-lock-file".into()));
-        assert!(args.contains(&"--no-write-lock-file".into()));
+        assert!(!args.contains(&"--no-write-lock-file".into()));
         assert!(args.contains(&"github:example/tools/0123456789abcdef0123456789abcdef01234567?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D#demo".into()));
         let reference = args
             .windows(2)

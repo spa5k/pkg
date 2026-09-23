@@ -26,12 +26,12 @@ impl RealNixAdapter {
         if self.eager_source_metadata {
             args.extend(os_args(["--option", "lazy-trees", "false"]));
         }
+        // Do not add --no-write-lock-file: it permits in-memory lock updates.
         args.extend(os_args([
             "flake",
             "metadata",
             "--json",
             "--no-update-lock-file",
-            "--no-write-lock-file",
         ]));
         args.push(reference.source().into());
         let bytes = self.require_success(MethodKind::EvaluateDerivation, args, EVALUATE_TIMEOUT)?;
@@ -111,7 +111,6 @@ impl RealNixAdapter {
             "derivation",
             "show",
             "--no-update-lock-file",
-            "--no-write-lock-file",
             "--reference-lock-file",
         ]));
         args.push(file.path().as_os_str().to_owned());
