@@ -12,6 +12,10 @@ on:
         description: SHA-256 of 1.root.json (build) or channel.tar.gz (deploy)
         type: string
         required: true
+      tag:
+        description: Existing alpha tag when deploying from main
+        type: string
+        required: false
 
 permissions: {}
 
@@ -91,7 +95,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      contents: read
+      # GitHub requires write access to read an unpublished draft release.
+      contents: write
       pages: write
       id-token: write
     environment:
@@ -100,15 +105,17 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       EXPECTED_SHA256: ${{ inputs.sha256 }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Stage the exact signed alpha channel
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[1-9][0-9]*$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[1-9][0-9]*$ ]]
+          [[ "$GITHUB_REF" == refs/heads/main || "$GITHUB_REF" == "refs/tags/$RELEASE_TAG" ]]
           [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
           test "$GITHUB_REPOSITORY" = spa5k/pkg
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern channel.tar.gz
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern channel.tar.gz
           printf '%s  channel.tar.gz\n' "$EXPECTED_SHA256" | sha256sum --check --strict
           mkdir -p site/alpha
           tar -xzf channel.tar.gz -C site/alpha --no-same-owner
