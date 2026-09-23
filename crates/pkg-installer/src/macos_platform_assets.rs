@@ -655,7 +655,9 @@ mod tests {
             .ok_or_else(|| std::io::Error::other("missing source workspace asset"))?;
         manager.ensure_asset(asset)?;
         let workspace = temporary.path().join("private/var/db/pkg-source");
-        fs::write(workspace.join("flake.lock"), b"locked")?;
+        let lock = workspace.join("flake.lock");
+        fs::write(&lock, b"locked")?;
+        fs::set_permissions(lock, fs::Permissions::from_mode(0o600))?;
 
         manager.remove_uninstall_asset(asset)?;
 

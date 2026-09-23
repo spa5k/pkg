@@ -125,6 +125,11 @@ impl UninstallBackend for ProductionLinuxUninstallBackend {
             return Err(UninstallError::backend_failure());
         }
         let result = self.runtime.execute(action);
+        if result.is_err()
+            && std::env::var_os("PKG_INSTALL_DEBUG").is_some_and(|value| value == "1")
+        {
+            eprintln!("linux uninstall failed: action={action:?}");
+        }
         if stopping_services && result.is_ok() {
             self.services_stopped = true;
         }
