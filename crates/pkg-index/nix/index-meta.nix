@@ -5,10 +5,10 @@
 pkgs:
 
 let
-  names = builtins.attrNames pkgs;
   cap = value:
     if builtins.isString value
-    then builtins.substring 0 4096 value
+    then builtins.substring 0 4096
+      (builtins.replaceStrings [ "\n" "\r" "\t" ] [ " " " " " " ] value)
     else null;
   sortedStrings = values:
     if builtins.isList values then
@@ -36,38 +36,40 @@ let
       values = if builtins.isList raw then raw else [ raw ];
     in sortedStrings (builtins.map licenseName values);
   force = value: builtins.deepSeq value value;
-  hostSystem = pkgs.stdenv.hostPlatform.system or null;
-in
-builtins.map
+  # Match nix search: descend only into package sets which opt into discovery.
+  walk = prefix: set: builtins.concatLists (builtins.map
   (name:
     let
+      path = if prefix == "" then name else "${prefix}.${name}";
       evaluated = builtins.tryEval (force (
         let
-          drv = pkgs.${name};
+          drv = set.${name};
           meta = drv.meta or {};
           broken = (meta.broken or false) == true;
           sourcePlatforms = sortedStrings (meta.platforms or []);
           platforms = builtins.filter
             (system: builtins.elem system supportedSystems)
             sourcePlatforms;
-        in if (drv.type or null) != "derivation" then
-          throw "not a derivation"
-        else {
-          attrPath = name;
+        in if !builtins.isAttrs drv then []
+        else if (drv.type or null) != "derivation" then
+          if (drv.recurseForDerivations or false) == true
+          then walk path drv else []
+        else [{
+          attrPath = path;
           pname = cap (drv.pname or null);
           version = cap (drv.version or null);
           description = cap (meta.description or null);
           homepage = cap (meta.homepage or null);
           licenses = licenseNames (meta.license or []);
           inherit platforms broken;
-          availableHere = !broken
-            && (sourcePlatforms == [] || builtins.elem hostSystem sourcePlatforms);
+          availableHere = !broken && pkgs.lib.meta.availableOn pkgs.stdenv.hostPlatform drv;
           position = null;
           outputs = outputNames (drv.outputs or []);
           aliases = [];
           skipped = false;
-        }));
+        }]));
     in
       if evaluated.success then evaluated.value
-      else { attrPath = name; skipped = true; })
-  names
+      else [{ attrPath = path; skipped = true; }])
+  (builtins.attrNames set));
+in walk "" pkgs

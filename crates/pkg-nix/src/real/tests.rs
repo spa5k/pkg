@@ -997,6 +997,20 @@ fn derivation_v4_normalizes_relative_paths_and_closed_fields()
         report
     );
 
+    // Nixpkgs also uses name-only derivations, such as unixtools.watch.
+    // Their display name comes from the evaluated derivation, never the index.
+    let mut name_only: serde_json::Value = serde_json::from_slice(raw)?;
+    let root_name = "00000000000000000000000000000000-demo.drv";
+    let root = &mut name_only["derivations"][root_name];
+    root["structuredAttrs"] = serde_json::Value::Null;
+    root["env"].as_object_mut().unwrap().remove("pname");
+    root["env"].as_object_mut().unwrap().remove("version");
+    let report = normalize_derivation(&serde_json::to_vec(&name_only)?, &request, root_name)?;
+    assert_eq!(report.pname(), "demo-1.0");
+    assert_eq!(report.version().as_str(), "");
+    name_only["derivations"][root_name]["structuredAttrs"] = serde_json::json!({"pname": false});
+    assert!(normalize_derivation(&serde_json::to_vec(&name_only)?, &request, root_name).is_err());
+
     let calls = calls.lock().map_err(|_| "poisoned call log")?;
     assert_eq!(calls.len(), 2);
     for call in calls.iter() {

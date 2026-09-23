@@ -242,6 +242,32 @@ It accepts no Nix command, expression, installable, store path, option, URL,
 or trust root. The output file must not exist.
 The output is the deterministic Brotli target used by the signed channel.
 
+Public alpha catalogs must be generated from Nixpkgs. Do not copy the small
+catalog from `linux_proof_publication`; it exists for isolated lifecycle tests.
+After setting the new sequence and Nixpkgs pin in a staged `descriptor.json`,
+generate and bind each supported system:
+
+```sh
+pkg-release-index --stage /absolute/staged/targets aarch64-darwin 2026-09-23T00:00:00Z
+pkg-release-index --stage /absolute/staged/targets x86_64-linux 2026-09-23T00:00:00Z
+```
+
+Run these commands sequentially with access to the installed vendor Nix and
+its private home. Evaluation supports both target systems on either release
+host; it does not build packages. No package list is supplied. Discovery uses
+the same `recurseForDerivations` convention as `nix search`.
+The command reads the revision, content hash, and sequence from the descriptor,
+writes a new `index/SEQUENCE/SYSTEM.json.br`, and then replaces that system's
+descriptor entry with its computed digest. Existing index targets are refused.
+Keep only the new sequence directory before running `pkg-rel publish`.
+The normal publication checks still validate and sign the completed targets.
+
+The projection regression check needs Nix:
+
+```sh
+nix eval --json --file crates/pkg-index/nix/test-index-meta.nix
+```
+
 Build and prove the Linux artifacts with this command:
 
 ```sh

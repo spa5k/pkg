@@ -418,9 +418,7 @@ pub(super) fn normalize_derivation(
         );
     }
     let closure = serde_json::to_vec(&raw.derivations).map_err(|_| malformed())?;
-    let pname = string_attr("pname")?
-        .map(str::to_owned)
-        .ok_or(NixAdapterError::OperationFailed)?;
+    let pname = string_attr("pname")?.unwrap_or(&root_raw.name).to_owned();
     let version = string_attr("version")?
         .map(str::to_owned)
         .unwrap_or_default();

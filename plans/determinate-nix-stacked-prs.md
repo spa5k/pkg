@@ -46,6 +46,33 @@ It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
 
+## Public alpha follow-up: Nixpkgs catalog coverage
+
+- **Identifier:** PUBLIC-05 (follow-up to PUBLIC-04).
+- **Purpose:** replace the public alpha's small proof catalog with metadata
+  generated from the pinned Nixpkgs package set.
+- **Owns:** recursive metadata discovery, name-only derivation support, unknown
+  version display, exclusion of internal Nix build metadata from activation,
+  release index staging, native catalog evidence, and package-management docs.
+  Native evidence is in the [PUBLIC-05 report](../tests/macos-clean-host/PUBLIC-05.md).
+- **Depends:** PUBLIC-03 and PUBLIC-04 (merged).
+- **Tests & gates:** nested package discovery, evaluation failures, platform
+  exclusions, safe display metadata, descriptor pin binding, catalog generation
+  for macOS and Linux targets on native macOS, native macOS package operations and local builds,
+  G-LINT, G-QUALITY, release tests, and docs links. F primary review and A
+  cross-area security review are required before merge.
+- **Evidence scope:** the Linux target catalog is evaluated on macOS. This does
+  not claim native Linux catalog generation or package installation. The normal
+  Linux lifecycle CI remains required. Broader native-host validation is deferred.
+- **Rollback:** revert the tooling and projection. Published catalogs require a
+  new, higher-sequence signed channel. Existing installed generations remain.
+
+The catalog follows Nix's `recurseForDerivations` discovery convention. It is
+derived from the descriptor's exact Nixpkgs revision and content hash. It is not
+a manually selected package list. Evaluation errors are skipped. Packages that
+are broken or unavailable on a platform cannot be installed on that platform.
+The small synthetic catalogs remain only in isolated regression proofs.
+
 ## Public alpha follow-up: native lifecycle regression evidence
 
 - **Identifier:** PUBLIC-04 (follow-up to DN-20).

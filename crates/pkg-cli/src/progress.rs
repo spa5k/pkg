@@ -100,7 +100,7 @@ struct BuildStartedEvent {
     op_id: String,
     selector: String,
     package_name: String,
-    version: String,
+    version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -189,7 +189,9 @@ impl PublicEvent {
             op_id: product_text("opId", op_id.as_ref())?,
             selector: product_text("selector", selector.as_ref())?,
             package_name: product_text("packageName", package_name.as_ref())?,
-            version: product_text("version", version.as_ref())?,
+            version: (!version.as_ref().is_empty())
+                .then(|| product_text("version", version.as_ref()))
+                .transpose()?,
         })))
     }
 
@@ -287,8 +289,13 @@ impl PublicEvent {
             EventKind::BuildStarted(event) => {
                 writeln!(
                     writer,
-                    "Building {} {}...",
-                    event.package_name, event.version
+                    "Building {}{}...",
+                    event.package_name,
+                    event
+                        .version
+                        .as_ref()
+                        .map(|version| format!(" {version}"))
+                        .unwrap_or_default()
                 )
             }
             EventKind::BuildProgress(event) => {
@@ -420,6 +427,18 @@ mod tests {
                 assert!(!encoded.contains(forbidden));
             }
         }
+    }
+
+    #[test]
+    fn build_without_version_has_valid_json_and_plain_text() {
+        let event = PublicEvent::build_started("op_1", "tool", "tool", "").unwrap();
+        let mut bytes = Vec::new();
+        event.write_ndjson(&mut bytes).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value["version"].is_null());
+        bytes.clear();
+        event.write_human(&mut bytes).unwrap();
+        assert_eq!(bytes, b"Building tool...\n");
     }
 
     #[test]

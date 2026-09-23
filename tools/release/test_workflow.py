@@ -24,6 +24,12 @@ MACOS_WORKFLOW = (ROOT / ".github/workflows/macos-alpha-proof.yml").read_text(
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_alpha_build_includes_the_native_catalog_builder(self) -> None:
+        workflow = (ROOT / ".github/workflows/alpha-release.yml").read_text()
+        self.assertIn("-p pkg-release --bin pkg-release-index", workflow)
+        self.assertIn("pkg-root-helper pkg-install pkg-release-index; do", workflow)
+        self.assertIn('for artifact in assets/*; do', workflow)
+
     def test_dry_run_has_read_only_permissions_and_pinned_checkout(self) -> None:
         self.assertIn("permissions:\n  contents: read", WORKFLOW)
         self.assertIn(
