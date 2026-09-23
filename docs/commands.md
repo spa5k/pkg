@@ -21,9 +21,9 @@ Downloads from the signed binary cache are preferred. A cache miss is shown befo
 local sandboxed build runs only after explicit approval and only when platform policy permits it.
 `--dry-run` previews an operation, while `--json` and `--jsonl` provide stable machine output.
 
-## Shell setup in the next release
+## Shell setup
 
-The current source adds `pkg shellenv` for Bash and zsh. It is not in alpha.46.
+Alpha.47 provides `pkg shellenv` for Bash and zsh.
 It prints shell settings and does not edit your files:
 
 ```sh
@@ -31,6 +31,6 @@ eval "$(pkg shellenv)"
 ```
 
 Add this line to `~/.zshrc` or your Bash startup file for future sessions.
-For the published alpha.46, use the PATH command in the [install guide](install.md).
+See the [install guide](install.md) for download and upgrade commands.
 
 Nix commands, paths, flags, substituters, and trust keys are not part of the public interface.
