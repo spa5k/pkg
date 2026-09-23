@@ -28,6 +28,7 @@ use std::{
     os::fd::AsFd,
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -46,6 +47,7 @@ const DEFAULT_HELPER_SOCKET: &str = "/Library/Application Support/pkg/run/helper
 pub struct RootHelperClient {
     endpoint: Option<PathBuf>,
     expected_uid: u32,
+    source_evaluator: Option<Arc<pkg_nix::RealNixAdapter>>,
 }
 
 impl fmt::Debug for RootHelperClient {
@@ -65,7 +67,14 @@ impl RootHelperClient {
         Self {
             endpoint,
             expected_uid: 0,
+            source_evaluator: None,
         }
+    }
+
+    /// Keeps source evaluation in the broker process; it never uses root RPC.
+    pub(crate) fn with_source_evaluator(mut self, evaluator: Arc<pkg_nix::RealNixAdapter>) -> Self {
+        self.source_evaluator = Some(evaluator);
+        self
     }
 
     #[cfg(test)]
@@ -73,6 +82,7 @@ impl RootHelperClient {
         Self {
             endpoint: Some(endpoint),
             expected_uid,
+            source_evaluator: None,
         }
     }
 
@@ -387,10 +397,10 @@ impl NixAdapter for RootHelperClient {
         &self,
         request: &EvaluateDerivationRequest,
     ) -> Result<DerivationPlanReport, NixAdapterError> {
-        match self.adapter_response(RootNixRequest::Evaluate(request.clone()))? {
-            RootNixResponse::Evaluate(report) => Ok(report),
-            _ => Err(NixAdapterError::OperationFailed),
-        }
+        self.source_evaluator
+            .as_ref()
+            .ok_or(NixAdapterError::Unavailable)?
+            .evaluate_derivation(request)
     }
 
     fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
@@ -500,10 +510,10 @@ impl BuildCacheProbe for RootHelperClient {
 
 impl NixpkgsMetadataRunner for RootHelperClient {
     fn run_metadata(&self, pin: &NixpkgsPin) -> Result<Vec<u8>, NixpkgsSourceError> {
-        match self.root_round_trip(RootNixRequest::NixpkgsMetadata(pin.clone())) {
-            Ok(RootNixResponse::NixpkgsMetadata(metadata)) => Ok(metadata),
-            _ => Err(NixpkgsSourceError::runner_failure()),
-        }
+        self.source_evaluator
+            .as_ref()
+            .ok_or_else(NixpkgsSourceError::runner_failure)?
+            .run_metadata(pin)
     }
 }
 
@@ -700,6 +710,59 @@ mod tests {
     use tempfile::TempDir;
 
     const STORE_HASH: &str = "0123456789abcdfghijklmnpqrsvwxyz";
+
+    #[test]
+    fn sources_use_the_broker_evaluator_without_a_helper_connection() -> Result<(), Box<dyn Error>>
+    {
+        use pkg_core::{AttributePath, NarHash, NixpkgsRevision, OutputSelection};
+        use std::os::unix::fs::PermissionsExt;
+
+        let temporary = TempDir::new()?;
+        let home = temporary.path().join("home");
+        std::fs::create_dir_all(home.join("tmp"))?;
+        for directory in [&home, &home.join("tmp")] {
+            std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let binary = temporary.path().join("nix");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$*\" in\n  *'flake metadata'*) printf source-metadata ;;\n  *) exit 42 ;;\nesac\n",
+        )?;
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::copy(&binary, temporary.path().join("nix-store"))?;
+        let pin = NixpkgsPin::new(
+            "0123456789abcdef0123456789abcdef01234567",
+            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )?;
+        let request = EvaluateDerivationRequest::new(
+            AttributePath::new("hello")?,
+            System::Aarch64Darwin,
+            NixpkgsRevision::new(pin.revision().as_str())?,
+            NarHash::new(pin.nar_hash().as_str())?,
+            OutputSelection::default_selection(),
+        )?;
+        let client = RootHelperClient::at(
+            temporary.path().join("absent.sock"),
+            Uid::effective().as_raw(),
+        );
+        assert_eq!(
+            client.evaluate_derivation(&request),
+            Err(NixAdapterError::Unavailable)
+        );
+        assert!(client.run_metadata(&pin).is_err());
+        let client =
+            client.with_source_evaluator(Arc::new(pkg_nix::RealNixAdapter::new(&binary, &home)?));
+        assert_eq!(client.run_metadata(&pin)?, b"source-metadata");
+        assert_eq!(
+            client.evaluate_derivation(&request),
+            Err(NixAdapterError::OperationFailed)
+        );
+        let calls = std::fs::read_to_string(home.join("calls"))?;
+        assert_eq!(calls.lines().count(), 2);
+        assert!(calls.contains("flake metadata"));
+        assert!(calls.contains("derivation show"));
+        Ok(())
+    }
 
     struct RootDispatch(AuthenticatedHelper);
 

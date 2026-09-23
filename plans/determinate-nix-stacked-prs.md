@@ -46,6 +46,27 @@ It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
 
+## Public flakes: unprivileged source evaluation
+
+- **Identifier:** PUBLIC-06.
+- **Purpose:** fetch source metadata and evaluate package definitions as the
+  unprivileged broker on both platforms before accepting public flakes.
+- **Owns:** broker evaluator composition, removal of root metadata/evaluation
+  operations, fixed subprocess working directory, and regression evidence.
+- **Depends:** PUBLIC-05.
+- **Tests & gates:** source calls use the local adapter even when the helper is
+  unavailable; retired helper methods refuse; existing build/repair operations
+  retain their authority; native macOS source evaluation and package lifecycle;
+  G-LINT, G-QUALITY, hermetic tests, docs links, F primary review and A security review.
+- **Rollback:** revert and ship broker/helper together. No user-state migration.
+
+PUBLIC-06 does not enable external sources. PUBLIC-07 will accept direct public
+flake package references, record the root and dependency locks, preserve source
+intent through upgrades, and reuse installation, removal, pinning, and rollback.
+Public flake evaluation must not enter the root helper. Source-controlled Nix
+configuration cannot grant new caches, keys, commands, or privileges. Private
+repositories, named sources, development shells, and system modules remain later work.
+
 ## Public alpha follow-up: Nixpkgs catalog coverage
 
 - **Identifier:** PUBLIC-05 (follow-up to PUBLIC-04).

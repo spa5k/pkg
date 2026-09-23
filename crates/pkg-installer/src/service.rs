@@ -228,7 +228,8 @@ fn run_broker_listener(
             ServiceError::new(ServiceErrorCode::InvalidRuntime)
         })?,
     );
-    let roots = Arc::new(RootHelperClient::production());
+    let roots =
+        Arc::new(RootHelperClient::production().with_source_evaluator(Arc::clone(&adapter)));
     #[cfg(target_os = "linux")]
     let planning_adapter: Arc<dyn BuildPlanningAdapter> =
         Arc::clone(&adapter) as Arc<dyn BuildPlanningAdapter>;

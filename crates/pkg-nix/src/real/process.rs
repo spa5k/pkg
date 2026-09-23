@@ -509,6 +509,7 @@ pub(super) fn build_command(
     let mut command = Command::new(binary);
     command
         .args(&spec.args)
+        .current_dir(&executor.private_home)
         .env_clear()
         .env("HOME", &executor.private_home)
         .env("TMPDIR", executor.private_home.join("tmp"))

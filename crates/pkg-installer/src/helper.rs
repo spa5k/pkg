@@ -13,9 +13,9 @@ type RemoveRootSetAuthorizer = fn(&RemoveRootSetRequest) -> Result<(), Maintenan
 use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, BuildCacheProbe, BuildRequest,
     CallerMaintenance, HELPER_FRAME_PAYLOAD_LIMIT, MaintenanceAdapter, MaintenanceCapability,
-    MaintenanceError, MaintenanceErrorCode, NixAdapter, NixAdapterError, NixpkgsMetadataRunner,
-    ProductFrameCodec, RealNixAdapter, RemoveRootSetRequest, RepairStorePathsRequest,
-    RootNixFailure, RootNixOperation, RootNixRequest, RootNixResponse, RootSetAttestationRequest,
+    MaintenanceError, MaintenanceErrorCode, NixAdapter, NixAdapterError, ProductFrameCodec,
+    RealNixAdapter, RemoveRootSetRequest, RepairStorePathsRequest, RootNixFailure,
+    RootNixOperation, RootNixRequest, RootNixResponse, RootSetAttestationRequest,
     RootSetPublicationRequest, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use pkg_store::{StateLayout, authorize_generation_root_removal};
@@ -383,11 +383,6 @@ impl LinuxHelperSession {
             RootNixRequest::Version => {
                 adapter_result(operation, adapter.version(), RootNixResponse::Version)
             }
-            RootNixRequest::Evaluate(request) => adapter_result(
-                operation,
-                adapter.evaluate_derivation(&request),
-                RootNixResponse::Evaluate,
-            ),
             RootNixRequest::PathInfo(path) => adapter_result(
                 operation,
                 adapter.path_info(&path),
@@ -417,10 +412,6 @@ impl LinuxHelperSession {
                 operation,
                 adapter.inspect_download_closures(&roots),
                 RootNixResponse::CacheInspectClosures,
-            ),
-            RootNixRequest::NixpkgsMetadata(pin) => adapter.run_metadata(&pin).map_or_else(
-                |error| root_nix_failure(operation, RootNixFailure::Nixpkgs(error.code())),
-                RootNixResponse::NixpkgsMetadata,
             ),
             RootNixRequest::ClosureForRoots(roots) => adapter_result(
                 operation,
