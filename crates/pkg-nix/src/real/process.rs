@@ -517,6 +517,13 @@ pub(super) fn build_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Darwin sandbox setup fails when TMPDIR is inside the private helper
+    // home, which build users cannot traverse. Nix creates
+    // its isolated build directories separately under /nix/var/nix/builds.
+    #[cfg(target_os = "macos")]
+    if executor.daemon_socket.is_none() {
+        command.env("TMPDIR", "/private/tmp");
+    }
     if let Some(daemon_socket) = &executor.daemon_socket {
         command
             .env("NIX_CONFIG", MANAGED_NIX_CONFIG)
