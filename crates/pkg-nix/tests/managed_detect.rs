@@ -113,6 +113,28 @@ fn ownership_receipt_is_a_claim_but_never_authorizes_installation() {
 }
 
 #[test]
+fn determinate_handoff_suppresses_removal_without_proving_ownership() {
+    for (system, relative) in [
+        (
+            System::X8664Linux,
+            "var/lib/pkg-install/determinate-handoff-v1.json",
+        ),
+        (
+            System::Aarch64Darwin,
+            "private/var/db/pkg-install/determinate-handoff-v1.json",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        fixture.mkdir("nix/store");
+        fixture.write(relative, "untrusted handoff bytes");
+        let report = scan(&fixture, system);
+        assert_eq!(report.disposition(), DetectionDisposition::Refuse);
+        assert!(report.has_unmanaged_evidence());
+        assert!(report.has_ownership_claim());
+    }
+}
+
+#[test]
 fn pkg_broker_configuration_suppresses_removal_without_proving_ownership() {
     let fixture = Fixture::new();
     fixture.mkdir("nix/store");

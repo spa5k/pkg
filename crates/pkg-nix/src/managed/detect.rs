@@ -753,6 +753,8 @@ impl Scanner<'_> {
         for relative in [
             "var/lib/pkg/managed-nix/ownership-v1.json",
             "Library/Application Support/pkg/managed-nix/ownership-v1.json",
+            "var/lib/pkg-install/determinate-handoff-v1.json",
+            "private/var/db/pkg-install/determinate-handoff-v1.json",
         ] {
             match path_state(&self.at(relative)) {
                 PathState::Missing => {}

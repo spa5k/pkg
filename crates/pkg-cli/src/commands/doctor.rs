@@ -672,7 +672,7 @@ fn unmanaged_check(observation: &UnmanagedNixObservation) -> DoctorCheck {
                         signals.len()
                     ),
                     Some(
-                        "remove it with its own uninstaller, then rerun pkg doctor; pkg never removes it",
+                        "do not remove Nix; collect pkg doctor --support output to check ownership",
                     ),
                 )
             } else {
@@ -844,6 +844,9 @@ mod tests {
         let text = String::from_utf8(json).unwrap();
         assert!(!text.contains("/nix/store"));
         assert!(text.contains("2 signals"));
+        assert!(text.contains("do not remove Nix"));
+        assert!(text.contains("pkg doctor --support"));
+        assert!(!text.contains("own uninstaller"));
     }
 
     #[test]
