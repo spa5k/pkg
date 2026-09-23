@@ -48,6 +48,11 @@ impl CommandExecutor for Scripted {
                 summary: crate::error::BoundedSummary::new("extra call"),
             })?
     }
+
+    #[cfg(not(target_os = "linux"))]
+    fn source_file(&self) -> Result<tempfile::NamedTempFile, NixAdapterError> {
+        tempfile::NamedTempFile::new().map_err(|_| NixAdapterError::Unavailable)
+    }
 }
 
 fn success(stdout: impl Into<Vec<u8>>) -> CommandOutcome {

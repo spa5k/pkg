@@ -18,7 +18,7 @@ pub trait CommandExecutor: Send + Sync {
 
     #[cfg(not(target_os = "linux"))]
     fn source_file(&self) -> Result<tempfile::NamedTempFile, NixAdapterError> {
-        tempfile::NamedTempFile::new().map_err(|_| NixAdapterError::Unavailable)
+        Err(NixAdapterError::Unavailable)
     }
 
     fn execute_with_stderr(
