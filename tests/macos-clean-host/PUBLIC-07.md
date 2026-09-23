@@ -5,7 +5,7 @@ No public channel, release, or host installation was changed by this proof.
 
 ## Source and environment
 
-- Source commit: `bda2debc42c15b4e3c2755ae3d0b2596a9def577`.
+- Native proof source commit: `bda2debc42c15b4e3c2755ae3d0b2596a9def577`.
 - Disposable Apple Silicon Tart VM, macOS 15.7.7 (24G720).
 - Determinate Nix 2.35.2; broker UID and GID 333.
 - VM-only signed test channel, sequence 49, with the existing alpha test root.
@@ -55,10 +55,12 @@ private source workspace. The reference lock file stays inside that workspace.
 Native probes evaluated cached and previously unseen GitHub flakes through this
 profile. The fresh probes fetched `NixOS/templates`, `hercules-ci/flake-parts`,
 and `edolstra/flake-compat`. A focused macOS test proved that a source child can
-read its private workspace and cannot read a marker outside it. Linux compilation
-passed in the Rust 1.96.1 Bookworm image; the Linux broker keeps its existing
-systemd `ProtectHome`, `ProtectSystem`, `PrivateTmp`, and unprivileged-user
-boundary.
+read its private workspace and cannot read a marker outside it. Linux refuses
+public flake references before any Nix source operation until it has an
+equivalent per-process local-file read boundary. Ordinary Nixpkgs packages keep
+their existing Linux behavior. A Linux-only direct-adapter regression used a
+forged Darwin target and proved that locking and evaluation both refuse without
+starting a subprocess.
 
 Separate native refusal probes confirmed these results:
 
@@ -83,8 +85,8 @@ an all-target Linux compile in the Rust 1.96.1 Bookworm image.
 
 The native proof used one public GitHub flake and one macOS system. It does not
 claim private repository support, arbitrary flake URL support, a changed-revision
-upgrade, a Linux lifecycle run, or a cold rebuild of every dependency. Public
-flake upgrades deliberately resolve the original public reference again.
+upgrade, Linux public flake support, or a cold rebuild of every dependency.
+Public flake upgrades deliberately resolve the original public reference again.
 
 Evidence is retained outside the repository in `pkg-public07-validation` on the
 development host. It includes gate logs, native lifecycle logs, refusal probes,

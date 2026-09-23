@@ -46,6 +46,7 @@ use crate::{
     VerifyReport, VerifyRequest, VersionInfo,
 };
 
+#[cfg(not(target_os = "linux"))]
 mod flake;
 
 /// Exact managed Nix version embedded in the V1 runtime contract.
@@ -682,7 +683,15 @@ impl NixAdapter for RealNixAdapter {
         &self,
         reference: &pkg_core::PublicFlakeRef,
     ) -> Result<pkg_core::LockedFlake, NixAdapterError> {
-        self.lock_public_flake(reference)
+        #[cfg(target_os = "linux")]
+        {
+            let _ = reference;
+            Err(NixAdapterError::OperationFailed)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.lock_public_flake(reference)
+        }
     }
 
     fn version(&self) -> Result<VersionInfo, NixAdapterError> {
@@ -734,7 +743,15 @@ impl NixAdapter for RealNixAdapter {
         request: &EvaluateDerivationRequest,
     ) -> Result<DerivationPlanReport, NixAdapterError> {
         if let Some(lock) = request.flake() {
-            return self.evaluate_public_flake(request, lock);
+            #[cfg(target_os = "linux")]
+            {
+                let _ = lock;
+                return Err(NixAdapterError::OperationFailed);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                return self.evaluate_public_flake(request, lock);
+            }
         }
         let installable = pinned_installable(request);
         let mut root_args = base_args();

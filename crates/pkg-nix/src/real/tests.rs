@@ -1836,6 +1836,7 @@ fn recursive_verify_dimension_cannot_drop_closure_semantics()
 }
 
 #[test]
+#[cfg_attr(target_os = "linux", ignore = "public flakes are refused on Linux")]
 fn public_flake_metadata_is_locked_and_missing_root_hash_is_calculated()
 -> Result<(), Box<dyn std::error::Error>> {
     let reference = pkg_core::PublicFlakeRef::new("github:example/tools/main#demo")?;
@@ -1872,6 +1873,7 @@ fn public_flake_metadata_is_locked_and_missing_root_hash_is_calculated()
 }
 
 #[test]
+#[cfg_attr(target_os = "linux", ignore = "public flakes are refused on Linux")]
 fn public_flake_evaluation_pins_root_inputs_and_configuration()
 -> Result<(), Box<dyn std::error::Error>> {
     let lock = pkg_core::LockedFlake::new(
@@ -1930,5 +1932,31 @@ fn public_flake_evaluation_pins_root_inputs_and_configuration()
         )
         .is_err()
     );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn public_flake_adapter_calls_refuse_before_starting_a_process()
+-> Result<(), Box<dyn std::error::Error>> {
+    let reference = pkg_core::PublicFlakeRef::new("github:example/tools#demo")?;
+    let lock = pkg_core::LockedFlake::new(
+        reference.clone(),
+        NixpkgsRevision::new("0123456789abcdef0123456789abcdef01234567")?,
+        NarHash::new("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")?,
+        r#"{"version":7,"root":"root","nodes":{"root":{}}}"#,
+    )?;
+    let request = EvaluateDerivationRequest::for_flake(
+        lock,
+        System::Aarch64Darwin,
+        OutputSelection::default_selection(),
+    )?;
+    let executor = Scripted::new(Vec::new());
+    let calls = Arc::clone(&executor.calls);
+    let adapter = RealNixAdapter::scripted(executor);
+
+    assert!(adapter.lock_flake(&reference).is_err());
+    assert!(adapter.evaluate_derivation(&request).is_err());
+    assert!(calls.lock().unwrap().is_empty());
     Ok(())
 }

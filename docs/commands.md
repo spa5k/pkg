@@ -26,7 +26,9 @@ local sandboxed build runs only after explicit approval and only when platform p
 
 ## Public flake packages (next release)
 
-This is available in source builds after PUBLIC-07. Alpha.47 does not support it.
+This is available on macOS in source builds after PUBLIC-07. Alpha.47 does not
+support it. Linux refuses public flake references until source evaluation has
+the same per-process local-file boundary.
 
 ```sh
 pkg install 'github:Mic92/nix-update#default'

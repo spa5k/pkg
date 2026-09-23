@@ -16,6 +16,7 @@ const MACOS_SOURCE_ROOT: &str = "/private/var/db/pkg-source";
 pub trait CommandExecutor: Send + Sync {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError>;
 
+    #[cfg(not(target_os = "linux"))]
     fn source_file(&self) -> Result<tempfile::NamedTempFile, NixAdapterError> {
         tempfile::NamedTempFile::new().map_err(|_| NixAdapterError::Unavailable)
     }
@@ -194,6 +195,7 @@ impl CommandExecutor for ProcessExecutor {
         self.execute_process(&spec, cancelled, stderr_chunk)
     }
 
+    #[cfg(not(target_os = "linux"))]
     fn source_file(&self) -> Result<tempfile::NamedTempFile, NixAdapterError> {
         tempfile::NamedTempFile::new_in(self.source_home.path())
             .map_err(|_| NixAdapterError::Unavailable)

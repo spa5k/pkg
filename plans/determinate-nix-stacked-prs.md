@@ -58,8 +58,8 @@ has not run. DN-20 completes the release documents after final proof.
 - **Tests & gates:** reference and lock validation; refusal of local/private
   inputs and source-controlled configuration; exact lock use at evaluation and
   build admission; mixed-source install, upgrade, pin, remove, and rollback;
-  native macOS install/build; G-LINT, G-QUALITY, hermetic tests, docs links,
-  F primary review and A security review; required Linux lifecycle CI.
+  native macOS install/build; Linux refusal before source evaluation; G-LINT,
+  G-QUALITY, hermetic tests, docs links, F primary review and A security review.
 - **Rollback:** revert and ship CLI/broker/helper together. Existing Nixpkgs
   generations remain readable. Before a downgrade, remove public flake entries
   or restore a generation from before their installation. Keep archived flake
@@ -71,6 +71,10 @@ dependency locks. Locked GitHub, GitLab, HTTPS Git, and HTTPS tarball inputs
 are accepted. Local path inputs, private credentials, arbitrary URL options,
 registries, and import-from-derivation are refused. Nixpkgs remains the default
 for ordinary package names. Flake configuration cannot add caches or trust keys.
+
+PUBLIC-07 enables this source type on macOS. Linux refuses it before any Nix
+source operation until Linux has an equivalent per-process local-file read
+boundary. Ordinary Nixpkgs packages remain supported on both platforms.
 
 An upgrade resolves the original branch, tag, or default branch again. An exact
 commit remains exact. Build preview and admission use the same saved root and

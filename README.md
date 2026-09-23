@@ -42,7 +42,8 @@ pkg remove ripgrep       # Remove a package
 `pkg` uses cached packages first. If a local build is required, `pkg` asks for
 one exact, one-time approval.
 
-Source builds also support [public flake packages](docs/commands.md#public-flake-packages-next-release).
+macOS source builds also support
+[public flake packages](docs/commands.md#public-flake-packages-next-release).
 This feature is not in the published alpha.47 release.
 
 ## Uninstall
@@ -75,7 +76,8 @@ pkg installer -> authenticated Determinate executable -> Base Nix Lifecycle
 ```
 
 - Catalog metadata and release inputs are authenticated. Public flake sources
-  are selected by the user and locked by content; they are not endorsed by pkg.
+  on macOS are selected by the user and locked by content; they are not endorsed
+  by pkg. Linux refuses them until it has the same source read boundary.
 - The installer refuses foreign or changed Nix state.
 - Privileged operations use a narrow helper interface.
 - Public commands accept package names and validated public flake references.

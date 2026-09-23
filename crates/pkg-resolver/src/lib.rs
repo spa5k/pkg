@@ -11,7 +11,7 @@
 use std::fmt;
 
 use pkg_core::{
-    AttributePath, ChannelSequence, NarHash, NixpkgsRevision, PackageSelector, SourceRevision,
+    AttributePath, ChannelSequence, NarHash, NixpkgsRevision, Os, PackageSelector, SourceRevision,
     System,
 };
 use pkg_index::{IndexDocument, IndexQuery, InfoLookup};
@@ -172,6 +172,9 @@ fn resolve_flake(
     system: System,
     adapter: &dyn NixAdapter,
 ) -> Result<ResolvedPackagePlan, ResolveError> {
+    if system.os() == Os::Linux {
+        return Err(ResolveError::new(ResolveErrorCode::EvaluationFailed));
+    }
     if selector.pin_state().is_pinned() {
         return Err(ResolveError::new(ResolveErrorCode::AlreadyRealized));
     }

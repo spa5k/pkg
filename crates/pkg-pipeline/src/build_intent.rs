@@ -62,6 +62,11 @@ impl AuthenticatedBuildIntent {
                     pkg_core::SourceRevision::CurrentChannel
                 )
             {
+                if self.system.os() == pkg_core::Os::Linux {
+                    return Err(BuildIntentError::new(
+                        BuildIntentErrorCode::SourceUnavailable,
+                    ));
+                }
                 let lock = adapter
                     .lock_flake(&reference)
                     .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::SourceUnavailable))?;

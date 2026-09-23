@@ -636,6 +636,34 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_removes_the_populated_private_source_workspace() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        for path in ["private", "private/var", "private/var/db"] {
+            let directory = temporary.path().join(path);
+            fs::create_dir(&directory)?;
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+        }
+        let mut manager = manager(
+            temporary.path(),
+            ManagedGroupBindings::new(333, 350)?,
+            Digest::from_bytes([0x31; 32]),
+        )?;
+        let asset = macos_install_assets()
+            .iter()
+            .copied()
+            .find(|asset| asset.id() == "broker-source-home")
+            .ok_or_else(|| std::io::Error::other("missing source workspace asset"))?;
+        manager.ensure_asset(asset)?;
+        let workspace = temporary.path().join("private/var/db/pkg-source");
+        fs::write(workspace.join("flake.lock"), b"locked")?;
+
+        manager.remove_uninstall_asset(asset)?;
+
+        assert!(!workspace.exists());
+        Ok(())
+    }
+
+    #[test]
     fn rebinding_the_same_prior_states_is_idempotent() -> Result<(), Box<dyn Error>> {
         let temporary = tempfile::tempdir()?;
         prepare_receipt_parent(temporary.path())?;

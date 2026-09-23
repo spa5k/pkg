@@ -1820,6 +1820,13 @@ fn diagnose_install_selector_error(
         .iter()
         .any(|selector| pkg_core::PublicFlakeRef::new(selector.selector().as_str()).is_ok())
     {
+        #[cfg(target_os = "linux")]
+        return Some(CommandError::new(
+            ExitCode::ResolveFailed,
+            "public flake packages are not yet supported on Linux",
+            "install the package by its Nixpkgs name, or use pkg on macOS",
+        ));
+        #[cfg(not(target_os = "linux"))]
         return Some(CommandError::new(
             ExitCode::ResolveFailed,
             "the public package could not be fetched or evaluated",
