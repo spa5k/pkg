@@ -77,8 +77,9 @@ pub(super) fn validated_process_executor(
     } else {
         private_home.join("tmp")
     };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
     let source_parent = private_home.join("tmp");
+    #[cfg(not(target_os = "linux"))]
     let source_home = tempfile::Builder::new()
         .prefix("pkg-nix-source-")
         .tempdir_in(&source_parent)
@@ -88,6 +89,7 @@ pub(super) fn validated_process_executor(
         nix_store_binary,
         private_home: private_home.to_path_buf(),
         daemon_socket: daemon_socket.map(Path::to_path_buf),
+        #[cfg(not(target_os = "linux"))]
         source_home,
     })
 }
@@ -178,6 +180,7 @@ pub(super) struct ProcessExecutor {
     pub(super) nix_store_binary: PathBuf,
     pub(super) private_home: PathBuf,
     pub(super) daemon_socket: Option<PathBuf>,
+    #[cfg(not(target_os = "linux"))]
     pub(super) source_home: tempfile::TempDir,
 }
 
@@ -544,16 +547,22 @@ pub(super) fn build_command(
         NixProgram::LegacyStore => &executor.nix_store_binary,
     };
     let mut command = process_command(executor, spec, binary);
+    #[cfg(not(target_os = "linux"))]
     let home = if spec.isolate_source {
         executor.source_home.path()
     } else {
         &executor.private_home
     };
+    #[cfg(target_os = "linux")]
+    let home = &executor.private_home;
+    #[cfg(not(target_os = "linux"))]
     let temporary = if spec.isolate_source {
         executor.source_home.path().to_path_buf()
     } else {
         executor.private_home.join("tmp")
     };
+    #[cfg(target_os = "linux")]
+    let temporary = executor.private_home.join("tmp");
     command
         .args(&spec.args)
         .current_dir(home)

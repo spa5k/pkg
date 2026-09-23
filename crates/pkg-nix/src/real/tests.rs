@@ -155,11 +155,13 @@ fn test_process_executor(
     private_home: PathBuf,
     daemon_socket: Option<PathBuf>,
 ) -> Result<ProcessExecutor, Box<dyn std::error::Error>> {
+    #[cfg(not(target_os = "linux"))]
     let source_parent = if cfg!(target_os = "macos") {
         PathBuf::from("/private/tmp")
     } else {
         private_home.join("tmp")
     };
+    #[cfg(not(target_os = "linux"))]
     let source_home = tempfile::Builder::new()
         .prefix("pkg-nix-source-")
         .tempdir_in(&source_parent)?;
@@ -168,8 +170,31 @@ fn test_process_executor(
         nix_store_binary,
         private_home,
         daemon_socket,
+        #[cfg(not(target_os = "linux"))]
         source_home,
     })
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_executor_does_not_create_a_source_workspace() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let temporary = tempfile::tempdir()?;
+    let home = temporary.path().join("home");
+    let tmp = home.join("tmp");
+    fs::create_dir(&home)?;
+    fs::create_dir(&tmp)?;
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o700))?;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o700))?;
+    let binary = temporary.path().join("nix");
+    fs::write(&binary, b"nix")?;
+    fs::write(temporary.path().join("nix-store"), b"nix-store")?;
+
+    let _executor = validated_process_executor(&binary, &home, None)?;
+
+    assert_eq!(fs::read_dir(tmp)?.count(), 0);
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
