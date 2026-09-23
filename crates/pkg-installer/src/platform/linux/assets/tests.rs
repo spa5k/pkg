@@ -132,6 +132,40 @@ fn exact_release_classification_accepts_only_same_undrifted_assets()
 }
 
 #[test]
+fn service_stop_uses_the_recorded_release_and_rejects_changed_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    for asset in linux_install_assets()
+        .iter()
+        .copied()
+        .filter(|asset| is_linux_service_runtime_asset(*asset))
+    {
+        let mut fixture = LinuxPlatformAssetManager::for_existing_non_file_preflight_test(
+            ManagedGroupBindings::new(30_000, 30_001)?,
+            System::X8664Linux,
+            Digest::from_bytes([0xa1; 32]),
+            "none",
+        )?;
+        // The new release is already bound. Stop authority comes from the old receipt.
+        fixture.manager.receipt_binding =
+            Some((System::X8664Linux, Digest::from_bytes([0xa2; 32])));
+        fixture.manager.verify_recorded_service_assets()?;
+        std::fs::write(
+            fixture
+                .temporary
+                .path()
+                .join(asset.path_or_name().trim_start_matches('/')),
+            b"changed",
+        )?;
+        assert!(
+            fixture.manager.verify_recorded_service_assets().is_err(),
+            "{}",
+            asset.id()
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn offline_upgrade_publishes_and_finalizes_the_candidate_receipt()
 -> Result<(), Box<dyn std::error::Error>> {
     let system = System::X8664Linux;

@@ -1069,7 +1069,7 @@ docker exec "$container" sh -eu -c '
 
 echo "+ authenticated offline product upgrade"
 n_plus_1_installer=$(publication_installer /srv/pkg-releases/2)
-upgrade_output=$(docker exec "$container" "$n_plus_1_installer")
+upgrade_output=$(docker exec "$container" "$n_plus_1_installer" --leave-services-offline)
 test "$upgrade_output" = "pkg product files are upgraded. Product services remain offline."
 assert_product_units_offline
 assert_publication_product /srv/pkg-releases/2

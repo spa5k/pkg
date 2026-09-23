@@ -79,62 +79,103 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
         groups,
     };
     if matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
-        let mut backend = match invocation {
-            Invocation::InstallOrUpgrade => ProductionMacOsInstallBackend::new(system, groups),
-            Invocation::ResumeBaseNix => ProductionMacOsInstallBackend::new_resume(system, groups),
-            Invocation::RepairProductAssets => {
-                ProductionMacOsInstallBackend::new_product_repair(system, groups)
-            }
-        }
-        .map_err(|error| {
-            report_backend_error("macos-backend-new", &error);
-            PublicInstallError::InstallFailed
-        })?;
-        install_macos_from_bundle(system, trusted_root, &request, &mut backend).map_err(
-            |error| {
-                report_backend_error("macos-install", &error);
-                PublicInstallError::InstallFailed
-            },
-        )?;
-        Ok(match backend.install_mode() {
-            pkg_installer::InstallMode::FreshInstall => InstallSuccess::Installed,
-            pkg_installer::InstallMode::OfflineUpgrade => InstallSuccess::Upgraded,
-            pkg_installer::InstallMode::OfflineRepair => InstallSuccess::Repaired,
-        })
+        run_macos(invocation, trusted_root, &request)
     } else {
-        let mut backend = match invocation {
-            Invocation::InstallOrUpgrade | Invocation::ResumeBaseNix => {
-                ProductionLinuxInstallBackend::new(system, groups)
-            }
-            Invocation::RepairProductAssets => {
-                ProductionLinuxInstallBackend::new_product_repair(system, groups)
-            }
-        }
-        .map_err(|error| {
-            report_backend_error("linux-backend-new", &error);
-            PublicInstallError::InstallFailed
-        })?;
-        install_linux_from_bundle(system, trusted_root, &request, &mut backend).map_err(
-            |error| {
-                report_install_error(error);
-                public_install_error(error)
-            },
-        )?;
-        Ok(match invocation {
-            Invocation::RepairProductAssets => InstallSuccess::Repaired,
-            Invocation::InstallOrUpgrade | Invocation::ResumeBaseNix
-                if backend.install_mode() == InstallMode::OfflineUpgrade =>
-            {
-                InstallSuccess::Upgraded
-            }
-            Invocation::InstallOrUpgrade | Invocation::ResumeBaseNix => InstallSuccess::Installed,
-        })
+        run_linux(invocation, trusted_root, &request)
     }
+}
+
+fn run_macos(
+    invocation: Invocation,
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<InstallSuccess, PublicInstallError> {
+    let (system, groups) = (request.system, request.groups);
+    let mut backend = match invocation {
+        Invocation::InstallOrUpgrade | Invocation::LeaveServicesOffline => {
+            ProductionMacOsInstallBackend::new(system, groups)
+        }
+        Invocation::ResumeBaseNix => ProductionMacOsInstallBackend::new_resume(system, groups),
+        Invocation::RepairProductAssets => {
+            ProductionMacOsInstallBackend::new_product_repair(system, groups)
+        }
+    }
+    .map_err(|error| {
+        report_backend_error("macos-backend-new", &error);
+        PublicInstallError::InstallFailed
+    })?;
+    if invocation == Invocation::InstallOrUpgrade {
+        backend.manage_upgrade_services();
+    }
+    install_macos_from_bundle(system, trusted_root, request, &mut backend).map_err(|error| {
+        report_backend_error("macos-install", &error);
+        PublicInstallError::InstallFailed
+    })?;
+    backend.finish_upgrade_services().map_err(|error| {
+        report_backend_error("macos-service-restart", &error);
+        PublicInstallError::ServicesNotReady
+    })?;
+    Ok(match backend.install_mode() {
+        pkg_installer::InstallMode::FreshInstall => InstallSuccess::Installed,
+        pkg_installer::InstallMode::OfflineUpgrade
+            if invocation == Invocation::InstallOrUpgrade =>
+        {
+            InstallSuccess::Ready
+        }
+        pkg_installer::InstallMode::OfflineUpgrade => InstallSuccess::Upgraded,
+        pkg_installer::InstallMode::OfflineRepair => InstallSuccess::Repaired,
+    })
+}
+
+fn run_linux(
+    invocation: Invocation,
+    trusted_root: TrustedRoot,
+    request: &InstallerProvisionRequest<'_>,
+) -> Result<InstallSuccess, PublicInstallError> {
+    let (system, groups) = (request.system, request.groups);
+    let mut backend = match invocation {
+        Invocation::InstallOrUpgrade
+        | Invocation::LeaveServicesOffline
+        | Invocation::ResumeBaseNix => ProductionLinuxInstallBackend::new(system, groups),
+        Invocation::RepairProductAssets => {
+            ProductionLinuxInstallBackend::new_product_repair(system, groups)
+        }
+    }
+    .map_err(|error| {
+        report_backend_error("linux-backend-new", &error);
+        PublicInstallError::InstallFailed
+    })?;
+    if invocation == Invocation::InstallOrUpgrade {
+        backend.manage_upgrade_services();
+    }
+    install_linux_from_bundle(system, trusted_root, request, &mut backend).map_err(|error| {
+        report_install_error(error);
+        public_install_error(error)
+    })?;
+    backend.finish_upgrade_services().map_err(|error| {
+        report_backend_error("linux-service-restart", &error);
+        PublicInstallError::ServicesNotReady
+    })?;
+    Ok(match invocation {
+        Invocation::RepairProductAssets => InstallSuccess::Repaired,
+        Invocation::InstallOrUpgrade if backend.install_mode() == InstallMode::OfflineUpgrade => {
+            InstallSuccess::Ready
+        }
+        Invocation::LeaveServicesOffline | Invocation::ResumeBaseNix
+            if backend.install_mode() == InstallMode::OfflineUpgrade =>
+        {
+            InstallSuccess::Upgraded
+        }
+        Invocation::InstallOrUpgrade
+        | Invocation::LeaveServicesOffline
+        | Invocation::ResumeBaseNix => InstallSuccess::Installed,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallSuccess {
     Installed,
+    Ready,
     Upgraded,
     Repaired,
 }
@@ -143,6 +184,9 @@ impl InstallSuccess {
     const fn message(self) -> &'static str {
         match self {
             Self::Installed => "pkg is installed.",
+            Self::Ready => {
+                "pkg is updated and ready. Your packages and Nix installation were kept."
+            }
             Self::Upgraded => "pkg product files are upgraded. Product services remain offline.",
             Self::Repaired => "pkg product files are repaired. Product services remain offline.",
         }
@@ -183,6 +227,7 @@ const fn public_install_error_code(code: InstallErrorCode) -> PublicInstallError
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Invocation {
     InstallOrUpgrade,
+    LeaveServicesOffline,
     RepairProductAssets,
     ResumeBaseNix,
 }
@@ -198,6 +243,12 @@ fn parse_invocation(
             return Err(PublicInstallError::InvalidInvocation);
         };
         match text {
+            "--leave-services-offline" => {
+                if invocation != Invocation::InstallOrUpgrade {
+                    return Err(PublicInstallError::InvalidInvocation);
+                }
+                invocation = Invocation::LeaveServicesOffline;
+            }
             "--repair-product-assets" => {
                 if invocation != Invocation::InstallOrUpgrade {
                     return Err(PublicInstallError::InvalidInvocation);
@@ -235,7 +286,9 @@ const fn validate_invocation_system(
     match (invocation, system) {
         (_, System::Aarch64Darwin)
         | (
-            Invocation::InstallOrUpgrade | Invocation::RepairProductAssets,
+            Invocation::InstallOrUpgrade
+            | Invocation::LeaveServicesOffline
+            | Invocation::RepairProductAssets,
             System::X8664Linux | System::Aarch64Linux,
         ) => Ok(()),
         _ => Err(PublicInstallError::UnsupportedSystem),
@@ -299,6 +352,7 @@ enum PublicInstallError {
     RecoveryModeMismatch,
     UnsupportedRecoverySchema,
     FreshRecoveryRetained,
+    ServicesNotReady,
     InstallFailed,
 }
 
@@ -306,7 +360,7 @@ impl fmt::Display for PublicInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::InvalidInvocation => {
-                "Run pkg-install without options, with --repair-product-assets, or with --resume on macOS. Use --channel <BASE_URL> to select the release channel."
+                "Run pkg-install without options. Use --leave-services-offline for a manual upgrade, --repair-product-assets for repair, or --resume for macOS recovery. Use --channel <BASE_URL> to select the release channel."
             }
             Self::RootRequired => "Run pkg-install as root.",
             Self::UnsupportedSystem => "This pkg installer does not support this system.",
@@ -322,6 +376,9 @@ impl fmt::Display for PublicInstallError {
             }
             Self::FreshRecoveryRetained => {
                 "Base Nix is ready, but pkg product installation is incomplete. Run pkg-install again."
+            }
+            Self::ServicesNotReady => {
+                "Pkg files are installed, but its services are not ready. Run this installer again. Your packages were kept."
             }
             Self::InstallFailed => "pkg installation failed.",
         })

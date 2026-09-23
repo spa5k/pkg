@@ -45,6 +45,38 @@ remains separate. DN-16 changes current macOS source and candidate behavior.
 It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
+
+## Public alpha follow-up: automatic product service updates
+
+The September 2026 public UX follow-up supersedes the manual service-control
+requirement for ordinary product upgrades in DN-15 and DN-16. The file transaction
+still runs offline. The public installer authenticates the new release first,
+verifies the installed service files against the existing ownership receipt,
+and stops the fixed product services. After the transaction commits, it verifies
+and starts the new services and waits for the broker to answer. Base Nix and
+per-user package state are kept.
+
+`--leave-services-offline` retains the earlier operator-controlled upgrade.
+Explicit Product Asset Repair also remains offline. It must not run changed
+service files. A failed update keeps services offline when the result is uncertain.
+The same authenticated installer can recover the file transaction. A failed
+post-commit service start reports failure and permits a verified retry.
+
+- **Identifier:** PUBLIC-02 (follow-up to DN-15, DN-16 and DN-20).
+- **Purpose:** make a normal product upgrade one installer command.
+- **Owns:** installer service control and its public result; existing transaction
+  and service managers retain their ownership.
+- **Depends:** DN-15 and DN-16 (merged), doctor ownership correction (PR #31).
+- **Tests & gates:** G-LINT, G-QUALITY, installer tests, changed-file refusals,
+  delayed broker readiness, active macOS upgrade, repeat install, service retry,
+  and byte comparison of Base Nix and per-user state. Existing offline proofs
+  use the explicit offline option. Linux CI must pass before merge.
+- **Rollback:** revert the follow-up. No receipt or journal schema changes.
+  Installed services stay in their current state; the earlier installer requires
+  manual service control for the next upgrade.
+
+The older checkpoint details below record the original offline implementation.
+
 ## 1. Accepted ownership
 
 The accepted product boundary is:

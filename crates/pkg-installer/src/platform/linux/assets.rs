@@ -428,6 +428,29 @@ impl LinuxPlatformAssetManager {
         Ok(())
     }
 
+    pub(crate) fn verify_recorded_service_assets(&mut self) -> Result<(), InstallError> {
+        self.preflight_existing_non_files()?;
+        let manifest = self
+            .load_installed_manifest()?
+            .ok_or_else(InstallError::backend_failure)?;
+        for asset in linux_install_assets()
+            .iter()
+            .copied()
+            .filter(|asset| is_linux_service_runtime_asset(*asset))
+        {
+            let digest = manifest
+                .assets()
+                .iter()
+                .find(|record| record.id() == asset.id())
+                .and_then(RecordedAsset::content_digest)
+                .ok_or_else(InstallError::backend_failure)?;
+            self.ensure_filesystem()?
+                .verify_asset_digest(asset, digest)
+                .map_err(|_| InstallError::backend_failure())?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn recover_repair_assets(
         &mut self,
         mut preflight_mutation: impl FnMut() -> Result<(), InstallError>,

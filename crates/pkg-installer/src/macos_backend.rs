@@ -71,6 +71,7 @@ pub struct ProductionMacOsInstallBackend {
     store_created: bool,
     requested_repair: bool,
     requested_resume: bool,
+    manage_upgrade_services: bool,
     mode: InstallMode,
     prior_manifest: Option<UninstallManifest>,
 }
@@ -96,6 +97,7 @@ impl ProductionMacOsInstallBackend {
             store_created: false,
             requested_repair: false,
             requested_resume: false,
+            manage_upgrade_services: false,
             mode: InstallMode::FreshInstall,
             prior_manifest: None,
         })
@@ -113,6 +115,52 @@ impl ProductionMacOsInstallBackend {
         let mut backend = Self::new(system, groups)?;
         backend.requested_repair = true;
         Ok(backend)
+    }
+
+    /// Let the installer stop verified services for an upgrade and restart them afterward.
+    pub const fn manage_upgrade_services(&mut self) {
+        self.manage_upgrade_services = true;
+    }
+
+    /// Start the verified service set after the file transaction has committed.
+    ///
+    /// # Errors
+    /// Returns an error if the new files or running services cannot be verified.
+    pub fn finish_upgrade_services(&mut self) -> Result<(), MacOsError> {
+        if !self.manage_upgrade_services {
+            return Ok(());
+        }
+        self.verify_service_assets()?;
+        self.verify_installed_code()?;
+        if self.mode == InstallMode::OfflineUpgrade {
+            eprintln!("Starting pkg services...");
+            self.services.activate()?;
+        }
+        self.check_managed_daemon()?;
+        crate::broker::wait_for_broker_readiness(Path::new(
+            crate::platform::macos::MacOsSocketContract::BROKER_PATH,
+        ))
+        .map_err(|_| MacOsError::backend_failure())?;
+        Ok(())
+    }
+
+    fn stop_upgrade_services(&mut self) -> Result<(), MacOsError> {
+        if self.manage_upgrade_services
+            && self.prior_manifest.is_some()
+            && (self.mode == InstallMode::OfflineUpgrade
+                || MacOsLaunchdManager::classify_activation() != Ok(true))
+            && MacOsLaunchdManager::require_offline().is_err()
+        {
+            let manifest = self
+                .prior_manifest
+                .as_ref()
+                .ok_or_else(MacOsError::backend_failure)?;
+            eprintln!("Checking installed service files...");
+            self.assets.verify_recorded_service_assets(manifest)?;
+            MacOsLaunchdManager::deactivate_verified()?;
+            eprintln!("Pkg services are stopped. Updating pkg...");
+        }
+        Ok(())
     }
 
     /// Creates the backend for an explicit recovery of completed Base Nix.
@@ -151,9 +199,12 @@ impl ProductionMacOsInstallBackend {
     }
 
     fn verify_service_assets(&mut self) -> Result<(), MacOsError> {
-        for asset in macos_product_install_assets()
-            .filter(|asset| matches!(asset.id(), "helper-plist" | "broker-plist"))
-        {
+        for asset in macos_product_install_assets().filter(|asset| {
+            matches!(
+                asset.id(),
+                "helper-binary" | "broker-binary" | "helper-plist" | "broker-plist"
+            )
+        }) {
             if self.assets.classify_asset(asset)? != AssetPresence::ExactPresent {
                 return Err(MacOsError::backend_failure());
             }
@@ -352,10 +403,9 @@ impl MacOsInstallBackend for ProductionMacOsInstallBackend {
             self.release_identity
                 .ok_or_else(MacOsError::backend_failure)?,
         )?;
-        if self.mode != InstallMode::FreshInstall {
-            MacOsLaunchdManager::require_offline()?;
-        }
         self.bind_prior_manifest(installed)?;
+        self.stop_upgrade_services()?;
+        self.preflight_product_mutation()?;
         self.existing_managed_install = handoff == DeterminateHandoffState::Accepted;
         Ok(())
     }

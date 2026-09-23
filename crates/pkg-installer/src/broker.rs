@@ -85,6 +85,23 @@ pub fn probe_broker_readiness(path: &Path) -> Result<(), BrokerTransportError> {
     probe_broker_stream(&mut stream)
 }
 
+/// Waits briefly for a newly started broker to finish its authenticated startup.
+pub fn wait_for_broker_readiness(path: &Path) -> Result<(), BrokerTransportError> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match probe_broker_readiness(path) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error.code() == BrokerTransportErrorCode::TransportFailure
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn probe_broker_stream(stream: &mut UnixStream) -> Result<(), BrokerTransportError> {
     let CliBrokerResponse::Started(handle) = readiness_transaction(
         stream,
@@ -1496,6 +1513,44 @@ mod tests {
         client.shutdown(Shutdown::Both).unwrap();
         assert_eq!(worker.join().unwrap(), Ok(()));
         assert_eq!(fake.assert_exhausted(), Ok(()));
+    }
+
+    #[test]
+    fn readiness_wait_accepts_delayed_start_and_refuses_invalid_frames() {
+        for valid in [true, false] {
+            let temporary = TempDir::new().unwrap();
+            let path = temporary.path().join("broker.sock");
+            let server_path = path.clone();
+            let worker = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(150));
+                let listener = std::os::unix::net::UnixListener::bind(server_path).unwrap();
+                let (mut stream, _) = listener.accept().unwrap();
+                if valid {
+                    let broker = Arc::new(InProcessBroker::new().unwrap());
+                    let fake = Arc::new(FakeNix::new());
+                    fake.expect_version(Ok(VersionInfo::new(
+                        NixVersion::new("2.34.8").unwrap(),
+                        AcceptedFormats::new(FormatVersion::new(1).unwrap()),
+                    )));
+                    let adapter: Arc<dyn NixAdapter> = fake;
+                    serve_broker_connection_with_nix(stream, &broker, &adapter).unwrap();
+                } else {
+                    // A complete invalid header must fail immediately, without retries.
+                    read_frame_with_timeout(&mut stream, Duration::from_secs(2)).unwrap();
+                    stream.write_all(&[0; FRAME_HEADER_BYTES]).unwrap();
+                }
+            });
+            let result = wait_for_broker_readiness(&path).map_err(BrokerTransportError::code);
+            assert_eq!(
+                result,
+                if valid {
+                    Ok(())
+                } else {
+                    Err(BrokerTransportErrorCode::InvalidFrame)
+                }
+            );
+            worker.join().unwrap();
+        }
     }
 
     #[test]
