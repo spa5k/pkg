@@ -57,10 +57,13 @@ has not run. DN-20 completes the release documents after final proof.
   Native evidence is in the [PUBLIC-05 report](../tests/macos-clean-host/PUBLIC-05.md).
 - **Depends:** PUBLIC-03 and PUBLIC-04 (merged).
 - **Tests & gates:** nested package discovery, evaluation failures, platform
-  exclusions, safe display metadata, descriptor pin binding, native macOS and
-  Linux catalog generation, representative package operations and local builds,
+  exclusions, safe display metadata, descriptor pin binding, catalog generation
+  for macOS and Linux targets on native macOS, native macOS package operations and local builds,
   G-LINT, G-QUALITY, release tests, and docs links. F primary review and A
   cross-area security review are required before merge.
+- **Evidence scope:** the Linux target catalog is evaluated on macOS. This does
+  not claim native Linux catalog generation or package installation. The normal
+  Linux lifecycle CI remains required. Broader native-host validation is deferred.
 - **Rollback:** revert the tooling and projection. Published catalogs require a
   new, higher-sequence signed channel. Existing installed generations remain.
 
