@@ -53,6 +53,7 @@ has not run. DN-20 completes the release documents after final proof.
   unprivileged broker on both platforms before accepting public flakes.
 - **Owns:** broker evaluator composition, removal of root metadata/evaluation
   operations, fixed subprocess working directory, and regression evidence.
+  Native evidence is in the [PUBLIC-06 report](../tests/macos-clean-host/PUBLIC-06.md).
 - **Depends:** PUBLIC-05.
 - **Tests & gates:** source calls use the local adapter even when the helper is
   unavailable; retired helper methods refuse; existing build/repair operations
