@@ -608,7 +608,8 @@ fn process_command(executor: &ProcessExecutor, spec: &CommandSpec, binary: &Path
 }
 
 #[cfg(not(target_os = "macos"))]
-fn process_command(_executor: &ProcessExecutor, _spec: &CommandSpec, binary: &Path) -> Command {
+fn process_command(_executor: &ProcessExecutor, spec: &CommandSpec, binary: &Path) -> Command {
+    let _ = spec.isolate_source;
     Command::new(binary)
 }
 
