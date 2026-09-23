@@ -1056,6 +1056,12 @@ impl LocalStateOperations {
                 .ok_or_else(no_active_generation)?;
             let generation_id = next_generation_id(newest.generation().id())?;
             let (plan, command_result) = rollback_state(&source, &history, args)?.into_parts();
+            let command_result = command_result
+                .with_summary(format!(
+                    "Restored the package environment from {}.",
+                    plan.target().generation().id()
+                ))
+                .map_err(|_| mutation_failed())?;
             // Rollback derives its destination from the retained target's
             // durable roots, not necessarily from the active generation. In
             // particular, an active empty generation has no helper root set.
@@ -1148,6 +1154,13 @@ impl LocalStateOperations {
                 .map_err(|_| mutation_failed())?;
             let generation_id = next_generation_id(newest.generation().id())?;
             let (next, command_result) = edit(source.state().clone())?.into_parts();
+            let command_result = if kind == StateEditKind::Remove {
+                command_result
+                    .with_summary("Packages removed. Your package environment is ready.")
+                    .map_err(|_| mutation_failed())?
+            } else {
+                command_result
+            };
             let prepared = prepare_state_edit(
                 layout.clone(),
                 lease,
@@ -2149,8 +2162,13 @@ fn install_result(
         .collect::<Vec<_>>();
     CommandResult::new(
         format!(
-            "Installed {} package(s) {} as {generation_id}.",
+            "Installed {} {} {}. Ready to use.",
             evidence.targets().len(),
+            if evidence.targets().len() == 1 {
+                "package"
+            } else {
+                "packages"
+            },
             install_provenance(evidence)
         ),
         Map::from_iter([

@@ -313,11 +313,23 @@ fn human_phase(event: &PhaseEvent) -> &'static str {
         ("acquire", "completed") => "Package source ready.",
         ("build", "started") => "Preparing a local build...",
         ("build", "completed") => "Local build complete.",
-        ("stage", "started") => "Preparing package state...",
-        ("stage", "completed") => "Package state ready.",
+        ("stage", "started") => "Saving the new package environment...",
+        ("stage", "completed") => "Package environment saved.",
         ("activate", "started") => "Activating packages...",
-        ("activate", "completed") => "Packages activated.",
-        _ => "Working...",
+        ("activate", "completed") => "Packages are ready to use.",
+        ("build_prepare", "host_refused") => {
+            "This computer is not ready for local builds. Run pkg doctor."
+        }
+        ("build_prepare", "intent_refused") => {
+            "The package request could not be used for a local build."
+        }
+        ("build_prepare", "planning_refused") => {
+            "The build plan could not be prepared. Check your connection, then retry."
+        }
+        ("build_prepare", "broker_refused") => {
+            "The build service could not prepare this request. Run pkg doctor."
+        }
+        _ => "Checking package requirements...",
     }
 }
 
@@ -364,6 +376,24 @@ fn normalized_relative_path(value: &str) -> Result<String, ProgressError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_preparation_failures_explain_the_next_step() {
+        for status in [
+            "host_refused",
+            "intent_refused",
+            "planning_refused",
+            "broker_refused",
+        ] {
+            let event = PublicEvent::phase("op_1", "build_prepare", status).unwrap();
+            let mut text = Vec::new();
+            event.write_human(&mut text).unwrap();
+            let text = String::from_utf8(text).unwrap();
+            assert!(!text.contains("Working"));
+            assert!(text.contains("build"));
+            assert!(!text.contains(status));
+        }
+    }
 
     #[test]
     fn records_are_versioned_newline_terminated_and_product_owned() {

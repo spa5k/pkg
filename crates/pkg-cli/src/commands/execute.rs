@@ -101,6 +101,14 @@ impl CommandResult {
         &self.summary
     }
 
+    /// Replaces a preview summary while preserving the validated result data.
+    pub(super) fn with_summary(
+        self,
+        summary: impl Into<String>,
+    ) -> Result<Self, PublicResultError> {
+        Self::new(summary, self.fields, self.records)
+    }
+
     /// Product-owned terminal fields.
     #[must_use]
     pub const fn fields(&self) -> &Map<String, Value> {
@@ -291,13 +299,14 @@ impl<C: CoreOperations> CommandEngine for CoreEngine<C> {
             Command::Rollback(args) => self.operations.rollback(args, policy),
             Command::Gc(args) => self.operations.gc(args, policy),
             Command::Repair(args) => self.operations.repair(args, policy),
-            Command::Doctor(_) | Command::Uninstall | Command::Completion(_) => {
-                Err(CommandError::new(
-                    ExitCode::Config,
-                    "bootstrap command reached the private engine",
-                    "report this product integration error",
-                ))
-            }
+            Command::Doctor(_)
+            | Command::Uninstall
+            | Command::Completion(_)
+            | Command::Shellenv => Err(CommandError::new(
+                ExitCode::Config,
+                "bootstrap command reached the private engine",
+                "report this product integration error",
+            )),
         }
     }
 }

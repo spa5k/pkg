@@ -654,7 +654,20 @@ fn install_step<T>(
     step: &'static str,
     operation: impl FnOnce() -> Result<T, MacOsError>,
 ) -> Result<T, MacOsError> {
-    eprintln!("macos install: step={step}");
+    if std::env::var_os("PKG_INSTALL_DEBUG").is_some_and(|value| value == "1") {
+        eprintln!("macos install: step={step}");
+    } else if let Some(message) = match step {
+        "preflight" => Some("Checking this Mac..."),
+        "product-root" => Some("Preparing pkg files and folders..."),
+        "provision-runtime" => Some("Preparing the package and build engine..."),
+        "broker-binary" => Some("Installing pkg commands and services..."),
+        "verify-code" => Some("Verifying the installed files..."),
+        "check-services" => Some("Checking the package engine..."),
+        "publish-receipt" => Some("Saving the installation record..."),
+        _ => None,
+    } {
+        eprintln!("{message}");
+    }
     operation().inspect_err(|error| {
         eprintln!("macos install step failed: step={step} error={error:?}");
     })

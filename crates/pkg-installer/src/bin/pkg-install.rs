@@ -44,6 +44,8 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
     }
     let system = host_system().ok_or(PublicInstallError::UnsupportedSystem)?;
     validate_invocation_system(invocation, system)?;
+    eprintln!("pkg setup — {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("Downloading and verifying the release. This can take a few minutes...");
     let trusted_root = trusted_root(RELEASE_TUF_ROOT_JSON)?;
     let environment = match std::env::var(CHANNEL_URL_VARIABLE) {
         Ok(base) => Some(base),
@@ -380,7 +382,7 @@ impl fmt::Display for PublicInstallError {
             Self::ServicesNotReady => {
                 "Pkg files are installed, but its services are not ready. Run this installer again. Your packages were kept."
             }
-            Self::InstallFailed => "pkg installation failed.",
+            Self::InstallFailed => "pkg setup could not finish. Keep the install log for support. Do not delete Nix or its installation records.",
         })
     }
 }

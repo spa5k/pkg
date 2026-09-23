@@ -11,7 +11,7 @@ use crate::exit::ExitCode;
 #[command(
     name = "pkg",
     version,
-    about = "Install and manage packages without exposing Nix internals",
+    about = "Find, install, and manage command-line tools",
     long_about = None,
     propagate_version = true,
     disable_help_subcommand = true
@@ -29,7 +29,7 @@ pub struct Cli {
     #[arg(long, global = true, conflicts_with = "verbose")]
     quiet: bool,
 
-    /// Include additional sanitized phase detail.
+    /// Show more detail about each operation.
     #[arg(long, global = true, conflicts_with = "quiet")]
     verbose: bool,
 
@@ -41,19 +41,19 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
-    /// Override the per-user state root, primarily for tests.
+    /// Use another package state directory.
     #[arg(long, global = true, value_name = "DIR")]
     state: Option<PathBuf>,
 
-    /// Select the invoking user's profile (V1 supports only `default`).
+    /// Select a profile (currently only `default`).
     #[arg(long, global = true, default_value = "default", value_parser = ["default"])]
     profile: String,
 
-    /// Accept ordinary confirmations and pre-approve this operation's one build plan.
+    /// Accept confirmations, including the local build plan.
     #[arg(long, global = true)]
     yes: bool,
 
-    /// Preview and preflight without desired-state or generation mutation.
+    /// Preview changes without applying them.
     #[arg(long, global = true)]
     dry_run: bool,
 
@@ -216,39 +216,41 @@ impl std::error::Error for CliValidationError {}
 /// Complete V1 command set.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Command {
-    /// Check environment, trust, managed runtime, state, and activation health.
+    /// Check your installation and show how to fix problems.
     Doctor(DoctorArgs),
-    /// Search the locally verified package index.
+    /// Find packages in the verified catalog.
     Search(SearchArgs),
-    /// Show package metadata.
+    /// Show package details and available versions.
     Info(InfoArgs),
-    /// Add packages and activate a new generation.
+    /// Install packages. Download first; build locally when needed.
     Install(InstallArgs),
-    /// Remove packages and activate a new generation.
+    /// Remove packages from your active environment.
     Remove(RemoveArgs),
-    /// Remove pkg and its verified managed system assets.
+    /// Uninstall pkg and its managed Nix installation.
     Uninstall,
-    /// List packages in the active generation.
+    /// List your installed packages.
     List(ListArgs),
-    /// Compare installed packages with the accepted source revision.
+    /// Show packages with available updates.
     Outdated,
-    /// Refresh signed metadata and the disposable index without changing packages.
+    /// Refresh the package catalog without changing installed packages.
     Update(UpdateArgs),
-    /// Upgrade selected packages or all unpinned packages.
+    /// Update selected packages, or use --all.
     Upgrade(UpgradeArgs),
-    /// Freeze installed selectors at their current realized identity.
+    /// Keep packages at their current versions.
     Pin(PackageArgs),
-    /// Allow installed selectors to move on a future upgrade.
+    /// Allow pinned packages to receive updates.
     Unpin(PackageArgs),
-    /// Inspect or prune generation history.
+    /// Show or prune saved package environments.
     History(HistoryArgs),
-    /// Activate a previous generation through a new monotonic history row.
+    /// Restore a previous package environment.
     Rollback(RollbackArgs),
-    /// Prune eligible generations and collect unreferenced store content.
+    /// Free disk space used by old package environments.
     Gc(GcArgs),
-    /// Verify and, when necessary, repair an installed generation.
+    /// Check installed packages and repair damaged files.
     Repair(RepairArgs),
-    /// Emit static completion code for a supported shell.
+    /// Print shell setup for Bash or zsh: eval "$(pkg shellenv)".
+    Shellenv,
+    /// Generate shell completions.
     Completion(CompletionArgs),
 }
 
@@ -272,6 +274,7 @@ impl Command {
             Self::Gc(_) => "gc",
             Self::Repair(_) => "repair",
             Self::Completion(_) => "completion",
+            Self::Shellenv => "shellenv",
         }
     }
 }

@@ -239,3 +239,23 @@ fn uninstall_refuses_an_unsupported_host_before_privilege() {
         "uninstall is not available on this system"
     );
 }
+
+#[test]
+fn shellenv_is_usable_before_state_exists_and_exports_the_package_path() {
+    let output = pkg().arg("shellenv").output().unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let snippet = String::from_utf8(output.stdout).unwrap();
+    let script = format!("{snippet}\n{snippet}\nprintf '%s' \"$PATH\"");
+    let output = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(script)
+        .env("HOME", "/tmp/pkg shellenv test")
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let path = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(path.matches("/current/bin").count(), 1);
+    assert!(path.ends_with(":/usr/bin:/bin"));
+}

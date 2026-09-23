@@ -273,6 +273,9 @@ impl BundleProvisioner for AuthenticatedProvisioner {
                 .stage_determinate_installer(Path::new(temporary))
                 .map_err(|_| BundleProvisionError::Failed)?;
             let installer = DeterminateInstaller::new(staged.length(), staged.sha256());
+            eprintln!(
+                "Installing Determinate Nix. This can take a few minutes. Please keep this window open."
+            );
             let outcome = run_with_new_determinate_handoff(&handoff, || {
                 installer
                     .install(staged.path())
@@ -282,7 +285,7 @@ impl BundleProvisioner for AuthenticatedProvisioner {
                 eprintln!("determinate installer outcome: {outcome}");
                 return Err(BundleProvisionError::RollbackIncomplete);
             }
-            eprintln!("determinate installer completed successfully");
+            eprintln!("Determinate Nix installation completed.");
             return accept_verified_determinate(handoff, bundle);
         }
         // Only the three supported systems reach the Determinate path above.

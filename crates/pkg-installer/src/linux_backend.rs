@@ -662,6 +662,11 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn ensure_asset(&mut self, asset: LinuxInstallAsset) -> Result<bool, InstallError> {
+        match asset.id() {
+            "product-root" => eprintln!("Preparing pkg files and folders..."),
+            "helper-binary" => eprintln!("Installing pkg commands and services..."),
+            _ => {}
+        }
         self.preflight_product_mutation()?;
         self.assets.ensure_asset(asset)
     }
@@ -705,6 +710,7 @@ impl LinuxInstallBackend for ProductionLinuxInstallBackend {
     }
 
     fn activate_services(&mut self) -> Result<bool, InstallError> {
+        eprintln!("Checking pkg service state...");
         if self.mode != crate::InstallMode::FreshInstall {
             self.preflight_product_mutation()?;
             return Ok(false);

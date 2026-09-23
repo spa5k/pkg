@@ -46,6 +46,20 @@ It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
 
+## Public alpha follow-up: setup and CLI language
+
+- **Identifier:** PUBLIC-03 (follow-up to DN-20).
+- **Purpose:** make setup, progress, help, and recovery instructions usable by
+  alpha users. Public docs link alpha.46 and distinguish unpublished changes.
+- **Owns:** public CLI text, Bash/zsh shell setup, installer stage text, download
+  wrapper logs, and public install/support docs.
+- **Depends:** PUBLIC-02 for automatic service-update behavior.
+- **Tests & gates:** CLI progress goldens and shell execution, wrapper checksum
+  refusal and exact failure status, private log permissions, real macOS package
+  expansion/signature tests, release tooling, docs links, G-LINT and G-QUALITY.
+- **Rollback:** revert. No state schema changes. `pkg shellenv` only prints code;
+  it does not edit shell files. Existing shell snippets remain safe.
+
 ## Public alpha follow-up: automatic product service updates
 
 The September 2026 public UX follow-up supersedes the manual service-control
