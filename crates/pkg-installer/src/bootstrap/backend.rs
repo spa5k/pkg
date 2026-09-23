@@ -901,7 +901,10 @@ impl<P: BundleProvisioner> MacOsInstallBackend for MacOsBundleBackend<'_, '_, P>
             Some(BootstrapOutcome::DeterminatePending { handoff, .. }) => {
                 handoff
                     .accept_after_installed_state_proof()
-                    .map_err(|_| MacOsError::backend_failure())?;
+                    .map_err(|error| {
+                        eprintln!("determinate handoff acceptance failed: {error:?}");
+                        MacOsError::backend_failure()
+                    })?;
             }
             #[cfg(test)]
             Some(BootstrapOutcome::DeterminateTestPending(handoff)) => {

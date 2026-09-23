@@ -162,9 +162,10 @@ fn accept_verified_determinate(
     handoff: DeterminateHandoff,
     bundle: AuthenticatedInstallerBundle,
 ) -> Result<BootstrapOutcome, BundleProvisionError> {
-    handoff
-        .enforce_receipt_privacy()
-        .map_err(|_| BundleProvisionError::RollbackIncomplete)?;
+    handoff.enforce_receipt_privacy().map_err(|error| {
+        eprintln!("determinate receipt validation failed: {error:?}");
+        BundleProvisionError::RollbackIncomplete
+    })?;
     Ok(BootstrapOutcome::DeterminatePending {
         bundle: Box::new(bundle),
         handoff: Box::new(handoff),
@@ -281,6 +282,7 @@ impl BundleProvisioner for AuthenticatedProvisioner {
                 eprintln!("determinate installer outcome: {outcome}");
                 return Err(BundleProvisionError::RollbackIncomplete);
             }
+            eprintln!("determinate installer completed successfully");
             return accept_verified_determinate(handoff, bundle);
         }
         // Only the three supported systems reach the Determinate path above.

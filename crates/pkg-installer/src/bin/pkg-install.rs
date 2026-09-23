@@ -81,6 +81,7 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
     if matches!(system, System::X8664Darwin | System::Aarch64Darwin) {
         let mut backend = match invocation {
             Invocation::InstallOrUpgrade => ProductionMacOsInstallBackend::new(system, groups),
+            Invocation::ResumeBaseNix => ProductionMacOsInstallBackend::new_resume(system, groups),
             Invocation::RepairProductAssets => {
                 ProductionMacOsInstallBackend::new_product_repair(system, groups)
             }
@@ -102,7 +103,9 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
         })
     } else {
         let mut backend = match invocation {
-            Invocation::InstallOrUpgrade => ProductionLinuxInstallBackend::new(system, groups),
+            Invocation::InstallOrUpgrade | Invocation::ResumeBaseNix => {
+                ProductionLinuxInstallBackend::new(system, groups)
+            }
             Invocation::RepairProductAssets => {
                 ProductionLinuxInstallBackend::new_product_repair(system, groups)
             }
@@ -119,12 +122,12 @@ fn run() -> Result<InstallSuccess, PublicInstallError> {
         )?;
         Ok(match invocation {
             Invocation::RepairProductAssets => InstallSuccess::Repaired,
-            Invocation::InstallOrUpgrade
+            Invocation::InstallOrUpgrade | Invocation::ResumeBaseNix
                 if backend.install_mode() == InstallMode::OfflineUpgrade =>
             {
                 InstallSuccess::Upgraded
             }
-            Invocation::InstallOrUpgrade => InstallSuccess::Installed,
+            Invocation::InstallOrUpgrade | Invocation::ResumeBaseNix => InstallSuccess::Installed,
         })
     }
 }
@@ -181,6 +184,7 @@ const fn public_install_error_code(code: InstallErrorCode) -> PublicInstallError
 enum Invocation {
     InstallOrUpgrade,
     RepairProductAssets,
+    ResumeBaseNix,
 }
 
 fn parse_invocation(
@@ -195,10 +199,16 @@ fn parse_invocation(
         };
         match text {
             "--repair-product-assets" => {
-                if invocation == Invocation::RepairProductAssets {
+                if invocation != Invocation::InstallOrUpgrade {
                     return Err(PublicInstallError::InvalidInvocation);
                 }
                 invocation = Invocation::RepairProductAssets;
+            }
+            "--resume" => {
+                if invocation != Invocation::InstallOrUpgrade {
+                    return Err(PublicInstallError::InvalidInvocation);
+                }
+                invocation = Invocation::ResumeBaseNix;
             }
             "--channel" => {
                 if channel.is_some() {
@@ -223,11 +233,12 @@ const fn validate_invocation_system(
     system: System,
 ) -> Result<(), PublicInstallError> {
     match (invocation, system) {
-        (_, System::X8664Darwin) => Err(PublicInstallError::UnsupportedSystem),
-        (
+        (_, System::Aarch64Darwin)
+        | (
             Invocation::InstallOrUpgrade | Invocation::RepairProductAssets,
-            System::X8664Linux | System::Aarch64Linux | System::Aarch64Darwin,
+            System::X8664Linux | System::Aarch64Linux,
         ) => Ok(()),
+        _ => Err(PublicInstallError::UnsupportedSystem),
     }
 }
 
@@ -295,7 +306,7 @@ impl fmt::Display for PublicInstallError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::InvalidInvocation => {
-                "Run pkg-install without options or with --repair-product-assets. Use --channel <BASE_URL> to select the release channel."
+                "Run pkg-install without options, with --repair-product-assets, or with --resume on macOS. Use --channel <BASE_URL> to select the release channel."
             }
             Self::RootRequired => "Run pkg-install as root.",
             Self::UnsupportedSystem => "This pkg installer does not support this system.",

@@ -8,6 +8,7 @@ mod recovery;
 mod tests;
 use backend::install_macos_with_provisioner_journaled;
 use provision::AuthenticatedProvisioner;
+pub use recovery::prepare_private_nix_home_at;
 pub use recovery::validate_linux_auth_datastore_file;
 use recovery::{
     LinuxJournalLocation, continue_linux_bundle_install, load_linux_bundle_for_recovery,
@@ -288,7 +289,9 @@ pub fn install_macos_from_bundle<'a>(
         request,
         backend,
     )?;
-    backend.preflight_clean_host(system)?;
+    backend.preflight_clean_host(system).inspect_err(|error| {
+        eprintln!("macos host preflight failed: {error:?}");
+    })?;
     verify_provision_workspace_absent(request.scratch_parent)
         .map_err(|_| MacOsError::backend_failure())?;
     let (storage, journal) = if let Some(recovered) = recovery {

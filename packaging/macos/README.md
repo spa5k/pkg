@@ -21,6 +21,39 @@ The result is for local technical-preview tests only.
 Use a shipping `pkg-install` binary that was compiled with the signed TUF root and the fixed HTTPS metadata and target URLs.
 The manual macOS proof workflow is the canonical preview build recipe.
 
+For an interactive preview install, run the verified package payload from a terminal:
+
+```sh
+bash packaging/macos/install-preview.sh /absolute/path/to/preview.pkg EXPECTED_SHA256
+```
+
+Use the checksum from the release publication. The runner verifies a private copy,
+checks the embedded executable signature, and runs it with `sudo` in the foreground.
+It prints the log path and returns the actual setup status. It does not run the
+package's scripts or reset an incomplete installation.
+
+If Nix completed but pkg stopped before accepting it, use the same release channel
+with an installer that supports explicit recovery:
+
+```sh
+bash packaging/macos/install-preview.sh /absolute/path/to/preview.pkg EXPECTED_SHA256 --resume
+```
+
+Recovery requires a matching pending pkg journal, the pinned vendor executable,
+a complete macOS vendor receipt, and a successful daemon check. It keeps the Nix
+store and continues product setup. A partial or changed vendor receipt is refused.
+
+On macOS, administrator privileges do not grant access to all system configuration
+files. Allow the system configuration prompt if macOS shows it. If macOS denies
+access, allow the terminal in System Settings > Privacy & Security > Full Disk
+Access, then restart that terminal. See [Apple's system configuration access
+guide](https://support.apple.com/guide/mac-help/mchlccb25729/mac).
+
+The previous background worker lost the interactive user's privacy authorization.
+Its PackageKit success result only meant the job was queued. The current package
+script waits for setup and returns its exit status. The interactive runner is the
+preview path for hosts that deny access from PackageKit's background session.
+
 The package is not Developer ID signed.
 The package is not notarized.
 The package is not proven Gatekeeper-clean.

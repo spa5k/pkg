@@ -148,6 +148,20 @@ pub(super) fn prepare_private_directory_at(
     Ok(())
 }
 
+/// Prepares the private HOME and TMPDIR required by the installer's Nix adapter.
+///
+/// # Errors
+///
+/// Rejects unsafe existing paths, wrong ownership, or directory creation failure.
+pub fn prepare_private_nix_home_at(
+    path: &Path,
+    expected_user: u32,
+    expected_group: u32,
+) -> Result<(), InstallError> {
+    prepare_private_directory_at(path, expected_user, expected_group)?;
+    prepare_private_directory_at(&path.join("tmp"), expected_user, expected_group)
+}
+
 /// Prepares the vendor temp directory used as `TMPDIR` for the Determinate
 /// installer on macOS. Unlike the private install-state directory, the vendor
 /// temp directory must let the vendor's unprivileged Nix build users traverse
@@ -508,8 +522,12 @@ pub(super) fn load_macos_bundle_for_recovery(
         system: request.system,
         groups: request.groups,
     };
-    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request)
-        .map_err(|_| MacOsError::backend_failure());
+    let result = load_authenticated_installer_bundle_blocking(trusted_root, &auth_request).map_err(
+        |error| {
+            eprintln!("macos release authentication failed: {error:?}");
+            MacOsError::backend_failure()
+        },
+    );
     remove_linux_auth_datastore(&auth_datastore).map_err(|_| MacOsError::backend_failure())?;
     result
 }
