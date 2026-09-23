@@ -8,8 +8,17 @@ pub(super) const MAX_STDERR_BYTES: usize = 128 * 1024 * 1024;
 pub(super) const MAX_INTERNAL_JSON_LINE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_STDERR_CHUNKS_PER_TICK: usize = 64;
 pub(super) const INTERNAL_JSON_PREFIX: &[u8] = b"@nix ";
+#[cfg(target_os = "macos")]
+const MACOS_BROKER_HOME: &str = "/Library/Application Support/pkg/broker-home";
+#[cfg(target_os = "macos")]
+const MACOS_SOURCE_ROOT: &str = "/private/var/db/pkg-source";
+
 pub trait CommandExecutor: Send + Sync {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError>;
+
+    fn source_file(&self) -> Result<tempfile::NamedTempFile, NixAdapterError> {
+        tempfile::NamedTempFile::new().map_err(|_| NixAdapterError::Unavailable)
+    }
 
     fn execute_with_stderr(
         &self,
@@ -61,11 +70,24 @@ pub(super) fn validated_process_executor(
     if !legacy_binary.is_file() {
         return Err(NixAdapterError::Unavailable);
     }
+    #[cfg(target_os = "macos")]
+    let source_parent = if private_home == Path::new(MACOS_BROKER_HOME) {
+        PathBuf::from(MACOS_SOURCE_ROOT)
+    } else {
+        private_home.join("tmp")
+    };
+    #[cfg(not(target_os = "macos"))]
+    let source_parent = private_home.join("tmp");
+    let source_home = tempfile::Builder::new()
+        .prefix("pkg-nix-source-")
+        .tempdir_in(&source_parent)
+        .map_err(|_| NixAdapterError::Unavailable)?;
     Ok(ProcessExecutor {
         nix_binary: nix_binary.to_path_buf(),
         nix_store_binary,
         private_home: private_home.to_path_buf(),
         daemon_socket: daemon_socket.map(Path::to_path_buf),
+        source_home,
     })
 }
 
@@ -89,23 +111,24 @@ pub(super) fn execute_checked(
         program,
         args,
         timeout,
+        isolate_source: false,
     })?;
-    if outcome.stdout_oversized || outcome.stderr_oversized {
-        return Err(NixAdapterError::OversizedInput {
-            limit_bytes: if outcome.stdout_oversized {
-                MAX_STDOUT_BYTES
-            } else {
-                MAX_STDERR_BYTES
-            },
-        });
-    }
-    if outcome.timed_out {
-        return Err(NixAdapterError::Timeout);
-    }
-    if outcome.code.is_none() {
-        return Err(NixAdapterError::OperationFailed);
-    }
-    Ok(outcome)
+    validate_outcome(outcome)
+}
+
+pub(super) fn execute_checked_source(
+    executor: &dyn CommandExecutor,
+    program: NixProgram,
+    args: Vec<OsString>,
+    timeout: Duration,
+) -> Result<CommandOutcome, NixAdapterError> {
+    let outcome = executor.execute(CommandSpec {
+        program,
+        args,
+        timeout,
+        isolate_source: true,
+    })?;
+    validate_outcome(outcome)
 }
 
 pub(super) fn execute_checked_with_stderr(
@@ -121,10 +144,15 @@ pub(super) fn execute_checked_with_stderr(
             program,
             args,
             timeout,
+            isolate_source: false,
         },
         cancelled,
         stderr_chunk,
     )?;
+    validate_outcome(outcome)
+}
+
+fn validate_outcome(outcome: CommandOutcome) -> Result<CommandOutcome, NixAdapterError> {
     if outcome.stdout_oversized || outcome.stderr_oversized {
         return Err(NixAdapterError::OversizedInput {
             limit_bytes: if outcome.stdout_oversized {
@@ -149,6 +177,7 @@ pub(super) struct ProcessExecutor {
     pub(super) nix_store_binary: PathBuf,
     pub(super) private_home: PathBuf,
     pub(super) daemon_socket: Option<PathBuf>,
+    pub(super) source_home: tempfile::TempDir,
 }
 
 impl CommandExecutor for ProcessExecutor {
@@ -163,6 +192,11 @@ impl CommandExecutor for ProcessExecutor {
         stderr_chunk: &mut StderrChunk<'_>,
     ) -> Result<CommandOutcome, NixAdapterError> {
         self.execute_process(&spec, cancelled, stderr_chunk)
+    }
+
+    fn source_file(&self) -> Result<tempfile::NamedTempFile, NixAdapterError> {
+        tempfile::NamedTempFile::new_in(self.source_home.path())
+            .map_err(|_| NixAdapterError::Unavailable)
     }
 }
 
@@ -245,6 +279,7 @@ pub struct CommandSpec {
     pub(super) program: NixProgram,
     pub(super) args: Vec<OsString>,
     pub(super) timeout: Duration,
+    pub(super) isolate_source: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -506,13 +541,23 @@ pub(super) fn build_command(
         NixProgram::Modern => &executor.nix_binary,
         NixProgram::LegacyStore => &executor.nix_store_binary,
     };
-    let mut command = Command::new(binary);
+    let mut command = process_command(executor, spec, binary);
+    let home = if spec.isolate_source {
+        executor.source_home.path()
+    } else {
+        &executor.private_home
+    };
+    let temporary = if spec.isolate_source {
+        executor.source_home.path().to_path_buf()
+    } else {
+        executor.private_home.join("tmp")
+    };
     command
         .args(&spec.args)
-        .current_dir(&executor.private_home)
+        .current_dir(home)
         .env_clear()
-        .env("HOME", &executor.private_home)
-        .env("TMPDIR", executor.private_home.join("tmp"))
+        .env("HOME", home)
+        .env("TMPDIR", temporary)
         .env("NIX_USER_CONF_FILES", "")
         .env("PATH", MANAGED_PATH)
         .stdin(Stdio::null())
@@ -522,7 +567,7 @@ pub(super) fn build_command(
     // home, which build users cannot traverse. Nix creates
     // its isolated build directories separately under /nix/var/nix/builds.
     #[cfg(target_os = "macos")]
-    if executor.daemon_socket.is_none() {
+    if executor.daemon_socket.is_none() && !spec.isolate_source {
         command.env("TMPDIR", "/private/tmp");
     }
     if let Some(daemon_socket) = &executor.daemon_socket {
@@ -535,6 +580,66 @@ pub(super) fn build_command(
     #[cfg(unix)]
     command.process_group(0);
     command
+}
+
+#[cfg(target_os = "macos")]
+fn process_command(executor: &ProcessExecutor, spec: &CommandSpec, binary: &Path) -> Command {
+    if spec.isolate_source {
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command
+            .arg("-p")
+            .arg(macos_source_profile(executor.source_home.path(), binary))
+            .arg(binary);
+        command
+    } else {
+        Command::new(binary)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn process_command(_executor: &ProcessExecutor, _spec: &CommandSpec, binary: &Path) -> Command {
+    Command::new(binary)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_source_profile(source_home: &Path, binary: &Path) -> String {
+    let source_home = fs::canonicalize(source_home).unwrap_or_else(|_| source_home.to_path_buf());
+    let binary = fs::canonicalize(binary).unwrap_or_else(|_| binary.to_path_buf());
+    let encode = |path: &Path| {
+        serde_json::to_string(&path.display().to_string())
+            .unwrap_or_else(|_| "\"/nonexistent\"".to_owned())
+    };
+    let binary_parent = encode(binary.parent().unwrap_or_else(|| Path::new("/")));
+    let binary = encode(&binary);
+    let source_home = encode(&source_home);
+    format!(
+        r#"(version 1)
+        (allow default)
+        (deny file-read-data (subpath "/"))
+        (allow file-read-data (literal "/"))
+        (allow file-read-data (literal "/private"))
+        (allow file-read-data (literal "/private/var"))
+        (allow file-read-data (literal "/private/var/db"))
+        (allow file-read-data (literal "/private/var/db/pkg-source"))
+        (allow file-read-data (literal {source_home}))
+        (allow file-read-data (literal {binary_parent}))
+        (allow file-read-data (literal {binary}))
+        (allow file-read-data (subpath "/nix"))
+        (allow file-read-data (subpath "/System"))
+        (allow file-read-data (literal "/usr"))
+        (allow file-read-data (subpath "/usr/bin"))
+        (allow file-read-data (subpath "/usr/lib"))
+        (allow file-read-data (subpath "/usr/libexec"))
+        (allow file-read-data (subpath "/usr/sbin"))
+        (allow file-read-data (subpath "/usr/share"))
+        (allow file-read-data (subpath "/bin"))
+        (allow file-read-data (subpath "/sbin"))
+        (allow file-read-data (subpath "/dev"))
+        (allow file-read-data (subpath "/private/var/run"))
+        (allow file-read-data (subpath "/private/var/db/timezone"))
+        (allow file-read-data (subpath "/private/var/db/pkg-source"))
+        (allow file-read-data (subpath {source_home}))"#
+    )
 }
 
 /// Forwards one batch of pending stderr chunks to the callback and records

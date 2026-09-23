@@ -134,12 +134,76 @@ fn captured_environment(
         program: NixProgram::Modern,
         args: Vec::new(),
         timeout: SHORT_TIMEOUT,
+        isolate_source: false,
     })?;
     Ok(String::from_utf8(outcome.stdout)?
         .lines()
         .filter_map(|line| line.split_once('='))
         .map(|(key, value)| (key.to_owned(), value.to_owned()))
         .collect())
+}
+
+#[cfg(unix)]
+fn test_process_executor(
+    nix_binary: PathBuf,
+    nix_store_binary: PathBuf,
+    private_home: PathBuf,
+    daemon_socket: Option<PathBuf>,
+) -> Result<ProcessExecutor, Box<dyn std::error::Error>> {
+    let source_parent = if cfg!(target_os = "macos") {
+        PathBuf::from("/private/tmp")
+    } else {
+        private_home.join("tmp")
+    };
+    let source_home = tempfile::Builder::new()
+        .prefix("pkg-nix-source-")
+        .tempdir_in(&source_parent)?;
+    Ok(ProcessExecutor {
+        nix_binary,
+        nix_store_binary,
+        private_home,
+        daemon_socket,
+        source_home,
+    })
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn source_children_cannot_read_outside_their_private_home() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let home = root.path().join("home");
+    fs::create_dir(&home)?;
+    fs::create_dir(home.join("tmp"))?;
+    let marker = root.path().join("private-marker");
+    fs::write(&marker, "must not be readable")?;
+    let executor = test_process_executor(
+        PathBuf::from("/bin/cat"),
+        PathBuf::from("/bin/cat"),
+        home,
+        None,
+    )?;
+    let allowed = executor.source_home.path().join("allowed");
+    fs::write(&allowed, "allowed")?;
+
+    let read = |path: &Path| {
+        executor.execute(CommandSpec {
+            program: NixProgram::Modern,
+            args: vec![path.as_os_str().to_owned()],
+            timeout: SHORT_TIMEOUT,
+            isolate_source: true,
+        })
+    };
+    let allowed = read(&allowed)?;
+    assert_eq!(
+        allowed.code,
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    assert_eq!(allowed.stdout, b"allowed");
+    assert_ne!(read(&marker)?.code, Some(0));
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -181,18 +245,13 @@ fn repair_executors_keep_standard_determinate_and_managed_environments_distinct(
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
 
-    let standard = ProcessExecutor {
-        nix_binary: binary.clone(),
-        nix_store_binary: binary.clone(),
-        private_home: home.clone(),
-        daemon_socket: None,
-    };
-    let legacy = ProcessExecutor {
-        nix_binary: binary.clone(),
-        nix_store_binary: binary,
-        private_home: home.clone(),
-        daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
-    };
+    let standard = test_process_executor(binary.clone(), binary.clone(), home.clone(), None)?;
+    let legacy = test_process_executor(
+        binary.clone(),
+        binary,
+        home.clone(),
+        Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
+    )?;
 
     let standard_environment = captured_environment(&standard)?;
     let command = build_command(
@@ -201,6 +260,7 @@ fn repair_executors_keep_standard_determinate_and_managed_environments_distinct(
             program: NixProgram::Modern,
             args: Vec::new(),
             timeout: SHORT_TIMEOUT,
+            isolate_source: false,
         },
     );
     assert_eq!(
@@ -1474,16 +1534,17 @@ fn noisy_stderr_cannot_starve_timeout_or_progress_cancellation()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     fs::create_dir(home.path().join("tmp"))?;
-    let executor = ProcessExecutor {
-        nix_binary: PathBuf::from("/bin/sh"),
-        nix_store_binary: PathBuf::from("/bin/sh"),
-        private_home: home.path().to_path_buf(),
-        daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
-    };
+    let executor = test_process_executor(
+        PathBuf::from("/bin/sh"),
+        PathBuf::from("/bin/sh"),
+        home.path().to_path_buf(),
+        Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
+    )?;
     let noisy = || CommandSpec {
         program: NixProgram::Modern,
         args: os_args(["-c", "while :; do printf 'noise\\n' >&2; done"]),
         timeout: Duration::from_millis(100),
+        isolate_source: false,
     };
 
     let started = Instant::now();
@@ -1519,12 +1580,12 @@ fn progress_callback_failure_reaps_a_silent_child_process_group()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     fs::create_dir(home.path().join("tmp"))?;
-    let executor = ProcessExecutor {
-        nix_binary: PathBuf::from("/bin/sh"),
-        nix_store_binary: PathBuf::from("/bin/sh"),
-        private_home: home.path().to_path_buf(),
-        daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
-    };
+    let executor = test_process_executor(
+        PathBuf::from("/bin/sh"),
+        PathBuf::from("/bin/sh"),
+        home.path().to_path_buf(),
+        Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
+    )?;
     let started = Instant::now();
     let disconnected = AtomicBool::new(false);
     let mut events = 0;
@@ -1536,6 +1597,7 @@ fn progress_callback_failure_reaps_a_silent_child_process_group()
                 "printf '%s' $$ > \"$HOME/child.pid\"; printf 'progress\\n' >&2; exec sleep 30",
             ]),
             timeout: Duration::from_secs(30),
+            isolate_source: false,
         },
         &|| disconnected.load(Ordering::Acquire),
         &mut |_| {
@@ -1738,18 +1800,19 @@ fn timeout_terminates_descendants_before_joining_capture_threads()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     fs::create_dir(home.path().join("tmp"))?;
-    let executor = ProcessExecutor {
-        nix_binary: PathBuf::from("/bin/sh"),
-        nix_store_binary: PathBuf::from("/bin/sh"),
-        private_home: home.path().to_path_buf(),
-        daemon_socket: Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
-    };
+    let executor = test_process_executor(
+        PathBuf::from("/bin/sh"),
+        PathBuf::from("/bin/sh"),
+        home.path().to_path_buf(),
+        Some(PathBuf::from(MANAGED_DAEMON_SOCKET)),
+    )?;
     for script in ["sleep 30 & wait", "sleep 30 &"] {
         let started = Instant::now();
         let outcome = executor.execute(CommandSpec {
             program: NixProgram::Modern,
             args: os_args(["-c", script]),
             timeout: Duration::from_millis(100),
+            isolate_source: false,
         })?;
 
         assert!(outcome.timed_out);
@@ -1853,7 +1916,6 @@ fn public_flake_evaluation_pins_root_inputs_and_configuration()
             .windows(2)
             .find(|pair| pair[0] == "--reference-lock-file")
             .unwrap();
-        assert_eq!(Path::new(&reference[1]).parent(), Some(Path::new("/tmp")));
         assert!(
             !Path::new(&reference[1]).exists(),
             "temporary lock removed after evaluation"

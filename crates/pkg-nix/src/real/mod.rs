@@ -437,8 +437,11 @@ impl RealNixAdapter {
         timeout: Duration,
     ) -> Result<CommandOutcome, NixAdapterError> {
         let timeout = bounded_timeout(self.operation_deadline, timeout)?;
-        let outcome = execute_checked(self.executor.as_ref(), program, args, timeout)?;
-        let _ = method;
+        let outcome = if method == MethodKind::EvaluateDerivation {
+            execute_checked_source(self.executor.as_ref(), program, args, timeout)?
+        } else {
+            execute_checked(self.executor.as_ref(), program, args, timeout)?
+        };
         Ok(outcome)
     }
 

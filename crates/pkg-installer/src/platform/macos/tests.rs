@@ -95,6 +95,11 @@ fn asset_manifest_is_closed_unique_and_has_exact_build_users() -> Result<(), Box
             MacOsAssetPrincipal::Broker,
         ),
         (
+            "broker-source-home",
+            "/private/var/db/pkg-source",
+            MacOsAssetPrincipal::Broker,
+        ),
+        (
             "helper-home",
             "/Library/Application Support/pkg/helper-home",
             MacOsAssetPrincipal::Root,

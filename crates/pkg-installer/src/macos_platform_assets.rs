@@ -452,7 +452,7 @@ impl MacOsPlatformAssetManager {
             "broker-socket-dir" | "helper-socket-dir" | "helper-log-dir" | "log-root" => {
                 self.ensure_filesystem()?.remove_runtime_state(asset)
             }
-            "broker-home" | "broker-log-dir" | "helper-home" => {
+            "broker-home" | "broker-log-dir" | "broker-source-home" | "helper-home" => {
                 self.ensure_filesystem()?.remove_private_tree(asset)
             }
             _ => self.ensure_filesystem()?.remove_verified_asset(asset),

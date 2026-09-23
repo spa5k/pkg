@@ -92,10 +92,8 @@ impl RealNixAdapter {
         request: &EvaluateDerivationRequest,
         lock: &LockedFlake,
     ) -> Result<DerivationPlanReport, NixAdapterError> {
-        // Determinate's lock reader cannot traverse the broker's private TMPDIR.
-        // Keep the file private (0600), but use the system temporary directory.
-        let mut file =
-            tempfile::NamedTempFile::new_in("/tmp").map_err(|_| NixAdapterError::Unavailable)?;
+        // Keep the reference lock inside the source evaluator's private sandbox.
+        let mut file = self.executor.source_file()?;
         file.write_all(lock.locks_json().as_bytes())
             .map_err(|_| NixAdapterError::Unavailable)?;
         file.flush().map_err(|_| NixAdapterError::Unavailable)?;
