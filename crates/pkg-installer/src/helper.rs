@@ -1,5 +1,6 @@
 //! Authenticated Unix broker-to-helper framed transport.
 
+use crate::determinate_handoff::{DeterminateHandoff, DeterminateHandoffState};
 use crate::platform::{authenticate_broker, linux::LinuxRootSetStore};
 use nix::unistd::{Uid, User};
 use nix::{
@@ -11,13 +12,11 @@ use nix::{
 type RemoveRootSetAuthorizer = fn(&RemoveRootSetRequest) -> Result<(), MaintenanceError>;
 use pkg_nix::{
     AuthenticatedHelper, BrokerHelperRequest, BrokerHelperResponse, BuildCacheProbe, BuildRequest,
-    CallerMaintenance, Digest, HELPER_FRAME_PAYLOAD_LIMIT, MaintenanceAdapter,
-    MaintenanceCapability, MaintenanceError, MaintenanceErrorCode, NixAdapter, NixAdapterError,
-    NixVersion, NixpkgsMetadataRunner, PINNED_NIX_VERSION, ProductFrameCodec, RealNixAdapter,
-    RemoveRootSetRequest, RepairStorePathsRequest, RootNixFailure, RootNixOperation,
-    RootNixRequest, RootNixResponse, RootSetAttestationRequest, RootSetPublicationRequest,
-    RootSetTransitionRequest, System, VerifiedRepairScope,
-    verify_authenticated_managed_install_from_receipt,
+    CallerMaintenance, HELPER_FRAME_PAYLOAD_LIMIT, MaintenanceAdapter, MaintenanceCapability,
+    MaintenanceError, MaintenanceErrorCode, NixAdapter, NixAdapterError, NixpkgsMetadataRunner,
+    ProductFrameCodec, RealNixAdapter, RemoveRootSetRequest, RepairStorePathsRequest,
+    RootNixFailure, RootNixOperation, RootNixRequest, RootNixResponse, RootSetAttestationRequest,
+    RootSetPublicationRequest, RootSetTransitionRequest, VerifiedRepairScope,
 };
 use pkg_store::{StateLayout, authorize_generation_root_removal};
 use std::{
@@ -346,21 +345,9 @@ impl LinuxHelperSession {
         self.caller(owner_uid).repair_store_paths(request)
     }
 
-    fn verify_managed_ownership(digest: Digest) -> bool {
-        let Ok(version) = NixVersion::new(PINNED_NIX_VERSION) else {
-            return false;
-        };
-        let Ok((system, groups)) = native_ownership_inputs() else {
-            return false;
-        };
-        verify_authenticated_managed_install_from_receipt(
-            std::path::Path::new("/"),
-            system,
-            &version,
-            digest,
-            groups,
-        )
-        .is_ok()
+    fn verify_managed_ownership(handoff: &DeterminateHandoff) -> bool {
+        // state() revalidates the pinned vendor executable and accepted receipt.
+        handoff.state() == Ok(DeterminateHandoffState::Accepted)
     }
 
     fn root_adapter(
@@ -486,34 +473,6 @@ fn cache_result<T>(
     )
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
-    crate::linux_accounts::plan_linux_group_bindings()
-        .map(|groups| (System::X8664Linux, groups))
-        .map_err(|_| platform_failure())
-}
-
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
-    crate::linux_accounts::plan_linux_group_bindings()
-        .map(|groups| (System::Aarch64Linux, groups))
-        .map_err(|_| platform_failure())
-}
-
-#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
-    crate::macos_accounts::macos_group_bindings()
-        .map(|groups| (System::X8664Darwin, groups))
-        .map_err(|_| platform_failure())
-}
-
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-fn native_ownership_inputs() -> Result<(System, pkg_nix::ManagedGroupBindings), MaintenanceError> {
-    crate::macos_accounts::macos_group_bindings()
-        .map(|groups| (System::Aarch64Darwin, groups))
-        .map_err(|_| platform_failure())
-}
-
 fn authorize_production_removal(request: &RemoveRootSetRequest) -> Result<(), MaintenanceError> {
     let user = User::from_uid(Uid::from_raw(request.owner_uid()))
         .map_err(|_| platform_failure())?
@@ -560,9 +519,14 @@ impl BrokerHelperDispatch for LinuxHelperSession {
             BrokerHelperRequest::LoadRepairRootSet(request) => self
                 .load_repair_roots(&request)
                 .map(BrokerHelperResponse::RepairRootSetLoaded),
-            BrokerHelperRequest::VerifyManagedOwnership(digest) => Ok(
-                BrokerHelperResponse::ManagedOwnership(Self::verify_managed_ownership(digest)),
-            ),
+            // Retain the wire field for existing clients. The legacy runtime
+            // manifest does not identify Determinate-owned Base Nix.
+            BrokerHelperRequest::VerifyManagedOwnership(_) => {
+                Ok(BrokerHelperResponse::ManagedOwnership(
+                    DeterminateHandoff::production()
+                        .is_ok_and(|handoff| Self::verify_managed_ownership(&handoff)),
+                ))
+            }
             BrokerHelperRequest::RootNix(request) => {
                 let deadline = Instant::now()
                     .checked_add(request.operation().server_budget())
@@ -860,9 +824,9 @@ mod tests {
     use crate::platform::linux::LinuxRootSetStore;
     use nix::unistd::Uid;
     use pkg_nix::{
-        BuildApprovalReceipt, DerivationPath, DerivedOutputTarget, GenerationId, InProcessHelper,
-        InProcessPeer, OperationId, OutputName, PolicyVersion, RepairMode, RootName, RootSet,
-        RootSetEntry, StorePath, VerifiedRepairScope,
+        BuildApprovalReceipt, DerivationPath, DerivedOutputTarget, Digest, GenerationId,
+        InProcessHelper, InProcessPeer, OperationId, OutputName, PolicyVersion, RepairMode,
+        RootName, RootSet, RootSetEntry, StorePath, System, VerifiedRepairScope,
     };
     use std::{
         io,
@@ -965,6 +929,32 @@ mod tests {
         frame.resize(FRAME_HEADER_BYTES + length, 0);
         stream.read_exact(&mut frame[FRAME_HEADER_BYTES..])?;
         Ok(frame)
+    }
+
+    #[test]
+    fn managed_ownership_requires_an_unchanged_accepted_determinate_handoff()
+    -> Result<(), Box<dyn Error>> {
+        let scratch = Scratch::new()?;
+        let installer = b"pinned vendor installer";
+        let installer_path = scratch.0.join("nix-installer");
+        let receipt_path = scratch.0.join("receipt.json");
+        std::fs::write(&installer_path, installer)?;
+        std::fs::set_permissions(&installer_path, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::write(&receipt_path, b"vendor receipt")?;
+        std::fs::set_permissions(&receipt_path, std::fs::Permissions::from_mode(0o600))?;
+        let handoff = DeterminateHandoff::for_test_bytes(&scratch.0, 0o600, installer)?;
+        assert!(!LinuxHelperSession::verify_managed_ownership(&handoff));
+        handoff.record_started()?;
+        assert!(!LinuxHelperSession::verify_managed_ownership(&handoff));
+        handoff.accept_after_installed_state_proof()?;
+        assert!(LinuxHelperSession::verify_managed_ownership(&handoff));
+        std::fs::write(&receipt_path, b"changed receipt")?;
+        assert!(!LinuxHelperSession::verify_managed_ownership(&handoff));
+        std::fs::write(&receipt_path, b"vendor receipt")?;
+        assert!(LinuxHelperSession::verify_managed_ownership(&handoff));
+        std::fs::write(&installer_path, b"changed installer")?;
+        assert!(!LinuxHelperSession::verify_managed_ownership(&handoff));
+        Ok(())
     }
 
     #[test]

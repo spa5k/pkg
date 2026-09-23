@@ -186,7 +186,8 @@ impl RootHelperClient {
         }
     }
 
-    /// Verifies the managed runtime against one authenticated manifest digest.
+    /// Revalidates the accepted Determinate handoff through the root helper.
+    /// The legacy runtime digest is retained for wire compatibility.
     ///
     /// # Errors
     ///
