@@ -1404,6 +1404,44 @@ fn substitution_batch_confirms_an_omitted_remote_path() -> Result<(), Box<dyn st
     Ok(())
 }
 
+#[test]
+fn substitution_batch_reports_a_cache_miss_for_local_build_inputs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path = StorePath::new("/nix/store/22222222222222222222222222222222-source")?;
+    let executor = Scripted::new(vec![
+        success(Vec::new()),
+        failure(1),
+        failure(1),
+        failure(1),
+    ]);
+    let calls = Arc::clone(&executor.calls);
+
+    let reports =
+        RealNixAdapter::scripted(executor).substitute_many(std::slice::from_ref(&path))?;
+
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].store_path(), &path);
+    assert_eq!(
+        reports[0].outcome(),
+        SubstituteOutcome::AbsentFromSubstituters
+    );
+    assert_eq!(calls.lock().map_err(|_| "poisoned call log")?.len(), 4);
+
+    let unavailable = Scripted::with_results(vec![
+        Ok(success(Vec::new())),
+        Ok(failure(1)),
+        Err(NixAdapterError::Timeout),
+    ]);
+    assert_eq!(
+        RealNixAdapter::scripted(unavailable)
+            .substitute_many(&[path])
+            .expect_err("a timeout must remain a failure")
+            .code(),
+        crate::NixAdapterErrorCode::Timeout
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn noisy_stderr_cannot_starve_timeout_or_progress_cancellation()

@@ -82,6 +82,9 @@ jobs:
               "$PWD/assets/pkg-${GITHUB_REF_NAME#v}-preview.pkg" "${GITHUB_REF_NAME#v}"
             cp packaging/macos/install-preview.sh assets/install-preview.sh
           fi
+          tar -czf "assets/pkg-binaries-$SYSTEM.tar.gz" -C assets \
+            "pkg-$SYSTEM" "pkg-install-$SYSTEM" \
+            "pkg-nix-broker-$SYSTEM" "pkg-root-helper-$SYSTEM"
           for artifact in assets/*; do
             cosign sign-blob --yes --bundle "$artifact.sigstore.json" "$artifact"
             cosign verify-blob --bundle "$artifact.sigstore.json" \

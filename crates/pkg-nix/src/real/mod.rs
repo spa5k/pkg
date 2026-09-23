@@ -802,18 +802,23 @@ impl NixAdapter for RealNixAdapter {
             let mut authenticated = Vec::new();
             for (index, path) in chunk.iter().enumerate() {
                 let exact_remote;
-                let entry = match &remote {
-                    Some(remote) => match batch_path_info_optional(remote, path)? {
-                        Some(entry) => Some(entry),
-                        None => {
-                            exact_remote = self.raw_remote_path_info_with_retry(path)?;
+                let entry = match remote
+                    .as_ref()
+                    .map(|remote| batch_path_info_optional(remote, path))
+                    .transpose()?
+                    .flatten()
+                {
+                    Some(entry) => Some(entry),
+                    None => match self.raw_remote_path_info_with_retry(path) {
+                        Ok(exact) => {
+                            exact_remote = exact;
                             root_path_info_optional(&exact_remote, path)?
                         }
+                        // Match single-path substitution: the build executor can
+                        // reuse a local input that is absent from the cache.
+                        Err(NixAdapterError::OperationFailed) => None,
+                        Err(error) => return Err(error),
                     },
-                    None => {
-                        exact_remote = self.raw_remote_path_info_with_retry(path)?;
-                        root_path_info_optional(&exact_remote, path)?
-                    }
                 };
                 let Some(entry) = entry else {
                     chunk_reports[index] = Some(SubstituteReport::miss(
