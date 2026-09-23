@@ -11,6 +11,7 @@ use pkg_core::{
 
 use crate::cli::{HistoryArgs, ListArgs, PackageArgs, RemoveArgs, RollbackArgs};
 use crate::commands::execute::CommandResult;
+use crate::commands::query::optional_text;
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
 
@@ -85,7 +86,10 @@ pub fn list_state(
         entry.insert("selector".into(), json!(desired.selector().as_str()));
         entry.insert("name".into(), json!(realization.pname()));
         if !args.name_only() {
-            entry.insert("version".into(), json!(realization.version().as_str()));
+            entry.insert(
+                "version".into(),
+                optional_text(realization.version().as_str()),
+            );
             entry.insert("pinned".into(), json!(desired.is_pinned()));
             entry.insert(
                 "sourceRevision".into(),
@@ -210,8 +214,8 @@ pub fn read_history(history: &History, args: &HistoryArgs) -> Result<CommandResu
         let changes = diff.changes().iter().map(|change| json!({
             "selector": change.selector().as_str(),
             "kind": match change.kind() { ChangeKind::Added => "added", ChangeKind::Removed => "removed", ChangeKind::Changed => "changed" },
-            "beforeVersion": change.before_version().map(pkg_core::PackageVersion::as_str),
-            "afterVersion": change.after_version().map(pkg_core::PackageVersion::as_str),
+            "beforeVersion": change.before_version().map(|version| optional_text(version.as_str())),
+            "afterVersion": change.after_version().map(|version| optional_text(version.as_str())),
             "beforeOutputs": change.before_outputs().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
             "afterOutputs": change.after_outputs().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
             "beforePinned": change.before_pinned(),

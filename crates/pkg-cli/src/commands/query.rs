@@ -346,8 +346,8 @@ pub fn outdated_catalog_reports(
         entries.push(json!({
             "package": installed.package(),
             "name": installed.name,
-            "current": installed.version.as_str(),
-            "available": summary.version(),
+            "current": optional_text(installed.version.as_str()),
+            "available": optional_text(summary.version()),
             "pinned": installed.pinned,
             "kind": kind
         }));
@@ -436,7 +436,7 @@ fn catalog_summary_value(summary: &CatalogPackageSummary) -> Value {
     })
 }
 
-fn optional_text(value: &str) -> Value {
+pub(super) fn optional_text(value: &str) -> Value {
     if value.is_empty() {
         Value::Null
     } else {
@@ -632,6 +632,17 @@ mod tests {
         assert_eq!(result.fields()["entries"][2]["kind"], "major");
         assert_eq!(result.fields()["entries"][3]["kind"], "rev-only");
         assert_eq!(result.records()[0]["type"], "outdated_package");
+    }
+
+    #[test]
+    fn outdated_preserves_unknown_versions_as_null() {
+        const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+        let installed = vec![installed_package("tool", "", REVISION, false)];
+        let reports = vec![catalog_info_report("tool", "1.0", REVISION, 42)];
+        let result =
+            outdated_catalog_reports(ChannelSequence::from_u64(42).unwrap(), &installed, &reports)
+                .unwrap();
+        assert!(result.fields()["entries"][0]["current"].is_null());
     }
 
     #[test]

@@ -17,7 +17,8 @@ use crate::cli::{
 type AcquiredInstallEvidence = (OperationHandle, String, InstallEvidence, &'static str);
 use crate::commands::execute::{CommandResult, CoreOperations, OperationPolicy};
 use crate::commands::query::{
-    InstalledCatalogPackage, info_catalog_reports, outdated_catalog_reports, search_catalog_report,
+    InstalledCatalogPackage, info_catalog_reports, optional_text, outdated_catalog_reports,
+    search_catalog_report,
 };
 use crate::commands::state::{
     LifecycleEdit, edit_pin_state, list_state, read_history, remove_state, rollback_state,
@@ -2155,7 +2156,7 @@ fn install_result(
             json!({
                 "selector": target.selector().as_str(),
                 "package": target.package_name(),
-                "version": target.package_version().as_str(),
+                "version": optional_text(target.package_version().as_str()),
                 "outputs": target.outputs_to_install().iter().map(OutputName::as_str).collect::<Vec<_>>()
             })
         })

@@ -371,6 +371,10 @@ fn walk_output(
     children.sort_by_key(fs::DirEntry::file_name);
     for child in children {
         let name = child.file_name();
+        // Nix build metadata stays in its store output, outside the user environment.
+        if relative.as_os_str().is_empty() && name == "nix-support" {
+            continue;
+        }
         let child_relative = relative.join(name);
         validate_relative(&child_relative)?;
         let kind = child.file_type()?;
@@ -692,6 +696,30 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, ActivationError::Collision));
         assert!(!stage.exists());
+    }
+
+    #[test]
+    fn nix_build_metadata_does_not_collide_in_the_user_environment() {
+        let temp = TempDir::new().unwrap();
+        let a = temp.path().join("a");
+        let b = temp.path().join("b");
+        for source in [&a, &b] {
+            fs::create_dir_all(source.join("nix-support")).unwrap();
+            fs::write(source.join("nix-support/propagated-build-inputs"), b"input").unwrap();
+        }
+        fs::write(a.join("first"), b"a").unwrap();
+        fs::write(b.join("second"), b"b").unwrap();
+        let stage = temp.path().join("stage");
+        let plan = stage_from_sources(
+            &stage,
+            &[(store("a"), a.clone()), (store("b"), b)],
+            CollisionPolicy::Abort,
+        )
+        .unwrap();
+        assert_eq!(plan.entry_count(), 2);
+        assert!(!stage.join("nix-support").exists());
+        assert!(a.join("nix-support/propagated-build-inputs").exists());
+        verify_activation(&stage, &plan).unwrap();
     }
 
     #[test]

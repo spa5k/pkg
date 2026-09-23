@@ -1336,6 +1336,16 @@ fn install_success_output_matches_the_v1_golden() {
 }
 
 #[test]
+fn install_success_preserves_an_unknown_version_as_null() {
+    let mut raw: Value =
+        serde_json::from_slice(&install_evidence("cacheSigned").to_json_bytes().unwrap()).unwrap();
+    raw["targets"][0]["packageVersion"] = json!("");
+    let evidence = InstallEvidence::from_json_bytes(&serde_json::to_vec(&raw).unwrap()).unwrap();
+    let result = install_result("op_fixture", "gen-0001", None, &evidence).unwrap();
+    assert!(result.fields()["added"][0]["version"].is_null());
+}
+
+#[test]
 fn install_success_names_a_local_build_in_the_human_result() {
     let result = install_result(
         "op_fixture",

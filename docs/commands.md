@@ -57,6 +57,8 @@ Coverage depends on the channel's Nixpkgs revision, your platform, evaluation
 success, and upstream package policy. Some packages have no executable command.
 A missing binary cache entry can require a local build.
 The next runtime also accepts valid name-only derivations such as `unixtools.watch`.
+An unknown version appears as `null` in JSON output. Internal Nix build metadata
+stays in the package store and does not cause conflicts in the active environment.
 
 ## Shell setup
 

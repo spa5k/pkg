@@ -51,8 +51,9 @@ has not run. DN-20 completes the release documents after final proof.
 - **Identifier:** PUBLIC-05 (follow-up to PUBLIC-04).
 - **Purpose:** replace the public alpha's small proof catalog with metadata
   generated from the pinned Nixpkgs package set.
-- **Owns:** recursive metadata discovery, name-only derivation support, release index staging, native catalog
-  evidence, and package-management documentation.
+- **Owns:** recursive metadata discovery, name-only derivation support, unknown
+  version display, exclusion of internal Nix build metadata from activation,
+  release index staging, native catalog evidence, and package-management docs.
 - **Depends:** PUBLIC-03 and PUBLIC-04 (merged).
 - **Tests & gates:** nested package discovery, evaluation failures, platform
   exclusions, safe display metadata, descriptor pin binding, native macOS and
