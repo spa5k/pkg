@@ -67,10 +67,11 @@ jobs:
           export PKG_RELEASE_TUF_ROOT_JSON="$(cat 1.root.json)"
           rustup toolchain install 1.96.1 --profile minimal
           cargo build --locked --release -p pkg-cli --bin pkg \
-            -p pkg-installer --bin pkg-install --bin pkg-nix-broker --bin pkg-root-helper
+            -p pkg-installer --bin pkg-install --bin pkg-nix-broker --bin pkg-root-helper \
+            -p pkg-release --bin pkg-release-index
           test "$(target/release/pkg --version)" = "pkg ${GITHUB_REF_NAME#v}"
           mkdir assets
-          for binary in pkg pkg-nix-broker pkg-root-helper pkg-install; do
+          for binary in pkg pkg-nix-broker pkg-root-helper pkg-install pkg-release-index; do
             cp "target/release/$binary" "assets/$binary-$SYSTEM"
           done
           if [[ "$SYSTEM" == aarch64-darwin ]]; then
