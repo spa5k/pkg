@@ -1,5 +1,9 @@
 # macOS Apple Silicon lifecycle proof
 
+The later [PUBLIC-04 checks](PUBLIC-04.md) record local regression evidence for
+automatic upgrades and public CLI changes. They are separate from the sealed
+DN-16 workflow below.
+
 This workflow is the destructive DN-16 lifecycle proof.
 The manual GitHub workflow is the only supported entry point.
 It uses one dispatch.
