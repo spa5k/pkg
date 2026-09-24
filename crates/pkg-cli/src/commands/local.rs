@@ -274,19 +274,17 @@ impl CoreOperations for LocalStateOperations {
     fn outdated(&mut self) -> Result<CommandResult, CommandError> {
         let active = self.active()?;
         let installed = installed_catalog_packages(active.state(), None)?;
-        if installed.is_empty() {
-            return outdated_catalog_reports(
+        let result = if installed.is_empty() {
+            outdated_catalog_reports(active.state().manifest().channel_seq(), &installed, &[])?
+        } else {
+            let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
+            run_catalog_outdated(
+                &mut broker,
                 active.state().manifest().channel_seq(),
                 &installed,
-                &[],
-            );
-        }
-        let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
-        run_catalog_outdated(
-            &mut broker,
-            active.state().manifest().channel_seq(),
-            &installed,
-        )
+            )?
+        };
+        report_unchecked_flakes(result, active.state())
     }
 
     fn update(
@@ -490,6 +488,7 @@ fn installed_catalog_packages(
         .entries()
         .iter()
         .filter(|desired| selected.is_none_or(|ids| ids.contains(desired.id())))
+        .filter(|desired| !matches!(desired.source_revision(), SourceRevision::PublicFlake(_)))
         .map(|desired| {
             let locked = state
                 .locked()
@@ -501,11 +500,31 @@ fn installed_catalog_packages(
                 desired.attribute().clone(),
                 realization.pname().to_owned(),
                 realization.version().clone(),
-                realization.nixpkgs_revision().clone(),
+                realization.source_commit().clone(),
                 desired.is_pinned(),
             ))
         })
         .collect()
+}
+
+fn report_unchecked_flakes(
+    result: CommandResult,
+    state: &pkg_core::lifecycle::LifecycleState,
+) -> Result<CommandResult, CommandError> {
+    let unchecked = state
+        .manifest()
+        .entries()
+        .iter()
+        .filter(|entry| matches!(entry.source_revision(), SourceRevision::PublicFlake(_)))
+        .map(|entry| entry.selector().as_str())
+        .collect::<Vec<_>>();
+    if unchecked.is_empty() {
+        return Ok(result);
+    }
+    let mut fields = result.fields().clone();
+    fields.insert("uncheckedSources".into(), json!(unchecked));
+    CommandResult::new(format!("{}. {} public flake source(s) not checked. Use pkg upgrade to check and install source updates.", result.summary(), unchecked.len()), fields, result.records().to_vec())
+        .map_err(|_| invalid_active_state())
 }
 
 fn invalid_active_state() -> CommandError {
@@ -563,21 +582,19 @@ impl LocalStateOperations {
                 &installed,
             )?;
             let outdated = outdated_attributes(&currency)?;
-            if outdated.is_empty() {
-                return upgrade_noop_result(&skipped_pinned);
-            }
             let ids = selection
                 .selectors()
                 .iter()
                 .filter(|selector| {
-                    selector
-                        .attribute()
-                        .is_some_and(|attribute| outdated.contains(attribute.as_str()))
+                    pkg_core::PublicFlakeRef::new(selector.selector().as_str()).is_ok()
+                        || selector
+                            .attribute()
+                            .is_some_and(|attribute| outdated.contains(attribute.as_str()))
                 })
                 .map(|selector| selector.id().clone())
                 .collect::<Vec<_>>();
-            if ids.len() != outdated.len() {
-                return Err(invalid_active_state());
+            if ids.is_empty() {
+                return upgrade_noop_result(&skipped_pinned);
             }
             selection = select_upgrade(source.state().clone(), UpgradeScope::Named(ids), false)
                 .map_err(upgrade_failed)?;
@@ -1799,6 +1816,23 @@ fn diagnose_install_selector_error(
     broker: &mut BrokerLifecycleClient,
     selectors: &[PackageSelector],
 ) -> Option<CommandError> {
+    if selectors
+        .iter()
+        .any(|selector| pkg_core::PublicFlakeRef::new(selector.selector().as_str()).is_ok())
+    {
+        #[cfg(target_os = "linux")]
+        return Some(CommandError::new(
+            ExitCode::ResolveFailed,
+            "public flake packages are not yet supported on Linux",
+            "install the package by its Nixpkgs name, or use pkg on macOS",
+        ));
+        #[cfg(not(target_os = "linux"))]
+        return Some(CommandError::new(
+            ExitCode::ResolveFailed,
+            "the public package could not be fetched or evaluated",
+            "check the repository, package output, network access, and committed flake.lock; inputs must use locked remote sources",
+        ));
+    }
     let requests = selectors
         .iter()
         .map(|selector| CatalogInfoRequest::new(selector.selector().as_str()))
@@ -2213,7 +2247,7 @@ fn invalid_install_selector() -> CommandError {
     CommandError::new(
         ExitCode::Usage,
         "a package selector or output name is invalid",
-        "use package and output names made from letters, numbers, dots, dashes, and underscores",
+        "use a package name or a quoted public GitHub flake reference; output names use letters, numbers, dots, dashes, and underscores",
     )
 }
 

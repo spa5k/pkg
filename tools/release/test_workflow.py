@@ -99,7 +99,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_linux_uninstall_uses_plain_terminal_exec_status(self) -> None:
         self.assertEqual(
             LINUX_HARNESS.count(
-                'docker exec "$container" /usr/local/bin/pkg --yes uninstall'
+                'docker exec "$container" env PKG_INSTALL_DEBUG=1 '
+                '/usr/local/bin/pkg --yes uninstall'
             ),
             1,
         )

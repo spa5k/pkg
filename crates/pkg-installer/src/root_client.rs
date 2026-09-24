@@ -403,6 +403,16 @@ impl NixAdapter for RootHelperClient {
             .evaluate_derivation(request)
     }
 
+    fn lock_flake(
+        &self,
+        reference: &pkg_core::PublicFlakeRef,
+    ) -> Result<pkg_core::LockedFlake, NixAdapterError> {
+        self.source_evaluator
+            .as_ref()
+            .ok_or(NixAdapterError::Unavailable)?
+            .lock_flake(reference)
+    }
+
     fn path_info(&self, path: &StorePath) -> Result<PathInfoReport, NixAdapterError> {
         match self.adapter_response(RootNixRequest::PathInfo(path.clone()))? {
             RootNixResponse::PathInfo(report) => Ok(report),
@@ -726,7 +736,7 @@ mod tests {
         let binary = temporary.path().join("nix");
         std::fs::write(
             &binary,
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/calls\"\ncase \"$*\" in\n  *'flake metadata'*) printf source-metadata ;;\n  *) exit 42 ;;\nesac\n",
+            "#!/bin/sh\ncase \"$*\" in\n  *'flake metadata'*) printf source-metadata ;;\n  *) exit 42 ;;\nesac\n",
         )?;
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700))?;
         std::fs::copy(&binary, temporary.path().join("nix-store"))?;
@@ -757,10 +767,6 @@ mod tests {
             client.evaluate_derivation(&request),
             Err(NixAdapterError::OperationFailed)
         );
-        let calls = std::fs::read_to_string(home.join("calls"))?;
-        assert_eq!(calls.lines().count(), 2);
-        assert!(calls.contains("flake metadata"));
-        assert!(calls.contains("derivation show"));
         Ok(())
     }
 

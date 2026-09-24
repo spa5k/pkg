@@ -164,7 +164,20 @@ impl UpgradePlan {
                 if entry.realization().system() != system {
                     return Err(UpgradeError::SystemMismatch);
                 }
-                if entry.realization().nixpkgs_revision() != &self.target_revision {
+                let selector = self
+                    .selection
+                    .selectors
+                    .iter()
+                    .find(|selector| selector.id() == id)
+                    .ok_or(UpgradeError::InvalidState)?;
+                let source_matches = match entry.realization().flake() {
+                    Some(lock) => lock.reference().as_str() == selector.selector().as_str(),
+                    None => {
+                        crate::PublicFlakeRef::new(selector.selector().as_str()).is_err()
+                            && entry.realization().source_commit() == &self.target_revision
+                    }
+                };
+                if !source_matches {
                     return Err(UpgradeError::RevisionMismatch);
                 }
                 let planned_attribute = self
@@ -221,6 +234,12 @@ impl UpgradePlan {
                     entry: replacement, ..
                 }) => entry.retarget_for_upgrade(
                     replacement.attribute().clone(),
+                    replacement
+                        .realization()
+                        .flake()
+                        .map_or(crate::SourceRevision::CurrentChannel, |lock| {
+                            crate::SourceRevision::PublicFlake(lock.clone())
+                        }),
                     self.selection.bump_pinned,
                 ),
                 _ => entry,
@@ -257,7 +276,8 @@ fn same_resolved_package(left: &LockEntry, right: &LockEntry) -> bool {
         && left_realization.outputs() == right_realization.outputs()
         && left_realization.outputs_to_install() == right_realization.outputs_to_install()
         && left_realization.system() == right_realization.system()
-        && left_realization.nixpkgs_revision() == right_realization.nixpkgs_revision()
+        && left_realization.source_commit() == right_realization.source_commit()
+        && left_realization.flake() == right_realization.flake()
         && left_realization.nar_hash() == right_realization.nar_hash()
         && left_realization.closure_nar_size() == right_realization.closure_nar_size()
         && left_realization.pname() == right_realization.pname()

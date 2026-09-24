@@ -811,6 +811,13 @@ impl BuildPlan {
                 SourceRevision::CurrentChannel => true,
                 SourceRevision::PinnedChannel(sequence) => *sequence == channel_seq,
                 SourceRevision::ExactRevision(target_revision) => target_revision == revision,
+                SourceRevision::PublicFlake(lock) => {
+                    lock.reference().as_str() == target.selector.as_str()
+                        && lock
+                            .reference()
+                            .attribute()
+                            .is_ok_and(|attribute| attribute == target.attribute)
+                }
             };
             if !source_matches
                 || target
@@ -1396,6 +1403,13 @@ impl InstallEvidence {
                         SourceRevision::PinnedChannel(sequence) => *sequence != channel_sequence,
                         SourceRevision::ExactRevision(target_revision) => {
                             target_revision != &revision
+                        }
+                        SourceRevision::PublicFlake(lock) => {
+                            lock.reference().as_str() != target.selector().as_str()
+                                || !lock
+                                    .reference()
+                                    .attribute()
+                                    .is_ok_and(|attribute| &attribute == target.attribute())
                         }
                     }
             })

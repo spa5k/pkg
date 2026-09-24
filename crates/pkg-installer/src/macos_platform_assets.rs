@@ -452,7 +452,7 @@ impl MacOsPlatformAssetManager {
             "broker-socket-dir" | "helper-socket-dir" | "helper-log-dir" | "log-root" => {
                 self.ensure_filesystem()?.remove_runtime_state(asset)
             }
-            "broker-home" | "broker-log-dir" | "helper-home" => {
+            "broker-home" | "broker-log-dir" | "broker-source-home" | "helper-home" => {
                 self.ensure_filesystem()?.remove_private_tree(asset)
             }
             _ => self.ensure_filesystem()?.remove_verified_asset(asset),
@@ -632,6 +632,36 @@ mod tests {
             );
             fs::write(&path, original)?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn uninstall_removes_the_populated_private_source_workspace() -> Result<(), Box<dyn Error>> {
+        let temporary = tempfile::tempdir()?;
+        for path in ["private", "private/var", "private/var/db"] {
+            let directory = temporary.path().join(path);
+            fs::create_dir(&directory)?;
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o755))?;
+        }
+        let mut manager = manager(
+            temporary.path(),
+            ManagedGroupBindings::new(333, 350)?,
+            Digest::from_bytes([0x31; 32]),
+        )?;
+        let asset = macos_install_assets()
+            .iter()
+            .copied()
+            .find(|asset| asset.id() == "broker-source-home")
+            .ok_or_else(|| std::io::Error::other("missing source workspace asset"))?;
+        manager.ensure_asset(asset)?;
+        let workspace = temporary.path().join("private/var/db/pkg-source");
+        let lock = workspace.join("flake.lock");
+        fs::write(&lock, b"locked")?;
+        fs::set_permissions(lock, fs::Permissions::from_mode(0o600))?;
+
+        manager.remove_uninstall_asset(asset)?;
+
+        assert!(!workspace.exists());
         Ok(())
     }
 

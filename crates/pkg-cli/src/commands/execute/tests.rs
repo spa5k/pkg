@@ -565,3 +565,11 @@ fn core_engine_routes_every_variant_and_preserves_global_policy() {
         }
     }
 }
+
+#[test]
+fn public_flake_intent_can_be_shown_without_allowing_raw_source_diagnostics() {
+    assert!(validate_public_string("github:example/tools#tool").is_ok());
+    assert!(validate_public_string("github:example/tools#packages.aarch64-darwin.tool").is_ok());
+    assert!(validate_public_string("source github:example/tools/secret").is_err());
+    assert!(validate_public_string("github:example/tools?token=secret#tool").is_err());
+}

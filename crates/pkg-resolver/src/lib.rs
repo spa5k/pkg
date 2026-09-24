@@ -11,7 +11,7 @@
 use std::fmt;
 
 use pkg_core::{
-    AttributePath, ChannelSequence, NarHash, NixpkgsRevision, PackageSelector, SourceRevision,
+    AttributePath, ChannelSequence, NarHash, NixpkgsRevision, Os, PackageSelector, SourceRevision,
     System,
 };
 use pkg_index::{IndexDocument, IndexQuery, InfoLookup};
@@ -152,6 +152,9 @@ pub fn resolve_package(
     index: Option<&IndexDocument>,
     adapter: &dyn NixAdapter,
 ) -> Result<ResolvedPackagePlan, ResolveError> {
+    if let Ok(reference) = pkg_core::PublicFlakeRef::new(selector.selector().as_str()) {
+        return resolve_flake(selector, &reference, system, adapter);
+    }
     resolve_with_source(
         selector,
         source.channel_sequence(),
@@ -161,6 +164,45 @@ pub fn resolve_package(
         index,
         adapter,
     )
+}
+
+fn resolve_flake(
+    selector: &PackageSelector,
+    reference: &pkg_core::PublicFlakeRef,
+    system: System,
+    adapter: &dyn NixAdapter,
+) -> Result<ResolvedPackagePlan, ResolveError> {
+    if system.os() == Os::Linux {
+        return Err(ResolveError::new(ResolveErrorCode::EvaluationFailed));
+    }
+    if selector.pin_state().is_pinned() {
+        return Err(ResolveError::new(ResolveErrorCode::AlreadyRealized));
+    }
+    let lock = match selector.source_revision() {
+        SourceRevision::CurrentChannel => {
+            adapter.lock_flake(reference).map_err(map_adapter_error)?
+        }
+        SourceRevision::PublicFlake(lock) if lock.reference() == reference => lock.clone(),
+        _ => return Err(ResolveError::new(ResolveErrorCode::SourceMismatch)),
+    };
+    let request =
+        EvaluateDerivationRequest::for_flake(lock.clone(), system, selector.outputs().clone())
+            .map_err(map_adapter_error)?;
+    let plan = adapter
+        .evaluate_derivation(&request)
+        .map_err(map_adapter_error)?;
+    if !selector.version_preference().matches(plan.version()) {
+        return Err(ResolveError::new(ResolveErrorCode::VersionMismatch));
+    }
+    let resolved = selector
+        .clone()
+        .with_flake_lock(lock)
+        .and_then(|selector| selector.with_attribute(request.attribute().clone()))
+        .map_err(|_| ResolveError::new(ResolveErrorCode::InvalidSelector))?;
+    Ok(ResolvedPackagePlan {
+        selector: resolved,
+        plan,
+    })
 }
 
 #[allow(
@@ -221,6 +263,7 @@ fn verify_source_revision(
         SourceRevision::CurrentChannel => true,
         SourceRevision::PinnedChannel(sequence) => sequence == &channel_sequence,
         SourceRevision::ExactRevision(requested) => requested == revision,
+        SourceRevision::PublicFlake(_) => false,
     };
     if matches {
         Ok(())

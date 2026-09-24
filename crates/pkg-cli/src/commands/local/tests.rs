@@ -1754,6 +1754,32 @@ fn install_failure_diagnosis_lists_ambiguous_catalog_ids() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn public_flake_diagnostic_names_the_linux_limit() {
+    let (_server, client) = UnixStream::pair().unwrap();
+    let selector = PackageSelector::new(
+        SelectorId::new("sel_test_0").unwrap(),
+        SelectorInput::new("github:example/tools#demo").unwrap(),
+        VersionPreference::Any,
+        OutputSelection::default_selection(),
+        SourceRevision::CurrentChannel,
+    );
+    let mut broker = BrokerLifecycleClient::from_stream(client);
+
+    let error = diagnose_install_selector_error(&mut broker, &[selector]).unwrap();
+
+    assert_eq!(error.exit_code(), ExitCode::ResolveFailed);
+    assert_eq!(
+        error.message(),
+        "public flake packages are not yet supported on Linux"
+    );
+    assert_eq!(
+        error.hint(),
+        "install the package by its Nixpkgs name, or use pkg on macOS"
+    );
+}
+
 #[test]
 fn catalog_info_renders_only_product_metadata() {
     let summary = CatalogPackageSummary::new(

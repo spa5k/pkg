@@ -1327,7 +1327,7 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
 
 echo "+ pkg terminal-exec uninstall"
 set +e
-docker exec "$container" /usr/local/bin/pkg --yes uninstall
+docker exec "$container" env PKG_INSTALL_DEBUG=1 /usr/local/bin/pkg --yes uninstall
 uninstall_status=$?
 set -e
 if [ "$uninstall_status" -ne 0 ]; then

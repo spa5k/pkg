@@ -131,7 +131,8 @@ fn is_selector_id(s: &str) -> bool {
 /// A user-typed selector input (`plans/01` §10.1 `selector`; `plans/01` §11.1
 /// allowlist grammar).
 ///
-/// Validated as a nonempty `[A-Za-z0-9._-]+` string. This is an intent string,
+/// Accepts a nonempty `[A-Za-z0-9._-]+` package name or a validated
+/// [`crate::PublicFlakeRef`]. This is an intent string,
 /// **not** a Nix attribute-path expression.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SelectorInput(String);
@@ -170,11 +171,12 @@ impl FromStr for SelectorInput {
 }
 
 /// Returns `true` if `s` is a valid [`SelectorInput`] (nonempty
-/// `[A-Za-z0-9._-]+`).
+/// `[A-Za-z0-9._-]+` name or a public flake reference).
 fn is_selector_input(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    crate::PublicFlakeRef::new(s).is_ok()
+        || (!s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')))
 }
 
 /// A conservative v1 Nixpkgs attribute-path fragment (`plans/01` §10.1
@@ -408,6 +410,20 @@ impl PackageSelector {
     #[must_use]
     pub const fn source_revision(&self) -> &crate::channel::SourceRevision {
         &self.source_revision
+    }
+
+    /// Binds a resolver-owned public source lock to the original request.
+    ///
+    /// # Errors
+    /// Refuses invalid source bindings or unavailable source metadata.
+    pub fn with_flake_lock(mut self, lock: crate::LockedFlake) -> Result<Self, SelectorError> {
+        if self.pin_state.is_pinned() || lock.reference().as_str() != self.selector.as_str() {
+            return Err(SelectorError::InvalidSelectorInput {
+                input: self.selector.as_str().to_owned(),
+            });
+        }
+        self.source_revision = crate::SourceRevision::PublicFlake(lock);
+        Ok(self)
     }
 
     /// Returns the pin state.

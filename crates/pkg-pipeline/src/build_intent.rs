@@ -50,6 +50,35 @@ impl fmt::Debug for AuthenticatedBuildIntent {
 }
 
 impl AuthenticatedBuildIntent {
+    /// Freezes public source roots and inputs before preview and admission-time replanning.
+    ///
+    /// # Errors
+    /// Refuses invalid source bindings or unavailable source metadata.
+    pub fn lock_sources(&mut self, adapter: &dyn NixAdapter) -> Result<(), BuildIntentError> {
+        for selector in &mut self.selectors {
+            if let Ok(reference) = pkg_core::PublicFlakeRef::new(selector.selector().as_str())
+                && matches!(
+                    selector.source_revision(),
+                    pkg_core::SourceRevision::CurrentChannel
+                )
+            {
+                if self.system.os() == pkg_core::Os::Linux {
+                    return Err(BuildIntentError::new(
+                        BuildIntentErrorCode::SourceUnavailable,
+                    ));
+                }
+                let lock = adapter
+                    .lock_flake(&reference)
+                    .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::SourceUnavailable))?;
+                *selector = selector
+                    .clone()
+                    .with_flake_lock(lock)
+                    .map_err(|_| BuildIntentError::new(BuildIntentErrorCode::InvalidIntent))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Retains one bounded validated request under authenticated channel policy.
     pub fn new(
         channel: VerifiedChannel,

@@ -46,6 +46,9 @@ use crate::{
     VerifyReport, VerifyRequest, VersionInfo,
 };
 
+#[cfg(not(target_os = "linux"))]
+mod flake;
+
 /// Exact managed Nix version embedded in the V1 runtime contract.
 pub const PINNED_NIX_VERSION: &str = "2.34.8";
 pub(super) const STORE_DIRECTORY: &str = "/nix/store";
@@ -435,8 +438,11 @@ impl RealNixAdapter {
         timeout: Duration,
     ) -> Result<CommandOutcome, NixAdapterError> {
         let timeout = bounded_timeout(self.operation_deadline, timeout)?;
-        let outcome = execute_checked(self.executor.as_ref(), program, args, timeout)?;
-        let _ = method;
+        let outcome = if method == MethodKind::EvaluateDerivation {
+            execute_checked_source(self.executor.as_ref(), program, args, timeout)?
+        } else {
+            execute_checked(self.executor.as_ref(), program, args, timeout)?
+        };
         Ok(outcome)
     }
 
@@ -673,6 +679,21 @@ impl NixpkgsMetadataRunner for RealNixAdapter {
 }
 
 impl NixAdapter for RealNixAdapter {
+    fn lock_flake(
+        &self,
+        reference: &pkg_core::PublicFlakeRef,
+    ) -> Result<pkg_core::LockedFlake, NixAdapterError> {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = reference;
+            Err(NixAdapterError::OperationFailed)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            self.lock_public_flake(reference)
+        }
+    }
+
     fn version(&self) -> Result<VersionInfo, NixAdapterError> {
         let bytes =
             self.require_success(MethodKind::Version, vec!["--version".into()], SHORT_TIMEOUT)?;
@@ -721,6 +742,17 @@ impl NixAdapter for RealNixAdapter {
         &self,
         request: &EvaluateDerivationRequest,
     ) -> Result<DerivationPlanReport, NixAdapterError> {
+        if let Some(lock) = request.flake() {
+            #[cfg(target_os = "linux")]
+            {
+                let _ = lock;
+                return Err(NixAdapterError::OperationFailed);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                return self.evaluate_public_flake(request, lock);
+            }
+        }
         let installable = pinned_installable(request);
         let mut root_args = base_args();
         root_args.extend(os_args(["derivation", "show"]));

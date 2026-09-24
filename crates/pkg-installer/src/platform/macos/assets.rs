@@ -324,6 +324,14 @@ pub(super) const MACOS_ASSETS: &[MacOsInstallAsset] = &[
         MacOsAssetPrincipal::Broker,
     ),
     MacOsInstallAsset::path(
+        "broker-source-home",
+        MacOsAssetKind::Directory,
+        "/private/var/db/pkg-source",
+        0o700,
+        MacOsAssetPrincipal::Broker,
+        MacOsAssetPrincipal::Broker,
+    ),
+    MacOsInstallAsset::path(
         "helper-home",
         MacOsAssetKind::Directory,
         "/Library/Application Support/pkg/helper-home",

@@ -321,9 +321,14 @@ impl ManifestEntry {
         })
     }
 
-    pub(crate) fn retarget_for_upgrade(mut self, attribute: AttributePath, bump_pin: bool) -> Self {
+    pub(crate) fn retarget_for_upgrade(
+        mut self,
+        attribute: AttributePath,
+        source: SourceRevision,
+        bump_pin: bool,
+    ) -> Self {
         self.attribute = attribute;
-        self.source_revision = SourceRevision::CurrentChannel;
+        self.source_revision = source;
         if bump_pin {
             self.pinned = false;
             self.pinned_to = None;
@@ -639,7 +644,7 @@ impl GenerationOutput {
     }
     /// Returns the exact pinned Nixpkgs revision.
     #[must_use]
-    pub const fn nixpkgs_revision(&self) -> &NixpkgsRevision {
+    pub const fn source_commit(&self) -> &NixpkgsRevision {
         &self.nixpkgs_revision
     }
     /// Returns the primary realized store path.
@@ -768,7 +773,10 @@ struct LockedStateWire {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LockEntryWire {
     attribute: String,
+    // Retained wire name for existing snapshots; public flakes store their root commit.
     nixpkgs_rev: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flake: Option<String>,
     realized: RealizationWire,
     locked_at: String,
     provenance: String,
@@ -1047,6 +1055,7 @@ fn lock_entry_from_wire(
         PackageVersion::new(r.version),
     )
     .map_err(|e| field_error("realized", e))?;
+    let realization = bind_flake(realization, w.flake)?;
     Ok(LockEntry {
         attribute,
         realization,
@@ -1054,6 +1063,21 @@ fn lock_entry_from_wire(
         provenance: nonempty("provenance", w.provenance)?,
         signatures_observed: w.sigs_observed,
     })
+}
+
+fn bind_flake(
+    realization: Realization,
+    encoded: Option<String>,
+) -> Result<Realization, StateSchemaError> {
+    if let Some(encoded) = encoded {
+        let lock = crate::LockedFlake::from_json(&encoded).map_err(|e| field_error("flake", e))?;
+        if lock.revision() != realization.source_commit() {
+            return Err(field_error("flake", "source commit mismatch"));
+        }
+        Ok(realization.with_flake(lock))
+    } else {
+        Ok(realization)
+    }
 }
 
 impl TryFrom<GenerationWire> for Generation {
@@ -1364,7 +1388,8 @@ impl From<&LockEntry> for LockEntryWire {
         let r = &v.realization;
         Self {
             attribute: v.attribute.as_str().into(),
-            nixpkgs_rev: r.nixpkgs_revision().as_str().into(),
+            nixpkgs_rev: r.source_commit().as_str().into(),
+            flake: r.flake().map(crate::LockedFlake::to_json),
             realized: RealizationWire {
                 store_path: r.store_path().as_str().into(),
                 deriver: r.deriver().as_str().into(),

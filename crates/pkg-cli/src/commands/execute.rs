@@ -699,6 +699,9 @@ fn validate_key(key: &str) -> Result<(), PublicResultError> {
 }
 
 fn validate_public_string(value: &str) -> Result<(), PublicResultError> {
+    if pkg_core::PublicFlakeRef::new(value).is_ok() {
+        return Ok(());
+    }
     if value.is_empty()
         || value.chars().any(char::is_control)
         || value.contains("/nix/")

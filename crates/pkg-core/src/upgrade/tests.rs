@@ -41,14 +41,14 @@ fn selective_upgrade_preserves_every_untouched_revision_and_pin() {
     assert_eq!(
         result.state().locked().entries()[&id("sel_a")]
             .realization()
-            .nixpkgs_revision()
+            .source_commit()
             .as_str(),
         REV2
     );
     assert_eq!(
         result.state().locked().entries()[&id("sel_b")]
             .realization()
-            .nixpkgs_revision()
+            .source_commit()
             .as_str(),
         REV1
     );
@@ -213,7 +213,7 @@ fn authenticated_channel_binding_advances_state_and_refuses_rollback() {
     assert_eq!(
         result.state().locked().entries()[&id("sel_b")]
             .realization()
-            .nixpkgs_revision()
+            .source_commit()
             .as_str(),
         REV1
     );
@@ -247,5 +247,138 @@ fn replacement_is_bound_to_planned_attribute_and_authenticated_revision() {
             RemovedUpstreamPolicy::Refuse,
         ),
         Err(UpgradeError::RevisionMismatch)
+    );
+}
+
+fn flake_lock(revision: &str) -> crate::LockedFlake {
+    crate::LockedFlake::new(
+        crate::PublicFlakeRef::new("github:example/tools/main#alpha").unwrap(),
+        NixpkgsRevision::new(revision).unwrap(),
+        crate::NarHash::new("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap(),
+        r#"{"version":7,"root":"root","nodes":{"root":{}}}"#,
+    )
+    .unwrap()
+}
+
+fn flake_entry(hash: char, revision: &str) -> LockEntry {
+    let entry = replacement("alpha", hash, revision, "1.0");
+    LockEntry::new(
+        entry.attribute().clone(),
+        entry.realization().clone().with_flake(flake_lock(revision)),
+        "2026-09-23T00:00:00Z".into(),
+        "build:local".into(),
+        vec![],
+    )
+    .unwrap()
+}
+
+#[test]
+fn flake_lifecycle_keeps_source_intent_exact_locks_and_rollback() {
+    use crate::state::{LockedState, Manifest};
+    use crate::{
+        ChannelSequence, InstallPackage, OutputSelection, PackageSelector, SelectorInput,
+        SourceRevision, System, VersionPreference,
+    };
+    let selector = PackageSelector::new(
+        id("sel_flake"),
+        SelectorInput::new("github:example/tools/main#alpha").unwrap(),
+        VersionPreference::Any,
+        OutputSelection::default_selection(),
+        SourceRevision::PublicFlake(flake_lock(REV1)),
+    )
+    .with_attribute(crate::AttributePath::new("alpha").unwrap())
+    .unwrap();
+    let initial = crate::install_packages(
+        None,
+        ChannelSequence::from_u64(2).unwrap(),
+        System::X8664Linux,
+        1001,
+        vec![
+            InstallPackage::new(
+                selector,
+                flake_entry('3', REV1),
+                "2026-09-23T00:00:00Z",
+                "user:install",
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap()
+    .into_state();
+    let initial = LifecycleState::new(
+        Manifest::from_json(&initial.manifest().to_json().unwrap()).unwrap(),
+        LockedState::from_json(&initial.locked().to_json().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let pinned = crate::edit_pins(initial.clone(), &[id("sel_flake")], crate::PinAction::Pin)
+        .unwrap()
+        .into_state();
+    assert!(
+        select_upgrade(pinned, UpgradeScope::All, false)
+            .unwrap()
+            .selectors()
+            .is_empty()
+    );
+    let plan = plan_upgrade(
+        initial.clone(),
+        UpgradeScope::All,
+        false,
+        NixpkgsRevision::new(REV1).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        plan.selectors()[0].selector().as_str(),
+        "github:example/tools/main#alpha"
+    );
+    let upgraded = plan
+        .apply(
+            vec![UpgradeOutcome::resolved(
+                id("sel_flake"),
+                flake_entry('4', REV2),
+            )],
+            RemovedUpstreamPolicy::Refuse,
+        )
+        .unwrap();
+    assert!(upgraded.changed());
+    let upgraded = upgraded.into_state();
+    assert_eq!(
+        upgraded.locked().entries()[&id("sel_flake")]
+            .realization()
+            .flake(),
+        Some(&flake_lock(REV2))
+    );
+    assert_eq!(
+        upgraded.manifest().entries()[0].source_revision(),
+        &SourceRevision::PublicFlake(flake_lock(REV2))
+    );
+    let old = crate::lifecycle_test_support::snapshot("gen-0001", None, initial, "install");
+    let current = crate::lifecycle_test_support::snapshot(
+        "gen-0002",
+        Some("gen-0001"),
+        upgraded.clone(),
+        "upgrade",
+    );
+    let rollback =
+        crate::plan_rollback(&current, &[old], crate::RollbackTarget::Parent, |_| true).unwrap();
+    assert_eq!(
+        rollback.target().state().locked().entries()[&id("sel_flake")]
+            .realization()
+            .flake(),
+        Some(&flake_lock(REV1))
+    );
+    let removed = crate::remove::remove_selectors(upgraded, &[id("sel_flake")])
+        .unwrap()
+        .into_state();
+    assert!(removed.manifest().entries().is_empty());
+    let bad = crate::lifecycle_test_support::state();
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&bad.manifest().to_json().unwrap()).unwrap();
+    manifest["entries"][0]["selector"] = serde_json::json!("github:example/tools#alpha");
+    assert!(
+        LifecycleState::new(
+            Manifest::from_json(&serde_json::to_vec(&manifest).unwrap()).unwrap(),
+            bad.locked().clone()
+        )
+        .is_err()
     );
 }

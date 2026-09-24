@@ -46,13 +46,16 @@ impl AuthenticatedBuildPreparation {
             ProductionBuildHostFactsProbe::from_verified_channel(&channel)
                 .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::HostRefused))?,
         );
-        let intent = AuthenticatedBuildIntent::new(
+        let mut intent = AuthenticatedBuildIntent::new(
             channel,
             selectors,
             host.system(),
             index.map(VerifiedIndex::into_document),
         )
         .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::IntentRefused))?;
+        intent
+            .lock_sources(adapter.as_ref())
+            .map_err(|_| BuildPreparationError::new(BuildPreparationErrorCode::PlanningRefused))?;
         let replanner = Arc::new(AuthenticatedBuildReplanner::new(intent, adapter, host));
         let initial_plan = replanner.initial_plan().map_err(|error| {
             let _ = writeln!(

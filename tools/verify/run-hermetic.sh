@@ -97,10 +97,13 @@ echo "    clean"
 #   an anonymous tempfile while digesting; deliberate, disk-bounded design
 # - pkg-nix/src/managed/provision.rs          extraction TempPath plumbing
 #   for the same bundle path
-# Both stay until an explicit-root spool design lands (IMPL-NOTES-PR2).
+# - pkg-nix/src/real/process.rs               creates source-evaluation files
+#   only below the installer-owned private source root
+# The first two stay until an explicit-root spool design lands (IMPL-NOTES-PR2).
 TEMP_ALLOWED=(
 	'crates/pkg-nix/src/managed/installer_bundle.rs'
 	'crates/pkg-nix/src/managed/provision.rs'
+	'crates/pkg-nix/src/real/process.rs'
 )
 # ---------------------------------------------------------------------------
 echo "==> temp-root audit (production code must not use the ambient temp dir)"

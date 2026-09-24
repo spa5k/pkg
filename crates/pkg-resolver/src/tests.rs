@@ -216,3 +216,48 @@ fn source_mismatch_and_adapter_failure_are_redacted() {
         ResolveErrorCode::AlreadyRealized
     );
 }
+
+#[test]
+fn public_flake_resolution_uses_its_lock_and_preserves_original_reference() {
+    let reference = pkg_core::PublicFlakeRef::new("github:example/tools/main#ripgrep").unwrap();
+    let lock = pkg_core::LockedFlake::new(
+        reference.clone(),
+        revision(),
+        nar_hash(),
+        r#"{"version":7,"root":"root","nodes":{"root":{}}}"#,
+    )
+    .unwrap();
+    let intent = selector(reference.as_str(), VersionPreference::Any)
+        .with_flake_lock(lock.clone())
+        .unwrap();
+    let fake = FakeNix::new();
+    fake.expect_evaluate_derivation(
+        EvaluateDerivationRequest::for_flake(
+            lock.clone(),
+            System::Aarch64Darwin,
+            OutputSelection::default_selection(),
+        )
+        .unwrap(),
+        Ok(plan("1.0")),
+    );
+    let resolved = resolve_flake(&intent, &reference, System::Aarch64Darwin, &fake).unwrap();
+    assert_eq!(
+        resolved.selector().source_revision(),
+        &SourceRevision::PublicFlake(lock)
+    );
+    assert_eq!(resolved.selector().selector().as_str(), reference.as_str());
+    assert!(resolved.build_plan_target().is_ok());
+    assert_eq!(fake.assert_exhausted(), Ok(()));
+}
+
+#[test]
+fn public_flake_resolution_refuses_linux_before_nix_runs() {
+    let reference = pkg_core::PublicFlakeRef::new("github:example/tools#ripgrep").unwrap();
+    let intent = selector(reference.as_str(), VersionPreference::Any);
+    let fake = FakeNix::new();
+
+    let error = resolve_flake(&intent, &reference, System::X8664Linux, &fake).unwrap_err();
+
+    assert_eq!(error.code(), ResolveErrorCode::EvaluationFailed);
+    assert_eq!(fake.assert_exhausted(), Ok(()));
+}

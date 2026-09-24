@@ -77,8 +77,8 @@ pub fn list_state(
             .get(desired.id())
             .ok_or_else(state_error)?;
         let realization = locked.realization();
-        let is_outdated =
-            accepted_revision.is_some_and(|revision| revision != realization.nixpkgs_revision());
+        let is_outdated = realization.flake().is_none()
+            && accepted_revision.is_some_and(|revision| revision != realization.source_commit());
         if args.outdated() && !is_outdated {
             continue;
         }
@@ -93,7 +93,7 @@ pub fn list_state(
             entry.insert("pinned".into(), json!(desired.is_pinned()));
             entry.insert(
                 "sourceRevision".into(),
-                json!(realization.nixpkgs_revision().as_str()),
+                json!(realization.source_commit().as_str()),
             );
             if args.with_outputs() {
                 entry.insert(

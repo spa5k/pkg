@@ -319,6 +319,8 @@ pub enum SourceRevision {
     PinnedChannel(ChannelSequence),
     /// An exact git revision.
     ExactRevision(NixpkgsRevision),
+    /// A user-selected public flake with exact root and dependency locks.
+    PublicFlake(crate::LockedFlake),
 }
 
 impl SourceRevision {
@@ -329,6 +331,7 @@ impl SourceRevision {
             SourceRevision::CurrentChannel => "channel:current".to_owned(),
             SourceRevision::PinnedChannel(seq) => format!("channel:pinned:{seq}"),
             SourceRevision::ExactRevision(rev) => format!("rev:{rev}"),
+            Self::PublicFlake(lock) => format!("flake:{}", lock.to_json()),
         }
     }
 }
@@ -343,6 +346,13 @@ impl FromStr for SourceRevision {
     type Err = ChannelError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(lock) = s.strip_prefix("flake:") {
+            return crate::LockedFlake::from_json(lock)
+                .map(Self::PublicFlake)
+                .map_err(|_| ChannelError::InvalidSourceRevision {
+                    input: "<invalid flake lock>".into(),
+                });
+        }
         if s == "channel:current" {
             return Ok(SourceRevision::CurrentChannel);
         }

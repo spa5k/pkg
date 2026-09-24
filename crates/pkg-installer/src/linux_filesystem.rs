@@ -1295,7 +1295,10 @@ impl LinuxFilesystemManager {
         &mut self,
         asset: LinuxInstallAsset,
     ) -> Result<(), LinuxFilesystemError> {
-        if !matches!(asset.id(), "broker-home" | "broker-log-dir" | "helper-home") {
+        if !matches!(
+            asset.id(),
+            "broker-home" | "broker-log-dir" | "broker-source-home" | "helper-home"
+        ) {
             return Err(unsupported());
         }
         let Some((parent, name)) = self.open_parent_optional(asset)? else {

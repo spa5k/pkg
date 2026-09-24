@@ -136,6 +136,6 @@ fn upgrade_evidence_advances_only_the_selected_exact_lock() {
     assert_eq!(state.manifest().channel_seq().get().get(), 2);
     assert_eq!(entry.realization().store_path().as_str(), NEXT_STORE);
     assert_eq!(entry.realization().version().as_str(), "2.0");
-    assert_eq!(entry.realization().nixpkgs_revision().as_str(), NEXT_REV);
+    assert_eq!(entry.realization().source_commit().as_str(), NEXT_REV);
     assert_eq!(entry.provenance(), "build:local");
 }
