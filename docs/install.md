@@ -17,6 +17,28 @@ checked before setup; do not delete it to bypass an error.
 This is an alpha. The macOS package is ad-hoc signed and is not notarized.
 The release uses a test signing root. Use a disposable system for evaluation.
 
+## One command for installation and updates
+
+Run this as your normal user on either supported platform:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/spa5k/pkg/main/install.sh -o "$HOME/pkg-install.sh" && /bin/sh "$HOME/pkg-install.sh"
+```
+
+The public script pins one release and verifies every downloaded installer file.
+It requests administrator access only after verification. It checks the installed
+version and runs doctor after setup. Use the same command for a compatible pkg
+update. Package updates still use `pkg update` and `pkg upgrade --all`.
+
+To check the downloads without installing, run the saved script with
+`/bin/sh "$HOME/pkg-install.sh" --verify-only`.
+Use `--no-color` for plain output. The saved script stays pinned; run the download
+command again to get the current published version.
+
+The bootstrap is distributed over HTTPS. Its pinned checksums protect the
+subsequent downloads. This shell step does not claim to implement TUF. The
+installed product retains its existing signed-channel verification.
+
 ## macOS Apple silicon
 
 Use the terminal installer. It keeps the macOS permission prompt in your

@@ -924,7 +924,7 @@ docker exec "$container" python3 /usr/local/libexec/pkg_bounded_capture.py 26214
     /run/pkg-bootstrap-capture/status.txt \
     /run/pkg-bootstrap-capture/stdout \
     /run/pkg-bootstrap-capture/stderr -- \
-    /usr/local/sbin/pkg-bootstrap >/dev/null 2>&1
+    su - setup-user -c /usr/local/sbin/pkg-bootstrap >/dev/null 2>&1
 docker exec "$container" chmod 0777 /opt/pkg/bin/pkg-nix-broker
 if drift_output=$(docker exec "$container" "$shipping_installer" 2>&1); then
     echo "Ownership drift was accepted." >&2
@@ -947,13 +947,13 @@ docker exec "$container" sh -eu -c '
 '
 
 echo "+ bootstrap verify-only"
-docker exec "$container" /usr/local/sbin/pkg-bootstrap --verify-only
+docker exec "$container" su - setup-user -c "/usr/local/sbin/pkg-bootstrap --verify-only"
 
 echo "+ bootstrap install"
-docker exec "$container" /usr/local/sbin/pkg-bootstrap
+docker exec "$container" su - setup-user -c /usr/local/sbin/pkg-bootstrap
 
 echo "+ bootstrap retry"
-docker exec "$container" /usr/local/sbin/pkg-bootstrap
+docker exec "$container" su - setup-user -c /usr/local/sbin/pkg-bootstrap
 
 echo "+ verify vendor Nix, product services, and ordinary-user isolation"
 docker exec "$container" sh -eu -c '

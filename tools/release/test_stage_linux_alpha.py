@@ -57,7 +57,7 @@ class StageLinuxAlphaTests(unittest.TestCase):
             )
             self.assertIn(f"PKG_RELEASE='{RELEASE}'", bootstrap.read_text())
             self.assertIn(
-                'pkg_url="$PKG_RELEASE_BASE_URL/$PKG_RELEASE/$pkg_artifact"',
+                '"$PKG_RELEASE_BASE_URL/$PKG_RELEASE/$1"',
                 bootstrap.read_text(),
             )
             self.assertEqual(stat.S_IMODE(bootstrap.stat().st_mode), 0o755)
