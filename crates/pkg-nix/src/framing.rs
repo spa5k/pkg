@@ -25,10 +25,10 @@ use crate::maintenance::{
 use crate::{
     ApprovalSource, BuildCacheErrorCode, BuildPreview, BuildProgressEstimate, BuildReadiness,
     BuildReport, CacheDownloadClosure, CachePathObservation, DerivationPlanReport,
-    EvaluateDerivationRequest, GcReport, InstallEvidence, JsonCodec, NixpkgsPin,
-    NixpkgsSourceErrorCode, PathInfoReport, RootName, RootNixFailure, RootNixOperation,
-    RootNixRequest, RootNixResponse, RootRef, RootRepairPlanProof, RootRepairPlanRequest,
-    SubstituteReport, System, VerifyReport, VerifyRequest, VersionInfo,
+    EvaluateDerivationRequest, GcReport, InstallEvidence, JsonCodec, PathInfoReport, RootName,
+    RootNixFailure, RootNixOperation, RootNixRequest, RootNixResponse, RootRef,
+    RootRepairPlanProof, RootRepairPlanRequest, SubstituteReport, System, VerifyReport,
+    VerifyRequest, VersionInfo,
 };
 use crate::{MethodKind, NixAdapterErrorCode};
 use serde_json::value::RawValue;
@@ -1874,7 +1874,6 @@ impl ProductFrameCodec {
 const ROOT_NIX_SUCCESS: u8 = 0;
 const ROOT_NIX_ADAPTER_ERROR: u8 = 1;
 const ROOT_NIX_CACHE_ERROR: u8 = 2;
-const ROOT_NIX_NIXPKGS_ERROR: u8 = 3;
 const ROOT_NIX_BUSY: u8 = 4;
 const ROOT_NIX_INACTIVE: u8 = 5;
 const ROOT_NIX_BUILD_PROGRESS: u8 = 6;
@@ -1890,20 +1889,6 @@ struct RootNixPathsWire<'a> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RootNixPathsOwnedWire {
     paths: Vec<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RootNixPinWire<'a> {
-    revision: &'a str,
-    nar_hash: &'a str,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RootNixPinOwnedWire {
-    revision: String,
-    nar_hash: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1969,7 +1954,6 @@ struct CacheClosureOwnedWire {
 fn encode_root_nix_request(request: &RootNixRequest) -> Result<Vec<u8>, FrameError> {
     match request {
         RootNixRequest::Version | RootNixRequest::Gc => Ok(Vec::new()),
-        RootNixRequest::Evaluate(request) => request.encode().map_err(adapter_payload),
         RootNixRequest::PathInfo(path) | RootNixRequest::Substitute(path) => {
             encode_root_paths(std::slice::from_ref(path))
         }
@@ -1979,10 +1963,6 @@ fn encode_root_nix_request(request: &RootNixRequest) -> Result<Vec<u8>, FrameErr
         | RootNixRequest::ClosureForRoots(paths) => encode_root_paths(paths),
         RootNixRequest::Build(request) => request.encode().map_err(adapter_payload),
         RootNixRequest::Verify(request) => request.encode().map_err(adapter_payload),
-        RootNixRequest::NixpkgsMetadata(pin) => encode_json(&RootNixPinWire {
-            revision: pin.revision().as_str(),
-            nar_hash: pin.nar_hash().as_str(),
-        }),
         RootNixRequest::RepairPlan(request) => encode_json(&RootRepairPlanWire {
             paths: request.damaged().iter().map(StorePath::as_str).collect(),
             policy_version: request.policy_version().get().get(),
@@ -2003,9 +1983,6 @@ fn decode_root_nix_request(
             require_empty(payload)?;
             Ok(RootNixRequest::Version)
         }
-        RootNixOperation::Evaluate => Ok(RootNixRequest::Evaluate(
-            EvaluateDerivationRequest::decode(&codec, payload).map_err(adapter_payload)?,
-        )),
         RootNixOperation::PathInfo => Ok(RootNixRequest::PathInfo(decode_one_path(payload)?)),
         RootNixOperation::Substitute => Ok(RootNixRequest::Substitute(decode_one_path(payload)?)),
         RootNixOperation::SubstituteMany => {
@@ -2027,13 +2004,6 @@ fn decode_root_nix_request(
         RootNixOperation::CacheInspectClosures => Ok(RootNixRequest::CacheInspectClosures(
             decode_root_paths(payload)?,
         )),
-        RootNixOperation::NixpkgsMetadata => {
-            let pin: RootNixPinOwnedWire = decode_json(payload)?;
-            Ok(RootNixRequest::NixpkgsMetadata(
-                NixpkgsPin::new(&pin.revision, &pin.nar_hash)
-                    .map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?,
-            ))
-        }
         RootNixOperation::ClosureForRoots => {
             Ok(RootNixRequest::ClosureForRoots(decode_root_paths(payload)?))
         }
@@ -2068,7 +2038,6 @@ fn decode_root_nix_request(
 fn encode_root_nix_response(response: &RootNixResponse) -> Result<Vec<u8>, FrameError> {
     let body = match response {
         RootNixResponse::Version(value) => value.encode().map_err(adapter_payload)?,
-        RootNixResponse::Evaluate(value) => value.encode().map_err(adapter_payload)?,
         RootNixResponse::PathInfo(value) => value.encode().map_err(adapter_payload)?,
         RootNixResponse::Substitute(value) => value.encode().map_err(adapter_payload)?,
         RootNixResponse::SubstituteMany(values) => encode_chunks(
@@ -2087,7 +2056,6 @@ fn encode_root_nix_response(response: &RootNixResponse) -> Result<Vec<u8>, Frame
         RootNixResponse::Gc(value) => value.encode().map_err(adapter_payload)?,
         RootNixResponse::CacheInspect(values) => encode_cache_observations(values)?,
         RootNixResponse::CacheInspectClosures(values) => encode_cache_closures(values)?,
-        RootNixResponse::NixpkgsMetadata(bytes) => bytes.clone(),
         RootNixResponse::ClosureForRoots(paths) => encode_root_paths(paths)?,
         RootNixResponse::RepairPlan(proof) => proof
             .preview()
@@ -2116,9 +2084,6 @@ fn decode_root_nix_response(
         RootNixOperation::Version => Ok(RootNixResponse::Version(
             VersionInfo::decode(&codec, body).map_err(adapter_payload)?,
         )),
-        RootNixOperation::Evaluate => Ok(RootNixResponse::Evaluate(
-            DerivationPlanReport::decode(&codec, body).map_err(adapter_payload)?,
-        )),
         RootNixOperation::PathInfo => Ok(RootNixResponse::PathInfo(
             PathInfoReport::decode(&codec, body).map_err(adapter_payload)?,
         )),
@@ -2146,7 +2111,6 @@ fn decode_root_nix_response(
         RootNixOperation::CacheInspectClosures => Ok(RootNixResponse::CacheInspectClosures(
             decode_cache_closures(body)?,
         )),
-        RootNixOperation::NixpkgsMetadata => Ok(RootNixResponse::NixpkgsMetadata(body.to_vec())),
         RootNixOperation::ClosureForRoots => {
             Ok(RootNixResponse::ClosureForRoots(decode_root_paths(body)?))
         }
@@ -2164,7 +2128,6 @@ fn encode_root_nix_failure(failure: RootNixFailure) -> Result<Vec<u8>, FrameErro
     let (status, code) = match failure {
         RootNixFailure::Adapter(code) => (ROOT_NIX_ADAPTER_ERROR, adapter_error_code(code)),
         RootNixFailure::Cache(code) => (ROOT_NIX_CACHE_ERROR, cache_error_code(code)),
-        RootNixFailure::Nixpkgs(code) => (ROOT_NIX_NIXPKGS_ERROR, nixpkgs_error_code(code)),
         RootNixFailure::Busy => return Ok(vec![ROOT_NIX_BUSY]),
         RootNixFailure::Inactive => return Ok(vec![ROOT_NIX_INACTIVE]),
     };
@@ -2194,9 +2157,6 @@ fn decode_root_nix_non_success(
         }
         ROOT_NIX_CACHE_ERROR if body.len() == 1 => {
             RootNixFailure::Cache(parse_cache_error_code(body[0])?)
-        }
-        ROOT_NIX_NIXPKGS_ERROR if body.len() == 1 => {
-            RootNixFailure::Nixpkgs(parse_nixpkgs_error_code(body[0])?)
         }
         ROOT_NIX_BUSY if body.is_empty() => RootNixFailure::Busy,
         ROOT_NIX_INACTIVE if body.is_empty() => RootNixFailure::Inactive,
@@ -2465,29 +2425,6 @@ const fn parse_cache_error_code(code: u8) -> Result<BuildCacheErrorCode, FrameEr
         2 => Ok(BuildCacheErrorCode::ProbeFailed),
         3 => Ok(BuildCacheErrorCode::NoBuildRequired),
         4 => Ok(BuildCacheErrorCode::InvalidEvidence),
-        _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
-    }
-}
-
-const fn nixpkgs_error_code(code: NixpkgsSourceErrorCode) -> u8 {
-    match code {
-        NixpkgsSourceErrorCode::InvalidVerifiedPin => 1,
-        NixpkgsSourceErrorCode::RunnerFailure => 2,
-        NixpkgsSourceErrorCode::MetadataTooLarge => 3,
-        NixpkgsSourceErrorCode::MalformedMetadata => 4,
-        NixpkgsSourceErrorCode::IdentityMismatch => 5,
-        NixpkgsSourceErrorCode::InvalidSourcePath => 6,
-    }
-}
-
-const fn parse_nixpkgs_error_code(code: u8) -> Result<NixpkgsSourceErrorCode, FrameError> {
-    match code {
-        1 => Ok(NixpkgsSourceErrorCode::InvalidVerifiedPin),
-        2 => Ok(NixpkgsSourceErrorCode::RunnerFailure),
-        3 => Ok(NixpkgsSourceErrorCode::MetadataTooLarge),
-        4 => Ok(NixpkgsSourceErrorCode::MalformedMetadata),
-        5 => Ok(NixpkgsSourceErrorCode::IdentityMismatch),
-        6 => Ok(NixpkgsSourceErrorCode::InvalidSourcePath),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
     }
 }
@@ -5162,15 +5099,26 @@ mod tests {
     }
 
     #[test]
+    fn retired_root_source_methods_refuse_valid_payloads() {
+        let request = evaluation_request().encode().unwrap();
+        let mut response = vec![ROOT_NIX_SUCCESS];
+        response.extend(derivation_report().encode().unwrap());
+        for (method, request, response) in [
+            (21, request, response),
+            (30, br#"{"revision":"0123456789abcdef0123456789abcdef01234567","narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}"#.to_vec(),
+                vec![ROOT_NIX_SUCCESS, b'{', b'}']),
+        ] {
+            let request = encode_frame(CHANNEL_BROKER_HELPER, method, 1, &request).unwrap();
+            let response = encode_frame(CHANNEL_BROKER_HELPER, method, 1, &response).unwrap();
+            assert_eq!(ProductFrameCodec::decode_helper_request(&request).unwrap_err().code(), FrameErrorCode::UnsupportedMessage);
+            assert_eq!(ProductFrameCodec::decode_helper_response(&response).unwrap_err().code(), FrameErrorCode::UnsupportedMessage);
+        }
+    }
+
+    #[test]
     fn root_nix_complete_grammar_round_trips_all_requests_results_and_failures() {
-        let pin = NixpkgsPin::new(
-            "0123456789abcdef0123456789abcdef01234567",
-            "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-        )
-        .unwrap();
         let requests = [
             RootNixRequest::Version,
-            RootNixRequest::Evaluate(evaluation_request()),
             RootNixRequest::PathInfo(path("hello-1.0")),
             RootNixRequest::Substitute(path("hello-1.0")),
             RootNixRequest::SubstituteMany(vec![path("hello-1.0"), path("glibc-2.39")]),
@@ -5181,7 +5129,6 @@ mod tests {
             RootNixRequest::Gc,
             RootNixRequest::CacheInspect(vec![path("hello-1.0")]),
             RootNixRequest::CacheInspectClosures(vec![path("hello-1.0")]),
-            RootNixRequest::NixpkgsMetadata(pin),
             RootNixRequest::ClosureForRoots(vec![path("hello-1.0")]),
             RootNixRequest::RepairPlan(repair_request()),
         ];
@@ -5206,7 +5153,6 @@ mod tests {
                 NixVersion::new("2.34.8").unwrap(),
                 AcceptedFormats::new(FormatVersion::new(1).unwrap()),
             )),
-            RootNixResponse::Evaluate(derivation_report()),
             RootNixResponse::PathInfo(path_info_report()),
             RootNixResponse::Substitute(
                 SubstituteReport::miss(path("hello"), SubstituteOutcome::NoBinaryAvailable)
@@ -5234,7 +5180,6 @@ mod tests {
             RootNixResponse::CacheInspectClosures(vec![
                 CacheDownloadClosure::new(path("hello"), vec![observation]).unwrap(),
             ]),
-            RootNixResponse::NixpkgsMetadata(br#"{"locked":{}}"#.to_vec()),
             RootNixResponse::ClosureForRoots(vec![path("hello"), path("glibc")]),
             RootNixResponse::RepairPlan(proof),
         ];
@@ -5251,7 +5196,6 @@ mod tests {
         for failure in [
             RootNixFailure::Adapter(NixAdapterErrorCode::Timeout),
             RootNixFailure::Cache(BuildCacheErrorCode::ProbeFailed),
-            RootNixFailure::Nixpkgs(NixpkgsSourceErrorCode::RunnerFailure),
             RootNixFailure::Busy,
             RootNixFailure::Inactive,
         ] {
@@ -5439,17 +5383,16 @@ mod tests {
         .unwrap();
         assert!(ProductFrameCodec::decode_helper_response(&frame).is_err());
 
-        let metadata = vec![b' '; HELPER_FRAME_PAYLOAD_LIMIT - 1];
-        let response =
-            BrokerHelperResponse::RootNix(Box::new(RootNixResponse::NixpkgsMetadata(metadata)));
-        let frame = ProductFrameCodec::encode_helper_response(93, &response).unwrap();
+        let payload = vec![b' '; HELPER_FRAME_PAYLOAD_LIMIT];
+        let frame = encode_frame(CHANNEL_BROKER_HELPER, 20, 93, &payload).unwrap();
         assert_eq!(frame.len(), HEADER_BYTES + HELPER_FRAME_PAYLOAD_LIMIT);
-
-        let oversized = BrokerHelperResponse::RootNix(Box::new(RootNixResponse::NixpkgsMetadata(
-            vec![b' '; HELPER_FRAME_PAYLOAD_LIMIT],
-        )));
         assert_eq!(
-            ProductFrameCodec::encode_helper_response(94, &oversized),
+            encode_frame(
+                CHANNEL_BROKER_HELPER,
+                20,
+                94,
+                &vec![b' '; HELPER_FRAME_PAYLOAD_LIMIT + 1]
+            ),
             Err(FrameError::new(FrameErrorCode::FrameTooLarge))
         );
     }

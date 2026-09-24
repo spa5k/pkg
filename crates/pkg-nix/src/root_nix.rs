@@ -4,10 +4,9 @@ use std::{str::FromStr, time::Duration};
 
 use crate::{
     BuildCacheErrorCode, BuildPreview, BuildProgressEstimate, BuildReadiness, BuildReport,
-    BuildRequest, CacheDownloadClosure, CachePathObservation, DerivationPlanReport, Digest,
-    EvaluateDerivationRequest, GcReport, NixAdapterErrorCode, NixpkgsPin, NixpkgsSourceErrorCode,
-    PathInfoReport, PolicyVersion, StorePath, SubstituteReport, System, VerifyReport,
-    VerifyRequest, VersionInfo,
+    BuildRequest, CacheDownloadClosure, CachePathObservation, Digest, GcReport,
+    NixAdapterErrorCode, PathInfoReport, PolicyVersion, StorePath, SubstituteReport, System,
+    VerifyReport, VerifyRequest, VersionInfo,
 };
 
 const CLIENT_GRACE: Duration = Duration::from_mins(1);
@@ -17,8 +16,6 @@ const CLIENT_GRACE: Duration = Duration::from_mins(1);
 pub enum RootNixOperation {
     /// Read the fixed Nix version.
     Version,
-    /// Evaluate one typed derivation request.
-    Evaluate,
     /// Inspect one typed store path.
     PathInfo,
     /// Substitute one typed store path.
@@ -35,8 +32,6 @@ pub enum RootNixOperation {
     CacheInspect,
     /// Inspect cache closures for typed roots.
     CacheInspectClosures,
-    /// Materialize one authenticated Nixpkgs pin.
-    NixpkgsMetadata,
     /// Resolve the closure of typed generation roots.
     ClosureForRoots,
     /// Produce a sanitized repair preview and digest.
@@ -49,7 +44,6 @@ impl RootNixOperation {
     pub const fn method_id(self) -> u8 {
         match self {
             Self::Version => 20,
-            Self::Evaluate => 21,
             Self::PathInfo => 22,
             Self::Substitute => 23,
             Self::SubstituteMany => 24,
@@ -58,7 +52,6 @@ impl RootNixOperation {
             Self::Gc => 27,
             Self::CacheInspect => 28,
             Self::CacheInspectClosures => 29,
-            Self::NixpkgsMetadata => 30,
             Self::ClosureForRoots => 31,
             Self::RepairPlan => 32,
         }
@@ -70,8 +63,6 @@ impl RootNixOperation {
         match self {
             Self::Version => Duration::from_mins(2),
             Self::PathInfo => Duration::from_mins(1),
-            Self::Evaluate => Duration::from_mins(30),
-            Self::NixpkgsMetadata => Duration::from_mins(15),
             Self::Substitute | Self::SubstituteMany | Self::Build | Self::Verify => {
                 Duration::from_hours(24)
             }
@@ -94,7 +85,6 @@ impl RootNixOperation {
     pub const fn from_method_id(method: u8) -> Option<Self> {
         match method {
             20 => Some(Self::Version),
-            21 => Some(Self::Evaluate),
             22 => Some(Self::PathInfo),
             23 => Some(Self::Substitute),
             24 => Some(Self::SubstituteMany),
@@ -103,7 +93,6 @@ impl RootNixOperation {
             27 => Some(Self::Gc),
             28 => Some(Self::CacheInspect),
             29 => Some(Self::CacheInspectClosures),
-            30 => Some(Self::NixpkgsMetadata),
             31 => Some(Self::ClosureForRoots),
             32 => Some(Self::RepairPlan),
             _ => None,
@@ -222,8 +211,6 @@ impl RootRepairPlanProof {
 pub enum RootNixRequest {
     /// Version request.
     Version,
-    /// Derivation evaluation request.
-    Evaluate(EvaluateDerivationRequest),
     /// Path-info request.
     PathInfo(StorePath),
     /// Single-path substitution request.
@@ -240,8 +227,6 @@ pub enum RootNixRequest {
     CacheInspect(Vec<StorePath>),
     /// Cache-closure inspection request.
     CacheInspectClosures(Vec<StorePath>),
-    /// Nixpkgs metadata request.
-    NixpkgsMetadata(NixpkgsPin),
     /// Generation-root closure request.
     ClosureForRoots(Vec<StorePath>),
     /// Repair approval proof request.
@@ -254,7 +239,6 @@ impl RootNixRequest {
     pub const fn operation(&self) -> RootNixOperation {
         match self {
             Self::Version => RootNixOperation::Version,
-            Self::Evaluate(_) => RootNixOperation::Evaluate,
             Self::PathInfo(_) => RootNixOperation::PathInfo,
             Self::Substitute(_) => RootNixOperation::Substitute,
             Self::SubstituteMany(_) => RootNixOperation::SubstituteMany,
@@ -263,7 +247,6 @@ impl RootNixRequest {
             Self::Gc => RootNixOperation::Gc,
             Self::CacheInspect(_) => RootNixOperation::CacheInspect,
             Self::CacheInspectClosures(_) => RootNixOperation::CacheInspectClosures,
-            Self::NixpkgsMetadata(_) => RootNixOperation::NixpkgsMetadata,
             Self::ClosureForRoots(_) => RootNixOperation::ClosureForRoots,
             Self::RepairPlan(_) => RootNixOperation::RepairPlan,
         }
@@ -277,8 +260,6 @@ pub enum RootNixFailure {
     Adapter(NixAdapterErrorCode),
     /// Cache-probe failure code.
     Cache(BuildCacheErrorCode),
-    /// Nixpkgs metadata failure code.
-    Nixpkgs(NixpkgsSourceErrorCode),
     /// The fixed operation admission limit is full.
     Busy,
     /// The inactive DN09 production state rejected the request.
@@ -290,8 +271,6 @@ pub enum RootNixFailure {
 pub enum RootNixResponse {
     /// Version result.
     Version(VersionInfo),
-    /// Derivation evaluation result.
-    Evaluate(DerivationPlanReport),
     /// Path-info result.
     PathInfo(PathInfoReport),
     /// Single-path substitution result.
@@ -310,8 +289,6 @@ pub enum RootNixResponse {
     CacheInspect(Vec<CachePathObservation>),
     /// Cache-closure inspection result.
     CacheInspectClosures(Vec<CacheDownloadClosure>),
-    /// Raw bounded metadata JSON from the fixed command.
-    NixpkgsMetadata(Vec<u8>),
     /// Canonical generation-root closure.
     ClosureForRoots(Vec<StorePath>),
     /// Sanitized repair preview proof.
@@ -331,7 +308,6 @@ impl RootNixResponse {
     pub const fn operation(&self) -> RootNixOperation {
         match self {
             Self::Version(_) => RootNixOperation::Version,
-            Self::Evaluate(_) => RootNixOperation::Evaluate,
             Self::PathInfo(_) => RootNixOperation::PathInfo,
             Self::Substitute(_) => RootNixOperation::Substitute,
             Self::SubstituteMany(_) => RootNixOperation::SubstituteMany,
@@ -340,7 +316,6 @@ impl RootNixResponse {
             Self::Gc(_) => RootNixOperation::Gc,
             Self::CacheInspect(_) => RootNixOperation::CacheInspect,
             Self::CacheInspectClosures(_) => RootNixOperation::CacheInspectClosures,
-            Self::NixpkgsMetadata(_) => RootNixOperation::NixpkgsMetadata,
             Self::ClosureForRoots(_) => RootNixOperation::ClosureForRoots,
             Self::RepairPlan(_) => RootNixOperation::RepairPlan,
             Self::Failed { operation, .. } => *operation,
@@ -356,7 +331,6 @@ mod tests {
     fn method_ids_and_client_grace_are_fixed_and_unique() {
         let operations = [
             RootNixOperation::Version,
-            RootNixOperation::Evaluate,
             RootNixOperation::PathInfo,
             RootNixOperation::Substitute,
             RootNixOperation::SubstituteMany,
@@ -365,13 +339,12 @@ mod tests {
             RootNixOperation::Gc,
             RootNixOperation::CacheInspect,
             RootNixOperation::CacheInspectClosures,
-            RootNixOperation::NixpkgsMetadata,
             RootNixOperation::ClosureForRoots,
             RootNixOperation::RepairPlan,
         ];
         let mut ids = operations.map(RootNixOperation::method_id);
         ids.sort_unstable();
-        assert_eq!(ids, [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]);
+        assert_eq!(ids, [20, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32]);
         for operation in operations {
             assert_eq!(
                 RootNixOperation::from_method_id(operation.method_id()),
@@ -385,6 +358,8 @@ mod tests {
             );
         }
         assert_eq!(RootNixOperation::from_method_id(19), None);
+        assert_eq!(RootNixOperation::from_method_id(21), None);
+        assert_eq!(RootNixOperation::from_method_id(30), None);
         assert_eq!(RootNixOperation::from_method_id(33), None);
     }
 }

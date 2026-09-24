@@ -195,6 +195,18 @@ fn repair_executors_keep_standard_determinate_and_managed_environments_distinct(
     };
 
     let standard_environment = captured_environment(&standard)?;
+    let command = build_command(
+        &standard,
+        &CommandSpec {
+            program: NixProgram::Modern,
+            args: Vec::new(),
+            timeout: SHORT_TIMEOUT,
+        },
+    );
+    assert_eq!(
+        command.get_current_dir(),
+        Some(standard.private_home.as_path())
+    );
     assert_eq!(
         standard_environment.get("HOME"),
         Some(&home.display().to_string())
