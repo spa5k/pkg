@@ -187,6 +187,60 @@ fn uninstall_manifest_disk_form_is_strict_canonical_and_complete() -> Result<(),
 }
 
 #[test]
+fn macos_alpha47_receipt_retains_its_exact_bytes_and_ownership()
+-> Result<(), Box<dyn std::error::Error>> {
+    let current = manifest(System::Aarch64Darwin, RecordedAssetState::Created)?;
+    let mut legacy = WireManifest::from_manifest(&current);
+    legacy
+        .assets
+        .retain(|asset| asset.id != "broker-source-home");
+    let mut bytes = serde_json::to_vec(&legacy)?;
+    bytes.push(b'\n');
+
+    let decoded = decode_uninstall_manifest(&bytes)?;
+    assert_eq!(encode_uninstall_manifest(&decoded)?, bytes);
+    assert_eq!(decoded.assets().len() + 1, current.assets().len());
+    assert!(
+        decoded
+            .assets()
+            .iter()
+            .all(|asset| asset.id() != "broker-source-home")
+    );
+    assert!(!plan_uninstall(&decoded)?.actions().iter().any(|action| {
+        matches!(
+            action,
+            UninstallAction::RemoveAsset {
+                id: "broker-source-home",
+                ..
+            }
+        )
+    }));
+    // Newly generated receipts must still cover the current complete inventory.
+    assert!(
+        UninstallManifest::new(
+            decoded.system(),
+            decoded.ownership_manifest_digest(),
+            decoded.assets().to_vec(),
+        )
+        .is_err()
+    );
+
+    for omitted in decoded.assets() {
+        let mut incomplete = WireManifest::from_manifest(&decoded);
+        incomplete.assets.retain(|asset| asset.id != omitted.id());
+        let mut bytes = serde_json::to_vec(&incomplete)?;
+        bytes.push(b'\n');
+        assert!(
+            decode_uninstall_manifest(&bytes).is_err(),
+            "{}",
+            omitted.id()
+        );
+    }
+    assert!(decode_uninstall_manifest(bytes.trim_ascii_end()).is_err());
+    Ok(())
+}
+
+#[test]
 fn manifest_round_trip_preserves_exact_file_content_identity() -> Result<(), UninstallError> {
     let mut assets = platform_assets(System::Aarch64Linux)
         .into_iter()

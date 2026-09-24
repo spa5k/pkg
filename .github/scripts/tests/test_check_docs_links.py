@@ -252,6 +252,7 @@ class IterMarkdownFilesDiscoveryTests(unittest.TestCase):
             "# License\n",
         )
         _write(root / ".git" / "notes" / "commentary.md", "# git notes\n")
+        _write(root / ".opencode" / "node_modules" / "vendor" / "README.md", "[missing](missing.md)\n")
 
         with patch.object(cdl, "REPO_ROOT", root):
             found = {

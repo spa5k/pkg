@@ -46,6 +46,29 @@ It is not in alpha.7. Its production code is not merged, and its native proof
 has not run. DN-20 completes the release documents after final proof.
 
 
+## Alpha.49: reliable installation and daily commands
+
+- **Identifier:** PUBLIC-08.
+- **Purpose:** fix macOS product upgrades and slow build preparation, and make
+  installation and daily CLI output clear.
+- **Owns:** legacy receipt compatibility, batched trusted cache probes, local
+  disk accounting and admission, truthful progress and refusal messages,
+  command help and human result views, install instructions, and release proof.
+- **Depends:** PUBLIC-03 and PUBLIC-07 (merged).
+- **Tests & gates:** receipt upgrade and rejection tests; complete signed cache
+  closure checks; mixed local/remote batches; disk admission boundaries; CLI
+  output tests; native macOS build, removal and rollback; exact release upgrade;
+  G-LINT, G-QUALITY, hermetic tests, docs links, F primary and A security review.
+- **Rollback:** revert and ship CLI, broker, helper, and installer together.
+  Retain saved package generations and Nix installation records. No migration
+  or vendor Nix configuration change is required.
+
+The build preview reports a minimum free-space requirement for admission.
+It does not claim a peak disk estimate. Existing store paths add no new space.
+The CLI keeps its command names, approval rules, and JSON progress schema.
+Human lists show the selected package data. Repeated rounded percentages are
+suppressed only in human output. The release uses the existing alpha root.
+
 ## Public flakes: direct package installation
 
 - **Identifier:** PUBLIC-07.

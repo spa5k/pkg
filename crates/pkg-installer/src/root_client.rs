@@ -505,12 +505,24 @@ impl BuildCacheProbe for RootHelperClient {
         &self,
         roots: &[StorePath],
     ) -> Result<Vec<CacheDownloadClosure>, BuildCacheError> {
-        match self.root_round_trip(RootNixRequest::CacheInspectClosures(roots.to_vec())) {
+        let response = self
+            .root_round_trip(RootNixRequest::CacheInspectClosures(roots.to_vec()))
+            .inspect_err(|error| eprintln!("pkg cache closure transport failed: {error:?}"));
+        match response {
             Ok(RootNixResponse::CacheInspectClosures(closures)) => Ok(closures),
             Ok(RootNixResponse::Failed {
                 operation: RootNixOperation::CacheInspectClosures,
                 failure: RootNixFailure::Cache(code),
-            }) => Err(BuildCacheError::remote(code)),
+            }) => {
+                eprintln!("pkg cache closure helper refused: code={code:?}");
+                Err(BuildCacheError::remote(code))
+            }
+            Ok(RootNixResponse::Failed { failure, .. }) => {
+                eprintln!("pkg cache closure helper failed: {failure:?}");
+                Err(BuildCacheError::remote(
+                    pkg_nix::BuildCacheErrorCode::ProbeFailed,
+                ))
+            }
             _ => Err(BuildCacheError::remote(
                 pkg_nix::BuildCacheErrorCode::ProbeFailed,
             )),

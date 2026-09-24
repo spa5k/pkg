@@ -41,9 +41,14 @@ echo "Allow the macOS system configuration prompt if it appears."
 if /usr/bin/sudo /usr/bin/env -i HOME=/var/root PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     PKG_INSTALL_DEBUG="${PKG_INSTALL_DEBUG:-0}" "$payload" "$@" 2>&1 | /usr/bin/tee "$log"; then
     echo "pkg setup completed."
-    echo 'To use installed commands in Bash or zsh, run: eval "$(pkg shellenv)"'
-    echo "Add that line to your shell settings, then run: pkg doctor"
-    echo "Install your first package with: pkg install fzf"
+    echo
+    echo 'Next steps:'
+    echo '  eval "$(/usr/local/bin/pkg shellenv)"'
+    echo '  pkg doctor'
+    echo '  pkg install fzf'
+    echo
+    echo 'For future zsh sessions, add eval "$(/usr/local/bin/pkg shellenv)" to ~/.zshrc.'
+    echo 'For Bash, add the same line to your shell startup file.'
 else
     code=$?
     echo "pkg setup failed (exit $code). Log: $log" >&2

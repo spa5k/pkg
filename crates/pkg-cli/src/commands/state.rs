@@ -118,8 +118,11 @@ pub fn list_state(
     }
     let records = row_records(&entries, "installed_package");
     result(
-        format!("{} package(s) installed", entries.len()),
-        Map::from_iter([("entries".into(), Value::Array(entries))]),
+        format!("Installed packages: {}", entries.len()),
+        Map::from_iter([
+            ("entries".into(), Value::Array(entries)),
+            ("nameOnly".into(), json!(args.name_only())),
+        ]),
         records,
     )
 }

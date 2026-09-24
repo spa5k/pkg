@@ -53,6 +53,24 @@ impl std::error::Error for ProgressError {}
 #[serde(transparent)]
 pub struct PublicEvent(EventKind);
 
+/// Suppress consecutive identical human lines without changing public events.
+#[derive(Default)]
+pub(crate) struct HumanProgress {
+    previous: Vec<u8>,
+}
+
+impl HumanProgress {
+    pub(crate) fn write(&mut self, event: &PublicEvent, mut writer: impl Write) -> io::Result<()> {
+        let mut line = Vec::new();
+        event.write_human(&mut line)?;
+        if line != self.previous {
+            writer.write_all(&line)?;
+            self.previous = line;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum EventKind {
@@ -318,8 +336,11 @@ fn human_phase(event: &PhaseEvent) -> &'static str {
     match (event.phase.as_str(), event.status.as_str()) {
         ("acquire", "started") => "Checking for a trusted download...",
         ("acquire", "completed") => "Package source ready.",
-        ("build", "started") => "Preparing a local build...",
+        ("build", "started") => {
+            "Preparing a local build. Checking dependencies and cached downloads..."
+        }
         ("build", "completed") => "Local build complete.",
+        ("build_execute", "started") => "Preparing the approved build...",
         ("stage", "started") => "Saving the new package environment...",
         ("stage", "completed") => "Package environment saved.",
         ("activate", "started") => "Activating packages...",
@@ -386,6 +407,20 @@ fn normalized_relative_path(value: &str) -> Result<String, ProgressError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_human_percentages_do_not_hide_machine_progress() {
+        let mut progress = HumanProgress::default();
+        let mut human = Vec::new();
+        let mut machine = Vec::new();
+        for fraction in [0.101, 0.102, 0.11] {
+            let event = PublicEvent::build_progress("op_1", "just", fraction).unwrap();
+            progress.write(&event, &mut human).unwrap();
+            event.write_ndjson(&mut machine).unwrap();
+        }
+        assert_eq!(human, b"Building: 10%\nBuilding: 11%\n");
+        assert_eq!(machine.iter().filter(|byte| **byte == b'\n').count(), 3);
+    }
 
     #[test]
     fn build_preparation_failures_explain_the_next_step() {

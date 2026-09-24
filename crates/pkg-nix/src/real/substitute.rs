@@ -68,7 +68,7 @@ impl BuildCacheProbe for RealNixAdapter {
                         .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
                     if let Some(entry) = entry {
                         observations[chunk_start + offset] =
-                            Some(CachePathObservation::hit(path.clone(), 0, entry.nar_size));
+                            Some(CachePathObservation::local(path.clone(), entry.nar_size));
                         continue;
                     }
                 }
@@ -132,115 +132,304 @@ impl BuildCacheProbe for RealNixAdapter {
         self.require_success(MethodKind::PathInfo, local_ping, SHORT_TIMEOUT)
             .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
 
-        let mut closures = Vec::with_capacity(roots.len());
-        let mut remote_ready = false;
+        let root_refs = roots.iter().collect::<Vec<_>>();
+        let mut local_sizes = self
+            .local_cache_sizes(&root_refs)
+            .inspect_err(|error| cache_stage_failure("root-local-sizes", *error))?;
+        let mut closures = BTreeMap::new();
+        let mut missing_roots = Vec::new();
         for root in roots {
-            match self.raw_path_info(root, false, false) {
-                Ok(local) => {
-                    let entry = root_path_info_optional(&local, root)
-                        .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                    if let Some(entry) = entry {
-                        closures.push(CacheDownloadClosure::new(
-                            root.clone(),
-                            vec![CachePathObservation::hit(root.clone(), 0, entry.nar_size)],
-                        )?);
-                        continue;
-                    }
-                }
-                Err(NixAdapterError::OperationFailed) => {}
-                Err(_) => {
-                    return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                }
+            if let Some(size) = local_sizes[root.as_str()] {
+                closures.insert(
+                    root.as_str().to_owned(),
+                    CacheDownloadClosure::new(
+                        root.clone(),
+                        vec![CachePathObservation::local(root.clone(), size)],
+                    )?,
+                );
+            } else {
+                missing_roots.push(root);
             }
-            if !remote_ready {
-                let mut remote_ping = base_args();
-                remote_ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
-                self.require_success(MethodKind::PathInfo, remote_ping, SHORT_TIMEOUT)
-                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                remote_ready = true;
-            }
-            // Nix expands a recursive closure before it writes path-info JSON.
-            // A missing root can therefore make the recursive command fail with
-            // no typed payload. Probe the root first so that an ordinary cache
-            // miss remains distinct from a failure while expanding a known hit.
-            let remote_root = match self.raw_path_info(root, false, true) {
-                Ok(remote_root) => remote_root,
-                Err(NixAdapterError::OperationFailed) => {
-                    closures.push(CacheDownloadClosure::new(
+        }
+        closures.extend(
+            self.remote_cache_closures(&missing_roots, &mut local_sizes)
+                .inspect_err(|error| cache_stage_failure("remote-closures", *error))?,
+        );
+        roots
+            .iter()
+            .map(|root| {
+                closures
+                    .get(root.as_str())
+                    .cloned()
+                    .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))
+            })
+            .collect()
+    }
+}
+
+impl RealNixAdapter {
+    fn remote_cache_closures(
+        &self,
+        roots: &[&StorePath],
+        local_sizes: &mut BTreeMap<String, Option<u64>>,
+    ) -> Result<BTreeMap<String, CacheDownloadClosure>, BuildCacheError> {
+        let mut closures = BTreeMap::new();
+        if roots.is_empty() {
+            return Ok(closures);
+        }
+        let mut remote_ping = base_args();
+        remote_ping.extend(os_args(["store", "ping", "--store", CACHE_URL]));
+        self.require_success(MethodKind::PathInfo, remote_ping, SHORT_TIMEOUT)
+            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+        // A missing root can make remote path-info fail without JSON. Presence
+        // selects the recursive queries; it never replaces signature checks.
+        let remote_misses = self
+            .cache_misses(roots, true)
+            .inspect_err(|error| cache_stage_failure("remote-validity", *error))?;
+        let mut cached_roots = Vec::new();
+        for &root in roots {
+            if remote_misses.contains(root.as_str()) {
+                closures.insert(
+                    root.as_str().to_owned(),
+                    CacheDownloadClosure::new(
                         root.clone(),
                         vec![CachePathObservation::miss(root.clone())],
-                    )?);
-                    continue;
-                }
-                Err(_) => return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)),
-            };
-            if root_path_info_optional(&remote_root, root)
-                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
-                .is_none()
-            {
-                closures.push(CacheDownloadClosure::new(
-                    root.clone(),
-                    vec![CachePathObservation::miss(root.clone())],
-                )?);
-                continue;
+                    )?,
+                );
+            } else {
+                cached_roots.push(root);
             }
-            let remote = self
-                .raw_path_info(root, true, true)
-                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-            validate_path_info_envelope(&remote)
-                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-            if root_path_info_optional(&remote, root)
-                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
-                .is_none()
-            {
-                return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
+        }
+        for chunk in cached_roots.chunks(PATH_INFO_BATCH_SIZE) {
+            for closure in self.remote_cache_closure_batch(chunk, local_sizes)? {
+                closures.insert(closure.root().as_str().to_owned(), closure);
             }
-            let mut paths = Vec::with_capacity(remote.info.len());
-            let mut remote_paths = Vec::new();
-            for (name, remote_entry) in &remote.info {
-                let path = store_path(name)
-                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                let Some(remote_entry) = remote_entry else {
-                    paths.push(CachePathObservation::miss(path));
-                    continue;
-                };
-                match self.raw_path_info(&path, false, false) {
-                    Ok(local) => {
-                        if let Some(local_entry) = root_path_info_optional(&local, &path)
-                            .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?
-                        {
-                            paths.push(CachePathObservation::hit(path, 0, local_entry.nar_size));
-                            continue;
-                        }
-                    }
-                    Err(NixAdapterError::OperationFailed) => {}
-                    Err(_) => {
-                        return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                    }
-                }
-                let signatures = signatures(&remote_entry.signatures)
-                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                let download_bytes = remote_entry
-                    .download_size
-                    .ok_or_else(|| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
-                if !has_approved_cache_signature(&signatures) {
-                    return Err(BuildCacheError::new(BuildCacheErrorCode::ProbeFailed));
-                }
-                remote_paths.push(path.clone());
-                paths.push(CachePathObservation::hit(
-                    path,
-                    download_bytes,
-                    remote_entry.nar_size,
-                ));
-            }
-            if !remote_paths.is_empty() {
-                let remote_paths = remote_paths.iter().collect::<Vec<_>>();
-                self.verify_remote_cache_trust_batch(&remote_paths)?;
-            }
-            closures.push(CacheDownloadClosure::new(root.clone(), paths)?);
         }
         Ok(closures)
     }
+
+    fn remote_cache_closure_batch(
+        &self,
+        roots: &[&StorePath],
+        local_sizes: &mut BTreeMap<String, Option<u64>>,
+    ) -> Result<Vec<CacheDownloadClosure>, BuildCacheError> {
+        let remote = self
+            .raw_path_infos(roots, true, true)
+            .map_err(|error| cache_query_failure("remote-closure", &error))?;
+        let entries = cache_closure_entries(&remote)
+            .inspect_err(|error| cache_stage_failure("closure-entries", *error))?;
+        // Recover each root's references from the union, so unrelated roots
+        // cannot inherit each other's missing dependencies.
+        let members = roots
+            .iter()
+            .map(|root| cache_closure_members(root, &entries))
+            .collect::<Result<Vec<_>, _>>()
+            .inspect_err(|error| cache_stage_failure("closure-members", *error))?;
+        let unknown_local = entries
+            .values()
+            .filter(|(path, entry)| entry.is_some() && !local_sizes.contains_key(path.as_str()))
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        local_sizes.extend(
+            self.local_cache_sizes(&unknown_local)
+                .inspect_err(|error| cache_stage_failure("closure-local-sizes", *error))?,
+        );
+        let mut observations = BTreeMap::new();
+        let mut remote_paths = Vec::new();
+        for (name, (path, entry)) in &entries {
+            let observation = match (entry, local_sizes.get(path.as_str()).copied().flatten()) {
+                (Some(_), Some(size)) => CachePathObservation::local(path.clone(), size),
+                (Some(entry), None) => {
+                    let (download_bytes, nar_bytes) = raw_path_sizes(entry)
+                        .inspect_err(|error| cache_stage_failure("remote-sizes", *error))?;
+                    remote_paths.push(path);
+                    CachePathObservation::hit(path.clone(), download_bytes, nar_bytes)
+                }
+                (None, _) => CachePathObservation::miss(path.clone()),
+            };
+            observations.insert(name.clone(), observation);
+        }
+        for paths in remote_paths.chunks(PATH_INFO_BATCH_SIZE) {
+            self.verify_remote_cache_trust_batch(paths)
+                .inspect_err(|error| cache_stage_failure("signature-verification", *error))?;
+        }
+        roots
+            .iter()
+            .zip(members)
+            .map(|(root, members)| {
+                let paths = members
+                    .iter()
+                    .map(|name| observations[name].clone())
+                    .collect();
+                CacheDownloadClosure::new((*root).clone(), paths)
+            })
+            .collect()
+    }
+
+    /// The legacy validity query prints only invalid paths and succeeds for
+    /// ordinary cache misses. Unlike path-info, mixed batches need no retries.
+    /// Presence is not trust: recursive metadata and signature verification
+    /// still have to succeed before any cached closure is returned.
+    fn cache_misses(
+        &self,
+        paths: &[&StorePath],
+        remote: bool,
+    ) -> Result<BTreeSet<String>, BuildCacheError> {
+        let failed = || BuildCacheError::new(BuildCacheErrorCode::ProbeFailed);
+        let mut missing = BTreeSet::new();
+        for chunk in paths.chunks(PATH_INFO_BATCH_SIZE) {
+            let mut args = base_args();
+            args.extend(os_args(["--check-validity", "--print-invalid"]));
+            if remote {
+                args.extend(os_args(["--store", CACHE_URL]));
+            }
+            args.extend(chunk.iter().map(|path| OsString::from(path.as_str())));
+            let outcome = self
+                .run_with_program(
+                    MethodKind::PathInfo,
+                    NixProgram::LegacyStore,
+                    args,
+                    SHORT_TIMEOUT,
+                )
+                .map_err(|error| cache_query_failure("validity", &error))?;
+            if outcome.code != Some(0) {
+                return Err(failed());
+            }
+            let output = std::str::from_utf8(&outcome.stdout).map_err(|_| failed())?;
+            for line in output.lines() {
+                let path = StorePath::new(line).map_err(|_| failed())?;
+                if !chunk.contains(&&path) || !missing.insert(path.as_str().to_owned()) {
+                    return Err(failed());
+                }
+            }
+        }
+        Ok(missing)
+    }
+
+    /// Batch existence and size checks. A failed metadata query uses a batched
+    /// validity query; an explicit JSON null is already a definitive miss.
+    fn local_cache_sizes(
+        &self,
+        paths: &[&StorePath],
+    ) -> Result<BTreeMap<String, Option<u64>>, BuildCacheError> {
+        let mut sizes = BTreeMap::new();
+        for chunk in paths.chunks(PATH_INFO_BATCH_SIZE) {
+            let raw = match self.raw_path_infos(chunk, false, false) {
+                Ok(raw) => raw,
+                Err(NixAdapterError::OperationFailed) => {
+                    sizes.extend(self.local_sizes_after_failed_batch(chunk)?);
+                    continue;
+                }
+                Err(error) => return Err(cache_query_failure("local-metadata", &error)),
+            };
+            validate_path_info_envelope(&raw)
+                .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+            for path in chunk {
+                let entry = root_path_info_optional(&raw, path)
+                    .map_err(|_| BuildCacheError::new(BuildCacheErrorCode::ProbeFailed))?;
+                sizes.insert(path.as_str().to_owned(), entry.map(|entry| entry.nar_size));
+            }
+        }
+        Ok(sizes)
+    }
+
+    fn local_sizes_after_failed_batch(
+        &self,
+        paths: &[&StorePath],
+    ) -> Result<BTreeMap<String, Option<u64>>, BuildCacheError> {
+        let failed = || BuildCacheError::new(BuildCacheErrorCode::ProbeFailed);
+        let missing = self.cache_misses(paths, false)?;
+        let mut sizes = missing
+            .iter()
+            .map(|path| (path.clone(), None))
+            .collect::<BTreeMap<_, _>>();
+        let present = paths
+            .iter()
+            .copied()
+            .filter(|path| !missing.contains(path.as_str()))
+            .collect::<Vec<_>>();
+        if present.is_empty() {
+            return Ok(sizes);
+        }
+        let raw = self
+            .raw_path_infos(&present, false, false)
+            .map_err(|error| cache_query_failure("local-present-metadata", &error))?;
+        validate_path_info_envelope(&raw).map_err(|_| failed())?;
+        for path in present {
+            let entry = root_path_info(&raw, path).map_err(|_| failed())?;
+            sizes.insert(path.as_str().to_owned(), Some(entry.nar_size));
+        }
+        Ok(sizes)
+    }
+}
+
+fn cache_query_failure(stage: &'static str, error: &NixAdapterError) -> BuildCacheError {
+    eprintln!(
+        "pkg cache probe failed: stage={stage} code={:?}",
+        error.code()
+    );
+    BuildCacheError::new(BuildCacheErrorCode::ProbeFailed)
+}
+
+fn cache_stage_failure(stage: &'static str, error: BuildCacheError) {
+    eprintln!(
+        "pkg cache probe failed: stage={stage} code={:?}",
+        error.code()
+    );
+}
+
+type CacheClosureEntries<'a> = BTreeMap<String, (StorePath, Option<&'a RawPathInfo>)>;
+
+fn cache_closure_entries(
+    remote: &RawPathInfoEnvelope,
+) -> Result<CacheClosureEntries<'_>, BuildCacheError> {
+    let failed = || BuildCacheError::new(BuildCacheErrorCode::ProbeFailed);
+    validate_path_info_envelope(remote).map_err(|_| failed())?;
+    let mut entries = BTreeMap::new();
+    for (name, entry) in &remote.info {
+        let path = store_path(name).map_err(|_| failed())?;
+        if entries
+            .insert(path.as_str().to_owned(), (path, entry.as_ref()))
+            .is_some()
+        {
+            return Err(failed());
+        }
+    }
+    Ok(entries)
+}
+
+/// Follow only references reachable from this root in the recursive union.
+fn cache_closure_members(
+    root: &StorePath,
+    entries: &CacheClosureEntries<'_>,
+) -> Result<BTreeSet<String>, BuildCacheError> {
+    let failed = || BuildCacheError::new(BuildCacheErrorCode::ProbeFailed);
+    if !entries
+        .get(root.as_str())
+        .is_some_and(|(_, entry)| entry.is_some())
+    {
+        return Err(failed());
+    }
+    let mut pending = vec![root.as_str().to_owned()];
+    let mut members = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !members.insert(name.clone()) {
+            continue;
+        }
+        if members.len() > crate::build_cache::MAX_CACHE_PATHS {
+            return Err(failed());
+        }
+        let (_, entry) = entries.get(&name).ok_or_else(failed)?;
+        if let Some(entry) = entry {
+            for reference in &entry.references {
+                let path = store_path(reference).map_err(|_| failed())?;
+                if !members.contains(path.as_str()) {
+                    pending.push(path.as_str().to_owned());
+                }
+            }
+        }
+    }
+    Ok(members)
 }
 
 /// Extracts and validates the `(download, nar)` sizes of one raw path info.

@@ -318,7 +318,7 @@ python3 "$repo/tools/release/stage_linux_alpha.py" \
     "$raw_stage/binaries/pkg-install" \
     "$repo/docs/install.sh" \
     "$artifact_context" \
-    v0.1.0-alpha.48 \
+    v0.1.0-alpha.49 \
     https://127.0.0.1:8443
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -328,10 +328,10 @@ else
 fi
 
 if [ -n "$artifact_output" ]; then
-    candidate="$artifact_output/pkg-v0.1.0-alpha.48-linux-x86_64.tar.gz"
+    candidate="$artifact_output/pkg-v0.1.0-alpha.49-linux-x86_64.tar.gz"
     python3 "$repo/tools/release/package_alpha_candidate.py" \
         linux-x86_64 \
-        v0.1.0-alpha.48 \
+        v0.1.0-alpha.49 \
         "$artifact_context" \
         "$repo/LICENSE" \
         "$PKG_CARGO_ABOUT" \
@@ -357,10 +357,10 @@ cp "$repo/tests/linux-clean-host/pkg-proof-server.py" \
     "$repo/tests/linux-clean-host/pkg_bounded_capture.py" \
     "$repo/tests/linux-clean-host/pkg-proof-release.service" \
     "$artifact_context/"
-cp -a "$artifact_context/v0.1.0-alpha.48" "$artifact_context/publication-1/"
-cp -a "$artifact_context/v0.1.0-alpha.48" "$artifact_context/publication-2/"
+cp -a "$artifact_context/v0.1.0-alpha.49" "$artifact_context/publication-1/"
+cp -a "$artifact_context/v0.1.0-alpha.49" "$artifact_context/publication-2/"
 cp "$raw_stage/binaries/pkg-install-n-plus-1" \
-    "$artifact_context/publication-2/v0.1.0-alpha.48/pkg-installer-x86_64-linux"
+    "$artifact_context/publication-2/v0.1.0-alpha.49/pkg-installer-x86_64-linux"
 mkdir -p "$evidence_root"
 cp -a "$artifact_context/." "$evidence_root/"
 
@@ -880,7 +880,7 @@ import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-path = root / "v0.1.0-alpha.48/pkg-installer-x86_64-linux"
+path = root / "v0.1.0-alpha.49/pkg-installer-x86_64-linux"
 manifest = json.loads((root / "release-manifest.json").read_text())
 record = next(
     item for item in manifest["cliArtifacts"]
@@ -892,7 +892,7 @@ print(path)
 PY
 }
 
-shipping_installer=/srv/pkg-release/v0.1.0-alpha.48/pkg-installer-x86_64-linux
+shipping_installer=/srv/pkg-release/v0.1.0-alpha.49/pkg-installer-x86_64-linux
 
 echo "+ foreign Nix refusal before mutation"
 start_container
@@ -986,7 +986,7 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
     /nix/var/nix/profiles/default/bin/nix store ping --store daemon
     systemctl is-active --quiet pkg-root-helper.socket
     systemctl is-active --quiet pkg-nix-broker.socket
-    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.48"
+    test "$(/usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.49"
     test ! -e /opt/pkg/nix
     test ! -L /opt/pkg/nix
     ! grep -R -F /opt/pkg/nix /etc/systemd/system/pkg-* >/dev/null 2>&1
@@ -1104,7 +1104,7 @@ docker exec "$container" su - proof-user -c \
 new_broker_pid=$(docker exec "$container" systemctl show --property=MainPID --value pkg-nix-broker.service)
 test "$new_broker_pid" -gt 0
 test "$new_broker_pid" != "$old_broker_pid"
-test "$(docker exec "$container" /usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.48"
+test "$(docker exec "$container" /usr/local/bin/pkg --version)" = "pkg 0.1.0-alpha.49"
 run_filter_group product-upgrade "$1" "native N to N+1; Base Nix unchanged; verified activation"
 
 echo "+ active product repair refusal without mutation"

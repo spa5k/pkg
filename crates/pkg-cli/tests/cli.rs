@@ -24,6 +24,22 @@ fn help_exits_success_and_lists_the_product_commands() {
 }
 
 #[test]
+fn help_guides_common_tasks_and_short_flags_match_long_flags() {
+    let short = pkg().arg("-h").output().unwrap();
+    let short = String::from_utf8(short.stdout).unwrap();
+    assert!(short.contains("pkg upgrade --all"));
+    assert!(!short.contains("--state"));
+    let install = pkg().args(["install", "--help"]).output().unwrap();
+    let install = String::from_utf8(install.stdout).unwrap();
+    assert!(install.contains("github:casey/just#default"));
+    assert!(install.contains("--state"));
+    let short_flags = pkg_cli::cli::Cli::try_parse(["pkg", "-vy", "install", "just"]).unwrap();
+    let long_flags =
+        pkg_cli::cli::Cli::try_parse(["pkg", "--verbose", "--yes", "install", "just"]).unwrap();
+    assert_eq!(short_flags, long_flags);
+}
+
+#[test]
 fn clap_usage_failures_exit_two() {
     for args in [
         &["--json", "--jsonl", "doctor"][..],
@@ -86,7 +102,7 @@ fn home_environment_is_not_a_state_identity_input() {
 }
 
 #[test]
-fn completion_is_real_static_source_and_doctor_fails_closed_without_the_broker() {
+fn completion_is_real_static_source_and_doctor_reports_verified_host_state() {
     let completion = pkg().args(["completion", "bash"]).output().unwrap();
     assert!(completion.status.success());
     assert!(
@@ -102,13 +118,28 @@ fn completion_is_real_static_source_and_doctor_fails_closed_without_the_broker()
         .env("PATH", &expected_bin)
         .output()
         .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    // The developer machine can have a working authenticated broker. An
+    // alternate user-state directory does not isolate the system service.
+    if doctor.status.success() {
+        assert_eq!(value["overall"], "healthy");
+        for id in ["runtime.managed", "channel.signed"] {
+            let check = value["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["id"] == id)
+                .unwrap();
+            assert_eq!(check["status"], "pass");
+        }
+        return;
+    }
     // A clean CI host reaches the failed production broker checks (78). A host
     // with an installed managed-Nix spike but no authenticated production
     // receipt must fail earlier at the PR-9 ownership gate (74). Both are
     // honest, fail-closed outcomes; this integration test must not pretend the
     // machine's global /nix state is part of its temporary --state directory.
     assert!(matches!(doctor.status.code(), Some(74 | 78)));
-    let value: serde_json::Value = serde_json::from_slice(&doctor.stdout).unwrap();
     assert!(matches!(
         value["overall"].as_str(),
         Some("needs_attention" | "nix_ownership_unknown")

@@ -1,5 +1,7 @@
 //! Tests for the real Nix adapter.
 
+mod cache_probe;
+
 use super::*;
 use super::{process::*, root::*, substitute::*};
 
@@ -17,6 +19,7 @@ use pkg_core::{
 #[derive(Debug)]
 struct Scripted {
     calls: Arc<Mutex<Vec<Vec<OsString>>>>,
+    programs: Arc<Mutex<Vec<NixProgram>>>,
     outcomes: Mutex<Vec<Result<CommandOutcome, NixAdapterError>>>,
 }
 
@@ -28,6 +31,7 @@ impl Scripted {
     fn with_results(outcomes: Vec<Result<CommandOutcome, NixAdapterError>>) -> Self {
         Self {
             calls: Arc::new(Mutex::new(Vec::new())),
+            programs: Arc::new(Mutex::new(Vec::new())),
             outcomes: Mutex::new(outcomes.into_iter().rev().collect()),
         }
     }
@@ -35,6 +39,10 @@ impl Scripted {
 
 impl CommandExecutor for Scripted {
     fn execute(&self, spec: CommandSpec) -> Result<CommandOutcome, NixAdapterError> {
+        self.programs
+            .lock()
+            .map_err(|_| NixAdapterError::OperationFailed)?
+            .push(spec.program);
         self.calls
             .lock()
             .map_err(|_| NixAdapterError::OperationFailed)?
@@ -1190,7 +1198,7 @@ fn build_cache_probe_falls_back_from_failed_batch_to_exact_hits_and_misses()
     assert_eq!(
         observations,
         vec![
-            CachePathObservation::hit(local.clone(), 0, 11),
+            CachePathObservation::local(local.clone(), 11),
             CachePathObservation::hit(remote.clone(), 7, 13),
             CachePathObservation::miss(missing.clone()),
         ]
@@ -1239,16 +1247,16 @@ fn download_probe_accounts_for_the_complete_missing_closure()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = StorePath::new("/nix/store/22222222222222222222222222222222-root")?;
     let dep = StorePath::new("/nix/store/33333333333333333333333333333333-dep")?;
-    let remote_root_json = br#"{"info":{"22222222222222222222222222222222-root":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":["33333333333333333333333333333333-dep"],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/root.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
     let remote_json = br#"{"info":{"22222222222222222222222222222222-root":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":["33333333333333333333333333333333-dep"],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/root.nar.xz","version":2},"33333333333333333333333333333333-dep":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":5,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":11,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/dep.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
     let executor = Scripted::new(vec![
         success(Vec::new()),
         failure(1),
+        success(format!("{}\n", root.as_str())),
         success(Vec::new()),
-        success(remote_root_json.as_slice()),
+        success(Vec::new()),
         success(remote_json.as_slice()),
         failure(1),
-        failure(1),
+        success(format!("{}\n", dep.as_str())),
         success(Vec::new()),
     ]);
     let calls = Arc::clone(&executor.calls);
@@ -1283,8 +1291,9 @@ fn download_probe_preserves_remote_root_miss_before_recursive_expansion()
     let executor = Scripted::new(vec![
         success(Vec::new()),
         failure(1),
+        success(format!("{}\n", root.as_str())),
         success(Vec::new()),
-        failure(1),
+        success(format!("{}\n", root.as_str())),
     ]);
     let calls = Arc::clone(&executor.calls);
     let adapter = RealNixAdapter::scripted(executor);
@@ -1297,8 +1306,8 @@ fn download_probe_preserves_remote_root_miss_before_recursive_expansion()
         )?]
     );
     let calls = calls.lock().map_err(|_| "poisoned call log")?;
-    assert_eq!(calls.len(), 4);
-    assert!(!calls[3].iter().any(|argument| argument == "--recursive"));
+    assert_eq!(calls.len(), 5);
+    assert!(!calls[4].iter().any(|argument| argument == "--recursive"));
     Ok(())
 }
 
@@ -1306,12 +1315,12 @@ fn download_probe_preserves_remote_root_miss_before_recursive_expansion()
 fn download_probe_refuses_recursive_failure_after_confirmed_root_hit()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = StorePath::new("/nix/store/22222222222222222222222222222222-root")?;
-    let remote_root_json = br#"{"info":{"22222222222222222222222222222222-root":{"ca":null,"compression":"xz","deriver":null,"downloadHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","downloadSize":7,"narHash":"sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","narSize":13,"references":[],"registrationTime":1,"signatures":["cache.nixos.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],"storeDir":"/nix/store","ultimate":false,"url":"nar/root.nar.xz","version":2}},"storeDir":"/nix/store","version":2}"#;
     let adapter = RealNixAdapter::scripted(Scripted::new(vec![
         success(Vec::new()),
         failure(1),
+        success(format!("{}\n", root.as_str())),
         success(Vec::new()),
-        success(remote_root_json.as_slice()),
+        success(Vec::new()),
         failure(1),
     ]));
 
@@ -1663,7 +1672,7 @@ fn build_cache_probe_never_contacts_remote_for_local_hits() -> Result<(), Box<dy
 
     assert_eq!(
         adapter.inspect(std::slice::from_ref(&path))?,
-        vec![CachePathObservation::hit(path, 0, 11)]
+        vec![CachePathObservation::local(path, 11)]
     );
     let calls = calls.lock().map_err(|_| "poisoned call log")?;
     assert_eq!(calls.len(), 2);

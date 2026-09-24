@@ -1925,6 +1925,7 @@ struct RootRepairPlanOwnedWire {
 #[serde(rename_all = "camelCase")]
 struct CacheObservationWire<'a> {
     path: &'a str,
+    local: bool,
     download_bytes: Option<u64>,
     nar_bytes: Option<u64>,
 }
@@ -1933,6 +1934,8 @@ struct CacheObservationWire<'a> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CacheObservationOwnedWire {
     path: String,
+    #[serde(default)]
+    local: bool,
     download_bytes: Option<u64>,
     nar_bytes: Option<u64>,
 }
@@ -2231,6 +2234,7 @@ fn encode_cache_observations(values: &[CachePathObservation]) -> Result<Vec<u8>,
             .iter()
             .map(|value| CacheObservationWire {
                 path: value.path().as_str(),
+                local: value.is_local(),
                 download_bytes: value.download_bytes(),
                 nar_bytes: value.nar_bytes(),
             })
@@ -2253,9 +2257,10 @@ fn promote_cache_observation(
 ) -> Result<CachePathObservation, FrameError> {
     let path =
         StorePath::new(&wire.path).map_err(|_| FrameError::new(FrameErrorCode::InvalidPayload))?;
-    match (wire.download_bytes, wire.nar_bytes) {
-        (Some(download), Some(nar)) => Ok(CachePathObservation::hit(path, download, nar)),
-        (None, None) => Ok(CachePathObservation::miss(path)),
+    match (wire.local, wire.download_bytes, wire.nar_bytes) {
+        (true, Some(0), Some(nar)) => Ok(CachePathObservation::local(path, nar)),
+        (false, Some(download), Some(nar)) => Ok(CachePathObservation::hit(path, download, nar)),
+        (false, None, None) => Ok(CachePathObservation::miss(path)),
         _ => Err(FrameError::new(FrameErrorCode::InvalidPayload)),
     }
 }
@@ -2272,6 +2277,7 @@ fn encode_cache_closures(values: &[CacheDownloadClosure]) -> Result<Vec<u8>, Fra
                     .iter()
                     .map(|path| CacheObservationWire {
                         path: path.path().as_str(),
+                        local: path.is_local(),
                         download_bytes: path.download_bytes(),
                         nar_bytes: path.nar_bytes(),
                     })
@@ -5113,6 +5119,23 @@ mod tests {
             assert_eq!(ProductFrameCodec::decode_helper_request(&request).unwrap_err().code(), FrameErrorCode::UnsupportedMessage);
             assert_eq!(ProductFrameCodec::decode_helper_response(&response).unwrap_err().code(), FrameErrorCode::UnsupportedMessage);
         }
+    }
+
+    #[test]
+    fn cache_wire_preserves_local_presence_and_rejects_contradictory_bytes() {
+        let observations = vec![
+            CachePathObservation::local(path("local"), 4096),
+            CachePathObservation::hit(path("remote"), 1024, 4096),
+            CachePathObservation::miss(path("missing")),
+        ];
+        let payload = encode_cache_observations(&observations).unwrap();
+        assert_eq!(decode_cache_observations(&payload).unwrap(), observations);
+        let mut wires: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        wires[0]["downloadBytes"] = serde_json::json!(1);
+        assert!(decode_cache_observations(&serde_json::to_vec(&wires).unwrap()).is_err());
+        wires[0]["downloadBytes"] = serde_json::Value::Null;
+        wires[0]["narBytes"] = serde_json::Value::Null;
+        assert!(decode_cache_observations(&serde_json::to_vec(&wires).unwrap()).is_err());
     }
 
     #[test]
