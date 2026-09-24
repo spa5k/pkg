@@ -5,7 +5,7 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.47`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.47).
+[`v0.1.0-alpha.48`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.48).
 It supports **Apple silicon macOS** and **Linux x86-64 with systemd**.
 Intel macOS and Linux arm64 are not release targets yet.
 
@@ -22,10 +22,10 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.47/pkg-0.1.0-alpha.47-preview.pkg
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.47/install-preview.sh
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.48/pkg-0.1.0-alpha.48-preview.pkg
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.48/install-preview.sh
 printf '%s  %s\n' '6b7e9346316a1cbf4c6301771897171bb1e62772a75360be79afb4ca74168735' 'install-preview.sh' | shasum -a 256 --check
-/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.47-preview.pkg 24ed075478172109d19c569f1b8548474d3d372d336f44f93d648ff1c8a1023a
+/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.48-preview.pkg 672018dc06e42fb3ddcf83c51c63add215dd52cd8344212943606d199ff77c08
 ```
 
 Allow the macOS system configuration prompt if it appears. Keep the terminal
@@ -60,8 +60,8 @@ sessions as an upgrade method.
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.47/pkg-install-x86_64-linux
-printf '%s  %s\n' '387037c69bbafeb0e7508e5115286bc2825af3e49191528a22b2ed60ddd5b91d' 'pkg-install-x86_64-linux' | sha256sum --check
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.48/pkg-install-x86_64-linux
+printf '%s  %s\n' 'e6668afe0debed9192b92d4fe8b756f8463f59e114f5cea83ff7c8dc1a87ec73' 'pkg-install-x86_64-linux' | sha256sum --check
 chmod 700 ./pkg-install-x86_64-linux
 sudo ./pkg-install-x86_64-linux
 ```
@@ -132,7 +132,7 @@ pending pkg transaction all pass validation.
 The installer waits for Determinate after it starts. Do not close the terminal
 to force a retry. A partial Nix installation needs diagnosis first.
 
-Alpha.47 fixes the false unmanaged-Nix diagnostic from alpha.46.
+Alpha.47 and later fix the false unmanaged-Nix diagnostic from alpha.46.
 If the diagnostic remains after an upgrade, keep the support report and
 installation log. See [support](support.md).
 

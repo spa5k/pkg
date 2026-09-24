@@ -8,7 +8,7 @@ Find and install command-line tools with familiar package commands. pkg uses
 trusted downloads first. If a local build is needed, it shows the build plan
 and asks before it starts.
 
-[Alpha.47](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.47) is available
+[Alpha.48](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.48) is available
 for Apple silicon macOS and Linux x86-64 with systemd. Setup installs
 Determinate Nix for you. The macOS preview is not notarized. The release uses
 a test signing root.
