@@ -1,6 +1,6 @@
 # `pkg`
 
-[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.47)
+[![Release](https://img.shields.io/github/v/release/spa5k/pkg?include_prereleases&sort=semver)](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.48)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 `pkg` is a package manager for Linux and macOS. It has a simple command
@@ -16,7 +16,7 @@ systems.
 ## Install
 
 Use the [install guide](docs/install.md) for **Apple silicon macOS** or
-**Linux x86-64 with systemd**. It includes the fixed alpha.47 download URLs,
+**Linux x86-64 with systemd**. It includes the fixed alpha.48 download URLs,
 checksums, shell setup, and upgrade steps.
 
 The terminal installer installs Determinate Nix for you. It saves a private
@@ -42,9 +42,8 @@ pkg remove ripgrep       # Remove a package
 `pkg` uses cached packages first. If a local build is required, `pkg` asks for
 one exact, one-time approval.
 
-macOS source builds also support
-[public flake packages](docs/commands.md#public-flake-packages-next-release).
-This feature is not in the published alpha.47 release.
+Alpha.48 on macOS also supports
+[public flake packages](docs/commands.md#public-flake-packages-macos).
 
 ## Uninstall
 
@@ -99,8 +98,8 @@ repair. See the
 
 | Platform | Preview status |
 | --- | --- |
-| Linux x86-64 | Public alpha.47; requires systemd |
-| macOS Apple silicon | Public alpha.47; ad-hoc signed, not notarized |
+| Linux x86-64 | Public alpha.48; requires systemd |
+| macOS Apple silicon | Public alpha.48; ad-hoc signed, not notarized |
 | macOS Intel | Not supported |
 | Linux arm64 | Not available in this preview |
 
@@ -108,7 +107,7 @@ The native platform cutover proofs passed. The release includes automatic
 product service updates, the doctor ownership correction, and `pkg shellenv`.
 The [native lifecycle report](tests/macos-clean-host/PUBLIC-04.md) records the
 compiled-package, repair, reboot, and uninstall checks that support these changes.
-See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.47)
+See the [release notes](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.48)
 for checks on the exact release files and known limits.
 
 ## Contribute

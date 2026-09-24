@@ -24,11 +24,10 @@ Downloads from the signed binary cache are preferred. A cache miss is shown befo
 local sandboxed build runs only after explicit approval and only when platform policy permits it.
 `--dry-run` previews an operation, while `--json` and `--jsonl` provide stable machine output.
 
-## Public flake packages (next release)
+## Public flake packages (macOS)
 
-This is available on macOS in source builds after PUBLIC-07. Alpha.47 does not
-support it. Linux refuses public flake references until source evaluation has
-the same per-process local-file boundary.
+Alpha.48 supports public flake packages on macOS. Linux refuses public flake
+references until source evaluation has the same per-process local-file boundary.
 
 ```sh
 pkg install 'github:Mic92/nix-update#default'
@@ -79,25 +78,22 @@ Use `pkg gc --dry-run` to preview cleanup. Use `pkg gc` to perform it.
 
 ## Package coverage
 
-The published alpha.47 channel contains the original 11-package test catalog.
-Installation already accepts exact Nixpkgs attribute IDs outside that catalog.
-The small catalog mainly limits search, package details, and update reports.
-The next catalog uses metadata generated from Nixpkgs, including nested package
-sets such as `python311Packages.requests`. This change requires a new signed
-channel before installed clients can use it.
+The signed alpha.48 channel contains 64,412 package records for Apple silicon
+macOS and 69,517 records for x86-64 Linux. It uses metadata generated from
+Nixpkgs, including nested package sets such as `python311Packages.requests`.
 
 Use `pkg search QUERY` to find packages. Use the exact package ID from the
 results with `pkg info ID` and `pkg install ID`.
 Coverage depends on the channel's Nixpkgs revision, your platform, evaluation
 success, and upstream package policy. Some packages have no executable command.
 A missing binary cache entry can require a local build.
-The next runtime also accepts valid name-only derivations such as `unixtools.watch`.
+Alpha.48 also accepts valid name-only derivations such as `unixtools.watch`.
 An unknown version appears as `null` in JSON output. Internal Nix build metadata
 stays in the package store and does not cause conflicts in the active environment.
 
 ## Shell setup
 
-Alpha.47 provides `pkg shellenv` for Bash and zsh.
+Alpha.48 provides `pkg shellenv` for Bash and zsh.
 It prints shell settings and does not edit your files:
 
 ```sh
