@@ -5,11 +5,12 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.48`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.48).
+[`v0.1.0-alpha.49`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.49).
 It supports **Apple silicon macOS** and **Linux x86-64 with systemd**.
 Intel macOS and Linux arm64 are not release targets yet.
 
-Install pkg on a clean system. It installs Determinate Nix for you.
+Use the same installer for a new installation or a compatible pkg upgrade.
+It installs Determinate Nix when needed.
 You do not need to install Nix first. An existing Nix installation must be
 checked before setup; do not delete it to bypass an error.
 
@@ -22,10 +23,10 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.48/pkg-0.1.0-alpha.48-preview.pkg
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.48/install-preview.sh
-printf '%s  %s\n' '6b7e9346316a1cbf4c6301771897171bb1e62772a75360be79afb4ca74168735' 'install-preview.sh' | shasum -a 256 --check
-/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.48-preview.pkg 672018dc06e42fb3ddcf83c51c63add215dd52cd8344212943606d199ff77c08
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-0.1.0-alpha.49-preview.pkg && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/install-preview.sh && \
+printf '%s  %s\n' '64ff6f29a287ce4b4759096b3a862b58a8bca681b05dcf3ea46d8a94793de4b4' 'install-preview.sh' | shasum -a 256 --check && \
+/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.49-preview.pkg 30397fa7519c7caf388cd8f6e83207aa1a7ba0b2b03bc6a067c5b720fc529c3a
 ```
 
 Allow the macOS system configuration prompt if it appears. Keep the terminal
@@ -60,9 +61,9 @@ sessions as an upgrade method.
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.48/pkg-install-x86_64-linux
-printf '%s  %s\n' 'e6668afe0debed9192b92d4fe8b756f8463f59e114f5cea83ff7c8dc1a87ec73' 'pkg-install-x86_64-linux' | sha256sum --check
-chmod 700 ./pkg-install-x86_64-linux
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-install-x86_64-linux && \
+printf '%s  %s\n' '3643ea8c422bf768a2f2ea62712e933c5d74d3fcfb062278dd83d4181b7c64a4' 'pkg-install-x86_64-linux' | sha256sum --check && \
+chmod 700 ./pkg-install-x86_64-linux && \
 sudo ./pkg-install-x86_64-linux
 ```
 
