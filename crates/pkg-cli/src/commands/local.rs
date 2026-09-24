@@ -342,7 +342,16 @@ impl CoreOperations for LocalStateOperations {
         args: &UpgradeArgs,
         policy: OperationPolicy,
     ) -> Result<CommandResult, CommandError> {
-        self.upgrade_packages(args, policy)
+        self.upgrade_packages(args, policy, &mut |_| Ok(()))
+    }
+
+    fn upgrade_with_progress(
+        &mut self,
+        args: &UpgradeArgs,
+        policy: OperationPolicy,
+        progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
+    ) -> Result<CommandResult, CommandError> {
+        self.upgrade_packages(args, policy, progress)
     }
 
     fn pin(
@@ -553,6 +562,7 @@ impl LocalStateOperations {
         &self,
         args: &UpgradeArgs,
         policy: OperationPolicy,
+        progress: &mut dyn FnMut(PublicEvent) -> Result<(), CommandError>,
     ) -> Result<CommandResult, CommandError> {
         self.require_broker_state()?;
         require_supported_upgrade_options(args)?;
@@ -627,14 +637,8 @@ impl LocalStateOperations {
             return preview_upgrade(&mut broker, selectors, &skipped_pinned);
         }
         self.recover_pending_install(&layout, &mut broker)?;
-        let mut ignore_progress = |_| Ok(());
-        let (handle, public_operation_id, evidence, build_approval) = acquire_install_evidence(
-            &mut broker,
-            selectors,
-            policy,
-            !args.no_build(),
-            &mut ignore_progress,
-        )?;
+        let (handle, public_operation_id, evidence, build_approval) =
+            acquire_install_evidence(&mut broker, selectors, policy, !args.no_build(), progress)?;
         let mut local_committed = false;
         let result = (|| {
             let plan = selection
@@ -1757,6 +1761,7 @@ fn acquire_install_evidence(
                 return Err(install_broker_error(error));
             }
         };
+        emit_phase(progress, &public_operation_id, "build", "approval")?;
         if !policy.yes() {
             render_build_preview(&preview)?;
         }
@@ -1905,7 +1910,11 @@ fn format_build_preview(preview: &BuildPreview) -> Result<String, CommandError> 
     } else {
         "Local build required."
     };
-    let mut lines = vec![heading.to_owned(), "".to_owned(), "Packages:".to_owned()];
+    let mut lines = vec![
+        heading.to_owned(),
+        String::new(),
+        format!("  {:<20} {:<14} {}", "Package", "Version", "Outputs"),
+    ];
     for target in build_preview_targets(&value)? {
         lines.push(format_build_target(target)?);
     }
@@ -1949,7 +1958,7 @@ fn format_build_target(target: &Value) -> Result<String, CommandError> {
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
     (!outputs.is_empty())
-        .then(|| format!("  {package} {version} ({})", outputs.join(", ")))
+        .then(|| format!("  {package:<20} {version:<14} {}", outputs.join(", ")))
         .ok_or_else(install_commit_failed)
 }
 

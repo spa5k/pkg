@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use serde_json::{Map, Value};
 
 use super::execute::CommandResult;
+use crate::presentation::{Style, Tone};
 
 type Column = (&'static str, &'static str);
 
@@ -12,6 +13,7 @@ pub(super) fn write_result(
     mut writer: impl Write,
     command: &str,
     result: &CommandResult,
+    style: Style,
 ) -> io::Result<()> {
     let records = result.records();
     if command == "list" && result.fields().get("nameOnly") == Some(&Value::Bool(true)) {
@@ -21,19 +23,25 @@ pub(super) fn write_result(
         return Ok(());
     }
     if command == "info" {
-        write_info(&mut writer, records)?;
+        write_info(&mut writer, records, style)?;
     } else if let Some(first) = records.first() {
         let columns = columns(command, first);
         if !columns.is_empty() {
-            write_table(&mut writer, records, &columns)?;
+            write_table(&mut writer, records, &columns, style)?;
             writeln!(writer)?;
         }
     }
-    writeln!(writer, "{}", result.summary())
+    style.success(&mut writer, result.summary())
 }
 
 fn columns(command: &str, first: &Map<String, Value>) -> Vec<Column> {
     match command {
+        "search" => vec![
+            ("Package", "package"),
+            ("Version", "version"),
+            ("Status", "catalogStatus"),
+            ("Description", "description"),
+        ],
         "list" => {
             let mut columns = vec![
                 ("Package", "selector"),
@@ -80,6 +88,7 @@ fn write_table(
     mut writer: impl Write,
     records: &[Map<String, Value>],
     columns: &[Column],
+    style: Style,
 ) -> io::Result<()> {
     let rows = records
         .iter()
@@ -90,7 +99,42 @@ fn write_table(
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
-    let widths = columns
+    let widths = column_widths(columns, &rows);
+    let available = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(80)
+        .clamp(40, 160);
+    if style.is_terminal() && widths.iter().sum::<usize>() + 2 * (widths.len() - 1) > available {
+        write_stacked(&mut writer, &rows, columns, available, style)?;
+        return Ok(());
+    }
+    let mut header = Vec::new();
+    write_row(
+        &mut header,
+        columns.iter().map(|(title, _)| *title),
+        &widths,
+    )?;
+    let header = String::from_utf8(header).map_err(io::Error::other)?;
+    write!(writer, "{}", style.paint(&header, Tone::Heading))?;
+    if style.is_terminal() {
+        writeln!(
+            writer,
+            "{}",
+            style.paint(
+                &"─".repeat(widths.iter().sum::<usize>() + 2 * (widths.len() - 1)),
+                Tone::Muted
+            )
+        )?;
+    }
+    for row in &rows {
+        write_row(&mut writer, row.iter().map(String::as_str), &widths)?;
+    }
+    Ok(())
+}
+
+fn column_widths(columns: &[Column], rows: &[Vec<String>]) -> Vec<usize> {
+    columns
         .iter()
         .enumerate()
         .map(|(index, (title, _))| {
@@ -100,14 +144,25 @@ fn write_table(
                 .unwrap_or(0)
                 .max(title.len())
         })
-        .collect::<Vec<_>>();
-    write_row(
-        &mut writer,
-        columns.iter().map(|(title, _)| *title),
-        &widths,
-    )?;
-    for row in &rows {
-        write_row(&mut writer, row.iter().map(String::as_str), &widths)?;
+        .collect::<Vec<_>>()
+}
+
+fn write_stacked(
+    mut writer: impl Write,
+    rows: &[Vec<String>],
+    columns: &[Column],
+    available: usize,
+    style: Style,
+) -> io::Result<()> {
+    for row in rows {
+        for ((title, _), value) in columns.iter().zip(row) {
+            writeln!(writer, "{}", style.paint(title, Tone::Heading))?;
+            let chars = value.chars().collect::<Vec<_>>();
+            for chunk in chars.chunks(available.saturating_sub(2)) {
+                writeln!(writer, "  {}", chunk.iter().collect::<String>())?;
+            }
+        }
+        writeln!(writer)?;
     }
     Ok(())
 }
@@ -130,12 +185,16 @@ fn write_row<'a>(
     writeln!(writer)
 }
 
-fn write_info(mut writer: impl Write, records: &[Map<String, Value>]) -> io::Result<()> {
+fn write_info(
+    mut writer: impl Write,
+    records: &[Map<String, Value>],
+    style: Style,
+) -> io::Result<()> {
     for record in records {
         writeln!(
             writer,
             "{} {}",
-            cell(record, "package"),
+            style.paint(&cell(record, "package"), Tone::Heading),
             cell(record, "version")
         )?;
         for (title, key) in [
@@ -154,6 +213,17 @@ fn write_info(mut writer: impl Write, records: &[Map<String, Value>]) -> io::Res
 }
 
 fn cell(record: &Map<String, Value>, key: &str) -> String {
+    if key == "catalogStatus" {
+        return match (
+            record.get("broken").and_then(Value::as_bool),
+            record.get("available").and_then(Value::as_bool),
+        ) {
+            (Some(true), _) => "broken",
+            (Some(false), Some(true)) => "ready",
+            _ => "unsupported",
+        }
+        .to_owned();
+    }
     record.get(key).map_or_else(|| "-".into(), value_text)
 }
 
@@ -184,7 +254,7 @@ mod tests {
             .collect();
         let result = CommandResult::new("Complete.", Map::new(), records).unwrap();
         let mut output = Vec::new();
-        write_result(&mut output, command, &result).unwrap();
+        write_result(&mut output, command, &result, Style::default()).unwrap();
         String::from_utf8(output).unwrap()
     }
 
@@ -218,7 +288,7 @@ mod tests {
         ] {
             let result = CommandResult::new("Installed packages", Map::from_iter([("nameOnly".into(), json!(true))]), records).unwrap();
             let mut output = Vec::new();
-            write_result(&mut output, "list", &result).unwrap();
+            write_result(&mut output, "list", &result, Style::default()).unwrap();
             assert_eq!(String::from_utf8(output).unwrap(), expected);
         }
     }

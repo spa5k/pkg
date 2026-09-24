@@ -321,7 +321,10 @@ fn run_doctor(cli: &Cli, args: &DoctorArgs) -> ProcessExitCode {
         };
     }
     let rendered = match OutputMode::from_flags(cli.json(), cli.jsonl()) {
-        OutputMode::Human => report.write_human(std::io::stdout()),
+        OutputMode::Human => report.write_styled(
+            std::io::stdout(),
+            pkg_cli::presentation::Style::stdout(cli.no_color()),
+        ),
         OutputMode::Json => report.write_json(std::io::stdout()),
         OutputMode::JsonLines => report.write_jsonl(std::io::stdout()),
     };

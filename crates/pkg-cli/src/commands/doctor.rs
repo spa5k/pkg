@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::broker::BrokerLifecycleClient;
 use crate::exit::ExitCode;
 use crate::path::{PathObservation, RawNixVisibility};
+use crate::presentation::{Style, Tone};
 use crate::ux::{PUBLIC_SCHEMA_VERSION, sanitize_public_text, write_json_line};
 
 /// Status of one independently actionable doctor check.
@@ -434,6 +435,43 @@ impl DoctorReport {
                 code: self.exit_code().as_u8(),
             },
         )
+    }
+
+    /// Render the terminal health table; redirected output keeps the plain checklist.
+    ///
+    /// # Errors
+    /// Returns an error if the output stream cannot be written.
+    pub fn write_styled(&self, mut writer: impl Write, style: Style) -> io::Result<()> {
+        if !style.is_terminal() {
+            return self.write_human(writer);
+        }
+        writeln!(
+            writer,
+            "{}\n",
+            style.paint("pkg · System check", Tone::Heading)
+        )?;
+        for check in &self.checks {
+            let (marker, tone) = match check.status {
+                CheckStatus::Pass => ("✓ PASS", Tone::Success),
+                CheckStatus::Warning => ("! WARN", Tone::Warning),
+                CheckStatus::Fail => ("✗ FAIL", Tone::Error),
+                CheckStatus::Deferred => ("– WAIT", Tone::Muted),
+            };
+            writeln!(writer, "{}  {}", style.paint(marker, tone), check.detail)?;
+            if let Some(hint) = &check.hint {
+                writeln!(writer, "        Next: {hint}")?;
+            }
+        }
+        writeln!(writer)?;
+        if self.exit_code() == ExitCode::Ok {
+            style.success(writer, "Your system is ready.")
+        } else {
+            writeln!(
+                writer,
+                "{} Follow the steps above, then run pkg doctor again.",
+                style.paint("Needs attention.", Tone::Warning)
+            )
+        }
     }
 
     /// Write the accessible human checklist without relying on color.

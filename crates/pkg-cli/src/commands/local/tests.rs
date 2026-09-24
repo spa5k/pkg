@@ -1288,6 +1288,7 @@ fn assert_build_execution_scenario(failure: Option<BuildExecutionErrorCode>, sen
         PublicEvent::download_started(&public_operation_id, "hello", 17_072).unwrap(),
         PublicEvent::phase(&public_operation_id, "acquire", "completed").unwrap(),
         PublicEvent::phase(&public_operation_id, "build", "started").unwrap(),
+        PublicEvent::phase(&public_operation_id, "build", "approval").unwrap(),
         PublicEvent::phase(&public_operation_id, "build_execute", "started").unwrap(),
         PublicEvent::build_started(&public_operation_id, "hello", "hello", "1.0").unwrap(),
     ];
@@ -1365,7 +1366,7 @@ fn human_build_preview_explains_the_decision_without_private_nix_details() {
 
     assert_eq!(
         rendered,
-        "Local build required.\n\nPackages:\n  hello 1.0 (out)\n\nTarget: linux x86_64\nIsolation: sandbox\nTime estimate: unknown\nNew disk estimate: about 1.0 GiB\n\nThe build is sandboxed. Estimates are approximate."
+        "Local build required.\n\n  Package              Version        Outputs\n  hello                1.0            out\n\nTarget: linux x86_64\nIsolation: sandbox\nTime estimate: unknown\nNew disk estimate: about 1.0 GiB\n\nThe build is sandboxed. Estimates are approximate."
     );
     for private in [
         "/nix/",

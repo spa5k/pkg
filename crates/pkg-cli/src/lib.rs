@@ -12,6 +12,7 @@ pub mod crash;
 pub mod exit;
 pub mod log;
 pub mod path;
+pub mod presentation;
 pub mod progress;
 pub mod support;
 pub mod telemetry;
