@@ -14,7 +14,8 @@ use crate::exit::ExitCode;
     about = "Find, install, and manage command-line tools",
     long_about = None,
     propagate_version = true,
-    disable_help_subcommand = true
+    disable_help_subcommand = true,
+    after_help = "Examples:\n  pkg search ripgrep\n  pkg install ripgrep\n  pkg list\n  pkg update\n  pkg upgrade --all\n  pkg remove ripgrep\n  pkg rollback\n\nUse pkg <command> --help for options and examples."
 )]
 pub struct Cli {
     /// Emit one stable final JSON document.
@@ -26,11 +27,11 @@ pub struct Cli {
     jsonl: bool,
 
     /// Suppress human progress while retaining the final result.
-    #[arg(long, global = true, conflicts_with = "verbose")]
+    #[arg(short = 'q', long, global = true, conflicts_with = "verbose")]
     quiet: bool,
 
     /// Show more detail about each operation.
-    #[arg(long, global = true, conflicts_with = "quiet")]
+    #[arg(short = 'v', long, global = true, conflicts_with = "quiet")]
     verbose: bool,
 
     /// Disable ANSI color even on a terminal.
@@ -38,19 +39,19 @@ pub struct Cli {
     no_color: bool,
 
     /// Override the product configuration file.
-    #[arg(long, global = true, value_name = "PATH")]
+    #[arg(long, global = true, value_name = "PATH", hide_short_help = true)]
     config: Option<PathBuf>,
 
     /// Use another package state directory.
-    #[arg(long, global = true, value_name = "DIR")]
+    #[arg(long, global = true, value_name = "DIR", hide_short_help = true)]
     state: Option<PathBuf>,
 
     /// Select a profile (currently only `default`).
-    #[arg(long, global = true, default_value = "default", value_parser = ["default"])]
+    #[arg(long, global = true, default_value = "default", value_parser = ["default"], hide_short_help = true)]
     profile: String,
 
     /// Accept confirmations, including the local build plan.
-    #[arg(long, global = true)]
+    #[arg(short = 'y', long, global = true)]
     yes: bool,
 
     /// Preview changes without applying them.
@@ -216,18 +217,17 @@ impl std::error::Error for CliValidationError {}
 /// Complete V1 command set.
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Command {
-    /// Check your installation and show how to fix problems.
-    Doctor(DoctorArgs),
     /// Find packages in the verified catalog.
     Search(SearchArgs),
     /// Show package details and available versions.
     Info(InfoArgs),
     /// Install packages. Download first; build locally when needed.
+    #[command(
+        after_help = "Examples:\n  pkg install ripgrep fzf\n  pkg install ripgrep --dry-run\n  pkg install 'github:casey/just#default'\n\nA missing download requires a local build. Review the build plan before approval.\nPublic GitHub flakes are supported on macOS."
+    )]
     Install(InstallArgs),
     /// Remove packages from your active environment.
     Remove(RemoveArgs),
-    /// Uninstall pkg and its managed Nix installation.
-    Uninstall,
     /// List your installed packages.
     List(ListArgs),
     /// Show packages with available updates.
@@ -235,6 +235,9 @@ pub enum Command {
     /// Refresh the package catalog without changing installed packages.
     Update(UpdateArgs),
     /// Update selected packages, or use --all.
+    #[command(
+        after_help = "Examples:\n  pkg update\n  pkg outdated\n  pkg upgrade ripgrep\n  pkg upgrade --all\n\nPinned packages keep their installed versions."
+    )]
     Upgrade(UpgradeArgs),
     /// Keep packages at their current versions.
     Pin(PackageArgs),
@@ -243,15 +246,25 @@ pub enum Command {
     /// Show or prune saved package environments.
     History(HistoryArgs),
     /// Restore a previous package environment.
+    #[command(
+        after_help = "Examples:\n  pkg history\n  pkg rollback\n\nRollback restores the previous saved package environment."
+    )]
     Rollback(RollbackArgs),
     /// Free disk space used by old package environments.
     Gc(GcArgs),
     /// Check installed packages and repair damaged files.
     Repair(RepairArgs),
+    /// Check your installation and show how to fix problems.
+    Doctor(DoctorArgs),
     /// Print shell setup for Bash or zsh: eval "$(pkg shellenv)".
     Shellenv,
     /// Generate shell completions.
     Completion(CompletionArgs),
+    /// Uninstall pkg and its managed Nix installation.
+    #[command(
+        after_help = "Use pkg remove <package> to remove individual packages.\n\nPreview: pkg uninstall --dry-run\nUninstall: sudo pkg uninstall"
+    )]
+    Uninstall,
 }
 
 impl Command {

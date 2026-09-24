@@ -376,6 +376,7 @@ fn execute_command_inner(
 ) -> io::Result<ExitCode> {
     let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
     let mut journal = operation_log.map(PublicOperationJournal::new);
+    let mut human_progress = crate::progress::HumanProgress::default();
     let result = {
         let mut progress = |event: PublicEvent| -> Result<(), CommandError> {
             let bytes = event.to_ndjson_line().map_err(public_stream_unavailable)?;
@@ -385,7 +386,7 @@ fn execute_command_inner(
                     .map_err(public_stream_unavailable)?;
             }
             match mode {
-                OutputMode::Human if !cli.quiet() => event.write_human(&mut stderr),
+                OutputMode::Human if !cli.quiet() => human_progress.write(&event, &mut stderr),
                 OutputMode::JsonLines => stdout.write_all(&bytes),
                 OutputMode::Human | OutputMode::Json => Ok(()),
             }
@@ -514,7 +515,7 @@ fn write_success_lines(
 ) -> io::Result<()> {
     match mode {
         OutputMode::Human if command == "search" => write_search_result(&mut writer, result),
-        OutputMode::Human => writeln!(writer, "{}", result.summary()),
+        OutputMode::Human => super::human::write_result(&mut writer, command, result),
         OutputMode::Json => {
             let mut value = result.fields().clone();
             bind_operation_id(&mut value, operation_id)?;
@@ -552,8 +553,8 @@ fn write_search_result(mut writer: impl Write, result: &CommandResult) -> io::Re
             .max(7);
         writeln!(
             writer,
-            "{:<package_width$}  {:<version_width$}  {:<11}  DESCRIPTION",
-            "PACKAGE", "VERSION", "STATUS"
+            "{:<package_width$}  {:<version_width$}  {:<11}  Description",
+            "Package", "Version", "Status"
         )?;
         for record in result.records() {
             let package = record.get("package").and_then(Value::as_str).unwrap_or("-");

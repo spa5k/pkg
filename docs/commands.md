@@ -24,6 +24,23 @@ Downloads from the signed binary cache are preferred. A cache miss is shown befo
 local sandboxed build runs only after explicit approval and only when platform policy permits it.
 `--dry-run` previews an operation, while `--json` and `--jsonl` provide stable machine output.
 
+Use `pkg -h` for a short command guide. Use `pkg install --help` for install
+examples. `-y` accepts confirmation prompts. `-v` shows more detail. `-q`
+hides progress. Use the long options in scripts when that improves clarity.
+
+`pkg list` shows installed selectors, versions, and pin status.
+`pkg list --name-only` prints one package name per line for scripts.
+`pkg list --size --with-outputs` also shows closure bytes and selected outputs.
+`pkg info` shows the package description, homepage, license, and availability.
+`pkg history` shows saved generation IDs and marks the active generation.
+
+There is no separate build command. `pkg install` first checks trusted cached
+downloads. If a local build is needed, it shows the plan and asks for approval.
+Dependency and cache checks can take a minute on a fresh system.
+The minimum free disk value is a starting requirement. It is not a peak usage
+estimate. A build can require more disk space. Build percentages appear only
+after the build service reports progress.
+
 ## Public flake packages (macOS)
 
 Alpha.48 supports public flake packages on macOS. Linux refuses public flake

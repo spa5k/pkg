@@ -1069,6 +1069,24 @@ fn local_install_reports_each_build_preparation_refusal_and_cancels() {
 
 #[test]
 fn cache_miss_uses_one_digest_bound_build_and_returns_local_evidence() {
+    assert_build_execution_scenario(None, false);
+    assert_build_execution_scenario(None, true);
+}
+
+#[test]
+fn resource_refusal_does_not_claim_a_build_started() {
+    assert_build_execution_scenario(
+        Some(BuildExecutionErrorCode::ResourcePreflightFailed),
+        false,
+    );
+}
+
+#[test]
+fn failed_execution_preserves_real_build_progress() {
+    assert_build_execution_scenario(Some(BuildExecutionErrorCode::ExecutionFailed), true);
+}
+
+fn assert_build_execution_scenario(failure: Option<BuildExecutionErrorCode>, send_progress: bool) {
     let (mut server, client) = UnixStream::pair().unwrap();
     let preview = build_preview();
     let digest = parse_build_plan_digest(preview.build_plan_digest()).unwrap();
@@ -1160,6 +1178,26 @@ fn cache_miss_uses_one_digest_bound_build_and_returns_local_evidence() {
         };
         assert_eq!(actual, build_handle);
         assert_eq!(actual_digest, digest);
+        if send_progress {
+            write_response(
+                &mut server,
+                request_id,
+                &CliBrokerResponse::BuildExecutionProgress(
+                    pkg_nix::BuildProgressEstimate::new(250_000).unwrap(),
+                ),
+            );
+        }
+        if let Some(code) = failure {
+            write_response(
+                &mut server,
+                request_id,
+                &CliBrokerResponse::BuildExecutionRefused(code),
+            );
+            let (request_id, request) = read_request(&mut server);
+            assert_eq!(request, CliBrokerRequest::Cancel(build_handle));
+            write_response(&mut server, request_id, &CliBrokerResponse::Cancelled);
+            return;
+        }
         let report = BuildReport::new(
             BuildStatus::Built,
             vec![BuildOutput::new(
@@ -1200,6 +1238,40 @@ fn cache_miss_uses_one_digest_bound_build_and_returns_local_evidence() {
             Ok(())
         },
     );
+    if let Some(code) = failure {
+        let error = result.unwrap_err();
+        let events = events
+            .iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect::<Vec<_>>();
+        assert!(events.iter().any(|event| event["phase"] == "build_execute"));
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["type"] == "build_progress" && event["pct"] == 0.0)
+        );
+        if code == BuildExecutionErrorCode::ResourcePreflightFailed {
+            assert_eq!(error.exit_code(), ExitCode::PreflightFail);
+            assert!(error.message().contains("disk-space or system-load"));
+            assert!(!error.hint().contains("pkg doctor"));
+            assert!(
+                !events
+                    .iter()
+                    .any(|event| event["type"] == "build_started"
+                        || event["type"] == "build_progress")
+            );
+        } else {
+            assert_eq!(error.exit_code(), ExitCode::BuildFailed);
+            assert!(
+                events
+                    .iter()
+                    .any(|event| event["type"] == "build_progress" && event["pct"] == 0.25)
+            );
+        }
+        drop(broker);
+        worker.join().unwrap();
+        return;
+    }
     let (handle, public_operation_id, actual, approval) = match result {
         Ok(result) => result,
         Err(error) => {
@@ -1211,19 +1283,23 @@ fn cache_miss_uses_one_digest_bound_build_and_returns_local_evidence() {
     assert!(!handle.as_str().is_empty());
     assert_eq!(actual, expected);
     assert_eq!(approval, "yes");
-    assert_eq!(
-        events,
-        vec![
-            PublicEvent::phase(&public_operation_id, "acquire", "started").unwrap(),
-            PublicEvent::download_started(&public_operation_id, "hello", 17_072).unwrap(),
-            PublicEvent::phase(&public_operation_id, "acquire", "completed").unwrap(),
-            PublicEvent::phase(&public_operation_id, "build", "started").unwrap(),
-            PublicEvent::build_started(&public_operation_id, "hello", "hello", "1.0",).unwrap(),
-            PublicEvent::build_progress(&public_operation_id, "hello", 0.0).unwrap(),
-            PublicEvent::build_progress(&public_operation_id, "hello", 1.0).unwrap(),
-            PublicEvent::phase(&public_operation_id, "build", "completed").unwrap(),
-        ]
-    );
+    let mut expected_events = vec![
+        PublicEvent::phase(&public_operation_id, "acquire", "started").unwrap(),
+        PublicEvent::download_started(&public_operation_id, "hello", 17_072).unwrap(),
+        PublicEvent::phase(&public_operation_id, "acquire", "completed").unwrap(),
+        PublicEvent::phase(&public_operation_id, "build", "started").unwrap(),
+        PublicEvent::phase(&public_operation_id, "build_execute", "started").unwrap(),
+        PublicEvent::build_started(&public_operation_id, "hello", "hello", "1.0").unwrap(),
+    ];
+    if send_progress {
+        expected_events
+            .push(PublicEvent::build_progress(&public_operation_id, "hello", 0.25).unwrap());
+    }
+    expected_events.extend([
+        PublicEvent::build_progress(&public_operation_id, "hello", 1.0).unwrap(),
+        PublicEvent::phase(&public_operation_id, "build", "completed").unwrap(),
+    ]);
+    assert_eq!(events, expected_events);
     assert!(
         events
             .iter()
@@ -1303,6 +1379,18 @@ fn human_build_preview_explains_the_decision_without_private_nix_details() {
             "unexpected private detail: {private}"
         );
     }
+}
+
+#[test]
+fn build_preview_distinguishes_unknown_disk_use_from_the_start_threshold() {
+    let mut value = build_preview().to_json_value().unwrap();
+    value["estimates"]["approxNewDiskBytes"] = serde_json::Value::Null;
+    value["estimates"]["minimumFreeDiskBytes"] = serde_json::json!(5 * 1024_u64.pow(3));
+    let preview = BuildPreview::from_json_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let rendered = format_build_preview(&preview).unwrap();
+    assert!(rendered.contains("New disk estimate: unknown"));
+    assert!(rendered.contains("Free disk needed to start: 5.0 GiB"));
+    assert!(rendered.contains("The build can need more disk space."));
 }
 
 #[test]

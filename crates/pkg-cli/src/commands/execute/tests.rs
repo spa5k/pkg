@@ -250,7 +250,7 @@ fn human_search_lists_packages_and_catalog_time() {
     let mut output = Vec::new();
     write_success(&mut output, OutputMode::Human, "search", &result).unwrap();
     let output = String::from_utf8(output).unwrap();
-    assert!(output.contains("PACKAGE                   VERSION  STATUS"));
+    assert!(output.contains("Package                   Version  Status"));
     assert!(output.contains("python3Packages.requests  2.32.4   ready"));
     assert!(output.contains("pythonPackages.requests   -        unsupported"));
     assert!(output.contains("Catalog updated: 2026-08-19T00:00:00Z"));

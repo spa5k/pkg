@@ -666,6 +666,48 @@ mod tests {
     }
 
     #[test]
+    fn alpha47_receipt_upgrade_and_rollback_preserve_exact_ownership() -> Result<(), Box<dyn Error>>
+    {
+        let temporary = tempfile::tempdir()?;
+        prepare_receipt_parent(temporary.path())?;
+        let groups = ManagedGroupBindings::new(333, 350)?;
+        let prior_release = Digest::from_bytes([0x21; 32]);
+        let current_release = Digest::from_bytes([0x31; 32]);
+        let mut prior_manager = manager(temporary.path(), groups, prior_release)?;
+        let prior =
+            prior_manager.expected_product_manifest(System::Aarch64Darwin, prior_release)?;
+        let prior_bytes = String::from_utf8(crate::encode_uninstall_manifest(&prior)?)?
+            .replace(",{\"id\":\"broker-source-home\",\"state\":\"created\"}", "")
+            .into_bytes();
+        let prior = crate::decode_uninstall_manifest(&prior_bytes)?;
+        assert!(
+            !prior
+                .assets()
+                .iter()
+                .any(|asset| asset.id() == "broker-source-home")
+        );
+        let receipt = temporary.path().join("opt/pkg/uninstall/manifest.json");
+        fs::write(&receipt, &prior_bytes)?;
+        fs::set_permissions(&receipt, fs::Permissions::from_mode(0o600))?;
+
+        let mut upgraded = manager(temporary.path(), groups, current_release)?;
+        assert_eq!(
+            upgraded.installed_uninstall_manifest()?,
+            Some(prior.clone())
+        );
+        upgraded.bind_prior_asset_states(&prior)?;
+        upgraded.bind_uninstall_manifest(&prior)?;
+        assert!(upgraded.publish_uninstall_manifest()?);
+        let candidate =
+            upgraded.expected_product_manifest(System::Aarch64Darwin, current_release)?;
+        assert_eq!(upgraded.installed_uninstall_manifest()?, Some(candidate));
+        upgraded.rollback_uninstall_manifest_replacement()?;
+        assert_eq!(fs::read(receipt)?, prior_bytes);
+        assert_eq!(upgraded.installed_uninstall_manifest()?, Some(prior));
+        Ok(())
+    }
+
+    #[test]
     fn rebinding_the_same_prior_states_is_idempotent() -> Result<(), Box<dyn Error>> {
         let temporary = tempfile::tempdir()?;
         prepare_receipt_parent(temporary.path())?;

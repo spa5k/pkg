@@ -172,7 +172,20 @@ impl UninstallManifest {
         ownership_manifest_digest: Digest,
         assets: Vec<RecordedAsset>,
     ) -> Result<Self, UninstallError> {
-        let expected = platform_assets(system);
+        Self::with_inventory(
+            system,
+            ownership_manifest_digest,
+            assets,
+            &platform_assets(system),
+        )
+    }
+
+    fn with_inventory(
+        system: System,
+        ownership_manifest_digest: Digest,
+        assets: Vec<RecordedAsset>,
+        expected: &[PlatformAsset],
+    ) -> Result<Self, UninstallError> {
         if assets.len() > MAX_RECORDED_ASSETS || assets.len() != expected.len() {
             return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
         }
@@ -193,7 +206,7 @@ impl UninstallManifest {
         {
             return Err(UninstallError::new(UninstallErrorCode::InvalidManifest));
         }
-        for asset in &expected {
+        for asset in expected {
             let has_digest = records
                 .get(asset.id)
                 .is_some_and(|(_, digest)| digest.is_some());
@@ -331,7 +344,18 @@ impl WireManifest {
             .into_iter()
             .map(WireRecordedAsset::promote)
             .collect::<Result<Vec<_>, _>>()?;
-        UninstallManifest::new(system, digest, assets)
+        let mut expected = platform_assets(system);
+        // Releases through alpha.47 did not own the source workspace. Validate
+        // that exact older inventory without inventing ownership or changing
+        // the canonical receipt bytes used by upgrade and rollback.
+        if system == System::Aarch64Darwin
+            && !assets
+                .iter()
+                .any(|asset| asset.id() == "broker-source-home")
+        {
+            expected.retain(|asset| asset.id != "broker-source-home");
+        }
+        UninstallManifest::with_inventory(system, digest, assets, &expected)
     }
 }
 

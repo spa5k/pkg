@@ -11,7 +11,7 @@ use crate::{CacheClassification, DerivationPath, StorePath};
 /// One cached derivation's owners: its store path and derivation paths.
 type DerivationOwnerMap = BTreeMap<String, (StorePath, Vec<DerivationPath>)>;
 
-const MAX_CACHE_PATHS: usize = 16_384;
+pub(crate) const MAX_CACHE_PATHS: usize = 16_384;
 
 /// One derivation and all of its evaluate-only expected output paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,12 +138,22 @@ impl CacheDownloadClosure {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CachePathStatus {
+    Local { nar_bytes: u64 },
     Hit { download_bytes: u64, nar_bytes: u64 },
     Miss,
 }
 
 impl CachePathObservation {
-    /// Records an already-local or authenticated-cache hit and its exact known bytes.
+    /// Records a path already present in the local store.
+    #[must_use]
+    pub const fn local(path: StorePath, nar_bytes: u64) -> Self {
+        Self {
+            path,
+            status: CachePathStatus::Local { nar_bytes },
+        }
+    }
+
+    /// Records an authenticated remote-cache hit and its exact known bytes.
     #[must_use]
     pub const fn hit(path: StorePath, download_bytes: u64, nar_bytes: u64) -> Self {
         Self {
@@ -170,12 +180,19 @@ impl CachePathObservation {
         &self.path
     }
 
+    /// Returns whether this path consumes no additional download or store space.
+    #[must_use]
+    pub const fn is_local(&self) -> bool {
+        matches!(self.status, CachePathStatus::Local { .. })
+    }
+
     /// Returns authenticated cache download bytes, or `None` for a miss.
     ///
     /// An already-local path is a hit with zero download bytes.
     #[must_use]
     pub const fn download_bytes(&self) -> Option<u64> {
         match self.status {
+            CachePathStatus::Local { .. } => Some(0),
             CachePathStatus::Hit { download_bytes, .. } => Some(download_bytes),
             CachePathStatus::Miss => None,
         }
@@ -185,7 +202,9 @@ impl CachePathObservation {
     #[must_use]
     pub const fn nar_bytes(&self) -> Option<u64> {
         match self.status {
-            CachePathStatus::Hit { nar_bytes, .. } => Some(nar_bytes),
+            CachePathStatus::Local { nar_bytes } | CachePathStatus::Hit { nar_bytes, .. } => {
+                Some(nar_bytes)
+            }
             CachePathStatus::Miss => None,
         }
     }
@@ -418,6 +437,10 @@ fn cache_classification(
     let mut identity = Vec::with_capacity(classified.len());
     for (path, status) in classified.values() {
         let present = match status {
+            CachePathStatus::Local { .. } => {
+                hits = hits.checked_add(1).ok_or_else(invalid_evidence)?;
+                true
+            }
             CachePathStatus::Hit {
                 download_bytes: download,
                 nar_bytes: nar,
@@ -548,6 +571,40 @@ mod tests {
                 })
                 .collect()
         }
+    }
+
+    #[test]
+    fn local_content_is_present_without_consuming_new_disk_space() {
+        let classified = BTreeMap::from([
+            (
+                "local".to_owned(),
+                (
+                    path("local"),
+                    CachePathStatus::Local {
+                        nar_bytes: u64::MAX,
+                    },
+                ),
+            ),
+            (
+                "remote".to_owned(),
+                (
+                    path("remote"),
+                    CachePathStatus::Hit {
+                        download_bytes: 10,
+                        nar_bytes: 20,
+                    },
+                ),
+            ),
+            (
+                "missing".to_owned(),
+                (path("missing"), CachePathStatus::Miss),
+            ),
+        ]);
+        let value = serde_json::to_value(cache_classification(&classified).unwrap()).unwrap();
+        assert_eq!(value["hits"], 2);
+        assert_eq!(value["misses"], 1);
+        assert_eq!(value["knownCacheBytes"]["downloadBytes"], 10);
+        assert_eq!(value["knownCacheBytes"]["narBytes"], 20);
     }
 
     #[test]

@@ -34,9 +34,9 @@ use pkg_core::{
     SourceRevision, VersionPreference, advance_channel,
 };
 use pkg_nix::{
-    ApprovalSource, BrokerOperationKind, BuildOutputProvenance, BuildPreview,
-    CacheInstallErrorCode, CacheInstallOutcome, CatalogInfoRequest, CatalogSearchRequest,
-    ChannelRefreshMode, ChannelRefreshReport, Digest, GenerationId,
+    ApprovalSource, BrokerOperationKind, BuildExecutionErrorCode, BuildOutputProvenance,
+    BuildPreview, CacheInstallErrorCode, CacheInstallOutcome, CatalogInfoRequest,
+    CatalogSearchRequest, ChannelRefreshMode, ChannelRefreshReport, Digest, GenerationId,
     GenerationRootAttestationErrorCode, InstallEvidence, MaintenanceAdapter, MaintenanceError,
     OperationHandle, OperationStatus, RemoveRootSetRequest, RepairGenerationRequest,
     RepairGenerationStatus, RepairStorePathsReport, RepairStorePathsRequest, RootSet,
@@ -1767,18 +1767,23 @@ fn acquire_install_evidence(
                 )
             })
             .collect::<Vec<_>>();
-        for (selector, package_name, version) in &build_targets {
-            progress(
-                PublicEvent::build_started(&public_operation_id, selector, package_name, version)
-                    .map_err(|_| install_commit_failed())?,
-            )?;
-            progress(
-                PublicEvent::build_progress(&public_operation_id, selector, 0.0)
-                    .map_err(|_| install_commit_failed())?,
-            )?;
-        }
+        emit_phase(progress, &public_operation_id, "build_execute", "started")?;
+        let mut build_started = false;
         broker
             .execute_build_with_progress(build_handle.clone(), digest, &mut |estimate| {
+                if !build_started {
+                    for (selector, package_name, version) in &build_targets {
+                        let event = PublicEvent::build_started(
+                            &public_operation_id,
+                            selector,
+                            package_name,
+                            version,
+                        )
+                        .map_err(|_| ())?;
+                        progress(event).map_err(|_| ())?;
+                    }
+                    build_started = true;
+                }
                 let pct = f64::from(estimate.millionths())
                     / f64::from(pkg_nix::BuildProgressEstimate::SCALE);
                 for (selector, _, _) in &build_targets {
@@ -1789,7 +1794,19 @@ fn acquire_install_evidence(
                 Ok(())
             })
             .map_err(install_broker_error)?;
-        for (selector, _, _) in &build_targets {
+        for (selector, package_name, version) in &build_targets {
+            // Some successful builds finish without a Nix progress update.
+            if !build_started {
+                progress(
+                    PublicEvent::build_started(
+                        &public_operation_id,
+                        selector,
+                        package_name,
+                        version,
+                    )
+                    .map_err(|_| install_commit_failed())?,
+                )?;
+            }
             progress(
                 PublicEvent::build_progress(&public_operation_id, selector, 1.0)
                     .map_err(|_| install_commit_failed())?,
@@ -1936,40 +1953,43 @@ fn build_preview_details(value: &Value) -> Vec<String> {
         })
         .unwrap_or_else(|| "supported target".to_owned());
     let isolation = value
-        .get("readiness")
-        .and_then(Value::as_object)
-        .and_then(|readiness| readiness.get("resourceBoundary"))
-        .and_then(Value::as_object)
-        .and_then(|boundary| boundary.get("isolation"))
+        .pointer("/readiness/resourceBoundary/isolation")
         .and_then(Value::as_str)
         .unwrap_or("sandbox");
     let time = value
-        .get("estimates")
-        .and_then(Value::as_object)
-        .and_then(|estimates| estimates.get("approxBuildMinutes"))
+        .pointer("/estimates/approxBuildMinutes")
         .and_then(Value::as_str)
         .map_or_else(
             || "Time estimate: unknown".to_owned(),
             |minutes| format!("Time estimate: about {minutes}"),
         );
     let disk = value
-        .get("estimates")
-        .and_then(Value::as_object)
-        .and_then(|estimates| estimates.get("approxNewDiskBytes"))
+        .pointer("/estimates/approxNewDiskBytes")
         .and_then(Value::as_u64)
         .map_or_else(
             || "New disk estimate: unknown".to_owned(),
             |bytes| format!("New disk estimate: about {}", format_bytes(bytes)),
         );
-    vec![
+    let mut details = vec![
         String::new(),
         format!("Target: {platform}"),
         format!("Isolation: {isolation}"),
         time,
         disk,
-        String::new(),
-        "The build is sandboxed. Estimates are approximate.".to_owned(),
-    ]
+    ];
+    if let Some(bytes) = value
+        .pointer("/estimates/minimumFreeDiskBytes")
+        .and_then(Value::as_u64)
+    {
+        details.push(format!(
+            "Free disk needed to start: {}",
+            format_bytes(bytes)
+        ));
+        details.push("The build can need more disk space.".to_owned());
+    }
+    details.push(String::new());
+    details.push("The build is sandboxed. Estimates are approximate.".to_owned());
+    details
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -2252,9 +2272,48 @@ fn invalid_install_selector() -> CommandError {
 }
 
 fn install_broker_error(error: BrokerClientError) -> CommandError {
-    let (exit, message, hint) =
-        install_broker_error_fields(error.code(), error.cache_install_code());
+    let (exit, message, hint) = error.build_execution_code().map_or_else(
+        || install_broker_error_fields(error.code(), error.cache_install_code()),
+        install_build_error_fields,
+    );
     CommandError::new(exit, message, hint)
+}
+
+const fn install_build_error_fields(
+    code: BuildExecutionErrorCode,
+) -> (ExitCode, &'static str, &'static str) {
+    match code {
+        BuildExecutionErrorCode::ResourcePreflightFailed => (
+            ExitCode::PreflightFail,
+            "the build did not start because the disk-space or system-load check failed",
+            "review the disk estimate, available disk space, and system load before retrying",
+        ),
+        BuildExecutionErrorCode::ApprovalUnavailable => (
+            ExitCode::AcquireNeedsApproval,
+            "the build approval is no longer available",
+            "run the package operation again and review the build plan",
+        ),
+        BuildExecutionErrorCode::ApprovalInvalidated => (
+            ExitCode::AcquireNeedsApproval,
+            "the build plan changed after approval",
+            "run the package operation again and review the new build plan",
+        ),
+        BuildExecutionErrorCode::Cancelled => (
+            ExitCode::Cancelled,
+            "the build operation was cancelled",
+            "run the package operation again when ready",
+        ),
+        BuildExecutionErrorCode::AuthorityUnavailable => (
+            ExitCode::EngineUnavailable,
+            "the build service is unavailable",
+            "run `pkg doctor` before retrying the package operation",
+        ),
+        BuildExecutionErrorCode::ExecutionFailed => (
+            ExitCode::BuildFailed,
+            "the local build failed",
+            "run `pkg doctor`, then retry the package operation",
+        ),
+    }
 }
 
 const fn install_broker_error_fields(
@@ -2394,8 +2453,8 @@ pub fn confirm_destructive(yes: bool, prompt: &str) -> Result<(), CommandError> 
     } else {
         Err(CommandError::new(
             ExitCode::Cancelled,
-            "the destructive operation was not approved",
-            "the newly requested mutation was not started",
+            "operation cancelled",
+            "no new changes were started",
         ))
     }
 }
@@ -2830,7 +2889,7 @@ fn gc_error(error: GcError) -> CommandError {
 fn confirmation_required() -> CommandError {
     CommandError::new(
         ExitCode::AcquireNeedsApproval,
-        "the destructive operation requires confirmation",
+        "this operation requires confirmation",
         "run interactively or pass `--yes` after reviewing a dry run",
     )
 }

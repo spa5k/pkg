@@ -44,7 +44,8 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 # `target/doc/static.files/*.md` license files emitted by `cargo doc`, which
 # otherwise inflate the author-owned Markdown count). Matched as exact path
 # components, never substrings, so e.g. `my-target/` stays in scope.
-IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target"}
+# Installed JavaScript dependencies are third-party files, not repository docs.
+IGNORED_DIR_COMPONENTS: Set[str] = {".git", "target", "node_modules"}
 
 # The plan index names one active implementation plan.
 REQUIRED_PLANS: List[str] = [

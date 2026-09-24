@@ -39,7 +39,8 @@ const MAX_SILENT_SECONDS: u64 = 3_600;
 const TIMEOUT_SECONDS: u64 = 86_400;
 const MAX_LOG_BYTES: u64 = 268_435_456;
 const DISK_HEADROOM_PERCENT: u64 = 120;
-const BOOTSTRAP_MISS_ALLOWANCE_BYTES: u64 = 1_073_741_824;
+// A start threshold for unknown build work, not a prediction of peak disk use.
+const BUILD_WORKSPACE_RESERVE_BYTES: u64 = 5 * 1_073_741_824;
 const ADMISSION_WAIT_POLL: Duration = Duration::from_millis(25);
 
 /// Stable local-build refusal category exposed to the broker/CLI mapper.
@@ -308,6 +309,7 @@ impl BuildResources {
 #[serde(rename_all = "camelCase")]
 struct BuildAdmissionPolicy {
     disk_headroom_percent: u64,
+    build_workspace_reserve_bytes: u64,
     max_loadavg_ceiling: u64,
 }
 
@@ -319,6 +321,7 @@ impl BuildAdmissionPolicy {
             .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
         Ok(Self {
             disk_headroom_percent: DISK_HEADROOM_PERCENT,
+            build_workspace_reserve_bytes: BUILD_WORKSPACE_RESERVE_BYTES,
             max_loadavg_ceiling,
         })
     }
@@ -991,26 +994,23 @@ impl BuildPlan {
         self.preview_with_estimates(BuildPreviewEstimates::unavailable())
     }
 
-    /// Produces the fixed V1 bootstrap estimate used for disk admission.
+    /// Produces a disk start threshold while keeping unknown build sizes unknown.
     ///
-    /// Nix cannot report the realized size of an uncached output before it is
-    /// built. Until authenticated historical observations exist, V1 therefore
-    /// reserves one GiB for every cache-miss path and adds the exact NarInfo
-    /// content bytes for cache-present paths. The result is explicitly a
-    /// heuristic: build time and total realized closure size remain unknown.
+    /// Missing cache content and its compressed download receive the admission
+    /// margin. One workspace reserve covers the operation, regardless of how
+    /// many derivations it contains. This is not a bound on peak build usage.
     pub fn bootstrap_estimates(&self) -> Result<BuildPreviewEstimates, BuildEngineError> {
-        let miss_allowance = self
-            .cache_classification
-            .misses
-            .checked_mul(BOOTSTRAP_MISS_ALLOWANCE_BYTES)
-            .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
-        let approx_new_disk_bytes = self
-            .cache_classification
-            .known_cache_bytes
+        let known = &self.cache_classification.known_cache_bytes;
+        let minimum_free_disk_bytes = known
             .nar_bytes
-            .checked_add(miss_allowance)
+            .checked_add(known.download_bytes)
+            .and_then(|bytes| disk_with_headroom(bytes, self.admission.disk_headroom_percent))
+            .and_then(|bytes| bytes.checked_add(self.admission.build_workspace_reserve_bytes))
             .ok_or_else(|| BuildEngineError::new(BuildEngineErrorCode::InvalidPlan))?;
-        BuildPreviewEstimates::new(None, Some(approx_new_disk_bytes), None)
+        Ok(BuildPreviewEstimates {
+            minimum_free_disk_bytes: Some(minimum_free_disk_bytes),
+            ..BuildPreviewEstimates::unavailable()
+        })
     }
 
     /// Produces a sanitized preview with volatile, non-digest-bound estimates.
@@ -1996,6 +1996,9 @@ pub struct BuildPreviewEstimates {
     approx_build_minutes: Option<String>,
     approx_new_disk_bytes: Option<u64>,
     approx_total_closure_bytes: Option<u64>,
+    /// Admission threshold, not an estimate of total or peak build size.
+    #[serde(default)]
+    minimum_free_disk_bytes: Option<u64>,
 }
 
 impl BuildPreviewEstimates {
@@ -2006,6 +2009,7 @@ impl BuildPreviewEstimates {
             approx_build_minutes: None,
             approx_new_disk_bytes: None,
             approx_total_closure_bytes: None,
+            minimum_free_disk_bytes: None,
         }
     }
 
@@ -2019,16 +2023,18 @@ impl BuildPreviewEstimates {
             approx_build_minutes: approx_build_minutes.map(checked_text).transpose()?,
             approx_new_disk_bytes,
             approx_total_closure_bytes,
+            minimum_free_disk_bytes: None,
         };
         estimates.validate()?;
         Ok(estimates)
     }
 
     pub(crate) const fn execution_disk_estimate(&self) -> Option<VolatileBuildEstimate> {
+        if let Some(bytes) = self.minimum_free_disk_bytes {
+            return Some(VolatileBuildEstimate::MinimumFreeBytes(bytes));
+        }
         match self.approx_new_disk_bytes {
-            Some(estimated_new_bytes) => Some(VolatileBuildEstimate {
-                estimated_new_bytes,
-            }),
+            Some(bytes) => Some(VolatileBuildEstimate::ApproximateNewBytes(bytes)),
             None => None,
         }
     }
@@ -2186,7 +2192,7 @@ impl BuildPreview {
 
 impl BuildPreviewEstimates {
     fn validate(&self) -> Result<(), BuildEngineError> {
-        if self.approx_new_disk_bytes == Some(0) {
+        if self.approx_new_disk_bytes == Some(0) || self.minimum_free_disk_bytes == Some(0) {
             return Err(BuildEngineError::new(BuildEngineErrorCode::InvalidPlan));
         }
         self.approx_build_minutes
@@ -2543,19 +2549,20 @@ fn parse_load_average(text: &str) -> Result<f64, BuildEngineError> {
     Ok(value)
 }
 
-/// Heuristic size input deliberately excluded from the approval digest.
+/// Disk admission input deliberately excluded from the approval digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VolatileBuildEstimate {
-    estimated_new_bytes: u64,
+pub enum VolatileBuildEstimate {
+    /// A predicted new size to which the admission margin must be applied.
+    ApproximateNewBytes(u64),
+    /// A start threshold that already includes the admission margin and reserve.
+    MinimumFreeBytes(u64),
 }
 
 impl VolatileBuildEstimate {
     /// Constructs an explicitly heuristic local-output estimate.
     #[must_use]
     pub const fn new(estimated_new_bytes: u64) -> Self {
-        Self {
-            estimated_new_bytes,
-        }
+        Self::ApproximateNewBytes(estimated_new_bytes)
     }
 }
 
@@ -2889,13 +2896,21 @@ fn resource_ok(
     if !snapshot.load_average.is_finite() || snapshot.load_average < 0.0 {
         return false;
     }
-    let required = estimate
-        .estimated_new_bytes
-        .checked_mul(plan.admission.disk_headroom_percent)
-        .and_then(|value| value.checked_add(99))
-        .map(|value| value / 100);
+    let required = match estimate {
+        VolatileBuildEstimate::ApproximateNewBytes(bytes) => {
+            disk_with_headroom(bytes, plan.admission.disk_headroom_percent)
+        }
+        VolatileBuildEstimate::MinimumFreeBytes(bytes) => Some(bytes),
+    };
     required.is_some_and(|required| snapshot.free_bytes >= required)
         && snapshot.load_average <= plan.admission.max_loadavg_ceiling as f64
+}
+
+fn disk_with_headroom(bytes: u64, percent: u64) -> Option<u64> {
+    bytes
+        .checked_mul(percent)?
+        .checked_add(99)
+        .map(|bytes| bytes / 100)
 }
 
 /// Renders exact immutable V1 Nix settings for the managed daemon.
@@ -3471,33 +3486,71 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_estimate_is_fixed_and_keeps_unknowns_honest() {
+    fn bootstrap_admission_keeps_unknowns_honest_and_does_not_scale_with_misses() {
         let mut plan = plan(1, System::X8664Linux, linux_readiness());
         let estimate = plan.bootstrap_estimates().unwrap();
         assert_eq!(
             estimate.execution_disk_estimate(),
-            Some(VolatileBuildEstimate::new(
-                BOOTSTRAP_MISS_ALLOWANCE_BYTES + 200
+            Some(VolatileBuildEstimate::MinimumFreeBytes(
+                BUILD_WORKSPACE_RESERVE_BYTES + 360
             ))
         );
         let preview = plan
-            .preview_with_estimates(estimate)
+            .preview_with_estimates(estimate.clone())
             .unwrap()
             .to_json_value()
             .unwrap();
         assert_eq!(
-            preview["estimates"]["approxNewDiskBytes"],
-            BOOTSTRAP_MISS_ALLOWANCE_BYTES + 200
+            preview["estimates"]["minimumFreeDiskBytes"],
+            BUILD_WORKSPACE_RESERVE_BYTES + 360
         );
+        assert!(preview["estimates"]["approxNewDiskBytes"].is_null());
         assert!(preview["estimates"]["approxBuildMinutes"].is_null());
         assert!(preview["estimates"]["approxTotalClosureBytes"].is_null());
         assert_eq!(preview["unknownLocalOutputs"], 1);
 
-        plan.cache_classification.misses = u64::MAX;
+        plan.cache_classification.misses = 100;
+        assert_eq!(plan.bootstrap_estimates().unwrap(), estimate);
+        plan.cache_classification.known_cache_bytes.nar_bytes = u64::MAX;
         assert_eq!(
             plan.bootstrap_estimates().unwrap_err().code(),
             BuildEngineErrorCode::InvalidPlan
         );
+    }
+
+    #[test]
+    fn bootstrap_disk_threshold_is_enforced_without_a_second_margin() {
+        let plan = plan(1, System::X8664Linux, linux_readiness());
+        let estimate = plan
+            .bootstrap_estimates()
+            .unwrap()
+            .execution_disk_estimate()
+            .unwrap();
+        let threshold = BUILD_WORKSPACE_RESERVE_BYTES + 360;
+        assert!(!resource_ok(
+            &plan,
+            estimate,
+            ResourceSnapshot {
+                free_bytes: threshold - 1,
+                load_average: 0.0
+            }
+        ));
+        assert!(resource_ok(
+            &plan,
+            estimate,
+            ResourceSnapshot {
+                free_bytes: threshold,
+                load_average: 0.0
+            }
+        ));
+        assert!(!resource_ok(
+            &plan,
+            estimate,
+            ResourceSnapshot {
+                free_bytes: threshold,
+                load_average: f64::NAN
+            }
+        ));
     }
 
     #[test]
