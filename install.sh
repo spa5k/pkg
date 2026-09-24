@@ -3,9 +3,9 @@
 # reviewed immutable value. An unrendered checkout exits before network access.
 set -eu
 
-PKG_RELEASE='v0.1.0-alpha.47'
+PKG_RELEASE='v0.1.0-alpha.49'
 PKG_RELEASE_BASE_URL='https://github.com/spa5k/pkg/releases/download'
-PKG_SHA256_X86_64_LINUX='387037c69bbafeb0e7508e5115286bc2825af3e49191528a22b2ed60ddd5b91d'
+PKG_SHA256_X86_64_LINUX='3643ea8c422bf768a2f2ea62712e933c5d74d3fcfb062278dd83d4181b7c64a4'
 
 pkg_install_mode='install'
 if [ "${1-}" = '--verify-only' ] && [ "$#" -eq 1 ]; then
