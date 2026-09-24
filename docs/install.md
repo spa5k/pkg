@@ -23,9 +23,9 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-0.1.0-alpha.49-preview.pkg
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/install-preview.sh
-printf '%s  %s\n' '64ff6f29a287ce4b4759096b3a862b58a8bca681b05dcf3ea46d8a94793de4b4' 'install-preview.sh' | shasum -a 256 --check
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-0.1.0-alpha.49-preview.pkg && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/install-preview.sh && \
+printf '%s  %s\n' '64ff6f29a287ce4b4759096b3a862b58a8bca681b05dcf3ea46d8a94793de4b4' 'install-preview.sh' | shasum -a 256 --check && \
 /bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.49-preview.pkg 30397fa7519c7caf388cd8f6e83207aa1a7ba0b2b03bc6a067c5b720fc529c3a
 ```
 
@@ -61,9 +61,9 @@ sessions as an upgrade method.
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-install-x86_64-linux
-printf '%s  %s\n' '3643ea8c422bf768a2f2ea62712e933c5d74d3fcfb062278dd83d4181b7c64a4' 'pkg-install-x86_64-linux' | sha256sum --check
-chmod 700 ./pkg-install-x86_64-linux
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-install-x86_64-linux && \
+printf '%s  %s\n' '3643ea8c422bf768a2f2ea62712e933c5d74d3fcfb062278dd83d4181b7c64a4' 'pkg-install-x86_64-linux' | sha256sum --check && \
+chmod 700 ./pkg-install-x86_64-linux && \
 sudo ./pkg-install-x86_64-linux
 ```
 
