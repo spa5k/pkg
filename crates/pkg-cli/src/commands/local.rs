@@ -160,17 +160,13 @@ impl LocalStateOperations {
     }
 
     fn active(&self) -> Result<pkg_core::GenerationSnapshot, CommandError> {
+        self.optional_active()?.ok_or_else(no_active_generation)
+    }
+
+    fn optional_active(&self) -> Result<Option<pkg_core::GenerationSnapshot>, CommandError> {
         let layout = self.layout();
         let lease = StateLease::try_shared(layout).map_err(state_lease_error)?;
-        load_active_snapshot(layout, &lease)
-            .map_err(state_read_error)?
-            .ok_or_else(|| {
-                CommandError::new(
-                    ExitCode::ResolveFailed,
-                    "no package generation is active",
-                    "install a package before using this command",
-                )
-            })
+        load_active_snapshot(layout, &lease).map_err(state_read_error)
     }
 
     fn history_view(&self) -> Result<History, CommandError> {
@@ -267,12 +263,29 @@ impl CoreOperations for LocalStateOperations {
     }
 
     fn list(&mut self, args: &ListArgs) -> Result<CommandResult, CommandError> {
-        let active = self.active()?;
+        let Some(active) = self.optional_active()? else {
+            return CommandResult::new(
+                "No packages are installed. Use pkg install <package> to get started.",
+                Map::from_iter([
+                    ("entries".into(), json!([])),
+                    ("nameOnly".into(), json!(args.name_only())),
+                ]),
+                Vec::new(),
+            )
+            .map_err(|_| mutation_failed());
+        };
         list_state(active.state(), args, None)
     }
 
     fn outdated(&mut self) -> Result<CommandResult, CommandError> {
-        let active = self.active()?;
+        let Some(active) = self.optional_active()? else {
+            return CommandResult::new(
+                "No packages are installed. Use pkg install <package> to get started.",
+                Map::from_iter([("entries".into(), json!([]))]),
+                Vec::new(),
+            )
+            .map_err(|_| mutation_failed());
+        };
         let installed = installed_catalog_packages(active.state(), None)?;
         let result = if installed.is_empty() {
             outdated_catalog_reports(active.state().manifest().channel_seq(), &installed, &[])?

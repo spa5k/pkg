@@ -1530,6 +1530,24 @@ fn initialized_empty_state_reports_no_active_generation() {
 }
 
 #[test]
+fn empty_package_queries_succeed_but_corrupt_active_state_is_not_hidden() {
+    for args in [
+        vec!["pkg", "list"],
+        vec!["pkg", "list", "--name-only"],
+        vec!["pkg", "outdated"],
+    ] {
+        let (home, _layout, operations, _) = repair_fixture();
+        let cli = Cli::try_parse(args).unwrap();
+        let mut engine = CoreEngine::new(operations);
+        let result = engine.execute(&CommandRequest::from_cli(&cli)).unwrap();
+        assert_eq!(result.fields()["entries"], json!([]));
+        assert!(result.records().is_empty());
+        fs::write(home.path().join("pkg/current"), "invalid active state").unwrap();
+        assert!(engine.execute(&CommandRequest::from_cli(&cli)).is_err());
+    }
+}
+
+#[test]
 fn mutation_identity_helpers_are_canonical_and_overflow_safe() {
     assert_eq!(next_generation_id("gen-0009").unwrap(), "gen-0010");
     assert_eq!(next_generation_id("gen-9999").unwrap(), "gen-10000");
