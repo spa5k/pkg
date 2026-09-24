@@ -1366,7 +1366,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pkg-channel"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "hex",
  "jiff",
@@ -1383,7 +1383,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-cli"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1409,7 +1409,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "pkg-core"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "jiff",
  "proptest",
@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-index"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "brotli",
  "criterion",
@@ -1435,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-installer"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "exacl",
  "listenfd",
@@ -1460,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-macos-security"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "core-foundation",
  "security-framework",
@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-nix"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "futures-util",
  "hex",
@@ -1492,7 +1492,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-pipeline"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "libc",
  "pkg-channel",
@@ -1507,7 +1507,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-release"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-resolver"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "pkg-channel",
  "pkg-core",
@@ -1541,7 +1541,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-store"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "libc",
  "pkg-core",
@@ -1554,7 +1554,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-testkit"
-version = "0.1.0-alpha.47"
+version = "0.1.0-alpha.48"
 dependencies = [
  "jiff",
  "pkg-core",
