@@ -95,7 +95,7 @@ Use `pkg gc --dry-run` to preview cleanup. Use `pkg gc` to perform it.
 
 ## Package coverage
 
-The signed alpha.48 channel contains 64,412 package records for Apple silicon
+The signed alpha.51 channel contains 64,412 package records for Apple silicon
 macOS and 69,517 records for x86-64 Linux. It uses metadata generated from
 Nixpkgs, including nested package sets such as `python311Packages.requests`.
 
@@ -135,5 +135,5 @@ select a plain transcript. `--quiet` removes progress and keeps the final result
 `--json` and `--jsonl` keep their existing machine formats. `pkg list --name-only`
 prints names only, including on a terminal.
 
-These terminal changes are source changes after alpha.49. They require the next
-CLI release. The public installer currently selects alpha.49.
+These terminal changes are available in alpha.51. The public installer selects
+this release.

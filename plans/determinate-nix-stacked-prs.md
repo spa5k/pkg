@@ -55,6 +55,8 @@ The product name remains `pkg`. Existing command and JSON contracts remain.
 
 ### PUBLIC-09: clear terminal output
 
+- **Status:** merged in [PR #44](https://github.com/spa5k/pkg/pull/44).
+
 - **Purpose:** make daily output readable and make long builds visibly active.
 - **Owns:** stream-specific terminal styles, tables, doctor checks, one live
   progress line with elapsed time, build preview, and upgrade progress.
@@ -65,6 +67,8 @@ The product name remains `pkg`. Existing command and JSON contracts remain.
 - **Rollback:** revert CLI changes. No stored-state or broker protocol migration.
 
 ### PUBLIC-10: one verified public installer
+
+- **Status:** merged in [PR #45](https://github.com/spa5k/pkg/pull/45).
 
 - **Purpose:** install or upgrade from one stable public script on both targets.
 - **Owns:** a self-contained POSIX entry script, fixed release digests, platform
@@ -78,6 +82,9 @@ The product name remains `pkg`. Existing command and JSON contracts remain.
 - **Rollback:** restore the previous script. Retain Nix and package state.
 
 ### PUBLIC-11: readable CI and production release preparation
+
+- **Status:** tooling merged in [PR #46](https://github.com/spa5k/pkg/pull/46).
+  Production trust activation still requires the external inputs below.
 
 - **Purpose:** make check results easy to find and prepare production signing.
 - **Owns:** GitHub summaries and artifacts, reusable exact-release lifecycle
