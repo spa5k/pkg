@@ -1,6 +1,6 @@
 //! Authenticated Unix broker-to-helper framed transport.
 
-use crate::determinate_handoff::{DeterminateHandoff, DeterminateHandoffState};
+use crate::determinate_handoff::DeterminateHandoff;
 use crate::platform::{authenticate_broker, linux::LinuxRootSetStore};
 use nix::unistd::{Uid, User};
 use nix::{
@@ -346,8 +346,9 @@ impl LinuxHelperSession {
     }
 
     fn verify_managed_ownership(handoff: &DeterminateHandoff) -> bool {
-        // state() revalidates the pinned vendor executable and accepted receipt.
-        handoff.state() == Ok(DeterminateHandoffState::Accepted)
+        // Doctor must work in the unchanged read-only service sandbox. Mutation
+        // paths retain the separate locked handoff transitions.
+        handoff.accepted_read_only() == Ok(true)
     }
 
     fn root_adapter(

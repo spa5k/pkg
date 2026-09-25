@@ -122,6 +122,12 @@ enum Record {
     },
 }
 
+struct ObservedRecord {
+    record: Record,
+    metadata: fs::Metadata,
+    bytes: Vec<u8>,
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireRecord {
@@ -219,6 +225,48 @@ impl DeterminateHandoff {
                 Ok(DeterminateHandoffState::Accepted)
             }
         }
+    }
+
+    /// Diagnostic snapshot only. It must never authorize a state transition.
+    /// Unlike `state`, this neither opens a write lock nor reconciles records.
+    pub(crate) fn accepted_read_only(&self) -> Result<bool, DeterminateHandoffError> {
+        self.accepted_snapshot(|| {})
+    }
+
+    fn accepted_snapshot(
+        &self,
+        after_identity: impl FnOnce(),
+    ) -> Result<bool, DeterminateHandoffError> {
+        if !self.no_temporary_record() {
+            return Ok(false);
+        }
+        let Some(ObservedRecord {
+            record: record @ Record::Accepted { installer, receipt },
+            metadata: opened,
+            bytes,
+        }) = self.read_record()?
+        else {
+            return Ok(false);
+        };
+        if bytes != encode(&record)? || self.observe_vendor_identity()? != (installer, receipt) {
+            return Ok(false);
+        }
+        after_identity();
+        let Some(current) = self.read_record()? else {
+            return Ok(false);
+        };
+        Ok(current.record == record
+            && current.bytes == bytes
+            && opened.dev() == current.metadata.dev()
+            && opened.ino() == current.metadata.ino()
+            && self.no_temporary_record())
+    }
+
+    fn no_temporary_record(&self) -> bool {
+        self.handoff.parent().is_some_and(|parent| {
+            fs::symlink_metadata(temporary_path(parent))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        })
     }
 
     /// Persists the crash boundary that must precede vendor execution.
@@ -533,6 +581,19 @@ impl DeterminateHandoff {
             DeterminateHandoffError::InvalidState,
         )?;
         reconcile_temporary(parent, &self.handoff, self.owner, self.group)?;
+        self.read_record()
+            .map(|record| record.map(|observed| observed.record))
+    }
+
+    fn read_record(&self) -> Result<Option<ObservedRecord>, DeterminateHandoffError> {
+        validate_parent_chain(
+            self.handoff
+                .parent()
+                .ok_or(DeterminateHandoffError::InvalidState)?,
+            &self.trust_root,
+            self.owner,
+            DeterminateHandoffError::InvalidState,
+        )?;
         match fs::symlink_metadata(&self.handoff) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(DeterminateHandoffError::InvalidState),
@@ -562,7 +623,12 @@ impl DeterminateHandoff {
         {
             return Err(DeterminateHandoffError::InvalidState);
         }
-        decode(&bytes).map(Some)
+        let record = decode(&bytes)?;
+        Ok(Some(ObservedRecord {
+            record,
+            metadata: opened,
+            bytes,
+        }))
     }
 
     fn persist_locked(&self, record: Record, create: bool) -> Result<(), DeterminateHandoffError> {
@@ -1190,6 +1256,89 @@ PKG_TEST_DN15_CRASH_CHILD=vendor-park exec "$PKG_TEST_DN15_TEST_EXECUTABLE" --ex
                 "state": "Completed", "action": {"action_name": name}
             }))
         })
+    }
+
+    #[test]
+    fn diagnostic_snapshot_never_creates_a_lock_or_recovers_pending_state() {
+        let fixture = fixture(0o600);
+        let handoff = &fixture.handoff;
+        assert_eq!(handoff.accepted_read_only(), Ok(false));
+        assert!(!handoff.lock.exists());
+        handoff.record_started().unwrap();
+        assert_eq!(handoff.accepted_read_only(), Ok(false));
+        handoff.accept_after_installed_state_proof().unwrap();
+        let bytes = fs::read(&handoff.handoff).unwrap();
+        fs::remove_file(&handoff.lock).unwrap();
+        assert_eq!(handoff.accepted_read_only(), Ok(true));
+        assert!(!handoff.lock.exists());
+        let pending = temporary_path(fixture.temporary.path());
+        write_mode(&pending, b"pending recovery", 0o600);
+        assert_eq!(handoff.accepted_read_only(), Ok(false));
+        assert_eq!(fs::read(&pending).unwrap(), b"pending recovery");
+        assert_eq!(fs::read(&handoff.handoff).unwrap(), bytes);
+    }
+
+    #[test]
+    fn diagnostic_snapshot_rejects_record_replacement_and_in_place_changes() {
+        let fixture = fixture(0o600);
+        let handoff = &fixture.handoff;
+        handoff.record_started().unwrap();
+        handoff.accept_after_installed_state_proof().unwrap();
+        let original = fs::read(&handoff.handoff).unwrap();
+        assert_eq!(
+            handoff.accepted_snapshot(|| {
+                let replacement = fixture.temporary.path().join("replacement");
+                write_mode(&replacement, &original, 0o600);
+                fs::rename(replacement, &handoff.handoff).unwrap();
+            }),
+            Ok(false)
+        );
+        assert_eq!(
+            handoff.accepted_snapshot(|| {
+                let mut changed = original.clone();
+                changed.push(b'\n');
+                write_mode(&handoff.handoff, &changed, 0o600);
+            }),
+            Ok(false)
+        );
+        write_mode(&handoff.handoff, &original, 0o600);
+        assert_eq!(
+            handoff.accepted_snapshot(|| {
+                write_mode(&handoff.handoff, &encode(&Record::Started).unwrap(), 0o600);
+            }),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn diagnostic_snapshot_rejects_temporary_state_created_during_verification() {
+        let fixture = fixture(0o600);
+        let handoff = &fixture.handoff;
+        handoff.record_started().unwrap();
+        handoff.accept_after_installed_state_proof().unwrap();
+        let pending = temporary_path(fixture.temporary.path());
+        assert_eq!(
+            handoff.accepted_snapshot(|| write_mode(&pending, b"pending", 0o600)),
+            Ok(false)
+        );
+        assert_eq!(fs::read(&pending).unwrap(), b"pending");
+    }
+
+    #[test]
+    fn diagnostic_snapshot_rejects_unsafe_records_and_links() {
+        let fixture = fixture(0o600);
+        let handoff = &fixture.handoff;
+        handoff.record_started().unwrap();
+        handoff.accept_after_installed_state_proof().unwrap();
+        fs::set_permissions(&handoff.handoff, Permissions::from_mode(0o644)).unwrap();
+        assert!(handoff.accepted_read_only().is_err());
+        fs::set_permissions(&handoff.handoff, Permissions::from_mode(0o600)).unwrap();
+        let saved = fixture.temporary.path().join("saved");
+        fs::hard_link(&handoff.handoff, &saved).unwrap();
+        assert!(handoff.accepted_read_only().is_err());
+        fs::remove_file(&handoff.handoff).unwrap();
+        std::os::unix::fs::symlink(&saved, &handoff.handoff).unwrap();
+        assert!(handoff.accepted_read_only().is_err());
     }
 
     #[test]
