@@ -11,7 +11,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pkg_channel::{TrustedRoot, VerifiedChannel};
+use pkg_channel::{ChannelError, TrustedRoot, VerifiedChannel};
 use tempfile::TempPath;
 use url::Url;
 
@@ -567,7 +567,7 @@ async fn load_authenticated_installer_bundle_with_owner(
         },
     )
     .await
-    .map_err(|_| ProvisionError::new(ProvisionErrorCode::InvalidAuthenticatedInput))?;
+    .map_err(|error| installer_authentication_error(&error))?;
     let installer_payloads = load_authenticated_installer_payloads(&source, source.system())?;
     let managed_nix_config = AuthenticatedManagedNixConfig {
         system: source.system(),
@@ -608,6 +608,17 @@ async fn load_authenticated_installer_bundle_with_owner(
         scratch_parent: request.scratch_parent.to_path_buf(),
         groups: request.groups,
     })
+}
+
+fn installer_authentication_error(error: &ChannelError) -> ProvisionError {
+    let code = match error {
+        ChannelError::TransportUnavailable => ProvisionErrorCode::FetchFailed,
+        ChannelError::DatastoreUnavailable
+        | ChannelError::AcceptedStateUnavailable
+        | ChannelError::DatastoreBusy => ProvisionErrorCode::ChannelStateFailed,
+        _ => ProvisionErrorCode::InvalidAuthenticatedInput,
+    };
+    ProvisionError::new(code)
 }
 
 /// Reauthenticates the same installer bundle in a different private datastore.

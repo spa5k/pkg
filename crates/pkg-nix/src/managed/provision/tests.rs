@@ -113,6 +113,97 @@ fn raw_channel_sha256_uses_the_product_digest_prefix() {
         format!("sha256-{value}")
     );
 }
+
+#[tokio::test]
+async fn installer_authentication_distinguishes_download_state_and_signature_failures() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/channel-v1");
+    for (failure, expected) in [
+        ("missing-download", ProvisionErrorCode::FetchFailed),
+        ("missing-target", ProvisionErrorCode::FetchFailed),
+        (
+            "oversized-target",
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ),
+        ("unsafe-state", ProvisionErrorCode::ChannelStateFailed),
+        (
+            "bad-signature",
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ),
+        (
+            "bad-target-hash",
+            ProvisionErrorCode::InvalidAuthenticatedInput,
+        ),
+    ] {
+        let temporary = TempDir::new().unwrap();
+        let bundle = temporary.path().join("bundle");
+        fs::create_dir_all(bundle.join("metadata")).unwrap();
+        fs::create_dir(bundle.join("targets")).unwrap();
+        for entry in fs::read_dir(fixture.join("metadata")).unwrap() {
+            let entry = entry.unwrap();
+            fs::copy(
+                entry.path(),
+                bundle.join("metadata").join(entry.file_name()),
+            )
+            .unwrap();
+        }
+        let datastore = temporary.path().join("state");
+        fs::create_dir(&datastore).unwrap();
+        fs::set_permissions(&datastore, fs::Permissions::from_mode(0o700)).unwrap();
+        let timestamp = bundle.join("metadata/timestamp.json");
+        match failure {
+            "missing-download" => fs::remove_file(&timestamp).unwrap(),
+            "missing-target" => {}
+            "unsafe-state" => {
+                fs::set_permissions(&datastore, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            "bad-signature" => {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&timestamp).unwrap()).unwrap();
+                value["signed"]["version"] = serde_json::json!(900);
+                fs::write(&timestamp, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            "bad-target-hash" | "oversized-target" => {
+                let target = fs::read_dir(fixture.join("targets"))
+                    .unwrap()
+                    .map(Result::unwrap)
+                    .find(|entry| {
+                        entry
+                            .file_name()
+                            .to_str()
+                            .unwrap()
+                            .ends_with(".descriptor.json")
+                    })
+                    .unwrap();
+                let bytes = fs::read(target.path()).unwrap();
+                fs::write(
+                    bundle.join("targets").join(target.file_name()),
+                    vec![0; bytes.len() + usize::from(failure == "oversized-target")],
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let request = InstallerProvisionRequest {
+            repository: InstallerRepository::Bundle(&bundle),
+            datastore: &datastore,
+            installation_root: temporary.path(),
+            scratch_parent: temporary.path(),
+            system: System::Aarch64Darwin,
+            groups: ManagedGroupBindings::new(333, 350).unwrap(),
+        };
+        let root = TrustedRoot::from_embedded(include_bytes!(
+            "../../../../../fixtures/channel-v1/root.json"
+        ))
+        .unwrap();
+        let error = load_authenticated_installer_bundle(root, &request)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), expected, "{failure}");
+        assert!(!format!("{error:?}").contains(&temporary.path().display().to_string()));
+        assert!(!datastore.join("accepted-channel.json").exists());
+    }
+}
+
 use crate::managed::ownership::encode_ownership_asset_manifest;
 
 const RUNTIME_PATH: &str = "/nix/store/fixture-nix-2.24.10/bin/nix";
