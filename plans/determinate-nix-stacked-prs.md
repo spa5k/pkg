@@ -116,7 +116,7 @@ completion of the production trust ceremony.
 ### PUBLIC-13: complete command results and previews
 
 - **Status:** merged in [PR #51](https://github.com/spa5k/pkg/pull/51).
-  E/F and A/Spec reviews pass. Public release pending.
+  E/F and A/Spec reviews pass. Included in alpha.52.
 - **Purpose:** show the useful result and next action for every daily command.
 - **Owns:** package changes, environment IDs, disk values, explicit previews,
   empty states, consistent errors, confirmations, and terminal result views.
@@ -128,7 +128,8 @@ completion of the production trust ceremony.
 
 ### PUBLIC-14: alpha.52 release
 
-- **Status:** preparing the release. Alpha.51 remains the public version.
+- **Status:** release preparation merged in [PR #52](https://github.com/spa5k/pkg/pull/52).
+  Published as [alpha.52](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.52).
 - **Purpose:** publish the reviewed command guide, terminal layouts, and results.
 - **Owns:** alpha.52 version and candidate names, signed native assets, sequence
   52 catalogs and channel, exact upgrade and reboot evidence, and publication.
@@ -142,7 +143,8 @@ completion of the production trust ceremony.
 
 ### PUBLIC-15: alpha.52 installation instructions
 
-- **Status:** pending the verified alpha.52 assets and publication.
+- **Status:** alpha.52 links, verified installer digests, and command instructions
+  are current.
 - **Purpose:** give users the exact installer and current command instructions.
 - **Owns:** public version links, the rendered installer with verified digests,
   installation examples, release notes, and published plan status.
