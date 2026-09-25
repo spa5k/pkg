@@ -5,15 +5,18 @@ use serde_json::{Map, Value, json};
 use pkg_core::lifecycle::LifecycleState;
 use pkg_core::remove::remove_selectors;
 use pkg_core::{
-    ChangeKind, GenerationSnapshot, History, NixpkgsRevision, PinAction, RollbackPlan,
-    RollbackTarget, SelectorId, edit_pins, plan_rollback,
+    GenerationSnapshot, History, PinAction, RollbackPlan, RollbackTarget, SelectorId, edit_pins,
+    plan_rollback,
 };
 
-use crate::cli::{HistoryArgs, ListArgs, PackageArgs, RemoveArgs, RollbackArgs};
+use crate::cli::{ListArgs, PackageArgs, RemoveArgs, RollbackArgs};
+
+mod history;
 use crate::commands::execute::CommandResult;
 use crate::commands::query::optional_text;
 use crate::exit::ExitCode;
 use crate::ux::CommandError;
+pub use history::read_history;
 
 /// A validated lifecycle edit paired with its sanitized public preview/result.
 #[derive(Debug)]
@@ -64,7 +67,7 @@ impl LifecycleEdit {
 pub fn list_state(
     state: &LifecycleState,
     args: &ListArgs,
-    accepted_revision: Option<&NixpkgsRevision>,
+    outdated_attributes: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<CommandResult, CommandError> {
     let mut entries = Vec::new();
     for desired in state.manifest().entries() {
@@ -78,7 +81,8 @@ pub fn list_state(
             .ok_or_else(state_error)?;
         let realization = locked.realization();
         let is_outdated = realization.flake().is_none()
-            && accepted_revision.is_some_and(|revision| revision != realization.source_commit());
+            && outdated_attributes
+                .is_some_and(|attributes| attributes.contains(desired.attribute().as_str()));
         if args.outdated() && !is_outdated {
             continue;
         }
@@ -116,6 +120,12 @@ pub fn list_state(
         }
         entries.push(Value::Object(entry));
     }
+    entries.sort_by(|left, right| {
+        left["name"]
+            .as_str()
+            .cmp(&right["name"].as_str())
+            .then_with(|| left["selector"].as_str().cmp(&right["selector"].as_str()))
+    });
     let records = row_records(&entries, "installed_package");
     result(
         format!("Installed packages: {}", entries.len()),
@@ -134,6 +144,7 @@ pub fn remove_state(
 ) -> Result<LifecycleEdit, CommandError> {
     let labels = package_labels(&state);
     let targets = resolve_targets(&state, args.packages())?;
+    let packages = installed_packages(&state, &targets)?;
     let removed = remove_selectors(state, &targets).map_err(|_| {
         CommandError::new(
             ExitCode::ResolveFailed,
@@ -150,6 +161,7 @@ pub fn remove_state(
         format!("{} package(s) ready to remove", names.len()),
         Map::from_iter([
             ("removed".into(), json!(names)),
+            ("packages".into(), packages),
             ("orphanCheckRequested".into(), json!(args.orphan_check())),
         ]),
         vec![],
@@ -195,6 +207,10 @@ pub fn edit_pin_state(
         format!("{} package(s) {verb}", changed.len()),
         Map::from_iter([
             ("changed".into(), json!(changed)),
+            (
+                "packages".into(),
+                installed_packages(edited.state(), edited.changed())?,
+            ),
             ("unchanged".into(), json!(unchanged)),
         ]),
         vec![],
@@ -205,56 +221,6 @@ pub fn edit_pin_state(
             .with_package_labels(labels)
             .map_err(|_| state_error())?,
     })
-}
-
-/// Renders retained generation rows or one sanitized two-generation diff.
-pub fn read_history(history: &History, args: &HistoryArgs) -> Result<CommandResult, CommandError> {
-    if args.delete().is_some() {
-        return Err(CommandError::new(
-            ExitCode::EngineUnavailable,
-            "generation deletion requires the private package engine",
-            "use `pkg history` without `--delete` for an offline view",
-        ));
-    }
-    if let [from, to] = args.diff() {
-        let from = find_snapshot(history, from)?;
-        let to = find_snapshot(history, to)?;
-        let diff = History::diff(from, to);
-        let changes = diff.changes().iter().map(|change| json!({
-            "selector": change.selector().as_str(),
-            "kind": match change.kind() { ChangeKind::Added => "added", ChangeKind::Removed => "removed", ChangeKind::Changed => "changed" },
-            "beforeVersion": change.before_version().map(|version| optional_text(version.as_str())),
-            "afterVersion": change.after_version().map(|version| optional_text(version.as_str())),
-            "beforeOutputs": change.before_outputs().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
-            "afterOutputs": change.after_outputs().iter().map(pkg_core::OutputName::as_str).collect::<Vec<_>>(),
-            "beforePinned": change.before_pinned(),
-            "afterPinned": change.after_pinned()
-        })).collect::<Vec<_>>();
-        let records = row_records(&changes, "generation_change");
-        return result(
-            format!("{} generation change(s)", changes.len()),
-            Map::from_iter([
-                ("from".into(), json!(from.generation().id())),
-                ("to".into(), json!(to.generation().id())),
-                ("changes".into(), Value::Array(changes)),
-            ]),
-            records,
-        );
-    }
-    let entries = history.summaries().iter().map(|summary| {
-        let counts = summary.changes_from_parent();
-        json!({
-            "id": summary.id(), "createdAt": summary.created_at(), "operation": summary.operation(),
-            "active": summary.is_active(),
-            "changes": counts.map(|counts| json!({"added": counts.added, "changed": counts.changed, "removed": counts.removed}))
-        })
-    }).collect::<Vec<_>>();
-    let records = row_records(&entries, "generation");
-    result(
-        format!("{} generation(s) retained", entries.len()),
-        Map::from_iter([("entries".into(), Value::Array(entries))]),
-        records,
-    )
 }
 
 /// Plans a rollback from one verified active snapshot and complete retained history.
@@ -290,6 +256,10 @@ pub fn rollback_state(
             ("sourceGeneration".into(), json!(active.generation().id())),
             ("targetGeneration".into(), json!(target_id)),
             (
+                "packageChanges".into(),
+                json!(history::package_changes(active, plan.target())),
+            ),
+            (
                 "packageCount".into(),
                 json!(plan.target().state().manifest().entries().len()),
             ),
@@ -297,6 +267,19 @@ pub fn rollback_state(
         vec![],
     )?;
     Ok(RollbackEdit { plan, result })
+}
+
+pub(super) fn installed_packages(
+    state: &LifecycleState,
+    ids: &[SelectorId],
+) -> Result<Value, CommandError> {
+    ids.iter().map(|id| {
+        let desired = state.manifest().entries().iter().find(|entry| entry.id() == id)
+            .ok_or_else(state_error)?;
+        let locked = state.locked().entries().get(id).ok_or_else(state_error)?;
+        Ok(json!({"name": locked.realization().pname(), "selector": desired.selector().as_str(),
+            "version": optional_text(locked.realization().version().as_str()), "pinned": desired.is_pinned()}))
+    }).collect::<Result<Vec<_>, _>>().map(Value::Array)
 }
 
 pub(super) fn package_labels(state: &LifecycleState) -> Map<String, Value> {
@@ -313,35 +296,64 @@ pub(super) fn package_labels(state: &LifecycleState) -> Map<String, Value> {
         .collect()
 }
 
-fn resolve_targets(
+/// Resolve installed intent before any approval. Exact selectors take priority;
+/// realized names are accepted only when they identify one installed selector.
+pub(super) fn resolve_targets(
     state: &LifecycleState,
     names: &[String],
 ) -> Result<Vec<SelectorId>, CommandError> {
-    names
-        .iter()
-        .map(|name| {
-            let matches = state
+    let mut ids = std::collections::BTreeSet::new();
+    for name in names {
+        let exact = state
+            .manifest()
+            .entries()
+            .iter()
+            .filter(|entry| entry.id().as_str() == name || entry.selector().as_str() == name)
+            .collect::<Vec<_>>();
+        let matches = if exact.is_empty() {
+            state
                 .manifest()
                 .entries()
                 .iter()
-                .filter(|entry| entry.id().as_str() == name || entry.selector().as_str() == name)
-                .map(|entry| entry.id().clone())
-                .collect::<Vec<_>>();
-            match matches.as_slice() {
-                [id] => Ok(id.clone()),
-                [] => Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    "package is not installed",
-                    "run `pkg list` and use an installed selector",
-                )),
-                _ => Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    "installed selector is ambiguous",
-                    "use the stable selector id from machine output",
-                )),
+                .filter(|entry| {
+                    state
+                        .locked()
+                        .entries()
+                        .get(entry.id())
+                        .is_some_and(|entry| entry.realization().pname() == name)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            exact
+        };
+        match matches.as_slice() {
+            [entry] => {
+                ids.insert(entry.id().clone());
             }
-        })
-        .collect()
+            [] => {
+                return Err(CommandError::new(
+                    ExitCode::ResolveFailed,
+                    format!("package '{name}' is not installed"),
+                    "run `pkg list` to see installed names and selectors",
+                ));
+            }
+            _ => {
+                let choices = matches
+                    .iter()
+                    .map(|entry| entry.id().as_str().to_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(CommandError::new(
+                    ExitCode::ResolveFailed,
+                    format!("installed name '{name}' matches more than one package"),
+                    format!(
+                        "use an exact selector from `pkg list`, or one of these IDs: {choices}"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(ids.into_iter().collect())
 }
 
 fn find_snapshot<'a>(
@@ -390,99 +402,4 @@ fn state_error() -> CommandError {
 }
 
 #[cfg(test)]
-mod tests {
-    use pkg_core::state::{LockedState, Manifest};
-
-    use super::*;
-    use crate::cli::{Cli, Command};
-
-    const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
-    const NAR: &str = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-
-    fn store(hash: char, name: &str) -> String {
-        format!("/nix/store/{}-{name}", hash.to_string().repeat(32))
-    }
-    fn drv(hash: char, name: &str) -> String {
-        format!("/nix/store/{}-{name}.drv", hash.to_string().repeat(32))
-    }
-
-    fn state() -> LifecycleState {
-        let alpha = store('0', "alpha");
-        let beta = store('1', "beta");
-        let manifest = json!({
-            "schemaVersion": 1, "channelSeq": 2, "uid": 1001,
-            "entries": [
-                {"id":"sel_alpha","selector":"alpha","attribute":"alpha","versionPref":{"kind":"any"},"outputs":null,"sourceRev":"channel:current","pinned":false,"pinnedTo":null,"addedAt":"2026-08-09T00:00:00Z","origin":"user:install"},
-                {"id":"sel_beta","selector":"beta","attribute":"beta","versionPref":{"kind":"any"},"outputs":null,"sourceRev":"channel:current","pinned":false,"pinnedTo":null,"addedAt":"2026-08-09T00:00:00Z","origin":"user:install"}
-            ], "pins": []
-        });
-        let locked = json!({
-            "schemaVersion":1,"channelSeq":2,"system":"x86_64-linux","uid":1001,
-            "entries": {
-                "sel_alpha":{"attribute":"alpha","nixpkgsRev":REVISION,"realized":{"storePath":alpha,"deriver":drv('0',"alpha"),"outputs":{"out":store('0',"alpha")},"outputsToInstall":["out"],"system":"x86_64-linux","narHash":NAR,"closureNarSize":42,"pname":"alpha","version":"1.0"},"lockedAt":"2026-08-09T00:00:01Z","provenance":"cache:official","sigsObserved":["official-1:fixture"]},
-                "sel_beta":{"attribute":"beta","nixpkgsRev":REVISION,"realized":{"storePath":beta,"deriver":drv('1',"beta"),"outputs":{"out":store('1',"beta")},"outputsToInstall":["out"],"system":"x86_64-linux","narHash":NAR,"closureNarSize":84,"pname":"beta","version":"2.0"},"lockedAt":"2026-08-09T00:00:01Z","provenance":"cache:official","sigsObserved":["official-1:fixture"]}
-            }
-        });
-        LifecycleState::new(
-            Manifest::from_json(&serde_json::to_vec(&manifest).unwrap()).unwrap(),
-            LockedState::from_json(&serde_json::to_vec(&locked).unwrap()).unwrap(),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn list_maps_active_state_without_private_identity() {
-        let cli = Cli::try_parse(["pkg", "list", "--with-outputs", "--size"]).unwrap();
-        let Command::List(args) = cli.parsed_command() else {
-            unreachable!()
-        };
-        let result = list_state(&state(), args, None).unwrap();
-        assert_eq!(result.fields()["entries"].as_array().unwrap().len(), 2);
-        assert_eq!(result.fields()["entries"][0]["closureBytes"], 42);
-        let encoded = serde_json::to_string(result.fields()).unwrap();
-        assert!(!encoded.contains("/nix/store/"));
-        assert!(!encoded.contains("x86_64-linux"));
-    }
-
-    #[test]
-    fn remove_and_pin_use_core_atomic_lifecycle_editors() {
-        let remove = Cli::try_parse(["pkg", "remove", "beta", "--orphan-check"]).unwrap();
-        let Command::Remove(args) = remove.parsed_command() else {
-            unreachable!()
-        };
-        let removed = remove_state(state(), args).unwrap();
-        assert_eq!(removed.state().manifest().entries().len(), 1);
-        assert_eq!(removed.result().fields()["orphanCheckRequested"], true);
-
-        let pin = Cli::try_parse(["pkg", "pin", "alpha"]).unwrap();
-        let Command::Pin(args) = pin.parsed_command() else {
-            unreachable!()
-        };
-        let pinned = edit_pin_state(state(), args, PinAction::Pin).unwrap();
-        assert!(pinned.state().manifest().entries()[0].is_pinned());
-        assert_eq!(pinned.result().fields()["changed"][0], "sel_alpha");
-    }
-
-    #[test]
-    fn empty_history_is_offline_but_delete_stays_engine_bound() {
-        let history = History::new(vec![], None).unwrap();
-        let list = Cli::try_parse(["pkg", "history"]).unwrap();
-        let Command::History(args) = list.parsed_command() else {
-            unreachable!()
-        };
-        assert!(
-            read_history(&history, args).unwrap().fields()["entries"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
-        let delete = Cli::try_parse(["pkg", "history", "--delete", "gen-0001"]).unwrap();
-        let Command::History(args) = delete.parsed_command() else {
-            unreachable!()
-        };
-        assert_eq!(
-            read_history(&history, args).unwrap_err().exit_code(),
-            ExitCode::EngineUnavailable
-        );
-    }
-}
+mod tests;

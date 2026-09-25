@@ -341,9 +341,7 @@ impl PublicEvent {
             EventKind::BuildProgress(event) => {
                 live::Update::Percent(format!("{:.0}", event.pct * 100.0).parse().unwrap_or(0))
             }
-            EventKind::DownloadProgress(event) => {
-                live::Update::Percent(percent(event.done, event.total))
-            }
+            EventKind::DownloadProgress(event) => live::Update::Download(event.done, event.total),
             EventKind::BuildStarted(event) => live::Update::Activity(format!(
                 "Building {} {}",
                 event.package_name,
@@ -407,11 +405,9 @@ impl PublicEvent {
 
 fn human_phase(event: &PhaseEvent) -> &'static str {
     match (event.phase.as_str(), event.status.as_str()) {
-        ("acquire", "started") => "Checking for a trusted download...",
+        ("acquire", "started") => "Checking package sources...",
         ("acquire", "completed") => "Package source ready.",
-        ("build", "started") => {
-            "Preparing a local build. Checking dependencies and cached downloads..."
-        }
+        ("build", "started") => "Checking build dependencies and cached downloads...",
         ("build", "approval") => "Build plan ready.",
         ("build", "completed") => "Local build complete.",
         ("build_execute", "started") => "Preparing the approved build...",
@@ -620,7 +616,7 @@ mod tests {
         let rendered = String::from_utf8(rendered).unwrap();
         assert_eq!(
             rendered,
-            "Checking for a trusted download...\nBuilding hello 1.0...\nBuilding: 50%\nActivated generation gen-1\n"
+            "Checking package sources...\nBuilding hello 1.0...\nBuilding: 50%\nActivated generation gen-1\n"
         );
         assert!(!rendered.contains("sel_1"));
         assert!(!rendered.contains("acquire:"));

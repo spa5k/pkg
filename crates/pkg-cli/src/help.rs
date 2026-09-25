@@ -31,7 +31,15 @@ const GROUPS: &[(&str, &[&str])] = &[
     (
         "Manage packages",
         &[
-            "install", "list", "remove", "outdated", "update", "upgrade", "pin", "unpin",
+            "install",
+            "list",
+            "remove",
+            "uninstall",
+            "outdated",
+            "update",
+            "upgrade",
+            "pin",
+            "unpin",
         ],
     ),
     (
@@ -40,7 +48,7 @@ const GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Set up and diagnose",
-        &["doctor", "shellenv", "completion", "uninstall"],
+        &["doctor", "shellenv", "completion", "system"],
     ),
 ];
 

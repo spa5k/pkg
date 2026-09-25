@@ -627,16 +627,16 @@ prove_structured_uninstall_refusal() {
     case "$mode" in
         json)
             flag=--json
-            printf '%s\n' '{"schemaVersion":1,"ok":false,"command":"uninstall","error":{"symbol":"CONFIG","code":78,"message":"live uninstall requires plain output","hint":"remove --json or --jsonl, or use --dry-run"}}' > "$expected"
+            printf '%s\n' '{"schemaVersion":1,"ok":false,"command":"system uninstall","error":{"symbol":"CONFIG","code":78,"message":"live uninstall requires plain output","hint":"remove --json or --jsonl, or use --dry-run"}}' > "$expected"
             ;;
         jsonl)
             flag=--jsonl
-            printf '%s\n' '{"schemaVersion":1,"type":"result","ok":false,"command":"uninstall","error":{"symbol":"CONFIG","code":78,"message":"live uninstall requires plain output","hint":"remove --json or --jsonl, or use --dry-run"}}' > "$expected"
+            printf '%s\n' '{"schemaVersion":1,"type":"result","ok":false,"command":"system uninstall","error":{"symbol":"CONFIG","code":78,"message":"live uninstall requires plain output","hint":"remove --json or --jsonl, or use --dry-run"}}' > "$expected"
             ;;
         *) return 2 ;;
     esac
     set +e
-    docker exec "$container" /usr/local/bin/pkg "$flag" --yes uninstall \
+    docker exec "$container" /usr/local/bin/pkg "$flag" --yes system uninstall \
         > "$stdout" 2> "$stderr"
     status=$?
     set -e
@@ -1192,7 +1192,7 @@ docker exec "$container" su - proof-user -c \
 
 echo "+ pkg rollback"
 rollback_output=$(docker exec "$container" su - proof-user -c \
-    "/usr/local/bin/pkg --json rollback")
+    "/usr/local/bin/pkg --json --yes rollback")
 printf '%s\n' "$rollback_output" | grep -F '"sourceGeneration"' >/dev/null
 printf '%s\n' "$rollback_output" | grep -F '"targetGeneration"' >/dev/null
 docker exec "$container" su - proof-user -c \
@@ -1327,7 +1327,7 @@ sys.exit(record.get("schema_version") != 1 or record.get("state", {}).get("kind"
 
 echo "+ pkg terminal-exec uninstall"
 set +e
-docker exec "$container" env PKG_INSTALL_DEBUG=1 /usr/local/bin/pkg --yes uninstall
+docker exec "$container" env PKG_INSTALL_DEBUG=1 /usr/local/bin/pkg --yes system uninstall
 uninstall_status=$?
 set -e
 if [ "$uninstall_status" -ne 0 ]; then

@@ -10,6 +10,7 @@ use crate::presentation::{Style, Tone};
 pub(super) enum Update {
     Activity(String),
     Percent(u64),
+    Download(u64, u64),
     Complete(String),
     Notice(String),
     Pause,
@@ -58,7 +59,7 @@ impl Drop for LiveProgress {
 struct Line {
     label: String,
     percent: Option<u64>,
-    started: Instant,
+    bytes: Option<(u64, u64)>,
     updated: Instant,
 }
 
@@ -82,6 +83,7 @@ fn run(receiver: &Receiver<Message>, style: Style) {
         if last_draw.elapsed() >= Duration::from_millis(120) {
             if let Some(line) = &line {
                 let text = render(line, frame, crate::presentation::terminal_width());
+                let text = style.paint(&text, Tone::Heading);
                 if write!(io::stderr(), "\r\x1b[2K{text}")
                     .and_then(|()| io::stderr().flush())
                     .is_err()
@@ -116,7 +118,7 @@ fn apply(
             *line = Some(Line {
                 label,
                 percent: None,
-                started: Instant::now(),
+                bytes: None,
                 updated: Instant::now(),
             });
         }
@@ -126,17 +128,17 @@ fn apply(
                 line.updated = Instant::now();
             }
         }
+        Update::Download(done, total) => {
+            if let Some(line) = line {
+                line.percent = (total > 0).then(|| super::percent(done, total));
+                line.bytes = (total > 0).then_some((done, total));
+                line.updated = Instant::now();
+            }
+        }
         Update::Complete(text) => {
             write!(writer, "\r\x1b[2K")?;
-            let elapsed = line
-                .take()
-                .map(|line| format!("  {}", duration(line.started.elapsed())))
-                .unwrap_or_default();
-            writeln!(
-                writer,
-                "{} {text}{elapsed}",
-                style.paint("✓", Tone::Success)
-            )?;
+            *line = None;
+            writeln!(writer, "{} {text}", style.paint("✓", Tone::Success))?;
         }
         Update::Notice(text) => {
             write!(writer, "\r\x1b[2K")?;
@@ -149,11 +151,6 @@ fn apply(
         }
     }
     writer.flush()
-}
-
-fn duration(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs();
-    format!("{}:{:02}", seconds / 60, seconds % 60)
 }
 
 fn render(line: &Line, frame: usize, width: usize) -> String {
@@ -180,7 +177,17 @@ fn render(line: &Line, frame: usize, width: usize) -> String {
     } else {
         ""
     };
-    let suffix = format!("{progress}  {}{waiting}", duration(line.started.elapsed()));
+    let bytes = line
+        .bytes
+        .filter(|_| width >= 80)
+        .map_or_else(String::new, |(done, total)| {
+            format!(
+                "  {} / {}",
+                crate::presentation::format_bytes(done),
+                crate::presentation::format_bytes(total)
+            )
+        });
+    let suffix = format!("{progress}{bytes}{waiting}");
     let limit = width.saturating_sub(suffix.chars().count() + 4);
     let first = crate::presentation::wrap(&line.label, limit.saturating_sub(1))
         .into_iter()
@@ -247,7 +254,7 @@ mod tests {
         let line = Line {
             label: "Building just 1.58.0".into(),
             percent: Some(99),
-            started: Instant::now(),
+            bytes: None,
             updated: Instant::now(),
         };
         let text = render(&line, 0, 80);
@@ -258,11 +265,45 @@ mod tests {
     }
 
     #[test]
+    fn known_downloads_show_bytes_and_unknown_downloads_have_no_percentage_or_timer() {
+        let mut line = None;
+        let mut output = Vec::new();
+        apply(
+            &mut line,
+            Update::Activity("Downloading just".into()),
+            Style::default(),
+            &mut output,
+        )
+        .unwrap();
+        apply(
+            &mut line,
+            Update::Download(1024, 4096),
+            Style::default(),
+            &mut output,
+        )
+        .unwrap();
+        let text = render(line.as_ref().unwrap(), 0, 100);
+        assert!(text.contains("25%"));
+        assert!(text.contains("1.0 KiB / 4.0 KiB"));
+        assert!(!text.contains("0:00"));
+        apply(
+            &mut line,
+            Update::Download(0, 0),
+            Style::default(),
+            &mut output,
+        )
+        .unwrap();
+        let text = render(line.as_ref().unwrap(), 0, 100);
+        assert!(!text.contains('%'));
+        assert!(!text.contains("KiB"));
+    }
+
+    #[test]
     fn unknown_work_has_no_invented_percent() {
         let line = Line {
             label: "Checking dependencies".into(),
             percent: None,
-            started: Instant::now(),
+            bytes: None,
             updated: Instant::now(),
         };
         assert!(!render(&line, 0, 40).contains('%'));

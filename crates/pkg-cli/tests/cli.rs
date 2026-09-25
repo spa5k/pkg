@@ -245,7 +245,10 @@ fn semantic_usage_failure_uses_the_selected_machine_format() {
 #[test]
 fn live_structured_uninstall_refuses_before_privilege_or_mutation() {
     for flag in ["--json", "--jsonl"] {
-        let output = pkg().args([flag, "uninstall", "--yes"]).output().unwrap();
+        let output = pkg()
+            .args([flag, "system", "uninstall", "--yes"])
+            .output()
+            .unwrap();
         assert_eq!(output.status.code(), Some(78));
         assert!(output.stderr.is_empty());
         let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -260,7 +263,7 @@ fn live_structured_uninstall_refuses_before_privilege_or_mutation() {
 #[test]
 fn uninstall_refuses_an_unsupported_host_before_privilege() {
     let output = pkg()
-        .args(["--json", "--dry-run", "uninstall"])
+        .args(["--json", "--dry-run", "system", "uninstall"])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(78));
@@ -327,4 +330,35 @@ fn every_command_has_examples_and_remains_discoverable() {
     let typo = pkg().args(["instal", "ripgrep"]).output().unwrap();
     assert!(!typo.status.success());
     assert!(String::from_utf8(typo.stderr).unwrap().contains("install"));
+}
+
+#[test]
+fn package_uninstall_is_a_remove_alias_and_never_reaches_product_uninstall() {
+    use pkg_cli::cli::Cli;
+    for flags in [vec![], vec!["--yes"], vec!["--dry-run"], vec!["--json"]] {
+        let mut remove = vec!["pkg", "remove", "just"];
+        remove.extend(flags.iter().copied());
+        let mut uninstall = vec!["pkg", "uninstall", "just"];
+        uninstall.extend(flags);
+        assert_eq!(
+            Cli::try_parse(remove).unwrap(),
+            Cli::try_parse(uninstall).unwrap()
+        );
+    }
+    for args in [
+        vec!["uninstall"],
+        vec!["system"],
+        vec!["system", "uninstall", "just"],
+    ] {
+        let output = pkg().args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+    }
+    let output = pkg()
+        .args(["system", "uninstall", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("sudo pkg system uninstall"));
+    assert!(help.contains("pkg uninstall <package>"));
 }

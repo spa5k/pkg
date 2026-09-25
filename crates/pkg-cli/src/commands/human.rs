@@ -8,6 +8,7 @@ use super::execute::CommandResult;
 use crate::presentation::table::write_table;
 use crate::presentation::{Style, Tone, format_bytes};
 
+mod changes;
 mod details;
 
 type Column = (&'static str, &'static str);
@@ -30,7 +31,7 @@ impl View {
             | Command::Rollback(_)
             | Command::Gc(_)
             | Command::Repair(_)
-            | Command::Uninstall
+            | Command::System(crate::cli::SystemCommand::Uninstall)
             | Command::Update(_) => true,
             Command::History(args) => args.delete().is_some(),
             _ => false,
@@ -77,11 +78,25 @@ pub(super) fn write_result(
             writeln!(writer)?;
         }
     }
+    if command == "list" {
+        changes::write_sources(&mut writer, records, style)?;
+        if records
+            .iter()
+            .any(|record| record.contains_key("closureBytes"))
+        {
+            style.text(
+                &mut writer,
+                "",
+                "Size is the primary output closure, including shared dependencies.",
+            )?;
+            writeln!(writer)?;
+        }
+    }
     details::write_details(&mut writer, command, &result.human_fields(), style)?;
     if preview {
         if (command == "upgrade"
             && result.fields().get("upgraded") == Some(&Value::Array(Vec::new())))
-            || (command == "uninstall"
+            || (command == "system uninstall"
                 && result.fields().get("status").and_then(Value::as_str) == Some("absent"))
         {
             style.text(&mut writer, "Plan: ", &summary_text(result.summary()))?;
@@ -91,6 +106,16 @@ pub(super) fn write_result(
         style.success(&mut writer, &summary_text(result.summary()))?;
     }
     details::write_next(writer, command, result, view, preview)
+}
+
+pub(super) fn write_confirmation(
+    mut writer: impl Write,
+    command: &str,
+    result: &CommandResult,
+) -> io::Result<()> {
+    let style = Style::new(Style::stderr(true).is_terminal(), false);
+    style.heading(&mut writer, &format!("pkg · {command}"))?;
+    details::write_details(writer, command, &result.human_fields(), style)
 }
 
 fn summary_text(summary: &str) -> String {
@@ -128,11 +153,13 @@ fn columns(command: &str, records: &[Map<String, Value>]) -> Vec<Column> {
             ("Description", "description"),
         ],
         "list" => {
-            let mut columns = vec![
-                ("Package", "selector"),
-                ("Version", "version"),
-                ("Pinned", "pinned"),
-            ];
+            let mut columns = vec![("Package", "name"), ("Version", "version")];
+            if records
+                .iter()
+                .any(|record| record.get("pinned") == Some(&Value::Bool(true)))
+            {
+                columns.push(("Pinned", "pinned"));
+            }
             for column in [
                 ("Outputs", "outputsToInstall"),
                 ("Size", "closureBytes"),
@@ -155,10 +182,10 @@ fn columns(command: &str, records: &[Map<String, Value>]) -> Vec<Column> {
             history_columns(records)
         }
         "history" => vec![
-            ("Generation", "id"),
+            ("Generation", "generationLabel"),
             ("Created", "createdAt"),
             ("Operation", "operation"),
-            ("Active", "active"),
+            ("Changes", "historyChanges"),
         ],
         _ => Vec::new(),
     }
@@ -174,6 +201,11 @@ fn history_columns(records: &[Map<String, Value>]) -> Vec<Column> {
     for (before, after, column) in [
         ("beforePinned", "afterPinned", ("Pins", "pinChange")),
         ("beforeOutputs", "afterOutputs", ("Outputs", "outputChange")),
+        (
+            "beforeRevision",
+            "afterRevision",
+            ("Source commit", "revisionChange"),
+        ),
     ] {
         if records
             .iter()
@@ -215,9 +247,24 @@ fn write_info(
 }
 
 fn cell(record: &Map<String, Value>, key: &str) -> String {
+    if key == "generationLabel" {
+        return format!(
+            "{}{}",
+            cell(record, "id"),
+            if record.get("active") == Some(&Value::Bool(true)) {
+                " (active)"
+            } else {
+                ""
+            }
+        );
+    }
+    if key == "historyChanges" {
+        return changes::history_summary(record);
+    }
     let change = match key {
         "pinChange" => Some(("beforePinned", "afterPinned")),
         "outputChange" => Some(("beforeOutputs", "afterOutputs")),
+        "revisionChange" => Some(("beforeRevision", "afterRevision")),
         _ => None,
     };
     if let Some((before, after)) = change {
@@ -333,9 +380,7 @@ mod tests {
             "history",
             &json!([{"type":"generation", "id":"gen-0002", "createdAt":"2026-09-25T00:00:00Z", "operation":"install", "active":true}]),
         );
-        assert!(
-            history.contains("gen-0002") && history.contains("Active") && history.contains("yes")
-        );
+        assert!(history.contains("gen-0002") && history.contains("(active)"));
         let outdated = render(
             "outdated",
             &json!([{"type":"outdated_package", "package":"just", "current":"1.0", "available":"2.0", "pinned":false, "kind":"upgrade"}]),
@@ -473,7 +518,7 @@ mod command_views {
             "rollback",
             "gc",
             "repair",
-            "uninstall",
+            "system uninstall",
         ] {
             let text = output(command, &json!({"dryRun":true}), false);
             assert!(

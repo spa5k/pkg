@@ -14,6 +14,12 @@ pub(super) fn write_details(
     style: Style,
 ) -> io::Result<()> {
     write_added(&mut writer, fields, style)?;
+    if let Some(packages) = fields.get("packages").and_then(Value::as_array) {
+        super::changes::write_packages(&mut writer, packages, style)?;
+    }
+    if let Some(changes) = fields.get("packageChanges").and_then(Value::as_array) {
+        super::changes::write_changes(&mut writer, changes, style)?;
+    }
     if let Some(plan) = fields
         .get("preflight")
         .or_else(|| fields.get("buildPreview"))
@@ -36,7 +42,9 @@ pub(super) fn write_details(
             }
         }
     }
-    if command == "uninstall" && fields.get("status").and_then(Value::as_str) == Some("planned") {
+    if command == "system uninstall"
+        && fields.get("status").and_then(Value::as_str) == Some("planned")
+    {
         style.text(
             &mut writer,
             "Scope: ",
@@ -61,6 +69,9 @@ fn write_fields(
         ("prunedGenerations", "Deleted generations"),
         ("recoveredGenerations", "Recovered generations"),
     ] {
+        if matches!(key, "removed" | "changed" | "upgraded") && fields.contains_key("packages") {
+            continue;
+        }
         if let Some(values) = fields
             .get(key)
             .and_then(Value::as_array)
@@ -74,6 +85,8 @@ fn write_fields(
         }
     }
     for (key, title) in [
+        ("createdAt", "Created"),
+        ("operation", "Operation"),
         ("sourceGeneration", "From"),
         ("targetGeneration", "Target environment"),
         ("packageCount", "Packages"),
@@ -201,14 +214,12 @@ pub(super) fn write_next(
                 "pkg update refreshes the catalog."
             }
             "update" => "pkg outdated shows available package updates.",
-            "install" | "upgrade" | "remove" | "rollback" => {
-                "pkg list shows your packages. pkg history shows saved environments."
-            }
+
             "pin" => {
                 "pkg list --pinned shows pinned packages. pkg unpin <package> allows upgrades."
             }
             "unpin" => "pkg upgrade <package> installs the latest available version.",
-            "history" => "pkg rollback <ID> restores a saved environment.",
+            "history" => "pkg history <ID> shows saved packages. pkg rollback <ID> restores them.",
             "repair" => "pkg doctor checks your system.",
             _ => return Ok(()),
         }
