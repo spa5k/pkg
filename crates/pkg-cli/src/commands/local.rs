@@ -259,7 +259,15 @@ impl CoreOperations for LocalStateOperations {
         }
         confirm_destructive(
             policy.yes(),
-            &format!("Remove {} package(s)?", args.packages().len()),
+            &format!(
+                "Remove {} {}?",
+                args.packages().len(),
+                if args.packages().len() == 1 {
+                    "package"
+                } else {
+                    "packages"
+                }
+            ),
         )?;
         self.commit_state_edit(StateEditKind::Remove, |state| remove_state(state, args))
     }
@@ -590,7 +598,7 @@ impl LocalStateOperations {
             .collect::<BTreeSet<_>>();
         if selected_ids.is_empty() {
             return upgrade_noop_result(&skipped_pinned)?
-                .with_package_labels(labels.clone())
+                .with_package_labels(labels)
                 .map_err(|_| mutation_failed());
         }
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
@@ -623,7 +631,7 @@ impl LocalStateOperations {
                 .collect::<Vec<_>>();
             if ids.is_empty() {
                 return upgrade_noop_result(&skipped_pinned)?
-                    .with_package_labels(labels.clone())
+                    .with_package_labels(labels)
                     .map_err(|_| mutation_failed());
             }
             selection = select_upgrade(source.state().clone(), UpgradeScope::Named(ids), false)
@@ -659,7 +667,7 @@ impl LocalStateOperations {
             if !upgraded.changed() {
                 let _ = broker.complete(handle.clone());
                 return upgrade_noop_result(&skipped_pinned)?
-                    .with_package_labels(labels.clone())
+                    .with_package_labels(labels)
                     .map_err(|_| mutation_failed());
             }
             let upgraded_names = upgraded
@@ -2467,10 +2475,15 @@ pub fn confirm_destructive(yes: bool, prompt: &str) -> Result<(), CommandError> 
         return Err(confirmation_required());
     }
     writeln!(stderr).map_err(|_| confirmation_required())?;
-    crate::presentation::Style::stderr(true)
-        .text(&mut stderr, "", prompt)
-        .map_err(|_| confirmation_required())?;
-    write!(stderr, "Continue? [y/N] ").map_err(|_| confirmation_required())?;
+    let lines = crate::presentation::wrap(
+        prompt,
+        crate::presentation::terminal_width().saturating_sub(6),
+    );
+    let (last, earlier) = lines.split_last().ok_or_else(confirmation_required)?;
+    for line in earlier {
+        writeln!(stderr, "{line}").map_err(|_| confirmation_required())?;
+    }
+    write!(stderr, "{last} [y/N] ").map_err(|_| confirmation_required())?;
     stderr.flush().map_err(|_| confirmation_required())?;
     let mut answer = String::new();
     stdin

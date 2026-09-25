@@ -21,6 +21,16 @@ pub(super) fn write_details(
         write_plan(&mut writer, plan, style)?;
     }
     write_fields(&mut writer, fields, style)?;
+    if command == "update" {
+        for (key, title) in [
+            ("channelSequence", "Catalog sequence"),
+            ("updated", "Update available"),
+        ] {
+            if let Some(value) = fields.get(key) {
+                style.text(&mut writer, &format!("{title}: "), &value_text(value))?;
+            }
+        }
+    }
     if command == "uninstall" && fields.get("status").and_then(Value::as_str) == Some("planned") {
         style.text(
             &mut writer,

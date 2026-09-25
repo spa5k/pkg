@@ -65,8 +65,8 @@ pub(super) fn write_result(
     style.heading(&mut writer, &title)?;
     if command == "info" {
         write_info(&mut writer, records, style)?;
-    } else if let Some(first) = records.first() {
-        let columns = columns(command, first);
+    } else if !records.is_empty() {
+        let columns = columns(command, records);
         if !columns.is_empty() {
             let rows = records
                 .iter()
@@ -79,6 +79,13 @@ pub(super) fn write_result(
     }
     details::write_details(&mut writer, command, &result.human_fields(), style)?;
     if preview {
+        if (command == "upgrade"
+            && result.fields().get("upgraded") == Some(&Value::Array(Vec::new())))
+            || (command == "uninstall"
+                && result.fields().get("status").and_then(Value::as_str) == Some("absent"))
+        {
+            style.text(&mut writer, "Plan: ", &summary_text(result.summary()))?;
+        }
         style.text(&mut writer, "Preview: ", "No changes were applied.")?;
     } else {
         style.success(&mut writer, &summary_text(result.summary()))?;
@@ -109,7 +116,10 @@ fn summary_text(summary: &str) -> String {
     text
 }
 
-fn columns(command: &str, first: &Map<String, Value>) -> Vec<Column> {
+fn columns(command: &str, records: &[Map<String, Value>]) -> Vec<Column> {
+    let Some(first) = records.first() else {
+        return Vec::new();
+    };
     match command {
         "search" => vec![
             ("Package", "package"),
@@ -142,12 +152,7 @@ fn columns(command: &str, first: &Map<String, Value>) -> Vec<Column> {
             ("Change", "kind"),
         ],
         "history" if first.get("type").and_then(Value::as_str) == Some("generation_change") => {
-            vec![
-                ("Package", "selector"),
-                ("Change", "kind"),
-                ("Before", "beforeVersion"),
-                ("After", "afterVersion"),
-            ]
+            history_columns(records)
         }
         "history" => vec![
             ("Generation", "id"),
@@ -157,6 +162,27 @@ fn columns(command: &str, first: &Map<String, Value>) -> Vec<Column> {
         ],
         _ => Vec::new(),
     }
+}
+
+fn history_columns(records: &[Map<String, Value>]) -> Vec<Column> {
+    let mut columns = vec![
+        ("Package", "selector"),
+        ("Change", "kind"),
+        ("Before", "beforeVersion"),
+        ("After", "afterVersion"),
+    ];
+    for (before, after, column) in [
+        ("beforePinned", "afterPinned", ("Pins", "pinChange")),
+        ("beforeOutputs", "afterOutputs", ("Outputs", "outputChange")),
+    ] {
+        if records
+            .iter()
+            .any(|record| record.get(before) != record.get(after))
+        {
+            columns.push(column);
+        }
+    }
+    columns
 }
 
 fn write_info(
@@ -189,6 +215,18 @@ fn write_info(
 }
 
 fn cell(record: &Map<String, Value>, key: &str) -> String {
+    let change = match key {
+        "pinChange" => Some(("beforePinned", "afterPinned")),
+        "outputChange" => Some(("beforeOutputs", "afterOutputs")),
+        _ => None,
+    };
+    if let Some((before, after)) = change {
+        return format!(
+            "{} → {}",
+            record.get(before).map_or_else(|| "-".into(), value_text),
+            record.get(after).map_or_else(|| "-".into(), value_text)
+        );
+    }
     if key == "catalogStatus" {
         return match (
             record.get("broken").and_then(Value::as_bool),
@@ -259,6 +297,20 @@ mod tests {
             "1.2 KiB",
         ] {
             assert!(output.contains(expected), "missing {expected}: {output}");
+        }
+    }
+
+    #[test]
+    fn history_shows_pin_and_output_changes_even_when_versions_match() {
+        let output = render(
+            "history",
+            &json!([
+                {"type":"generation_change", "selector":"fzf", "kind":"changed", "beforeVersion":"1.0", "afterVersion":"1.0", "beforePinned":false, "afterPinned":true, "beforeOutputs":["out"], "afterOutputs":["out"]},
+                {"type":"generation_change", "selector":"just", "kind":"changed", "beforeVersion":"1.0", "afterVersion":"1.0", "beforePinned":false, "afterPinned":false, "beforeOutputs":["out"], "afterOutputs":["out", "man"]}
+            ]),
+        );
+        for text in ["Pins", "no → yes", "Outputs", "out → out, man"] {
+            assert!(output.contains(text), "{output}");
         }
     }
 
@@ -441,6 +493,21 @@ mod command_views {
             assert!(
                 !View::from_cli(&Cli::try_parse(["pkg", "--dry-run", command]).unwrap()).preview
             );
+        }
+    }
+
+    #[test]
+    fn catalog_previews_retain_the_check_result() {
+        for (updated, expected) in [(true, "yes"), (false, "no")] {
+            let text = output(
+                "update",
+                &json!({"channelSequence":52,"checkedOnly":true,"updated":updated}),
+                true,
+            );
+            assert!(text.contains("Catalog sequence: 52"));
+            assert!(text.contains(&format!("Update available: {expected}")));
+            assert!(text.contains("No changes were applied."));
+            assert!(!text.contains('✓'));
         }
     }
 
