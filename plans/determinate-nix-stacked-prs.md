@@ -103,7 +103,7 @@ completion of the production trust ceremony.
 
 ### PUBLIC-12: complete command help and terminal layout
 
-- **Status:** in progress.
+- **Status:** merged in [PR #50](https://github.com/spa5k/pkg/pull/50).
 - **Purpose:** make every public command easy to find and learn.
 - **Owns:** grouped home help, examples for all commands, shared display-width
   wrapping, terminal size detection, and accessible help/color behavior.
@@ -115,7 +115,8 @@ completion of the production trust ceremony.
 
 ### PUBLIC-13: complete command results and previews
 
-- **Status:** in progress.
+- **Status:** implemented in [PR #51](https://github.com/spa5k/pkg/pull/51).
+  E/F and A/Spec reviews pass. Public release pending.
 - **Purpose:** show the useful result and next action for every daily command.
 - **Owns:** package changes, environment IDs, disk values, explicit previews,
   empty states, consistent errors, confirmations, and terminal result views.
