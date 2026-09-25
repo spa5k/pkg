@@ -4,9 +4,7 @@ title: Everyday pkg commands
 
 # Everyday commands
 
-This page describes current source. The public installer still selects alpha.52.
-The command changes below will ship in the next release. In alpha.52, use
-`pkg remove <package>` for packages and `sudo pkg uninstall` for product removal.
+These commands are available in alpha.54.
 
 ```console
 pkg search ripgrep
@@ -114,7 +112,7 @@ Use `pkg gc --dry-run` to preview cleanup. Use `pkg gc` to perform it.
 
 ## Package coverage
 
-The signed alpha.52 channel contains 64,412 package records for Apple silicon
+The signed alpha.54 channel contains 64,412 package records for Apple silicon
 macOS and 69,517 records for x86-64 Linux. It uses metadata generated from
 Nixpkgs, including nested package sets such as `python311Packages.requests`.
 
@@ -160,4 +158,4 @@ Previews show the planned targets and state that no changes were applied.
 Install and rollback results identify the saved environment. History includes
 pin and output changes even when package versions match.
 
-The public installer selects alpha.52.
+The public installer selects alpha.54.
