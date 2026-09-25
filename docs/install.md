@@ -5,7 +5,7 @@ title: Install pkg
 # Install pkg
 
 The current public release is
-[`v0.1.0-alpha.49`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.49).
+[`v0.1.0-alpha.51`](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.51).
 It supports **Apple silicon macOS** and **Linux x86-64 with systemd**.
 Intel macOS and Linux arm64 are not release targets yet.
 
@@ -45,10 +45,10 @@ Use the terminal installer. It keeps the macOS permission prompt in your
 terminal session, shows the real result, and saves a private log.
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-0.1.0-alpha.49-preview.pkg && \
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/install-preview.sh && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.51/pkg-0.1.0-alpha.51-preview.pkg && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.51/install-preview.sh && \
 printf '%s  %s\n' '64ff6f29a287ce4b4759096b3a862b58a8bca681b05dcf3ea46d8a94793de4b4' 'install-preview.sh' | shasum -a 256 --check && \
-/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.49-preview.pkg 30397fa7519c7caf388cd8f6e83207aa1a7ba0b2b03bc6a067c5b720fc529c3a
+/bin/bash ./install-preview.sh ./pkg-0.1.0-alpha.51-preview.pkg 40da10c22a8bffb3e0e31ae28fdd9538c989fbfbb151195b82dbe7ebe2c07cfc
 ```
 
 Allow the macOS system configuration prompt if it appears. Keep the terminal
@@ -83,8 +83,8 @@ sessions as an upgrade method.
 Download and verify the installer before you run it:
 
 ```sh
-curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.49/pkg-install-x86_64-linux && \
-printf '%s  %s\n' '3643ea8c422bf768a2f2ea62712e933c5d74d3fcfb062278dd83d4181b7c64a4' 'pkg-install-x86_64-linux' | sha256sum --check && \
+curl -fLO https://github.com/spa5k/pkg/releases/download/v0.1.0-alpha.51/pkg-install-x86_64-linux && \
+printf '%s  %s\n' '7bbbfa9f31db90307005684642abb82bd9336526842e22e5b19e82eb5426908b' 'pkg-install-x86_64-linux' | sha256sum --check && \
 chmod 700 ./pkg-install-x86_64-linux && \
 sudo ./pkg-install-x86_64-linux
 ```
@@ -109,7 +109,7 @@ For a normal product upgrade, run the verified installer without options.
 It checks, stops, updates, and restarts the pkg services automatically.
 It keeps Nix and installed packages.
 
-#### Fresh Install
+#### Fresh install
 
 Run the verified installer without options. It installs the package engine,
 installs pkg, starts services, and saves the installation record.
@@ -131,7 +131,7 @@ unit files must be unchanged and must have no drop-ins.
 
 Omit `--leave-services-offline` for the normal automatic upgrade.
 
-#### Offline Product Asset Repair
+#### Offline product asset repair
 
 Package repair and product repair have different purposes:
 
