@@ -368,12 +368,18 @@ impl PublicEvent {
                 writeln!(writer, "Downloading {}...", event.selector)
             }
             EventKind::DownloadProgress(event) => {
-                writeln!(
-                    writer,
-                    "Downloading {}: {}%",
-                    event.selector,
-                    percent(event.done, event.total)
-                )
+                if event.total == 0 {
+                    writeln!(writer, "Downloading {}...", event.selector)
+                } else {
+                    writeln!(
+                        writer,
+                        "Downloading {}: {}% ({} / {})",
+                        event.selector,
+                        percent(event.done, event.total),
+                        crate::presentation::format_bytes(event.done),
+                        crate::presentation::format_bytes(event.total)
+                    )
+                }
             }
             EventKind::BuildStarted(event) => {
                 writeln!(
@@ -623,13 +629,13 @@ mod tests {
     }
 
     #[test]
-    fn download_progress_uses_percent_not_raw_byte_counts() {
+    fn download_progress_shows_known_byte_counts() {
         let event = PublicEvent::download_progress("op_1", "hello", 25, 100).unwrap();
         let mut rendered = Vec::new();
         event.write_human(&mut rendered).unwrap();
         assert_eq!(
             String::from_utf8(rendered).unwrap(),
-            "Downloading hello: 25%\n"
+            "Downloading hello: 25% (25 B / 100 B)\n"
         );
     }
 }

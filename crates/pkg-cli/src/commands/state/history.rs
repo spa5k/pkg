@@ -10,6 +10,9 @@ use pkg_core::{ChangeKind, GenerationSnapshot, History};
 use serde_json::{Map, Value, json};
 
 /// Read a saved environment, the retained history, or a two-generation diff.
+///
+/// # Errors
+/// Returns an error for a missing generation, an engine-bound deletion, or an invalid public result.
 pub fn read_history(history: &History, args: &HistoryArgs) -> Result<CommandResult, CommandError> {
     if args.delete().is_some() {
         return Err(CommandError::new(
@@ -104,11 +107,11 @@ fn history_entries(history: &History) -> Result<Vec<Value>, CommandError> {
 
 pub(super) fn package_changes(from: &GenerationSnapshot, to: &GenerationSnapshot) -> Vec<Value> {
     History::diff(from, to).changes().iter().map(|change| {
-        let before = from.state().locked().entries().get(change.id()).map(|entry| entry.realization());
-        let after = to.state().locked().entries().get(change.id()).map(|entry| entry.realization());
+        let before = from.state().locked().entries().get(change.id()).map(pkg_core::state::LockEntry::realization);
+        let after = to.state().locked().entries().get(change.id()).map(pkg_core::state::LockEntry::realization);
         json!({
             "selector": change.selector().as_str(),
-            "name": after.or(before).map(|realization| realization.pname()),
+            "name": after.or(before).map(pkg_core::Realization::pname),
             "kind": match change.kind() { ChangeKind::Added => "added", ChangeKind::Removed => "removed", ChangeKind::Changed => "changed" },
             "beforeVersion": change.before_version().map(|version| optional_text(version.as_str())),
             "afterVersion": change.after_version().map(|version| optional_text(version.as_str())),

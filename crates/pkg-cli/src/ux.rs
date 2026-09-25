@@ -299,7 +299,7 @@ pub(crate) fn sanitize_public_text(value: &str) -> String {
     let bounded: String = value
         .chars()
         .map(|character| {
-            if matches!(character, '\n' | '\r' | '\t') {
+            if character.is_control() {
                 ' '
             } else {
                 character

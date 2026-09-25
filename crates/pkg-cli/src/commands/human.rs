@@ -79,18 +79,7 @@ pub(super) fn write_result(
         }
     }
     if command == "list" {
-        changes::write_sources(&mut writer, records, style)?;
-        if records
-            .iter()
-            .any(|record| record.contains_key("closureBytes"))
-        {
-            style.text(
-                &mut writer,
-                "",
-                "Size is the primary output closure, including shared dependencies.",
-            )?;
-            writeln!(writer)?;
-        }
+        write_list_notes(&mut writer, records, style)?;
     }
     details::write_details(&mut writer, command, &result.human_fields(), style)?;
     if preview {
@@ -106,6 +95,26 @@ pub(super) fn write_result(
         style.success(&mut writer, &summary_text(result.summary()))?;
     }
     details::write_next(writer, command, result, view, preview)
+}
+
+fn write_list_notes(
+    mut writer: impl Write,
+    records: &[Map<String, Value>],
+    style: Style,
+) -> io::Result<()> {
+    changes::write_sources(&mut writer, records, style)?;
+    if records
+        .iter()
+        .any(|record| record.contains_key("closureBytes"))
+    {
+        style.text(
+            &mut writer,
+            "",
+            "Size is the primary output closure, including shared dependencies.",
+        )?;
+        writeln!(writer)?;
+    }
+    Ok(())
 }
 
 pub(super) fn write_confirmation(
@@ -152,25 +161,7 @@ fn columns(command: &str, records: &[Map<String, Value>]) -> Vec<Column> {
             ("Status", "catalogStatus"),
             ("Description", "description"),
         ],
-        "list" => {
-            let mut columns = vec![("Package", "name"), ("Version", "version")];
-            if records
-                .iter()
-                .any(|record| record.get("pinned") == Some(&Value::Bool(true)))
-            {
-                columns.push(("Pinned", "pinned"));
-            }
-            for column in [
-                ("Outputs", "outputsToInstall"),
-                ("Size", "closureBytes"),
-                ("Outdated", "outdated"),
-            ] {
-                if first.contains_key(column.1) {
-                    columns.push(column);
-                }
-            }
-            columns
-        }
+        "list" => list_columns(records, first),
         "outdated" => vec![
             ("Package", "package"),
             ("Installed", "current"),
@@ -191,6 +182,26 @@ fn columns(command: &str, records: &[Map<String, Value>]) -> Vec<Column> {
     }
 }
 
+fn list_columns(records: &[Map<String, Value>], first: &Map<String, Value>) -> Vec<Column> {
+    let mut columns = vec![("Package", "name"), ("Version", "version")];
+    if records
+        .iter()
+        .any(|record| record.get("pinned") == Some(&Value::Bool(true)))
+    {
+        columns.push(("Pinned", "pinned"));
+    }
+    for column in [
+        ("Outputs", "outputsToInstall"),
+        ("Size", "closureBytes"),
+        ("Outdated", "outdated"),
+    ] {
+        if first.contains_key(column.1) {
+            columns.push(column);
+        }
+    }
+    columns
+}
+
 fn history_columns(records: &[Map<String, Value>]) -> Vec<Column> {
     let mut columns = vec![
         ("Package", "selector"),
@@ -207,10 +218,10 @@ fn history_columns(records: &[Map<String, Value>]) -> Vec<Column> {
             ("Source commit", "revisionChange"),
         ),
     ] {
-        if records
-            .iter()
-            .any(|record| record.get(before) != record.get(after))
-        {
+        if records.iter().any(|record| {
+            record.get("kind").and_then(Value::as_str) == Some("changed")
+                && record.get(before) != record.get(after)
+        }) {
             columns.push(column);
         }
     }
@@ -268,11 +279,7 @@ fn cell(record: &Map<String, Value>, key: &str) -> String {
         _ => None,
     };
     if let Some((before, after)) = change {
-        return format!(
-            "{} → {}",
-            record.get(before).map_or_else(|| "-".into(), value_text),
-            record.get(after).map_or_else(|| "-".into(), value_text)
-        );
+        return format!("{} → {}", cell(record, before), cell(record, after));
     }
     if key == "catalogStatus" {
         return match (
@@ -284,6 +291,12 @@ fn cell(record: &Map<String, Value>, key: &str) -> String {
             _ => "unsupported",
         }
         .to_owned();
+    }
+    if matches!(key, "beforeRevision" | "afterRevision") {
+        return record.get(key).and_then(Value::as_str).map_or_else(
+            || "-".into(),
+            |revision| revision.chars().take(12).collect(),
+        );
     }
     if key == "closureBytes" {
         return record

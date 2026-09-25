@@ -145,7 +145,12 @@ fn change_detail(change: &Map<String, Value>) -> String {
     if details.is_empty() {
         format!("Updated {after}")
     } else {
-        details.join("; ")
+        let detail = details.join("; ");
+        if before == after {
+            format!("{after}; {detail}")
+        } else {
+            detail
+        }
     }
 }
 
@@ -171,11 +176,11 @@ mod tests {
             ),
             (
                 json!({"kind":"changed","beforeVersion":"1.0","afterVersion":"1.0","beforePinned":false,"afterPinned":true}),
-                "pinned: no → yes",
+                "1.0; pinned: no → yes",
             ),
             (
                 json!({"kind":"changed","beforeVersion":"1.0","afterVersion":"1.0","beforeOutputs":["out"],"afterOutputs":["out","man"]}),
-                "outputs: out → out, man",
+                "1.0; outputs: out → out, man",
             ),
         ] {
             assert_eq!(change_detail(change.as_object().unwrap()), expected);

@@ -59,31 +59,7 @@ fn write_fields(
     fields: &Map<String, Value>,
     style: Style,
 ) -> io::Result<()> {
-    for (key, title) in [
-        ("upgraded", "Packages"),
-        ("removed", "Packages"),
-        ("changed", "Packages"),
-        ("unchanged", "Already in this state"),
-        ("skippedPinned", "Kept pinned"),
-        ("generations", "Generations to delete"),
-        ("prunedGenerations", "Deleted generations"),
-        ("recoveredGenerations", "Recovered generations"),
-    ] {
-        if matches!(key, "removed" | "changed" | "upgraded") && fields.contains_key("packages") {
-            continue;
-        }
-        if let Some(values) = fields
-            .get(key)
-            .and_then(Value::as_array)
-            .filter(|values| !values.is_empty())
-        {
-            style.text(
-                &mut writer,
-                &format!("{title}: "),
-                &value_text(&Value::Array(values.clone())),
-            )?;
-        }
-    }
+    write_selected(&mut writer, fields, style)?;
     for (key, title) in [
         ("createdAt", "Created"),
         ("operation", "Operation"),
@@ -110,6 +86,39 @@ fn write_fields(
                 .as_u64()
                 .map_or_else(|| "unknown".into(), format_bytes);
             style.text(&mut writer, &format!("{title}: "), &text)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_selected(
+    mut writer: impl Write,
+    fields: &Map<String, Value>,
+    style: Style,
+) -> io::Result<()> {
+    for (key, title) in [
+        ("upgraded", "Packages"),
+        ("removed", "Packages"),
+        ("changed", "Packages"),
+        ("unchanged", "Already in this state"),
+        ("skippedPinned", "Kept pinned"),
+        ("generations", "Generations to delete"),
+        ("prunedGenerations", "Deleted generations"),
+        ("recoveredGenerations", "Recovered generations"),
+    ] {
+        if matches!(key, "removed" | "changed" | "upgraded") && fields.contains_key("packages") {
+            continue;
+        }
+        if let Some(values) = fields
+            .get(key)
+            .and_then(Value::as_array)
+            .filter(|values| !values.is_empty())
+        {
+            style.text(
+                &mut writer,
+                &format!("{title}: "),
+                &value_text(&Value::Array(values.clone())),
+            )?;
         }
     }
     Ok(())

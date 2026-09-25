@@ -302,58 +302,56 @@ pub(super) fn resolve_targets(
     state: &LifecycleState,
     names: &[String],
 ) -> Result<Vec<SelectorId>, CommandError> {
-    let mut ids = std::collections::BTreeSet::new();
-    for name in names {
-        let exact = state
+    names
+        .iter()
+        .map(|name| resolve_target(state, name))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()
+        .map(|ids| ids.into_iter().collect())
+}
+
+fn resolve_target(state: &LifecycleState, name: &str) -> Result<SelectorId, CommandError> {
+    let exact = state
+        .manifest()
+        .entries()
+        .iter()
+        .filter(|entry| entry.id().as_str() == name || entry.selector().as_str() == name)
+        .collect::<Vec<_>>();
+    let matches = if exact.is_empty() {
+        state
             .manifest()
             .entries()
             .iter()
-            .filter(|entry| entry.id().as_str() == name || entry.selector().as_str() == name)
-            .collect::<Vec<_>>();
-        let matches = if exact.is_empty() {
-            state
-                .manifest()
-                .entries()
+            .filter(|entry| {
+                state
+                    .locked()
+                    .entries()
+                    .get(entry.id())
+                    .is_some_and(|entry| entry.realization().pname() == name)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        exact
+    };
+    match matches.as_slice() {
+        [entry] => Ok(entry.id().clone()),
+        [] => Err(CommandError::new(
+            ExitCode::ResolveFailed,
+            format!("package '{name}' is not installed"),
+            "run `pkg list` to see installed names and selectors",
+        )),
+        _ => {
+            let choices = matches
                 .iter()
-                .filter(|entry| {
-                    state
-                        .locked()
-                        .entries()
-                        .get(entry.id())
-                        .is_some_and(|entry| entry.realization().pname() == name)
-                })
+                .map(|entry| entry.id().as_str())
                 .collect::<Vec<_>>()
-        } else {
-            exact
-        };
-        match matches.as_slice() {
-            [entry] => {
-                ids.insert(entry.id().clone());
-            }
-            [] => {
-                return Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    format!("package '{name}' is not installed"),
-                    "run `pkg list` to see installed names and selectors",
-                ));
-            }
-            _ => {
-                let choices = matches
-                    .iter()
-                    .map(|entry| entry.id().as_str().to_owned())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(CommandError::new(
-                    ExitCode::ResolveFailed,
-                    format!("installed name '{name}' matches more than one package"),
-                    format!(
-                        "use an exact selector from `pkg list`, or one of these IDs: {choices}"
-                    ),
-                ));
-            }
+                .join(", ");
+            Err(CommandError::new(
+                ExitCode::ResolveFailed,
+                format!("installed name '{name}' matches more than one package"),
+                format!("use an exact selector from `pkg list`, or one of these IDs: {choices}"),
+            ))
         }
     }
-    Ok(ids.into_iter().collect())
 }
 
 fn find_snapshot<'a>(

@@ -700,6 +700,16 @@ impl LocalStateOperations {
                 .first()
                 .ok_or_else(no_active_generation)?;
             let generation_id = next_generation_id(newest.generation().id())?;
+            let command_result = upgrade_result(
+                &public_operation_id,
+                &generation_id,
+                &upgraded_names,
+                &skipped_pinned,
+                build_approval,
+            )?
+            .with_packages(packages)
+            .and_then(|result| result.with_package_labels(labels))
+            .map_err(|_| mutation_failed())?;
             let prepared = prepare_state_edit(
                 layout.clone(),
                 lease,
@@ -736,16 +746,7 @@ impl LocalStateOperations {
                 .map_err(|_| install_commit_failed())?;
             local_committed = true;
             let _ = broker.complete(handle.clone());
-            upgrade_result(
-                &public_operation_id,
-                &generation_id,
-                &upgraded_names,
-                &skipped_pinned,
-                build_approval,
-            )?
-            .with_packages(packages)
-            .and_then(|result| result.with_package_labels(labels))
-            .map_err(|_| mutation_failed())
+            Ok(command_result)
         })();
         if result.is_err() && !local_committed {
             let _ = broker.cancel(handle);

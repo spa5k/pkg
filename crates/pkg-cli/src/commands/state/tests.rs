@@ -323,3 +323,16 @@ fn list_outdated_uses_catalog_results_and_keeps_name_only_output() {
     assert_eq!(result.fields()["entries"][0]["name"], "beta");
     assert_eq!(result.fields()["nameOnly"], true);
 }
+
+#[test]
+fn invalid_installed_names_cannot_emit_terminal_controls() {
+    let state = state();
+    let name = "missing\u{001b}]52;c;payload\u{0007}\u{009b}31m".to_owned();
+    let error = resolve_targets(&state, std::slice::from_ref(&name)).unwrap_err();
+    assert!(!error.message().chars().any(char::is_control));
+    assert!(!error.hint().chars().any(char::is_control));
+    for command in ["remove", "pin", "unpin", "upgrade"] {
+        let cli = Cli::try_parse(["pkg", command, &name]).unwrap();
+        assert!(cli.validate().is_ok());
+    }
+}
