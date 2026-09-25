@@ -83,13 +83,13 @@ jobs:
             target/release/pkg-root-helper target/release/pkg-install \
             target/release/pkg-release-index \
             production-linux/
-          test "$(production-linux/pkg --version)" = "pkg 0.1.0-alpha.51"
+          test "$(production-linux/pkg --version)" = "pkg 0.1.0-alpha.52"
           file production-linux/*
 
       - name: Retain the production input without publishing it
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pkg-v0.1.0-alpha.51-production-linux-input
+          name: pkg-v0.1.0-alpha.52-production-linux-input
           path: production-linux/
           if-no-files-found: error
           retention-days: 1
@@ -175,15 +175,15 @@ jobs:
       - name: Verify the retained candidate name
         if: ${{ success() }}
         run: |
-          test -f proof-artifacts/pkg-v0.1.0-alpha.51-linux-x86_64.tar.gz
+          test -f proof-artifacts/pkg-v0.1.0-alpha.52-linux-x86_64.tar.gz
           test -d proof-artifacts/evidence
 
       - name: Retain the candidate without publishing it
         if: ${{ success() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pkg-v0.1.0-alpha.51-linux-x86_64-candidate
-          path: proof-artifacts/pkg-v0.1.0-alpha.51-linux-x86_64.tar.gz
+          name: pkg-v0.1.0-alpha.52-linux-x86_64-candidate
+          path: proof-artifacts/pkg-v0.1.0-alpha.52-linux-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -191,7 +191,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pkg-v0.1.0-alpha.51-x86_64-linux-proof
+          name: pkg-v0.1.0-alpha.52-x86_64-linux-proof
           path: proof-artifacts/evidence/
           if-no-files-found: error
           retention-days: 7
