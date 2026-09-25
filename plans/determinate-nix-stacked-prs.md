@@ -143,8 +143,7 @@ completion of the production trust ceremony.
 
 ### PUBLIC-15: alpha.52 installation instructions
 
-- **Status:** alpha.52 links, verified installer digests, and command instructions
-  are current.
+- **Status:** alpha.52 instructions were published. Superseded by PUBLIC-19.
 - **Purpose:** give users the exact installer and current command instructions.
 - **Owns:** public version links, the rendered installer with verified digests,
   installation examples, release notes, and published plan status.
@@ -157,7 +156,7 @@ completion of the production trust ceremony.
 ### PUBLIC-16: installer authentication failure diagnostics
 
 - **Status:** merged in [PR #54](https://github.com/spa5k/pkg/pull/54).
-  Awaiting release. The original alpha.52 failure log does not establish the transport cause.
+  Published in alpha.53. The original alpha.52 failure log does not establish the transport cause.
 - **Purpose:** distinguish release download failures from rejected signatures
   and unsafe verification state.
 - **Owns:** redacted installer failure categories and clear retry instructions
@@ -172,7 +171,7 @@ completion of the production trust ceremony.
 ### PUBLIC-17: installed package identity and useful daily command output
 
 - **Status:** merged in [PR #55](https://github.com/spa5k/pkg/pull/55).
-  These commands are not in published alpha.52.
+  Published in alpha.53.
 - **Purpose:** resolve installed package names before approval and show the package changes users need to assess.
 - **Owns:** unique installed-name matching for remove, pin, unpin and upgrade; package uninstall alias; explicit system uninstall command; package names and source selectors in lists; generation inventories and change details; rollback approval; quiet progress without elapsed timers; command help and lifecycle harness updates.
 - **Depends:** PUBLIC-12, PUBLIC-13 and PUBLIC-16 (merged).
@@ -181,12 +180,22 @@ completion of the production trust ceremony.
 
 ### PUBLIC-18: alpha.53 release
 
-- **Status:** release preparation in progress. Alpha.52 remains the published release.
+- **Status:** release preparation merged in [PR #56](https://github.com/spa5k/pkg/pull/56).
+  Published as [alpha.53](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.53).
 - **Purpose:** publish installed package name resolution, useful history and rollback details, clear package/system removal commands, quieter progress, and installer authentication diagnostics.
 - **Owns:** alpha.53 version and candidate names, signed native assets, sequence 53 catalogs and channel, exact upgrade/reboot/product-removal evidence, installer instructions, and publication.
 - **Depends:** PUBLIC-16 and PUBLIC-17 (merged).
 - **Tests & gates:** local G-LINT, workspace tests, G-QUALITY, docs links, hosted Linux/macOS checks, exact asset signatures, public channel byte verification, alpha.52-to-alpha.53 macOS upgrade and reboot, native system uninstall and reinstall, and public installer checks on both platforms; A primary/security and E cross-area review.
 - **Rollback:** publish a higher channel sequence with the previous approved content. Keep Nix records and package generations. Never replay old metadata.
+
+### PUBLIC-19: alpha.53 installation instructions
+
+- **Status:** alpha.53 links, verified installer digests, and package/system removal instructions are current.
+- **Purpose:** give users the verified alpha.53 installer and current package/system removal commands.
+- **Owns:** published version links, the rendered installer with verified digests, command examples, release notes, and plan status.
+- **Depends:** PUBLIC-18.
+- **Tests & gates:** asset signatures, installer byte comparison and verification mode, shell syntax, renderer and documentation tests, docs links, and hosted checks; A primary/security and E cross-area review.
+- **Rollback:** restore the previous entry script only with a compatible higher channel sequence. Retain Nix records and package generations.
 
 ## Alpha.49: reliable installation and daily commands
 
