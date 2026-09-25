@@ -24,13 +24,13 @@ Downloads from the signed binary cache are preferred. A cache miss is shown befo
 local sandboxed build runs only after explicit approval and only when platform policy permits it.
 `--dry-run` previews an operation, while `--json` and `--jsonl` provide stable machine output.
 
-Use `pkg -h` for a short command guide. Use `pkg install --help` for install
+Run `pkg` or `pkg -h` for a short command guide. Use `pkg install --help` for install
 examples. `-y` accepts confirmation prompts. `-v` shows more detail. `-q`
 hides progress. Use the long options in scripts when that improves clarity.
 
 `pkg list` shows installed selectors, versions, and pin status.
 `pkg list --name-only` prints one package name per line for scripts.
-`pkg list --size --with-outputs` also shows closure bytes and selected outputs.
+`pkg list --size --with-outputs` also shows readable disk sizes and selected outputs.
 `pkg info` shows the package description, homepage, license, and availability.
 `pkg history` shows saved generation IDs and marks the active generation.
 
@@ -95,7 +95,7 @@ Use `pkg gc --dry-run` to preview cleanup. Use `pkg gc` to perform it.
 
 ## Package coverage
 
-The signed alpha.51 channel contains 64,412 package records for Apple silicon
+The signed alpha.52 channel contains 64,412 package records for Apple silicon
 macOS and 69,517 records for x86-64 Linux. It uses metadata generated from
 Nixpkgs, including nested package sets such as `python311Packages.requests`.
 
@@ -135,5 +135,10 @@ select a plain transcript. `--quiet` removes progress and keeps the final result
 `--json` and `--jsonl` keep their existing machine formats. `pkg list --name-only`
 prints names only, including on a terminal.
 
-These terminal changes are available in alpha.51. The public installer selects
-this release.
+Alpha.52 uses this layout across all 18 commands. Wide terminals show tables;
+small terminals show labeled cards. Long values wrap within the terminal width.
+Previews show the planned targets and state that no changes were applied.
+Install and rollback results identify the saved environment. History includes
+pin and output changes even when package versions match.
+
+The public installer selects alpha.52.

@@ -8,15 +8,16 @@ Find and install command-line tools with familiar package commands. pkg uses
 trusted downloads first. If a local build is needed, it shows the build plan
 and asks before it starts.
 
-[Alpha.51](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.51) is available
+[Alpha.52](https://github.com/spa5k/pkg/releases/tag/v0.1.0-alpha.52) is available
 for Apple silicon macOS and Linux x86-64 with systemd. Setup installs
 Determinate Nix for you. The macOS preview is not notarized. The release uses
 a test signing root.
 
-Alpha.51 adds one live build line with the current step and elapsed time.
-Package lists and history use clear tables. System checks show status marks.
-One verified installer command installs or updates pkg on both platforms.
-Use `pkg -h` for common commands and examples.
+Alpha.52 gives all 18 commands a consistent terminal layout. Run `pkg` for a
+short command guide. Every command has examples. Results use tables on wide
+terminals and compact labeled cards on small terminals. Previews show the planned
+changes. Errors show a corrective step. One verified installer command installs
+or updates pkg on both platforms.
 
 ## Start here
 

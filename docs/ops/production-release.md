@@ -1,7 +1,7 @@
 # Production release preparation
 
 Status: tooling prepared; production trust is not active.
-Alpha.51 still uses the alpha test root and ad-hoc macOS signatures.
+Alpha.52 still uses the alpha test root and ad-hoc macOS signatures.
 
 ## Operator inputs
 
