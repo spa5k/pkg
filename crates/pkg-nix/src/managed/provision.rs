@@ -610,7 +610,7 @@ async fn load_authenticated_installer_bundle_with_owner(
     })
 }
 
-fn installer_authentication_error(error: &ChannelError) -> ProvisionError {
+const fn installer_authentication_error(error: &ChannelError) -> ProvisionError {
     let code = match error {
         ChannelError::TransportUnavailable => ProvisionErrorCode::FetchFailed,
         ChannelError::DatastoreUnavailable
