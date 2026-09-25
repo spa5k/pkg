@@ -2,7 +2,6 @@
 
 use std::process::ExitCode as ProcessExitCode;
 
-use clap::Parser;
 use nix::unistd::Uid;
 use pkg_cli::cli::{Cli, Command, DoctorArgs};
 use pkg_cli::commands::doctor::{DoctorInputs, DoctorReport, observe_production_subsystems};
@@ -25,7 +24,7 @@ use pkg_installer::{UninstallErrorCode, uninstall_linux_production, uninstall_ma
 use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
 
 fn main() -> ProcessExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::try_parse(std::env::args_os()).unwrap_or_else(|error| error.exit());
     if let Err(error) = cli.validate() {
         let command_error = CommandError::new(error.exit_code(), error.to_string(), error.hint());
         return write_command_error(&cli, &command_error);
@@ -365,11 +364,11 @@ mod tests {
 
     #[test]
     fn live_uninstall_accepts_only_plain_output() {
-        let plain = Cli::try_parse_from(["pkg", "uninstall", "--yes"]).unwrap();
+        let plain = Cli::try_parse(["pkg", "uninstall", "--yes"]).unwrap();
         assert!(validate_live_uninstall_output(&plain).is_ok());
 
         for flag in ["--json", "--jsonl"] {
-            let live = Cli::try_parse_from(["pkg", flag, "uninstall", "--yes"]).unwrap();
+            let live = Cli::try_parse(["pkg", flag, "uninstall", "--yes"]).unwrap();
             assert_eq!(
                 validate_live_uninstall_output(&live).is_err(),
                 cfg!(any(
@@ -378,7 +377,7 @@ mod tests {
                 ))
             );
 
-            let dry_run = Cli::try_parse_from(["pkg", flag, "--dry-run", "uninstall"]).unwrap();
+            let dry_run = Cli::try_parse(["pkg", flag, "--dry-run", "uninstall"]).unwrap();
             assert!(validate_live_uninstall_output(&dry_run).is_ok());
         }
     }

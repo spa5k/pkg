@@ -1,6 +1,7 @@
 //! Small terminal presentation layer. Machine output never uses this module.
 
 use std::io::{self, IsTerminal, Write};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Stream-specific presentation policy, kept explicit for render tests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -68,6 +69,43 @@ impl Style {
         self.color
     }
 
+    /// Write a section title without adding decoration to redirected output.
+    ///
+    /// # Errors
+    /// Returns an error if the output stream cannot be written.
+    pub fn heading(self, mut writer: impl Write, title: &str) -> io::Result<()> {
+        if self.terminal {
+            writeln!(writer, "{}\n", self.paint(title, Tone::Heading))?;
+        }
+        Ok(())
+    }
+
+    /// Wrap public text to the terminal width. Preserve plain log lines.
+    ///
+    /// # Errors
+    /// Returns an error if the output stream cannot be written.
+    pub fn text(self, mut writer: impl Write, prefix: &str, text: &str) -> io::Result<()> {
+        if !self.terminal {
+            return writeln!(writer, "{prefix}{text}");
+        }
+        if prefix.width() > terminal_width() / 2 {
+            for line in wrap(prefix.trim_end(), terminal_width()) {
+                writeln!(writer, "{line}")?;
+            }
+            for line in wrap(text, terminal_width().saturating_sub(2)) {
+                writeln!(writer, "  {line}")?;
+            }
+            return Ok(());
+        }
+        let indent = " ".repeat(UnicodeWidthStr::width(prefix));
+        let width = terminal_width().saturating_sub(indent.len()).max(1);
+        for (index, line) in wrap(text, width).iter().enumerate() {
+            let prefix = if index == 0 { prefix } else { &indent };
+            writeln!(writer, "{prefix}{line}")?;
+        }
+        Ok(())
+    }
+
     /// Style trusted, already sanitized public text.
     #[must_use]
     pub fn paint(self, text: &str, tone: Tone) -> String {
@@ -90,10 +128,71 @@ impl Style {
     /// Returns an error if the output stream cannot be written.
     pub fn success(self, mut writer: impl Write, text: &str) -> io::Result<()> {
         if self.terminal {
-            writeln!(writer, "{} {text}", self.paint("✓", Tone::Success))
+            write!(writer, "{} ", self.paint("✓", Tone::Success))?;
+            let lines = wrap(text, terminal_width().saturating_sub(2));
+            writeln!(writer, "{}", lines.join("\n  "))
         } else {
             writeln!(writer, "{text}")
         }
+    }
+}
+
+/// Read the actual terminal width, with an explicit override for recordings.
+#[must_use]
+pub fn terminal_width() -> usize {
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|width| *width > 0)
+        .or_else(|| terminal_size::terminal_size().map(|(width, _)| usize::from(width.0)))
+        .unwrap_or(80)
+        .clamp(20, 120)
+}
+
+/// Wrap sanitized text by display cells, retaining every character.
+pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    if text.width() <= width {
+        return vec![text.to_owned()];
+    }
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() {
+            if line.width() + 1 + word.width() <= width {
+                line.push(' ');
+            } else {
+                lines.push(std::mem::take(&mut line));
+            }
+        }
+        for character in word.chars() {
+            let cells = character.width().unwrap_or(0);
+            if !line.is_empty() && line.width() + cells > width {
+                lines.push(std::mem::take(&mut line));
+            }
+            line.push(character);
+        }
+    }
+    lines.push(line);
+    lines
+}
+
+/// Render bytes with binary units; machine output retains the original count.
+#[must_use]
+pub fn format_bytes(bytes: u64) -> String {
+    let mut value = bytes as f64;
+    let mut unit = "B";
+    for next in ["KiB", "MiB", "GiB", "TiB"] {
+        if value < 1024.0 {
+            break;
+        }
+        value /= 1024.0;
+        unit = next;
+    }
+    if unit == "B" {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {unit}")
     }
 }
 
