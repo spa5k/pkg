@@ -6,6 +6,9 @@ RUN apt-get update \
         binutils ca-certificates curl dbus file openssl passwd procps python3 sudo systemd systemd-sysv \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --shell /bin/sh proof-user \
+    && useradd --create-home --shell /bin/sh setup-user \
+    && printf 'setup-user ALL=(root) NOPASSWD: ALL\n' > /etc/sudoers.d/pkg-proof-setup \
+    && chmod 0440 /etc/sudoers.d/pkg-proof-setup \
     && mkdir -p /etc/pkg-proof /usr/local/libexec \
     && openssl req -x509 -newkey rsa:2048 -nodes -days 30 \
         -subj /CN=pkg-linux-proof-ca \

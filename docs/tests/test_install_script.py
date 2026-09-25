@@ -39,7 +39,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("sha256sum --check", text)
         self.assertIn("shasum -a 256 --check", text)
         self.assertNotIn("curl |", text)
-        self.assertNotIn("eval ", text)
+        self.assertNotRegex(text, r"(?m)^\s*eval\s")  # printed instructions are allowed
         self.assertNotIn("PKG_URL=", text)
         self.assertNotIn("PKG_SHA256=", text)
 
@@ -51,7 +51,7 @@ class InstallScriptTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("usage:", result.stderr)
+        self.assertIn("Usage:", result.stderr)
 
 
 if __name__ == "__main__":

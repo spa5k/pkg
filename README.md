@@ -15,9 +15,14 @@ systems.
 
 ## Install
 
-Use the [install guide](docs/install.md) for **Apple silicon macOS** or
-**Linux x86-64 with systemd**. It includes the fixed alpha.49 download URLs,
-checksums, shell setup, and upgrade steps.
+Use one command for **Apple silicon macOS** or **Linux x86-64 with systemd**:
+
+```sh
+curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/spa5k/pkg/main/install.sh -o "$HOME/pkg-install.sh" && /bin/sh "$HOME/pkg-install.sh"
+```
+
+The [install guide](docs/install.md) includes fixed release downloads,
+checksums, shell setup, and recovery steps. Run the same command to update pkg.
 
 The terminal installer installs Determinate Nix for you. It saves a private
 log and waits for setup to finish. The macOS package is ad-hoc signed and is

@@ -80,6 +80,10 @@ def stage(
         "@PKG_RELEASE@": release,
         "@PKG_RELEASE_BASE_URL@": base_url,
         "@PKG_SHA256_X86_64_LINUX@": sha256(artifact),
+        "@PKG_ARTIFACT_X86_64_LINUX@": ARTIFACT,
+        # This isolated proof publication contains no macOS assets.
+        "@PKG_SHA256_MACOS_PACKAGE@": "",
+        "@PKG_SHA256_MACOS_WRAPPER@": "",
     }
     rendered = template.read_text(encoding="utf-8")
     for token, value in replacements.items():
