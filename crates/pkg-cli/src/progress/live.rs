@@ -63,11 +63,6 @@ struct Line {
 }
 
 fn run(receiver: &Receiver<Message>, style: Style) {
-    let width = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(80)
-        .clamp(40, 160);
     let mut line: Option<Line> = None;
     let mut frame = 0;
     let mut last_draw = Instant::now();
@@ -86,7 +81,7 @@ fn run(receiver: &Receiver<Message>, style: Style) {
         }
         if last_draw.elapsed() >= Duration::from_millis(120) {
             if let Some(line) = &line {
-                let text = render(line, frame, width);
+                let text = render(line, frame, crate::presentation::terminal_width());
                 if write!(io::stderr(), "\r\x1b[2K{text}")
                     .and_then(|()| io::stderr().flush())
                     .is_err()
@@ -163,16 +158,21 @@ fn duration(elapsed: Duration) -> String {
 
 fn render(line: &Line, frame: usize, width: usize) -> String {
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][frame % 10];
-    let progress = line.percent.map_or_else(String::new, |percent| {
-        let filled = usize::try_from(percent / 10).unwrap_or(10).min(10);
-        format!(
-            " [{}{}] {percent}%",
-            "━".repeat(filled),
-            "─".repeat(10 - filled)
-        )
-    });
+    let progress = line
+        .percent
+        .filter(|_| width >= 40)
+        .map_or_else(String::new, |percent| {
+            let filled = usize::try_from(percent / 10).unwrap_or(10).min(10);
+            format!(
+                " [{}{}] {percent}%",
+                "━".repeat(filled),
+                "─".repeat(10 - filled)
+            )
+        });
     let waiting = if line.updated.elapsed() >= Duration::from_secs(30) {
-        if width < 80 {
+        if width < 40 {
+            ""
+        } else if width < 80 {
             " · waiting"
         } else {
             " · waiting for an update"
@@ -182,16 +182,14 @@ fn render(line: &Line, frame: usize, width: usize) -> String {
     };
     let suffix = format!("{progress}  {}{waiting}", duration(line.started.elapsed()));
     let limit = width.saturating_sub(suffix.chars().count() + 4);
-    let label = if line.label.chars().count() > limit {
-        format!(
-            "{}…",
-            line.label
-                .chars()
-                .take(limit.saturating_sub(1))
-                .collect::<String>()
-        )
+    let first = crate::presentation::wrap(&line.label, limit.saturating_sub(1))
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let label = if first == line.label {
+        first
     } else {
-        line.label.clone()
+        format!("{first}…")
     };
     format!("{spinner} {label}{suffix}")
 }

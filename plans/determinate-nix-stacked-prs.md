@@ -101,6 +101,30 @@ Production keys, key custody, Apple certificates, domain access, and a native
 production Gatekeeper proof remain external inputs. Tooling readiness is not
 completion of the production trust ceremony.
 
+### PUBLIC-12: complete command help and terminal layout
+
+- **Status:** in progress.
+- **Purpose:** make every public command easy to find and learn.
+- **Owns:** grouped home help, examples for all commands, shared display-width
+  wrapping, terminal size detection, and accessible help/color behavior.
+- **Depends:** PUBLIC-09 (merged).
+- **Tests & gates:** complete help-tree coverage, narrow-terminal and Unicode
+  layouts, no-color/CI modes, shell output preservation, CLI tests, G-LINT,
+  G-QUALITY, workspace tests, docs links; E primary and A cross-area review.
+- **Rollback:** revert presentation changes. No state or protocol migration.
+
+### PUBLIC-13: complete command results and previews
+
+- **Status:** in progress.
+- **Purpose:** show the useful result and next action for every daily command.
+- **Owns:** package changes, environment IDs, disk values, explicit previews,
+  empty states, consistent errors, confirmations, and terminal result views.
+- **Depends:** PUBLIC-12.
+- **Tests & gates:** command result matrix, preview-versus-completion checks,
+  machine/quiet/name-only contracts, disposable macOS lifecycle smoke test,
+  G-LINT, G-QUALITY, workspace tests, docs links; E primary and A cross-area review.
+- **Rollback:** revert human views. No stored-state or broker changes.
+
 ## Alpha.49: reliable installation and daily commands
 
 - **Identifier:** PUBLIC-08.

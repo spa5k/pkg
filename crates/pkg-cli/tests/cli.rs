@@ -290,3 +290,37 @@ fn shellenv_is_usable_before_state_exists_and_exports_the_package_path() {
     assert_eq!(path.matches("/current/bin").count(), 1);
     assert!(path.ends_with(":/usr/bin:/bin"));
 }
+
+#[test]
+fn every_command_has_examples_and_remains_discoverable() {
+    use clap::CommandFactory;
+    let grammar = pkg_cli::cli::Cli::command();
+    let home = pkg().env("COLUMNS", "80").output().unwrap();
+    assert!(home.status.success());
+    let home = String::from_utf8(home.stdout).unwrap();
+    for command in grammar.get_subcommands() {
+        let name = command.get_name();
+        assert!(
+            home.contains(&format!("  {name} ")),
+            "missing {name} from home"
+        );
+        for width in [40, 80, 120] {
+            let output = pkg()
+                .args([name, "--help", "--no-color"])
+                .env("COLUMNS", width.to_string())
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{name}: {output:?}");
+            let text = String::from_utf8(output.stdout).unwrap();
+            assert!(text.contains("Examples"), "missing examples for {name}");
+            assert!(
+                text.contains(&format!("pkg {name}")),
+                "missing usage for {name}"
+            );
+            assert!(!text.contains('\x1b'));
+        }
+    }
+    let typo = pkg().args(["instal", "ripgrep"]).output().unwrap();
+    assert!(!typo.status.success());
+    assert!(String::from_utf8(typo.stderr).unwrap().contains("install"));
+}

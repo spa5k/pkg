@@ -10,6 +10,7 @@ pub mod commands;
 pub mod completion;
 pub mod crash;
 pub mod exit;
+mod help;
 pub mod log;
 pub mod path;
 pub mod presentation;

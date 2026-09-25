@@ -457,9 +457,14 @@ impl DoctorReport {
                 CheckStatus::Fail => ("✗ FAIL", Tone::Error),
                 CheckStatus::Deferred => ("– WAIT", Tone::Muted),
             };
-            writeln!(writer, "{}  {}", style.paint(marker, tone), check.detail)?;
+            write!(writer, "{}  ", style.paint(marker, tone))?;
+            let lines = crate::presentation::wrap(
+                &check.detail,
+                crate::presentation::terminal_width().saturating_sub(8),
+            );
+            writeln!(writer, "{}", lines.join("\n        "))?;
             if let Some(hint) = &check.hint {
-                writeln!(writer, "        Next: {hint}")?;
+                style.text(&mut writer, "        Next: ", hint)?;
             }
         }
         writeln!(writer)?;

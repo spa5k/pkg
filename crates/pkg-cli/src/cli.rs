@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand, ValueEnum};
+use clap::{
+    ArgAction, ArgGroup, Args, ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand,
+    ValueEnum,
+};
 
 use crate::exit::ExitCode;
 
@@ -15,47 +18,71 @@ use crate::exit::ExitCode;
     long_about = None,
     propagate_version = true,
     disable_help_subcommand = true,
-    after_help = "Examples:\n  pkg search ripgrep\n  pkg install ripgrep\n  pkg list\n  pkg update\n  pkg upgrade --all\n  pkg remove ripgrep\n  pkg rollback\n\nUse pkg <command> --help for options and examples."
+    after_help = "Start here:\n  pkg search ripgrep\n  pkg install ripgrep\n  pkg list\n  pkg update\n  pkg upgrade --all\n\nUse pkg <command> --help for options and examples.\nUse pkg <command> --dry-run to preview changes."
 )]
 pub struct Cli {
-    /// Emit one stable final JSON document.
-    #[arg(long, global = true, conflicts_with = "jsonl")]
+    /// Print the final result as JSON.
+    #[arg(help_heading = "Output", long, global = true, conflicts_with = "jsonl")]
     json: bool,
 
-    /// Emit versioned public progress records as NDJSON.
-    #[arg(long, global = true, conflicts_with = "json")]
+    /// Print progress and the final result as JSON Lines.
+    #[arg(help_heading = "Output", long, global = true, conflicts_with = "json")]
     jsonl: bool,
 
-    /// Suppress human progress while retaining the final result.
-    #[arg(short = 'q', long, global = true, conflicts_with = "verbose")]
+    /// Show only the final result.
+    #[arg(
+        help_heading = "Output",
+        short = 'q',
+        long,
+        global = true,
+        conflicts_with = "verbose"
+    )]
     quiet: bool,
 
-    /// Show more detail about each operation.
-    #[arg(short = 'v', long, global = true, conflicts_with = "quiet")]
+    /// Show operation details.
+    #[arg(
+        help_heading = "Output",
+        short = 'v',
+        long,
+        global = true,
+        conflicts_with = "quiet"
+    )]
     verbose: bool,
 
-    /// Disable ANSI color even on a terminal.
-    #[arg(long, global = true)]
+    /// Use static output without color or animation.
+    #[arg(help_heading = "Output", long, global = true)]
     no_color: bool,
 
     /// Override the product configuration file.
-    #[arg(long, global = true, value_name = "PATH", hide_short_help = true)]
+    #[arg(
+        help_heading = "Advanced",
+        long,
+        global = true,
+        value_name = "PATH",
+        hide_short_help = true
+    )]
     config: Option<PathBuf>,
 
     /// Use another package state directory.
-    #[arg(long, global = true, value_name = "DIR", hide_short_help = true)]
+    #[arg(
+        help_heading = "Advanced",
+        long,
+        global = true,
+        value_name = "DIR",
+        hide_short_help = true
+    )]
     state: Option<PathBuf>,
 
     /// Select a profile (currently only `default`).
-    #[arg(long, global = true, default_value = "default", value_parser = ["default"], hide_short_help = true)]
+    #[arg(help_heading = "Advanced", long, global = true, default_value = "default", value_parser = ["default"], hide_short_help = true)]
     profile: String,
 
-    /// Accept confirmations, including the local build plan.
-    #[arg(short = 'y', long, global = true)]
+    /// Accept prompts and local build plans.
+    #[arg(help_heading = "Safety", short = 'y', long, global = true)]
     yes: bool,
 
     /// Preview changes without applying them.
-    #[arg(long, global = true)]
+    #[arg(help_heading = "Safety", long, global = true)]
     dry_run: bool,
 
     #[command(subcommand)]
@@ -69,7 +96,25 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
-        <Self as Parser>::try_parse_from(args)
+        let mut args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+        let no_color = args
+            .iter()
+            .take_while(|arg| *arg != "--")
+            .any(|arg| arg == "--no-color")
+            || std::env::var_os("NO_COLOR").is_some()
+            || std::env::var_os("CI").is_some()
+            || std::env::var("TERM").as_deref() == Ok("dumb");
+        if args.len() == 1 {
+            args.push("--help".into());
+        }
+        let color = if no_color {
+            ColorChoice::Never
+        } else {
+            ColorChoice::Auto
+        };
+        let mut command = crate::help::configure(Self::command(), color);
+        let matches = command.try_get_matches_from_mut(args)?;
+        Self::from_arg_matches(&matches).map_err(|error| error.format(&mut command))
     }
 
     /// Apply grammar rules that depend on the parsed command as a whole.
@@ -218,8 +263,14 @@ impl std::error::Error for CliValidationError {}
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Command {
     /// Find packages in the verified catalog.
+    #[command(
+        after_help = "Examples:\n  pkg search ripgrep\n  pkg search editor --limit 10\n  pkg search ripgrep --exact\n\nNext: pkg info <package> shows package details."
+    )]
     Search(SearchArgs),
     /// Show package details and available versions.
+    #[command(
+        after_help = "Examples:\n  pkg info ripgrep\n  pkg info ripgrep fzf\n  pkg info ripgrep --exact\n\nNext: pkg install <package> installs a package."
+    )]
     Info(InfoArgs),
     /// Install packages. Download first; build locally when needed.
     #[command(
@@ -227,12 +278,24 @@ pub enum Command {
     )]
     Install(InstallArgs),
     /// Remove packages from your active environment.
+    #[command(
+        after_help = "Examples:\n  pkg remove ripgrep --dry-run\n  pkg remove ripgrep\n\nUse pkg list to find installed names. Use pkg rollback to restore an environment."
+    )]
     Remove(RemoveArgs),
     /// List your installed packages.
+    #[command(
+        after_help = "Examples:\n  pkg list\n  pkg list --pinned\n  pkg list --with-outputs --size\n  pkg list --name-only\n\nUse --name-only for one name per line. Use --json for structured output."
+    )]
     List(ListArgs),
     /// Show packages with available updates.
+    #[command(
+        after_help = "Examples:\n  pkg outdated\n  pkg update\n  pkg upgrade --all\n\nRun pkg update first to check the latest catalog. Public flake sources are checked during upgrade."
+    )]
     Outdated,
     /// Refresh the package catalog without changing installed packages.
+    #[command(
+        after_help = "Examples:\n  pkg update\n  pkg update --check\n\nThis refreshes the package catalog. Use pkg upgrade to change installed packages."
+    )]
     Update(UpdateArgs),
     /// Update selected packages, or use --all.
     #[command(
@@ -240,10 +303,19 @@ pub enum Command {
     )]
     Upgrade(UpgradeArgs),
     /// Keep packages at their current versions.
+    #[command(
+        after_help = "Examples:\n  pkg pin ripgrep\n  pkg list --pinned\n\nPinned packages stay at their current version during upgrades."
+    )]
     Pin(PackageArgs),
     /// Allow pinned packages to receive updates.
+    #[command(
+        after_help = "Examples:\n  pkg unpin ripgrep\n  pkg upgrade ripgrep\n\nThis allows future upgrades. It does not change the installed version."
+    )]
     Unpin(PackageArgs),
     /// Show or prune saved package environments.
+    #[command(
+        after_help = "Examples:\n  pkg history\n  pkg history --diff gen-0001 gen-0002\n  pkg history --delete gen-0001 --dry-run\n\nEach saved environment is a generation. Use an ID from pkg history. The active generation cannot be deleted."
+    )]
     History(HistoryArgs),
     /// Restore a previous package environment.
     #[command(
@@ -251,18 +323,33 @@ pub enum Command {
     )]
     Rollback(RollbackArgs),
     /// Free disk space used by old package environments.
+    #[command(
+        after_help = "Examples:\n  pkg gc --dry-run\n  pkg gc\n  pkg gc --keep-generations 5\n\nPreview the cleanup first. Deleted generations are no longer available for rollback."
+    )]
     Gc(GcArgs),
     /// Check installed packages and repair damaged files.
+    #[command(
+        after_help = "Examples:\n  pkg repair --verify-only\n  pkg repair\n  pkg repair gen-0002\n\nStart with verification. Repair can temporarily make affected commands unavailable."
+    )]
     Repair(RepairArgs),
     /// Check your installation and show how to fix problems.
+    #[command(
+        after_help = "Examples:\n  pkg doctor\n  pkg doctor --json\n  pkg doctor --support\n\nDoctor checks your system. --support prints a sanitized support preview. It does not send it."
+    )]
     Doctor(DoctorArgs),
     /// Print shell setup for Bash or zsh: eval "$(pkg shellenv)".
+    #[command(
+        after_help = "Examples (Bash or Zsh):\n  eval \"$(pkg shellenv)\"\n\nThis prints shell code. Add the line above to your shell startup file for future sessions."
+    )]
     Shellenv,
     /// Generate shell completions.
+    #[command(
+        after_help = "Examples:\n  pkg completion bash > pkg.bash\n  pkg completion zsh > _pkg\n  pkg completion fish > pkg.fish\n  pkg completion powershell > pkg.ps1\n\nThis prints a completion script. Load it with your shell completion setup."
+    )]
     Completion(CompletionArgs),
     /// Uninstall pkg and its managed Nix installation.
     #[command(
-        after_help = "Use pkg remove <package> to remove individual packages.\n\nPreview: pkg uninstall --dry-run\nUninstall: sudo pkg uninstall"
+        after_help = "Examples:\n  sudo pkg uninstall --dry-run\n  sudo pkg uninstall\n\nThis removes pkg and its managed Nix installation. Use pkg remove <package> to remove individual packages."
     )]
     Uninstall,
 }
@@ -396,7 +483,7 @@ pub struct InstallArgs {
     /// Select explicit package outputs (comma-delimited; repeatable).
     #[arg(long, value_name = "OUTPUTS", value_delimiter = ',', action = ArgAction::Append)]
     with_outputs: Vec<String>,
-    /// Deterministic activation collision policy.
+    /// Choose how to handle file name conflicts.
     #[arg(long, value_enum, default_value_t = CollisionPolicy::Abort)]
     on_collision: CollisionPolicy,
     /// Resolve every target but commit nothing if any target fails.
@@ -553,7 +640,7 @@ pub struct UpgradeArgs {
     /// Select explicit package outputs (comma-delimited; repeatable).
     #[arg(long, value_name = "OUTPUTS", value_delimiter = ',', action = ArgAction::Append)]
     with_outputs: Vec<String>,
-    /// Deterministic activation collision policy.
+    /// Choose how to handle file name conflicts.
     #[arg(long, value_enum, default_value_t = CollisionPolicy::Abort)]
     on_collision: CollisionPolicy,
     /// Resolve every target but commit nothing if any target fails.
