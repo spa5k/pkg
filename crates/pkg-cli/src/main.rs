@@ -19,7 +19,7 @@ use pkg_cli::path::{
     observe_raw_nix_visibility,
 };
 use pkg_cli::support::SupportBundle;
-use pkg_cli::ux::{CommandError, OutputMode, write_error};
+use pkg_cli::ux::{CommandError, OutputMode, write_styled_error};
 use pkg_installer::{UninstallErrorCode, uninstall_linux_production, uninstall_macos_production};
 use pkg_nix::{DetectionDisposition, detect_unmanaged_nix};
 
@@ -102,7 +102,10 @@ impl CommandEngine for UninstallEngine {
             ));
         }
         if !request.dry_run() {
-            confirm_destructive(request.yes(), "Uninstall pkg?")?;
+            confirm_destructive(
+                request.yes(),
+                "Uninstall pkg and its managed Nix installation?",
+            )?;
         }
         let result = if cfg!(target_os = "macos") {
             uninstall_macos_production(request.dry_run())
@@ -110,29 +113,33 @@ impl CommandEngine for UninstallEngine {
             uninstall_linux_production(request.dry_run())
         };
         let actions = result.map_err(|error| uninstall_command_error(error.code()))?;
-        let (summary, status) = if actions == 0 {
-            ("pkg is not installed.", "absent")
-        } else if request.dry_run() {
-            ("pkg can be safely uninstalled.", "planned")
-        } else {
-            ("pkg is uninstalled.", "removed")
-        };
-        CommandResult::new(
-            summary,
-            serde_json::Map::from_iter([
-                ("actions".to_owned(), serde_json::json!(actions)),
-                ("status".to_owned(), serde_json::json!(status)),
-            ]),
-            Vec::new(),
-        )
-        .map_err(|_| {
-            CommandError::new(
-                ExitCode::EngineUnavailable,
-                "pkg could not report the uninstall result",
-                "run `pkg doctor`",
-            )
-        })
+        uninstall_result(actions, request.dry_run())
     }
+}
+
+fn uninstall_result(actions: usize, dry_run: bool) -> Result<CommandResult, CommandError> {
+    let (summary, status) = if actions == 0 {
+        ("pkg is not installed.", "absent")
+    } else if dry_run {
+        ("pkg can be safely uninstalled.", "planned")
+    } else {
+        ("pkg is uninstalled.", "removed")
+    };
+    CommandResult::new(
+        summary,
+        serde_json::Map::from_iter([
+            ("actions".to_owned(), serde_json::json!(actions)),
+            ("status".to_owned(), serde_json::json!(status)),
+        ]),
+        Vec::new(),
+    )
+    .map_err(|_| {
+        CommandError::new(
+            ExitCode::EngineUnavailable,
+            "pkg could not report the uninstall result",
+            "run `pkg doctor`",
+        )
+    })
 }
 
 fn run_uninstall(cli: &Cli) -> ProcessExitCode {
@@ -224,16 +231,7 @@ fn write_state_location_error(cli: &Cli, error: StateLocationError) -> ProcessEx
 }
 
 fn write_command_error(cli: &Cli, error: &CommandError) -> ProcessExitCode {
-    let mode = OutputMode::from_flags(cli.json(), cli.jsonl());
-    if write_error(
-        std::io::stdout(),
-        std::io::stderr(),
-        mode,
-        cli.command_name(),
-        error,
-    )
-    .is_err()
-    {
+    if write_styled_error(std::io::stdout(), std::io::stderr(), cli, error).is_err() {
         return ProcessExitCode::FAILURE;
     }
     error.exit_code().into()

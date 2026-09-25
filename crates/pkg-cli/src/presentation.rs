@@ -3,6 +3,8 @@
 use std::io::{self, IsTerminal, Write};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+pub(crate) mod table;
+
 /// Stream-specific presentation policy, kept explicit for render tests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Style {

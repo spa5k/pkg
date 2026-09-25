@@ -298,6 +298,10 @@ fn every_command_has_examples_and_remains_discoverable() {
     let home = pkg().env("COLUMNS", "80").output().unwrap();
     assert!(home.status.success());
     let home = String::from_utf8(home.stdout).unwrap();
+    assert!(
+        !home.contains("--state"),
+        "the home guide keeps advanced options in full help"
+    );
     for command in grammar.get_subcommands() {
         let name = command.get_name();
         assert!(

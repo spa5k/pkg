@@ -105,7 +105,7 @@ impl Cli {
             || std::env::var_os("CI").is_some()
             || std::env::var("TERM").as_deref() == Ok("dumb");
         if args.len() == 1 {
-            args.push("--help".into());
+            args.push("-h".into());
         }
         let color = if no_color {
             ColorChoice::Never

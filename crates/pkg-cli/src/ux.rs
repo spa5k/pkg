@@ -5,6 +5,7 @@ use std::io::{self, IsTerminal, Write};
 use serde::Serialize;
 
 use crate::exit::ExitCode;
+use crate::presentation::{Style, Tone};
 
 /// Version carried by every public machine-readable record.
 pub const PUBLIC_SCHEMA_VERSION: u64 = 1;
@@ -172,7 +173,28 @@ pub fn write_error(
     command: &str,
     error: &CommandError,
 ) -> io::Result<()> {
-    write_error_with_operation(stdout, stderr, mode, command, error, None)
+    write_error_with_operation(stdout, stderr, mode, command, error, None, Style::default())
+}
+
+/// Render an error with stream-specific terminal presentation.
+///
+/// # Errors
+/// Returns an error if the output stream cannot be written.
+pub fn write_styled_error(
+    stdout: impl Write,
+    stderr: impl Write,
+    cli: &crate::cli::Cli,
+    error: &CommandError,
+) -> io::Result<()> {
+    write_error_with_operation(
+        stdout,
+        stderr,
+        OutputMode::from_flags(cli.json(), cli.jsonl()),
+        cli.command_name(),
+        error,
+        None,
+        Style::stderr(cli.no_color()),
+    )
 }
 
 /// Render an error and bind machine output to a known public operation id.
@@ -183,6 +205,7 @@ pub(crate) fn write_error_with_operation(
     command: &str,
     error: &CommandError,
     operation_id: Option<&str>,
+    style: Style,
 ) -> io::Result<()> {
     let detail = ErrorDetail {
         symbol: error.exit_code.symbol(),
@@ -191,10 +214,7 @@ pub(crate) fn write_error_with_operation(
         hint: error.hint(),
     };
     match mode {
-        OutputMode::Human => {
-            writeln!(stderr, "error[{}]: {}", detail.symbol, detail.message)?;
-            writeln!(stderr, "hint: {}", detail.hint)
-        }
+        OutputMode::Human => write_human_error(&mut stderr, error, style),
         OutputMode::Json => write_json_line(
             &mut stdout,
             &FinalError {
@@ -216,6 +236,30 @@ pub(crate) fn write_error_with_operation(
                 error: detail,
             },
         ),
+    }
+}
+
+fn write_human_error(mut writer: impl Write, error: &CommandError, style: Style) -> io::Result<()> {
+    let symbol = error.exit_code().symbol();
+    if style.is_terminal() {
+        let (heading, tone) = if error.exit_code() == ExitCode::Cancelled {
+            ("Cancelled", Tone::Warning)
+        } else {
+            ("Could not complete the command", Tone::Error)
+        };
+        style.text(&mut writer, "", &format!("{heading}  [{symbol}]"))?;
+        // Only the status marker carries color; details remain readable.
+        write!(writer, "{} ", style.paint("›", tone))?;
+        let lines = crate::presentation::wrap(
+            error.message(),
+            crate::presentation::terminal_width().saturating_sub(2),
+        );
+        writeln!(writer, "{}", lines.join("\n  "))?;
+        writeln!(writer)?;
+        style.text(writer, "Next: ", error.hint())
+    } else {
+        writeln!(writer, "error[{symbol}]: {}", error.message())?;
+        writeln!(writer, "hint: {}", error.hint())
     }
 }
 

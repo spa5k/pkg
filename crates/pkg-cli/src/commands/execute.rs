@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
+use super::human::View;
 use crate::cli::{
     Cli, Command, GcArgs, HistoryArgs, InfoArgs, InstallArgs, ListArgs, PackageArgs, RemoveArgs,
     RepairArgs, RollbackArgs, SearchArgs, UpdateArgs, UpgradeArgs,
@@ -66,6 +67,7 @@ pub struct CommandResult {
     summary: String,
     fields: Map<String, Value>,
     records: Vec<Map<String, Value>>,
+    package_labels: Map<String, Value>,
 }
 
 impl CommandResult {
@@ -93,6 +95,7 @@ impl CommandResult {
             summary,
             fields,
             records,
+            package_labels: Map::new(),
         })
     }
 
@@ -107,7 +110,36 @@ impl CommandResult {
         self,
         summary: impl Into<String>,
     ) -> Result<Self, PublicResultError> {
-        Self::new(summary, self.fields, self.records)
+        Self::new(summary, self.fields, self.records)?.with_package_labels(self.package_labels)
+    }
+
+    /// Keep readable selectors for human output while preserving machine IDs.
+    pub(super) fn with_package_labels(
+        mut self,
+        labels: Map<String, Value>,
+    ) -> Result<Self, PublicResultError> {
+        validate_map(&labels, 0)?;
+        let encoded = serde_json::to_vec(&(&self.summary, &self.fields, &self.records, &labels))
+            .map_err(|_| PublicResultError::InvalidValue)?;
+        if encoded.len() > MAX_RESULT_BYTES {
+            return Err(PublicResultError::TooLarge);
+        }
+        self.package_labels = labels;
+        Ok(self)
+    }
+
+    pub(super) fn human_fields(&self) -> Map<String, Value> {
+        let mut fields = self.fields.clone();
+        for key in ["removed", "changed", "unchanged", "skippedPinned"] {
+            if let Some(values) = fields.get_mut(key).and_then(Value::as_array_mut) {
+                for value in values {
+                    if let Some(label) = value.as_str().and_then(|id| self.package_labels.get(id)) {
+                        *value = label.clone();
+                    }
+                }
+            }
+        }
+        fields
     }
 
     /// Product-owned terminal fields.
@@ -375,6 +407,7 @@ pub fn execute_command_with_operation_log(
                 cli.command_name(),
                 &error,
                 None,
+                Style::stderr(cli.no_color()),
             )?;
             return Ok(error.exit_code());
         }
@@ -432,7 +465,7 @@ fn execute_command_inner(
                 &result,
                 operation_id.as_deref(),
                 &lines,
-                Style::stdout(cli.no_color()),
+                View::from_cli(cli),
             )?;
             Ok(ExitCode::Ok)
         }
@@ -452,6 +485,7 @@ fn execute_command_inner(
                     cli.command_name(),
                     &error,
                     operation_id.as_deref(),
+                    Style::stderr(cli.no_color()),
                 )?;
             }
             Ok(error.exit_code())
@@ -531,7 +565,7 @@ pub(crate) fn write_success(
         result,
         None,
         &lines,
-        Style::default(),
+        View::default(),
     )
 }
 
@@ -542,11 +576,13 @@ fn write_success_lines(
     result: &CommandResult,
     operation_id: Option<&str>,
     jsonl_lines: &[Vec<u8>],
-    style: Style,
+    view: View,
 ) -> io::Result<()> {
     match mode {
-        OutputMode::Human if command == "search" => write_search_result(&mut writer, result, style),
-        OutputMode::Human => super::human::write_result(&mut writer, command, result, style),
+        OutputMode::Human if command == "search" => {
+            write_search_result(&mut writer, result, view.style)
+        }
+        OutputMode::Human => super::human::write_result(&mut writer, command, result, view),
         OutputMode::Json => {
             let mut value = result.fields().clone();
             bind_operation_id(&mut value, operation_id)?;
@@ -569,60 +605,15 @@ fn write_search_result(
     result: &CommandResult,
     style: Style,
 ) -> io::Result<()> {
-    if style.is_terminal() {
-        super::human::write_result(&mut writer, "search", result, style)?;
-        return write_catalog_notes(writer, result);
-    }
-    if !result.records().is_empty() {
-        let package_width = result
-            .records()
-            .iter()
-            .filter_map(|record| record.get("package").and_then(Value::as_str))
-            .map(str::len)
-            .max()
-            .unwrap_or(7)
-            .max(7);
-        let version_width = result
-            .records()
-            .iter()
-            .filter_map(|record| record.get("version").and_then(Value::as_str))
-            .map(str::len)
-            .max()
-            .unwrap_or(7)
-            .max(7);
-        writeln!(
-            writer,
-            "{:<package_width$}  {:<version_width$}  {:<11}  Description",
-            "Package", "Version", "Status"
-        )?;
-        for record in result.records() {
-            let package = record.get("package").and_then(Value::as_str).unwrap_or("-");
-            let version = record
-                .get("version")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("-");
-            let description = record
-                .get("description")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("-");
-            let status = match (
-                record.get("broken").and_then(Value::as_bool),
-                record.get("available").and_then(Value::as_bool),
-            ) {
-                (Some(true), _) => "broken",
-                (Some(false), Some(true)) => "ready",
-                _ => "unsupported",
-            };
-            writeln!(
-                writer,
-                "{package:<package_width$}  {version:<version_width$}  {status:<11}  {description}"
-            )?;
-        }
-        writeln!(writer)?;
-    }
-    style.success(&mut writer, result.summary())?;
+    super::human::write_result(
+        &mut writer,
+        "search",
+        result,
+        View {
+            style,
+            preview: false,
+        },
+    )?;
     write_catalog_notes(writer, result)
 }
 

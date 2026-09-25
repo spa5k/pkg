@@ -1,5 +1,7 @@
 //! Production command adapter over the invoking user's verified local state.
 
+use crate::presentation::format_bytes;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
@@ -257,7 +259,15 @@ impl CoreOperations for LocalStateOperations {
         }
         confirm_destructive(
             policy.yes(),
-            &format!("Remove {} package(s)?", args.packages().len()),
+            &format!(
+                "Remove {} {}?",
+                args.packages().len(),
+                if args.packages().len() == 1 {
+                    "package"
+                } else {
+                    "packages"
+                }
+            ),
         )?;
         self.commit_state_edit(StateEditKind::Remove, |state| remove_state(state, args))
     }
@@ -568,6 +578,7 @@ impl LocalStateOperations {
         require_supported_upgrade_options(args)?;
         let layout = self.layout().clone();
         let source = self.active()?;
+        let labels = super::state::package_labels(source.state());
         let mut selection = select_upgrade(
             source.state().clone(),
             upgrade_scope(source.state(), args)?,
@@ -586,7 +597,9 @@ impl LocalStateOperations {
             .map(|selector| selector.id().clone())
             .collect::<BTreeSet<_>>();
         if selected_ids.is_empty() {
-            return upgrade_noop_result(&skipped_pinned);
+            return upgrade_noop_result(&skipped_pinned)?
+                .with_package_labels(labels)
+                .map_err(|_| mutation_failed());
         }
         let mut broker = BrokerLifecycleClient::connect_default().map_err(broker_error)?;
         let has_local_build = selected_ids.iter().any(|id| {
@@ -617,7 +630,9 @@ impl LocalStateOperations {
                 .map(|selector| selector.id().clone())
                 .collect::<Vec<_>>();
             if ids.is_empty() {
-                return upgrade_noop_result(&skipped_pinned);
+                return upgrade_noop_result(&skipped_pinned)?
+                    .with_package_labels(labels)
+                    .map_err(|_| mutation_failed());
             }
             selection = select_upgrade(source.state().clone(), UpgradeScope::Named(ids), false)
                 .map_err(upgrade_failed)?;
@@ -634,7 +649,9 @@ impl LocalStateOperations {
             .collect::<BTreeMap<_, _>>();
         let selectors = broker_upgrade_selectors(selection.selectors());
         if policy.dry_run() {
-            return preview_upgrade(&mut broker, selectors, &skipped_pinned);
+            return preview_upgrade(&mut broker, selectors, &skipped_pinned)?
+                .with_package_labels(labels)
+                .map_err(|_| mutation_failed());
         }
         self.recover_pending_install(&layout, &mut broker)?;
         let (handle, public_operation_id, evidence, build_approval) =
@@ -649,7 +666,9 @@ impl LocalStateOperations {
                 .map_err(|_| upgrade_failed(pkg_core::upgrade::UpgradeError::InvalidState))?;
             if !upgraded.changed() {
                 let _ = broker.complete(handle.clone());
-                return upgrade_noop_result(&skipped_pinned);
+                return upgrade_noop_result(&skipped_pinned)?
+                    .with_package_labels(labels)
+                    .map_err(|_| mutation_failed());
             }
             let upgraded_names = upgraded
                 .upgraded()
@@ -713,7 +732,9 @@ impl LocalStateOperations {
                 &upgraded_names,
                 &skipped_pinned,
                 build_approval,
-            )
+            )?
+            .with_package_labels(labels)
+            .map_err(|_| mutation_failed())
         })();
         if result.is_err() && !local_committed {
             let _ = broker.cancel(handle);
@@ -1896,9 +1917,13 @@ fn emit_phase(
 fn render_build_preview(preview: &pkg_nix::BuildPreview) -> Result<(), CommandError> {
     let rendered = format_build_preview(preview)?;
     let mut stderr = io::stderr();
-    writeln!(stderr, "{rendered}")
-        .and_then(|()| stderr.flush())
-        .map_err(|_| confirmation_required())
+    let style = crate::presentation::Style::stderr(true);
+    for line in rendered.lines() {
+        style
+            .text(&mut stderr, "", line)
+            .map_err(|_| confirmation_required())?;
+    }
+    stderr.flush().map_err(|_| confirmation_required())
 }
 
 fn format_build_preview(preview: &BuildPreview) -> Result<String, CommandError> {
@@ -2012,21 +2037,6 @@ fn build_preview_details(value: &Value) -> Vec<String> {
     details.push(String::new());
     details.push("The build is sandboxed. Estimates are approximate.".to_owned());
     details
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} {}", UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
 }
 
 fn preview_install(
@@ -2464,7 +2474,16 @@ pub fn confirm_destructive(yes: bool, prompt: &str) -> Result<(), CommandError> 
     if !stdin.is_terminal() || !stderr.is_terminal() {
         return Err(confirmation_required());
     }
-    write!(stderr, "{prompt} [y/N] ").map_err(|_| confirmation_required())?;
+    writeln!(stderr).map_err(|_| confirmation_required())?;
+    let lines = crate::presentation::wrap(
+        prompt,
+        crate::presentation::terminal_width().saturating_sub(" [y/N] ".len()),
+    );
+    let (last, earlier) = lines.split_last().ok_or_else(confirmation_required)?;
+    for line in earlier {
+        writeln!(stderr, "{line}").map_err(|_| confirmation_required())?;
+    }
+    write!(stderr, "{last} [y/N] ").map_err(|_| confirmation_required())?;
     stderr.flush().map_err(|_| confirmation_required())?;
     let mut answer = String::new();
     stdin
