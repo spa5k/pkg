@@ -156,8 +156,8 @@ completion of the production trust ceremony.
 
 ### PUBLIC-16: installer authentication failure diagnostics
 
-- **Status:** implementation in progress after an alpha.52 installation retry
-  succeeded. The original failure log does not establish the transport cause.
+- **Status:** merged in [PR #54](https://github.com/spa5k/pkg/pull/54).
+  Awaiting release. The original alpha.52 failure log does not establish the transport cause.
 - **Purpose:** distinguish release download failures from rejected signatures
   and unsafe verification state.
 - **Owns:** redacted installer failure categories and clear retry instructions
@@ -171,12 +171,22 @@ completion of the production trust ceremony.
 
 ### PUBLIC-17: installed package identity and useful daily command output
 
-- **Status:** implementation in progress. These commands are not in published alpha.52.
+- **Status:** merged in [PR #55](https://github.com/spa5k/pkg/pull/55).
+  These commands are not in published alpha.52.
 - **Purpose:** resolve installed package names before approval and show the package changes users need to assess.
 - **Owns:** unique installed-name matching for remove, pin, unpin and upgrade; package uninstall alias; explicit system uninstall command; package names and source selectors in lists; generation inventories and change details; rollback approval; quiet progress without elapsed timers; command help and lifecycle harness updates.
 - **Depends:** PUBLIC-12, PUBLIC-13 and PUBLIC-16 (merged).
 - **Tests & gates:** missing/ambiguous/duplicate package selectors, exact selector precedence, validation before approval, history and rollback versions/pins/sources, package versus system uninstall dispatch, all help pages, TTY/plain/JSON/quiet output, native macOS lifecycle commands, G-LINT, G-QUALITY, workspace tests, docs links, hosted Linux/macOS checks; E primary, F cross-area, and A security review.
 - **Rollback:** revert the command and presentation changes. Stored generations remain in the existing format. Restore harness command names with the CLI; no Nix or package data deletion is needed.
+
+### PUBLIC-18: alpha.53 release
+
+- **Status:** release preparation in progress. Alpha.52 remains the published release.
+- **Purpose:** publish installed package name resolution, useful history and rollback details, clear package/system removal commands, quieter progress, and installer authentication diagnostics.
+- **Owns:** alpha.53 version and candidate names, signed native assets, sequence 53 catalogs and channel, exact upgrade/reboot/product-removal evidence, installer instructions, and publication.
+- **Depends:** PUBLIC-16 and PUBLIC-17 (merged).
+- **Tests & gates:** local G-LINT, workspace tests, G-QUALITY, docs links, hosted Linux/macOS checks, exact asset signatures, public channel byte verification, alpha.52-to-alpha.53 macOS upgrade and reboot, native system uninstall and reinstall, and public installer checks on both platforms; A primary/security and E cross-area review.
+- **Rollback:** publish a higher channel sequence with the previous approved content. Keep Nix records and package generations. Never replay old metadata.
 
 ## Alpha.49: reliable installation and daily commands
 
